@@ -1503,27 +1503,29 @@ async fn authenticate(
     // The canonical attach has its database in a bounded JSON body. Bind the
     // identity authority to that same database, then restore the exact bytes
     // for the handler; never accept a caller-provided owner header here.
-    let attach_database =
+    let attach_scope =
         if request.method() == Method::POST && request.uri().path() == "/api/v1/reactive/views" {
             let body = std::mem::replace(request.body_mut(), axum::body::Body::empty());
             let bytes = match axum::body::to_bytes(body, 65_536).await {
                 Ok(bytes) => bytes,
                 Err(_) => return ApiError::unauthorized().into_response(),
             };
-            let parsed = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
-            let database = parsed
-                .as_ref()
-                .and_then(|value| value.get("databaseId"))
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| {
-                    !value.is_empty() && value.len() <= 128 && !value.contains(['/', '?', '#'])
-                })
-                .map(str::to_owned);
+            let parsed = serde_json::from_slice::<crate::reactive_api::AttachRequest>(&bytes);
             *request.body_mut() = axum::body::Body::from(bytes);
-            let Some(database) = database else {
+            let Ok(attach) = parsed else {
                 return ApiError::unauthorized().into_response();
             };
-            Some(database)
+            if attach.database_id.is_empty()
+                || attach.database_id.len() > 128
+                || attach.database_id.contains(['/', '?', '#'])
+            {
+                return ApiError::unauthorized().into_response();
+            }
+            let collection = match crate::reactive_api::attach_collection(&state, &attach) {
+                Ok(collection) => collection,
+                Err(error) => return error.into_response(),
+            };
+            Some((attach.database_id, collection))
         } else {
             None
         };
@@ -1536,13 +1538,16 @@ async fn authenticate(
         return ApiError::malformed_credential().into_response();
     };
     let request_method = request.method().clone();
-    let request_path = attach_database.as_ref().map_or_else(
+    let request_path = attach_scope.as_ref().map_or_else(
         || request.uri().path().to_owned(),
-        |database| format!("/api/v1/databases/{database}/sql"),
+        |(database, _)| format!("/api/v1/databases/{database}/sql"),
     );
     let request_headers = request.headers().clone();
     let (principal, verified_project) =
-        match admit_bearer(&state, &request_method, &request_path, &request_headers, token).await {
+        match admit_bearer(
+            &state, &request_method, &request_path, &request_headers, token,
+            attach_scope.as_ref().map(|(_, collection)| collection.as_str()),
+        ).await {
             Ok(value) => value,
             Err(error) => return error.into_response(),
         };
@@ -1617,10 +1622,12 @@ async fn admit_bearer(
     path: &str,
     headers: &HeaderMap,
     token: &str,
+    query_collection: Option<&str>,
 ) -> Result<
     (crate::api_keys::Principal, Option<crate::delegated_identity::VerifiedProjectScope>),
     ApiError,
 > {
+    let collection = query_collection.or_else(|| collection_of(path));
     let route_owner = match database_of(path) {
         Some(database) => crate::public_admission::route_owner(state, database)?,
         None if project_operation_headers(method, path) => {
@@ -1668,7 +1675,7 @@ async fn admit_bearer(
             let _capability = crate::auth_runtime::byo_config::principal_for(
                 &context,
                 database_of(path),
-                collection_of(path),
+                collection,
                 required_verb(method, path),
                 project_operation,
             )
@@ -1682,7 +1689,7 @@ async fn admit_bearer(
                             &route_owner.0,
                             &route_owner.1,
                             database,
-                            collection_of(path),
+                            collection,
                             required_verb(method, path),
                         )
                         .await
@@ -1727,7 +1734,7 @@ async fn admit_bearer(
                     &route_owner.0,
                     &route_owner.1,
                     database,
-                    collection_of(path),
+                    collection,
                     required_verb(method, path),
                 )
                 .await
@@ -2807,12 +2814,18 @@ async fn batch_documents(
         Ok(operations) => operations,
         Err(error) => return error.into_response(),
     };
-    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
-        Ok(durability) => durability,
-        Err(error) => return error.into_response(),
-    };
     let operation = match write_operation(&headers, "api-batch") {
         Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let fingerprint = batch_request_fingerprint(&collection, &operations);
+    match replay_batch_request(&state, engine, &scope, &headers, &operation, fingerprint).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {}
+        Err(error) => return error.into_response(),
+    }
+    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
+        Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
     let mut session = match open_session(engine, &scope, &headers) {
@@ -2823,9 +2836,20 @@ async fn batch_documents(
         Ok(snapshot) => snapshot,
         Err(error) => return session_error(error).into_response(),
     };
-    let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
-        return ApiError::storage_failure().into_response();
+    let mut transaction = match engine.begin(&scope, snapshot, operation.clone()) {
+        Ok(transaction) => transaction,
+        Err(terrabase::EngineError::OperationIdReuse { .. }) => {
+            return durability_unknown().into_response();
+        }
+        Err(_) => return ApiError::storage_failure().into_response(),
     };
+    // The operation reservation excludes a simultaneous publisher. Resolve
+    // once more before inspecting mutable patch bases or delete targets.
+    match replay_batch_request(&state, engine, &scope, &headers, &operation, fingerprint).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {}
+        Err(error) => return error.into_response(),
+    }
     let database_id = engine.database_owner().database().to_text();
     let mut units = 0_u64;
     let operation_id = transaction.operation_id().clone();
@@ -2833,6 +2857,11 @@ async fn batch_documents(
         match stage_batch_operation(&mut transaction, &collection, item) {
             Ok(operation_units) => units = units.saturating_add(operation_units),
             Err((code, message)) => return batch_refusal(index, code, message),
+        }
+    }
+    if has_idempotency_key(&headers) {
+        if let Err(error) = transaction.bind_batch_request(fingerprint, operations.len()) {
+            return document_request_error(error).into_response();
         }
     }
     if let Err(error) = attach_write_budget(
@@ -2849,24 +2878,24 @@ async fn batch_documents(
     if let Err(error) = durability.guard(&mut transaction) {
         return error.into_response();
     }
-    match transaction.commit(LocalDurability::Synced) {
+    let outcome = transaction.commit(LocalDurability::Synced);
+    if !matches!(outcome, CommitOutcome::Committed(_)) {
+        match replay_batch_request(&state, engine, &scope, &headers, &operation, fingerprint).await
+        {
+            Ok(Some(response)) => return response,
+            Ok(None) => {}
+            Err(error) => return error.into_response(),
+        }
+    }
+    match outcome {
         CommitOutcome::Committed(receipt) => {
             if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
                 return error.into_response();
             }
-            let mut response = json_response(
-                StatusCode::OK,
-                format!(
-                    "{{\"committed\":{},\"count\":{}}}",
-                    receipt.sequence().get(),
-                    operations.len()
-                ),
-            );
-            if let Err(error) = session.read_snapshot() {
-                return session_error(error).into_response();
+            match batch_write_response(&mut session, receipt.sequence().get(), operations.len()) {
+                Ok(response) => response,
+                Err(error) => error.into_response(),
             }
-            with_session(&mut response, session.session_token());
-            response
         }
         CommitOutcome::Rejected(reason) => ApiError {
             status: StatusCode::CONFLICT,
@@ -2885,6 +2914,60 @@ async fn batch_documents(
         }
         .into_response(),
     }
+}
+
+fn batch_request_fingerprint(
+    collection: &CollectionName,
+    operations: &[serde_json::Value],
+) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"batch-request-v1");
+    hash.update(&(collection.as_str().len() as u64).to_le_bytes());
+    hash.update(collection.as_str().as_bytes());
+    // Serialization of parsed JSON makes whitespace and object-key order irrelevant.
+    for item in operations {
+        let encoded = item.to_string();
+        hash.update(&(encoded.len() as u64).to_le_bytes());
+        hash.update(encoded.as_bytes());
+    }
+    *hash.finalize().as_bytes()
+}
+
+async fn replay_batch_request(
+    state: &ApiState,
+    engine: &terrabase::Engine,
+    scope: &terrabase::types::TenantScope,
+    headers: &axum::http::HeaderMap,
+    operation: &OperationId,
+    fingerprint: [u8; 32],
+) -> Result<Option<Response>, ApiError> {
+    if !has_idempotency_key(headers) {
+        return Ok(None);
+    }
+    let Some((receipt, count)) = engine
+        .resolve_batch_request(scope, operation.clone(), fingerprint)
+        .map_err(document_request_error)?
+    else {
+        return Ok(None);
+    };
+    let durability = WriteDurability::prepare_replay(state, engine, scope, headers).await?;
+    durability.confirm(engine, scope, &receipt).await?;
+    let mut session = open_session(engine, scope, headers)?;
+    batch_write_response(&mut session, receipt.sequence().get(), count).map(Some)
+}
+
+fn batch_write_response(
+    session: &mut Session<'_>,
+    sequence: u64,
+    count: usize,
+) -> Result<Response, ApiError> {
+    session.read_snapshot().map_err(session_error)?;
+    let mut response = json_response(
+        StatusCode::OK,
+        format!("{{\"committed\":{sequence},\"count\":{count}}}"),
+    );
+    with_session(&mut response, session.session_token());
+    Ok(response)
 }
 
 /// Decodes the bounded operation list before opening a write transaction.
@@ -4955,6 +5038,8 @@ mod tests {
     mod conditional_create;
     #[path = "conditional_replay.rs"]
     mod conditional_replay;
+    #[path = "batch_replay.rs"]
+    mod batch_replay;
     #[path = "api_session_query_tests.rs"]
     mod api_session_query_tests;
     mod cors;

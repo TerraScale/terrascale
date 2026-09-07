@@ -275,6 +275,7 @@ fn split_verification_rejects_empty_or_missing_target_without_recreating_it() {
     let through = engine.published_sequence().unwrap().get();
     assert_eq!(adapter.prepare_split_verification(&context, through), Err(EngineError::Conflict));
     split.begin_catch_up(through).unwrap();
+    split.note_source_high_water(through);
     split.note_target_applied(through);
     split.cut_over().unwrap();
     adapter.save(&split.durable_state()).unwrap();

@@ -125,6 +125,9 @@ pub(super) struct Proof {
     pub previous_proof_digest: String,
     pub lease_id: String,
     pub genesis_grant: Option<Signed>,
+    /// Exact receipt keys admitted by the GRU signer for this accepted member set.
+    #[serde(default)]
+    pub member_receipt_keys: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Deserialize)]
@@ -161,7 +164,7 @@ struct Prepared {
     journal_revision: u64,
 }
 
-/// Explicitly provisioned public signing pins for GRU grants and member fences.
+/// Explicitly provisioned public signing pins for GRU grants and bootstrap member fences.
 /// These are independent of endpoint health, proposal bytes, and supplied keys.
 #[derive(Clone)]
 pub struct TransitionTrust {
@@ -214,7 +217,16 @@ impl TransitionTrust {
         Ok(Self { authority, genesis, members })
     }
 
+    #[cfg(test)]
     pub(super) fn decode(&self, encoded: &[u8]) -> Result<VerifiedProof, PlacementError> {
+        self.decode_with_prior(encoded, None)
+    }
+
+    pub(super) fn decode_with_prior(
+        &self,
+        encoded: &[u8],
+        prior: Option<&VerifiedProof>,
+    ) -> Result<VerifiedProof, PlacementError> {
         if encoded.len() > MAX_PROOF_BYTES {
             return Err(PlacementError::Invalid);
         }
@@ -254,6 +266,13 @@ impl TransitionTrust {
         if regions.values().any(|count| *count != 2) {
             return Err(PlacementError::Invalid);
         }
+        let member_keys = admitted_member_keys(&proof)?;
+        // A successor may not substitute its own keys for old-epoch fences.
+        // Only the retained predecessor's signed inventory can extend the
+        // startup pins. Reconstructing the chain repeats this verification.
+        let receipt_keys = prior
+            .filter(|prior| !prior.member_keys.is_empty())
+            .map_or(&self.members, |prior| &prior.member_keys);
         let mut fences = Vec::new();
         if proof.request.prior_epoch == 0 {
             let grant = proof.genesis_grant.as_ref().ok_or(PlacementError::Invalid)?;
@@ -283,7 +302,7 @@ impl TransitionTrust {
             let mut digests = Vec::new();
             let mut identities = BTreeSet::new();
             for signed in &proof.drain_receipts {
-                let payload = verify(signed, &self.members)?;
+                let payload = verify(signed, receipt_keys)?;
                 let receipt: FenceReceipt =
                     serde_json::from_slice(&payload).map_err(|_| PlacementError::Invalid)?;
                 if receipt.kind != "old_epoch_drained_fenced"
@@ -305,7 +324,7 @@ impl TransitionTrust {
                 return Err(PlacementError::Invalid);
             }
         }
-        Ok(VerifiedProof { proof, digest: hash(&payload), fences })
+        Ok(VerifiedProof { proof, digest: hash(&payload), fences, member_keys })
     }
 
     /// Verifies an authority-signed prepared transition against the exact
@@ -383,6 +402,31 @@ pub(super) struct VerifiedProof {
     pub proof: Proof,
     pub digest: String,
     pub fences: Vec<FenceReceipt>,
+    member_keys: BTreeMap<String, Vec<u8>>,
+}
+
+fn admitted_member_keys(proof: &Proof) -> Result<BTreeMap<String, Vec<u8>>, PlacementError> {
+    let Some(inventory) = &proof.member_receipt_keys else {
+        return Ok(BTreeMap::new());
+    };
+    if inventory.len() != proof.request.members.len() {
+        return Err(PlacementError::Invalid);
+    }
+    proof
+        .request
+        .members
+        .iter()
+        .map(|member| {
+            let encoded = inventory.get(&member.identity).ok_or(PlacementError::Invalid)?;
+            let key = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|_| PlacementError::Invalid)?;
+            if key.len() != 32 {
+                return Err(PlacementError::Invalid);
+            }
+            Ok((member.identity.clone(), key))
+        })
+        .collect()
 }
 
 /// Authenticated authority evidence authorizing one exact next transition.
@@ -465,10 +509,19 @@ impl VerifiedProof {
             None if self.proof.request.prior_epoch == 0 => Ok(()),
             Some(prior) => {
                 if self.proof.request.prior_epoch != prior.proof.request.epoch
+                    || self.proof.request.scope_id != prior.proof.request.scope_id
                     || self.proof.prior_generation != prior.proof.request.generation
                     || self.proof.previous_proof_digest != prior.digest
                     || self.proof.authority_epoch < prior.proof.authority_epoch
                     || self.proof.journal_revision <= prior.proof.journal_revision
+                {
+                    return Err(PlacementError::Conflict);
+                }
+                if !prior.member_keys.is_empty()
+                    && (self.member_keys.is_empty()
+                        || prior.member_keys.iter().any(|(identity, key)| {
+                            self.member_keys.get(identity).is_some_and(|next| next != key)
+                        }))
                 {
                     return Err(PlacementError::Conflict);
                 }

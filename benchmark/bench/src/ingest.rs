@@ -530,6 +530,11 @@ fn measure<B: BulkBackend>(
     backend: &mut B,
     config: &IngestConfig,
 ) -> Result<Vec<IngestSample>, String> {
+    if config.target == Target::TerraBase
+        && std::env::var_os("TERRABASE_BENCH_INGEST_MEMBER_PID").is_none()
+    {
+        return Err("TERRABASE_BENCH_INGEST_MEMBER_PID is required to measure the served member's resources".into());
+    }
     let admission = ResourceEvidence::capture()?;
     if !admission.complete {
         return Err(
@@ -715,10 +720,15 @@ fn document(index: usize) -> serde_json::Value {
 
 impl ResourceEvidence {
     fn capture() -> Result<Self, String> {
-        let cgroup = fs::read_to_string("/proc/self/cgroup")
-            .map_err(|error| format!("cannot read /proc/self/cgroup: {error}"))?;
+        let member = std::env::var("TERRABASE_BENCH_INGEST_MEMBER_PID")
+            .ok()
+            .map(|value| value.parse::<u32>().map_err(|_| "invalid ingest member PID"))
+            .transpose()?;
+        let process = member.map_or_else(|| "self".to_owned(), |pid| pid.to_string());
+        let cgroup = fs::read_to_string(format!("/proc/{process}/cgroup"))
+            .map_err(|error| format!("cannot read measured process cgroup: {error}"))?;
         let cgroup_path = cgroup.lines().next().unwrap_or("unknown").to_owned();
-        // The evidence is this process's own cgroup, not the host root: a
+        // Resolve the measured process's cgroup, not the host root: a
         // systemd-run scope (bare-metal host) reports its fence only under
         // /sys/fs/cgroup/<scope>/, while a fenced container already sits at
         // the root. The `0::` prefix names the cgroup-v2 delegation path.
@@ -733,7 +743,7 @@ impl ResourceEvidence {
         let memory_limit_bytes = read_limit(&format!("{root}/memory.max"))?;
         let memory_current_bytes = read_limit(&format!("{root}/memory.current"))?;
         let memory_peak_bytes = read_limit(&format!("{root}/memory.peak"))?;
-        let process_rss_bytes = process_rss_bytes();
+        let process_rss_bytes = process_rss_bytes(&process);
         let cpu_usage_usec = read_cpu_usage(&root).ok();
         // cgroup v2 expresses CPUQuota=200% as 200000/100000. Requiring the
         // exact pair and exact memory ceiling prevents a larger or merely
@@ -745,7 +755,11 @@ impl ResourceEvidence {
             && memory_limit_bytes == Some(MEMBER_MEMORY_BYTES)
             && memory_current_bytes.is_some();
         Ok(Self {
-            scope: "benchmark process cgroup (must contain the production member)",
+            scope: if member.is_some() {
+                "served member process cgroup"
+            } else {
+                "benchmark process cgroup (must contain the production member)"
+            },
             cgroup_path,
             cpu_limit,
             cpuset_effective,
@@ -790,15 +804,14 @@ fn read_limit(path: &str) -> Result<Option<u64>, String> {
 }
 
 fn read_cpu_usage(root: &str) -> Result<u64, String> {
-    let text =
-        fs::read_to_string(format!("{root}/cpu.stat")).map_err(|error| error.to_string())?;
+    let text = fs::read_to_string(format!("{root}/cpu.stat")).map_err(|error| error.to_string())?;
     text.lines()
         .find_map(|line| line.strip_prefix("usage_usec ").and_then(|value| value.parse().ok()))
         .ok_or_else(|| "cpu.stat has no usage_usec".to_owned())
 }
 
-fn process_rss_bytes() -> Option<u64> {
-    let text = fs::read_to_string("/proc/self/status").ok()?;
+fn process_rss_bytes(process: &str) -> Option<u64> {
+    let text = fs::read_to_string(format!("/proc/{process}/status")).ok()?;
     text.lines()
         .find_map(|line| {
             line.strip_prefix("VmRSS:")

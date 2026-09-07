@@ -539,6 +539,16 @@ pub(crate) mod tests {
         database: &str,
         action: &str,
     ) -> (IdentityVerifier, Arc<Mutex<serde_json::Value>>, tokio::task::JoinHandle<()>) {
+        authority_for_collection(organization, project, database, action, None).await
+    }
+
+    pub(crate) async fn authority_for_collection(
+        organization: &str,
+        project: &str,
+        database: &str,
+        action: &str,
+        collection: Option<&str>,
+    ) -> (IdentityVerifier, Arc<Mutex<serde_json::Value>>, tokio::task::JoinHandle<()>) {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
         let server = rustls::ServerConfig::builder_with_provider(provider.clone())
@@ -570,11 +580,16 @@ pub(crate) mod tests {
             "action":action,"scopes":[format!("database:{action}")],"expiresAt":now+60}),
         ));
         let responses = reply.clone();
-        let expected = serde_json::json!({"token":"delegated-token","organizationId":organization,"projectId":project,
+        let mut expected = serde_json::json!({"token":"delegated-token","organizationId":organization,"projectId":project,
             "databaseId":database,"action":action,"audience":"https://api.example"});
-        let verified_expected = serde_json::json!({"verifiedIssuer":"https://issuer.example",
+        let mut verified_expected = serde_json::json!({"verifiedIssuer":"https://issuer.example",
             "verifiedSubject":"user-1","audience":"https://api.example","organizationId":organization,
             "projectId":project,"databaseId":database,"action":action});
+        if let Some(collection) = collection {
+            reply.lock().unwrap()["collection"] = collection.into();
+            expected["collection"] = collection.into();
+            verified_expected["collection"] = collection.into();
+        }
         let task = tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
@@ -612,6 +627,11 @@ pub(crate) mod tests {
                                             assert_eq!(input, serde_json::json!({"kind":"revocations","audience":"https://api.example"}));
                                             return Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(Bytes::from(
                                                 serde_json::json!({"active":false,"membershipRevocations":responses.lock().unwrap()["membershipRevocations"]}).to_string()
+                                            ))));
+                                        }
+                                        if input.get("collection") != expected.get("collection") {
+                                            return Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(Bytes::from(
+                                                serde_json::json!({"active":false}).to_string()
                                             ))));
                                         }
                                         if input.get("token").is_some() {

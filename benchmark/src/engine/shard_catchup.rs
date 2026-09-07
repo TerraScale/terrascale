@@ -82,13 +82,13 @@ impl ShardJournalCatchUp {
         self.applied_through
     }
 
-    /// Returns the exact latest source journal sequence currently retained.
-    /// `None` is the empty journal baseline.
+    /// Returns the durable source publication boundary to be covered by the
+    /// retained original transaction groups, including metadata-only groups.
     pub(crate) fn source_high_water(&self) -> Result<u64, ShardCatchUpError> {
         self.source
-            .journaled_high_water()
+            .published_sequence()
             .map_err(|_| ShardCatchUpError::SourceFailed)
-            .map(|sequence| sequence.map_or(0, |sequence| sequence.get()))
+            .map(|sequence| sequence.get())
     }
 
     /// Applies one bounded page and returns the number of source groups read.
@@ -96,16 +96,17 @@ impl ShardJournalCatchUp {
         if limit == 0 || limit > MAX_SHARD_CATCH_UP_BATCH {
             return Err(ShardCatchUpError::BatchTooLarge);
         }
-        let journal_high_water = self.source_high_water()?;
-        let published =
-            self.source.published_sequence().map_err(|_| ShardCatchUpError::SourceFailed)?.get();
-        if journal_high_water < published {
-            return Err(ShardCatchUpError::SourceHistoryGap);
-        }
+        let source_high_water = self.source_high_water()?;
         let groups = self
             .source
             .replication_publications(&self.source_scope, self.applied_through, limit)
             .map_err(|_| ShardCatchUpError::SourceFailed)?;
+        // Document-history high water excludes metadata-only publications.
+        // Check the actual outbox tail instead: an empty page before the
+        // durable boundary cannot prove the source was fully replayed.
+        if groups.is_empty() && self.applied_through < source_high_water {
+            return Err(ShardCatchUpError::SourceHistoryGap);
+        }
         let mut previous = self.applied_through;
         for (cursor, publication) in &groups {
             if *cursor <= previous
@@ -116,7 +117,7 @@ impl ShardJournalCatchUp {
             {
                 return Err(ShardCatchUpError::SequenceRegressed);
             }
-            let selected = range_publication(publication, self.lower.as_deref(), &self.upper);
+            let selected = range_publication(publication, self.lower.as_deref(), &self.upper)?;
             if !selected.records.is_empty() || !selected.private_payload.is_empty() {
                 self.target
                     .apply_replicated_publication(&self.target_scope, &selected)
@@ -133,13 +134,35 @@ fn range_publication(
     publication: &ReplicatedPublication,
     lower: Option<&[u8]>,
     upper: &[u8],
-) -> ReplicatedPublication {
+) -> Result<ReplicatedPublication, ShardCatchUpError> {
     let mut selected = publication.clone();
     selected.records.retain(|record| {
         let key = canonical_shard_key(&record.collection, &record.id);
         lower.is_none_or(|bound| key.as_slice() >= bound) && key.as_slice() < upper
     });
-    selected
+    if !selected.private_payload.is_empty() {
+        let (mut metadata, schemas) =
+            crate::storage::decode_private_changes(&selected.private_payload)
+                .ok_or(ShardCatchUpError::SourceFailed)?;
+        let before = metadata.len();
+        // These controls describe the source's physical routing and split
+        // worker, not customer state. Installing its route catalog on the
+        // target would reject later target transactions against source routes;
+        // copying target identity/proof would overwrite the new split owner.
+        metadata.retain(|entry| {
+            !["control:shard-route/v1/", "control:shard-split/v1/", "control:shard-target/v1/"]
+                .iter()
+                .any(|prefix| entry.key.starts_with(prefix))
+        });
+        if metadata.len() != before {
+            selected.private_payload = if metadata.is_empty() && schemas.is_empty() {
+                Vec::new()
+            } else {
+                crate::storage::encode_private_changes(&metadata, &schemas)
+            };
+        }
+    }
+    Ok(selected)
 }
 
 #[cfg(test)]
@@ -186,6 +209,14 @@ mod tests {
                 )
                 .expect("put");
         }
+        for key in [
+            "control:shard-route/v1/source",
+            "control:shard-split/v1/source",
+            "control:shard-target/v1/identity",
+            "retained-control",
+        ] {
+            transaction.put_private_metadata(key, DocumentValue::String(key.to_owned())).unwrap();
+        }
         assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
         let publication = engine
             .replication_publications(&scope, 0, 1)
@@ -194,10 +225,14 @@ mod tests {
             .expect("publication")
             .1;
         let upper = canonical_shard_key(&collection, &DocumentId::try_new("z").expect("id"));
-        let selected = range_publication(&publication, None, &upper);
+        let selected = range_publication(&publication, None, &upper).unwrap();
         assert_eq!(selected.records.len(), 1);
         assert_eq!(selected.records[0].id.as_str(), "a");
-        assert_eq!(selected.private_payload, publication.private_payload);
+        let (metadata, _) =
+            crate::storage::decode_private_changes(&selected.private_payload).unwrap();
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].key, "retained-control");
+        assert_eq!(metadata[0].value, Some(DocumentValue::String("retained-control".into())));
         drop(engine);
         let _ = std::fs::remove_dir_all(path);
     }

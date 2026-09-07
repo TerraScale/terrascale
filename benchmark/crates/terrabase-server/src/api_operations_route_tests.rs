@@ -120,7 +120,7 @@ async fn production_handler_paginates_authority_export_recovery_after_restart() 
     let fleet = Arc::new(Mutex::new(
         terrabase::backup::worker::NativeBackupFleet::new(terrabase::backup::worker::FleetLimits {
             streams: 2,
-            staging_bytes_per_stream: 3 * 1024 * 1024,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
             inventory_bytes_per_stream: 16 * 1024 * 1024,
             points_per_stream: 2,
         })

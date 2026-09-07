@@ -1162,6 +1162,11 @@ CREATE TABLE IF NOT EXISTS usage_facts (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS usage_facts_tenant_seq ON usage_facts (tenant, seq);
+-- Global watermarks must seek to the last sequence rather than scan every
+-- retained fact. The operation index also bounds each commit wave's billing
+-- fold (sequence > wave_base) to the facts published by that wave.
+CREATE INDEX IF NOT EXISTS operation_facts_sequence ON operation_facts (sequence);
+CREATE INDEX IF NOT EXISTS usage_facts_sequence ON usage_facts (seq);
 
 CREATE TABLE IF NOT EXISTS usage_budget_allocations (
     tenant TEXT NOT NULL, operation TEXT NOT NULL, database_id TEXT NOT NULL,

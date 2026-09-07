@@ -25,7 +25,7 @@ are retained. The unused `RestoreResult` compatibility alias had no callers acro
 | `db.go:checkpointWithExecutor` | Capture before checkpoint, then seal writes under a barrier; compare WAL restart state | Backup retention is independent of follower acknowledgement. Native worker pins `consumer_frontiers['native-backup']`; only every selected provider's complete readback advances it. |
 | `replica.go:syncOnce` | Serialize replica sync; recompute remote position on error; bounded batches | One shared fleet tick bounds in-flight capture/upload and retries every selected provider independently. Upload index is last; retry never treats a PUT acknowledgement as verified coverage. |
 | `replica.go:calcRestorePlan`, `applyNewLTXFiles` | Select complete paths; bridge compacted gaps, refuse unsupported gaps; verify restore before follow progress | Restore authenticates every manifest/member and validates predecessor boundaries before publication. One provider supplies its own listing and complete chain. |
-| `db.go:EnforceSnapshotRetention` | Retain a root even when all snapshots are old; conservative floor preserves in-flight restore plans | Daily full roots and retention keep the newest complete root preceding the cutoff and every newer point. Exclusive fleet operations prevent pruning during local restores. Staging exhaustion preserves pending data. |
+| `db.go:EnforceSnapshotRetention` | Retain a root even when all snapshots are old; conservative floor preserves in-flight restore plans | Periodic self-contained roots and retention keep the newest complete root preceding the cutoff and every newer point. Exclusive fleet operations prevent pruning during local restores. Staging exhaustion preserves pending data. |
 
 Reviewed tests include `TestReplica_RestoreRetriesInitialLTXOpenError`,
 `TestReplica_Restore_InvalidFileSize`, `TestReplica_Restore_RemovesTempFileOnFailure`,
@@ -45,6 +45,27 @@ engine backup core. Full and incremental artifacts are encrypted. Recovery lease
 reconstruct authenticated artifact contexts after process restart, and readers
 can resolve retained key versions. No writer acknowledgement waits for object
 storage. Failures preserve staged data and journal retention protection.
+
+The archive cache and retained encrypted manifest inventory have separate,
+explicit disk budgets. Half the archive budget holds the active chain; the other
+half reserves root replacement or serialized restore/policy transfer. Roots
+rotate before the active point or byte bound is exhausted. Replacement snapshots
+pin the previous archived boundary and a following incremental covers subsequent
+transactions, preserving timestamp recovery across rotation. A durable intent
+resumes an interrupted replacement. Provider copies retain the entire promised
+window while obsolete local chains are atomically hidden, fsynced, and removed.
+Restart cleanup reclaims interrupted local evictions. Inventory admission checks
+both manifest count and bytes before capture; full inventories remain readable
+for retention and recovery.
+
+Persisted upload journals record transfer work, not current recoverability.
+New objects require readback; existing active-chain receipts are process-local
+and expire after sixty seconds. Restart and explicit capture force verification.
+A failed readback marks that provider unhealthy and schedules authenticated
+re-upload. Retention verifies its surviving root directly against each provider
+before deleting predecessors. Restore downloads only the selected authenticated
+chain, and policy migration stages one retained point at a time. These finite
+work and disk bounds still require workload and provider qualification.
 
 Encrypted incremental discovery now authenticates encrypted predecessor
 manifests; the previous implementation searched the plaintext namespace only.

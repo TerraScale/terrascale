@@ -262,7 +262,6 @@ mod tests {
             webhook_keys: None,
             exports: None,
             imports: None,
-            import_worker: None,
         })
     }
 

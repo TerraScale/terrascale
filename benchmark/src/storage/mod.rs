@@ -32,8 +32,8 @@ pub use shadow::{
 #[cfg(test)]
 pub(crate) use faults::FaultPoint;
 pub(crate) use intent::{
-    CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite, TtlGuard,
-    SupersededReplication, UnknownCause,
+    CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite,
+    SupersededReplication, TtlGuard, UnknownCause,
 };
 pub(crate) use ownership::validate_local_restore_source;
 pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
@@ -1716,7 +1716,8 @@ pub(crate) use codec::{document_fingerprint, write_set_digest};
 pub(crate) use codec::document_within_limits;
 
 pub(crate) use codec::{
-    decode_private_changes, decode_private_value, encode_private_value, transaction_digest,
+    decode_private_changes, decode_private_value, encode_private_changes, encode_private_value,
+    transaction_digest,
 };
 pub(crate) use intent::{PrivateMetadataWrite, SchemaEnvelopeWrite};
 

@@ -39,8 +39,8 @@ pub(super) fn persist_inventory(stream: &Stream, limits: FleetLimits) -> Result<
     let root = inventory_path(stream);
     std::fs::create_dir_all(&root).map_err(|_| FleetError::Capture)?;
     super::super::sync_directory(&stream.config.staging).map_err(|_| FleetError::Capture)?;
-    cleanup_evictions(&stream.config.staging)?;
-    cleanup_evictions(&root)?;
+    cleanup_interrupted(&stream.config.staging)?;
+    cleanup_interrupted(&root)?;
     for point in super::super::restore::discover_encrypted_points(
         &stream.config.staging,
         stream.config.keys.as_ref(),
@@ -147,20 +147,29 @@ pub(super) fn remove_point(point: &Path) -> Result<(), FleetError> {
     super::super::sync_directory(parent).map_err(|_| FleetError::Capture)
 }
 
-fn cleanup_evictions(directory: &Path) -> Result<(), FleetError> {
+fn cleanup_interrupted(directory: &Path) -> Result<(), FleetError> {
     for entry in std::fs::read_dir(directory).map_err(|_| FleetError::Capture)? {
         let entry = entry.map_err(|_| FleetError::Capture)?;
-        if entry.file_name().to_str().is_some_and(|name| name.starts_with(".evict-rp-")) {
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".evict-rp-") || name.starts_with(".pending-"))
+        {
             std::fs::remove_dir_all(entry.path()).map_err(|_| FleetError::Capture)?;
         }
     }
     super::super::sync_directory(directory).map_err(|_| FleetError::Capture)
 }
 
-pub(super) fn has_capacity(stream: &Stream, limits: FleetLimits, additional: usize) -> Result<bool, FleetError> {
+pub(super) fn has_capacity(
+    stream: &Stream,
+    limits: FleetLimits,
+    additional: usize,
+) -> Result<bool, FleetError> {
     let count = point_paths(&inventory_path(stream), inventory_point_limit(stream))?.len();
     let bytes = staged_bytes(&inventory_path(stream))?;
-    let reserve = (additional as u64).saturating_mul((super::super::manifest::MAX_MANIFEST_BYTES + 4096) as u64);
+    let reserve = (additional as u64)
+        .saturating_mul((super::super::manifest::MAX_MANIFEST_BYTES + 4096) as u64);
     Ok(count.saturating_add(additional) <= inventory_point_limit(stream)
         && bytes.saturating_add(reserve) <= limits.inventory_bytes_per_stream)
 }

@@ -109,19 +109,20 @@ impl ScopedShardEngine {
             None => None,
             Some(DocumentValue::String(receipt)) => {
                 let receipt = hex::decode(receipt).map_err(|_| EngineError::Conflict)?;
-                let receipt: [u8; 16] = receipt.try_into().map_err(|_| EngineError::Conflict)?;
+                let receipt: [u8; 56] = receipt.try_into().map_err(|_| EngineError::Conflict)?;
                 let prior =
                     u64::from_be_bytes(receipt[..8].try_into().map_err(|_| EngineError::Conflict)?);
-                let boundary =
-                    u64::from_be_bytes(receipt[8..].try_into().map_err(|_| EngineError::Conflict)?);
+                let boundary = u64::from_be_bytes(
+                    receipt[8..16].try_into().map_err(|_| EngineError::Conflict)?,
+                );
                 (prior == through).then_some(StorageSequence::new(boundary))
             }
             Some(_) => return Err(EngineError::Conflict),
         };
         let boundary = pinned.unwrap_or(snapshot.sequence());
-        if range_fingerprint(&self.engine, &self.scope, StorageSequence::new(through), &state)?
-            != range_fingerprint(&target, &scope, boundary, &state)?
-        {
+        let facts =
+            range_fingerprint(&self.engine, &self.scope, StorageSequence::new(through), &state)?;
+        if facts != range_fingerprint(&target, &scope, boundary, &state)? {
             return Err(EngineError::Conflict);
         }
         // A proof transaction advances the target sequence itself. Reuse the
@@ -132,6 +133,8 @@ impl ScopedShardEngine {
         }
         let mut receipt = through.to_be_bytes().to_vec();
         receipt.extend_from_slice(&boundary.get().to_be_bytes());
+        receipt.extend_from_slice(&facts.0.to_be_bytes());
+        receipt.extend_from_slice(&facts.1);
         let operation =
             OperationId::try_new(&format!("shard-proof-{:032x}-{through}", context.split_id()))
                 .map_err(|_| EngineError::InvalidDocument)?;
@@ -338,15 +341,19 @@ impl SplitEngineAdapter for ScopedShardEngine {
             return Err(EngineError::Conflict);
         };
         let receipt = hex::decode(receipt).map_err(|_| EngineError::Conflict)?;
-        let receipt: [u8; 16] = receipt.try_into().map_err(|_| EngineError::Conflict)?;
+        let receipt: [u8; 56] = receipt.try_into().map_err(|_| EngineError::Conflict)?;
         let through =
             u64::from_be_bytes(receipt[..8].try_into().map_err(|_| EngineError::Conflict)?);
-        let boundary =
-            u64::from_be_bytes(receipt[8..].try_into().map_err(|_| EngineError::Conflict)?);
+        let records =
+            u64::from_be_bytes(receipt[16..24].try_into().map_err(|_| EngineError::Conflict)?);
+        let fingerprint: [u8; 32] = receipt[24..].try_into().map_err(|_| EngineError::Conflict)?;
         if through != state.source_high_water() {
             return Err(EngineError::Conflict);
         }
-        let copied = range_fingerprint(&target, &scope, StorageSequence::new(boundary), &state)?;
+        // These are measured target facts, durably recorded before the route
+        // was exposed. Post-cutover writes may legitimately change the live
+        // target, and an empty pre-write snapshot may no longer be servable.
+        let copied = (records, fingerprint);
         if source != copied {
             return Err(EngineError::Conflict);
         }

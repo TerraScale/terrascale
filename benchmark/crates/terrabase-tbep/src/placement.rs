@@ -599,7 +599,9 @@ impl PlacementJournal {
         if *accepted_revision != revision || environment.is_empty() {
             return Err(PlacementError::Conflict);
         }
-        let supplied = trust.decode(signature).map_err(|_| PlacementError::Conflict)?;
+        let supplied = trust
+            .decode_with_prior(signature, chain.iter().rev().nth(1).map(|(_, _, proof)| proof))
+            .map_err(|_| PlacementError::Conflict)?;
         if supplied.digest != accepted.digest
             || supplied.proof.authority_epoch != accepted.proof.authority_epoch
             || supplied.proof.lease_id != accepted.proof.lease_id
@@ -897,8 +899,9 @@ pub(crate) mod tests;
 pub mod transition;
 
 impl PlacementJournal {
-    /// Installs explicitly provisioned public proof pins and verifies the retained chain.
-    /// Pins cannot be replaced on a live journal; key rotation requires a new composition.
+    /// Installs explicitly provisioned root proof pins and verifies the retained chain.
+    /// Root pins cannot be replaced on a live journal. Member receipt inventories
+    /// are admitted by signed accepted epochs and reconstructed from that chain.
     ///
     /// # Errors
     /// Rejects repeated configuration or a retained proof that fails validation.
@@ -928,15 +931,22 @@ impl PlacementJournal {
     ) -> Result<pb::PlacementAcceptanceResponse, PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
-        let verified = trust.decode(&request.proof)?;
-        if operation != verified.proof.request.operation_id {
-            return Err(PlacementError::RetryMismatch);
-        }
         let mut connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| PlacementError::Storage)?;
         let chain = self.verified_chain(&transaction, trust)?;
+        let predecessor = match chain
+            .iter()
+            .position(|(_, _, proof)| proof.proof.request.operation_id == operation)
+        {
+            Some(index) => index.checked_sub(1).map(|previous| &chain[previous].2),
+            None => chain.last().map(|(_, _, proof)| proof),
+        };
+        let verified = trust.decode_with_prior(&request.proof, predecessor)?;
+        if operation != verified.proof.request.operation_id {
+            return Err(PlacementError::RetryMismatch);
+        }
         if let Some((_, revision, prior)) =
             chain.iter().find(|(_, _, prior)| prior.proof.request.operation_id == operation)
         {
@@ -1068,7 +1078,8 @@ impl PlacementJournal {
             {
                 return Err(PlacementError::Storage);
             }
-            let verified = trust.decode(&bytes)?;
+            let verified =
+                trust.decode_with_prior(&bytes, chain.last().map(|(_, _, prior)| prior))?;
             if digest != verified.digest {
                 return Err(PlacementError::Storage);
             }

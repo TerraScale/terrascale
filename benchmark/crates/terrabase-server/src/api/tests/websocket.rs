@@ -422,7 +422,7 @@ async fn feature_revocation_closes_active_socket_without_delivery_authority_call
 
 async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
     let (identity, reply, authority_task) =
-        crate::delegated_identity::tests::authority_for("terrabase-local", "local", "prod", "read")
+        crate::delegated_identity::tests::authority_for_collection("terrabase-local", "local", "prod", "read", Some("orders"))
             .await;
     let identity = Arc::new(identity);
     let snapshot = |entries: Vec<serde_json::Value>| {

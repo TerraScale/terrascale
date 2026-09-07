@@ -167,7 +167,12 @@ impl Drop for Fixture {
 /// The public PUT route derives its operation identity from this key.
 /// Build the producer envelope with the test-only P256 signer so the test
 /// exercises the same wire verifier as production delivery.
-fn signed_for(tenant: &str, database: &str, operation: &str, paid: bool) -> (Value, Vec<u8>) {
+fn signed_for(
+    tenant: &str,
+    database: &str,
+    operation: &str,
+    paid: bool,
+) -> (Value, Vec<u8>, EcdsaKeyPair) {
     let key_der =
         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &SystemRandom::new())
             .unwrap();
@@ -207,17 +212,18 @@ fn signed_for(tenant: &str, database: &str, operation: &str, paid: bool) -> (Val
         placement: "db-placement".into(),
     })
     .unwrap();
+    (sign_allocation(&key, &key_id, &payload), spki, key)
+}
+
+fn sign_allocation(key: &EcdsaKeyPair, key_id: &str, payload: &[u8]) -> Value {
     let mut message = terrabase::usage::ALLOCATION_SIGNING_DOMAIN.to_vec();
-    message.extend_from_slice(&payload);
+    message.extend_from_slice(payload);
     let signature = key.sign(&SystemRandom::new(), &message).unwrap();
     let mut wrapped = b"TSCS\x01\x01".to_vec();
-    wrapped.extend_from_slice(&hex::decode(&key_id).unwrap());
+    wrapped.extend_from_slice(&hex::decode(key_id).unwrap());
     wrapped.extend_from_slice(&(signature.as_ref().len() as u16).to_be_bytes());
     wrapped.extend_from_slice(signature.as_ref());
-    (
-        serde_json::json!({"payload":STANDARD.encode(payload),"signature":STANDARD.encode(wrapped),"key_id":key_id}),
-        spki,
-    )
+    serde_json::json!({"payload":STANDARD.encode(payload),"signature":STANDARD.encode(wrapped),"key_id":key_id})
 }
 
 #[tokio::test]
@@ -281,9 +287,27 @@ async fn canonical_delivery_is_denied_when_holder_binding_changes() {
     assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
+fn public_write(batch: bool, key: &str, name: &str) -> Request<Body> {
+    let value = serde_json::json!({"name": name});
+    let (request, body) = if batch {
+        (
+            Request::post("/api/v1/databases/prod/collections/users/documents/batch"),
+            serde_json::json!({"operations":[{"op":"put","id":"doc-1","value":value}]}),
+        )
+    } else {
+        (Request::put("/api/v1/databases/prod/collections/users/documents/doc-1"), value)
+    };
+    request
+        .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+        .header("idempotency-key", key)
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 #[tokio::test]
-async fn public_put_consumes_signed_included_and_paid_allocations_once() {
-    for paid in [false, true] {
+async fn public_writes_consume_signed_included_and_paid_allocations_once() {
+    for (paid, batch) in [(false, false), (true, false), (false, true), (true, true)] {
+        let operation = if batch { "api-batch-idem-budget" } else { "api-document-idem-budget" };
         let mut state = super::state_with_keys_and_control();
         let response = super::router(state.clone())
             .oneshot(
@@ -299,7 +323,7 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
         assert_eq!(response.status(), StatusCode::CREATED);
         let host = super::super::document_host(&state, "prod").unwrap();
         let database = host.engine().database_owner().database().to_text();
-        let (signed, spki) = signed_for("terrabase-local", &database, "api-document-idem-budget", paid);
+        let (signed, spki, signing_key) = signed_for("terrabase-local", &database, operation, paid);
         let binding = Arc::new(std::sync::Mutex::new(Binding {
             organization: "terrabase-local".into(),
             holder: "holder".into(),
@@ -318,13 +342,7 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
             crate::production_budget::ProductionBudgetRuntime::new(fixture.journal.clone()),
         ));
         let mut app = super::router(state.clone());
-        let put = || {
-            Request::put("/api/v1/databases/prod/collections/users/documents/doc-1")
-                .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
-                .header("idempotency-key", "budget")
-                .body(Body::from(r#"{"name":"Ada"}"#))
-                .unwrap()
-        };
+        let put = || public_write(batch, "budget", "Ada");
         assert_eq!(
             app.clone().oneshot(put()).await.unwrap().status(),
             StatusCode::TOO_MANY_REQUESTS
@@ -349,7 +367,7 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
             assert_eq!(
                 status,
                 StatusCode::OK,
-                "paid={paid}, attempt={attempt}: {}",
+                "paid={paid}, batch={batch}, attempt={attempt}: {}",
                 String::from_utf8_lossy(&body)
             );
             if let Some(expected) = &first {
@@ -365,19 +383,59 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
         }
-        let changed = Request::put("/api/v1/databases/prod/collections/users/documents/doc-1")
-            .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
-            .header("idempotency-key", "budget")
-            .body(Body::from(r#"{"name":"Grace"}"#))
-            .unwrap();
+        let changed = public_write(batch, "budget", "Grace");
         assert_eq!(app.clone().oneshot(changed).await.unwrap().status(), StatusCode::CONFLICT);
         binding.lock().unwrap().holder = "another-writer".into();
         assert_eq!(
             fixture.router().oneshot(deliver()).await.unwrap().status(),
             StatusCode::CONFLICT
         );
+        // A stale spending grant must not hide an already committed result.
+        // The API caller and database serving assignment remain authorized.
+        assert_eq!(app.clone().oneshot(put()).await.unwrap().status(), StatusCode::OK);
+        binding.lock().unwrap().holder = "holder".into();
+        let mut payload: Value =
+            serde_json::from_slice(&STANDARD.decode(signed["payload"].as_str().unwrap()).unwrap())
+                .unwrap();
+        payload["grant"]["expires_at"] = "2026-01-01T00:00:01Z".into();
+        let expired = sign_allocation(
+            &signing_key,
+            signed["key_id"].as_str().unwrap(),
+            &serde_json::to_vec(&payload).unwrap(),
+        );
+        assert!(matches!(
+            terrabase::usage::VerifiedAllocation::verify(
+                &serde_json::to_vec(&expired).unwrap(),
+                &verifier.key_id,
+                &verifier.public_key_spki,
+                "GRU",
+                "db-placement",
+                "terrabase-local",
+                &database,
+                "holder",
+                1,
+                1,
+                1,
+                u64::MAX,
+            ),
+            Err(terrabase::usage::AllocationError::Expired)
+        ));
+        let journal =
+            rusqlite::Connection::open(fixture.root.join("usage-admissions.sqlite")).unwrap();
+        journal
+            .execute(
+                "UPDATE allocations SET payload=?1 WHERE operation=?2",
+                rusqlite::params![serde_json::to_vec(&expired).unwrap(), operation],
+            )
+            .unwrap();
+        assert!(
+            fixture.journal.resolve_allocation(operation, &database).is_err(),
+            "expired signed grant cannot authorize spending"
+        );
+        assert_eq!(app.clone().oneshot(put()).await.unwrap().status(), StatusCode::OK);
+        let fresh = public_write(batch, "fresh-budget", "Ada");
         assert_eq!(
-            app.clone().oneshot(put()).await.unwrap().status(),
+            app.clone().oneshot(fresh).await.unwrap().status(),
             StatusCode::TOO_MANY_REQUESTS
         );
         let path = state
@@ -388,30 +446,31 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
             .join("terrabase.sqlite3");
         let connection = rusqlite::Connection::open(path).unwrap();
         let consumption: (i64, i64, i64) = connection.query_row(
-            "SELECT COUNT(*), SUM(units_total), SUM(units_remaining) FROM usage_budget_allocations WHERE operation='api-document-idem-budget'",
-            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
-        assert_eq!(consumption, (1, 1, 0), "paid={paid}");
+            "SELECT COUNT(*), SUM(units_total), SUM(units_remaining) FROM usage_budget_allocations WHERE operation=?1",
+            [operation], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+        assert_eq!(consumption, (1, 1, 0), "paid={paid}, batch={batch}");
         let journal_connection =
             rusqlite::Connection::open(fixture.root.join("usage-admissions.sqlite")).unwrap();
-        let admitted_at: i64 = journal_connection.query_row(
-            "SELECT accepted_at_millis FROM operation_admissions WHERE operation='api-document-idem-budget'",
-            [], |row| row.get(0),
-        ).unwrap();
+        let admitted_at: i64 = journal_connection
+            .query_row(
+                "SELECT accepted_at_millis FROM operation_admissions WHERE operation=?1",
+                [operation],
+                |row| row.get(0),
+            )
+            .unwrap();
         let fact_at: i64 = connection
             .query_row(
-                "SELECT start_millis FROM usage_facts WHERE fact_id='api-document-idem-budget'",
-                [],
+                "SELECT start_millis FROM usage_facts WHERE fact_id=?1",
+                [operation],
                 |row| row.get(0),
             )
             .unwrap();
         assert_eq!(fact_at, admitted_at, "the retry retains the first local accounting window");
         let facts: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM usage_facts WHERE fact_id='api-document-idem-budget'",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM usage_facts WHERE fact_id=?1", [operation], |row| {
+                row.get(0)
+            })
             .unwrap();
-        assert_eq!(facts, 1, "retry must not duplicate billed usage; paid={paid}");
+        assert_eq!(facts, 1, "retry must not duplicate billed usage; paid={paid}, batch={batch}");
     }
 }

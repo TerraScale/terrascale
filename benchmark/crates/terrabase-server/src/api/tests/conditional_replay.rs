@@ -177,6 +177,12 @@ async fn conditional_http_postcommit_rf2_timeout_replays_only_after_durable_conf
         request(&server, "PUT", PATH, "fresh", Some(&etag), r#"{"a":2}"#).await.0,
         StatusCode::PRECONDITION_FAILED
     );
+    progress.fence_database(route);
+    assert_eq!(
+        request(&server, "PUT", PATH, "timeout", Some(&etag), r#"{"a":2}"#).await.0,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "committed replay still enforces the current database serving fence"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

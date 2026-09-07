@@ -1374,6 +1374,48 @@ fn immutable_response(frozen: &Frozen, etag: &str) -> Response {
     response
 }
 
+/// Derive identity admission from the same bounded SQL plan used to attach.
+/// Execute-only queries cannot use their first relation to widen collection scope.
+pub(crate) fn attach_collection(state: &ApiState, request: &AttachRequest) -> Result<String, ApiError> {
+    let host = crate::api::document_host(state, &request.database_id)?;
+    let (plan, _) = compile_view_plan(&host, request)?;
+    plan.source().collection().map(|collection| collection.as_str().to_owned())
+        .ok_or_else(|| ApiError::forbidden("read on the requested collection"))
+}
+
+fn compile_view_plan(
+    host: &std::sync::Arc<terrabase_tbep::member_host::MemberHost>,
+    request: &AttachRequest,
+) -> Result<(terrabase::QueryPlan, Vec<u8>), ApiError> {
+    let statement = terrabase::SqlQueryText::try_new(request.statement.trim())
+        .map_err(|_| sql_error("the statement is not valid read-only SQL"))?;
+    let parameter_bytes =
+        decode_base64(&request.parameters).map_err(|()| invalid_attach("parameters"))?;
+    let parameters = view_parameters(&parameter_bytes)?;
+    let deadline = terrabase::Deadline::after(Duration::from_secs(30))
+        .map_err(|_| ApiError::query(terrabase::QueryError::Deadline))?;
+    let cancellation = terrabase::Cancellation::new();
+    let plan = host.engine()
+        .queries()
+        .compile(terrabase::QueryInput::sql_bounded_with_parameters(
+            statement,
+            deadline,
+            cancellation,
+            parameters,
+        ))
+        .map_err(ApiError::query)?;
+    if plan.sql_execute_only_operator().is_some() {
+        return Err(ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "not_subscribable",
+            message: "the SQL statement is execute-only".into(),
+            fix: "subscribe a single-collection SELECT with scalar predicates, ORDER BY, LIMIT, or MATCH".into(),
+            placement: None,
+        });
+    }
+    Ok((plan, parameter_bytes))
+}
+
 /// Runs the attach query exactly once against the Engine's immutable snapshot
 /// and turns the result into the generated wire item shape. The same engine
 /// snapshot sequence becomes the first view revision, tying the result to the
@@ -1385,24 +1427,8 @@ fn prepare_view(
     scope: &str,
     principal: Option<&crate::api_keys::Principal>,
 ) -> Result<Materialization, ApiError> {
-    let statement = terrabase::SqlQueryText::try_new(request.statement.trim())
-        .map_err(|_| sql_error("the statement is not valid read-only SQL"))?;
-    let parameter_bytes =
-        decode_base64(&request.parameters).map_err(|()| invalid_attach("parameters"))?;
-    let parameters = view_parameters(&parameter_bytes)?;
-    let deadline = terrabase::Deadline::after(Duration::from_secs(30))
-        .map_err(|_| ApiError::query(terrabase::QueryError::Deadline))?;
-    let cancellation = terrabase::Cancellation::new();
+    let (plan, parameter_bytes) = compile_view_plan(host, request)?;
     let engine = host.engine();
-    let plan = engine
-        .queries()
-        .compile(terrabase::QueryInput::sql_bounded_with_parameters(
-            statement,
-            deadline,
-            cancellation,
-            parameters,
-        ))
-        .map_err(ApiError::query)?;
     if let Some(principal) = principal
         && let Some(collection) = plan.source().collection()
         && !principal.scope().admits_collection(
@@ -1412,15 +1438,6 @@ fn prepare_view(
         )
     {
         return Err(ApiError::forbidden("read on the requested collection"));
-    }
-    if plan.sql_execute_only_operator().is_some() {
-        return Err(ApiError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "not_subscribable",
-            message: "the SQL statement is execute-only".into(),
-            fix: "subscribe a single-collection SELECT with scalar predicates, ORDER BY, LIMIT, or MATCH".into(),
-            placement: None,
-        });
     }
     let tenant = terrabase::types::TenantId::try_new(host.tenant())
         .map_err(|_| ApiError::storage_failure())?;

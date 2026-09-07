@@ -252,8 +252,8 @@ where
 
     fn source_boundary(&self) -> Result<u64, SplitSupervisorError<O::Error>> {
         self.engine
-            .journaled_high_water()
+            .published_sequence()
             .map_err(|_| SplitSupervisorError::MissingRoute)
-            .map(|sequence| sequence.map_or(0, |sequence| sequence.get()))
+            .map(|sequence| sequence.get())
     }
 }

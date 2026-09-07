@@ -172,8 +172,15 @@ pub(super) fn resolve_encrypted_points_chain(
         Selection::Latest => points
             .iter()
             .max_by(|left, right| {
-                (left.boundary_sequence().get(), left.identity())
-                    .cmp(&(right.boundary_sequence().get(), right.identity()))
+                let rank = |point: &BackupManifest| {
+                    (
+                        point.boundary_sequence().get(),
+                        point.captured_unix_millis(),
+                        point.recoverable_through_unix_millis(),
+                        point.base_sequence().is_some(),
+                    )
+                };
+                rank(left).cmp(&rank(right)).then_with(|| left.identity().cmp(right.identity()))
             })
             .ok_or(BackupError::ChainIncomplete)?,
         Selection::Point { identity } => points
@@ -324,6 +331,44 @@ fn indexed_timestamp_roots_handle_long_chains_and_noop_heads() {
     let chain = indexed_chain(points.last().unwrap(), &parents).unwrap();
     assert_eq!(chain.len(), 2050);
     assert_eq!(chain.last().unwrap().boundary_sequence().get(), 2048);
+}
+
+#[cfg(test)]
+#[test]
+fn latest_same_boundary_prefers_capture_clock_and_complete_coverage() {
+    use crate::backup::manifest::ManifestFacts;
+    let point = |kind, captured| BackupManifest::assemble(ManifestFacts {
+        database_id: "0123456789abcdef0123456789abcdef".to_owned(),
+        partition_id: "partition-000000".to_owned(),
+        kind,
+        boundary: StorageSequence::new(7),
+        boundary_unix_millis: 10,
+        captured_unix_millis: captured,
+        retain_until_unix_millis: captured + 86_400_000,
+        logical_checksum: crate::engine::logical_state_hasher().finalize().to_hex().to_string(),
+        logical_documents: 0, documents: 0, family_records: 0, deletes: 0, disclosures: 0,
+        tenants: Vec::new(), members: Vec::new(),
+    });
+    let root = point(BackupKind::Full, 10);
+    let snapshot = point(BackupKind::Snapshot, 20);
+    let noop = point(BackupKind::Incremental { base: StorageSequence::new(7) }, 20);
+    let later_noop = point(BackupKind::Incremental { base: StorageSequence::new(7) }, 30);
+    for points in [vec![root.clone(), snapshot.clone()], vec![snapshot.clone(), root.clone()]] {
+        let chain = resolve_encrypted_points_chain(&points, &Selection::Latest).unwrap();
+        assert_eq!(chain.last().unwrap().identity(), snapshot.identity());
+    }
+    for points in [
+        vec![root.clone(), snapshot.clone(), noop.clone()],
+        vec![noop.clone(), snapshot.clone(), root.clone()],
+    ] {
+        let chain = resolve_encrypted_points_chain(&points, &Selection::Latest).unwrap();
+        assert_eq!(chain.last().unwrap().identity(), noop.identity());
+        assert_eq!(chain.last().unwrap().recoverable_through_unix_millis(), 20);
+    }
+    let chain = resolve_encrypted_points_chain(
+        &[later_noop.clone(), root, snapshot, noop], &Selection::Latest,
+    ).unwrap();
+    assert_eq!(chain.last().unwrap().identity(), later_noop.identity());
 }
 
 pub(super) fn discover_encrypted_points(
