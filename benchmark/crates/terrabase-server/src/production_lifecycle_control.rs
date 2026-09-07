@@ -477,6 +477,8 @@ pub struct RegistryLifecycleWorker {
     pub recovery: Option<Arc<crate::native_recovery::NativeRecoveryRuntime>>,
     /// Durable signed completed observations.
     pub receipts: Arc<crate::native_recovery_receipt::NativeRecoveryReceiptStore>,
+    /// Retained placement journal used to decode the already verified grant.
+    pub journal: Option<Arc<terrabase_tbep::placement::PlacementJournal>>,
 }
 
 #[async_trait::async_trait]
@@ -596,6 +598,33 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             target_database_id: request.target_database.clone(),
             journal_cut: request.journal_cut.clone(),
             restore_epoch: request.restore_epoch,
+            authority_epoch: request
+                .context
+                .as_ref()
+                .ok_or("restore context is missing")?
+                .authority_epoch,
+            authority_lease: request
+                .context
+                .as_ref()
+                .ok_or("restore context is missing")?
+                .authority_lease
+                .clone(),
+            accepted_proof_digest: if let Some(journal) = &self.journal {
+                journal
+                    .verify_lifecycle_grant(
+                        &request
+                            .context
+                            .as_ref()
+                            .ok_or("restore context is missing")?
+                            .operation_grant,
+                    )
+                    .map_err(|_| "lifecycle operation grant is invalid")?
+                    .accepted_proof_digest
+            } else if let Some(retained) = retained.as_ref() {
+                retained.accepted_proof_digest.clone()
+            } else {
+                return Err("placement authority is unavailable".into());
+            },
             provider: match terrabase_tbep::proto::terrabase::v1::RestoreProvider::try_from(
                 request.provider,
             ) {

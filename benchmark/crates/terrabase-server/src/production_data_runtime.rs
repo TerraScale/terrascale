@@ -578,6 +578,9 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                 || request.recovery_point_digest.len() != 64
                 || request.journal_cut.is_empty()
                 || request.restore_epoch == 0
+                || request.authority_epoch == 0
+                || request.authority_lease.is_empty()
+                || request.accepted_proof_digest.len() != 64
             {
                 return Err("restore request facts are incomplete".into());
             }
@@ -593,13 +596,15 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
             {
                 return Err("restore source facts do not match accepted admission".into());
             }
-            let accepted_epoch = runtime
+            let (accepted_epoch, accepted_lease, accepted_proof_digest) = runtime
                 .journal
-                .accepted()
-                .map_err(|_| "accepted placement authority unavailable")?
-                .epoch;
-            if request.restore_epoch != accepted_epoch {
-                return Err("restore epoch does not match accepted placement authority".into());
+                .accepted_authority()
+                .map_err(|_| "accepted placement authority unavailable")?;
+            if request.authority_epoch != accepted_epoch
+                || request.authority_lease != accepted_lease
+                || request.accepted_proof_digest != accepted_proof_digest
+            {
+                return Err("restore authority pins are stale or mismatched".into());
             }
             let target = runtime
                 .registry

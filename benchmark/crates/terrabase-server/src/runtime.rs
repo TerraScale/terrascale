@@ -401,6 +401,11 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             },
         ))) as Box<dyn Error + Send + Sync>
     })?;
+    let mut recovery_worker = Some(recovery_worker);
+    let native_for_startup_cleanup = Arc::clone(&native);
+    let admission_for_startup_cleanup = Arc::clone(&admission);
+    let member_for_startup_cleanup = Arc::clone(&member);
+    let startup_result: Result<(), Box<dyn Error + Send + Sync>> = async {
     let lifecycle_fleet = native.fleet();
     let Some(public) = public else {
         return Err(Box::new(DaemonError::ProductionConfigurationMissing));
@@ -578,6 +583,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         backups: Some(lifecycle_fleet),
         recovery: Some(Arc::clone(&recovery)),
         receipts,
+        journal: Some(journal.clone().ok_or(DaemonError::ProductionConfigurationMissing)?),
     });
     let lifecycle_authority =
         Arc::new(crate::production_lifecycle_control::PlacementLifecycleAuthority::new(
@@ -643,6 +649,9 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         .await
         .map_err(|_| DaemonError::ShutdownTimeout)?
         .map_err(|_| DaemonError::ShutdownTimeout)?;
+    let recovery_worker = recovery_worker
+        .take()
+        .ok_or(DaemonError::ShutdownTimeout)?;
     let _ = recovery_worker.shutdown().await;
     native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
     admission.drain().await.map_err(|_| DaemonError::ShutdownTimeout)?;
@@ -657,6 +666,17 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         ))) as Box<dyn Error + Send + Sync>
     })?;
     result.map_err(|_| Box::new(DaemonError::ShutdownTimeout) as Box<dyn Error + Send + Sync>)
+    }.await;
+    if let Err(error) = startup_result {
+        if let Some(recovery_worker) = recovery_worker.take() {
+            let _ = recovery_worker.shutdown().await;
+        }
+        let _ = admission_for_startup_cleanup.drain().await;
+        let _ = native_for_startup_cleanup.drain();
+        let _ = member_for_startup_cleanup.drain().await;
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn parts_root_for_recovery(production: &crate::config::ProductionConfig) -> std::path::PathBuf {

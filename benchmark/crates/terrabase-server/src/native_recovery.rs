@@ -502,6 +502,9 @@ impl NativeRecoveryRuntime {
             || request.source_database_id == request.target_database_id
             || request.journal_cut.is_empty()
             || request.restore_epoch == 0
+            || request.authority_epoch == 0
+            || request.authority_lease.is_empty()
+            || request.accepted_proof_digest.len() != 64
             || !matches!(request.provider.as_str(), "oci" | "tigris")
             || request.residency.is_empty()
             || request.placement.is_empty()
@@ -1168,6 +1171,9 @@ mod tests {
             target_database_id: records[1].database_id.clone(),
             journal_cut: "1".into(),
             restore_epoch: 1,
+            authority_epoch: 7,
+            authority_lease: "lease".into(),
+            accepted_proof_digest: "a".repeat(64),
             provider: "oci".into(),
             selection: NativeRestoreSelection::PointId("point".into()),
             residency: records[0].residency.clone(),
@@ -1277,6 +1283,9 @@ mod tests {
             target_database_id: target.database_id.clone(),
             journal_cut: "1".into(),
             restore_epoch: 1,
+            authority_epoch: 7,
+            authority_lease: "lease".into(),
+            accepted_proof_digest: "a".repeat(64),
             provider: "oci".into(),
             selection: NativeRestoreSelection::PointId("a".repeat(64)),
             residency: target.residency.clone(),
@@ -1315,6 +1324,7 @@ mod tests {
                 backups: None,
                 recovery: Some(Arc::clone(&runtime)),
                 receipts,
+                journal: None,
             }),
             authority: Arc::new(Authority),
         }));
@@ -1384,6 +1394,9 @@ mod tests {
                 target_database_id: record.database_id.clone(),
                 journal_cut: "1".into(),
                 restore_epoch: 1,
+                authority_epoch: 7,
+                authority_lease: "lease".into(),
+                accepted_proof_digest: "a".repeat(64),
                 provider: "oci".into(),
                 selection: NativeRestoreSelection::PointId("point".into()),
                 residency: record.residency.clone(),

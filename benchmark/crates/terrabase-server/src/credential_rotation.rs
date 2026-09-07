@@ -69,12 +69,20 @@ pub(crate) struct LiveKeys {
     tls: Option<TlsMaterial>,
     #[serde(default)]
     previous_generation: u64,
+    #[serde(default)]
+    origin_previous_generation: u64,
     pub(crate) origin: KeyMaterial,
     pub(crate) capability: KeyMaterial,
 }
 impl LiveKeys {
     pub(crate) fn single(keys: KeyMaterial) -> Self {
-        Self { origin: keys.clone(), capability: keys, tls: None, previous_generation: 0 }
+        Self {
+            origin: keys.clone(),
+            capability: keys,
+            tls: None,
+            previous_generation: 0,
+            origin_previous_generation: 0,
+        }
     }
 }
 
@@ -132,11 +140,25 @@ struct Request {
     #[serde(default)]
     current_key: String,
     #[serde(default)]
+    origin_current_key_id: String,
+    #[serde(default)]
+    origin_current_key: String,
+    #[serde(default)]
+    origin_expires_at: u64,
+    #[serde(default)]
     previous_key_id: String,
     #[serde(default)]
     previous_key: String,
     #[serde(default)]
     previous_expires_at: u64,
+    #[serde(default)]
+    origin_previous_key_id: String,
+    #[serde(default)]
+    origin_previous_key: String,
+    #[serde(default)]
+    origin_previous_generation: u64,
+    #[serde(default)]
+    origin_previous_expires_at: u64,
     #[serde(default)]
     workload_tls: String,
     #[serde(default)]
@@ -151,6 +173,8 @@ impl Drop for Request {
         self.trust_bundle.zeroize();
         self.current_key.zeroize();
         self.previous_key.zeroize();
+        self.origin_current_key.zeroize();
+        self.origin_previous_key.zeroize();
     }
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -409,6 +433,9 @@ fn stage_rotation(service: &Service, request: &Request, next: &mut Durable) -> i
         || request.expires_at <= now()
         || request.current_key_id.is_empty()
         || request.current_key_id.len() > 128
+        || request.origin_expires_at <= now()
+        || request.origin_current_key_id.is_empty()
+        || request.origin_current_key_id.len() > 128
     {
         return Err(invalid());
     }
@@ -416,6 +443,15 @@ fn stage_rotation(service: &Service, request: &Request, next: &mut Durable) -> i
         zeroize::Zeroizing::new(STANDARD.decode(&request.current_key).map_err(|_| invalid())?);
     let previous =
         zeroize::Zeroizing::new(STANDARD.decode(&request.previous_key).map_err(|_| invalid())?);
+    let origin_current = zeroize::Zeroizing::new(
+        STANDARD.decode(&request.origin_current_key).map_err(|_| invalid())?,
+    );
+    let origin_previous = zeroize::Zeroizing::new(
+        STANDARD.decode(&request.origin_previous_key).map_err(|_| invalid())?,
+    );
+    if current == origin_current {
+        return Err(invalid());
+    }
     let overlap = !previous.is_empty();
     if overlap
         && (request.previous_key_id.is_empty()
@@ -429,13 +465,32 @@ fn stage_rotation(service: &Service, request: &Request, next: &mut Durable) -> i
         KeyMaterial::new(&current, overlap.then_some(previous.as_slice())).ok_or_else(invalid)?;
     keys.expires_at = request.expires_at;
     keys.previous_expires_at = request.previous_expires_at;
-    let mut snapshot = LiveKeys::single(keys);
+    let origin_overlap = !origin_previous.is_empty();
+    if origin_overlap
+        && (request.origin_previous_key_id.is_empty()
+            || request.origin_previous_key_id == request.origin_current_key_id
+            || request.origin_previous_expires_at <= now()
+            || request.origin_previous_expires_at > request.origin_expires_at
+            || request.origin_previous_generation == 0
+            || request.origin_previous_generation >= request.generation)
+    {
+        return Err(invalid());
+    }
+    let mut origin_keys = KeyMaterial::new(
+        &origin_current,
+        origin_overlap.then_some(origin_previous.as_slice()),
+    )
+    .ok_or_else(invalid)?;
+    origin_keys.expires_at = request.origin_expires_at;
+    origin_keys.previous_expires_at = request.origin_previous_expires_at;
     if overlap
         && (request.previous_generation == 0 || request.previous_generation >= request.generation)
     {
         return Err(invalid());
     }
+    let mut snapshot = LiveKeys { origin: origin_keys, capability: keys, ..LiveKeys::default() };
     snapshot.previous_generation = request.previous_generation;
+    snapshot.origin_previous_generation = request.origin_previous_generation;
     if service.tls.is_some() {
         let mut material = TlsMaterial {
             workload: STANDARD.decode(&request.workload_tls).map_err(|_| invalid())?,
@@ -542,7 +597,9 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
         }
         "verify" => {
             if request.generation != next.generation
-                || next.staged.as_ref().is_none_or(|s| s.origin.usable().is_none())
+                || next.staged.as_ref().is_none_or(|s| {
+                    s.origin.usable().is_none() || s.capability.usable().is_none()
+                })
             {
                 return Err(invalid());
             }
@@ -563,7 +620,7 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
                 return Err(invalid());
             }
             let staged = next.staged.take().ok_or_else(invalid)?;
-            if staged.origin.usable().is_none() {
+            if staged.origin.usable().is_none() || staged.capability.usable().is_none() {
                 return Err(invalid());
             }
             next.rollback = Some(next.active.clone());
@@ -571,10 +628,14 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
             next.state = "active".into();
         }
         "retire" => {
-            if request.generation != next.active.previous_generation || next.state != "active" {
+            if (request.generation != next.active.previous_generation
+                && request.generation != next.active.origin_previous_generation)
+                || next.state != "active"
+            {
                 return Err(invalid());
             }
             next.active.previous_generation = 0;
+            next.active.origin_previous_generation = 0;
             next.active.origin.previous = None;
             next.active.capability.previous = None;
             next.rollback = None;
@@ -617,10 +678,17 @@ mod tests {
             expires_at: now() + 3600,
             current_key_id: "new".into(),
             current_key: STANDARD.encode(b"new-key-with-at-least-32-bytes-000"),
+            origin_current_key_id: "origin-new".into(),
+            origin_current_key: STANDARD.encode(b"origin-new-key-at-least-32-bytes-"),
+            origin_expires_at: now() + 3600,
             previous_key_id: "old".into(),
             previous_key: STANDARD.encode(b"old-key-with-at-least-32-bytes-000"),
             previous_expires_at: now() + 600,
             previous_generation: 1,
+            origin_previous_key_id: "origin-old".into(),
+            origin_previous_key: STANDARD.encode(b"origin-old-key-at-least-32-bytes-"),
+            origin_previous_generation: 1,
+            origin_previous_expires_at: now() + 600,
             workload_tls: String::new(),
             trust_bundle: String::new(),
         }
@@ -661,6 +729,7 @@ mod tests {
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         let old = b"old-key-with-at-least-32-bytes-000";
         let new = b"new-key-with-at-least-32-bytes-000";
+        let origin_new = b"origin-new-key-at-least-32-bytes-";
         let make = || {
             bind(
                 &dir.join("control.sock"),
@@ -682,14 +751,14 @@ mod tests {
         let stage = request("stage", "stage");
         apply(&bound.service, &stage).unwrap();
         assert!(accepts(&bound.origin, old));
-        assert!(!accepts(&bound.origin, new));
+        assert!(!accepts(&bound.origin, origin_new));
         assert!(apply(&bound.service, &request("activate", "early-activate")).is_err());
         apply(&bound.service, &request("verify", "verify")).unwrap();
         let activate = request("activate", "activate");
         apply(&bound.service, &activate).unwrap();
         apply(&bound.service, &activate).unwrap();
         assert!(accepts(&bound.origin, old));
-        assert!(accepts(&bound.origin, new));
+        assert!(accepts(&bound.origin, origin_new));
         let mut conflict = request("fence", "activate");
         conflict.generation = 2;
         assert!(apply(&bound.service, &conflict).is_err());
@@ -710,12 +779,12 @@ mod tests {
         stop.send(()).unwrap();
         task.await.unwrap().unwrap();
         let restored = make();
-        assert!(accepts(&restored.origin, new));
+        assert!(accepts(&restored.origin, origin_new));
         let mut retire = request("retire", "retire");
         retire.generation = 1;
         apply(&restored.service, &retire).unwrap();
         assert!(!accepts(&restored.origin, old));
-        assert!(accepts(&restored.origin, new));
+        assert!(accepts(&restored.origin, origin_new));
         apply(&restored.service, &request("fence", "fence")).unwrap();
         assert!(!accepts(&restored.origin, new));
         drop(restored);
