@@ -79,6 +79,24 @@ describe("management entrypoint", () => {
     expect(requests).toHaveLength(0);
   });
 
+  it("preserves omitted metadata and the maximum producer u64 revision", async () => {
+    const client = createTerraScaleManagementClient({
+      apiBaseUrl: "https://api.example.test",
+      fetch: async () => new Response(
+        '{"operations":[{"operation_id":"op-2","kind":"recovery","database_id":"db-2","name":"db-2","state":"running","stage":"capturing","cancellable":false,"cancellation_reason":"Native recovery has no safe cancellation action"},{"operation_id":"op-3","kind":"database_create","database_id":"db-3","name":"db-3","state":"succeeded","stage":"ready","created_at":"2026-09-06T12:00:00Z","revision":18446744073709551615,"cancellable":false,"cancellation_reason":"Provisioning has no safe cancellation action"}],"next_cursor":null,"covered_kinds":["export","recovery"]}',
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    });
+
+    const result = await client.operations.list();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.operations[0]).not.toHaveProperty("created_at");
+      expect(result.value.operations[0]).not.toHaveProperty("revision");
+      expect(result.value.operations[1]?.revision).toBe(18446744073709551615n);
+    }
+  });
+
   it("uses the producer-published database, branch, and backup routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({

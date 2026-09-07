@@ -32,8 +32,8 @@ export type OperationSummary = {
   readonly name: string;
   readonly state: string;
   readonly stage: string;
-  readonly created_at: string;
-  readonly revision: Contracts.Int64Value;
+  readonly created_at?: string;
+  readonly revision?: Contracts.UInt64Value;
   readonly cancellable: boolean;
   readonly cancellation_reason: string;
 };
