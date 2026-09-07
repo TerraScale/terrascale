@@ -1,11 +1,10 @@
 //! Engine-owned durable shard route catalog and cutover CAS.
 
-use super::{CommitError, CommitOutcome, Engine, EngineError};
+use super::{CommitError, CommitOutcome, Engine, EngineError, EngineOpenError};
 use crate::{
     shard_split::{
         AtomicSplitCutover, CommittedSplitRoute, CutoverContext, DurableSplitState, RouteTable,
-        ShardAdmissionToken, ShardRoute, ShardSplit, SplitContext, SplitPhase,
-        SplitStateStore,
+        ShardAdmissionToken, ShardRoute, ShardSplit, SplitContext, SplitPhase, SplitStateStore,
     },
     types::{DocumentValue, LocalDurability, OperationId, TenantScope},
 };
@@ -51,7 +50,10 @@ impl ScopedShardEngine {
         if let Some(keys) = &self.engine.storage_keys {
             config = config.with_storage_keys(std::sync::Arc::clone(keys));
         }
-        config = config.with_replication_origin(self.engine.database_owner().region());
+        let origin =
+            crate::types::RegionId::try_new(self.engine.database_owner().region().as_str())
+                .map_err(|_| EngineOpenError::InvalidConfig)?;
+        config = config.with_replication_origin(origin);
         Engine::open(config)
     }
 }
@@ -72,31 +74,47 @@ impl SplitStateStore for ScopedShardEngine {
                 snapshot.sequence(),
             )
             .map_err(|()| RouteCatalogError::Engine(EngineError::StorageFailure))?;
-        bytes(value)?.map(|raw| DurableSplitState::decode(&raw).map_err(|_| RouteCatalogError::Malformed)).transpose()
+        bytes(value)?
+            .map(|raw| DurableSplitState::decode(&raw).map_err(|_| RouteCatalogError::Malformed))
+            .transpose()
     }
 
     fn save(&mut self, state: &DurableSplitState) -> Result<(), Self::Error> {
-        let operation = OperationId::try_new(&format!("shard-state-{:032x}-{}", self.incarnation, state.phase() as u8))
-            .map_err(|_| RouteCatalogError::Malformed)?;
-        let mut tx = self.engine.begin(&self.scope, self.engine.read_snapshot(&self.scope)?, operation)?;
+        let operation = OperationId::try_new(&format!(
+            "shard-state-{:032x}-{}-{}",
+            self.incarnation,
+            state.phase() as u8,
+            crate::identity::generate()
+        ))
+        .map_err(|_| RouteCatalogError::Malformed)?;
+        let mut tx =
+            self.engine.begin(&self.scope, self.engine.read_snapshot(&self.scope)?, operation)?;
         tx.internal_maintenance = true;
         tx.put_private_metadata(&split_key(self.incarnation), value(&state.encode()))?;
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
-            CommitOutcome::Rejected(CommitError::Conflict | CommitError::OperationIdReuse { .. }) => Err(RouteCatalogError::Conflict),
-            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(RouteCatalogError::Engine(EngineError::StorageFailure)),
+            CommitOutcome::Rejected(
+                CommitError::Conflict | CommitError::OperationIdReuse { .. },
+            ) => Err(RouteCatalogError::Conflict),
+            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
+                Err(RouteCatalogError::Engine(EngineError::StorageFailure))
+            }
         }
     }
 
     fn remove(&mut self) -> Result<(), Self::Error> {
-        let operation = OperationId::try_new(&format!("shard-state-remove-{:032x}", self.incarnation))
-            .map_err(|_| RouteCatalogError::Malformed)?;
-        let mut tx = self.engine.begin(&self.scope, self.engine.read_snapshot(&self.scope)?, operation)?;
+        let operation =
+            OperationId::try_new(&format!("shard-state-remove-{:032x}", self.incarnation))
+                .map_err(|_| RouteCatalogError::Malformed)?;
+        let mut tx =
+            self.engine.begin(&self.scope, self.engine.read_snapshot(&self.scope)?, operation)?;
         tx.internal_maintenance = true;
         tx.delete_private_metadata(&split_key(self.incarnation))?;
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
-            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(RouteCatalogError::Engine(EngineError::StorageFailure)),
+            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
+                Err(RouteCatalogError::Engine(EngineError::StorageFailure))
+            }
         }
     }
 }

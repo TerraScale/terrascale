@@ -359,6 +359,7 @@ async fn real_worker_suspension_releases_engine_and_rebinds_same_assignment() {
     let placement = parts.placement.clone();
     let (transport, remote) = transport_pair(&placement);
     let config = transport.config();
+    let local_identity = config.local_identity().clone();
     let peer = config.peers().next().unwrap().identity().clone();
     let database_scope = spec.scope().unwrap();
     let scope = DatabaseRouteScope::new(
@@ -367,8 +368,7 @@ async fn real_worker_suspension_releases_engine_and_rebinds_same_assignment() {
         database_scope.database(),
     );
     let binding =
-        WalReplicaBinding::new(scope, &placement, config.local_identity().clone(), peer.clone())
-            .unwrap();
+        WalReplicaBinding::new(scope, &placement, local_identity.clone(), peer.clone()).unwrap();
     let make_lane = |lease: Arc<dyn WalEngineHandle>| PeerDatabase {
         scope,
         physical: Some(PhysicalDriver::Writer(WalWriterDriver::new(
@@ -430,6 +430,7 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     let placement = parts.placement.clone();
     let (transport, remote) = transport_pair(&placement);
     let config = transport.config();
+    let local_identity = config.local_identity().clone();
     let peer = config.peers().next().unwrap().identity().clone();
     let remote_config = remote.config();
     let database_scope = spec.scope().unwrap();
@@ -471,10 +472,21 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     progress.advance_regional_from_peer(scope, peer.member().as_str(), 8);
     assert!(progress.regional_covers(scope, 8).unwrap());
     let observations = peers.observations();
+    // The follower must authorize from its own local placement view.
+    let follower_placement = terrabase_cluster::production::ProductionPlacement::try_new(
+        terrabase::identity::MemberUlid::from_text(
+            remote_config.local_identity().member().as_str(),
+        )
+        .unwrap(),
+        placement.generation(),
+        placement.epoch(),
+        placement.regions(),
+    )
+    .unwrap();
     let follower_binding = WalReplicaBinding::new(
         scope,
-        &placement,
-        config.local_identity().clone(),
+        &follower_placement,
+        local_identity,
         remote_config.local_identity().clone(),
     )
     .unwrap();
@@ -536,15 +548,17 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         checkpoint_sent.load(Ordering::Acquire),
         "replacement must receive a real follower checkpoint"
     );
-    assert!(
-        progress.regional_covers(scope, 8).is_err(),
-        "fenced evidence must not cover before a fresh response"
+    assert_eq!(
+        progress.regional_covers(scope, 8),
+        Ok(false),
+        "session fencing removes old evidence while retaining database admission"
     );
-    let facts = observations.lock().unwrap();
-    let facts = facts.get(&(peer.member().as_str().to_owned(), scope)).unwrap();
-    assert!(facts.physical.is_none(), "closed session must not publish physical proof");
-    assert!(facts.readiness.is_none(), "closed session must not publish readiness proof");
-    drop(facts);
+    {
+        let observations = observations.lock().unwrap();
+        let facts = observations.get(&(peer.member().as_str().to_owned(), scope)).unwrap();
+        assert!(facts.physical.is_none(), "closed session must not publish physical proof");
+        assert!(facts.readiness.is_none(), "closed session must not publish readiness proof");
+    }
     assert!(
         peers.ensure_running().is_ok(),
         "terminal command path remains usable after session restart"

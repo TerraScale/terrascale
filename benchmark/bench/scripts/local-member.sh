@@ -90,8 +90,9 @@ write_config() {
     printf '[public_api]\nlisten = "127.0.0.1:%s"\n' "$API_PORT"
     printf 'data_root = "%s/data"\n' "$MEMBER_DIR"
     printf 'bootstrap_key_file = "%s/bootstrap.key"\n' "$MEMBER_DIR"
-    printf 'regions = ["%s"]\n\n' "$REGION"
-    printf '[replication]\npeers = []\n'
+    printf 'regions = ["%s"]\n' "$REGION"
+    # No [replication] section: the standalone one-member shape. An explicit
+    # empty peers list is a configuration error by design.
   } >"$MEMBER_DIR/member.toml"
 }
 
