@@ -326,7 +326,7 @@ func TestOperationsGetPollsWithoutRepeatingCreation(t *testing.T) {
 			t.Errorf("operation discovery repeated work: %s %s", r.Method, r.URL)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"operation_id":"operation/one","database_id":"db-1","key_version":"key-1","name":"demo","regions":["GRU"],"residency":"","state":"pending"}`))
+		_, _ = w.Write([]byte(`{"operation_id":"operation/one","kind":"database_create","database_id":"db-1","name":"demo","state":"queued","stage":"accepted","created_at":"2026-09-07T00:00:00Z","revision":1,"cancellable":false,"cancellation_reason":""}`))
 	}))
 	defer server.Close()
 	client, err := NewClient(Config{APIBaseURL: server.URL})
@@ -337,7 +337,7 @@ func TestOperationsGetPollsWithoutRepeatingCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if operation.State != "pending" || operation.OperationID != "operation/one" {
+	if operation.State != "queued" || operation.OperationID != "operation/one" {
 		t.Fatalf("lost operation progress: %+v", operation)
 	}
 }

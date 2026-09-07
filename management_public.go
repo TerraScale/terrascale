@@ -582,15 +582,17 @@ func (d *DatabasesClient) DevelopmentLogs(ctx context.Context, database string, 
 // OperationsClient reads authoritative operation state without repeating work.
 type OperationsClient struct{ c *Client }
 
-// Get discovers provisioning progress by the original operation identity.
-func (o *OperationsClient) Get(ctx context.Context, operationID string, opts ...RequestOption) (*ProvisioningOperation, error) {
+// Get discovers durable operation progress by the original operation identity.
+// The producer returns the canonical OperationSummary projection for both
+// control-plane and member-owned operation journals.
+func (o *OperationsClient) Get(ctx context.Context, operationID string, opts ...RequestOption) (*OperationSummary, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
 	if err := requireID("operation_id", operationID); err != nil {
 		return nil, err
 	}
-	var out ProvisioningOperation
+	var out OperationSummary
 	if err := o.c.do(ctx, "GET", "/api/v1/operations/"+url.PathEscape(operationID), nil, nil, &out, "get_provisioning_operation", opts...); err != nil {
 		return nil, err
 	}
