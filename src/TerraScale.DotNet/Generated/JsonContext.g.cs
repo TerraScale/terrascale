@@ -57,6 +57,8 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(PredicateOnly))]
 [JsonSerializable(typeof(PredicateUpdate))]
 [JsonSerializable(typeof(ProvisioningOperation))]
+[JsonSerializable(typeof(OperationPage))]
+[JsonSerializable(typeof(OperationSummary))]
 [JsonSerializable(typeof(ReadAttribution))]
 [JsonSerializable(typeof(RecommendationList))]
 [JsonSerializable(typeof(RestoreRequest))]
