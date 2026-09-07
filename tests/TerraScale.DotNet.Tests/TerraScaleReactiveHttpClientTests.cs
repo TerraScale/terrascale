@@ -100,6 +100,27 @@ public sealed class TerraScaleReactiveHttpClientTests
     }
 
     [Test]
+    public async Task WebSocketTransportUsesCanonicalRouteAndSendsSubscribeBeforeEvent()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var serverDone = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var eventFrame = Envelope(4, body: Delta("orders", 3, 0, 1, "Y3AtMQ=="));
+        var server = ServeWebSocketAsync(listener, "capability", "terrascale.sync.v1", serverDone.Token, sendFrame: true, responseFrame: eventFrame, expectedPath: "/api/v1/reactive/views/view-1/3/websocket", expectSubscribe: true);
+        using var handler = new ReactiveHandler(subscription: "orders", websocketLog: $"http://127.0.0.1:{port}/wrong-log?offset=0");
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { BaseAddress = new Uri($"http://127.0.0.1:{port}") });
+
+        await using var subscription = await client.SubscribeAsync("db", "orders", "SELECT * FROM orders", new byte[] { 0, 255, 1 }, transport: TerraScaleReactiveTransport.WebSocket, cancellationToken: serverDone.Token);
+        var result = await subscription.ReadNextAsync(serverDone.Token);
+        await server;
+
+        await Assert.That(result!.Frame).IsTypeOf<TerraScaleReactiveDelta>();
+        await Assert.That(subscription.Offset).IsEqualTo(1ul);
+    }
+
+    [Test]
     public async Task EmptyNoStorePollReturnsNullWithoutAdvancingOffset()
     {
         using var handler = new ReactiveHandler(timeout: true);
@@ -339,7 +360,7 @@ public sealed class TerraScaleReactiveHttpClientTests
         await Assert.That(regionSubscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Live);
     }
 
-    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false, bool staleReattachAuthorization = false) : HttpMessageHandler
+    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false, bool staleReattachAuthorization = false, string? websocketLog = null) : HttpMessageHandler
     {
         public List<RequestObservation> Requests { get; } = [];
         public TaskCompletionSource PollStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -354,7 +375,7 @@ public sealed class TerraScaleReactiveHttpClientTests
             {
                 attachCount++;
                 AttachBody = await request.Content!.ReadAsStringAsync(cancellationToken);
-                return Json("{\"view\":\"view-1\",\"generation\":3,\"snapshot_chunks\":[\"/api/v1/reactive/views/view-1/3/snapshot/0?cut=0\"],\"log\":\"/api/v1/reactive/views/view-1/3/log?offset=0\",\"checkpoint\":\"Y3AtMA==\",\"capability\":\"capability\",\"capability_header\":\"X-TerraScale-View-Capability\",\"offset\":0}", HttpStatusCode.Created);
+                return Json($"{{\"view\":\"view-1\",\"generation\":3,\"snapshot_chunks\":[\"/api/v1/reactive/views/view-1/3/snapshot/0?cut=0\"],\"log\":\"{websocketLog ?? "/api/v1/reactive/views/view-1/3/log?offset=0"}\",\"checkpoint\":\"Y3AtMA==\",\"capability\":\"capability\",\"capability_header\":\"X-TerraScale-View-Capability\",\"offset\":0}}", HttpStatusCode.Created);
             }
             if (request.RequestUri!.AbsolutePath.EndsWith("/snapshot/0", StringComparison.Ordinal))
             {
@@ -394,18 +415,22 @@ public sealed class TerraScaleReactiveHttpClientTests
 
     private sealed record RequestObservation(HttpMethod Method, Uri Uri, IReadOnlyDictionary<string, string> Headers);
 
-    private static async Task ServeWebSocketAsync(TcpListener listener, string capability, string? selectedProtocol, CancellationToken cancellationToken, bool sendFrame)
+    private static async Task ServeWebSocketAsync(TcpListener listener, string capability, string? selectedProtocol, CancellationToken cancellationToken, bool sendFrame, byte[]? responseFrame = null, string? expectedPath = null, bool expectSubscribe = false)
     {
         using var connection = await listener.AcceptTcpClientAsync(cancellationToken);
         await using var stream = connection.GetStream();
         using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
         string? key = null;
+        string? path = null;
         string? protocols = null;
         while (await reader.ReadLineAsync(cancellationToken) is { } line && line.Length > 0)
         {
+            if (line.StartsWith("GET ", StringComparison.Ordinal)) path = line[4..line.IndexOf(' ', 4)];
             if (line.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase)) key = line[(line.IndexOf(':') + 1)..].Trim();
             if (line.StartsWith("Sec-WebSocket-Protocol:", StringComparison.OrdinalIgnoreCase)) protocols = line[(line.IndexOf(':') + 1)..].Trim();
         }
+
+        if (expectedPath is not null) await Assert.That(path).IsEqualTo(expectedPath);
 
         await Assert.That(protocols).IsEqualTo($"terrascale.sync.v1, terrascale.cap.{capability}");
         var accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(key! + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
@@ -413,7 +438,29 @@ public sealed class TerraScaleReactiveHttpClientTests
         if (selectedProtocol is not null) response.Append("Sec-WebSocket-Protocol: ").Append(selectedProtocol).Append("\r\n");
         response.Append("Sec-WebSocket-Accept: ").Append(accept).Append("\r\n\r\n");
         await stream.WriteAsync(Encoding.ASCII.GetBytes(response.ToString()), cancellationToken);
-        if (sendFrame) await stream.WriteAsync(new byte[] { 0x82, 0x01, 0x90 }, cancellationToken);
+        if (sendFrame)
+        {
+            if (expectSubscribe)
+            {
+                var frame = await ReadWebSocketFrameAsync(stream, cancellationToken);
+                await Assert.That(frame.Length > 40).IsTrue();
+                await Assert.That(frame[..7]).IsEqualTo(new byte[] { 0x97, 0x01, 0x00, 0x00, 0x01, 0x01, 0x00 });
+            }
+            var payload = responseFrame ?? new byte[] { 0x90 };
+            if (payload.Length > 125) throw new InvalidOperationException("Test frame helper only supports short payloads.");
+            await stream.WriteAsync(new[] { (byte)0x82, (byte)payload.Length }, cancellationToken);
+            await stream.WriteAsync(payload, cancellationToken);
+            await stream.WriteAsync(new byte[] { 0x88, 0x00 }, cancellationToken);
+        }
+    }
+
+    private static async Task<byte[]> ReadWebSocketFrameAsync(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        var header = new byte[2]; await stream.ReadExactlyAsync(header, cancellationToken);
+        var length = header[1] & 0x7f; var mask = new byte[4]; await stream.ReadExactlyAsync(mask, cancellationToken);
+        var payload = new byte[length]; await stream.ReadExactlyAsync(payload, cancellationToken);
+        for (var i = 0; i < payload.Length; i++) payload[i] ^= mask[i % 4];
+        return payload;
     }
 
     private static byte[] Envelope(uint tag, ulong correlation = 0, byte[]? body = null, uint features = 0)

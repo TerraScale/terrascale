@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.ObjectModel;
 using System.Net;
@@ -136,8 +137,10 @@ public sealed class TerraScaleReactiveHttpClient
 
     private async Task<TerraScaleReactivePollResult?> PollWebSocketAsync(TerraScaleReactiveSubscription subscription, CancellationToken cancellationToken)
     {
-        var log = AppendOffset(subscription.Attachment.Log, subscription.Offset);
-        var socket = await subscription.EnsureWebSocketAsync(CreateWebSocketUri(log), subscription.Attachment.Capability, cancellationToken).ConfigureAwait(false);
+        var socket = await subscription.EnsureWebSocketAsync(CreateWebSocketUri(subscription.Attachment.Log, subscription.Attachment.View, subscription.Attachment.Generation), subscription.Attachment.Capability, cancellationToken).ConfigureAwait(false);
+        var checkpoint = DecodeCheckpoint(subscription.CurrentSnapshot.Checkpoint.Token);
+        var subscribe = EncodeSubscribe(subscription.Attachment.Subscription, subscription.Attachment.Statement, subscription.Attachment.Parameters.Span, checkpoint);
+        await socket.SendAsync(subscribe, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken).ConfigureAwait(false);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(options.PollWindow);
         byte[]? bytes;
@@ -251,10 +254,57 @@ public sealed class TerraScaleReactiveHttpClient
 
     private Uri AttachOrigin() => options.ApiBaseAddress ?? options.BaseAddress;
 
-    private static Uri CreateWebSocketUri(Uri log)
+    private static Uri CreateWebSocketUri(Uri log, string view, ulong generation)
     {
-        var builder = new UriBuilder(log) { Scheme = log.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" };
+        var builder = new UriBuilder(log)
+        {
+            Scheme = log.Scheme == Uri.UriSchemeHttps ? "wss" : "ws",
+            Path = $"/api/v1/reactive/views/{Uri.EscapeDataString(view)}/{generation.ToString(System.Globalization.CultureInfo.InvariantCulture)}/websocket",
+            Query = string.Empty,
+        };
         return builder.Uri;
+    }
+
+    private static byte[] DecodeCheckpoint(string token)
+    {
+        try { return Convert.FromBase64String(token); }
+        catch (FormatException) { throw new TerraScaleReactiveProtocolException("The reactive checkpoint is not valid base64."); }
+    }
+
+    private static byte[] EncodeSubscribe(string subscription, string statement, ReadOnlySpan<byte> parameters, ReadOnlySpan<byte> checkpoint)
+    {
+        var writer = new ArrayBufferWriter<byte>();
+        WriteArrayHeader(writer, 7);
+        WriteUInt(writer, 1); WriteUInt(writer, 0); WriteUInt(writer, 0); WriteUInt(writer, 1); WriteUInt(writer, 1); WriteUInt(writer, 0);
+        WriteArrayHeader(writer, 4);
+        WriteString(writer, subscription); WriteString(writer, statement); WriteBinary(writer, parameters); WriteBinary(writer, checkpoint);
+        return writer.WrittenMemory.ToArray();
+    }
+
+    private static void WriteArrayHeader(ArrayBufferWriter<byte> writer, int count) { writer.GetSpan(1)[0] = (byte)(0x90 | count); writer.Advance(1); }
+
+    private static void WriteUInt(ArrayBufferWriter<byte> writer, ulong value)
+    {
+        if (value < 128) { writer.GetSpan(1)[0] = (byte)value; writer.Advance(1); return; }
+        var span = writer.GetSpan(9); span[0] = 0xcf; BinaryPrimitives.WriteUInt64BigEndian(span[1..], value); writer.Advance(9);
+    }
+
+    private static void WriteString(ArrayBufferWriter<byte> writer, string value)
+    {
+        var bytes = StrictUtf8.GetBytes(value);
+        if (bytes.Length > ushort.MaxValue) throw new TerraScaleReactiveProtocolException("The reactive subscribe string is too large.");
+        if (bytes.Length < 32) { var span = writer.GetSpan(1); span[0] = (byte)(0xa0 | bytes.Length); writer.Advance(1); }
+        else { var span = writer.GetSpan(3); span[0] = 0xda; BinaryPrimitives.WriteUInt16BigEndian(span[1..], (ushort)bytes.Length); writer.Advance(3); }
+        writer.Write(bytes);
+    }
+
+    private static void WriteBinary(ArrayBufferWriter<byte> writer, ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length <= byte.MaxValue) { var span = writer.GetSpan(2); span[0] = 0xc4; span[1] = (byte)bytes.Length; writer.Advance(2); }
+        else if (bytes.Length <= ushort.MaxValue) { var span = writer.GetSpan(3); span[0] = 0xc5; BinaryPrimitives.WriteUInt16BigEndian(span[1..], (ushort)bytes.Length); writer.Advance(3); }
+        else if (bytes.Length <= MaxBinaryBytes) { var span = writer.GetSpan(5); span[0] = 0xc6; BinaryPrimitives.WriteUInt32BigEndian(span[1..], (uint)bytes.Length); writer.Advance(5); }
+        else throw new TerraScaleReactiveProtocolException("The reactive subscribe binary value is too large.");
+        writer.Write(bytes);
     }
 
     private static bool IsStrongEtag(EntityTagHeaderValue? value) => value is { Tag: not null, IsWeak: false } && value.Tag != "*";
