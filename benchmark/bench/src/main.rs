@@ -42,6 +42,7 @@ mod metrics;
 mod pg;
 mod pg_fullstack;
 mod raven;
+mod terrabase_http;
 mod sync;
 
 use std::path::PathBuf;
@@ -210,57 +211,11 @@ fn main() {
         std::process::exit(2);
     }
     std::fs::create_dir_all(&out).expect("results directory");
-    if target == Target::TerraBase {
-        match Err::<(), String>(
-            "legacy Go served benchmark adapter is retired; use a direct public-boundary family"
-                .to_owned(),
-        ) {
-            Ok(()) => println!("served TerraBase runner completed"),
-            Err(error) => {
-                eprintln!("the served TerraBase run failed: {error}");
-                // The Rust served runner already retained the canonical
-                // failed attempt. Do not create a second, less-informative
-                // wrapper document for the same invocation.
-                if error.to_string().contains("retained canonical failure") {
-                    std::process::exit(1);
-                }
-                let environment = metrics::host_environment(
-                    "not captured: served run failed before identity observation".to_owned(),
-                    endpoint_for(target),
-                    transport_for(target),
-                );
-                let failure = metrics::FailureResults {
-                    status: "failed",
-                    target: target.as_str(),
-                    workload: workload.as_str().to_owned(),
-                    config: lane_config,
-                    error: error.to_string(),
-                    comparability: metrics::comparability(
-                        &lane_config,
-                        target.as_str(),
-                        &environment,
-                        Some(&boundary),
-                    ),
-                    environment,
-                    samples: Vec::new(),
-                    limits: vec![
-                        "failed or invalid attempts are retained for audit and cannot be compared"
-                            .to_owned(),
-                    ],
-                };
-                let json =
-                    serde_json::to_string_pretty(&failure).expect("serialize failure results");
-                let path = write_retained(&out, target, workload, json.as_bytes())
-                    .expect("write failure JSON");
-                eprintln!("failed result retained: {}", path.display());
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
     let started = std::time::Instant::now();
     let result = match target {
-        Target::TerraBase => unreachable!("served target returned before reference dispatch"),
+        Target::TerraBase => {
+            execute::<terrabase_http::TerraBaseHttpBackend>(workload, lane_config)
+        }
         Target::PostgreSql => execute::<pg::PostgreSqlBackend>(workload, lane_config),
         Target::PgFullstack => execute::<pg_fullstack::PgFullstackBackend>(workload, lane_config),
         Target::RavenDb => execute::<raven::RavenDbBackend>(workload, lane_config),

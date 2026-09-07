@@ -171,10 +171,13 @@ cmd_up() {
     sleep 1
   done
   healthy >/dev/null 2>&1 || { tail -n 20 "$MEMBER_DIR/logs/member.log" >&2; die "member not healthy in 90 s"; }
-  # The member is its own session leader; the pid inside the scope is found
-  # from the server process itself, not the systemd-run wrapper.
+  # The pid must be the server process itself, not any wrapper in the
+  # systemd-run/taskset/nice/setsid argv chain (those share the command
+  # line but a wrapper's cgroup is not the member's evidence).
   local pid
-  pid="$(pgrep -f "terrabase-server --config $MEMBER_DIR/member.toml" | head -1 || true)"
+  pid="$(pgrep -f "terrabase-server --config $MEMBER_DIR/member.toml" | while read -r candidate; do
+    [[ "$(readlink -f "/proc/$candidate/exe" 2>/dev/null)" == "$BIN" ]] && { echo "$candidate"; break; }
+  done)"
   [[ -n "$pid" ]] || die "cannot find member pid"
   printf '%s\n' "$pid" >"$MEMBER_DIR/member.pid"
   envelope_subject_evidence "terrabase-member" "$pid" "$MEMBER_DIR/resource-evidence.txt"
