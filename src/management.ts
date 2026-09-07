@@ -32,15 +32,15 @@ export type OperationSummary = {
   readonly name: string;
   readonly state: string;
   readonly stage: string;
-  readonly created_at?: string;
-  readonly revision?: Contracts.UInt64Value;
+  readonly created_at?: string | null;
+  readonly revision?: Contracts.UInt64Value | null;
   readonly cancellable: boolean;
   readonly cancellation_reason: string;
 };
 
 export type OperationPage = {
   readonly operations: readonly OperationSummary[];
-  readonly next_cursor: string | null;
+  readonly next_cursor?: string | null;
   readonly covered_kinds: readonly string[];
 };
 
@@ -92,6 +92,8 @@ export type ProvisioningOperation = {
 };
 export type CreateDatabaseResult = TerraScaleFailure
   | (TerraScaleSuccess<Database> & { readonly status: 201 })
+  | (TerraScaleSuccess<ProvisioningOperation> & { readonly status: 202 });
+export type RestoreBackupResult = TerraScaleFailure
   | (TerraScaleSuccess<ProvisioningOperation> & { readonly status: 202 });
 
 export type CreateDatabaseRequest = {
@@ -286,18 +288,18 @@ export class ManagementBackupsClient {
     });
   }
 
-  restoreBackup(databaseId: string, request: RestoreRequest): Promise<TerraScaleResult<Database>> {
+  restoreBackup(databaseId: string, request: RestoreRequest): Promise<RestoreBackupResult> {
     validateRestoreRequest(request);
-    return this.#http.request({
+    return this.#http.request<unknown>({
       method: "POST",
       path: `${databasePath(databaseId)}/backups/restore`,
       routeName: "databases.restoreBackup",
       body: request,
       idempotencyKey: false,
-    });
+    }).then(decodeRestoreBackupResult);
   }
 
-  restore(databaseId: string, request: RestoreRequest): Promise<TerraScaleResult<Database>> {
+  restore(databaseId: string, request: RestoreRequest): Promise<RestoreBackupResult> {
     return this.restoreBackup(databaseId, request);
   }
 
@@ -675,6 +677,13 @@ function decodeCreateDatabaseResult(result: TerraScaleResult<unknown>): CreateDa
   if (result.status === 202 && isProvisioningOperation(result.value)) return { ...result, status: 202, value: result.value };
   return { ok: false, routeName: result.routeName, status: result.status, headers: result.headers,
     error: { kind: "invalid-response", code: "invalid_create_response", message: "Database creation must return a 201 database or a 202 provisioning operation.", status: result.status }, body: result.value };
+}
+
+function decodeRestoreBackupResult(result: TerraScaleResult<unknown>): RestoreBackupResult {
+  if (!result.ok) return result;
+  if (result.status === 202 && isProvisioningOperation(result.value)) return { ...result, status: 202, value: result.value };
+  return { ok: false, routeName: result.routeName, status: result.status, headers: result.headers,
+    error: { kind: "invalid-response", code: "invalid_restore_response", message: "Backup restore must return a 202 provisioning operation.", status: result.status }, body: result.value };
 }
 
 function isDatabase(value: unknown): value is Database {

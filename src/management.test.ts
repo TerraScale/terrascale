@@ -40,8 +40,10 @@ function fixtureFetch(requests: Request[]): typeof fetch {
     requests.push(request);
     const body = request.method === "POST" && new URL(request.url).pathname === "/api/v1/databases"
       ? { created_at: 1, deleted: false, name: "primary", placement: "GRU", residency: "", parent: null }
+      : request.method === "POST" && new URL(request.url).pathname.endsWith("/backups/restore")
+        ? { environment: "production", tenant_id: "tenant-1", project_id: "project-1", operation_id: "op-restore", database_id: "db-restore", key_version: "key-1", name: "restored", regions: ["GRU"], residency: "br-only", parent_database_id: "primary", state: "accepted" }
       : {};
-    return Response.json(body, { status: request.method === "POST" ? 201 : 200 });
+    return Response.json(body, { status: request.method === "POST" && new URL(request.url).pathname.endsWith("/backups/restore") ? 202 : request.method === "POST" ? 201 : 200 });
   };
 }
 
@@ -83,7 +85,7 @@ describe("management entrypoint", () => {
     const client = createTerraScaleManagementClient({
       apiBaseUrl: "https://api.example.test",
       fetch: async () => new Response(
-        '{"operations":[{"operation_id":"op-2","kind":"recovery","database_id":"db-2","name":"db-2","state":"running","stage":"capturing","cancellable":false,"cancellation_reason":"Native recovery has no safe cancellation action"},{"operation_id":"op-3","kind":"database_create","database_id":"db-3","name":"db-3","state":"succeeded","stage":"ready","created_at":"2026-09-06T12:00:00Z","revision":18446744073709551615,"cancellable":false,"cancellation_reason":"Provisioning has no safe cancellation action"}],"next_cursor":null,"covered_kinds":["export","recovery"]}',
+        '{"operations":[{"operation_id":"op-2","kind":"recovery","database_id":"db-2","name":"db-2","state":"running","stage":"capturing","cancellable":false,"cancellation_reason":"Native recovery has no safe cancellation action"},{"operation_id":"op-3","kind":"database_create","database_id":"db-3","name":"db-3","state":"succeeded","stage":"ready","created_at":"2026-09-06T12:00:00Z","revision":18446744073709551615,"cancellable":false,"cancellation_reason":"Provisioning has no safe cancellation action"}],"covered_kinds":["export","recovery"]}',
         { status: 200, headers: { "content-type": "application/json" } },
       ),
     });
@@ -94,6 +96,7 @@ describe("management entrypoint", () => {
       expect(result.value.operations[0]).not.toHaveProperty("created_at");
       expect(result.value.operations[0]).not.toHaveProperty("revision");
       expect(result.value.operations[1]?.revision).toBe(18446744073709551615n);
+      expect(result.value.next_cursor).toBeUndefined();
     }
   });
 
@@ -117,6 +120,8 @@ describe("management entrypoint", () => {
     for (const result of [listed, created, fetched, deleted, restored, branches, branch, backups, backupRestore]) {
       expect(result.ok).toBe(true);
     }
+    expect(backupRestore.ok && backupRestore.status).toBe(202);
+    expect(backupRestore.ok && backupRestore.value.operation_id).toBe("op-restore");
     expect(requests.map(request => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
       "GET /api/v1/databases",
       "POST /api/v1/databases",
