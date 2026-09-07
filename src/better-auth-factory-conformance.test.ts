@@ -223,3 +223,28 @@ test("provisions mapped core and plugin compound uniqueness before data operatio
   assert.ok(indexes.some(value => JSON.stringify(value) === JSON.stringify({model:"claims", fields:["realm_name", "subject_id"]})));
   assert.equal(seen.at(-1)?.request.url.endsWith("/findPage"), true);
 });
+
+for (const result of [
+  { matched: false, record: { id: "token", identifier: "one-time", value: "secret" } },
+  { matched: true, record: null },
+  { matched: true },
+  { matched: true, record: [] },
+]) {
+  test(`rejects inconsistent consume success ${JSON.stringify(result)}`, async () => {
+    const seen: Seen[] = [];
+    const adapter = createTerraScaleAuthAdapter(client(seen, request => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/transactions/begin")) return Response.json({ matched: true, record: null, transactionId: "tx#1", expiresAtMs: Date.now() + 30_000 });
+      if (path.endsWith("/consumeMatching")) return Response.json(result);
+      return Response.json({ matched: true, record: null });
+    }), "auth")(options);
+    await assert.rejects(adapter.consumeOne({ model: "verification", where: [{ field: "identifier", value: "one-time" }] }), /invalid success result/u);
+    await assert.rejects(adapter.transaction(async transaction => {
+      // Even a swallowed validation error must prevent commit.
+      await transaction.consumeOne({ model: "verification", where: [{ field: "identifier", value: "one-time" }] }).catch(() => undefined);
+    }), /invalid success result/u);
+    const paths = seen.map(entry => new URL(entry.request.url).pathname);
+    assert.equal(paths.filter(path => path.endsWith("/transactions/rollback")).length, 1);
+    assert.equal(paths.some(path => path.endsWith("/transactions/commit")), false);
+  });
+}

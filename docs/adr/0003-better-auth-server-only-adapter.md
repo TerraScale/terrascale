@@ -65,6 +65,13 @@ Producer publication, maintained upstream adapter suites, exact plugin/license
 evidence, dashboard composition, schema migration beyond unique constraints,
 and real multi-Region qualification remain required before production use.
 
+One-time consumption accepts a record only when the authority returns
+`matched: true` with an object record. An unmatched response must carry a null
+record; contradictory or missing consumption results fail before Better Auth
+can redeem the token. Such validation failures poison transactions even when
+the application callback catches the error. Wire fault tests cover these
+responses; they do not substitute for live authority contention evidence.
+
 The temporary local SQLite bridge is still consumed by dashboard development
 and cannot be retired before that replacement is qualified. Both its direct
 operation port and loopback HTTP port reject transaction callbacks with

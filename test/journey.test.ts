@@ -212,7 +212,8 @@ describe("P-3 journey chapter 1: CRUD/SQL (mock)", () => {
     }
     assert.equal(requests.length, before);
 
-    const removed = await client.databases.delete(databaseId, { confirm: true });
+    const deleteKey = "journey-db-delete-1";
+    const removed = await client.databases.delete(databaseId, { confirm: true, idempotencyKey: deleteKey });
     assert.equal(removed.ok, true);
 
     assert.deepEqual(
@@ -226,6 +227,7 @@ describe("P-3 journey chapter 1: CRUD/SQL (mock)", () => {
     );
     assert.equal(new URL(requests[0]!.url).searchParams.get("take"), "100");
     assert.equal(requests[1]?.headers.get("idempotency-key"), "journey-db-1");
+    assert.equal(requests[3]?.headers.get("idempotency-key"), deleteKey);
     assert.equal(
       requests[3]?.headers.get("x-terrascale-delete-confirmation"),
       databaseId,

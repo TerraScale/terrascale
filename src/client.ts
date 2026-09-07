@@ -1629,10 +1629,8 @@ async function directRequest<TResponse>(
     body: options.body,
     headers: options.headers,
     idempotencyKey: options.idempotencyKey,
-    // TerraScaleHttp predates the signal field; retain it at this boundary
-    // so cancellation remains observable without widening its route API.
     signal,
-  } as Parameters<TerraScaleHttp["request"]>[0] & { readonly signal?: AbortSignal };
+  } satisfies Parameters<TerraScaleHttp["request"]>[0];
   const pending = http.request<TResponse>(request);
   if (signal === undefined) return pending;
   return new Promise<TerraScaleResult<TResponse>>((resolve, reject) => {
