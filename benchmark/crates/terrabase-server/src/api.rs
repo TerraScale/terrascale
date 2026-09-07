@@ -1230,7 +1230,7 @@ fn openapi_schemas() -> serde_json::Value {
                 "code": { "type": "string" }, "message": { "type": "string" }, "fix": { "type": "string" }
             } } }
         },
-        "HealthResponse": { "type": "object", "required": ["region", "healthy"], "properties": { "region": { "type": "string" }, "healthy": { "type": "boolean" } } },
+        "HealthResponse": { "type": "object", "required": ["region", "healthy", "version"], "properties": { "region": { "type": "string" }, "healthy": { "type": "boolean" }, "version": { "type": "string" } } },
         "DatabaseRecord": { "type": "object", "required": ["name", "placement", "residency", "deleted", "created_at", "parent"], "properties": {
             "name": { "type": "string" }, "placement": { "type": "string" }, "residency": { "type": "string" }, "deleted": { "type": "boolean" }, "created_at": { "type": "integer", "format": "int64" }, "parent": { "type": ["string", "null"] }
         } },
@@ -1861,7 +1861,14 @@ fn verb_name(verb: Verbs) -> &'static str {
 async fn health(State(state): State<Arc<ApiState>>) -> Response {
     let healthy = state.metrics.snapshot().service_state() == ServiceState::Serving;
     let status = if healthy { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
-    let body = format!("{{\"region\":\"{}\",\"healthy\":{}}}", state.region, healthy);
+    // The immutable build identity every consumer (bench lane, dashboard,
+    // operator) observes first: a served member states what it is.
+    let body = format!(
+        "{{\"region\":\"{}\",\"healthy\":{},\"version\":\"terrabase-{}\"}}",
+        state.region,
+        healthy,
+        env!("CARGO_PKG_VERSION")
+    );
     let mut response = (status, body).into_response();
     response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     if let Ok(region) = HeaderValue::from_str(state.region.as_str()) {

@@ -432,7 +432,6 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     let config = transport.config();
     let peer = config.peers().next().unwrap().identity().clone();
     let remote_config = remote.config();
-    let remote_peer = remote_config.peers().next().unwrap().identity().clone();
     let database_scope = spec.scope().unwrap();
     let scope = DatabaseRouteScope::new(
         database_scope.tenant(),
@@ -475,8 +474,8 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     let follower_binding = WalReplicaBinding::new(
         scope,
         &placement,
+        config.local_identity().clone(),
         remote_config.local_identity().clone(),
-        remote_peer,
     )
     .unwrap();
     let follower_engine = runtime.acquire_replication(&scope).unwrap();

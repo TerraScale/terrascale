@@ -718,17 +718,23 @@ impl ResourceEvidence {
         let cgroup = fs::read_to_string("/proc/self/cgroup")
             .map_err(|error| format!("cannot read /proc/self/cgroup: {error}"))?;
         let cgroup_path = cgroup.lines().next().unwrap_or("unknown").to_owned();
-        let cpu_limit = fs::read_to_string("/sys/fs/cgroup/cpu.max")
+        // The evidence is this process's own cgroup, not the host root: a
+        // systemd-run scope (bare-metal host) reports its fence only under
+        // /sys/fs/cgroup/<scope>/, while a fenced container already sits at
+        // the root. The `0::` prefix names the cgroup-v2 delegation path.
+        let own = cgroup_path.strip_prefix("0::").unwrap_or("/");
+        let root = format!("/sys/fs/cgroup{}", own.trim_end_matches('/'));
+        let cpu_limit = fs::read_to_string(format!("{root}/cpu.max"))
             .map(|value| value.trim().to_owned())
             .map_err(|error| format!("cannot read cgroup cpu.max: {error}"))?;
-        let cpuset_effective = fs::read_to_string("/sys/fs/cgroup/cpuset.cpus.effective")
+        let cpuset_effective = fs::read_to_string(format!("{root}/cpuset.cpus.effective"))
             .map(|value| value.trim().to_owned())
             .map_err(|error| format!("cannot read cgroup cpuset.cpus.effective: {error}"))?;
-        let memory_limit_bytes = read_limit("/sys/fs/cgroup/memory.max")?;
-        let memory_current_bytes = read_limit("/sys/fs/cgroup/memory.current")?;
-        let memory_peak_bytes = read_limit("/sys/fs/cgroup/memory.peak")?;
+        let memory_limit_bytes = read_limit(&format!("{root}/memory.max"))?;
+        let memory_current_bytes = read_limit(&format!("{root}/memory.current"))?;
+        let memory_peak_bytes = read_limit(&format!("{root}/memory.peak"))?;
         let process_rss_bytes = process_rss_bytes();
-        let cpu_usage_usec = read_cpu_usage().ok();
+        let cpu_usage_usec = read_cpu_usage(&root).ok();
         // cgroup v2 expresses CPUQuota=200% as 200000/100000. Requiring the
         // exact pair and exact memory ceiling prevents a larger or merely
         // finite parent cgroup from being reported as launch-envelope proof.
@@ -783,8 +789,9 @@ fn read_limit(path: &str) -> Result<Option<u64>, String> {
     Ok(value.parse().ok())
 }
 
-fn read_cpu_usage() -> Result<u64, String> {
-    let text = fs::read_to_string("/sys/fs/cgroup/cpu.stat").map_err(|error| error.to_string())?;
+fn read_cpu_usage(root: &str) -> Result<u64, String> {
+    let text =
+        fs::read_to_string(format!("{root}/cpu.stat")).map_err(|error| error.to_string())?;
     text.lines()
         .find_map(|line| line.strip_prefix("usage_usec ").and_then(|value| value.parse().ok()))
         .ok_or_else(|| "cpu.stat has no usage_usec".to_owned())

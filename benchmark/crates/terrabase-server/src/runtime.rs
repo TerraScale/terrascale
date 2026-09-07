@@ -1753,24 +1753,30 @@ mod tests {
         let receipt_key = root.join("receipt-signing.key");
         let receipt_der = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(
             &aws_lc_rs::rand::SystemRandom::new(),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(&receipt_key, receipt_der.as_ref()).unwrap();
         let export_key = root.join("export-cursor.key");
         std::fs::write(&export_key, [7u8; 32]).unwrap();
+        let ca_key = rcgen::KeyPair::generate().unwrap();
+        let mut ca_params = rcgen::CertificateParams::new(vec!["startup-ca".into()]).unwrap();
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let ca = ca_params.self_signed(&ca_key).unwrap();
         let tls_key = rcgen::KeyPair::generate().unwrap();
-        let mut tls_params = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap();
-        tls_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        let certificate = tls_params.self_signed(&tls_key).unwrap();
+        let tls_params = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap();
+        let certificate = tls_params.signed_by(&tls_key, &ca, &ca_key).unwrap();
         std::fs::write(&production.transport.server_certificate, certificate.pem()).unwrap();
-        std::fs::write(&production.transport.client_ca, certificate.pem()).unwrap();
+        std::fs::write(&production.transport.client_ca, ca.pem()).unwrap();
         std::fs::write(&production.transport.server_private_key, tls_key.serialize_pem()).unwrap();
         for path in [&receipt_key, &export_key, &production.transport.server_private_key] {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
         // Reserve three distinct known ports, then relinquish them to the
         // real public, metrics and mTLS listeners.
-        let reservations: Vec<_> = (0..3).map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap()).collect();
-        let addresses: Vec<_> = reservations.iter().map(|listener| listener.local_addr().unwrap()).collect();
+        let reservations: Vec<_> =
+            (0..3).map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap()).collect();
+        let addresses: Vec<_> =
+            reservations.iter().map(|listener| listener.local_addr().unwrap()).collect();
         production.transport.tbep_listen = addresses[0];
         production.transport.metrics_listen = addresses[1];
         drop(reservations);
@@ -1882,7 +1888,8 @@ mod tests {
         // inputs above are valid, so no earlier missing-fixture branch wins.
         std::fs::write(&outbox, b"corrupt SQLite outbox").unwrap();
         let mut public = crate::auth_runtime::tests::admitted_fixture::public_config(
-            &root, root.join("bootstrap.key"),
+            &root,
+            root.join("bootstrap.key"),
         );
         public.listen = addresses[2];
         public.lifecycle_publication = Some(crate::config::LifecyclePublicationConfig {
@@ -1904,7 +1911,7 @@ mod tests {
             server_certificate: root.join("missing.crt"),
             server_private_key: root.join("missing.key"),
             client_ca: root.join("missing-ca.crt"),
-            member_principals: BTreeSet::new(),
+            member_principals: BTreeSet::from(["spiffe://production/startup-member".to_owned()]),
             uds: None,
             public_api: Some(public),
             replication_peers: Vec::new(),
@@ -1935,7 +1942,10 @@ mod tests {
         .await
         .unwrap()
         .unwrap_err();
-        assert!(error.to_string().contains("production public listener stopped during startup"), "{error}");
+        assert!(
+            error.to_string().contains("production public listener stopped during startup"),
+            "{error}"
+        );
         assert!(!serving.load(Ordering::Acquire), "failed startup must close admission");
         for address in addresses {
             let reopened = std::net::TcpListener::bind(address)

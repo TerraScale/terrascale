@@ -1094,6 +1094,110 @@ mod tests {
         }
     }
 
+    struct GatedRestore {
+        entered: Arc<Notify>,
+        release: Arc<Notify>,
+        _dependency: Arc<()>,
+    }
+    impl RestoreExecutor for GatedRestore {
+        fn reconcile<'a>(
+            &'a self,
+            _: &'a NativeRestoreRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn execute<'a>(
+            &'a self,
+            _: &'a NativeRestoreRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<NativeRestoreOutcome, String>> + Send + 'a>>
+        {
+            Box::pin(async move {
+                self.entered.notify_one();
+                self.release.notified().await;
+                Err("controlled unknown provider outcome".into())
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn owned_completion_waits_for_inflight_provider_before_releasing_dependencies() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let runtime_root = root.join("native-recovery-owned-drain");
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let dependency = Arc::new(());
+        let dependency_lifetime = Arc::downgrade(&dependency);
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            registry.clone(),
+            limits(),
+            Arc::new(GatedRestore {
+                entered: entered.clone(),
+                release: release.clone(),
+                _dependency: dependency,
+            }),
+        )
+        .unwrap();
+        registry.pause(&records[1].database_id, "owned-drain").unwrap();
+        runtime
+            .admit_restore(NativeRestoreRequest {
+                operation_id: "owned-drain".into(),
+                source_owner: format!("{}/{}", records[0].tenant_id, records[0].project_id),
+                source_database_id: records[0].database_id.clone(),
+                recovery_point_id: "point".into(),
+                recovery_point_digest: "a".repeat(64),
+                target_owner: format!("{}/{}", records[1].tenant_id, records[1].project_id),
+                target_database_id: records[1].database_id.clone(),
+                journal_cut: "1".into(),
+                restore_epoch: 2,
+                authority_epoch: 7,
+                authority_lease: "lease".into(),
+                accepted_proof_digest: "a".repeat(64),
+                provider: "oci".into(),
+                selection: NativeRestoreSelection::PointId("point".into()),
+                residency: records[0].residency.clone(),
+                placement: records[0].regions.clone(),
+            })
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), entered.notified())
+            .await
+            .expect("admitted restore reaches the real provider executor");
+        drop(runtime);
+        let completion = tokio::spawn(worker.await_completion());
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_secs(6)).await;
+        assert!(!completion.is_finished(), "owned drain must not detach after five seconds");
+        assert!(dependency_lifetime.upgrade().is_some(), "provider dependencies must remain owned");
+        let lease =
+            File::options().write(true).open(runtime_root.join("recovery.worker.lock")).unwrap();
+        assert!(
+            lease.try_lock().is_err(),
+            "inflight worker must retain exclusive ledger ownership"
+        );
+        release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(1), completion)
+            .await
+            .expect("released provider allows owned completion")
+            .unwrap()
+            .unwrap();
+        assert!(dependency_lifetime.upgrade().is_none(), "provider completion releases its owner");
+        lease.try_lock().expect("completed worker releases its ledger lock");
+        drop(lease);
+        let (reopened, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            registry.clone(),
+            limits(),
+            Arc::new(RejectRestore),
+        )
+        .expect("actual constructor can reopen after owned completion");
+        worker.await_completion().await.unwrap();
+        drop((reopened, registry, member));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn real_constructor_idle_shutdown_closes_admission_fence() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();

@@ -5,6 +5,7 @@ use crate::{
     shard_split::{
         AtomicSplitCutover, CommittedSplitRoute, CutoverContext, DurableSplitState, RouteTable,
         ShardAdmissionToken, ShardRoute, ShardSplit, SplitContext, SplitPhase,
+        SplitStateStore,
     },
     types::{DocumentValue, LocalDurability, OperationId, TenantScope},
 };
@@ -32,6 +33,71 @@ impl ScopedShardEngine {
     fn operation(split: SplitContext) -> Result<OperationId, RouteCatalogError> {
         OperationId::try_new(&format!("shard-split-{:032x}", split.split_id()))
             .map_err(|_| RouteCatalogError::Malformed)
+    }
+
+    fn target_path(&self, context: &SplitContext) -> std::path::PathBuf {
+        self.engine.location.join("shards").join(format!("{:016x}.sqlite3", context.target_shard()))
+    }
+
+    /// Opens (or reopens) the target file with the parent database's owner and
+    /// encryption lease. Data movement owns the returned handle in its worker.
+    pub(crate) fn open_target(&self, context: &SplitContext) -> Result<Engine, EngineOpenError> {
+        let path = self.target_path(context);
+        std::fs::create_dir_all(path.parent().expect("target has shard directory"))
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
+        let mut config = super::EngineConfig::durable(path)
+            .map_err(|_| EngineOpenError::InvalidConfig)?
+            .with_owner(self.engine.database_owner().clone());
+        if let Some(keys) = &self.engine.storage_keys {
+            config = config.with_storage_keys(std::sync::Arc::clone(keys));
+        }
+        config = config.with_replication_origin(self.engine.database_owner().region());
+        Engine::open(config)
+    }
+}
+
+impl SplitStateStore for ScopedShardEngine {
+    type Error = RouteCatalogError;
+
+    fn load(&self) -> Result<Option<DurableSplitState>, Self::Error> {
+        let snapshot = self.engine.read_snapshot(&self.scope).map_err(RouteCatalogError::from)?;
+        let value = self
+            .engine
+            .lock_storage()
+            .map_err(RouteCatalogError::from)?
+            .port
+            .private_metadata_at(
+                self.scope.tenant(),
+                &split_key(self.incarnation),
+                snapshot.sequence(),
+            )
+            .map_err(|()| RouteCatalogError::Engine(EngineError::StorageFailure))?;
+        bytes(value)?.map(|raw| DurableSplitState::decode(&raw).map_err(|_| RouteCatalogError::Malformed)).transpose()
+    }
+
+    fn save(&mut self, state: &DurableSplitState) -> Result<(), Self::Error> {
+        let operation = OperationId::try_new(&format!("shard-state-{:032x}-{}", self.incarnation, state.phase() as u8))
+            .map_err(|_| RouteCatalogError::Malformed)?;
+        let mut tx = self.engine.begin(&self.scope, self.engine.read_snapshot(&self.scope)?, operation)?;
+        tx.internal_maintenance = true;
+        tx.put_private_metadata(&split_key(self.incarnation), value(&state.encode()))?;
+        match tx.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Rejected(CommitError::Conflict | CommitError::OperationIdReuse { .. }) => Err(RouteCatalogError::Conflict),
+            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(RouteCatalogError::Engine(EngineError::StorageFailure)),
+        }
+    }
+
+    fn remove(&mut self) -> Result<(), Self::Error> {
+        let operation = OperationId::try_new(&format!("shard-state-remove-{:032x}", self.incarnation))
+            .map_err(|_| RouteCatalogError::Malformed)?;
+        let mut tx = self.engine.begin(&self.scope, self.engine.read_snapshot(&self.scope)?, operation)?;
+        tx.internal_maintenance = true;
+        tx.delete_private_metadata(&split_key(self.incarnation))?;
+        match tx.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(RouteCatalogError::Engine(EngineError::StorageFailure)),
+        }
     }
 }
 

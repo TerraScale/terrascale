@@ -1145,6 +1145,9 @@ type AutoIndexShadowSamples = BTreeMap<
 /// let engine = terrabase::engine::Engine::ephemeral();
 /// ```
 pub struct Engine {
+    /// Durable directory retained so related encrypted shard files use the
+    /// same database root after a restart.
+    pub(crate) location: PathBuf,
     storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     identity: u128,
     durable_owner: crate::storage::DatabaseOwner,
@@ -1366,6 +1369,7 @@ impl Engine {
         indexes.set_lifecycle_thresholds(config.lifecycle_thresholds());
         let index_subscription = subscriptions.subscribe(indexes.sink());
         Ok(Self {
+            location,
             storage_keys: config.storage_keys.clone(),
             identity: EngineIdentity::next().0,
             durable_owner: owner,
