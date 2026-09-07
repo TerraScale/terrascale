@@ -2,7 +2,7 @@
 
 use crate::{production::DatabaseRouteScope, wal_driver::{WalPhysicalBoundary, WalWriterDriver}};
 use terrabase::types::TenantScope;
-use terrabase::engine::LocalCrossFileReceipt;
+use terrabase::engine::{CrossFileReceiptPhase, LocalCrossFileReceipt};
 
 /// A local receipt qualified against an authenticated writer physical bound.
 /// This type does not claim Global durability.
@@ -31,6 +31,9 @@ fn qualify_rf2(
 ) -> Result<Rf2DecisionQualification, &'static str> {
     if physical.scope() != scope || physical.epoch() != epoch || physical.generation() != generation {
         return Err("writer boundary scope or epoch mismatch");
+    }
+    if local.phase() != CrossFileReceiptPhase::Decision || local.durability() != terrabase::types::LocalDurability::Synced {
+        return Err("receipt is not a synced decision");
     }
     if local.sequence() > physical.sequence() {
         return Err("writer boundary does not cover local decision");

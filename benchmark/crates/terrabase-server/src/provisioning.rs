@@ -65,7 +65,8 @@ impl ProvisioningClient {
         selection: serde_json::Value,
         operation_id: &str,
     ) -> Result<ProvisioningOperation, ProvisioningError> {
-        if source_database.is_empty() || target_name.is_empty() || !valid_operation_id(operation_id) {
+        if source_database.is_empty() || target_name.is_empty() || !valid_operation_id(operation_id)
+        {
             return Err(ProvisioningError::InvalidRequest);
         }
         let _permit = self.permits.try_acquire().map_err(|_| ProvisioningError::Unavailable)?;
@@ -90,7 +91,6 @@ impl ProvisioningClient {
             || result.project_id != scope.project_id
             || result.operation_id != operation_id
             || result.name != target_name
-            || result.parent_database_id.is_some()
             || !canonical_ulid(&result.database_id)
             || !canonical_ulid(&result.key_version)
             || !matches!(result.state.as_str(), "accepted" | "pending")

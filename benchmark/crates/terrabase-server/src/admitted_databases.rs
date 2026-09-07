@@ -920,6 +920,9 @@ pub(crate) mod tests {
         let lease = reservation.reacquire(&member).unwrap();
         reservation.complete(&registry, lease, 2).unwrap();
         registry.activate(&[database.clone()]).unwrap();
+        // Republication retains the durable pause until the lifecycle owner
+        // explicitly resumes the restored target.
+        registry.resume(database, "restore-resume").unwrap();
         assert!(registry.resolve_serving(database).unwrap().is_some());
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();

@@ -66,7 +66,7 @@ pub use engine::{
     EngineConfigError, EngineError, EngineOpenError, EngineShutdownError, IngestBatchReceipt,
     IngestConflictMode, IngestReceipt, IngestRefusal, IngestRefusalReason, IngestStream,
     IngestTermination, MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS, Transaction,
-    UnknownCommit, UnknownReason,
+    UnknownCommit, UnknownReason, LocalCrossFileReceipt, CrossFileReceiptPhase,
 };
 pub use families::{
     FamilyError, FamilyKind, FamilyReadContext, FamilyReadRequest, FamilyReadResult, FamilyStore,

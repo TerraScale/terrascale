@@ -1110,8 +1110,13 @@ impl ServerConfig {
                     .receipt_signing_key_file
                     .map(|path| production_path(&path))
                     .transpose()?;
-                let export_cursor_key_file = control.export_cursor_key_file.map(|path| production_path(&path)).transpose()?;
-                if let Some(path) = &export_cursor_key_file { paths.push(path.clone()); }
+                let export_cursor_key_file = control
+                    .export_cursor_key_file
+                    .map(|path| production_path(&path))
+                    .transpose()?;
+                if let Some(path) = &export_cursor_key_file {
+                    paths.push(path.clone());
+                }
                 if control.receipt_signing_key_id.is_some() != receipt_signing_key_file.is_some()
                     || control.receipt_signing_key_id.as_ref().is_some_and(|id| {
                         id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_graphic())
@@ -1981,6 +1986,23 @@ capabilities = ["production", "tbep", "quic", "metrics", "oci-vault"]
         assert_eq!(production.transport.peers.len(), 3);
         assert_eq!(production.release.capabilities.len(), 5);
         assert_eq!(production.databases[0].encryption_provider, KeyProviderIdentity::OciVault);
+    }
+
+    #[test]
+    fn go_placement_writer_fixture_round_trips_through_production_parser() {
+        // Canonical TOML emitted by the placement writer: repeated database
+        // tables, explicit selected residency, and bounded backup destinations
+        // are parsed through the same public ServerConfig entry point.
+        let config = ServerConfig::parse(&production_valid()).expect("Go placement fixture");
+        let production = config.production.expect("production section");
+        let database = &production.databases[0];
+        assert_eq!(database.region, RegionCode::GRU);
+        assert_eq!(database.selected_regions, [RegionCode::GRU].into_iter().collect());
+        let backup = database.backup.as_ref().expect("backup policy");
+        assert_eq!(backup.policy_revision, "backup-policy-1");
+        assert_eq!(backup.destinations.len(), 1);
+        assert_eq!(backup.destinations[0].provider, Provider::Oci);
+        assert_eq!(backup.destinations[0].verified_geography, "br");
     }
 
     #[test]

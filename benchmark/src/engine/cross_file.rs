@@ -15,7 +15,12 @@ pub struct LocalCrossFileReceipt {
     sequence: u64,
     digest: [u8; 32],
     durability: LocalDurability,
+    phase: CrossFileReceiptPhase,
 }
+
+/// Local coordinator phase represented by a receipt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CrossFileReceiptPhase { Prepare, Decision }
 
 impl LocalCrossFileReceipt {
     /// Logical operation identity.
@@ -30,6 +35,9 @@ impl LocalCrossFileReceipt {
     /// Local durability reached by the Engine.
     #[must_use]
     pub const fn durability(&self) -> LocalDurability { self.durability }
+    /// Coordinator phase reached by this receipt.
+    #[must_use]
+    pub const fn phase(&self) -> CrossFileReceiptPhase { self.phase }
 }
 
 /// Immutable identity binding one cross-file operation to its database view.
@@ -125,6 +133,7 @@ impl VisibleFrontier {
 }
 
 fn key(operation: &OperationId) -> String { format!("control:cross-file/v1/{}", operation.as_str()) }
+fn visible_key() -> &'static str { "control:cross-file-visible/v1" }
 fn maintenance_operation(identity: &CrossFileIdentity, phase: &str) -> Result<OperationId, EngineError> {
     let mut input = b"terrascale.cross-file.maintenance.v1".to_vec();
     input.extend_from_slice(identity.operation.as_str().as_bytes());
@@ -187,6 +196,40 @@ fn decode(value: DocumentValue) -> Result<CrossFileRecord, EngineError> {
 }
 
 impl Engine {
+    /// Advances the local DB-visible frontier after every named participant
+    /// has reported its installed snapshot. This method performs no RF2 or
+    /// Global finality claim; those proofs remain cluster-owned.
+    pub fn advance_cross_file_visible(
+        &self,
+        scope: &TenantScope,
+        identity: &CrossFileIdentity,
+        installed: BTreeMap<String, u64>,
+    ) -> Result<VisibleFrontier, EngineError> {
+        if !identity.validate() || identity.tenant != scope.tenant().as_str() || installed != identity.participants {
+            return Err(EngineError::Conflict);
+        }
+        let mut tx = self.begin(scope, self.read_snapshot(scope)?, maintenance_operation(identity, "visible")?)?;
+        let record = tx.read_private_metadata(&key(&identity.operation))?.ok_or(EngineError::Conflict).and_then(decode)?;
+        if record.identity != *identity || record.decision != Some(CrossFileDecision::Committed) {
+            return Err(EngineError::Conflict);
+        }
+        let version = identity.decision_epoch;
+        let frontier = VisibleFrontier { version, participants: installed };
+        if !frontier.validate() { return Err(EngineError::InvalidDocument); }
+        tx.internal_maintenance = true;
+        let fields = frontier
+            .participants
+            .iter()
+            .map(|(name, seq)| {
+                Ok(DocumentValue::Object(BTreeMap::from([
+                    (String::from("name"), DocumentValue::String(name.clone())),
+                    (String::from("sequence"), DocumentValue::Integer(i64::try_from(*seq).map_err(|_| EngineError::InvalidDocument)?)),
+                ])))
+            })
+            .collect::<Result<Vec<_>, EngineError>>()?;
+        tx.put_private_metadata(visible_key(), DocumentValue::Object(BTreeMap::from([(String::from("version"), DocumentValue::Integer(i64::try_from(version).map_err(|_| EngineError::InvalidDocument)?)), (String::from("participants"), DocumentValue::Array(fields))])))?;
+        match tx.commit(LocalDurability::Synced) { CommitOutcome::Committed(_) => Ok(frontier), CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict), CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(EngineError::StorageFailure) }
+    }
     /// Reads a durable cross-file prepare record for one operation.
     pub fn read_cross_file_decision(&self, scope: &TenantScope, operation: &OperationId) -> Result<Option<CrossFileRecord>, EngineError> {
         let read_op = OperationId::try_new(&format!("cross-file-read-{}", blake3::hash(operation.as_str().as_bytes()).to_hex())).map_err(|_| EngineError::InvalidDocument)?;
@@ -207,7 +250,7 @@ impl Engine {
             let receipt = match self.resolve_commit(scope, maintenance)? {
                 super::DurableResolution::Committed(receipt) => LocalCrossFileReceipt {
                     operation: receipt.operation_id().clone(), sequence: receipt.sequence().get(),
-                    digest: identity.write_digest, durability: receipt.durability(),
+                    digest: identity.write_digest, durability: receipt.durability(), phase: CrossFileReceiptPhase::Prepare,
                 },
                 super::DurableResolution::Pending => return Err(EngineError::StorageFailure),
                 super::DurableResolution::Rejected(_) => return Err(EngineError::Conflict),
@@ -216,7 +259,7 @@ impl Engine {
         }
         tx.internal_maintenance = true;
         tx.put_private_metadata(&key(&identity.operation), encode(&CrossFileRecord { identity: identity.clone(), decision: None })?)?;
-        match tx.commit(LocalDurability::Synced) { CommitOutcome::Committed(receipt) => Ok((identity.clone(), LocalCrossFileReceipt { operation: receipt.operation_id().clone(), sequence: receipt.sequence().get(), digest: identity.write_digest, durability: receipt.durability() })), CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict), CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(EngineError::StorageFailure) }
+        match tx.commit(LocalDurability::Synced) { CommitOutcome::Committed(receipt) => Ok((identity.clone(), LocalCrossFileReceipt { operation: receipt.operation_id().clone(), sequence: receipt.sequence().get(), digest: identity.write_digest, durability: receipt.durability(), phase: CrossFileReceiptPhase::Prepare })), CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict), CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(EngineError::StorageFailure) }
     }
 
     /// Durably decides a prepared operation exactly once.
@@ -237,7 +280,7 @@ impl Engine {
             if existing != decision { return Err(EngineError::Conflict); }
             let maintenance = maintenance_operation(identity, "decide")?;
             let receipt = match self.resolve_commit(scope, maintenance)? {
-                super::DurableResolution::Committed(receipt) => LocalCrossFileReceipt { operation: receipt.operation_id().clone(), sequence: receipt.sequence().get(), digest: identity.write_digest, durability: receipt.durability() },
+                super::DurableResolution::Committed(receipt) => LocalCrossFileReceipt { operation: receipt.operation_id().clone(), sequence: receipt.sequence().get(), digest: identity.write_digest, durability: receipt.durability(), phase: CrossFileReceiptPhase::Decision },
                 super::DurableResolution::Pending => return Err(EngineError::StorageFailure),
                 super::DurableResolution::Rejected(_) => return Err(EngineError::Conflict),
             };
@@ -246,6 +289,6 @@ impl Engine {
         tx.internal_maintenance = true;
         let phase = match decision { CrossFileDecision::Committed => "commit", CrossFileDecision::Aborted => "abort" };
         tx.put_private_metadata(&key(&identity.operation), encode_phase(&CrossFileRecord { identity: identity.clone(), decision: Some(decision) }, phase)?)?;
-        match tx.commit(LocalDurability::Synced) { CommitOutcome::Committed(receipt) => Ok((CrossFileRecord { identity: identity.clone(), decision: Some(decision) }, LocalCrossFileReceipt { operation: receipt.operation_id().clone(), sequence: receipt.sequence().get(), digest: identity.write_digest, durability: receipt.durability() })), CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict), CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(EngineError::StorageFailure) }
+        match tx.commit(LocalDurability::Synced) { CommitOutcome::Committed(receipt) => Ok((CrossFileRecord { identity: identity.clone(), decision: Some(decision) }, LocalCrossFileReceipt { operation: receipt.operation_id().clone(), sequence: receipt.sequence().get(), digest: identity.write_digest, durability: receipt.durability(), phase: CrossFileReceiptPhase::Decision })), CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict), CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(EngineError::StorageFailure) }
     }
 }

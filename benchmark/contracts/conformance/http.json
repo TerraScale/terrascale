@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
-  "openapiBlake3": "48d8396861afa5511ec70bf034306285853e1d8314bbfc19b6cf6bd9aa3ea2fe",
-  "openapiSha256": "f66cad1f7a1e1afe501a8800610818310f2345b6bd0a4d5b5a350a8538554d89",
+  "openapiBlake3": "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595",
+  "openapiSha256": "1db95e5dd6044bb35328377551447bdadc691b774122e42706025b22a5916b79",
   "operations": [
     {
       "errors": [
@@ -9178,7 +9178,8 @@
           "mediaType": "application/json",
           "value": {
             "at": 0,
-            "name": "sample"
+            "name": "sample",
+            "operation_id": "sample"
           }
         },
         "headers": {

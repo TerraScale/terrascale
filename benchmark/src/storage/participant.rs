@@ -34,13 +34,42 @@ pub(crate) struct ParticipantPrepare {
 #[derive(Clone, Debug)]
 pub(crate) struct ParticipantPrepareReceipt { pub(crate) identity: ParticipantIdentity, pub(crate) writes: Vec<ParticipantWrite>, pub(crate) metadata: Vec<PrivateMetadataWrite>, pub(crate) schema_envelopes: Vec<SchemaEnvelopeWrite>, pub(crate) replication_publication: Option<ParticipantReplicationPublication> }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ParticipantReplicationPublication {
     pub(crate) origin: String, pub(crate) origin_sequence: u64, pub(crate) hlc: u64,
     pub(crate) commit_ulid: String, pub(crate) context: Vec<u8>,
     pub(crate) records: Vec<crate::engine::ReplicatedRecord>, pub(crate) private_payload: Vec<u8>,
     pub(crate) observations: Vec<(CollectionName, DocumentId)>, pub(crate) schema_observations: Vec<(CollectionName, Option<String>)>,
     pub(crate) conflicts: Vec<(CollectionName, DocumentId, crate::storage::MergeConflictEntry)>,
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    #[test]
+    fn publication_roundtrip_preserves_observations_schema_and_conflict() {
+        let collection = CollectionName::try_new("items").unwrap();
+        let id = DocumentId::try_new("doc-1").unwrap();
+        let publication = ParticipantReplicationPublication {
+            origin: "origin".into(), origin_sequence: 7, hlc: 9, commit_ulid: "commit".into(),
+            context: vec![1, 2], records: vec![crate::engine::ReplicatedRecord {
+                collection: collection.clone(), id: id.clone(), body: DocumentValue::Null,
+                deleted: false, commit_ulid: "record".into(), hlc: 10, origin: "peer".into(),
+                origin_sequence: 8, context: vec![3],
+            }], private_payload: vec![4],
+            observations: vec![(collection.clone(), id.clone())],
+            schema_observations: vec![(collection.clone(), Some("main".into()))],
+            conflicts: vec![(collection.clone(), id.clone(), crate::storage::MergeConflictEntry {
+                loser_commit_ulid: "loser".into(), loser_hlc: 1, loser_origin: "a".into(), loser_deleted: true,
+                winner_commit_ulid: "winner".into(), winner_hlc: 2, winner_origin: "b".into(),
+                policy: "remove-wins".into(), explanation: "winner".into(),
+            })],
+        };
+        let encoded = encode_prepare_payload(&[], &[], &[], Some(&publication)).unwrap();
+        let (_, _, _, decoded) = decode_prepare_payload(&encoded).unwrap();
+        assert_eq!(decoded, Some(publication));
+    }
 }
 
 /// Encodes a bounded participant write using the storage canonical document form.

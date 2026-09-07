@@ -4189,29 +4189,44 @@ async fn restore_backup(
         let Some((principal_tenant, principal_project)) = principal.owner() else {
             return ApiError::forbidden("restore requires a project credential").into_response();
         };
-        if source.record.tenant_id != principal_tenant || source.record.project_id != principal_project {
-            return ApiError::forbidden("restore source is outside credential scope").into_response();
+        if source.record.tenant_id != principal_tenant
+            || source.record.project_id != principal_project
+        {
+            return ApiError::forbidden("restore source is outside credential scope")
+                .into_response();
         }
         let value: serde_json::Value = match serde_json::from_str(&body) {
             Ok(value) => value,
-            Err(_) => return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest).into_response(),
+            Err(_) => {
+                return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
+                    .into_response();
+            }
         };
         let (Some(target), Some(operation)) = (
             value.get("name").and_then(serde_json::Value::as_str),
             value.get("operation_id").and_then(serde_json::Value::as_str),
         ) else {
-            return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest).into_response();
+            return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
+                .into_response();
         };
         let selection = match value.get("at").and_then(serde_json::Value::as_u64) {
-            Some(unix_millis) => serde_json::json!({"kind":"unix_millis","unix_millis":unix_millis}),
+            Some(unix_millis) => {
+                serde_json::json!({"kind":"unix_millis","unix_millis":unix_millis})
+            }
             None => serde_json::json!({"kind":"latest"}),
         };
         let scope = crate::delegated_identity::VerifiedProjectScope {
             tenant_id: source.record.tenant_id.clone(),
             project_id: source.record.project_id.clone(),
         };
-        return match authority.restore(&scope, &source.record.database_id, target, selection, operation).await {
-            Ok(value) => json_response(StatusCode::ACCEPTED, serde_json::to_string(&value).unwrap_or_default()),
+        return match authority
+            .restore(&scope, &source.record.database_id, target, selection, operation)
+            .await
+        {
+            Ok(value) => json_response(
+                StatusCode::ACCEPTED,
+                serde_json::to_string(&value).unwrap_or_default(),
+            ),
             Err(error) => provisioning_error(error).into_response(),
         };
     }
@@ -5175,6 +5190,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header("authorization", auth)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"live","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )

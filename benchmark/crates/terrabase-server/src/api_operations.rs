@@ -141,6 +141,29 @@ pub(super) async fn list_operations(
     let Some(Extension(scope)) = scope else {
         return ApiError::control_unavailable().into_response();
     };
+    // A member cursor is self-authenticating and takes precedence over the
+    // authority cursor once the provisioning phase has been exhausted.
+    if let (Some(exports), Some(token)) = (&state.exports, query.after.as_deref()) {
+        if DiscoveryCursor::open(
+            exports,
+            token,
+            &scope.tenant_id,
+            &scope.project_id,
+            member_id(&state),
+        )
+        .is_ok()
+        {
+            return match list_member_operations(
+                &state,
+                &scope,
+                Some(token),
+                query.limit.unwrap_or(50),
+            ) {
+                Ok(page) => crate::export_api::json_response(StatusCode::OK, &page),
+                Err(_) => ApiError::control_unavailable().into_response(),
+            };
+        }
+    }
     let Some(authority) = &state.provisioning else {
         return match list_member_operations(
             &state,
@@ -154,7 +177,23 @@ pub(super) async fn list_operations(
     };
     match authority.list_operations(&scope, query.after.as_deref(), query.limit.unwrap_or(50)).await
     {
-        Ok(page) => crate::export_api::json_response(StatusCode::OK, &page),
+        Ok(mut page) => {
+            if page.operations.len() < query.limit.unwrap_or(50) {
+                if let Ok(local) = list_member_operations(
+                    &state,
+                    &scope,
+                    None,
+                    query.limit.unwrap_or(50) - page.operations.len(),
+                ) {
+                    page.operations.extend(local.operations);
+                    page.next_cursor = local.next_cursor;
+                    page.covered_kinds.extend(local.covered_kinds);
+                    page.covered_kinds.sort();
+                    page.covered_kinds.dedup();
+                }
+            }
+            crate::export_api::json_response(StatusCode::OK, &page)
+        }
         Err(error) => super::provisioning_error(error).into_response(),
     }
 }
@@ -330,6 +369,53 @@ fn list_member_operations(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn owner_states_use_public_values_and_missing_facts_are_omitted() {
+        assert_eq!(super::export_state(&crate::export_api::JobStatus::Accepted), "queued");
+        assert_eq!(super::export_state(&crate::export_api::JobStatus::Complete), "succeeded");
+        let summary = super::OperationSummary {
+            operation_id: "job".into(),
+            kind: "export".into(),
+            database_id: "db".into(),
+            name: "db".into(),
+            state: "queued".into(),
+            stage: "documents".into(),
+            created_at: None,
+            revision: None,
+            cancellable: false,
+            cancellation_reason: String::new(),
+        };
+        let json = serde_json::to_value(summary).unwrap();
+        assert!(json.get("created_at").is_none());
+        assert!(json.get("revision").is_none());
+    }
+
+    #[test]
+    fn discovery_cursor_rejects_foreign_scope_and_member() {
+        let root = std::env::temp_dir().join(format!("operation-cursor-{}", std::process::id()));
+        let runtime =
+            crate::export_api::ExportRuntime::local(&root, terrabase::regions::RegionCode::GRU)
+                .unwrap();
+        let cursor = super::DiscoveryCursor {
+            version: 1,
+            phase: "export".into(),
+            member_id: "member-a".into(),
+            db_after: "db-a".into(),
+            current_db: Some("db-a".into()),
+            owner_after: "job-a".into(),
+        };
+        let token = cursor.seal(&runtime, "tenant-a", "project-a", "member-a").unwrap();
+        assert!(
+            super::DiscoveryCursor::open(&runtime, &token, "tenant-b", "project-a", "member-a")
+                .is_err()
+        );
+        assert!(
+            super::DiscoveryCursor::open(&runtime, &token, "tenant-a", "project-a", "member-b")
+                .is_err()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn discovery_is_project_administration_and_has_a_typed_paged_contract() {
