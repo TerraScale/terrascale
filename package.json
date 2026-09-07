@@ -110,5 +110,8 @@
       "last 1 Edge major version"
     ]
   },
-  "packageManager": "npm@11.18.0"
+  "packageManager": "npm@11.18.0",
+  "dependencies": {
+    "@terrascale/sdk": "file:../../../../../tmp/terrascale-sdk-consumer.cdb0S7/pack/terrascale-sdk-0.3.0.tgz"
+  }
 }
