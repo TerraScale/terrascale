@@ -14,11 +14,11 @@ use crate::shard_split::{
 };
 
 use super::{
+    Engine, EngineError,
     shard_catchup::ShardJournalCatchUp,
     shard_split::{
         RouteCatalogError, ScopedShardEngine, ScopedShardRangeSource, ScopedShardRangeTarget,
     },
-    Engine, EngineError,
 };
 use crate::types::TenantScope;
 
@@ -166,6 +166,19 @@ where
         copy_limit: usize,
         catchup_limit: u32,
     ) -> Result<SplitStep, SplitSupervisorError<O::Error>> {
+        // A committed route survives publication, verification, and cleanup
+        // failures. Finish that operation before touching the old copy/tail
+        // workers, including when retrying without a process restart.
+        if self.runtime.split().is_some_and(|split| {
+            matches!(split.phase(), SplitPhase::CutOver | SplitPhase::Complete)
+        }) {
+            self.runtime.complete().map_err(SplitSupervisorError::Runtime)?;
+            self.copier = None;
+            self.catchup = None;
+            return Ok(SplitStep::Complete {
+                generation: self.runtime.router().table().generation(),
+            });
+        }
         if let Some(copier) = &mut self.copier {
             let mut target = ScopedShardRangeTarget::open(Arc::clone(&self.target), &self.scope);
             if !copier
@@ -212,15 +225,7 @@ where
             self.catchup = None;
             return Ok(SplitStep::Complete { generation });
         }
-        let generation = self
-            .runtime
-            .split()
-            .and_then(|split| {
-                (split.phase() == SplitPhase::Complete)
-                    .then(|| self.runtime.router().table().generation())
-            })
-            .ok_or(SplitSupervisorError::MissingRoute)?;
-        Ok(SplitStep::Complete { generation })
+        Err(SplitSupervisorError::MissingRoute)
     }
 
     fn source_boundary(&self) -> Result<u64, SplitSupervisorError<O::Error>> {

@@ -136,25 +136,12 @@ pub fn decode(
     format: TransferFormat,
     max_record: usize,
 ) -> Result<Vec<ImportRecord>, CodecError> {
-    if max_record == 0 {
-        return Err(CodecError::Oversized);
-    }
-    match format {
-        TransferFormat::Native | TransferFormat::Jsonl | TransferFormat::DynamoJson => input
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
-            .map(|line| decode_one(line, format, max_record))
-            .collect(),
-        TransferFormat::MongoJson | TransferFormat::CosmosJson => {
-            if input.len() > max_record.saturating_mul(2_048) {
-                return Err(CodecError::Oversized);
-            }
-            let values: Vec<Value> =
-                serde_json::from_slice(input).map_err(|_| CodecError::Malformed)?;
-            values.into_iter().map(|value| decode_value(value, format, max_record)).collect()
-        }
-        TransferFormat::Csv => decode_csv(input, max_record),
-    }
+    let mut records = Vec::new();
+    decode_reader(input, format, max_record, |_, record| {
+        records.push(record);
+        Ok(())
+    })?;
+    Ok(records)
 }
 
 /// Incrementally decodes newline framed imports. The callback is invoked
@@ -165,7 +152,7 @@ pub fn decode_jsonl_reader<R: Read, F>(
     input: R,
     format: TransferFormat,
     max_record: usize,
-    mut consume: F,
+    consume: F,
 ) -> Result<(), CodecError>
 where
     F: FnMut(u64, ImportRecord) -> io::Result<()>,
@@ -240,7 +227,7 @@ fn next_byte<R: Read>(input: &mut R, offset: &mut u64) -> Result<Option<u8>, Cod
     Ok(Some(byte[0]))
 }
 
-fn decode_csv_reader<R: Read, F: FnMut(u64, ImportRecord) -> io::Result<()>>(
+fn decode_csv_reader<R: BufRead, F: FnMut(u64, ImportRecord) -> io::Result<()>>(
     input: &mut R,
     max_record: usize,
     consume: &mut F,
@@ -368,7 +355,7 @@ fn parse_csv_row(row: &[u8]) -> Result<Vec<String>, CodecError> {
     Ok(fields)
 }
 
-fn decode_json_array_reader<R: Read, F: FnMut(u64, ImportRecord) -> io::Result<()>>(
+fn decode_json_array_reader<R: BufRead, F: FnMut(u64, ImportRecord) -> io::Result<()>>(
     input: &mut R,
     format: TransferFormat,
     max_record: usize,
@@ -435,7 +422,6 @@ fn decode_json_array_reader<R: Read, F: FnMut(u64, ImportRecord) -> io::Result<(
         match next_byte(input, &mut offset)? {
             Some(b',') => {
                 consume(offset, record).map_err(|_| CodecError::Malformed)?;
-                after_comma = true;
             }
             Some(b']') => {
                 consume(offset, record).map_err(|_| CodecError::Malformed)?;
@@ -573,57 +559,6 @@ fn decode_value(
         id,
         value,
     })
-}
-
-fn decode_csv(input: &[u8], max: usize) -> Result<Vec<ImportRecord>, CodecError> {
-    let mut rows = csv_rows(input, max)?;
-    let header = rows.next().ok_or(CodecError::Malformed)?;
-    if header.len() != 3 || header[0] != "collection" || header[1] != "id" || header[2] != "value" {
-        return Err(CodecError::Malformed);
-    }
-    rows.map(|row| {
-        if row.len() != 3 {
-            return Err(CodecError::Malformed);
-        }
-        let value = serde_json::from_str::<Value>(&row[2]).map_err(|_| CodecError::Malformed)?;
-        let value = serde_json::to_vec(&value).map_err(|_| CodecError::Malformed)?;
-        if value.len() > max {
-            return Err(CodecError::Oversized);
-        }
-        Ok(ImportRecord { collection: row[0].clone(), id: row[1].clone(), value })
-    })
-    .collect()
-}
-
-fn csv_rows(
-    input: &[u8],
-    max: usize,
-) -> Result<impl Iterator<Item = Vec<String>> + '_, CodecError> {
-    if input.len() > max.saturating_mul(2_048) {
-        return Err(CodecError::Oversized);
-    }
-    let text = std::str::from_utf8(input).map_err(|_| CodecError::Utf8)?;
-    Ok(text.lines().map(|line| {
-        let mut fields = Vec::new();
-        let mut field = String::new();
-        let mut quoted = false;
-        let mut chars = line.chars().peekable();
-        while let Some(ch) = chars.next() {
-            match ch {
-                '"' if quoted && chars.peek() == Some(&'"') => {
-                    field.push('"');
-                    chars.next();
-                }
-                '"' => quoted = !quoted,
-                ',' if !quoted => {
-                    fields.push(std::mem::take(&mut field));
-                }
-                _ => field.push(ch),
-            }
-        }
-        fields.push(field);
-        fields
-    }))
 }
 
 fn csv_field(out: &mut Vec<u8>, field: &str) {
@@ -817,7 +752,8 @@ mod tests {
 
     #[test]
     fn streams_multiline_csv_and_json_arrays_with_offsets() {
-        let csv = b"collection,id,value\n\"users\",\"a\",\"{\"\"note\"\":\"\"line1\nline2\"\"}\"\n";
+        let csv =
+            b"collection,id,value\n\"users\",\"a\",\"{\n\"\"note\"\":\"\"line1\\nline2\"\"}\"\n";
         let mut rows = Vec::new();
         decode_reader(&csv[..], TransferFormat::Csv, 128, |offset, record| {
             rows.push((offset, record));
@@ -844,6 +780,39 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert!(ids[0].0 < ids[1].0 && ids[1].0 == json.len() as u64);
         assert_eq!(ids.into_iter().map(|(_, id)| id).collect::<Vec<_>>(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn buffered_and_streaming_decoders_reject_malformed_formats() {
+        let cases: &[(TransferFormat, &[u8])] = &[
+            (TransferFormat::Csv, b"collection,id,value\nusers,a,\"{}\n"),
+            (TransferFormat::Csv, b"collection,id,value\nusers,a,\"{}\"suffix\n"),
+            (TransferFormat::Csv, b"collection,id,value\nusers,a,{}extra\n"),
+            (TransferFormat::MongoJson, br#"[{"_id":"a","value":{}},]"#),
+            (TransferFormat::CosmosJson, br#"[{"id":"a","value":{}}]extra"#),
+            (TransferFormat::Jsonl, br#"{"id":"a","value":{}}extra"#),
+            (TransferFormat::DynamoJson, br#"{"Item":{}}"#),
+        ];
+        for &(format, input) in cases {
+            assert_eq!(decode(input, format, 1024), Err(CodecError::Malformed), "{format:?}");
+            assert_eq!(
+                decode_reader(input, format, 1024, |_, _| Ok(())),
+                Err(CodecError::Malformed),
+                "{format:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn buffered_csv_uses_bounded_multiline_record_decoder() {
+        let records = vec![ImportRecord {
+            collection: "multi\nline".into(),
+            id: "a".into(),
+            value: br#"{"note":"escaped \"quote\""}"#.to_vec(),
+        }];
+        let encoded = encode(&records, TransferFormat::Csv).unwrap();
+        assert_eq!(decode(&encoded, TransferFormat::Csv, 1024).unwrap(), records);
+        assert_eq!(decode(&encoded, TransferFormat::Csv, 32), Err(CodecError::Oversized));
     }
 
     #[test]

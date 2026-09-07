@@ -933,6 +933,22 @@ mod tests {
         }
     }
 
+    struct ResolvedTarget<'a>(&'a UncertainTarget);
+    impl ImportWriteTarget for ResolvedTarget<'_> {
+        fn resolve_import_batch(&self, _: &str, records: u64) -> Result<ImportCommit, String> {
+            Ok(ImportCommit::Committed { records })
+        }
+
+        fn commit_import_batch(
+            &self,
+            operation: &str,
+            database: &str,
+            records: &[ImportRecord],
+        ) -> Result<ImportCommit, String> {
+            self.0.commit_import_batch(operation, database, records)
+        }
+    }
+
     #[test]
     fn unknown_resume_resolves_before_any_second_write() {
         let (registry, _member, records, root) = crate::admitted_databases::tests::fixture();
@@ -994,5 +1010,30 @@ mod tests {
         assert_eq!(held.state, "unknown");
         assert_eq!((held.cursor, held.committed_records), (0, 0));
         assert!(held.pending_operation.is_some());
+
+        // Once the durable engine receipt becomes available, recovery advances
+        // the original checkpoint without submitting or billing the batch again.
+        assert!(runtime.store.claim(&job.operation_id).unwrap());
+        let current = runtime.store.get(&job.operation_id).unwrap().unwrap();
+        let reader = ImportInputReader::open(
+            current.input_path.as_ref().unwrap(),
+            &current.operation_id,
+            cipher(host, &current.key_version).unwrap(),
+        )
+        .unwrap();
+        let completed = execute_import(
+            &runtime.store,
+            &current,
+            reader,
+            &ResolvedTarget(&target),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(completed.operation_id, job.operation_id);
+        assert_eq!(completed.state, "completed");
+        assert_eq!(completed.committed_records, 1);
+        assert_eq!(completed.cursor, completed.input_length.unwrap());
+        assert!(completed.pending_operation.is_none());
+        assert_eq!(target.0.load(Ordering::SeqCst), 1);
     }
 }

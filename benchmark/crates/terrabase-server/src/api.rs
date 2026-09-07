@@ -3528,10 +3528,21 @@ async fn put_document(
     headers: axum::http::HeaderMap,
     body: String,
 ) -> Response {
+    let trace = std::env::var_os("TERRABASE_TRACE_PUT").is_some();
+    let t0 = std::time::Instant::now();
+    let mut t = t0;
+    let mark = |trace: bool, t: &mut std::time::Instant, stage: &str| {
+        if trace {
+            let now = std::time::Instant::now();
+            eprintln!("PUTTRACE {stage}: {:?}", now - *t);
+            *t = now;
+        }
+    };
     let host = match document_host(&state, &name) {
         Ok(host) => host,
         Err(error) => return error.into_response(),
     };
+    mark(trace, &mut t, "document_host");
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
         return ApiError::control_unavailable().into_response();
@@ -3563,9 +3574,11 @@ async fn put_document(
     if let Err(error) = session.load(document.collection(), document.id()) {
         return session_error(error).into_response();
     }
+    mark(trace, &mut t, "session_open_load");
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::storage_failure().into_response();
     };
+    mark(trace, &mut t, "read_snapshot");
     let operation = match write_operation(&headers, "api-put") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
@@ -3574,6 +3587,7 @@ async fn put_document(
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
+    mark(trace, &mut t, "durability_prepare");
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
         return ApiError::storage_failure().into_response();
     };
@@ -3643,6 +3657,19 @@ async fn put_document(
             if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
                 response.headers_mut().insert(axum::http::header::ETAG, etag);
             }
+    mark(trace, &mut t, "staging");
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(receipt) => {
+            mark(trace, &mut t, "commit");
+            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
+                return error.into_response();
+            }
+            mark(trace, &mut t, "durability_confirm");
+            let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
+                Ok(revision) => revision,
+                Err(error) => return error.into_response(),
+            };
+            mark(trace, &mut t, "live_revision");
             let token = match refresh_session(&mut session, &probe.0, &probe.1) {
                 Ok(token) => token,
                 Err(error) => return error.into_response(),

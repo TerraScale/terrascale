@@ -104,3 +104,102 @@ fn split_cutover_refuses_drain_ahead_of_target_without_changing_route() {
     drop(engine);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn supervisor_resumes_committed_route_and_retries_frontier_publication() {
+    use super::shard_supervisor::{ShardSplitSupervisor, SplitStep, SplitSupervisorError};
+    use crate::shard_split::{ShardRouter, SplitOrchestratorAdapter, SplitRuntimeError};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[derive(Clone)]
+    struct Orchestrator(Arc<AtomicUsize>);
+    impl SplitOrchestratorAdapter for Orchestrator {
+        type Error = ();
+        fn validate_split_placement(&mut self, _: u128, _: u64) -> Result<(), ()> {
+            Ok(())
+        }
+        fn publish_split_frontier(&mut self, _: &SplitContext, generation: u64) -> Result<(), ()> {
+            assert_eq!(generation, 1);
+            if self.0.fetch_add(1, Ordering::SeqCst) == 0 { Err(()) } else { Ok(()) }
+        }
+    }
+
+    let (dir, engine, tenant) = super::tests::open_owned_engine("split-resume-publication");
+    let engine = Arc::new(engine);
+    let scope = engine.scope_for(&tenant);
+    let incarnation = u128::from_be_bytes(engine.database_id().as_bytes().to_owned());
+    let context = SplitContext::new(81, incarnation, 1, 2, 1, 0);
+    let mut split = ShardSplit::plan_with_context(None, b"m".to_vec(), context).unwrap();
+    engine
+        .install_shard_route_catalog(
+            &scope,
+            incarnation,
+            None,
+            &encode_catalog(&RouteCatalog { table: RouteTable::single(1), generation: 0 }).unwrap(),
+            &split.durable_state(),
+            super::tests::operation("resume-route-init"),
+        )
+        .unwrap();
+    split.begin_backfill().unwrap();
+    let mut adapter =
+        super::shard_split::ScopedShardEngine::new(engine.clone(), scope.clone()).unwrap();
+    adapter.save(&split.durable_state()).unwrap();
+    adapter.create_split_target(&context).unwrap();
+    let through = engine.published_sequence().unwrap().get();
+    split.begin_catch_up(through).unwrap();
+    split.note_target_applied(through);
+    split.note_acked(through);
+    let mut fence = WriterFence::new();
+    fence.begin_drain(through).unwrap();
+    let permit = fence.try_fence(through).unwrap();
+    engine
+        .install_shard_split_route(
+            &scope,
+            &CutoverContext {
+                split: context,
+                route_generation: 0,
+                drained_through: through,
+                permit,
+            },
+            &split.durable_state(),
+            super::tests::operation("resume-route-cutover"),
+        )
+        .unwrap();
+    // The atomic route commit persisted CutOver. Simulate losing the process
+    // before any frontier publication or completion work ran.
+    assert_eq!(adapter.load().unwrap().unwrap().phase(), SplitPhase::CutOver);
+    let publications = Arc::new(AtomicUsize::new(0));
+    let orchestrator = Orchestrator(publications.clone());
+    let mut supervisor = ShardSplitSupervisor::resume(
+        engine.clone(),
+        scope.clone(),
+        orchestrator.clone(),
+        ShardRouter::single(1),
+    )
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        supervisor.step(1, 1),
+        Err(SplitSupervisorError::Runtime(SplitRuntimeError::Publication(())))
+    ));
+    assert_eq!(adapter.load().unwrap().unwrap().phase(), SplitPhase::CutOver);
+    assert_eq!(supervisor.step(1, 1), Ok(SplitStep::Complete { generation: 1 }));
+    assert_eq!(adapter.load().unwrap().unwrap().phase(), SplitPhase::Complete);
+    assert_eq!(publications.load(Ordering::SeqCst), 2);
+    drop(supervisor);
+    // Complete is persisted before source cleanup. Restart must replay the
+    // finalization path, rather than silently declaring the worker finished.
+    let mut supervisor =
+        ShardSplitSupervisor::resume(engine.clone(), scope, orchestrator, ShardRouter::single(1))
+            .unwrap()
+            .unwrap();
+    assert_eq!(supervisor.step(1, 1), Ok(SplitStep::Complete { generation: 1 }));
+    assert_eq!(publications.load(Ordering::SeqCst), 3);
+    drop(supervisor);
+    drop(adapter);
+    drop(engine);
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -991,15 +991,6 @@ async fn sync_stream(
     let root_due = chain
         .first()
         .is_none_or(|root| now.saturating_sub(root.captured_unix_millis()) >= 86_400_000);
-    let destinations_acknowledge_points = destinations_acknowledge_points(stream, &points, limits)?;
-    if stream.health.protected
-        && stream.health.protected_sequence == high_water.get()
-        && base == Some(high_water)
-        && !root_due
-        && destinations_acknowledge_points
-    {
-        return Ok(());
-    }
     let mut captured_boundary = base.unwrap_or_default();
     let mut capture_refusal = None;
     if base != Some(high_water) || root_due {
@@ -1076,7 +1067,15 @@ async fn upload_destinations(
             let name =
                 point.file_name().and_then(|name| name.to_str()).ok_or(FleetError::Capture)?;
             if acknowledged.contains(name) {
-                continue;
+                if destination.verify_point(point, &format!("{identity}/{name}")).await.is_ok() {
+                    continue;
+                }
+                // Report the failed readback now. The next tick repairs this
+                // exact sealed point instead of trusting the stale receipt.
+                acknowledged.remove(name);
+                persist_upload_journal(&journal, &stream.config.policy_revision, &acknowledged)?;
+                succeeded = false;
+                break;
             }
             if destination.upload_point(point, &format!("{identity}/{name}")).await.is_err() {
                 succeeded = false;
@@ -1089,32 +1088,6 @@ async fn upload_destinations(
         failed |= !succeeded;
     }
     Ok(failed)
-}
-
-fn destinations_acknowledge_points(
-    stream: &Stream,
-    points: &[PathBuf],
-    limits: FleetLimits,
-) -> Result<bool, FleetError> {
-    for (provider, _) in &stream.config.destinations {
-        let journal = stream.config.staging.join(match provider {
-            Provider::Oci => "uploaded-oci",
-            Provider::Tigris => "uploaded-tigris",
-        });
-        let acknowledged = read_upload_journal(
-            &journal,
-            &stream.config.policy_revision,
-            limits.points_per_stream,
-        )?;
-        for point in points {
-            let name =
-                point.file_name().and_then(|name| name.to_str()).ok_or(FleetError::Capture)?;
-            if !acknowledged.contains(name) {
-                return Ok(false);
-            }
-        }
-    }
-    Ok(true)
 }
 
 async fn enforce_retention(
@@ -1367,6 +1340,80 @@ mod tests {
             )
             .unwrap(),
         )))
+    }
+
+    #[tokio::test]
+    async fn acknowledged_provider_loss_is_detected_after_restart_and_repaired() {
+        use object_store::ObjectStore;
+        let (_, engine) = open_engine("fleet-readback-source");
+        let engine = Arc::new(engine);
+        let key_provider = keys(&engine);
+        let staging = location("fleet-readback-staging");
+        let store = Arc::new(object_store::memory::InMemory::new());
+        let destination = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            store.clone(),
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let second = Arc::new(ObjectDestination::for_test(
+            Provider::Tigris,
+            Arc::new(object_store::memory::InMemory::new()),
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let config = || StreamConfig {
+            engine: engine.clone(),
+            keys: key_provider.clone(),
+            destinations: vec![(Provider::Oci, destination.clone()), (Provider::Tigris, second.clone())],
+            policy_revision: "policy-1".into(),
+            retention_days: 1,
+            staging: staging.clone(),
+            placement: PlacementLock::br_only(),
+        };
+        let limits = FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 8,
+        };
+        let mut fleet = NativeBackupFleet::new(limits).unwrap();
+        fleet.attach(config()).unwrap();
+        committed(put(
+            &engine,
+            engine.database_owner().tenant().to_text().as_str(),
+            "op-readback", "doc-readback", "users", text("one"), LocalDurability::Synced,
+        ));
+        assert!(fleet.sync_once().await.is_empty());
+        let identity = engine.database_id().to_string();
+        let point = fleet.retained_points(&identity).unwrap().pop().unwrap();
+        committed(put(
+            &engine,
+            engine.database_owner().tenant().to_text().as_str(),
+            "op-readback-2", "doc-readback-2", "users", text("two"), LocalDurability::Synced,
+        ));
+        let latest = fleet.capture_snapshot(&identity).await.unwrap();
+        assert!(latest.base_sequence().is_some());
+        assert_ne!(latest.identity(), point.identity());
+        let prefix = format!("{identity}/rp-{}", point.identity());
+        destination.delete_point(&prefix).await.unwrap();
+        drop(fleet);
+        let mut fleet = NativeBackupFleet::new(limits).unwrap();
+        fleet.attach(config()).unwrap();
+        assert_eq!(fleet.sync_once().await, vec![(identity.clone(), FleetError::Upload)]);
+        assert!(!fleet.observe_protection(&identity).unwrap().protected);
+        assert_eq!(fleet.health(&identity).unwrap().protected_sequence, 0);
+        assert_eq!(fleet.health(&identity).unwrap().providers,
+            vec![(Provider::Oci, false), (Provider::Tigris, true)]);
+        fleet.capture_snapshot(&identity).await.unwrap();
+        assert!(fleet.health(&identity).unwrap().protected);
+        let manifest = object_store::path::Path::from(format!(
+            "{prefix}/{}", super::super::manifest::ENCRYPTED_MANIFEST_FILE
+        ));
+        store.put(&manifest, b"corrupt".to_vec().into()).await.unwrap();
+        assert_eq!(fleet.capture_snapshot(&identity).await.unwrap_err(), FleetError::Upload);
+        assert!(!fleet.observe_protection(&identity).unwrap().protected);
+        fleet.capture_snapshot(&identity).await.unwrap();
+        assert!(fleet.health(&identity).unwrap().protected);
     }
 
     #[tokio::test]
@@ -1671,6 +1718,14 @@ mod tests {
             .upload_point(&staging.join(&root_name), &format!("{identity}/{root_name}"))
             .await
             .unwrap();
+        enforce_retention_at(
+            &identity,
+            fleet.streams.get(&identity).unwrap(),
+            limits,
+            root.manifest().captured_unix_millis() + 86_400_001,
+        )
+        .await
+        .unwrap();
         assert_eq!(point_paths(staging, 8).unwrap().len(), 1);
         for provider in [Provider::Oci, Provider::Tigris] {
             let (target_owner, target_config) =

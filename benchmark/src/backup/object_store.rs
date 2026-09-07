@@ -364,6 +364,30 @@ impl ObjectDestination {
         self.verify_remote(&key, &entry).await
     }
 
+    /// Verifies an existing remote point against the local sealed artifacts.
+    /// Upload acknowledgements are not evidence that a provider still holds data.
+    /// This streams each remote artifact without adding local staging bytes.
+    ///
+    /// # Errors
+    /// Refuses missing, corrupted, oversized, or malformed point artifacts.
+    pub async fn verify_point(&self, point: &Path, prefix: &str) -> Result<(), TransferError> {
+        validate_prefix(prefix)?;
+        let entries = self.scan_point(point)?;
+        for entry in &entries {
+            self.verify_remote(&object_key(prefix, &entry.name)?, entry).await?;
+        }
+        let index = render_index(&entries);
+        self.verify_remote(
+            &object_key(prefix, INDEX)?,
+            &Entry {
+                name: INDEX.into(),
+                length: index.len() as u64,
+                digest: blake3::hash(index.as_bytes()),
+            },
+        )
+        .await
+    }
+
     /// Deletes one retired recovery point after the caller validates retention.
     ///
     /// Invalidates its publication index and encrypted manifest before deleting

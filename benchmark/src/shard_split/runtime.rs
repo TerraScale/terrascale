@@ -43,6 +43,7 @@ where
     router: ShardRouter,
     split: Option<ShardSplit>,
     committed_generation: Option<u64>,
+    frontier_published: bool,
 }
 
 impl<E, O> SplitRuntime<E, O>
@@ -54,7 +55,14 @@ where
     /// member startup. The supplied table is immutable until cutover.
     #[must_use]
     pub fn new(engine: E, orchestrator: O, router: ShardRouter) -> Self {
-        Self { engine, orchestrator, router, split: None, committed_generation: None }
+        Self {
+            engine,
+            orchestrator,
+            router,
+            split: None,
+            committed_generation: None,
+            frontier_published: false,
+        }
     }
 
     /// Returns the current serving router.
@@ -99,6 +107,7 @@ where
         self.engine.create_split_target(&context).map_err(SplitRuntimeError::Data)?;
         self.split = Some(split);
         self.committed_generation = None;
+        self.frontier_published = false;
         Ok(())
     }
 
@@ -115,6 +124,7 @@ where
             O::Error,
         >,
     > {
+        self.frontier_published = false;
         let Some(state) = self.engine.load().map_err(SplitRuntimeError::State)? else {
             self.split = None;
             return Ok(false);
@@ -237,6 +247,7 @@ where
             self.orchestrator
                 .publish_split_frontier(&context, recovered.generation)
                 .map_err(SplitRuntimeError::Publication)?;
+            self.frontier_published = true;
             return Ok(recovered.generation);
         }
         let generation = self
@@ -274,6 +285,7 @@ where
         self.orchestrator
             .publish_split_frontier(&context, generation)
             .map_err(SplitRuntimeError::Publication)?;
+        self.frontier_published = true;
         Ok(generation)
     }
 
@@ -289,12 +301,23 @@ where
             O::Error,
         >,
     > {
-        if self.committed_generation.is_none() {
-            return Err(SplitRuntimeError::MissingCommittedGeneration);
-        }
+        let generation =
+            self.committed_generation.ok_or(SplitRuntimeError::MissingCommittedGeneration)?;
         let split =
             self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
         let context = split.context().ok_or(SplitRuntimeError::MissingContext)?;
+        if !matches!(split.phase(), SplitPhase::CutOver | SplitPhase::Complete) {
+            return Err(SplitRuntimeError::WrongPhase(split.phase()));
+        }
+        // Publication may have failed after the durable route commit, or the
+        // process may have restarted before its response. Replay it before
+        // verification and cleanup; the orchestrator must accept that retry.
+        if !self.frontier_published {
+            self.orchestrator
+                .publish_split_frontier(&context, generation)
+                .map_err(SplitRuntimeError::Publication)?;
+            self.frontier_published = true;
+        }
         self.engine.verify_split_target(&context).map_err(SplitRuntimeError::Data)?;
         split.note_verified().map_err(|_| SplitRuntimeError::WrongPhase(split.phase()))?;
         self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)?;
