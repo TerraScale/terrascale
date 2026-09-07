@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
 using TerraScale.DotNet.Generated;
 
@@ -29,7 +28,7 @@ public sealed class TerraScaleManagementClientTests
                 .Single(value => value.GetProperty("operationId").GetString() == operationId);
             foreach (var response in operation.GetProperty("responses").EnumerateArray())
             {
-                using var handler = new CorpusHandler(response, operationId);
+                using var handler = new CorpusHandler(response);
                 using var http = new HttpClient(handler);
                 var client = Client(http);
                 var result = await Invoke(client, operationId, operation);
@@ -59,7 +58,7 @@ public sealed class TerraScaleManagementClientTests
             }
             foreach (var response in operation.GetProperty("errors").EnumerateArray())
             {
-                using var handler = new CorpusHandler(response, operationId);
+                using var handler = new CorpusHandler(response);
                 using var http = new HttpClient(handler);
                 var client = Client(http);
                 var error = await Assert.ThrowsAsync<TerraScaleApiException>(() => Invoke(client, operationId, operation));
@@ -150,7 +149,7 @@ public sealed class TerraScaleManagementClientTests
         ApiKey = "test-key",
     });
 
-    private sealed class CorpusHandler(JsonElement fixture, string operationId) : HttpMessageHandler
+    private sealed class CorpusHandler(JsonElement fixture) : HttpMessageHandler
     {
         public int Attempts { get; private set; }
         public string? Method { get; private set; }
@@ -170,17 +169,7 @@ public sealed class TerraScaleManagementClientTests
             if (fixture.TryGetProperty("body", out var body) && body.ValueKind != JsonValueKind.Null)
             {
                 var media = fixture.GetProperty("mediaType").GetString()!;
-                var responseBody = body.GetRawText();
-                if (operationId == "get_provisioning_operation" && response.StatusCode == HttpStatusCode.OK)
-                {
-                    var operation = JsonNode.Parse(responseBody)!.AsObject();
-                    operation["kind"] ??= "database_create";
-                    operation["stage"] ??= "accepted";
-                    operation["cancellable"] ??= false;
-                    operation["cancellation_reason"] ??= "";
-                    responseBody = operation.ToJsonString();
-                }
-                response.Content = new StringContent(media == "application/octet-stream" ? body.GetString()! : responseBody, Encoding.UTF8, media);
+                response.Content = new StringContent(media == "application/octet-stream" ? body.GetString()! : body.GetRawText(), Encoding.UTF8, media);
                 if (media == "application/octet-stream")
                 {
                     response.Headers.Add("X-TerraScale-Artifact-Length", response.Content.Headers.ContentLength!.Value.ToString());
