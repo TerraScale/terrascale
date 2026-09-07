@@ -519,6 +519,7 @@ start_dashboard() {
   # API calls go to the local proxy, the public URL is the local origin.
   # NODE_ENV=development selects the dashboard's own local-dev mode (dev
   # shim, workspace repository, insecure-cookie + local-portal paths); the
+  # Owning outcome: ts-dashboard local-dev behavior — dev-shim paths stay dev-only.
   # production guards (auth terms version, 32-char session secret) stay on
   # for real deploys via wrangler.jsonc and orchestrator secrets.
   #

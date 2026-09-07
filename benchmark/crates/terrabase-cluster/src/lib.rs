@@ -6,6 +6,8 @@
 //! What remains is the production bootstrap the server uses: member
 //! placement, routing, and admission over the real member catalog.
 
+/// Cluster-owned RF2 qualification for DB-local cross-file receipts.
+pub mod cross_file;
 pub mod production;
 /// Persistent production physical replication sessions and restart handshake.
 pub mod wal_driver;
@@ -19,5 +21,3 @@ pub mod wal_route;
 pub mod wal_snapshot;
 /// Database-scoped physical WAL wire protocol.
 pub mod wal_wire;
-/// Cluster-owned RF2 qualification for DB-local cross-file receipts.
-pub mod cross_file;

@@ -45,7 +45,7 @@
     {
       "path": "proto/terrabase/v1/engine.proto",
       "mediaType": "text/x-protobuf",
-      "blake3": "afc89d35d212332a4ae60ec1beb60c8589cdfe5b80948a3c4bb67188fb3cb643"
+      "blake3": "eddd647a5824625e069bbc43f64aff2f685f50ca79613e13bc3e643428925fe2"
     },
     {
       "path": "proto/terrabase/v1/family.proto",

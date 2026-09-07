@@ -24,7 +24,9 @@ pub struct LocalCrossFileReceipt {
 /// Local coordinator phase represented by a receipt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CrossFileReceiptPhase {
+    /// Coordinator prepared the decision without committing it.
     Prepare,
+    /// Coordinator reached a committed decision.
     Decision,
 }
 

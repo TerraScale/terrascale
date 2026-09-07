@@ -4056,6 +4056,7 @@ fn standalone_usage_fact_is_valid(fact: &UsageFact) -> bool {
 
 /// Maps a minting rule to its integer code — the discriminant whose order
 /// is the type's `Ord`, so SQL ordering equals `UsageFactPosition` order.
+/// Owning outcome: D-16 usage-export ordering — SQL order must equal `UsageFactPosition` order.
 /// Codes are wire-compat: `MintingRule::DocumentWrite` shares 0 with
 /// `AcceptedOriginCommit` and `LogicalStorage` shares 1 with
 /// `StableAdmittedRequest`, so both current and legacy identities order
@@ -4486,23 +4487,48 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
-    fn prepare_participant(&mut self, prepare: &crate::storage::ParticipantPrepare) -> Result<crate::storage::ParticipantPrepareReceipt, ()> {
+    fn prepare_participant(
+        &mut self,
+        prepare: &crate::storage::ParticipantPrepare,
+    ) -> Result<crate::storage::ParticipantPrepareReceipt, ()> {
         let identity = &prepare.identity;
-        if prepare.writes.len() > 1024 { return Err(()); }
+        if prepare.writes.len() > 1024 {
+            return Err(());
+        }
         let writes: Vec<_> = prepare.writes.clone();
-        let payload = crate::storage::participant::encode_prepare_payload(&writes, &prepare.metadata, &prepare.schema_envelopes, prepare.replication_publication.as_ref())?;
-        if payload.len() > 64 * 1024 * 1024 { return Err(()); }
-        if *blake3::hash(&payload).as_bytes() != identity.digest { return Err(()); }
+        let payload = crate::storage::participant::encode_prepare_payload(
+            &writes,
+            &prepare.metadata,
+            &prepare.schema_envelopes,
+            prepare.replication_publication.as_ref(),
+        )?;
+        if payload.len() > 64 * 1024 * 1024 {
+            return Err(());
+        }
+        if *blake3::hash(&payload).as_bytes() != identity.digest {
+            return Err(());
+        }
         let mut connection = self.writer.lock().map_err(|_| ())?;
         connection.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())?;
         let transaction = connection.unchecked_transaction().map_err(|_| ())?;
         transaction.execute("INSERT INTO participant_prepares(tenant,incarnation,operation,participant,owner,digest,epoch,snapshot,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(tenant,incarnation,operation,participant) DO NOTHING", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant, identity.owner, identity.digest.as_slice(), i64::try_from(identity.epoch).map_err(|_| ())?, i64::try_from(identity.snapshot.get()).map_err(|_| ())?, payload]).map_err(|_| ())?;
         let matched: bool = transaction.query_row("SELECT owner=?5 AND epoch=?7 AND snapshot=?8 AND digest=?6 FROM participant_prepares WHERE tenant=?1 AND incarnation=?2 AND operation=?3 AND participant=?4", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant, identity.owner, identity.digest.as_slice(), i64::try_from(identity.epoch).map_err(|_| ())?, i64::try_from(identity.snapshot.get()).map_err(|_| ())?], |row| row.get(0)).map_err(|_| ())?;
-        if !matched { return Err(()); }
+        if !matched {
+            return Err(());
+        }
         transaction.commit().map_err(|_| ())?;
-        Ok(crate::storage::ParticipantPrepareReceipt { identity: identity.clone(), writes: prepare.writes.clone(), metadata: prepare.metadata.clone(), schema_envelopes: prepare.schema_envelopes.clone(), replication_publication: prepare.replication_publication.clone() })
+        Ok(crate::storage::ParticipantPrepareReceipt {
+            identity: identity.clone(),
+            writes: prepare.writes.clone(),
+            metadata: prepare.metadata.clone(),
+            schema_envelopes: prepare.schema_envelopes.clone(),
+            replication_publication: prepare.replication_publication.clone(),
+        })
     }
-    fn resolve_participant(&mut self, identity: &crate::storage::ParticipantIdentity) -> Result<Option<crate::storage::ParticipantPrepareReceipt>, ()> {
+    fn resolve_participant(
+        &mut self,
+        identity: &crate::storage::ParticipantIdentity,
+    ) -> Result<Option<crate::storage::ParticipantPrepareReceipt>, ()> {
         let connection = self.writer.lock().map_err(|_| ())?;
         let found: Option<(String, i64, i64, Vec<u8>, Vec<u8>)> = connection.query_row("SELECT owner,epoch,snapshot,digest,payload FROM participant_prepares WHERE tenant=?1 AND incarnation=?2 AND operation=?3 AND participant=?4", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).optional().map_err(|_| ())?;
         match found {
@@ -4510,11 +4536,13 @@ impl StoragePort for SqliteStorage {
                 if owner == identity.owner
                     && epoch == i64::try_from(identity.epoch).map_err(|_| ())?
                     && snapshot == i64::try_from(identity.snapshot.get()).map_err(|_| ())?
-                    && digest == identity.digest => {
+                    && digest == identity.digest =>
+            {
                 if *blake3::hash(&payload).as_bytes() != identity.digest {
                     return Err(());
                 }
-                let (writes, metadata, schema_envelopes, replication_publication) = crate::storage::participant::decode_prepare_payload(&payload)?;
+                let (writes, metadata, schema_envelopes, replication_publication) =
+                    crate::storage::participant::decode_prepare_payload(&payload)?;
                 Ok(Some(crate::storage::ParticipantPrepareReceipt {
                     identity: identity.clone(),
                     writes,

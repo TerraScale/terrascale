@@ -699,7 +699,9 @@ pub(crate) mod tests {
         assert_eq!(error.to_string(), "replication: test seam is absent");
     }
 
-    pub(crate) fn opened_bootstrap(label: &str) -> (ProductionCatalogBootstrap, PathBuf, DatabaseSpec) {
+    pub(crate) fn opened_bootstrap(
+        label: &str,
+    ) -> (ProductionCatalogBootstrap, PathBuf, DatabaseSpec) {
         let root = std::env::temp_dir()
             .join(format!("terrabase-server-production-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);

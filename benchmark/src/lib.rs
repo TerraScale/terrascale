@@ -62,11 +62,11 @@ pub use backup::{
 };
 pub use engine::{
     AuthorizedEngine, AuthorizedEngineError, AuthorizedSession, BulkIngestRequest, CommitError,
-    CommitOutcome, CommitReceipt, DurableResolution, Engine, EngineClosed, EngineConfig,
-    EngineConfigError, EngineError, EngineOpenError, EngineShutdownError, IngestBatchReceipt,
-    IngestConflictMode, IngestReceipt, IngestRefusal, IngestRefusalReason, IngestStream,
-    IngestTermination, MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS, Transaction,
-    UnknownCommit, UnknownReason, LocalCrossFileReceipt, CrossFileReceiptPhase,
+    CommitOutcome, CommitReceipt, CrossFileReceiptPhase, DurableResolution, Engine, EngineClosed,
+    EngineConfig, EngineConfigError, EngineError, EngineOpenError, EngineShutdownError,
+    IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal, IngestRefusalReason,
+    IngestStream, IngestTermination, LocalCrossFileReceipt, MAX_INGEST_BATCH_DOCUMENTS,
+    MAX_INGEST_REFUSAL_DETAILS, Transaction, UnknownCommit, UnknownReason,
 };
 pub use families::{
     FamilyError, FamilyKind, FamilyReadContext, FamilyReadRequest, FamilyReadResult, FamilyStore,

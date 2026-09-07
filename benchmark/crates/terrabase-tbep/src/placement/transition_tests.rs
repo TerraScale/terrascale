@@ -241,26 +241,17 @@ fn signed_lifecycle_grant_replays_and_rejects_mutation_after_reopen() {
     assert!(!reopened.admit_lifecycle_operation(&verified).unwrap());
     let mut changed = verified.clone();
     changed.accepted_proof_digest = "b".repeat(64);
-    assert_eq!(
-        reopened.admit_lifecycle_operation(&changed),
-        Err(PlacementError::RetryMismatch)
-    );
+    assert_eq!(reopened.admit_lifecycle_operation(&changed), Err(PlacementError::RetryMismatch));
     let mut changed = verified.clone();
     changed.accepted_restore_request_digest = "c".repeat(64);
-    assert_eq!(
-        reopened.admit_lifecycle_operation(&changed),
-        Err(PlacementError::RetryMismatch)
-    );
+    assert_eq!(reopened.admit_lifecycle_operation(&changed), Err(PlacementError::RetryMismatch));
     let mut renewed = verified.clone();
     renewed.authority_epoch = 2;
     assert!(!reopened.admit_lifecycle_operation(&renewed).unwrap());
     let mut stale = verified;
     stale.operation_id = "lifecycle-stale-new".into();
     stale.authority_epoch = 1;
-    assert_eq!(
-        reopened.admit_lifecycle_operation(&stale),
-        Err(PlacementError::Conflict)
-    );
+    assert_eq!(reopened.admit_lifecycle_operation(&stale), Err(PlacementError::Conflict));
 }
 
 #[test]
@@ -273,11 +264,14 @@ fn producer_lifecycle_restore_fixture_verifies_and_has_stable_digest() {
         .map(|index| u8::from_str_radix(&public_key[index..index + 2], 16).unwrap())
         .collect();
     journal
-        .configure_transition_trust(TransitionTrust::new(
-            BTreeMap::from([("proof".into(), key_bytes)]),
-            BTreeMap::from([("genesis".into(), key(2).public_key().as_ref().to_vec())]),
-            BTreeMap::from([("member".into(), key(3).public_key().as_ref().to_vec())]),
-        ).unwrap())
+        .configure_transition_trust(
+            TransitionTrust::new(
+                BTreeMap::from([("proof".into(), key_bytes)]),
+                BTreeMap::from([("genesis".into(), key(2).public_key().as_ref().to_vec())]),
+                BTreeMap::from([("member".into(), key(3).public_key().as_ref().to_vec())]),
+            )
+            .unwrap(),
+        )
         .unwrap();
     let encoded = include_bytes!("../../testdata/lifecycle-restore-grant.json");
     let grant = journal.verify_lifecycle_grant(encoded).unwrap();

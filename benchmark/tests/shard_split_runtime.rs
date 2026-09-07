@@ -252,7 +252,7 @@ fn crash_after_atomic_install_recovers_committed_routes_without_stale_reads() {
     shared.borrow_mut().fail_save = true;
     assert!(runtime.cut_over(permit, 4).is_err());
     assert_eq!(shared.borrow().publications, 0);
-    assert_eq!(shared.borrow().route.unwrap().generation, 1);
+    assert_eq!(shared.borrow().route.as_ref().unwrap().generation, 1);
 
     let routes = RouteTable::new(vec![
         ShardRoute::new(8, None, Some(b"m".to_vec())).unwrap(),

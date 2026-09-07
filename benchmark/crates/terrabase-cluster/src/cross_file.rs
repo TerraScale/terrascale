@@ -1,8 +1,11 @@
 //! Cluster-owned qualification of DB-local cross-file receipts.
 
-use crate::{production::DatabaseRouteScope, wal_driver::{WalPhysicalBoundary, WalWriterDriver}};
-use terrabase::types::TenantScope;
+use crate::{
+    production::DatabaseRouteScope,
+    wal_driver::{WalPhysicalBoundary, WalWriterDriver},
+};
 use terrabase::engine::{CrossFileReceiptPhase, LocalCrossFileReceipt};
+use terrabase::types::TenantScope;
 
 /// A local receipt qualified against an authenticated writer physical bound.
 /// This type does not claim Global durability.
@@ -15,10 +18,14 @@ pub struct Rf2DecisionQualification {
 impl Rf2DecisionQualification {
     /// Local Engine receipt.
     #[must_use]
-    pub fn local(&self) -> &LocalCrossFileReceipt { &self.local }
+    pub fn local(&self) -> &LocalCrossFileReceipt {
+        &self.local
+    }
     /// Authenticated writer physical boundary.
     #[must_use]
-    pub fn physical(&self) -> &WalPhysicalBoundary { &self.physical }
+    pub fn physical(&self) -> &WalPhysicalBoundary {
+        &self.physical
+    }
 }
 
 /// Validates that a local decision is covered by an admitted writer boundary.
@@ -29,10 +36,13 @@ fn qualify_rf2(
     epoch: u64,
     generation: u64,
 ) -> Result<Rf2DecisionQualification, &'static str> {
-    if physical.scope() != scope || physical.epoch() != epoch || physical.generation() != generation {
+    if physical.scope() != scope || physical.epoch() != epoch || physical.generation() != generation
+    {
         return Err("writer boundary scope or epoch mismatch");
     }
-    if local.phase() != CrossFileReceiptPhase::Decision || local.durability() != terrabase::types::LocalDurability::Synced {
+    if local.phase() != CrossFileReceiptPhase::Decision
+        || local.durability() != terrabase::types::LocalDurability::Synced
+    {
         return Err("receipt is not a synced decision");
     }
     if local.sequence() > physical.sequence() {
@@ -52,7 +62,9 @@ pub async fn qualify_rf2_from_writer(
     epoch: u64,
     generation: u64,
 ) -> Result<Option<Rf2DecisionQualification>, &'static str> {
-    let Some(physical) = writer.physical_boundary(tenant).await.map_err(|_| "writer boundary unavailable")? else {
+    let Some(physical) =
+        writer.physical_boundary(tenant).await.map_err(|_| "writer boundary unavailable")?
+    else {
         return Ok(None);
     };
     qualify_rf2(local, physical, scope, epoch, generation).map(Some)

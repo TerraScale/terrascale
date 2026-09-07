@@ -100,7 +100,10 @@ pub type LifecycleFuture<'a> =
 /// Async native lifecycle owner boundary.
 pub trait LifecycleControl: Send + Sync {
     /// Resolves a retained point without admitting or creating a target.
-    fn resolve_recovery_point(&self, request: &pb::ResolveRecoveryPointRequest) -> ResolveRecoveryPointFuture<'_> {
+    fn resolve_recovery_point(
+        &self,
+        request: &pb::ResolveRecoveryPointRequest,
+    ) -> ResolveRecoveryPointFuture<'_> {
         let _ = request;
         Box::pin(async { Err("native recovery point resolver is not composed".into()) })
     }
@@ -284,4 +287,5 @@ mod tests {
 }
 
 /// Asynchronous authenticated source-point response.
-pub type ResolveRecoveryPointFuture<'a> = Pin<Box<dyn Future<Output = Result<pb::ResolveRecoveryPointResponse, String>> + Send + 'a>>;
+pub type ResolveRecoveryPointFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<pb::ResolveRecoveryPointResponse, String>> + Send + 'a>>;

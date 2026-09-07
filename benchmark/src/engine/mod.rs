@@ -42,12 +42,12 @@ mod usage_placement_tests;
 pub use replicated_publication::{
     MAX_REPLICATION_PUBLICATION_BYTES, MAX_REPLICATION_PUBLICATION_RECORDS, ReplicatedPublication,
 };
+mod cross_file;
 mod replication_dependencies;
 mod replication_wire;
 mod schema_indexes;
 mod schema_metadata;
 mod shard_split;
-mod cross_file;
 mod webhook_metadata;
 
 #[cfg(test)]
@@ -57,11 +57,11 @@ mod ingest_tests;
 mod metadata_tests;
 
 #[cfg(test)]
+mod cross_file_tests;
+#[cfg(test)]
 mod patch_tests;
 #[cfg(test)]
 mod shard_split_tests;
-#[cfg(test)]
-mod cross_file_tests;
 
 #[cfg(test)]
 mod tests;

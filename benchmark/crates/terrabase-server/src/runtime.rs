@@ -135,7 +135,6 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     metrics.transition_service(ServiceState::Draining)?;
     let _ = host.begin_shutdown(&SupervisionShutdownRequest { reason: ShutdownReason::Supervisor });
     network.begin_drain();
-    public_status.begin_drain();
     if let Some(handle) = &uds_handle {
         // Keep the local administrative lane from admitting new work while
         // the shared host finishes already-admitted calls.

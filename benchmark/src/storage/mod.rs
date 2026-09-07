@@ -14,8 +14,8 @@ mod faults;
 mod intent;
 mod invisible;
 mod ownership;
-mod physical_file;
 pub(crate) mod participant;
+mod physical_file;
 mod shadow;
 mod sqlite;
 pub use physical_file::{
@@ -635,8 +635,18 @@ pub(crate) use participant::{ParticipantIdentity, ParticipantPrepare, Participan
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
-    fn prepare_participant(&mut self, _prepare: &ParticipantPrepare) -> Result<ParticipantPrepareReceipt, ()> { Err(()) }
-    fn resolve_participant(&mut self, _identity: &ParticipantIdentity) -> Result<Option<ParticipantPrepareReceipt>, ()> { Ok(None) }
+    fn prepare_participant(
+        &mut self,
+        _prepare: &ParticipantPrepare,
+    ) -> Result<ParticipantPrepareReceipt, ()> {
+        Err(())
+    }
+    fn resolve_participant(
+        &mut self,
+        _identity: &ParticipantIdentity,
+    ) -> Result<Option<ParticipantPrepareReceipt>, ()> {
+        Ok(None)
+    }
     fn lifecycle_update(
         &mut self,
         _tenant: &TenantId,

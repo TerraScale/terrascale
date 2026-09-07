@@ -504,7 +504,8 @@ impl PlacementJournal {
             return Err(PlacementError::Conflict);
         }
         let action = serde_json::to_string(&grant.action).map_err(|_| PlacementError::Storage)?;
-        let revision = i64::try_from(grant.accepted_placement_revision).map_err(|_| PlacementError::Invalid)?;
+        let revision = i64::try_from(grant.accepted_placement_revision)
+            .map_err(|_| PlacementError::Invalid)?;
         let epoch = i64::try_from(grant.authority_epoch).map_err(|_| PlacementError::Invalid)?;
         let existing: Option<(String, String, String, String, String, String, String, i64, String, i64, String, String)> = transaction
             .query_row(

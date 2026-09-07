@@ -366,25 +366,6 @@ impl MeterKind {
         matches!(self, Self::DocumentWriteUnits | Self::StorageByteSeconds)
     }
 
-    /// Returns the stable wire key, or `None` for legacy guard/attribution
-    /// kinds. Unknown keys must not be converted into a meter by callers.
-    /// Legacy arms are wire-compat for already-persisted bytes; new code uses
-    /// only the two billable keys via `from_key`.
-    #[must_use]
-    #[allow(deprecated)]
-    pub const fn key(self) -> Option<&'static str> {
-        match self {
-            Self::DocumentWriteUnits => Some(DOCUMENT_WRITE_UNITS_KEY),
-            Self::StorageByteSeconds => Some(STORAGE_BYTE_SECONDS_KEY),
-            Self::StoredByteHours
-            | Self::AdmittedRequestUnits
-            | Self::PublicEgressBytes
-            | Self::ActiveRegionSeats
-            | Self::BackupByteHours
-            | Self::RestoreWork => None,
-        }
-    }
-
     /// Resolves only the closed, published billable meter vocabulary.
     pub fn from_key(key: &str) -> Result<Self, UsageError> {
         match key {
@@ -635,6 +616,7 @@ impl MintingIdentity {
     #[must_use]
     pub fn rule(&self) -> MintingRule {
         match self {
+            // Owning outcome: D-16 billed write/storage vocabulary — keep exhaustive for persisted facts.
             // These two identities are the new closed billable vocabulary.
             // Their wire-compatible legacy rule values keep older storage
             // readers exhaustive; callers must use `MeterKind::is_billable`

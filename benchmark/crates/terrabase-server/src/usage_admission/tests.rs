@@ -263,10 +263,7 @@ fn accepted_proof(
     let proof_payload = serde_json::to_vec(&proof).unwrap();
     let envelope = serde_json::to_vec(&sign("authority", &proof_payload, &keys.authority)).unwrap();
     journal
-        .accept(
-            "usage-op",
-            &pb::PlacementAcceptRequest { proposal_revision: 1, proof: envelope },
-        )
+        .accept("usage-op", &pb::PlacementAcceptRequest { proposal_revision: 1, proof: envelope })
         .unwrap()
         .proof_digest
 }

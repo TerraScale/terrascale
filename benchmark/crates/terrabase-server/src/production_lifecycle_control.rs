@@ -277,6 +277,9 @@ impl TbepLifecycleControl {
             LifecycleGrantAction::RestoreToTarget => {
                 Err("restore requires its typed request".into())
             }
+            LifecycleGrantAction::ResolveRecoveryPoint => {
+                Err("resolve requires its typed request".into())
+            }
         }
     }
 }
