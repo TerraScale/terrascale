@@ -703,7 +703,7 @@ async fn development_operations_use_branch_confirmation_and_bounded_wire_fields(
 async fn operations_poll_durable_provisioning_with_get() {
     let mock = Mock::new(vec![Response::json(
         200,
-        &json!({"environment":"production","tenant_id":"tenant","project_id":"project","operation_id":"op","database_id":"db-id","parent_database_id":null,"key_version":"key-1","name":"orders","regions":["GRU"],"residency":"br-only","state":"Ready"}),
+        &json!({"operation_id":"op","kind":"database_create","database_id":"db-id","name":"orders","state":"Ready","stage":"admitted","created_at":null,"revision":null,"cancellable":false,"cancellation_reason":"Provisioning has no safe cancellation action"}),
     )]);
     let operation = client(Arc::clone(&mock))
         .management()

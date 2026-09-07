@@ -1756,7 +1756,7 @@ pub struct OperationListOptions {
 }
 impl Operations {
     /// Read the durable provisioning operation without resubmitting creation.
-    pub async fn get(&self, operation_id: &str) -> Result<ProvisioningOperation> {
+    pub async fn get(&self, operation_id: &str) -> Result<OperationSummary> {
         self.shared
             .send_typed(Request {
                 route_name: "operations.get".into(),

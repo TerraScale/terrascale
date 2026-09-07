@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "50cb882fbb94860ca7eec5e1b440bf530bd8b3a69df53fed489324c162cd35ff";
-pub const OPENAPI_BLAKE3: &str = "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595";
+    "2831326446fda4cfbd09e784434d6e77f2bb5f643f0cdc95861c3e0045227a73";
+pub const OPENAPI_BLAKE3: &str = "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
 pub const MSGPACK_PROTOCOL: &str = "terrascale.sync.v1.msgpack";
@@ -23,7 +23,7 @@ pub struct ContractArtifact {
 pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/http.json",
-        blake3: "ee4aa8a158d8e37902035ddc48f61e45c80f31d9a28011e69a3c0a65c3d3b6a7",
+        blake3: "cf70549f56d34107f315fb47b7b9366e2c8d6a5754fdf18fc215b16dc7d03ad8",
     },
     ContractArtifact {
         path: "conformance/msgpack/hostile-vectors.json",
@@ -35,7 +35,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "conformance/reactive.json",
-        blake3: "f92d0c63f48209500c260473bf8cc86e37f1e197c8c840e16bd75fa756ed2693",
+        blake3: "20f4f63ea988a78bb352de7796e68c0e493e558cb79a77bd7e502aaddbf3f4d8",
     },
     ContractArtifact {
         path: "msgpack/hostile-vectors.json",
@@ -51,7 +51,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "openapi.json",
-        blake3: "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595",
+        blake3: "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/engine.proto",
@@ -322,7 +322,7 @@ pub const ROUTES: &[Route] = &[
         method: HttpMethod::Get,
         path: "/api/v1/operations/{operation_id}",
         request_model: None,
-        response_model: Some("ProvisioningOperation"),
+        response_model: Some("OperationSummary"),
     },
     Route {
         operation_id: "get_schema",
@@ -945,7 +945,7 @@ pub mod models {
         pub kind: String,
         pub name: String,
         pub operation_id: String,
-        pub revision: Option<i64>,
+        pub revision: Option<u64>,
         pub stage: String,
         pub state: String,
     }
@@ -1339,6 +1339,6 @@ pub const MESSAGE_VECTOR_SHA256: &str =
 pub const HOSTILE_VECTOR_SHA256: &str =
     "e6d8e6d92a87fe4d37fb00e5b441d0c351eecaf6117e5ac50631ce94d18890f5";
 pub const HTTP_CONFORMANCE_SHA256: &str =
-    "0e588af0bf794ae7d04a299e0adbf03db6a130453afa5e2d34465860e3092dce";
+    "04c5d00e9676dbe4b7f775cdc7beeef70375b5eac741373e6dd9c6c964fe8075";
 pub const REACTIVE_CONFORMANCE_SHA256: &str =
-    "e185fd35f4673940f6769b32f4174b479b1c2085e15e6302e37d34e025848880";
+    "11fd1f30e1da610a204183bc564d795860bc8020bb60a9184ff152accc89567c";
