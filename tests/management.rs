@@ -745,7 +745,7 @@ async fn operations_list_is_project_scoped_paged_and_preserves_u64_revision() {
         .list(Some("cursor previous"), Some(50))
         .await
         .expect("operation page");
-    assert_eq!(page.operations[0].revision, u64::MAX);
+    assert_eq!(page.operations[0].revision, Some(u64::MAX));
     assert_eq!(page.next_cursor.as_deref(), Some("opaque"));
     assert_eq!(page.covered_kinds, ["database_create", "branch_create"]);
     assert_eq!(mock.last().method, Method::Get);
@@ -758,6 +758,34 @@ async fn operations_list_is_project_scoped_paged_and_preserves_u64_revision() {
         .headers
         .iter()
         .any(|(name, value)| { name == "x-terrascale-project-id" && value == "ignored" }));
+}
+
+#[tokio::test]
+async fn operations_list_accepts_missing_optional_journal_facts() {
+    let mock = Mock::new(vec![Response::json(
+        200,
+        &json!({
+            "operations": [{
+                "operation_id": "op-1",
+                "kind": "branch_create",
+                "database_id": "db-1",
+                "name": "copy",
+                "state": "queued",
+                "stage": "accepted",
+                "cancellable": false,
+                "cancellation_reason": "Provisioning has no safe cancellation action"
+            }],
+            "covered_kinds": ["database_create", "branch_create"]
+        }),
+    )]);
+    let page = client(Arc::clone(&mock))
+        .management()
+        .operations()
+        .list(None, None)
+        .await
+        .expect("operation page");
+    assert_eq!(page.operations[0].created_at, None);
+    assert_eq!(page.operations[0].revision, None);
 }
 
 #[tokio::test]

@@ -1743,8 +1743,8 @@ pub struct OperationSummary {
     pub name: String,
     pub state: String,
     pub stage: String,
-    pub created_at: String,
-    pub revision: u64,
+    pub created_at: Option<String>,
+    pub revision: Option<u64>,
     pub cancellable: bool,
     pub cancellation_reason: String,
 }
