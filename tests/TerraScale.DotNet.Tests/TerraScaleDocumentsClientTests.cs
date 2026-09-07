@@ -8,6 +8,60 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleDocumentsClientTests
 {
     [Test]
+    public async Task UnknownUnkeyedPutOutcomeIsNotRetried()
+    {
+        using var handler = new DroppedResponseHandler();
+        using var http = new HttpClient(handler);
+        var client = new TerraScaleClient(http, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"), ApiKey = "test-key",
+            MaxRetryAttempts = 2, RetryDelay = TimeSpan.Zero
+        });
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.Documents.PutAsync("db", "items", "one", new { value = 1 }));
+        await Assert.That(handler.Keys.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CallerDocumentKeyControlsRetryAndOverridesFactory()
+    {
+        foreach (var method in new[] { "put", "patch", "batch", "delete" })
+        {
+            using var handler = new DroppedResponseHandler();
+            using var http = new HttpClient(handler);
+            var factoryCalls = 0;
+            var client = new TerraScaleClient(http, new TerraScaleClientOptions
+            {
+                BaseAddress = new Uri("https://api.example.invalid/"), ApiKey = "test-key",
+                MaxRetryAttempts = 1, RetryDelay = TimeSpan.Zero,
+                IdempotencyKeyFactory = () => { factoryCalls++; return "factory-key"; }
+            });
+            var options = new TerraScaleDocumentMutationOptions(IdempotencyKey: " caller-key ");
+            await Assert.ThrowsAsync<HttpRequestException>(async () =>
+            {
+                switch (method)
+                {
+                    case "put": await client.Documents.PutAsync("db", "items", "one", new { value = 1 }, options); break;
+                    case "patch": await client.Documents.PatchAsync("db", "items", "one", new { value = 1 }, options); break;
+                    case "batch": await client.Documents.BatchAsync("db", "items", [TerraScaleDocumentBatchOperation.Delete("one")], options); break;
+                    case "delete": await client.Documents.DeleteAsync("db", "items", "one", options); break;
+                }
+            });
+            await Assert.That(handler.Keys.SequenceEqual(["caller-key", "caller-key"])).IsTrue();
+            await Assert.That(factoryCalls).IsEqualTo(0);
+        }
+    }
+
+    private sealed class DroppedResponseHandler : HttpMessageHandler
+    {
+        public List<string?> Keys { get; } = [];
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Keys.Add(request.Headers.TryGetValues("Idempotency-Key", out var keys) ? string.Join(",", keys) : null);
+            throw new HttpRequestException("Response lost after transmission.");
+        }
+    }
+
+    [Test]
     public async Task UpsertAsync_SendsRawJsonAndProjectsEtagAndSession()
     {
         using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"revision\":\"r1\"}", "\"r1\"", "7");

@@ -283,6 +283,25 @@ public sealed class TerraScaleReactiveHttpClientTests
     }
 
     [Test]
+    public async Task DisposalCancelsActiveAndQueuedPollsAndWaitsForCleanup()
+    {
+        using var handler = new ReactiveHandler(blockPoll: true);
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        var pending = subscription.ReadNextAsync();
+        await handler.PollStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var queued = subscription.ReadNextAsync();
+        var disposal = subscription.DisposeAsync().AsTask();
+        var repeatedDisposal = subscription.DisposeAsync().AsTask();
+        await Task.WhenAll(disposal, repeatedDisposal).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => pending);
+        await Assert.ThrowsAsync<OperationCanceledException>(() => queued);
+        await Assert.That(subscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Closed);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => subscription.ReadNextAsync());
+    }
+
+    [Test]
     public async Task HostileFeatureAndMapFramesAreRejected()
     {
         foreach (var frame in new[] { Envelope(6, body: [0x90], features: 1), new byte[] { 0x81, 0xa1, (byte)'x', 0x01 } })

@@ -682,8 +682,11 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
     private readonly TerraScaleReactiveHttpClient client;
     private readonly Dictionary<ulong, string> etags = [];
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly object lifecycleGate = new();
+    private readonly CancellationTokenSource lifetime = new();
+    private Task? disposal;
     private ClientWebSocket? webSocket;
-    private bool disposed;
+    private volatile bool disposed;
     internal TerraScaleReactiveSubscription(TerraScaleReactiveHttpClient client, TerraScaleReactiveAttachment attachment, TerraScaleReactiveSnapshot snapshot) { this.client = client; Attachment = attachment; CurrentSnapshot = snapshot; if (snapshot.Revision != attachment.Offset) throw new TerraScaleReactiveProtocolException("The attach offset does not match the immutable snapshot revision."); Offset = attachment.Offset; SessionState = TerraScaleViewSessionState.Live; }
     public TerraScaleReactiveAttachment Attachment { get; private set; }
     public TerraScaleReactiveSnapshot CurrentSnapshot { get; private set; }
@@ -721,7 +724,26 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
         var socket = Interlocked.Exchange(ref webSocket, null);
         socket?.Dispose();
     }
-    public async Task<TerraScaleReactivePollResult?> ReadNextAsync(CancellationToken cancellationToken = default) { ObjectDisposedException.ThrowIf(disposed, this); await gate.WaitAsync(cancellationToken).ConfigureAwait(false); try { return await client.PollAsync(this, cancellationToken).ConfigureAwait(false); } finally { gate.Release(); } }
+    public async Task<TerraScaleReactivePollResult?> ReadNextAsync(CancellationToken cancellationToken = default)
+    {
+        CancellationTokenSource linked;
+        lock (lifecycleGate)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.Token);
+        }
+
+        using (linked)
+        {
+            await gate.WaitAsync(linked.Token).ConfigureAwait(false);
+            try
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                return await client.PollAsync(this, linked.Token).ConfigureAwait(false);
+            }
+            finally { gate.Release(); }
+        }
+    }
     public async IAsyncEnumerable<TerraScaleReactivePollResult> ReadAllAsync([EnumeratorCancellation] CancellationToken cancellationToken = default) { while (true) { var result = await ReadNextAsync(cancellationToken).ConfigureAwait(false); if (result is not null) yield return result; } }
     internal TerraScaleReactivePollResult Accept(TerraScaleReactiveFrame frame, string? etag)
     {
@@ -809,15 +831,34 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
     internal void SetSessionState(TerraScaleViewSessionState state) => SessionState = state;
     public ValueTask DisposeAsync()
     {
-        if (!disposed)
+        lock (lifecycleGate)
         {
-            disposed = true;
+            if (disposal is null)
+            {
+                disposed = true;
+                disposal = DisposeCoreAsync();
+            }
+
+            return new ValueTask(disposal);
+        }
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        await lifetime.CancelAsync().ConfigureAwait(false);
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
             SessionState = TerraScaleViewSessionState.Closed;
             DropWebSocket();
-            gate.Dispose();
+            lifetime.Dispose();
         }
-
-        return ValueTask.CompletedTask;
+        finally
+        {
+            // Queued reads may still be observing cancellation. Keep their semaphore
+            // valid until they finish; it has no allocated wait handle.
+            gate.Release();
+        }
     }
 }
 

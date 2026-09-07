@@ -45,7 +45,8 @@ public sealed class TerraScaleDocumentsClient
         return client.SendAsync<TerraScaleBatchResponse, TerraScaleDocumentBatch>(HttpMethod.Post, CollectionRoute(database, collection) + "/batch",
             new TerraScaleBatchMutation(operations.Select(static operation => operation.ToWire()).ToArray()), preferredRegion: null,
             request => ConfigureMutation(request, options),
-            (value, response) => client.ObserveDocumentBatch(new TerraScaleDocumentBatch(database.Trim(), collection.Trim(), [], TerraScaleRoutingObservation.From(response), value.Committed, value.Count), response, database), cancellationToken);
+            (value, response) => client.ObserveDocumentBatch(new TerraScaleDocumentBatch(database.Trim(), collection.Trim(), [], TerraScaleRoutingObservation.From(response), value.Committed, value.Count), response, database), cancellationToken,
+            idempotencyKeyOverride: options?.IdempotencyKey?.Trim(), allowUnkeyedPutRetry: false);
     }
 
     public Task<TerraScaleDocumentPage> ListAsync(string database, string collection, int limit = 100, string? after = null, CancellationToken cancellationToken = default)
@@ -78,8 +79,9 @@ public sealed class TerraScaleDocumentsClient
         ValidateMutationOptions(options, method);
         var payload = JsonSerializer.SerializeToUtf8Bytes(document, TerraScaleDocumentJson.Options);
         if (payload.Length > MaxDocumentBytes) throw new ArgumentException("The document exceeds the 1 MiB limit.", nameof(document));
-        return client.SendAsync<TerraScaleDocumentWriteResponse, TerraScaleDocument>(method, DocumentRoute(database, collection, documentId), JsonSerializer.SerializeToElement(document, TerraScaleDocumentJson.Options), preferredRegion: null,
-            request => ConfigureMutation(request, options), (value, response) => client.ObserveDocumentWrite(ReadWriteResult(value, response, database, collection, documentId), response, database), cancellationToken);
+        return client.SendAsync<TerraScaleDocumentWriteResponse, TerraScaleDocument>(method, DocumentRoute(database, collection, documentId).RequestUri, JsonSerializer.SerializeToElement(document, TerraScaleDocumentJson.Options), preferredRegion: null,
+            request => ConfigureMutation(request, options), (value, response) => client.ObserveDocumentWrite(ReadWriteResult(value, response, database, collection, documentId), response, database), cancellationToken,
+            idempotencyKeyOverride: options?.IdempotencyKey?.Trim(), allowUnkeyedPutRetry: false);
     }
 
     private static TerraScaleBoundRoute DocumentRoute(string database, string collection, string documentId)
@@ -110,7 +112,6 @@ public sealed class TerraScaleDocumentsClient
     {
         if (options?.CreateOnly == true) request.Headers.TryAddWithoutValidation("If-None-Match", "*");
         if (!string.IsNullOrWhiteSpace(options?.ExpectedChangeToken)) request.Headers.TryAddWithoutValidation("If-Match", options.ExpectedChangeToken.Trim());
-        if (!string.IsNullOrWhiteSpace(options?.IdempotencyKey)) request.Headers.TryAddWithoutValidation("Idempotency-Key", options.IdempotencyKey.Trim());
         if (options?.Durability is { } durability) request.Headers.TryAddWithoutValidation("X-TerraScale-Durability", durability switch { TerraScaleDurability.Regional => "regional", TerraScaleDurability.Global => "global", _ => throw new ArgumentOutOfRangeException(nameof(options)) });
     }
 

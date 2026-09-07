@@ -609,7 +609,7 @@ public sealed class TerraScaleClient
             allowUnkeyedPutRetry: true);
 
 
-    private async Task<TResult> SendAsync<TResponse, TResult>(
+    internal async Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,
         string requestUri,
         object? body,
