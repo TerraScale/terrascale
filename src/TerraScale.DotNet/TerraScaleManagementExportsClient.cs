@@ -12,7 +12,7 @@ public sealed class TerraScaleManagementExportsClient(TerraScaleClient client)
     public Task<ExportAccepted> CreateAsync(string database, string idempotencyKey, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
-        return client.SendJsonAsync(HttpMethod.Post, Route(database), new CreateExport(idempotencyKey),
+        return client.SendJsonAsync(HttpMethod.Post, Route(database), new CreateExport(null, idempotencyKey, null),
             TerraScaleContractJsonContext.Default.CreateExport, TerraScaleContractJsonContext.Default.ExportAccepted, cancellationToken, idempotencyKey);
     }
 

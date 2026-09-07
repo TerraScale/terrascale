@@ -9,15 +9,15 @@ public static class TerraScaleContractPin
     public const int ManifestSchemaVersion = 1;
     public const string Version = "v1";
     public const string ContractVersion = Version;
-    public const string ManifestSha256 = "b5ed25d097b7991030df5c4841dd5f29b9d1125c550ac668eb949f3e0dd369ea";
-    public const string Blake3_ConformanceHttpJson = "ea2ecc502f645b8cb6b5e4c5c6d2994dbe6e4e1054ca2a60b9abbff0d15c791c";
+    public const string ManifestSha256 = "7097b74c86c0e946301c61112a553f3f65d14258a478dc193a81f410c557f599";
+    public const string Blake3_ConformanceHttpJson = "ee4aa8a158d8e37902035ddc48f61e45c80f31d9a28011e69a3c0a65c3d3b6a7";
     public const string Blake3_ConformanceMsgpackHostileVectorsJson = "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3";
     public const string Blake3_ConformanceMsgpackMessageVectorsJson = "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c";
-    public const string Blake3_ConformanceReactiveJson = "4d4ccbf1a8bbc4bb2545f30977ab42d80c6e618ea127f3c5e8dc631a0a96aad4";
+    public const string Blake3_ConformanceReactiveJson = "f92d0c63f48209500c260473bf8cc86e37f1e197c8c840e16bd75fa756ed2693";
     public const string Blake3_MsgpackHostileVectorsJson = "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3";
     public const string Blake3_MsgpackMessageVectorsJson = "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c";
     public const string Blake3_MsgpackTerrascaleSyncV1MsgpackJson = "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
-    public const string Blake3_OpenapiJson = "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0";
-    public const string Blake3_ProtoTerrabaseV1EngineProto = "6a7c5b26c5e964910fe87706cfe8c175366a88c986bba3e7cdff0af2ab8c7ed3";
+    public const string Blake3_OpenapiJson = "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595";
+    public const string Blake3_ProtoTerrabaseV1EngineProto = "afc89d35d212332a4ae60ec1beb60c8589cdfe5b80948a3c4bb67188fb3cb643";
     public const string Blake3_ProtoTerrabaseV1FamilyProto = "5bcaff241de738e58018b81cbc09141b1ee453a3426a1b44dbf1afe934ec8d40";
 }

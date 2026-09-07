@@ -23,7 +23,7 @@ public sealed class TerraScaleBackupsClient
     }
 
     /// <summary>Restores a backup into a new database.</summary>
-    public Task<DatabaseRecord> RestoreAsync(
+    public Task<ProvisioningOperation> RestoreAsync(
         string database,
         RestoreRequest request,
         CancellationToken cancellationToken = default)
@@ -36,7 +36,7 @@ public sealed class TerraScaleBackupsClient
             $"/api/v1/databases/{Escape(database)}/backups/restore",
             request,
             TerraScaleContractJsonContext.Default.RestoreRequest,
-            TerraScaleContractJsonContext.Default.DatabaseRecord,
+            TerraScaleContractJsonContext.Default.ProvisioningOperation,
             cancellationToken);
     }
 

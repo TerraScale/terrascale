@@ -12,7 +12,6 @@ public sealed record ArtifactFact(
     [property: JsonPropertyName("path"), JsonRequired] string Path
 );
 
-
 public sealed record AttachViewRequest(
     [property: JsonPropertyName("checkpoint"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Checkpoint,
     [property: JsonPropertyName("databaseId"), JsonRequired] string DatabaseId,
@@ -99,15 +98,22 @@ public sealed record CoordinatorRecommendation(
     [property: JsonPropertyName("score"), JsonRequired] double Score
 );
 
+public sealed record CreateBranchRequest(
+    [property: JsonPropertyName("name"), JsonRequired] string Name,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId
+);
+
 public sealed record CreateDatabaseRequest(
     [property: JsonPropertyName("name"), JsonRequired] string Name,
-    [property: JsonPropertyName("operation_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OperationId,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
     [property: JsonPropertyName("placement"), JsonRequired] IReadOnlyList<string> Placement,
-    [property: JsonPropertyName("residency"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Residency
+    [property: JsonPropertyName("residency"), JsonRequired] string Residency
 );
 
 public sealed record CreateExport(
-    [property: JsonPropertyName("idempotency_key"), JsonRequired] string IdempotencyKey
+    [property: JsonPropertyName("format"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Format,
+    [property: JsonPropertyName("idempotency_key"), JsonRequired] string IdempotencyKey,
+    [property: JsonPropertyName("scope"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Scope
 );
 
 public sealed record CreateIndexRequest(
@@ -134,6 +140,13 @@ public sealed record DatabaseRecord(
     [property: JsonPropertyName("parent"), JsonRequired] string? Parent,
     [property: JsonPropertyName("placement"), JsonRequired] string Placement,
     [property: JsonPropertyName("residency"), JsonRequired] string Residency
+);
+
+public sealed record DeletionOperation(
+    [property: JsonPropertyName("cutoff"), JsonRequired] string Cutoff,
+    [property: JsonPropertyName("request"), JsonRequired] DeletionOperationRequest Request,
+    [property: JsonPropertyName("state"), JsonRequired] string State,
+    [property: JsonPropertyName("targets"), JsonRequired] IReadOnlyList<DeletionOperationTargets> Targets
 );
 
 public sealed record DeliveryLog(
@@ -287,6 +300,25 @@ public sealed record MigrationStep(
     [property: JsonPropertyName("to"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? To
 );
 
+public sealed record OperationPage(
+    [property: JsonPropertyName("covered_kinds"), JsonRequired] IReadOnlyList<string> CoveredKinds,
+    [property: JsonPropertyName("next_cursor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NextCursor,
+    [property: JsonPropertyName("operations"), JsonRequired] IReadOnlyList<OperationSummary> Operations
+);
+
+public sealed record OperationSummary(
+    [property: JsonPropertyName("cancellable"), JsonRequired] bool Cancellable,
+    [property: JsonPropertyName("cancellation_reason"), JsonRequired] string CancellationReason,
+    [property: JsonPropertyName("created_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CreatedAt,
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("kind"), JsonRequired] string Kind,
+    [property: JsonPropertyName("name"), JsonRequired] string Name,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("revision"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Revision,
+    [property: JsonPropertyName("stage"), JsonRequired] string Stage,
+    [property: JsonPropertyName("state"), JsonRequired] string State
+);
+
 public sealed record PageJoin(
     [property: JsonPropertyName("fromField"), JsonRequired] string FromField,
     [property: JsonPropertyName("limit"), JsonRequired] int Limit,
@@ -356,7 +388,8 @@ public sealed record RecommendationList(
 
 public sealed record RestoreRequest(
     [property: JsonPropertyName("at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? At,
-    [property: JsonPropertyName("name"), JsonRequired] string Name
+    [property: JsonPropertyName("name"), JsonRequired] string Name,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId
 );
 
 public sealed record ResumeExport(
@@ -467,6 +500,20 @@ public sealed record ConditionalUpdateUpdate;
 
 public sealed record ConsumeExpected;
 
+public sealed record DeletionOperationRequest(
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("environment"), JsonRequired] string Environment,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("project_id"), JsonRequired] string ProjectId,
+    [property: JsonPropertyName("tenant_id"), JsonRequired] string TenantId
+);
+
+public sealed record DeletionOperationTargets(
+    [property: JsonPropertyName("stop"), JsonRequired] IReadOnlyDictionary<string, JsonElement> Stop
+);
+
+public sealed record DeletionOperationTargetsStop;
+
 public sealed record DocumentsResponseDocuments(
     [property: JsonPropertyName("id"), JsonRequired] string Id,
     [property: JsonPropertyName("value"), JsonRequired] JsonElement Value,
@@ -480,7 +527,12 @@ public sealed record ErrorResponseError(
 );
 
 public sealed record HistoryResponseHistory(
+    [property: JsonPropertyName("commitUlid"), JsonRequired] string CommitUlid,
     [property: JsonPropertyName("deleted"), JsonRequired] bool Deleted,
+    [property: JsonPropertyName("explanation"), JsonRequired] string Explanation,
+    [property: JsonPropertyName("hlc"), JsonRequired] long Hlc,
+    [property: JsonPropertyName("origin"), JsonRequired] string Origin,
+    [property: JsonPropertyName("policy"), JsonRequired] string Policy,
     [property: JsonPropertyName("revision"), JsonRequired] string Revision
 );
 
@@ -503,3 +555,4 @@ public sealed record SqlResponseRows(
 );
 
 public sealed record UniqueInsertRecord;
+

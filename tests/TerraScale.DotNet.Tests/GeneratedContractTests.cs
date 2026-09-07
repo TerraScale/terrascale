@@ -73,7 +73,7 @@ public sealed class GeneratedContractTests
     [Test]
     public async Task GeneratedBranchModelsRoundTripPublishedWireNames()
     {
-        var request = new RestoreRequest(7, "branch-a");
+        var request = new RestoreRequest(7, "branch-a", "restore-op-1");
         var json = JsonSerializer.Serialize(request, TerraScaleContractJsonContext.Default.RestoreRequest);
         await Assert.That(json).IsEqualTo("{\"at\":7,\"name\":\"branch-a\"}");
 
