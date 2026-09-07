@@ -1,7 +1,7 @@
 //! `terrascale`: Rust SDK for TerraScale.
 //!
-//! Same core surface as `@terrascale/sdk` (GOAL D-13): document CRUD, the
-//! typed schema builder (plus a `#[derive(Schema)]` stub), the typed SQL
+//! Document CRUD, the
+//! typed schema builder (plus `#[derive(Schema)]`), the typed SQL
 //! builder and raw parameterized SQL, `subscribe`/`execute`, checkpoints and
 //! typed resets, region pinning, tenants, and management.
 //!

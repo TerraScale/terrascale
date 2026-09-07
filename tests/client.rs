@@ -484,6 +484,9 @@ async fn strict_affinity_preserves_region_after_placement_responses() {
         response
             .headers
             .push(("x-terrascale-placement".to_owned(), "FRA".to_owned()));
+        response
+            .headers
+            .push(("x-terrascale-region".to_owned(), "FRA".to_owned()));
         let mock = Mock::new([response, document_response()]);
         let sdk = TerraScaleClient::with_transport(
             ClientConfig::builder()
@@ -512,5 +515,44 @@ async fn strict_affinity_preserves_region_after_placement_responses() {
         assert!(requests
             .iter()
             .all(|request| request.url.starts_with("https://gru.api.terrascale.tech")));
+    }
+}
+
+#[tokio::test]
+async fn failover_preference_learns_first_contact_and_keeps_the_learned_pin() {
+    for serving_region in ["GRU", "FRA"] {
+        let mut first = document_response();
+        first
+            .headers
+            .push(("x-terrascale-region".into(), serving_region.into()));
+        let mut second = document_response();
+        second
+            .headers
+            .push(("x-terrascale-region".into(), "SFO".into()));
+        let mock = Mock::new([first, second, document_response()]);
+        let sdk = TerraScaleClient::with_transport(
+            ClientConfig::builder()
+                .preferred_region(terrascale::RegionCode::Gru)
+                .build()
+                .expect("config"),
+            Arc::clone(&mock) as Arc<dyn HttpTransport>,
+        );
+        let scope = DatabaseScope::new("database");
+        for _ in 0..3 {
+            sdk.documents()
+                .get(&scope, "users", "doc")
+                .await
+                .expect("document");
+        }
+        let requests = mock.requests.lock().expect("request mutex");
+        assert!(requests[0].url.starts_with("https://api.terrascale.tech/"));
+        let regional_base = format!(
+            "https://{}.api.terrascale.tech/",
+            serving_region.to_ascii_lowercase()
+        );
+        assert!(requests[1..]
+            .iter()
+            .all(|request| request.url.starts_with(&regional_base)));
+        assert_eq!(sdk.pinned_region(), serving_region.parse().ok());
     }
 }

@@ -275,12 +275,11 @@ impl Shared {
             }
         }
         // First-contact responses identify the member that served the
-        // request. Learn that region only when no configured preference or
-        // repaired placement exists; a strict/preferred pin must not be
-        // silently replaced by an informational response header.
+        // request. A failover preference still uses global first contact, so
+        // it must learn the serving region too. Preserve strict affinity and
+        // an existing learned/repaired pin.
         if (200..300).contains(&response.status)
-            && self.config.preferred_region().is_none()
-            && self.pinned_region().is_none()
+            && self.config.region_affinity() != RegionAffinity::Strict
         {
             let region = response
                 .header("x-terrascale-serving-region")
@@ -288,7 +287,9 @@ impl Shared {
                 .and_then(|value| value.trim().parse().ok());
             if let Some(region) = region {
                 if let Ok(mut guard) = self.placement.write() {
-                    *guard = Some(region);
+                    if guard.is_none() {
+                        *guard = Some(region);
+                    }
                 }
             }
         }

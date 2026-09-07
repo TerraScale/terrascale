@@ -1,10 +1,8 @@
 //! SDK behavior checks not covered by the independent producer corpus.
 //!
-//! terrabase publishes HTTP + reactive fixtures with the pinned contract;
-//! an SDK is not done until it passes. Until those fixtures land, this suite
-//! pins the SDK's own request shapes, error mapping, region pinning,
+//! This suite pins the SDK's own request shapes, error mapping, region pinning,
 //! checkpoint/resets, and builder rendering against a mock transport so
-//! contract drift fails loudly here first.
+//! behavioral regressions fail locally. Producer corpus tests live separately.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
