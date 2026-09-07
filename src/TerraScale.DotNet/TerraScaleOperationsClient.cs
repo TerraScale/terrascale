@@ -1,5 +1,5 @@
-using TerraScale.DotNet.Generated;
 using System.Globalization;
+using TerraScale.DotNet.Generated;
 
 #pragma warning disable CS1591
 namespace TerraScale.DotNet;
@@ -31,7 +31,7 @@ public sealed class TerraScaleOperationsClient(TerraScaleClient client)
 
         route += "limit=" + limit.ToString(CultureInfo.InvariantCulture);
         return client.SendJsonAsync(HttpMethod.Get, route,
-            TerraScaleContractJsonContext.Default.OperationPage, cancellationToken);
+            TerraScaleOperationDiscoveryJsonContext.Default.OperationPage, cancellationToken);
     }
 
     public Task<ProvisioningOperation> GetAsync(string operationId, CancellationToken cancellationToken = default) =>
