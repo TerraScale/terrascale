@@ -1,4 +1,4 @@
-# `create-terrascale-app` (P-8/D-56/D-74)
+# `create-terrascale-app`
 
 Scaffold a Next.js + TerraScale development app with document writes and a
 live query. The five-minute sign-in journey still requires qualification.
@@ -11,6 +11,8 @@ cd my-app
 npm install
 cp .env.example .env.local
 terrascale dev <database> --watch=false --no-log-tail
+# Set the branch database and project settings in .env.local.
+terrascale push --database <branch-database>
 npm run dev
 ```
 
@@ -26,12 +28,16 @@ go install ./cmd/terrascale
 cloud branch. It prints the branch name, source, and selected region, but not
 credentials or a database id. Use the dashboard/API response to obtain the
 branch database id, then put that id and the API URL in `.env.local`.
-Enter a scoped development credential into each browser tab; it stays only
-in tab memory and is cleared on disconnect/reload. Export a scoped key as
+Click **Sign in with TerraScale** in each browser tab. The starter uses
+authorization-code PKCE (S256); the resulting credential stays in tab memory
+and is cleared on disconnect/reload. Set the exact registered callback URL
+in `.env.local`. Export a scoped key as
 `TERRASCALE_API_KEY` (or pass
 `--api-key`) for the CLI; `.env.local` is read by Next.js, not by the shell.
-Seed execution, log tailing, and codegen watch are separate CLI capabilities;
-use those flags only when the installed CLI release advertises their contracts.
+The CLI supports data-file seeds (`--seed ./seed.jsonl --seed-collection posts`),
+bounded branch diagnostics, and codegen watch. It does not run TypeScript seed
+functions. Apply `terrascale.schema.json` to the branch with
+`terrascale push --database <branch-database>` before opening the app.
 The starter attaches a typed SQL live query through the current reactive SDK;
 it writes posts through the published typed `client.documents.put` API. There is no local engine or fake SDK involved.
 
@@ -44,7 +50,7 @@ it writes posts through the published typed `client.documents.put` API. There is
   regions (D-18).
 - Open the app in two tabs to attach the same cloud-backed live result view.
   Add a post in either tab to exercise a real write and live delivery.
-  Seed execution remains blocked until its CLI contract is published.
+  Sign in separately in each tab.
 
 ## What it scaffolds (`template/`)
 
@@ -54,8 +60,8 @@ it writes posts through the published typed `client.documents.put` API. There is
 - `schema.ts`: the typed `defineSchema` source used by the SQL builder.
 - `terrascale.schema.json`: the contract `terrascale push` applies and
   codegen reads (typed `defineSchema` builder in your code emits it).
-- `seed.ts`: retained as the cloud-only seed entry point for the CLI contract
-  when seed execution is enabled; it never starts a local engine.
+- `seed.ts`: optional cloud seed function for an application script runner;
+  the CLI accepts data files, not this function.
 - `AGENTS.md`: starter-owned assistant brief (SDK, schema/SQL builders,
   `terrascale dev`, MCP setup) so AI-assisted builders work on minute one.
 - `.env.example`: public project ID, database ID, and API URL settings; no key.
@@ -64,8 +70,9 @@ it writes posts through the published typed `client.documents.put` API. There is
 
 The template pins the current SDK surface (`@terrascale/sdk` 0.3.0: schema/SQL
 builders, typed document writes, and `TerraScaleSyncV1Client`). Tenant
-provisioning and application sign-in remain unqualified. The development
-credential form is not an application sign-in implementation.
+provisioning and application sign-in remain unqualified. The OAuth sign-in
+flow requires the deployed authorization provider to accept the registered
+callback and authorize the resulting bearer for the selected cloud branch.
 Full docs:
 https://docs.terrascale.tech/getting-started/
 
@@ -75,3 +82,9 @@ required. Never embed privileged API keys in NEXT_PUBLIC settings. Browser
 credentials must be limited to this development branch and its required
 posts read/write/reactive permissions. Local checks do not prove real cloud
 behavior or the five-minute setup target.
+
+After OAuth sign-in, the starter exchanges its bearer for short-lived access
+limited to the selected project/database and the `posts` collection, with read
+and write actions. It renews this delegation while the OAuth session token
+remains valid. If authorization expires or is revoked, disconnect and sign in
+again. Both credentials remain in tab memory.

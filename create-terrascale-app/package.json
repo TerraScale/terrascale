@@ -1,7 +1,7 @@
 {
   "name": "create-terrascale-app",
   "version": "0.1.0",
-  "description": "Scaffold a Next.js + TerraScale app with a first live query in under 5 minutes (D-56/D-74).",
+  "description": "Scaffold a Next.js + TerraScale app with cloud document writes and a live query.",
   "type": "module",
   "bin": {
     "create-terrascale-app": "./bin/create-terrascale-app.mjs"

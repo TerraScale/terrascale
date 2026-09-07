@@ -7,6 +7,7 @@ import { authorId, posts, publishedAt, title } from "../schema";
 type Post = { id: string; title: string };
 const databaseId = process.env.NEXT_PUBLIC_TERRASCALE_DATABASE_ID?.trim() ?? "";
 const apiBaseUrl = process.env.NEXT_PUBLIC_TERRASCALE_API_URL ?? "https://api.terrascale.tech";
+const projectId = process.env.NEXT_PUBLIC_TERRASCALE_PROJECT_ID?.trim() ?? "";
 const authBaseUrl = process.env.NEXT_PUBLIC_TERRASCALE_AUTH_URL ?? "https://app.terrascale.tech";
 const redirectUri = process.env.NEXT_PUBLIC_TERRASCALE_REDIRECT_URI;
 const oauthClientId = "terrascale-starter-web";
@@ -68,24 +69,24 @@ export default function Page() {
     setAuthError(undefined);
     setAuthenticating(true);
     try {
-    const verifier = randomString(32);
-    const state = randomString(24);
-    sessionStorage.setItem("terrascale.oauth.verifier", verifier);
-    sessionStorage.setItem("terrascale.oauth.state", state);
-    const challenge = await pkceChallenge(verifier);
-    const callback = redirectUri ?? `${window.location.origin}${window.location.pathname}`;
-    const authorize = new URL("/api/auth/oauth2/authorize", authBaseUrl);
-    authorize.search = new URLSearchParams({
-      client_id: oauthClientId,
-      response_type: "code",
-      redirect_uri: callback,
-      scope: oauthScopes.join(" "),
-      resource: apiBaseUrl,
-      state,
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-    }).toString();
-    window.location.assign(authorize);
+      const verifier = randomString(32);
+      const state = randomString(24);
+      sessionStorage.setItem("terrascale.oauth.verifier", verifier);
+      sessionStorage.setItem("terrascale.oauth.state", state);
+      const challenge = await pkceChallenge(verifier);
+      const callback = redirectUri ?? `${window.location.origin}${window.location.pathname}`;
+      const authorize = new URL("/api/auth/oauth2/authorize", authBaseUrl);
+      authorize.search = new URLSearchParams({
+        client_id: oauthClientId,
+        response_type: "code",
+        redirect_uri: callback,
+        scope: oauthScopes.join(" "),
+        resource: apiBaseUrl,
+        state,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      }).toString();
+      window.location.assign(authorize);
     } catch (cause: unknown) {
       setAuthError(cause instanceof Error ? cause.message : "Sign-in could not be started.");
       setAuthenticating(false);
@@ -96,14 +97,14 @@ export default function Page() {
       <p>TerraScale development starter</p>
       <h1>Posts that stay in sync.</h1>
       <p>Connect two browser tabs to the same cloud branch, then add a post in either tab.</p>
-      {!databaseId ? <p role="alert">Set NEXT_PUBLIC_TERRASCALE_DATABASE_ID in .env.local and restart the development server.</p> : credential ? (
+      {!databaseId || !projectId ? <p role="alert">Set NEXT_PUBLIC_TERRASCALE_DATABASE_ID and NEXT_PUBLIC_TERRASCALE_PROJECT_ID in .env.local and restart the development server.</p> : credential ? (
         <>
           <button onClick={() => setCredential("")}>Disconnect and clear credential</button>
           <LivePosts key={credential} credential={credential} />
         </>
       ) : (
         <>
-          <p>Sign in to TerraScale to authorize this starter to read and write your development database.</p>
+          <p>Sign in to TerraScale to authorize this starter to read and write posts in your development database.</p>
           <button onClick={() => void signIn()} disabled={authenticating}>{authenticating ? "Signing in…" : "Sign in with TerraScale"}</button>
           {authError ? <p role="alert">{authError}</p> : null}
         </>
@@ -150,11 +151,38 @@ async function exchangeAuthorizationCode(code: string, verifier: string): Promis
   return body.access_token;
 }
 
+// Renew the short-lived, branch-scoped credential without storing either token.
+// Concurrent reads and writes share one exchange; a failed exchange is retryable.
+function starterAccessToken(credential: string): () => Promise<string> {
+  let cached: { token: string; renewAt: number } | undefined;
+  let pending: Promise<string> | undefined;
+  return async () => {
+    if (cached && Date.now() < cached.renewAt) return cached.token;
+    if (pending) return pending;
+    pending = (async () => {
+      const response = await fetch(new URL("/api/auth/web-starter/delegation", authBaseUrl), {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
+        body: JSON.stringify({ projectId, databaseId, collection: "posts", actions: ["read", "write"] }),
+      });
+      const body = await response.json() as { accessToken?: unknown; expiresIn?: unknown; message?: unknown };
+      if (!response.ok || typeof body.accessToken !== "string" || !body.accessToken ||
+          typeof body.expiresIn !== "number" || !Number.isFinite(body.expiresIn) || body.expiresIn <= 0) {
+        throw new Error(typeof body.message === "string" ? body.message : "Database authorization failed. Verify access to this project and branch, or sign in again.");
+      }
+      cached = { token: body.accessToken, renewAt: Date.now() + Math.max(0, body.expiresIn - 10) * 1000 };
+      return cached.token;
+    })();
+    try { return await pending; }
+    finally { pending = undefined; }
+  };
+}
+
 function LivePosts({ credential }: { credential: string }) {
   const client = useMemo(() => createTerraScaleClient({
     apiBaseUrl,
-    projectId: process.env.NEXT_PUBLIC_TERRASCALE_PROJECT_ID,
-    accessToken: credential,
+    projectId,
+    accessToken: starterAccessToken(credential),
   }), [credential]);
   const [rows, setRows] = useState<Post[]>([]);
   const [attached, setAttached] = useState(false);
@@ -171,7 +199,8 @@ function LivePosts({ credential }: { credential: string }) {
     let live: Awaited<ReturnType<TerraScaleSyncV1Client["subscribe"]>> | undefined;
     void client.reactive.subscribe({
       databaseId,
-      subscription: "starter-posts",
+      // Each effect owns its attach, including StrictMode effect replays.
+      subscription: `starter-posts-${crypto.randomUUID()}`,
       query: postsQuery.sql,
       parameters: queryParameters,
       signal: controller.signal,

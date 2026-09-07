@@ -31,6 +31,8 @@ test("scaffold is deterministic, cloud-only, and complete", async () => {
       const second = await runNode([bin, "second"], secondRoot);
       assert.equal(second.code, 0, second.stderr);
       const files = [
+        ".env.example",
+        "README.md",
         "package.json",
         "tsconfig.json",
         "next-env.d.ts",
@@ -60,7 +62,8 @@ test("scaffold is deterministic, cloud-only, and complete", async () => {
       assert.doesNotMatch(readme, /local TerraBase|TerraBase emulator/i);
       assert.match(readme, /cloud branch/i);
       assert.match(readme, /typed Database API contract/i);
-      assert.match(readme, /pending/i);
+      assert.match(readme, /terrascale push --database/);
+      assert.match(readme, /PKCE/);
       assert.match(await readFile(join(root, "first", "terrascale.schema.json"), "utf8"), /"historyRetentionDays": 7/);
       assert.match(await readFile(join(root, "first", "seed.ts"), "utf8"), /documents\.put/);
     } finally {

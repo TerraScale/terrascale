@@ -1,7 +1,8 @@
 import { createTerraScaleClient } from "@terrascale/sdk";
 
 /**
- * Optional cloud seed for `terrascale dev` once the CLI seed route is enabled.
+ * Optional cloud seed function for an application script runner.
+ * `terrascale dev --seed` accepts data files, not TypeScript functions.
  * This always writes through the public API; it never starts a local engine.
  */
 export default async function seed(): Promise<void> {

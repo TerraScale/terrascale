@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// create-terrascale-app stub (P-8/D-56/D-74).
+// create-terrascale-app scaffolder.
 // Usage: npx create-terrascale-app@latest my-app
-// Copies template/ into ./my-app and prints the 5-minute flow.
+// Copies template/ into ./my-app and prints cloud setup instructions.
 // No network calls, no credentials needed to scaffold.
 import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -41,6 +41,7 @@ console.log("  # free plan needs no subscription; eligible onboarding promotion 
 console.log("  # from a ts-cli checkout: go install ./cmd/terrascale");
 console.log("  terrascale dev <database> --watch=false --no-log-tail");
 console.log("  # copy the branch database id/API settings into .env.local");
-console.log("  npm run dev   # enter a scoped development credential, then add a post");
+console.log("  terrascale push --database <branch-database>");
+console.log("  npm run dev   # sign in with TerraScale in each tab, then add a post");
 console.log("");
 console.log("Docs: https://docs.terrascale.tech/getting-started/");

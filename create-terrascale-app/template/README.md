@@ -11,6 +11,8 @@ database.
 npm install
 cp .env.example .env.local
 terrascale dev <database> --watch=false --no-log-tail
+# Set the branch database and project settings in .env.local.
+terrascale push --database <branch-database>
 npm run dev
 ```
 
@@ -25,12 +27,13 @@ registered for `terrascale-starter-web`; sign-in uses authorization-code PKCE
 credential stays in tab memory and is passed directly to `@terrascale/sdk`; it
 is never rendered or persisted. Export a key as `TERRASCALE_API_KEY` (or pass
 `--api-key`) for the CLI; `.env.local` is read by Next.js, not by the shell.
-Seed execution, log tailing, and codegen watch require their published CLI
-capabilities; this starter never starts a local engine.
+Apply the collection schema to that branch before attaching the live query:
+`terrascale push --database <branch-database>`. The CLI supports data-file
+seeds, bounded branch diagnostics, and codegen watch; it does not execute
+TypeScript seed functions.
 
 Open the app in two tabs to attach the same cloud-backed live result view. The
-starter can add posts through the typed Database API contract. The cloud
-seed CLI contract remains pending; the Add post form needs no seed runner.
+starter can add posts through the typed Database API contract. The Add post form needs no seed runner. Sign in separately in each tab.
 
 ## Files
 
@@ -38,8 +41,8 @@ seed CLI contract remains pending; the Add post form needs no seed runner.
   `TerraScaleSyncV1Client.subscribe({ databaseId, ... })` over CDN-backed HTTP.
 - `schema.ts` — the typed `defineSchema` source for the JSON contract.
 - `terrascale.schema.json` — the contract `terrascale push` applies.
-- `seed.ts` — optional cloud seed entry point for the CLI seed contract when
-  seed execution is enabled.
+- `seed.ts` — optional cloud seed function for an application script runner.
+  `terrascale dev --seed` accepts data files, not TypeScript functions.
 - `AGENTS.md` — SDK, schema/SQL builders, `terrascale dev`, MCP setup.
 
 Full quickstart: https://docs.terrascale.tech/getting-started/
@@ -50,3 +53,9 @@ privileged API keys in NEXT_PUBLIC settings. Browser credentials must be
 limited to this development branch and its required posts read/write/reactive
 permissions. Local checks do not prove real cloud behavior or the five-minute
 setup target.
+
+After OAuth sign-in, the starter exchanges its bearer for short-lived access
+limited to the selected project/database and the `posts` collection, with read
+and write actions. It renews this delegation while the OAuth session token
+remains valid. If authorization expires or is revoked, disconnect and sign in
+again. Both credentials remain in tab memory.
