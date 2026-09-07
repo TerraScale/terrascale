@@ -46,6 +46,39 @@ function fixtureFetch(requests: Request[]): typeof fetch {
 }
 
 describe("management entrypoint", () => {
+  it("lists project operations with bounded pagination and lossless revisions", async () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleManagementClient({
+      apiBaseUrl: "https://api.example.test",
+      projectId: "project-1",
+      fetch: async input => {
+        const request = new Request(input);
+        requests.push(request);
+        return new Response('{"operations":[{"operation_id":"op-1","kind":"database_create","database_id":"db-1","name":"primary","state":"running","stage":"accepted","created_at":"2026-09-06T12:00:00Z","revision":9223372036854775807,"cancellable":false,"cancellation_reason":"Provisioning has no safe cancellation action"}],"next_cursor":"cursor-1","covered_kinds":["database_create","branch_create"]}', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const result = await client.operations.list({ after: "cursor-0", limit: 1 });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.operations[0]?.revision).toBe(9223372036854775807n);
+    expect(new URL(requests[0]!.url).pathname).toBe("/api/v1/operations");
+    expect(new URL(requests[0]!.url).search).toBe("?after=cursor-0&limit=1");
+    expect(requests[0]!.headers.get("x-terrascale-project-id")).toBe("project-1");
+  });
+
+  it("bounds operation page sizes before sending", () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleManagementClient({
+      apiBaseUrl: "https://api.example.test",
+      fetch: fixtureFetch(requests),
+    });
+    for (const limit of [0, 51, 1.5, NaN]) expect(() => client.operations.list({ limit })).toThrow(TypeError);
+    expect(requests).toHaveLength(0);
+  });
+
   it("uses the producer-published database, branch, and backup routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({

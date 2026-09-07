@@ -24,6 +24,32 @@ export type ManagementOperationOptions = {
 
 export type ManagementRequestOptions = Pick<ManagementOperationOptions, "signal">;
 
+export type OperationSummary = {
+  readonly operation_id: string;
+  /** Current producer coverage is explicit; newer kinds may be added additively. */
+  readonly kind: string;
+  readonly database_id: string;
+  readonly name: string;
+  readonly state: string;
+  readonly stage: string;
+  readonly created_at: string;
+  readonly revision: Contracts.Int64Value;
+  readonly cancellable: boolean;
+  readonly cancellation_reason: string;
+};
+
+export type OperationPage = {
+  readonly operations: readonly OperationSummary[];
+  readonly next_cursor: string | null;
+  readonly covered_kinds: readonly string[];
+};
+
+export type OperationListOptions = {
+  readonly after?: string | undefined;
+  readonly limit?: number | undefined;
+  readonly signal?: AbortSignal | undefined;
+};
+
 /** A residency constraint. Region lists are normalized and bounded. */
 export type PlacementLock =
   | "eu-only"
@@ -176,6 +202,22 @@ export class ManagementDatabasesClient {
 export class ManagementOperationsClient {
   readonly #http: TerraScaleHttp;
   constructor(http: TerraScaleHttp) { this.#http = http; }
+
+  list(options: OperationListOptions = {}): Promise<TerraScaleResult<OperationPage>> {
+    if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 50)) {
+      throw new TypeError("limit must be an integer between 1 and 50.");
+    }
+    return this.#http.request({
+      method: "GET",
+      path: `${apiRoot}/operations`,
+      routeName: "databases.listOperations",
+      query: {
+        ...(options.after === undefined ? {} : { after: options.after }),
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+      },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  }
 
   get(operationId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<ProvisioningOperation>> {
     requireText(operationId, "operationId", 128);

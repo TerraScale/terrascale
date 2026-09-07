@@ -653,6 +653,7 @@ const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly
 };
 
 const responseInt64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {
+  "databases.listOperations": ["operations.*.revision"],
   "databases.listDocuments": ["documents.*.version"],
   "databases.batchDocuments": ["committed"],
   "databases.listDatabases": ["databases.*.created_at"],

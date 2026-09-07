@@ -23,6 +23,11 @@ export type {
 } from "./client.js";
 export type { TerraScaleManagementClient } from "./management.js";
 export type {
+  OperationListOptions,
+  OperationPage,
+  OperationSummary,
+} from "./management.js";
+export type {
   CreateTenantBranchRequest,
   CreateTenantKeyRequest,
   CreateTenantRequest,
