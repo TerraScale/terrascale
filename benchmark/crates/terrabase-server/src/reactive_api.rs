@@ -999,7 +999,7 @@ pub async fn attach_view(
     if request.database_id.is_empty() || request.database_id.len() > 256 {
         return invalid_attach("databaseId").into_response();
     }
-    if !principal.scope().admits(crate::api_keys::Verbs::READ, &request.database_id) {
+    if !principal.reactive_allowed() || !principal.scope().admits(crate::api_keys::Verbs::READ, &request.database_id) {
         return ApiError::forbidden("read on the requested database").into_response();
     }
     let host = match crate::api::document_host(&state, &request.database_id) {

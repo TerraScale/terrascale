@@ -150,6 +150,10 @@ pub(crate) struct ManifestFacts {
     pub(crate) captured_unix_millis: u64,
     /// Immutable minimum retention deadline for the encrypted artifact.
     pub(crate) retain_until_unix_millis: u64,
+    /// Canonical logical checksum at the captured boundary.
+    pub(crate) logical_checksum: String,
+    /// Live logical records, including reserved family records.
+    pub(crate) logical_documents: u64,
     /// The archived user-document count.
     pub(crate) documents: u64,
     /// The archived family-record count.
@@ -182,6 +186,8 @@ pub struct BackupManifest {
     boundary_unix_millis: u64,
     captured_unix_millis: u64,
     retain_until_unix_millis: u64,
+    logical_checksum: String,
+    logical_documents: u64,
     documents: u64,
     family_records: u64,
     deletes: u64,
@@ -203,6 +209,8 @@ impl BackupManifest {
             boundary_unix_millis,
             captured_unix_millis,
             retain_until_unix_millis,
+            logical_checksum,
+            logical_documents,
             documents,
             family_records,
             deletes,
@@ -222,6 +230,8 @@ impl BackupManifest {
             boundary_unix_millis,
             captured_unix_millis,
             retain_until_unix_millis,
+            logical_checksum,
+            logical_documents,
             documents,
             family_records,
             deletes,
@@ -308,6 +318,18 @@ impl BackupManifest {
             BackupKind::Incremental { base } => Some(base),
             BackupKind::Full | BackupKind::Snapshot => None,
         }
+    }
+
+    /// Returns the canonical BLAKE3 logical checksum at this exact boundary.
+    #[must_use]
+    pub fn logical_checksum(&self) -> &str {
+        &self.logical_checksum
+    }
+
+    /// Returns live logical records at the boundary, including reserved family records.
+    #[must_use]
+    pub fn logical_documents(&self) -> u64 {
+        self.logical_documents
     }
 
     /// Returns the archived user-document count.
@@ -407,6 +429,8 @@ impl BackupManifest {
         lines.push(format!("boundary_unix_millis {}", self.boundary_unix_millis));
         lines.push(format!("captured_unix_millis {}", self.captured_unix_millis));
         lines.push(format!("retain_until_unix_millis {}", self.retain_until_unix_millis));
+        lines.push(format!("logical_checksum {}", self.logical_checksum));
+        lines.push(format!("logical_documents {}", self.logical_documents));
         lines.push(format!("documents {}", self.documents));
         lines.push(format!("family_records {}", self.family_records));
         lines.push(format!("deletes {}", self.deletes));
@@ -480,6 +504,8 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
     if captured_unix_millis < boundary_unix_millis {
         return Err(invalid());
     }
+    let logical_checksum = parse_digest(lines.next().ok_or_else(invalid)?, "logical_checksum")?;
+    let logical_documents = parse_number(lines.next().ok_or_else(invalid)?, "logical_documents")?;
     let documents = parse_number(lines.next().ok_or_else(invalid)?, "documents")?;
     let family_records = parse_number(lines.next().ok_or_else(invalid)?, "family_records")?;
     let deletes = parse_number(lines.next().ok_or_else(invalid)?, "deletes")?;
@@ -558,6 +584,8 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
         boundary_unix_millis,
         captured_unix_millis,
         retain_until_unix_millis,
+        logical_checksum,
+        logical_documents,
         documents,
         family_records,
         deletes,
@@ -737,6 +765,8 @@ mod tests {
             boundary_unix_millis: 700,
             captured_unix_millis: 800,
             retain_until_unix_millis: 86_400_800,
+            logical_checksum: "a".repeat(64),
+            logical_documents: 1,
             documents: 1,
             family_records: 0,
             deletes: 0,
@@ -756,6 +786,21 @@ mod tests {
         lines[1] = format!("identity {}", hex::encode(digest(&SHA256, body.as_bytes()).as_ref()));
         text = lines.join("\n");
         text
+    }
+
+    #[test]
+    fn logical_source_facts_are_bound_to_manifest_identity() {
+        let manifest = sample();
+        assert_eq!(BackupManifest::decode(&manifest.encode()).unwrap(), manifest);
+        for changed in [
+            manifest.render().replace(
+                &format!("logical_checksum {}", "a".repeat(64)),
+                &format!("logical_checksum {}", "b".repeat(64)),
+            ),
+            manifest.render().replace("logical_documents 1", "logical_documents 2"),
+        ] {
+            assert_eq!(parse_manifest(&changed), Err(BackupError::ManifestInvalid));
+        }
     }
 
     #[test]

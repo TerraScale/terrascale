@@ -104,7 +104,8 @@ impl Session {
             Authorization::Bearer { principal, credential } => {
                 if let Some(scope) = principal.membership_scope() {
                     let now = super::now_seconds();
-                    if principal.is_expired_at(now.saturating_mul(1000))
+                    if !principal.reactive_allowed()
+                        || principal.is_expired_at(now.saturating_mul(1000))
                         || !self
                             .state
                             .delegated_identity

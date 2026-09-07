@@ -39,7 +39,7 @@ impl CrossFileIdentity {
             && !self.participants.is_empty()
             && self.participants.len() <= MAX_PARTICIPANTS
             && self.participants.iter().all(|(name, sequence)| {
-                !name.is_empty() && name.len() <= 255 && *sequence != u64::MAX
+                !name.is_empty() && name.len() <= 255 && *sequence <= i64::MAX as u64
             })
     }
 }
@@ -88,14 +88,25 @@ impl VisibleFrontier {
 }
 
 fn key(operation: &OperationId) -> String { format!("control:cross-file/v1/{}", operation.as_str()) }
+fn maintenance_operation(identity: &CrossFileIdentity, phase: &str) -> Result<OperationId, EngineError> {
+    let mut input = b"terrascale.cross-file.maintenance.v1".to_vec();
+    input.extend_from_slice(identity.operation.as_str().as_bytes());
+    input.extend_from_slice(phase.as_bytes());
+    OperationId::try_new(&format!("cross-file-{phase}-{}", blake3::hash(&input).to_hex())).map_err(|_| EngineError::InvalidDocument)
+}
 
-fn encode(identity: &CrossFileIdentity) -> DocumentValue {
-    let participants = identity.participants.iter().map(|(name, sequence)|
-        DocumentValue::Object(BTreeMap::from([
+fn encode(identity: &CrossFileIdentity) -> Result<DocumentValue, EngineError> {
+    encode_phase(identity, "prepare")
+}
+
+fn encode_phase(identity: &CrossFileIdentity, phase: &str) -> Result<DocumentValue, EngineError> {
+    if !identity.validate() { return Err(EngineError::InvalidDocument); }
+    let participants: Vec<_> = identity.participants.iter().map(|(name, sequence)|
+        Ok(DocumentValue::Object(BTreeMap::from([
             ("name".into(), DocumentValue::String(name.clone())),
-            ("sequence".into(), DocumentValue::Integer(*sequence as i64)),
-        ]))).collect();
-    DocumentValue::Object(BTreeMap::from([
+            ("sequence".into(), DocumentValue::Integer(i64::try_from(*sequence).map_err(|_| EngineError::InvalidDocument)?)),
+        ])))).collect::<Result<_, _>>()?;
+    Ok(DocumentValue::Object(BTreeMap::from([
         ("incarnation".into(), DocumentValue::String(format!("{:032x}", identity.incarnation))),
         ("authority_epoch".into(), DocumentValue::Integer(identity.authority_epoch as i64)),
         ("route_generation".into(), DocumentValue::Integer(identity.route_generation as i64)),
@@ -104,8 +115,8 @@ fn encode(identity: &CrossFileIdentity) -> DocumentValue {
         ("participants".into(), DocumentValue::Array(participants)),
         ("operation".into(), DocumentValue::String(identity.operation.as_str().into())),
         ("decision_epoch".into(), DocumentValue::Integer(identity.decision_epoch as i64)),
-        ("phase".into(), DocumentValue::String("prepare".into())),
-    ]))
+        ("phase".into(), DocumentValue::String(phase.into())),
+    ])))
 }
 
 fn integer(fields: &BTreeMap<String, DocumentValue>, name: &str) -> Option<u64> {
@@ -114,6 +125,7 @@ fn integer(fields: &BTreeMap<String, DocumentValue>, name: &str) -> Option<u64> 
 
 fn decode(value: DocumentValue) -> Result<CrossFileIdentity, EngineError> {
     let DocumentValue::Object(fields) = value else { return Err(EngineError::InvalidDocument); };
+    if !matches!(fields.get("phase"), Some(DocumentValue::String(phase)) if phase == "prepare" || phase == "commit" || phase == "abort") { return Err(EngineError::InvalidDocument); }
     let Some(DocumentValue::String(incarnation)) = fields.get("incarnation") else { return Err(EngineError::InvalidDocument); };
     let incarnation = u128::from_str_radix(incarnation, 16).map_err(|_| EngineError::InvalidDocument)?;
     let Some(DocumentValue::String(digest)) = fields.get("write_digest") else { return Err(EngineError::InvalidDocument); };
@@ -136,10 +148,30 @@ impl Engine {
     /// Creates an immutable prepare record with exact-identity replay.
     pub fn prepare_cross_file(&self, scope: &TenantScope, identity: CrossFileIdentity) -> Result<CrossFileIdentity, EngineError> {
         if !identity.validate() { return Err(EngineError::InvalidDocument); }
-        let mut tx = self.begin(scope, self.read_snapshot(scope)?, OperationId::try_new("cross-file-prepare").map_err(|_| EngineError::InvalidDocument)?)?;
+        if identity.incarnation != u128::from_be_bytes(self.database_id().as_bytes().to_owned()) { return Err(EngineError::Conflict); }
+        let mut tx = self.begin(scope, self.read_snapshot(scope)?, maintenance_operation(&identity, "prepare")?)?;
         if let Some(existing) = tx.read_private_metadata(&key(&identity.operation))? { let existing = decode(existing)?; return (existing == identity).then_some(existing).ok_or(EngineError::Conflict); }
         tx.internal_maintenance = true;
-        tx.put_private_metadata(&key(&identity.operation), encode(&identity))?;
+        tx.put_private_metadata(&key(&identity.operation), encode(&identity)?)?;
         match tx.commit(LocalDurability::Synced) { CommitOutcome::Committed(_) => Ok(identity), CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict), CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(EngineError::StorageFailure) }
+    }
+
+    /// Durably decides a prepared operation exactly once.
+    pub fn decide_cross_file(
+        &self,
+        scope: &TenantScope,
+        identity: &CrossFileIdentity,
+        decision: CrossFileDecision,
+    ) -> Result<CrossFileDecision, EngineError> {
+        if !identity.validate() { return Err(EngineError::InvalidDocument); }
+        if identity.incarnation != u128::from_be_bytes(self.database_id().as_bytes().to_owned()) { return Err(EngineError::Conflict); }
+        let mut tx = self.begin(scope, self.read_snapshot(scope)?, maintenance_operation(identity, "decide")?)?;
+        let current = tx.read_private_metadata(&key(&identity.operation))?.ok_or(EngineError::Conflict)?;
+        let decoded = decode(current.clone())?;
+        if decoded != *identity { return Err(EngineError::Conflict); }
+        tx.internal_maintenance = true;
+        let phase = match decision { CrossFileDecision::Committed => "commit", CrossFileDecision::Aborted => "abort" };
+        tx.put_private_metadata(&key(&identity.operation), encode_phase(identity, phase)?)?;
+        match tx.commit(LocalDurability::Synced) { CommitOutcome::Committed(_) => Ok(decision), CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict), CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(EngineError::StorageFailure) }
     }
 }

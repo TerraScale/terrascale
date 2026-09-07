@@ -177,6 +177,7 @@ async fn byo_router_rechecks_current_membership_and_permission() {
         None,
         Some(("active", json!(false))),
         Some(("action", json!("write"))),
+        Some(("scopes", json!(["database:write"]))),
         Some(("projectId", json!("other"))),
         Some(("membershipScope", json!(null))),
     ] {

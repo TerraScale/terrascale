@@ -323,6 +323,12 @@ mod tests {
         }
         assert!(crate::export_artifact_crypto::read_cursor_key(&path).is_err());
         std::fs::write(&path, [0_u8; 32]).expect("fixture");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                .expect("private fixture");
+        }
         assert!(crate::export_artifact_crypto::read_cursor_key(&path).is_err());
         let mut valid = [0_u8; 32];
         valid[0] = 1;

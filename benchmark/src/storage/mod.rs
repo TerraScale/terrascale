@@ -15,6 +15,7 @@ mod intent;
 mod invisible;
 mod ownership;
 mod physical_file;
+mod participant;
 mod shadow;
 mod sqlite;
 pub use physical_file::{
@@ -626,22 +627,7 @@ pub(crate) struct AppliedFrontierEntry {
     pub(crate) hlc: u64,
 }
 
-/// Immutable identity for a cross-file storage participant.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ParticipantIdentity {
-    pub(crate) operation: OperationId,
-    pub(crate) local_file: String,
-    pub(crate) owner: String,
-    pub(crate) incarnation: u128,
-    pub(crate) digest: [u8; 32],
-    pub(crate) epoch: u64,
-}
-
-/// Durable participant preparation result.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ParticipantPrepareReceipt {
-    pub(crate) identity: ParticipantIdentity,
-}
+pub(crate) use participant::{ParticipantIdentity, ParticipantPrepare, ParticipantPrepareReceipt};
 
 /// The private storage adapter seam the Engine depends on.
 ///

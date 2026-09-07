@@ -247,6 +247,8 @@ pub struct ProductionControl {
     pub transition: Option<ProductionTransitionTrust>,
     /// Optional owner-private signing key reference for placement receipts.
     pub receipt_signing_key_file: Option<PathBuf>,
+    /// Explicit provisioned Ed25519 receipt signing identity.
+    pub receipt_signing_key_id: Option<String>,
 }
 
 /// Public signing pins for membership acceptance and old-epoch fences.
@@ -608,6 +610,8 @@ struct FileProductionControl {
     transition: Option<ProductionTransitionTrust>,
     #[serde(default)]
     receipt_signing_key_file: Option<PathBuf>,
+    #[serde(default)]
+    receipt_signing_key_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1102,6 +1106,13 @@ impl ServerConfig {
                     .receipt_signing_key_file
                     .map(|path| production_path(&path))
                     .transpose()?;
+                if control.receipt_signing_key_id.is_some() != receipt_signing_key_file.is_some()
+                    || control.receipt_signing_key_id.as_ref().is_some_and(|id| {
+                        id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_graphic())
+                    })
+                {
+                    return Err(ConfigError::InvalidMemberPrincipal);
+                }
                 if (principals.is_empty() && observers.is_empty())
                     || !principals.is_disjoint(&observers)
                 {
@@ -1138,6 +1149,7 @@ impl ServerConfig {
                     observer_principals: observers,
                     transition: control.transition,
                     receipt_signing_key_file,
+                    receipt_signing_key_id: control.receipt_signing_key_id,
                 })
             })
             .transpose()?;

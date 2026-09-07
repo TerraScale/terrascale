@@ -9,6 +9,7 @@ use rcgen::{
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{Ipv4Addr, UdpSocket};
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -135,6 +136,7 @@ fn endpoints(ids: &[MemberWorkloadIdentity]) -> Vec<Arc<ProductionQuicEndpoint>>
 async fn create() -> Fixture {
     let root = std::env::temp_dir().join(format!("terrabase-auth-four-{}", Ulid::new()));
     std::fs::create_dir_all(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     let tenant = TenantUlid::generate();
     let project = ProjectUlid::generate();
     let database = DatabaseUlid::generate();
@@ -252,6 +254,7 @@ async fn create() -> Fixture {
     let token = "four-node-bootstrap-key-01234567890123456789".to_owned();
     let key_path = root.join("bootstrap.key");
     std::fs::write(&key_path, &token).unwrap();
+    std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mut production = super::tests::admitted_fixture::production_config(
         (tenant, project, database),
         cluster,

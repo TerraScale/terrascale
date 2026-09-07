@@ -699,7 +699,7 @@ pub(crate) mod tests {
         assert_eq!(error.to_string(), "replication: test seam is absent");
     }
 
-    fn opened_bootstrap(label: &str) -> (ProductionCatalogBootstrap, PathBuf, DatabaseSpec) {
+    pub(crate) fn opened_bootstrap(label: &str) -> (ProductionCatalogBootstrap, PathBuf, DatabaseSpec) {
         let root = std::env::temp_dir()
             .join(format!("terrabase-server-production-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -750,7 +750,7 @@ pub(crate) mod tests {
         member.close(Duration::from_secs(1)).expect("close reopened member");
     }
 
-    struct Writer;
+    pub(crate) struct Writer;
 
     impl DatabaseRoleAuthority for Writer {
         fn accepted_role(&self, _: &terrabase::member::DatabaseId) -> Option<AcceptedDatabaseRole> {
@@ -789,7 +789,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn transport_pair(
+    pub(crate) fn transport_pair(
         placement: &ProductionPlacement,
     ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
         let local = placement.local_member();
@@ -921,7 +921,7 @@ pub(crate) mod tests {
         (runtime, root, spec)
     }
 
-    struct AcceptedMembership(super::ProductionPlacement);
+    pub(crate) struct AcceptedMembership(pub(crate) super::ProductionPlacement);
 
     impl terrabase_cluster::production::DurableMembershipSource for AcceptedMembership {
         fn load_admitted_placement(

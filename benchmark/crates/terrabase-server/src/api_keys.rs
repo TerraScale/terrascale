@@ -121,11 +121,19 @@ pub struct Principal {
     /// Immutable tenant/project owner, when this is a customer credential.
     owner: Option<(String, String)>,
     membership_scope: Option<String>,
+    reactive_allowed: bool,
 }
 
 impl Principal {
     pub(crate) fn delegated(label: String, scope: Scope, expires_at: u64) -> Self {
-        Self { label, scope, expires_at: Some(expires_at), owner: None, membership_scope: None }
+        Self {
+            label,
+            scope,
+            expires_at: Some(expires_at),
+            owner: None,
+            membership_scope: None,
+            reactive_allowed: true,
+        }
     }
 
     /// Creates a customer principal bound to one immutable project owner.
@@ -141,12 +149,26 @@ impl Principal {
             expires_at: Some(expires_at),
             owner: Some(owner),
             membership_scope: None,
+            reactive_allowed: true,
         }
     }
 
     pub(crate) fn with_membership_scope(mut self, scope: String) -> Self {
         self.membership_scope = Some(scope);
         self
+    }
+
+    pub(crate) fn with_reactive_policy(mut self, feature: &str, allowed: bool) -> Self {
+        if let Some(scope) = self.membership_scope.as_mut() {
+            scope.push(':');
+            scope.push_str(feature);
+        }
+        self.reactive_allowed = allowed;
+        self
+    }
+
+    pub(crate) fn reactive_allowed(&self) -> bool {
+        self.reactive_allowed
     }
 
     pub(crate) fn membership_scope(&self) -> Option<&str> {
@@ -284,6 +306,7 @@ impl KeyStore {
                 expires_at,
                 owner: Some(owner),
                 membership_scope: None,
+                reactive_allowed: true,
             },
         );
     }
@@ -309,6 +332,7 @@ impl KeyStore {
                 expires_at,
                 owner: None,
                 membership_scope: None,
+                reactive_allowed: true,
             },
         );
     }
@@ -568,6 +592,7 @@ mod tests {
             scope: Scope::every_database(Verbs::READ),
             expires_at: Some(1_000),
             membership_scope: None,
+            reactive_allowed: true,
         };
         assert!(!principal.is_expired_at(999), "before the bound admits");
         assert!(principal.is_expired_at(1_000), "at the bound refuses");
@@ -578,6 +603,7 @@ mod tests {
             scope: Scope::every_database(Verbs::ALL),
             expires_at: None,
             membership_scope: None,
+            reactive_allowed: true,
         };
         assert!(!bootstrap.is_expired_at(u64::MAX), "never-expiring admits at any clock");
         assert_eq!(bootstrap.expires_at(), None);

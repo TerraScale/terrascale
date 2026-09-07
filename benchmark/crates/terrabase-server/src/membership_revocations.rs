@@ -25,6 +25,10 @@ pub(crate) fn valid_scope(scope: &str) -> bool {
         && scope.starts_with("scope-")
         && scope.as_bytes()[6..].iter().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
 }
+pub(crate) fn valid_authority_scopes(scopes: &str) -> bool {
+    let parts = scopes.split(':').collect::<Vec<_>>();
+    (1..=2).contains(&parts.len()) && parts.iter().all(|scope| valid_scope(scope))
+}
 impl MembershipRevocations {
     pub fn install(&self, next: Snapshot, now: u64) -> Result<(), ()> {
         if next.entries.len() > 32
@@ -68,14 +72,14 @@ impl MembershipRevocations {
         Ok(())
     }
     pub fn admits(&self, scope: &str, now: u64) -> bool {
-        valid_scope(scope)
+        valid_authority_scopes(scope)
             && self.snapshot.read().ok().is_some_and(|snapshot| {
                 snapshot.as_ref().is_some_and(|snapshot| {
                     snapshot.valid_until > now
-                        && !snapshot
-                            .entries
-                            .iter()
-                            .any(|entry| entry.scope == scope && entry.expires_at > now)
+                        && !snapshot.entries.iter().any(|entry| {
+                            scope.split(':').any(|part| entry.scope == part)
+                                && entry.expires_at > now
+                        })
                 })
             })
     }

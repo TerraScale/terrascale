@@ -64,6 +64,7 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
             row_count: response.row_count,
             journal_cut: response.journal_cut,
             placement: response.placement,
+            signed_completed_receipt: response.signed_completed_receipt,
         }))
     }
 

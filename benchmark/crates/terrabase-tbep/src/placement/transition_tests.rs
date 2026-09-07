@@ -264,6 +264,32 @@ fn signed_lifecycle_grant_replays_and_rejects_mutation_after_reopen() {
 }
 
 #[test]
+fn producer_lifecycle_restore_fixture_verifies_and_has_stable_digest() {
+    let fixture = tests::Fixture::new();
+    let journal = fixture.open();
+    let public_key = include_str!("../../../testdata/lifecycle-restore-grant-public.key").trim();
+    let key_bytes = hex::decode(public_key).unwrap();
+    journal
+        .configure_transition_trust(TransitionTrust::new(
+            BTreeMap::from([("proof".into(), key_bytes)]),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        ).unwrap())
+        .unwrap();
+    let encoded = include_bytes!("../../../testdata/lifecycle-restore-grant.json");
+    let grant = journal.verify_lifecycle_grant(encoded).unwrap();
+    assert_eq!(grant.operation_id, "restore-op-member");
+    assert_eq!(grant.authority_epoch, 7);
+    assert_eq!(grant.accepted_placement_revision, 9);
+    assert_eq!(
+        grant.accepted_restore_request_digest,
+        "8de75d48c6ed3bba6d0b05f266c390a3fb36c155ba423a225e8e733fae64413d"
+    );
+    assert_eq!(grant.issued_at_unix_millis, 1_800_000_000_000);
+    assert_eq!(grant.expires_at_unix_millis, 1_800_000_010_000);
+}
+
+#[test]
 fn successor_needs_one_fence_from_each_old_pair_and_exact_predecessor() {
     let mut fixture = tests::Fixture::new();
     fixture.request.proposal.as_mut().unwrap().regions.push(pb::PlacementRegionSeats {

@@ -287,6 +287,8 @@ fn indexed_timestamp_roots_handle_long_chains_and_noop_heads() {
             boundary_unix_millis: sequence,
             captured_unix_millis: sequence + 1,
             retain_until_unix_millis: sequence + 1 + 86_400_000,
+            logical_checksum: crate::engine::logical_state_hasher().finalize().to_hex().to_string(),
+            logical_documents: 0,
             documents: 0,
             family_records: 0,
             deletes: 0,
@@ -1407,6 +1409,7 @@ fn execute_configured_restore(
         let reopened = Engine::open(config).map_err(|_| BackupError::DestinationUnavailable)?;
         let guard = reopened.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
         let verification = verify_storage(guard.port.as_ref(), &replay)?;
+        verify_manifest_logical_facts(chain, cutoff, &verification)?;
         drop(guard);
         let facts = replay.into_facts(verification);
         write_restore_metadata(&reopened, identity, &facts)?;
@@ -1668,6 +1671,7 @@ fn build_and_verify(
     replay.chain(&engine, destination, chain, None)?;
     drop(engine);
     let verification = verify_staging(staging.path(), &replay)?;
+    verify_manifest_logical_facts(chain, None, &verification)?;
     Ok(replay.into_facts(verification))
 }
 
@@ -1687,7 +1691,25 @@ fn build_and_verify_encrypted(
     replay.chain(&engine, destination, chain, Some(cipher))?;
     drop(engine);
     let verification = verify_staging(staging.path(), &replay)?;
+    verify_manifest_logical_facts(chain, cutoff, &verification)?;
     Ok(replay.into_facts(verification))
+}
+
+/// Exact manifest boundaries bind independently captured logical source facts.
+/// A timestamp inside a journal link has no whole-link logical state claim.
+fn verify_manifest_logical_facts(
+    chain: &[BackupManifest],
+    cutoff: Option<u64>,
+    verification: &VerificationFacts,
+) -> Result<(), BackupError> {
+    let selected = chain.last().ok_or(BackupError::ChainIncomplete)?;
+    if cutoff.is_none_or(|cutoff| cutoff >= selected.boundary_unix_millis())
+        && (selected.logical_checksum() != verification.logical_checksum
+            || selected.logical_documents() != verification.documents_read_back)
+    {
+        return Err(BackupError::ChecksumMismatch);
+    }
+    Ok(())
 }
 
 /// The decoded-count tally of one chain link, cross-checked against the

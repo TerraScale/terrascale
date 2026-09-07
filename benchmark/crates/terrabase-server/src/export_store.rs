@@ -60,6 +60,69 @@ impl SqliteExportStore {
         Ok(Self { connection: Mutex::new(connection), leases })
     }
 
+    /// Reads a bounded indexed page from an existing journal without initializing
+    /// storage, loading snapshots, or acquiring worker ownership.
+    pub(crate) fn discover(
+        root: &std::path::Path,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ExportStatus>, ExportError> {
+        if !(1..=51).contains(&limit) {
+            return Err(ExportError::InvalidRequest("invalid discovery page"));
+        }
+        if let Some(after) = after {
+            validate_id(after)?;
+        }
+        let path = root.join("exports.sqlite");
+        for (candidate, directory) in [(root.to_path_buf(), true), (path.clone(), false)] {
+            match std::fs::symlink_metadata(candidate) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+                Err(error) => return Err(io_error(error)),
+                Ok(metadata)
+                    if (directory && !metadata.is_dir()) || (!directory && !metadata.is_file()) =>
+                {
+                    return Err(ExportError::DestinationUnavailable);
+                }
+                Ok(_) => {}
+            }
+        }
+        let connection = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(io_error)?;
+        connection.busy_timeout(Duration::from_secs(5)).map_err(io_error)?;
+        let mut statement = connection.prepare("SELECT job_id,length(progress),progress,cancel_requested FROM export_jobs WHERE job_id > ?1 ORDER BY job_id LIMIT ?2").map_err(io_error)?;
+        let mut rows = statement
+            .query(params![after.unwrap_or(""), i64::try_from(limit).map_err(io_error)?])
+            .map_err(io_error)?;
+        let mut result = Vec::new();
+        while let Some(row) = rows.next().map_err(io_error)? {
+            let id: String = row.get(0).map_err(io_error)?;
+            validate_id(&id)?;
+            let length: i64 = row.get(1).map_err(io_error)?;
+            if length < 0
+                || usize::try_from(length).map_or(true, |length| length > MAX_PROGRESS_BYTES)
+            {
+                return Err(ExportError::DestinationUnavailable);
+            }
+            let bytes: Vec<u8> = row.get(2).map_err(io_error)?;
+            let requested: bool = row.get(3).map_err(io_error)?;
+            let mut progress: ExportStatus = serde_json::from_slice(&bytes).map_err(io_error)?;
+            if progress.job_id != id {
+                return Err(ExportError::DestinationUnavailable);
+            }
+            progress.cancellation = match progress.status {
+                JobStatus::Complete => ExportCancellation::Unavailable,
+                JobStatus::Cancelled => ExportCancellation::Complete,
+                _ if requested => ExportCancellation::Requested,
+                _ => ExportCancellation::Available,
+            };
+            result.push(progress);
+        }
+        Ok(result)
+    }
+
     fn update_cancel(&self, job_id: &str, requested: bool) -> Result<(), ExportError> {
         validate_id(job_id)?;
         let connection = self.connection.lock().map_err(io_error)?;

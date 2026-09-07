@@ -95,6 +95,16 @@ impl ExportRuntime {
         Ok(Arc::new(service))
     }
 
+    pub(crate) fn discover(
+        &self,
+        database_id: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<super::ExportStatus>, ExportError> {
+        let identity = blake3::hash(database_id.as_bytes()).to_hex().to_string();
+        SqliteExportStore::discover(&self.root.join(identity), after, limit)
+    }
+
     pub(crate) async fn recover_pending(
         &self,
         database_id: &str,
@@ -148,5 +158,71 @@ impl ExportRuntime {
 
     pub(crate) fn destination(&self) -> ExportDestination {
         self.destination.clone()
+    }
+}
+
+impl ExportRuntime {
+    /// Authenticated, confidential pagination token: global registry scan keys
+    /// can belong to other scopes and must never appear in a readable cursor.
+    pub(crate) fn seal_discovery_cursor(
+        &self,
+        scope: &[u8],
+        plaintext: &[u8],
+    ) -> Result<String, ExportError> {
+        use aws_lc_rs::{
+            aead,
+            rand::{SecureRandom as _, SystemRandom},
+        };
+        use base64::Engine as _;
+        let derived =
+            blake3::derive_key("TerraScale operation discovery cursor v1", &self.cursor_key);
+        let key = aead::LessSafeKey::new(
+            aead::UnboundKey::new(&aead::AES_256_GCM, &derived)
+                .map_err(|_| ExportError::EncryptionUnavailable)?,
+        );
+        let mut nonce = [0u8; 12];
+        SystemRandom::new().fill(&mut nonce).map_err(|_| ExportError::EncryptionUnavailable)?;
+        let mut output = plaintext.to_vec();
+        key.seal_in_place_append_tag(
+            aead::Nonce::assume_unique_for_key(nonce),
+            aead::Aad::from(scope),
+            &mut output,
+        )
+        .map_err(|_| ExportError::EncryptionUnavailable)?;
+        let mut token = nonce.to_vec();
+        token.extend(output);
+        Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(token))
+    }
+
+    pub(crate) fn open_discovery_cursor(
+        &self,
+        scope: &[u8],
+        token: &str,
+    ) -> Result<Vec<u8>, ExportError> {
+        use aws_lc_rs::aead;
+        use base64::Engine as _;
+        let invalid = || ExportError::InvalidRequest("invalid operation cursor");
+        if token.len() > 2048 {
+            return Err(invalid());
+        }
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(token)
+            .map_err(|_| invalid())?;
+        let nonce: [u8; 12] =
+            bytes.get(..12).ok_or_else(invalid)?.try_into().map_err(|_| invalid())?;
+        let derived =
+            blake3::derive_key("TerraScale operation discovery cursor v1", &self.cursor_key);
+        let key = aead::LessSafeKey::new(
+            aead::UnboundKey::new(&aead::AES_256_GCM, &derived)
+                .map_err(|_| ExportError::EncryptionUnavailable)?,
+        );
+        let mut ciphertext = bytes[12..].to_vec();
+        key.open_in_place(
+            aead::Nonce::assume_unique_for_key(nonce),
+            aead::Aad::from(scope),
+            &mut ciphertext,
+        )
+        .map(|value| value.to_vec())
+        .map_err(|_| invalid())
     }
 }

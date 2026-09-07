@@ -405,19 +405,14 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     let Some(public) = public else {
         return Err(Box::new(DaemonError::ProductionConfigurationMissing));
     };
-    if production
-        .control
-        .as_ref()
-        .and_then(|control| control.receipt_signing_key_file.as_ref())
-        .is_none()
-    {
-        return Err(Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
-            crate::production::ProductionComponentError {
-                component: crate::production::ProductionComponent::Backup,
-                detail: "native recovery receipt signer is not configured",
-            },
-        ))));
-    }
+    let control = production.control.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
+    let receipt_signer = crate::native_recovery_receipt::NativeRecoveryReceiptSigner::from_file(
+        control.receipt_signing_key_id.clone().ok_or(DaemonError::ProductionConfigurationMissing)?,
+        control.receipt_signing_key_file.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?,
+    ).map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+    let receipts = Arc::new(crate::native_recovery_receipt::NativeRecoveryReceiptStore::open(
+        &control.proposal_journal.with_extension("restore-receipts.sqlite"), receipt_signer,
+    ).map_err(|_| DaemonError::ProductionConfigurationMissing)?);
     let region = public_api_region(config.region)?;
     let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
     let prepared_metrics = crate::production_metrics::PreparedMetrics::bind(
@@ -571,6 +566,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         registry: Arc::clone(&registry),
         backups: Some(lifecycle_fleet),
         recovery: Some(Arc::clone(&recovery)),
+        receipts,
     });
     let lifecycle_authority =
         Arc::new(crate::production_lifecycle_control::PlacementLifecycleAuthority::new(
@@ -1399,7 +1395,7 @@ fn read_pem(path: &Path, private: bool) -> Result<String, DaemonError> {
     Ok(text)
 }
 
-fn open_readonly(path: &Path) -> Result<File, DaemonError> {
+pub(crate) fn open_readonly(path: &Path) -> Result<File, DaemonError> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]

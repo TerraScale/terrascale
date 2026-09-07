@@ -1034,6 +1034,8 @@ fn validate_placement(engine: &Engine, plan: &BackupPlan) -> Result<(), BackupEr
 
 /// The mutable state of one executing backup run.
 struct RunState {
+    logical_hasher: blake3::Hasher,
+    logical_documents: u64,
     budget: ReadBudget,
     progress: Option<Arc<dyn Fn(BackupProgress) + Send + Sync>>,
     cancellation: Option<Arc<Cancellation>>,
@@ -1048,6 +1050,8 @@ impl RunState {
     /// Creates the run state from the plan's bounds and observers.
     fn new(plan: &BackupPlan) -> Self {
         Self {
+            logical_hasher: crate::engine::logical_state_hasher(),
+            logical_documents: 0,
             budget: ReadBudget::new(plan.read_ops_per_second),
             progress: plan.progress.clone(),
             cancellation: plan.cancellation.clone(),
@@ -1155,6 +1159,7 @@ fn execute(
             // longer provable once the journal has given it up: the run
             // fails closed from `effective_start` (M0-2 deleted the
             // retained-evidence store that proved discarded windows).
+            capture_logical_state_at(engine, &mut state, &tenants, boundary)?;
             archive_journal_range(
                 engine,
                 &mut state,
@@ -1270,6 +1275,7 @@ fn selected_tenants(
     if let Some(selected) = &plan.tenants {
         tenants.retain(|tenant| selected.contains(tenant));
     }
+    tenants.sort();
     state.observe(BackupStep::ReadingJournal)?;
     Ok(tenants)
 }
@@ -1320,6 +1326,39 @@ fn archive_journal_range(
     Ok(())
 }
 
+/// Reads complete logical state for an incremental's fixed boundary. Journal
+/// member counts describe mutations; this digest describes the restored state.
+fn capture_logical_state_at(
+    engine: &Engine,
+    state: &mut RunState,
+    tenants: &[TenantId],
+    boundary: StorageSequence,
+) -> Result<(), BackupError> {
+    for tenant in tenants {
+        let mut after = None;
+        loop {
+            state.spend_read()?;
+            let page = engine
+                .snapshot_records_from(tenant.clone(), boundary, after, MAX_SNAPSHOT_RECORD_PAGE)
+                .map_err(|_| BackupError::SourceUnavailable)?;
+            if page.is_empty() {
+                break;
+            }
+            for record in &page {
+                state
+                    .logical_hasher
+                    .update(&crate::engine::logical_document_digest(tenant, record.document()));
+                state.logical_documents =
+                    state.logical_documents.checked_add(1).ok_or(BackupError::SourceUnavailable)?;
+            }
+            let last = page.last().expect("nonempty snapshot page").document();
+            after = Some((last.collection().clone(), last.id().clone()));
+            state.observe(BackupStep::ReadingJournal)?;
+        }
+    }
+    Ok(())
+}
+
 /// Archives the source state at `boundary` for a full or snapshot run by
 /// paging final-state records directly into the staged member writer.
 ///
@@ -1353,6 +1392,11 @@ fn archive_state_at(
             }
             for record in &page {
                 let document = record.document().clone();
+                state
+                    .logical_hasher
+                    .update(&crate::engine::logical_document_digest(tenant, &document));
+                state.logical_documents =
+                    state.logical_documents.checked_add(1).ok_or(BackupError::SourceUnavailable)?;
                 let entry = tenant_counts.entry(tenant.clone()).or_default();
                 if is_family_record(document.collection().as_str()) {
                     entry.1 = entry.1.checked_add(1).ok_or(BackupError::DestinationUnavailable)?;
@@ -1428,6 +1472,8 @@ fn seal_run(
         boundary_unix_millis,
         captured_unix_millis,
         retain_until_unix_millis,
+        logical_checksum: state.logical_hasher.finalize().to_hex().to_string(),
+        logical_documents: state.logical_documents,
         documents: state.documents,
         family_records: state.family_records,
         deletes: state.deletes,

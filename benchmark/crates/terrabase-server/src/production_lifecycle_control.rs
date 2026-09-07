@@ -158,13 +158,15 @@ impl TbepLifecycleControl {
         use terrabase_tbep::proto::terrabase::v1::{LifecycleControlResponse, LifecycleStatus};
         match operation.phase {
             NativeRestorePhase::Complete => {
+                let signed_completed_receipt = self.control.worker.signed_completed_receipt(&operation.request.operation_id).await?;
                 let receipt =
                     operation.receipt.ok_or("complete restore has no verified receipt")?;
                 Ok(LifecycleControlResponse {
                     status: LifecycleStatus::Applied as i32,
                     operation_id: operation.request.operation_id,
                     detail: String::new(),
-                    recovery_point_id: receipt.selected_identity.clone(),
+                    signed_completed_receipt,
+                    recovery_point_id: operation.request.recovery_point_id,
                     recovery_point_digest: receipt.selected_identity,
                     placement: operation.request.placement,
                 })
@@ -177,6 +179,7 @@ impl TbepLifecycleControl {
                 status: LifecycleStatus::Accepted as i32,
                 operation_id: operation.request.operation_id,
                 detail: String::new(),
+                signed_completed_receipt: Vec::new(),
                 recovery_point_id: String::new(),
                 recovery_point_digest: String::new(),
                 placement: Vec::new(),
@@ -227,6 +230,7 @@ impl TbepLifecycleControl {
                             // returned by RestoreStats after restore.
                             recovery_point_digest: facts.recovery_point_id.clone(),
                             placement: facts.placement,
+                            signed_completed_receipt: Vec::new(),
                         })
                     }
                     _ => Err("native snapshot receipt was not measured".into()),
@@ -373,6 +377,10 @@ pub struct AcceptedLifecycleAssignment {
 /// Native lifecycle owner supplied by member and backup composition.
 #[async_trait::async_trait]
 pub trait NativeLifecycleWorker: Send + Sync {
+    /// Signs only durable completed observations under the explicitly provisioned key.
+    async fn signed_completed_receipt(&self, _operation: &str) -> Result<Vec<u8>, String> {
+        Err("native receipt signer is not composed".into())
+    }
     /// Reads complete verified restore facts for an exact target identity.
     async fn restore_stats(
         &self,
@@ -451,10 +459,26 @@ pub struct RegistryLifecycleWorker {
     pub backups: Option<Arc<std::sync::Mutex<terrabase::backup::worker::NativeBackupFleet>>>,
     /// Durable native recovery owner.
     pub recovery: Option<Arc<crate::native_recovery::NativeRecoveryRuntime>>,
+    /// Durable signed completed observations.
+    pub receipts: Arc<crate::native_recovery_receipt::NativeRecoveryReceiptStore>,
 }
 
 #[async_trait::async_trait]
 impl NativeLifecycleWorker for RegistryLifecycleWorker {
+    async fn signed_completed_receipt(&self, operation: &str) -> Result<Vec<u8>, String> {
+        let recovery = self.recovery.as_ref().ok_or("native recovery owner unavailable")?;
+        let operation = recovery.restore_status(operation)
+            .map_err(|_| "native restore observation unavailable")?
+            .ok_or("native restore observation absent")?;
+        if operation.phase != crate::native_recovery::NativeRestorePhase::Complete {
+            return Err("native restore is not complete".into());
+        }
+        let source = recovery.verified_restore_source_facts(&operation.request).await
+            .map_err(|_| "authenticated restore source facts unavailable")?;
+        self.receipts.completed(&operation, &source)
+            .map_err(|_| "native restore signed observation unavailable".into())
+    }
+
     async fn restore_stats(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest,
@@ -617,7 +641,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             .engine()
             .lifecycle_state(&database.host.engine().scope_for(&tenant))
             .map_err(|_| "lifecycle state unavailable")?;
-        let intent = state.deletion.ok_or("durable deletion intent is missing")?;
+        let intent = state.deletion.as_ref().ok_or("durable deletion intent is missing")?;
         let retain_until = intent.retain_until.ok_or("deletion retention cutoff is unknown")?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -626,13 +650,20 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         if !state.access_revoked() || retain_until > now {
             return Err("durable deletion retention boundary has not elapsed".into());
         }
-        let backups = self.backups.as_ref().ok_or("native backup fleet is not composed")?;
-        backups
-            .lock()
-            .map_err(|_| "native backup fleet poisoned")?
-            .lifecycle_delete(&assignment.database, operation)
-            .await
-            .map_err(|_| "provider-owned backup deletion is pending")?;
+        let backups =
+            Arc::clone(self.backups.as_ref().ok_or("native backup fleet is not composed")?);
+        let database_id = assignment.database.clone();
+        let operation = operation.to_owned();
+        // The blocking owner retains fleet serialization throughout provider I/O;
+        // the async request only awaits a Send join handle.
+        tokio::task::spawn_blocking(move || {
+            let mut fleet = backups.lock().map_err(|_| "native backup fleet poisoned")?;
+            tokio::runtime::Handle::current()
+                .block_on(fleet.lifecycle_delete(&database_id, &operation))
+                .map_err(|_| "provider-owned backup deletion is pending")
+        })
+        .await
+        .map_err(|_| "native backup deletion worker unavailable")??;
         Err("provider-owned backup deletion complete; local/key cleanup is pending".into())
     }
 }
@@ -684,10 +715,12 @@ impl ProductionLifecycleControl {
             Some(&request_digest),
         )?;
         let receipt = self.worker.restore_stats(request).await?;
+        let signed_completed_receipt = self.worker.signed_completed_receipt(&request.operation_id).await?;
         Ok(terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse {
             operation_id: request.operation_id.clone(),
             target_owner: request.target_owner.clone(),
             target_database: request.target_database.clone(),
+            signed_completed_receipt,
             checksum: receipt.logical_content_checksum,
             row_count: i64::try_from(receipt.restored_documents)
                 .map_err(|_| "restore row count exceeds the wire range")?,
@@ -811,6 +844,9 @@ mod restore_stats_tests {
     }
     #[async_trait::async_trait]
     impl NativeLifecycleWorker for Worker {
+        async fn signed_completed_receipt(&self, _: &str) -> Result<Vec<u8>, String> {
+            if self.complete { Ok(b"test observation".to_vec()) } else { Err("pending".into()) }
+        }
         async fn restore_request_facts(
             &self,
             operation: &str,

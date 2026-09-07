@@ -346,3 +346,147 @@ async fn drain_rejects_admission_already_waiting_for_queue_capacity() {
     }
     synthetic.peers.drain().await.unwrap();
 }
+
+#[tokio::test]
+async fn real_worker_suspension_releases_engine_and_rebinds_same_assignment() {
+    use crate::production::tests::{AcceptedMembership, Writer, opened_bootstrap, transport_pair};
+    use terrabase_cluster::wal_driver::WalEngineHandle;
+    use terrabase_cluster::wal_follower::WalTail;
+    let (bootstrap, root, spec) = opened_bootstrap("replication-suspend");
+    let parts = bootstrap.into_parts();
+    let database = parts.member.database_ids().next().unwrap();
+    parts.member.accept_database_role(&database, &Writer).unwrap();
+    let placement = parts.placement.clone();
+    let (transport, remote) = transport_pair(&placement);
+    let config = transport.config();
+    let peer = config.peers().next().unwrap().identity().clone();
+    let database_scope = spec.scope().unwrap();
+    let scope = DatabaseRouteScope::new(
+        database_scope.tenant(),
+        database_scope.project(),
+        database_scope.database(),
+    );
+    let binding =
+        WalReplicaBinding::new(scope, &placement, config.local_identity().clone(), peer.clone())
+            .unwrap();
+    let make_lane = |lease: Arc<dyn WalEngineHandle>| PeerDatabase {
+        scope,
+        physical: Some(PhysicalDriver::Writer(WalWriterDriver::new(
+            binding.clone(),
+            lease,
+            WalTail::new(root.join("unused-tail")),
+        ))),
+        causal: None,
+    };
+    let member = parts.member.clone();
+    let runtime = Arc::new(
+        ProductionMemberRuntime::try_new(placement.clone(), parts.routes, parts.member, transport)
+            .unwrap(),
+    );
+    runtime.admit_membership(&AcceptedMembership(placement)).unwrap();
+    let lease: Arc<dyn WalEngineHandle> = Arc::new(runtime.acquire_replication(&scope).unwrap());
+    let retained = Arc::downgrade(&lease);
+    let progress = Arc::new(ReplicationProgress::default());
+    let batch = |lane| PeerDatabaseBatch {
+        lanes: BTreeMap::from([(peer.member().as_str().to_owned(), vec![lane])]),
+        selected_regions: BTreeMap::from([(scope, BTreeSet::from(["GRU".into()]))]),
+    };
+    let peers = ReplicationPeers::start(runtime.clone(), progress.clone(), batch(make_lane(lease)))
+        .unwrap();
+    assert!(retained.upgrade().is_some());
+    let token = peers.suspend_database(scope).await.unwrap();
+    assert!(retained.upgrade().is_none(), "worker retained the old engine lease after its barrier");
+    assert!(peers.pending_suspension(scope).unwrap().is_some());
+    assert_eq!(progress.selected_regions(scope).unwrap(), BTreeSet::from(["GRU".into()]));
+    let retry = peers.suspend_database(scope).await.unwrap();
+    let rebound: Arc<dyn WalEngineHandle> = Arc::new(runtime.acquire_replication(&scope).unwrap());
+    let rebound_retained = Arc::downgrade(&rebound);
+    peers.resume_database(&retry, batch(make_lane(rebound))).await.unwrap();
+    assert!(peers.pending_suspension(scope).unwrap().is_none());
+    let stale: Arc<dyn WalEngineHandle> = Arc::new(runtime.acquire_replication(&scope).unwrap());
+    assert!(peers.resume_database(&token, batch(make_lane(stale))).await.is_err());
+    peers.suspend_database(scope).await.unwrap();
+    assert!(rebound_retained.upgrade().is_none());
+    peers.drain().await.unwrap();
+    drop(peers);
+    drop(remote);
+    drop(runtime);
+    drop(member);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn canceled_suspension_retries_without_retiring_or_removing_other_database() {
+    let mut synthetic = synthetic();
+    let target = scope(1);
+    let other = scope(2);
+    synthetic
+        .peers
+        .add_databases(PeerDatabaseBatch {
+            lanes: BTreeMap::from([("peer-a".into(), vec![lane(target), lane(other)])]),
+            selected_regions: BTreeMap::from([
+                (target, BTreeSet::from(["GRU".into()])),
+                (other, BTreeSet::from(["GRU".into()])),
+            ]),
+        })
+        .await
+        .unwrap();
+    let mut inbox = synthetic.receivers.remove("peer-a").unwrap();
+    let mut lanes = Vec::new();
+    let command = inbox.recv().await.unwrap();
+    apply_worker_command(command, &mut lanes, &synthetic.observations, "peer-a", &mut inbox);
+    let first = {
+        let suspend = synthetic.peers.suspend_database(target);
+        tokio::pin!(suspend);
+        tokio::select! {
+            result = &mut suspend => panic!("barrier completed before worker drain: {result:?}"),
+            command = inbox.recv() => command.unwrap(),
+        }
+        // Dropping the future models cancellation after command publication but
+        // before the worker finishes its current disk callback.
+    };
+    assert!(synthetic.peers.pending_suspension(target).unwrap().is_some());
+    assert!(
+        synthetic
+            .peers
+            .add_databases(PeerDatabaseBatch {
+                lanes: BTreeMap::from([("peer-b".into(), vec![lane(target)])]),
+                selected_regions: BTreeMap::from([(target, BTreeSet::from(["GRU".into()]))]),
+            })
+            .await
+            .is_err(),
+        "a new peer must not reacquire a suspended database"
+    );
+    assert_eq!(lanes.len(), 2);
+    apply_worker_command(first, &mut lanes, &synthetic.observations, "peer-a", &mut inbox);
+    assert_eq!(lanes.iter().map(|lane| lane.scope).collect::<Vec<_>>(), vec![other]);
+    let retry = synthetic.peers.suspend_database(target);
+    tokio::pin!(retry);
+    let token = tokio::select! {
+        result = &mut retry => panic!("retry completed without worker: {result:?}"),
+        command = inbox.recv() => {
+            apply_worker_command(command.unwrap(), &mut lanes, &synthetic.observations, "peer-a", &mut inbox);
+            retry.await.unwrap()
+        }
+    };
+    synthetic
+        .peers
+        .resume_database(
+            &token,
+            PeerDatabaseBatch {
+                lanes: BTreeMap::from([("peer-a".into(), vec![lane(target)])]),
+                selected_regions: BTreeMap::from([(target, BTreeSet::from(["GRU".into()]))]),
+            },
+        )
+        .await
+        .unwrap();
+    let command = inbox.recv().await.unwrap();
+    apply_worker_command(command, &mut lanes, &synthetic.observations, "peer-a", &mut inbox);
+    assert_eq!(
+        lanes.iter().map(|lane| lane.scope).collect::<BTreeSet<_>>(),
+        BTreeSet::from([target, other])
+    );
+    assert!(!inbox.suspended.contains(&target));
+    assert!(synthetic.progress.selected_regions(target).is_ok());
+    assert!(synthetic.progress.selected_regions(other).is_ok());
+}

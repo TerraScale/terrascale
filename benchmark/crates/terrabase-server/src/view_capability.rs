@@ -331,7 +331,7 @@ impl ViewCapabilityVerifier {
                 .strip_prefix(&format!("{}:", expected.authorization_scope))
                 .is_some_and(|scope| {
                     crate::membership_revocations::valid_scope(&expected.authorization_scope)
-                        && crate::membership_revocations::valid_scope(scope)
+                        && crate::membership_revocations::valid_authority_scopes(scope)
                 })
             || claims.entitlement_epoch != expected.entitlement_epoch
             || claims.region != expected.region

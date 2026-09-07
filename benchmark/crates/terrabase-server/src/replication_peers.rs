@@ -395,6 +395,10 @@ impl ReplicationPeers {
         {
             return Err("replication peer owner is draining".into());
         }
+        let suspensions = self.suspensions.lock().map_err(failure)?;
+        if peers.values().flatten().any(|lane| suspensions.contains_key(&lane.scope)) {
+            return Err("replication database is suspended for restore".into());
+        }
         let added = peers.values().map(Vec::len).sum::<usize>();
         if admitted.len().saturating_add(added) > terrabase::member::MAX_DATABASES * 20 {
             return Err("replication lane bound exceeded".into());
@@ -832,6 +836,13 @@ async fn session(
                             build_repair_lanes(runtime, &connection, &added)
                         }.await;
                         observe(observations, connection.peer().member().as_str(), &added, true, new_lanes.worker_id);
+                        if let Ok(mut facts) = observations.lock() {
+                            for lane in &added {
+                                if let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), lane.scope)) {
+                                    region.clone_into(&mut facts.region);
+                                }
+                            }
+                        }
                         apply_worker_command(PeerCommand::Rebind(added), lanes, observations, connection.peer().member().as_str(), new_lanes);
                         repair_lanes.extend(setup?);
                     }

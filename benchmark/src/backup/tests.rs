@@ -566,6 +566,11 @@ fn backup_includes_family_records_from_the_reserved_collection() {
     let manifest = result.manifest();
     assert_eq!(manifest.documents(), 1, "user documents count separately");
     assert_eq!(manifest.family_records(), 2, "reserved-collection records count as family records");
+    assert_eq!(manifest.logical_documents(), 3);
+    let receipt = RestorePlan::restore_latest(&destination, &location("family-logical-target"))
+        .expect("restore includes every logical family record");
+    assert_eq!(receipt.documents_read_back(), manifest.logical_documents());
+    assert_eq!(receipt.logical_checksum(), manifest.logical_checksum());
 
     let alpha = manifest.tenants().iter().find(|t| t.tenant().as_str() == "alpha").expect("alpha");
     assert_eq!(alpha.documents(), 1);
@@ -1207,6 +1212,18 @@ fn snapshot_backup_pins_its_boundary_and_stays_self_contained() {
     assert_eq!(full.manifest().kind(), BackupKind::Full);
     assert!(full.manifest().boundary_sequence().get() > manifest.boundary_sequence().get());
     assert_eq!(full.manifest().documents(), 2);
+    assert_eq!(manifest.logical_documents(), 1);
+    assert_eq!(full.manifest().logical_documents(), 2);
+    assert_ne!(manifest.logical_checksum(), full.manifest().logical_checksum());
+
+    // Recovery is independent of the source host and its newer state.
+    drop(engine);
+    std::fs::remove_dir_all(&_dir).expect("source host storage removed");
+    let target = location("historical-logical-target");
+    let receipt = RestorePlan::restore_recovery_point(manifest.identity(), &destination, &target)
+        .expect("historical manifest restores without source storage");
+    assert_eq!(receipt.logical_checksum(), manifest.logical_checksum());
+    assert_eq!(receipt.documents_read_back(), manifest.logical_documents());
 }
 
 #[test]

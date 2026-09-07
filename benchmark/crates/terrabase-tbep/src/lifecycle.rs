@@ -206,6 +206,7 @@ pub fn unavailable(operation_id: &str) -> pb::LifecycleControlResponse {
         recovery_point_id: String::new(),
         recovery_point_digest: String::new(),
         placement: Vec::new(),
+        signed_completed_receipt: Vec::new(),
     }
 }
 
@@ -218,6 +219,7 @@ pub fn applied(operation_id: &str) -> pb::LifecycleControlResponse {
         recovery_point_id: String::new(),
         recovery_point_digest: String::new(),
         placement: Vec::new(),
+        signed_completed_receipt: Vec::new(),
     }
 }
 

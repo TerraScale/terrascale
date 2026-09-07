@@ -73,6 +73,8 @@ struct Admission {
     action: Option<String>,
     expires_at: Option<u64>,
     membership_scope: Option<String>,
+    feature_scope: Option<String>,
+    reactive_allowed: Option<bool>,
 }
 
 impl IdentityVerifier {
@@ -252,13 +254,19 @@ impl IdentityVerifier {
             .membership_scope
             .filter(|s| crate::membership_revocations::valid_scope(s))
             .ok_or(IdentityError::Denied)?;
+        let feature_scope = admission
+            .feature_scope
+            .filter(|s| crate::membership_revocations::valid_scope(s))
+            .ok_or(IdentityError::Denied)?;
+        let reactive_allowed = admission.reactive_allowed.ok_or(IdentityError::Denied)?;
         Ok(Principal::delegated_for_owner(
             subject,
             admitted_scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
             (organization.to_owned(), project.to_owned()),
         )
-        .with_membership_scope(membership_scope))
+        .with_membership_scope(membership_scope)
+        .with_reactive_policy(&feature_scope, reactive_allowed))
     }
 
     /// Revalidates a locally signature-verified BYO-JWT subject through the
@@ -322,6 +330,10 @@ impl IdentityVerifier {
             || admission.collection.as_deref() != collection
             || admission.action.as_deref() != Some(action)
             || expires <= now
+            || !admission
+                .scopes
+                .as_ref()
+                .is_some_and(|scopes| scopes.contains(&format!("database:{action}")))
         {
             return Err(IdentityError::Denied);
         }
@@ -333,13 +345,19 @@ impl IdentityVerifier {
             .membership_scope
             .filter(|s| crate::membership_revocations::valid_scope(s))
             .ok_or(IdentityError::Denied)?;
+        let feature_scope = admission
+            .feature_scope
+            .filter(|s| crate::membership_revocations::valid_scope(s))
+            .ok_or(IdentityError::Denied)?;
+        let reactive_allowed = admission.reactive_allowed.ok_or(IdentityError::Denied)?;
         Ok(Principal::delegated_for_owner(
             mapped_subject,
             scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
             (organization.to_owned(), project.to_owned()),
         )
-        .with_membership_scope(membership_scope))
+        .with_membership_scope(membership_scope)
+        .with_reactive_policy(&feature_scope, reactive_allowed))
     }
 
     /// Project-wide variant of [`Self::admit_verified_byo`].
@@ -548,7 +566,7 @@ pub(crate) mod tests {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
         let reply = Arc::new(Mutex::new(
             serde_json::json!({"active":true,"issuer":"https://identity.example","audience":"https://api.example",
-            "subject":"user-1","membershipScope":format!("scope-{}", "a".repeat(64)),"organizationId":organization,"projectId":project,"databaseId":database,
+            "subject":"user-1","membershipScope":format!("scope-{}", "a".repeat(64)),"featureScope":format!("scope-{}", "b".repeat(64)),"reactiveAllowed":true,"organizationId":organization,"projectId":project,"databaseId":database,
             "action":action,"scopes":[format!("database:{action}")],"expiresAt":now+60}),
         ));
         let responses = reply.clone();

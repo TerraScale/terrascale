@@ -589,6 +589,32 @@ impl AdmittedDatabaseRegistry {
             .collect()
     }
 
+    /// Reads at most sixteen registry keys for operation discovery. The cursor
+    /// advances over foreign scopes without exposing their identities.
+    pub(crate) fn discovery_page(
+        &self,
+        tenant: &str,
+        project: &str,
+        after: &str,
+    ) -> Result<(Vec<Arc<AdmittedDatabase>>, Option<String>), String> {
+        if !(self.ready)() || self.draining.load(Ordering::Acquire) {
+            return Err("Member is not ready to serve".into());
+        }
+        let databases = self.databases.read().map_err(|_| "admitted registry unavailable")?;
+        let mut entries = databases
+            .range((std::ops::Bound::Excluded(after.to_owned()), std::ops::Bound::Unbounded));
+        let mut result = Vec::new();
+        let mut last = None;
+        for (id, database) in entries.by_ref().take(16) {
+            last = Some(id.clone());
+            if database.record.tenant_id == tenant && database.record.project_id == project {
+                result.push(database.clone());
+            }
+        }
+        let cursor = entries.next().and(last);
+        Ok((result, cursor))
+    }
+
     /// Enumerates admitted databases for bounded maintenance drivers.
     ///
     /// # Errors

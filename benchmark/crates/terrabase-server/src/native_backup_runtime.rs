@@ -235,14 +235,28 @@ impl NativeBackupRuntime {
 
     /// Releases target engine references under the serialized native fleet lock.
     pub fn suspend_for_restore(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
-        self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?
-            .suspend_for_restore(database).map_err(NativeBackupRuntimeError::Fleet)
+        self.fleet
+            .lock()
+            .map_err(|_| NativeBackupRuntimeError::Poisoned)?
+            .suspend_for_restore(database)
+            .map_err(NativeBackupRuntimeError::Fleet)
     }
 
     /// Restores the same backup policy with the reopened admitted target engine.
-    pub fn resume_after_restore(&self, database: &str, host: Arc<MemberHost>) -> Result<(), NativeBackupRuntimeError> {
-        self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?
-            .resume_after_restore(database, Arc::new(AdmittedBackupEngine::new(host)))
+    pub fn resume_after_restore(
+        &self,
+        database: &str,
+        host: Arc<MemberHost>,
+        resume_capture: bool,
+    ) -> Result<(), NativeBackupRuntimeError> {
+        self.fleet
+            .lock()
+            .map_err(|_| NativeBackupRuntimeError::Poisoned)?
+            .resume_after_restore(
+                database,
+                Arc::new(AdmittedBackupEngine::new(host)),
+                resume_capture,
+            )
             .map_err(NativeBackupRuntimeError::Fleet)
     }
 
@@ -313,4 +327,99 @@ fn validate_operation_id(operation_id: &str) -> Result<(), NativeBackupRuntimeEr
         return Err(NativeBackupRuntimeError::Unavailable);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    #[test]
+    fn restore_suspension_releases_real_admitted_host_and_rebinds_after_cancellation() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let record = &records[0];
+        let scope = terrabase::member::DatabaseScope::new(
+            &record.environment,
+            record.tenant_id.parse().unwrap(),
+            record.project_id.parse().unwrap(),
+            record.database_id.parse().unwrap(),
+            record.region.parse().unwrap(),
+        )
+        .unwrap();
+        let target = registry
+            .retained_snapshot()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == record.database_id)
+            .unwrap();
+        let backups = NativeBackupRuntime::new(
+            FleetLimits {
+                streams: 2,
+                staging_bytes_per_stream: 4 * 1024 * 1024,
+                points_per_stream: 4,
+            },
+            [NativeBackupInput {
+                engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&target.database.host))),
+                keys: Arc::new(
+                    terrabase::backup::worker::OciBackupKeys::new(crate::test_keys::backup_keys(
+                        &scope,
+                    ))
+                    .unwrap(),
+                ),
+                destinations: vec![(
+                    terrabase::backup::object_store::Provider::Oci,
+                    Arc::new(terrabase::backup::object_store::ObjectDestination::for_test(
+                        terrabase::backup::object_store::Provider::Oci,
+                        Arc::new(object_store::memory::InMemory::new()),
+                        4 * 1024 * 1024,
+                        8 * 1024 * 1024,
+                    )),
+                )],
+                policy_revision: "restore-policy".into(),
+                retention_days: 1,
+                staging: root.join("backup-target"),
+                placement: PlacementLock::explicit([record.region.parse().unwrap()]).unwrap(),
+            }],
+        )
+        .unwrap();
+        drop(target);
+        registry.pause(&record.database_id, "pause-for-restore").unwrap();
+        assert!(
+            registry.reserve_restore(&record.database_id).is_err(),
+            "live backup owns target engine"
+        );
+        backups.suspend_for_restore(&record.database_id).unwrap();
+        let reservation = registry
+            .reserve_restore(&record.database_id)
+            .unwrap()
+            .rollback_on_drop(member.clone(), Arc::clone(&registry));
+        member
+            .close_database(&terrabase::member::DatabaseId::try_new(&record.database_id).unwrap())
+            .unwrap();
+        drop(reservation);
+        let reopened = registry
+            .retained_snapshot()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == record.database_id)
+            .unwrap();
+        backups
+            .resume_after_restore(&record.database_id, Arc::clone(&reopened.database.host), false)
+            .unwrap();
+        drop(reopened);
+        assert!(
+            registry.reserve_restore(&record.database_id).is_err(),
+            "rebound backup owns reopened engine"
+        );
+        backups.suspend_for_restore(&record.database_id).unwrap();
+        drop(
+            registry
+                .reserve_restore(&record.database_id)
+                .unwrap()
+                .rollback_on_drop(member.clone(), Arc::clone(&registry)),
+        );
+        drop(backups);
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

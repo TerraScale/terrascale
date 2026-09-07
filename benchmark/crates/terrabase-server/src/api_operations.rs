@@ -11,6 +11,7 @@ pub(super) struct OperationListQuery {
     /// Opaque cursor returned by the preceding page, bound to the verified project.
     after: Option<String>,
     /// Maximum records, from one through fifty; defaults to fifty.
+    #[param(minimum = 1, maximum = 50)]
     limit: Option<usize>,
 }
 

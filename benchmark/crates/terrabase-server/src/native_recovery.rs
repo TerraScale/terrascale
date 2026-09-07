@@ -229,6 +229,11 @@ pub struct NativeRestoreOutcome {
 /// Production restore owner. Implementations reserve the target and publish
 /// only after provider installation and authorized reacquisition.
 pub trait RestoreExecutor: Send + Sync {
+    /// Rebinds suspended workers before a published marker is made serving.
+    fn reconcile<'a>(
+        &'a self,
+        request: &'a NativeRestoreRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
     /// Installs the selected recovery point under exclusive target admission.
     fn execute<'a>(
         &'a self,
@@ -566,6 +571,48 @@ impl NativeRecoveryRuntime {
         Ok(operation)
     }
 
+    /// Reads source facts from the authenticated selected archive manifest.
+    /// No target measurements or current source snapshot are substituted.
+    pub async fn verified_restore_source_facts(
+        &self,
+        request: &NativeRestoreRequest,
+    ) -> Result<RecoveryPointFacts, NativeRecoveryError> {
+        let operation =
+            self.restore_status(&request.operation_id)?.ok_or(NativeRecoveryError::Unavailable)?;
+        if operation.request != *request || operation.phase != NativeRestorePhase::Complete {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
+        let cut = request
+            .journal_cut
+            .parse::<u64>()
+            .map_err(|_| NativeRecoveryError::VerificationFailed)?;
+        let manifest = self
+            .fleet
+            .lock()
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .retained_points(&request.source_database_id)
+            .map_err(map_fleet_error)?
+            .into_iter()
+            .find(|point| point.identity() == request.recovery_point_id)
+            .ok_or(NativeRecoveryError::Unavailable)?;
+        if manifest.identity() != request.recovery_point_digest
+            || manifest.database_id() != request.source_database_id
+            || manifest.boundary_sequence().get() != cut
+        {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
+        Ok(RecoveryPointFacts {
+            recovery_point_id: manifest.identity().to_owned(),
+            source_database_id: manifest.database_id().to_owned(),
+            journal_cut: cut,
+            captured_at_millis: manifest.captured_unix_millis(),
+            checksum: manifest.logical_checksum().to_owned(),
+            row_count: manifest.logical_documents(),
+            placement: request.placement.clone(),
+            retained_until_millis: manifest.retain_until_unix_millis(),
+        })
+    }
+
     /// Returns facts only for a complete restore with exact identity binding.
     pub fn verified_restore_stats(
         &self,
@@ -665,7 +712,9 @@ impl NativeRecoveryRuntime {
         let capture_operation = operation.clone();
         let captured = tokio::task::spawn_blocking(move || {
             runtime.run_capture(&admitted.host, placement, &capture_source, &capture_operation)
-        }).await.map_err(|_| NativeRecoveryError::Unavailable)?;
+        })
+        .await
+        .map_err(|_| NativeRecoveryError::Unavailable)?;
         match captured {
             Ok(()) => {}
             Err(NativeRecoveryError::Unavailable) => return Err(NativeRecoveryError::Unavailable),
@@ -735,6 +784,10 @@ impl NativeRecoveryRuntime {
                 | NativeRestorePhase::Uncertain
         ) {
             if let Some(receipt) = self.read_published_restore(&operation)? {
+                self.restore_executor
+                    .reconcile(&operation.request)
+                    .await
+                    .map_err(|_| NativeRecoveryError::Unavailable)?;
                 self.registry
                     .resume(&operation.request.target_database_id, &operation.request.operation_id)
                     .map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -900,10 +953,10 @@ impl NativeRecoveryRuntime {
         let capture = || {
             let manifest = {
                 let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-                    tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(fleet.capture_snapshot(source))
-                    })
-                    .map_err(map_fleet_error)?
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(fleet.capture_snapshot(source))
+                })
+                .map_err(map_fleet_error)?
             };
             Ok(Checkpoint::from_manifest(&manifest, source, &placement))
         };
@@ -988,6 +1041,12 @@ mod tests {
 
     struct RejectRestore;
     impl RestoreExecutor for RejectRestore {
+        fn reconcile<'a>(
+            &'a self,
+            _: &'a NativeRestoreRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
         fn execute<'a>(
             &'a self,
             _request: &'a NativeRestoreRequest,
@@ -997,20 +1056,43 @@ mod tests {
         }
     }
 
+    struct CountingReject(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl RestoreExecutor for CountingReject {
+        fn reconcile<'a>(
+            &'a self,
+            _: &'a NativeRestoreRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn execute<'a>(
+            &'a self,
+            _request: &'a NativeRestoreRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<NativeRestoreOutcome, String>> + Send + 'a>>
+        {
+            let calls = Arc::clone(&self.0);
+            Box::pin(async move {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err("provider must not be retried".into())
+            })
+        }
+    }
+
     #[tokio::test]
     async fn real_constructor_idle_shutdown_closes_admission_fence() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
         let runtime_root = root.join("native-recovery-idle");
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let (runtime, worker) = NativeRecoveryRuntime::new(
             &runtime_root,
             fleet(),
             Arc::clone(&registry),
             limits(),
-            Arc::new(RejectRestore),
+            Arc::new(CountingReject(Arc::clone(&calls))),
         )
         .unwrap();
         worker.shutdown().await.unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(
             runtime.capture(records[0].database_id.clone(), "retry".into()).await,
             Err(NativeRecoveryError::Unavailable)
@@ -1062,12 +1144,13 @@ mod tests {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
         let runtime_root = root.join("native-recovery-uncertain");
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let (runtime, worker) = NativeRecoveryRuntime::new(
             &runtime_root,
             fleet(),
             Arc::clone(&registry),
             limits(),
-            Arc::new(RejectRestore),
+            Arc::new(CountingReject(Arc::clone(&calls))),
         )
         .unwrap();
         worker.shutdown().await.unwrap();
@@ -1104,12 +1187,15 @@ mod tests {
         let retried = runtime.retry_restore_readback("uncertain-operation").unwrap();
         assert_eq!(retried.phase, NativeRestorePhase::Verifying);
         assert!(retried.receipt.is_none());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(runtime.process_restore_pending().await.unwrap());
         assert_eq!(
             runtime.restore_status("uncertain-operation").unwrap().unwrap().phase,
             NativeRestorePhase::Accepted
         );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(runtime.process_restore_pending().await.unwrap());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(
             runtime.restore_status("uncertain-operation").unwrap().unwrap().phase,
             NativeRestorePhase::Uncertain

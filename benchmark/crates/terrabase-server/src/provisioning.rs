@@ -321,7 +321,10 @@ impl ProvisioningClient {
                     || !matches!(
                         (operation.state.as_str(), operation.stage.as_str()),
                         ("queued", "accepted")
-                            | ("running", "members_admitted" | "placement_pending")
+                            | (
+                                "running",
+                                "keys_provisioned" | "members_admitted" | "placement_pending"
+                            )
                             | ("succeeded", "ready")
                     )
                     || operation.cancellable

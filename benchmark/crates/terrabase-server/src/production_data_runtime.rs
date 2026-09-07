@@ -541,6 +541,22 @@ impl ProductionRestoreExecutor {
 }
 
 impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
+    fn reconcile<'a>(
+        &'a self,
+        request: &'a crate::native_recovery::NativeRestoreRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        let runtime = Arc::clone(&self.runtime);
+        let backups = Arc::clone(&self.backups);
+        let target = request.target_database_id.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                tokio::runtime::Handle::current()
+                    .block_on(runtime.resume_restore_workers(&backups, &target, true))
+            })
+            .await
+            .map_err(|_| "restore worker reconciliation unavailable")?
+        })
+    }
     fn execute<'a>(
         &'a self,
         request: &'a crate::native_recovery::NativeRestoreRequest,
@@ -617,7 +633,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
             drop(target);
             drop(admitted);
             let receipt = tokio::task::spawn_blocking(move || {
-                tokio::runtime::Handle::current().block_on(runtime.restore_native_to_target(
+                tokio::runtime::Handle::current().block_on(runtime.restore_native_with_workers(
                     &backups,
                     &request.source_database_id,
                     &request.target_database_id,
@@ -1173,6 +1189,98 @@ impl ProductionAdmissionRuntime {
         Ok((target, placement))
     }
 
+    async fn restore_native_with_workers(
+        &self,
+        backups: &crate::native_backup_runtime::NativeBackupRuntime,
+        source: &str,
+        target: &str,
+        provider: terrabase::backup::object_store::Provider,
+        point: Option<&str>,
+        operation_id: &str,
+        expected_manifest_digest: &str,
+        expected_journal_boundary: u64,
+        restore_epoch: u64,
+    ) -> Result<terrabase::backup::RecoveryReceipt, String> {
+        // The ProductionRestoreExecutor blocking owner retains this complete
+        // workflow when the requesting future is cancelled.
+        let record = self
+            .admitted_records()?
+            .into_iter()
+            .find(|record| record.database_id == target)
+            .ok_or("restore target admission unavailable")?;
+        let scope = record_scope(&record)?;
+        let data = self.lifecycle.get().ok_or("replication lifecycle unavailable")?;
+        let _suspension = data.peers.suspend_database(scope).await?;
+        let result = match backups.suspend_for_restore(target) {
+            Ok(()) => {
+                self.restore_native_to_target(
+                    backups,
+                    source,
+                    target,
+                    provider,
+                    point,
+                    operation_id,
+                    expected_manifest_digest,
+                    expected_journal_boundary,
+                    restore_epoch,
+                )
+                .await
+            }
+            Err(_) => Err("native backup restore suspension unavailable".into()),
+        };
+        // Both success and rollback rebind through current admitted authority.
+        // A failure here remains discoverable through the retained suspension;
+        // marker reconciliation retries it before serving publication.
+        self.resume_restore_workers(backups, target, result.is_ok()).await?;
+        if result.is_ok() {
+            self.registry.resume(target, operation_id)?;
+        }
+        result
+    }
+
+    async fn resume_restore_workers(
+        &self,
+        backups: &crate::native_backup_runtime::NativeBackupRuntime,
+        target: &str,
+        resume_capture: bool,
+    ) -> Result<(), String> {
+        let record = self
+            .admitted_records()?
+            .into_iter()
+            .find(|record| record.database_id == target)
+            .ok_or("restore target admission unavailable")?;
+        let scope = record_scope(&record)?;
+        let data = self.lifecycle.get().ok_or("replication lifecycle unavailable")?;
+        if let Some(suspension) = data.peers.pending_suspension(scope)? {
+            let (proposal, digest) =
+                self.refresh_inventory()?.ok_or("restore placement unavailable")?;
+            let (assignment, _) = self
+                .build_database_assignment(
+                    &record,
+                    &proposal,
+                    &digest,
+                    &self.config.environment.member.to_text(),
+                )?
+                .ok_or("restore assignment unavailable")?;
+            let lanes =
+                build_peer_databases(&self.runtime, &*self.journal, vec![assignment]).await?;
+            data.peers.resume_database(&suspension, lanes).await?;
+        }
+        let target = self
+            .registry
+            .retained_snapshot()?
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == target)
+            .ok_or("restore target host unavailable")?;
+        backups
+            .resume_after_restore(
+                &record.database_id,
+                Arc::clone(&target.database.host),
+                resume_capture,
+            )
+            .map_err(|_| "native backup restore rebind unavailable".to_owned())
+    }
+
     /// Executes a native restore only after the target has been admitted and
     /// durably paused. The caller supplies the already authenticated source
     /// fleet and operation identity; this method never opens a source engine
@@ -1309,10 +1417,7 @@ impl ProductionAdmissionRuntime {
         let lease = reservation.reacquire(&self.member).map_err(failure)?;
         reservation.complete(&self.registry, lease, 1)?;
         match restored {
-            Ok(receipt) => {
-                self.registry.resume(target, operation_id)?;
-                Ok(receipt)
-            }
+            Ok(receipt) => Ok(receipt),
             Err(error) => Err(error),
         }
     }
@@ -1383,6 +1488,17 @@ impl ProductionAdmissionRuntime {
         if self.active.contains(&record.database_id) {
             return Ok(None);
         }
+        self.build_database_assignment(record, proposal, proof_digest, local_member)
+    }
+
+    fn build_database_assignment(
+        &self,
+        record: &crate::admission::AdmissionRecord,
+        proposal: &terrabase_tbep::proto::terrabase::v1::PlacementProposal,
+        proof_digest: &str,
+        local_member: &str,
+    ) -> Result<Option<(ProductionDatabaseAssignment, (DatabaseRouteScope, String, bool))>, String>
+    {
         let scope = record_scope(record)?;
         let selected: BTreeSet<_> = record.regions.iter().cloned().collect();
         let assignments: Vec<_> = proposal

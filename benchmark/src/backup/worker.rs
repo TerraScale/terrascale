@@ -552,40 +552,84 @@ impl NativeBackupFleet {
     /// A running tick must finish before this exclusive operation can execute.
     pub fn detach(&mut self, database: &str) {
         self.streams.remove(database);
+        self.suspended.remove(database);
     }
 
     /// Releases a paused target's engine while retaining its exact backup policy.
     /// The fleet lock serializes this with in-flight provider work.
     pub fn suspend_for_restore(&mut self, database: &str) -> Result<(), FleetError> {
-        if self.suspended.contains_key(database) { return Ok(()); }
-        let Some(stream) = self.streams.get(database) else { return Ok(()); };
+        if self.suspended.contains_key(database) {
+            return Ok(());
+        }
+        let Some(stream) = self.streams.get(database) else {
+            return Ok(());
+        };
         let engine = stream.config.engine.engine();
         let tenant = crate::types::TenantId::try_new(&engine.database_owner().tenant().to_text())
             .map_err(|_| FleetError::Configuration)?;
-        let state = engine.lifecycle_state(&engine.scope_for(&tenant)).map_err(|_| FleetError::Capture)?;
-        if !state.paused || state.access_revoked() { return Err(FleetError::Configuration); }
+        let state =
+            engine.lifecycle_state(&engine.scope_for(&tenant)).map_err(|_| FleetError::Capture)?;
+        if !state.paused || state.access_revoked() || stream.closing {
+            return Err(FleetError::Configuration);
+        }
         let stream = self.streams.remove(database).ok_or(FleetError::Configuration)?;
-        let StreamConfig { engine, keys, destinations, policy_revision, retention_days, staging, placement } = stream.config;
+        let StreamConfig {
+            engine,
+            keys,
+            destinations,
+            policy_revision,
+            retention_days,
+            staging,
+            placement,
+        } = stream.config;
         drop(engine);
-        self.suspended.insert(database.to_owned(), SuspendedStream {
-            keys, destinations, policy_revision, retention_days, staging, placement, paused: stream.paused,
-        });
+        self.suspended.insert(
+            database.to_owned(),
+            SuspendedStream {
+                keys,
+                destinations,
+                policy_revision,
+                retention_days,
+                staging,
+                placement,
+                paused: stream.paused,
+            },
+        );
         Ok(())
     }
 
     /// Rebinds the retained policy to the reopened target after restore or rollback.
-    pub fn resume_after_restore(&mut self, database: &str, engine: Arc<dyn BackupEngineHandle>) -> Result<(), FleetError> {
-        if engine.engine().database_id().to_string() != database { return Err(FleetError::Configuration); }
-        let Some(policy) = self.suspended.remove(database) else { return Ok(()); };
+    pub fn resume_after_restore(
+        &mut self,
+        database: &str,
+        engine: Arc<dyn BackupEngineHandle>,
+        resume_capture: bool,
+    ) -> Result<(), FleetError> {
+        if engine.engine().database_id().to_string() != database {
+            return Err(FleetError::Configuration);
+        }
+        let Some(policy) = self.suspended.remove(database) else {
+            if resume_capture && self.streams.contains_key(database) {
+                self.resume(database)?;
+            }
+            return Ok(());
+        };
         let retained = policy.clone();
-        let result = self.attach(StreamConfig { engine, keys: policy.keys, destinations: policy.destinations,
-            policy_revision: policy.policy_revision, retention_days: policy.retention_days,
-            staging: policy.staging, placement: policy.placement });
+        let result = self.attach(StreamConfig {
+            engine,
+            keys: policy.keys,
+            destinations: policy.destinations,
+            policy_revision: policy.policy_revision,
+            retention_days: policy.retention_days,
+            staging: policy.staging,
+            placement: policy.placement,
+        });
         if let Err(error) = result {
             self.suspended.insert(database.to_owned(), retained);
             return Err(error);
         }
-        self.streams.get_mut(database).ok_or(FleetError::Configuration)?.paused = retained.paused;
+        self.streams.get_mut(database).ok_or(FleetError::Configuration)?.paused =
+            retained.paused && !resume_capture;
         Ok(())
     }
 

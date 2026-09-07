@@ -17,6 +17,17 @@ use terrabase::member::{DatabaseId, DatabaseScope};
 pub(crate) fn storage_keys(
     scope: &DatabaseScope,
 ) -> BTreeMap<DatabaseId, Arc<dyn DatabaseKeySource>> {
+    keys_for(scope, KeyPurpose::Data)
+}
+
+pub(crate) fn backup_keys(scope: &DatabaseScope) -> Arc<dyn DatabaseKeySource> {
+    keys_for(scope, KeyPurpose::Backup).into_values().next().unwrap()
+}
+
+fn keys_for(
+    scope: &DatabaseScope,
+    purpose: KeyPurpose,
+) -> BTreeMap<DatabaseId, Arc<dyn DatabaseKeySource>> {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -38,7 +49,7 @@ pub(crate) fn storage_keys(
             scope.tenant(),
             scope.project(),
             scope.database(),
-            KeyPurpose::Data,
+            purpose,
         )
         .unwrap(),
         version,

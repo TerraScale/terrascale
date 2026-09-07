@@ -35,6 +35,8 @@ impl Server {
             .clone()
             .oneshot(
                 Request::post("/api/v1/databases")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .header("authorization", KEY)
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .unwrap(),
@@ -410,6 +412,15 @@ async fn packed_sdk_cross_origin_browser_journey() {
 
 #[tokio::test]
 async fn membership_revocation_closes_active_socket_without_delivery_authority_calls() {
+    authority_revocation_closes_active_socket("a").await;
+}
+
+#[tokio::test]
+async fn feature_revocation_closes_active_socket_without_delivery_authority_calls() {
+    authority_revocation_closes_active_socket("b").await;
+}
+
+async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
     let (identity, reply, authority_task) =
         crate::delegated_identity::tests::authority_for("terrabase-local", "local", "prod", "read")
             .await;
@@ -452,7 +463,7 @@ async fn membership_revocation_closes_active_socket_without_delivery_authority_c
     )
     .unwrap();
     let capability = attached["capability"].as_str().unwrap();
-    assert!(capability.split('.').nth(3).unwrap().ends_with(&format!(":scope-{}", "a".repeat(64))));
+    assert!(capability.split('.').nth(3).unwrap().contains(&format!(":scope-{}", "a".repeat(64))));
     let view = attached["view"].as_str().unwrap();
     let mut request = format!("ws://{}/api/v1/reactive/views/{view}/1/websocket", server.address)
         .into_client_request()
@@ -466,7 +477,7 @@ async fn membership_revocation_closes_active_socket_without_delivery_authority_c
     let _ = receive(&mut socket).await;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     reply.lock().unwrap()["membershipRevocations"] = snapshot(vec![
-        serde_json::json!({"scope":format!("scope-{}","a".repeat(64)),"expiresAt":now+1320}),
+        serde_json::json!({"scope":format!("scope-{}",revoked_scope.repeat(64)),"expiresAt":now+1320}),
     ]);
     identity.refresh_membership().await.unwrap();
     // No authority or Worker is needed for the one-second local socket fence.
