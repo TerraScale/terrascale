@@ -138,10 +138,13 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
         new RegExp(`\\b${method}\\b`, "u"),
       );
     }
-    await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "@better-auth/core@1.7.2"], { cwd: consumer });
+    await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "@better-auth/core@1.7.2", "react@18.3.1"], { cwd: consumer });
     const journey = path.join(consumer, "packed-journey.ts");
     await writeFile(journey, packedConsumerJourney);
     await run("node", [journey], { cwd: consumer });
+    const adapterJourney = path.join(consumer, "packed-adapters.ts");
+    await writeFile(adapterJourney, packedAdapterJourney);
+    await run("node", [adapterJourney], { cwd: consumer });
     await run("node", ["--conditions=workerd", "--conditions=browser", "--input-type=module", "--eval",
       "import { createTerraScaleBetterAuthAdapter } from '@terrascale/sdk/better-auth'; if (typeof createTerraScaleBetterAuthAdapter !== 'function') throw new Error('Workerd server adapter is missing');",
     ], { cwd: consumer });
@@ -237,6 +240,57 @@ try {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   });
 }
+`;
+
+const packedAdapterJourney = String.raw`import assert from "node:assert/strict";
+import { ReactiveQueryObserver } from "@terrascale/sdk/react";
+import { TerraScaleSyncV1Client } from "@terrascale/sdk";
+import { terrascaleCollectionOptions } from "@terrascale/sdk/tanstack";
+
+let aborted = false;
+const query = new ReactiveQueryObserver({
+  subscribe: (_observer, context) => {
+    context.signal.addEventListener("abort", () => { aborted = true; }, { once: true });
+  },
+});
+const stopQuery = query.subscribe(() => undefined);
+assert.equal(query.getSnapshot().isFetching, true);
+stopQuery();
+assert.equal(aborted, true);
+
+const client = new TerraScaleSyncV1Client();
+const frames = [];
+const collection = terrascaleCollectionOptions({
+  client,
+  subscription: "packaged-consumer",
+  query: "from todos",
+  getKey: row => String(row.id),
+  transport: { send: frame => { frames.push(frame); } },
+  mutate: async request => {
+    assert.equal(request.operation, "update");
+    assert.equal(typeof request.idempotencyKey, "string");
+    assert.equal(request.signal.aborted, false);
+    return { status: "rejected", error: new Error("controlled producer rejection") };
+  },
+});
+const cleanup = collection.adapter.options.sync.sync({
+  collection: {}, begin: () => undefined, write: () => undefined,
+  commit: () => true, markReady: () => undefined, markError: error => { throw error; }, truncate: () => undefined,
+});
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(frames.length, 1);
+await assert.rejects(
+  collection.onUpdate({ transaction: {
+    id: "tx-packaged",
+    mutations: [{ type: "update", key: "todo-1", original: { id: "todo-1", done: false }, modified: { id: "todo-1", done: true } }],
+  } }),
+  /controlled producer rejection/u,
+);
+cleanup?.();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(frames.length, 2);
+collection.adapter.dispose();
+console.log("Packaged React/TanStack adapter consumer qualification passed.");
 `;
 
 async function readPackedEntry(tarball: string, entry: string): Promise<string> {
