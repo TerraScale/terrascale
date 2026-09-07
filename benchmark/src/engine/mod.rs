@@ -75,6 +75,7 @@ pub use crate::storage::{
     MergeKernelEntry, MergePolicy, MergeSchema, MergeSchemaError,
 };
 pub use authorized::{AuthorizedEngine, AuthorizedEngineError, AuthorizedSession};
+pub use cross_file::{CrossFileReceiptPhase, LocalCrossFileReceipt};
 pub use export::{ExportHistoryRow, ExportMetadataSnapshot};
 pub use ingest::{
     BulkIngestRequest, IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal,
@@ -93,7 +94,6 @@ pub use patch::{
 pub use recovery_statistics::RecoveryStatistics;
 pub(crate) use recovery_statistics::{logical_document_digest, logical_state_hasher};
 pub(crate) use shard_split::{RouteCatalog, RouteCatalogError, ScopedShardEngine};
-pub use cross_file::LocalCrossFileReceipt;
 
 use crate::{
     families::FamilyStore,

@@ -188,6 +188,14 @@ impl WalWriterDriver {
         &mut self,
         scope: terrabase::types::TenantScope,
     ) -> Result<Option<WalPhysicalBoundary>, WalQuicError> {
+        let owner = self.engine.engine().database_owner();
+        let binding_scope = self.binding.scope();
+        if owner.tenant().to_text() != binding_scope.tenant().to_text()
+            || owner.project().to_text() != binding_scope.project().to_text()
+            || owner.database().to_text() != binding_scope.database().to_text()
+        {
+            return Err(WalQuicError::Route(WalRouteError::Unauthorized));
+        }
         let Some(installed) = self.installed.clone() else {
             return Ok(None);
         };

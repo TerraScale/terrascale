@@ -214,6 +214,33 @@ impl NativeBackupRuntime {
             .map_err(NativeBackupRuntimeError::Fleet)
     }
 
+    /// Restores through an inclusive Unix-millisecond timestamp without rounding.
+    pub async fn restore_at_millis(
+        &self,
+        database: &str,
+        provider: Provider,
+        at_millis: u64,
+        target: &terrabase::engine::EngineConfig,
+        operation_id: &str,
+        placement: &PlacementLock,
+        identity: &terrabase::backup::RestoreIdentity,
+    ) -> Result<terrabase::backup::RecoveryReceipt, NativeBackupRuntimeError> {
+        validate_operation_id(operation_id)?;
+        if !self
+            .databases
+            .lock()
+            .map_err(|_| NativeBackupRuntimeError::Poisoned)?
+            .contains(database)
+        {
+            return Err(NativeBackupRuntimeError::Unavailable);
+        }
+        let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+        fleet
+            .restore_at_from_provider(database, provider, at_millis, target, identity)
+            .await
+            .map_err(NativeBackupRuntimeError::Fleet)
+    }
+
     /// Dynamically admits one accepted stream under the shared fleet lock.
     pub fn attach(&self, input: NativeBackupInput) -> Result<(), NativeBackupRuntimeError> {
         let database = input.engine.engine().database_id().to_string();

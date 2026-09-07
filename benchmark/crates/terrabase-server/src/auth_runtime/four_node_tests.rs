@@ -432,8 +432,19 @@ async fn four_voter_encrypted_logs_survive_authority_restart() {
         }),
     );
     fixture.runtime = runtime;
-    wait_ready(&fixture.authorities[0]).await;
-    let retained = fixture.authorities[0].find_one("user".into(), "retained".into()).await.unwrap();
+    let retained = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            match fixture.authorities[0].find_one("user".into(), "retained".into()).await {
+                Ok(record) => break record,
+                Err(AuthorityError::Unavailable | AuthorityError::Deadline) => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("recovered authority read failed: {error:?}"),
+            }
+        }
+    })
+    .await
+    .expect("restarted voter must rejoin and complete a retained-record quorum read");
     assert_eq!(retained.unwrap()["id"], serde_json::json!("retained"));
     stop(fixture).await;
 }

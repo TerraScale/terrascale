@@ -178,13 +178,26 @@ pub(super) async fn list_operations(
     match authority.list_operations(&scope, query.after.as_deref(), query.limit.unwrap_or(50)).await
     {
         Ok(mut page) => {
-            if page.operations.len() < query.limit.unwrap_or(50) {
-                if let Ok(local) = list_member_operations(
-                    &state,
-                    &scope,
-                    None,
-                    query.limit.unwrap_or(50) - page.operations.len(),
-                ) {
+            let limit = query.limit.unwrap_or(50);
+            if page.next_cursor.is_none()
+                && state.admitted_databases.is_some()
+                && state.exports.is_some()
+            {
+                if page.operations.len() == limit {
+                    page.next_cursor = match member_start(&state, &scope) {
+                        Ok(cursor) => Some(cursor),
+                        Err(()) => return ApiError::control_unavailable().into_response(),
+                    };
+                } else {
+                    let local = match list_member_operations(
+                        &state,
+                        &scope,
+                        None,
+                        limit - page.operations.len(),
+                    ) {
+                        Ok(local) => local,
+                        Err(()) => return ApiError::control_unavailable().into_response(),
+                    };
                     page.operations.extend(local.operations);
                     page.next_cursor = local.next_cursor;
                     page.covered_kinds.extend(local.covered_kinds);
@@ -196,6 +209,22 @@ pub(super) async fn list_operations(
         }
         Err(error) => super::provisioning_error(error).into_response(),
     }
+}
+
+fn member_start(
+    state: &ApiState,
+    scope: &crate::delegated_identity::VerifiedProjectScope,
+) -> Result<String, ()> {
+    DiscoveryCursor {
+        version: 1,
+        phase: "member".into(),
+        member_id: member_id(state).into(),
+        db_after: String::new(),
+        current_db: None,
+        owner_after: String::new(),
+    }
+    .seal(state.exports.as_ref().ok_or(())?, &scope.tenant_id, &scope.project_id, member_id(state))
+    .map_err(|_| ())
 }
 
 /// Reads the local member journals through the admitted registry. This is an
@@ -245,67 +274,62 @@ fn list_member_operations(
     let mut current_db = cursor.current_db;
     let mut owner_after = cursor.owner_after;
     let mut phase = cursor.phase;
-    let scanning_recovery = phase == "recovery";
+    let mut db_after = cursor.db_after.clone();
+    if current_db
+        .as_ref()
+        .is_some_and(|id| !databases.iter().any(|db| &db.record.database_id == id))
+    {
+        return Err(());
+    }
     for database in databases {
         if current_db.as_deref().is_some_and(|id| id != database.record.database_id) {
             continue;
         }
         current_db = Some(database.record.database_id.clone());
-        let rows = if phase == "recovery" {
-            Vec::new()
-        } else {
-            exports
+        if phase != "recovery" {
+            let rows = exports
                 .discover(
                     &database.record.database_id,
                     (!owner_after.is_empty()).then_some(owner_after.as_str()),
-                    limit + 1,
+                    limit - operations.len(),
                 )
-                .map_err(|_| ())?
-        };
-        for row in rows {
-            if operations.len() == limit {
-                break;
+                .map_err(|_| ())?;
+            for row in rows {
+                owner_after = row.job_id.clone();
+                operations.push(OperationSummary {
+                    operation_id: row.job_id,
+                    kind: "export".into(),
+                    database_id: database.record.database_id.clone(),
+                    name: database.record.database_id.clone(),
+                    state: export_state(&row.status).into(),
+                    stage: export_phase(row.phase).into(),
+                    created_at: rfc3339_millis(row.created_at_millis),
+                    revision: None,
+                    cancellable: matches!(
+                        row.cancellation,
+                        crate::export_api::ExportCancellation::Available
+                    ),
+                    cancellation_reason: String::new(),
+                });
             }
-            owner_after = row.job_id.clone();
-            let state_name = export_state(&row.status);
-            operations.push(OperationSummary {
-                operation_id: row.job_id,
-                kind: "export".into(),
-                database_id: database.record.database_id.clone(),
-                name: database.record.database_id.clone(),
-                state: state_name.into(),
-                stage: export_phase(row.phase).into(),
-                created_at: rfc3339_millis(row.created_at_millis),
-                revision: None,
-                cancellable: matches!(
-                    row.cancellation,
-                    crate::export_api::ExportCancellation::Available
-                        | crate::export_api::ExportCancellation::Requested
-                ),
-                cancellation_reason: String::new(),
-            });
+            phase = "export".into();
         }
-        let mut recovery_added = false;
         if operations.len() < limit {
+            if phase != "recovery" {
+                owner_after.clear();
+            }
+            phase = "recovery".into();
             if let Some(recovery) = &state.native_recovery {
-                let recovery_rows = recovery
+                let rows = recovery
                     .discover(
                         &database.record.database_id,
-                        if scanning_recovery { &owner_after } else { "" },
+                        &owner_after,
                         limit - operations.len(),
                         false,
                     )
                     .map_err(|_| ())?;
-                for row in recovery_rows {
-                    if operations.len() == limit {
-                        break;
-                    }
-                    let facts = recovery
-                        .status(&database.record.database_id, &row.operation_id)
-                        .map_err(|_| ())?
-                        .and_then(|operation| operation.facts);
+                for row in rows {
                     owner_after = row.operation_id.clone();
-                    recovery_added = true;
                     operations.push(OperationSummary {
                         operation_id: row.operation_id,
                         kind: "recovery".into(),
@@ -313,9 +337,7 @@ fn list_member_operations(
                         name: database.record.database_id.clone(),
                         state: recovery_state(&row.phase).into(),
                         stage: row.phase,
-                        created_at: facts
-                            .as_ref()
-                            .map(|facts| facts.captured_at_millis.to_string()),
+                        created_at: None,
                         revision: None,
                         cancellable: false,
                         cancellation_reason: "Native recovery has no safe cancellation action"
@@ -325,26 +347,27 @@ fn list_member_operations(
             }
         }
         if operations.len() == limit {
-            phase = if scanning_recovery || recovery_added { "recovery" } else { "export" }.into();
             let next = DiscoveryCursor {
                 version: 1,
                 phase,
-                member_id: member_id(&state).into(),
-                db_after: cursor.db_after.clone(),
+                member_id: member_id(state).into(),
+                db_after,
                 current_db,
                 owner_after,
             };
             return Ok(OperationPage {
                 operations,
                 next_cursor: Some(
-                    next.seal(exports, &scope.tenant_id, &scope.project_id, member_id(&state))
+                    next.seal(exports, &scope.tenant_id, &scope.project_id, member_id(state))
                         .map_err(|_| ())?,
                 ),
                 covered_kinds: vec!["export".into(), "recovery".into()],
             });
         }
+        db_after = database.record.database_id.clone();
         owner_after.clear();
         current_db = None;
+        phase = "member".into();
     }
     let next_cursor = db_next
         .map(|db_after| {
@@ -442,3 +465,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "api_operations_route_tests.rs"]
+mod route_tests;

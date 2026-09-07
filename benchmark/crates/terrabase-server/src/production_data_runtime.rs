@@ -619,12 +619,12 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                 "tigris" => terrabase::backup::object_store::Provider::Tigris,
                 _ => return Err("restore provider is not approved".into()),
             };
-            let point = match &request.selection {
+            let (point, timestamp) = match &request.selection {
                 crate::native_recovery::NativeRestoreSelection::PointId(point) => {
-                    Some(point.clone())
+                    (Some(point.clone()), None)
                 }
-                crate::native_recovery::NativeRestoreSelection::AtUnixMillis(_) => {
-                    return Err("timestamp restore executor is unavailable".into());
+                crate::native_recovery::NativeRestoreSelection::AtUnixMillis(value) => {
+                    (None, Some(*value))
                 }
             };
             let expected_cut =
@@ -639,6 +639,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                     &request.target_database_id,
                     provider,
                     point.as_deref(),
+                    timestamp,
                     &request.operation_id,
                     &request.recovery_point_digest,
                     expected_cut,
@@ -1196,6 +1197,7 @@ impl ProductionAdmissionRuntime {
         target: &str,
         provider: terrabase::backup::object_store::Provider,
         point: Option<&str>,
+        timestamp: Option<u64>,
         operation_id: &str,
         expected_manifest_digest: &str,
         expected_journal_boundary: u64,
@@ -1219,6 +1221,7 @@ impl ProductionAdmissionRuntime {
                     target,
                     provider,
                     point,
+                    timestamp,
                     operation_id,
                     expected_manifest_digest,
                     expected_journal_boundary,
@@ -1292,6 +1295,7 @@ impl ProductionAdmissionRuntime {
         target: &str,
         provider: terrabase::backup::object_store::Provider,
         point: Option<&str>,
+        timestamp: Option<u64>,
         operation_id: &str,
         expected_manifest_digest: &str,
         expected_journal_boundary: u64,
@@ -1393,26 +1397,44 @@ impl ProductionAdmissionRuntime {
             Ok(placement) => placement,
             Err(error) => return recover(reservation, error),
         };
-        let restored = backups
-            .restore_from_provider(
-                source,
-                provider,
-                point,
-                &target_config,
-                operation_id,
-                &placement,
-                &terrabase::backup::RestoreIdentity {
-                    operation_id: operation_id.to_owned(),
-                    source_database_id: source.to_owned(),
-                    target_database_id: target.to_owned(),
-                    provider: format!("{provider:?}").to_lowercase(),
-                    selection: point.unwrap_or("latest").to_owned(),
-                    expected_manifest_digest: expected_manifest_digest.to_owned(),
-                    expected_journal_boundary,
-                    restore_epoch,
-                },
-            )
-            .await
+        let selection = point
+            .map_or_else(|| timestamp.expect("timestamp selection").to_string(), str::to_owned);
+        let identity = terrabase::backup::RestoreIdentity {
+            operation_id: operation_id.to_owned(),
+            source_database_id: source.to_owned(),
+            target_database_id: target.to_owned(),
+            provider: format!("{provider:?}").to_lowercase(),
+            selection,
+            expected_manifest_digest: expected_manifest_digest.to_owned(),
+            expected_journal_boundary,
+            restore_epoch,
+        };
+        let restored = if let Some(timestamp) = timestamp {
+            backups
+                .restore_at_millis(
+                    source,
+                    provider,
+                    timestamp,
+                    &target_config,
+                    operation_id,
+                    &placement,
+                    &identity,
+                )
+                .await
+        } else {
+            backups
+                .restore_from_provider(
+                    source,
+                    provider,
+                    point,
+                    &target_config,
+                    operation_id,
+                    &placement,
+                    &identity,
+                )
+                .await
+        };
+        let restored = restored
             .map_err(|_| "native restore failed or target authority was unavailable".to_owned());
         let lease = reservation.reacquire(&self.member).map_err(failure)?;
         reservation.complete(&self.registry, lease, 1)?;

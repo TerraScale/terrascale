@@ -14,6 +14,8 @@ use std::pin::Pin;
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleGrantAction {
+    /// Read an authenticated retained recovery point under source placement.
+    ResolveRecoveryPoint,
     /// Restore an exact recovery point into an admitted target.
     RestoreToTarget,
     EnsureSnapshot,
@@ -97,6 +99,12 @@ pub type LifecycleFuture<'a> =
 
 /// Async native lifecycle owner boundary.
 pub trait LifecycleControl: Send + Sync {
+    /// Resolves a retained point without admitting or creating a target.
+    fn resolve_recovery_point(&self, request: &pb::ResolveRecoveryPointRequest) -> ResolveRecoveryPointFuture<'_> {
+        let _ = request;
+        Box::pin(async { Err("native recovery point resolver is not composed".into()) })
+    }
+
     /// Reads verified facts from an admitted restored target.
     fn restore_stats(&self, request: &pb::RestoreStatsRequest) -> RestoreStatsFuture<'_> {
         let _ = request;
@@ -274,3 +282,6 @@ mod tests {
         assert_eq!(response.operation_id, "op");
     }
 }
+
+/// Asynchronous authenticated source-point response.
+pub type ResolveRecoveryPointFuture<'a> = Pin<Box<dyn Future<Output = Result<pb::ResolveRecoveryPointResponse, String>> + Send + 'a>>;

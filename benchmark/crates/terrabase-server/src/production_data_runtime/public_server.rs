@@ -92,6 +92,16 @@ impl PublicServingStatus {
                 .get()
                 .is_some_and(|workers| workers.iter().all(|worker| !worker.is_finished()))
     }
+
+    /// Requests every public maintenance worker to stop before listener drain.
+    pub fn begin_drain(&self) {
+        if let Some(workers) = self.workers.get() {
+            for worker in workers {
+                worker.abort();
+            }
+        }
+        self.serving.store(false, Ordering::Release);
+    }
 }
 
 impl PreparedProductionPublic {

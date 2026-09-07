@@ -38,6 +38,24 @@ impl TbepGrpcServer {
 
 #[tonic::async_trait]
 impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
+    async fn resolve_recovery_point(
+        &self,
+        request: Request<pb::ResolveRecoveryPointRequest>,
+    ) -> Result<Response<pb::ResolveRecoveryPointResponse>, Status> {
+        self.authenticate_lifecycle(&request)?;
+        let request = request.into_inner();
+        if request.operation_id.is_empty() || request.operation_id.len() > 128
+            || request.point_id.len() > 64 || request.unix_millis != 0
+            || !(request.selection_kind == "latest" && request.point_id.is_empty()
+                || request.selection_kind == "point_id" && request.point_id.len() == 64)
+        {
+            return Err(Status::invalid_argument("unsupported recovery point selection"));
+        }
+        let owner = self.lifecycle.as_ref().ok_or_else(|| Status::unavailable("native recovery point resolver is not composed"))?;
+        let response = owner.resolve_recovery_point(&request).await.map_err(Status::unavailable)?;
+        Ok(Response::new(response))
+    }
+
     async fn restore_stats(
         &self,
         request: Request<pb::RestoreStatsRequest>,
