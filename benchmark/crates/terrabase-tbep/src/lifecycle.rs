@@ -26,7 +26,7 @@ pub enum LifecycleGrantAction {
 
 /// Strict, scoped lifecycle effect grant payload.
 #[allow(missing_docs)]
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LifecycleOperationGrant {
     pub version: u64,
@@ -248,6 +248,7 @@ mod tests {
                 authority_epoch: 3,
                 authority_lease: "lease".into(),
                 authority_signature: vec![1],
+                operation_grant: vec![1],
             }),
             operation_id: "operation".into(),
         }

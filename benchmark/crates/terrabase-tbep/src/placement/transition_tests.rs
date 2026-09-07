@@ -211,16 +211,16 @@ fn signed_lifecycle_grant_replays_and_rejects_mutation_after_reopen() {
     let journal = fixture.open();
     let proposal = stage(&journal, fixture.request.clone(), "lifecycle-proof");
     journal.configure_transition_trust(trust(&proposal)).unwrap();
-    let grant = terrabase::lifecycle::LifecycleOperationGrant {
+    let grant = crate::lifecycle::LifecycleOperationGrant {
         version: 1,
         domain: "terrascale-lifecycle-operation-v1".into(),
-        environment: fixture.request.environment.clone(),
+        environment: proposal.environment.clone(),
         tenant: "tenant".into(),
         project: "project".into(),
         database: "database".into(),
         region: "GRU".into(),
         member: "member".into(),
-        action: terrabase::lifecycle::LifecycleGrantAction::CloseDatabase,
+        action: crate::lifecycle::LifecycleGrantAction::CloseDatabase,
         operation_id: "lifecycle-replay".into(),
         accepted_proof_digest: "a".repeat(64),
         accepted_placement_revision: 1,
@@ -267,16 +267,19 @@ fn signed_lifecycle_grant_replays_and_rejects_mutation_after_reopen() {
 fn producer_lifecycle_restore_fixture_verifies_and_has_stable_digest() {
     let fixture = tests::Fixture::new();
     let journal = fixture.open();
-    let public_key = include_str!("../../../testdata/lifecycle-restore-grant-public.key").trim();
-    let key_bytes = hex::decode(public_key).unwrap();
+    let public_key = include_str!("../../testdata/lifecycle-restore-grant-public.key").trim();
+    let key_bytes: Vec<u8> = (0..public_key.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&public_key[index..index + 2], 16).unwrap())
+        .collect();
     journal
         .configure_transition_trust(TransitionTrust::new(
             BTreeMap::from([("proof".into(), key_bytes)]),
-            BTreeMap::new(),
-            BTreeMap::new(),
+            BTreeMap::from([("genesis".into(), key(2).public_key().as_ref().to_vec())]),
+            BTreeMap::from([("member".into(), key(3).public_key().as_ref().to_vec())]),
         ).unwrap())
         .unwrap();
-    let encoded = include_bytes!("../../../testdata/lifecycle-restore-grant.json");
+    let encoded = include_bytes!("../../testdata/lifecycle-restore-grant.json");
     let grant = journal.verify_lifecycle_grant(encoded).unwrap();
     assert_eq!(grant.operation_id, "restore-op-member");
     assert_eq!(grant.authority_epoch, 7);

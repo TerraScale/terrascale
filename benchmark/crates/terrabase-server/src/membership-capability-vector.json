@@ -1,0 +1,17 @@
+{
+  "now": 1800000000,
+  "view": "shared",
+  "generation": 1,
+  "organizationId": "org-a",
+  "projectId": "project-a",
+  "databaseId": "database-a",
+  "userId": "user-a",
+  "memberId": "member-a",
+  "membershipRevision": "7",
+  "featureRevision": "3",
+  "databaseScope": "scope-ed9d28c889b9582538bdf7d68c98dc68b07dff4296dcc6d53b84061a4d748e78",
+  "membershipScope": "scope-783b4f9642bed7b8d99ee29807a984782bdab2f7f922d86681e7d885b7869166",
+  "featureScope": "scope-b85d2f640e76ee49f984cb450c558b34fc72a2556a39ebaf2a51e3cb85d5735f",
+  "keyHex": "74657272617363616c652d72656163746976652d6361706162696c6974792d7631",
+  "token": "v1.shared.1.scope-ed9d28c889b9582538bdf7d68c98dc68b07dff4296dcc6d53b84061a4d748e78:scope-783b4f9642bed7b8d99ee29807a984782bdab2f7f922d86681e7d885b7869166:scope-b85d2f640e76ee49f984cb450c558b34fc72a2556a39ebaf2a51e3cb85d5735f.0.GRU.1800001200.ff309d007b428c6d1edd2b1e5a7d70b9073d7816cabe5344c4bb0f9ba847f36a"
+}

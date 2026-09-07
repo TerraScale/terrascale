@@ -4489,11 +4489,18 @@ impl StoragePort for SqliteStorage {
     fn prepare_participant(&mut self, prepare: &crate::storage::ParticipantPrepare) -> Result<crate::storage::ParticipantPrepareReceipt, ()> {
         let identity = &prepare.identity;
         if !prepare.metadata.is_empty() { return Err(()); }
-        let payload = prepare.writes.iter().map(crate::storage::participant::encode_write).collect::<Result<Vec<_>,_>>()?.into_iter().flatten().collect::<Vec<_>>();
-        let computed = *blake3::hash(&payload).as_bytes();
-        if computed != identity.digest { return Err(()); }
-        let connection = self.writer.lock().map_err(|_| ())?;
-        connection.execute("INSERT INTO participant_prepares(tenant,incarnation,operation,participant,owner,digest,epoch,snapshot,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(tenant,incarnation,operation,participant) DO NOTHING", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant, identity.owner, identity.digest.as_slice(), i64::try_from(identity.epoch).map_err(|_| ())?, i64::try_from(identity.snapshot.get()).map_err(|_| ())?, payload]).map_err(|_| ())?;
+        if prepare.writes.len() > 1024 { return Err(()); }
+        let mut payload = vec![1u8];
+        payload.extend_from_slice(&u32::try_from(prepare.writes.len()).map_err(|_| ())?.to_be_bytes());
+        for write in &prepare.writes { let encoded = crate::storage::participant::encode_write(write)?; payload.extend_from_slice(&u32::try_from(encoded.len()).map_err(|_| ())?.to_be_bytes()); payload.extend_from_slice(&encoded); }
+        if payload.len() > 64 * 1024 * 1024 { return Err(()); }
+        if *blake3::hash(&payload).as_bytes() != identity.digest { return Err(()); }
+        let mut connection = self.writer.lock().map_err(|_| ())?;
+        let transaction = connection.unchecked_transaction().map_err(|_| ())?;
+        transaction.execute("INSERT INTO participant_prepares(tenant,incarnation,operation,participant,owner,digest,epoch,snapshot,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(tenant,incarnation,operation,participant) DO NOTHING", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant, identity.owner, identity.digest.as_slice(), i64::try_from(identity.epoch).map_err(|_| ())?, i64::try_from(identity.snapshot.get()).map_err(|_| ())?, payload]).map_err(|_| ())?;
+        let matched: bool = transaction.query_row("SELECT owner=?5 AND epoch=?7 AND snapshot=?8 AND digest=?6 FROM participant_prepares WHERE tenant=?1 AND incarnation=?2 AND operation=?3 AND participant=?4", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant, identity.owner, identity.digest.as_slice(), i64::try_from(identity.epoch).map_err(|_| ())?, i64::try_from(identity.snapshot.get()).map_err(|_| ())?], |row| row.get(0)).map_err(|_| ())?;
+        if !matched { return Err(()); }
+        transaction.commit().map_err(|_| ())?;
         Ok(crate::storage::ParticipantPrepareReceipt { identity: identity.clone() })
     }
     fn resolve_participant(&mut self, identity: &crate::storage::ParticipantIdentity) -> Result<Option<crate::storage::ParticipantPrepareReceipt>, ()> {

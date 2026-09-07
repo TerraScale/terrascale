@@ -573,6 +573,8 @@ pub struct ApiState {
     pub provisioning: Option<Arc<crate::provisioning::ProvisioningClient>>,
     /// The serving member's own region (D-58: named on every response).
     pub region: RegionCode,
+    /// Immutable identity of this serving member, used to bind discovery cursors.
+    pub member_id: String,
     /// The member's health registry backing `/health`.
     pub metrics: Arc<MetricsRegistry>,
     /// Admitted member data keys. `None` admits no data keys; other product
@@ -639,6 +641,7 @@ impl ApiState {
                 + Sync,
         >,
         region: RegionCode,
+        member_id: String,
         metrics: Arc<MetricsRegistry>,
         admitted_databases: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
         replication_progress: Arc<crate::replication_runtime::ReplicationProgress>,
@@ -666,6 +669,7 @@ impl ApiState {
             development: Arc::default(),
             provisioning,
             region,
+            member_id,
             metrics,
             keys,
             delegated_identity,
@@ -4662,6 +4666,7 @@ mod tests {
             admitted_databases: None,
             replication_progress: None,
             region: RegionCode::GRU,
+            member_id: "test-member".into(),
             metrics: Arc::new(MetricsRegistry::new()),
             delegated_identity: None,
             byo_jwt: None,
@@ -4715,6 +4720,7 @@ mod tests {
             admitted_databases: None,
             replication_progress: Some(rf2::progress()),
             region: RegionCode::GRU,
+            member_id: "test-member".into(),
             metrics: Arc::new(MetricsRegistry::new()),
             delegated_identity: None,
             byo_jwt: None,

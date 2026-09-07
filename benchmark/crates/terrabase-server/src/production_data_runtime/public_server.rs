@@ -210,6 +210,7 @@ mod tests {
             development: Arc::default(),
             provisioning: None,
             region: RegionCode::GRU,
+            member_id: "test-member".into(),
             metrics: Arc::new(MetricsRegistry::new()),
             keys: None,
             delegated_identity: None,

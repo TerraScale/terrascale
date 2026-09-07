@@ -661,4 +661,21 @@ mod tests {
             Err(CapabilityKeyError::Duplicate)
         ));
     }
+    #[test]
+    fn native_membership_feature_vector_matches_edge_fixture() {
+        let vector: serde_json::Value =
+            serde_json::from_str(include_str!("membership-capability-vector.json")).unwrap();
+        let scope = format!(
+            "{}:{}:{}",
+            vector["databaseScope"].as_str().unwrap(),
+            vector["membershipScope"].as_str().unwrap(),
+            vector["featureScope"].as_str().unwrap()
+        );
+        let key = hex::decode(vector["keyHex"].as_str().unwrap()).unwrap();
+        let issuer = ViewCapabilityIssuer::new(&key).unwrap();
+        let token = issuer
+            .issue("shared", 1, &scope, 0, RegionCode::GRU, vector["now"].as_u64().unwrap())
+            .unwrap();
+        assert_eq!(token, vector["token"].as_str().unwrap());
+    }
 }

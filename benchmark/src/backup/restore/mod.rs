@@ -623,6 +623,10 @@ pub struct RestoreMarkerFacts {
     pub source_logical_checksum: String,
     /// Logical document count authenticated by the selected source manifest.
     pub source_logical_documents: u64,
+    /// Capture clock authenticated by the selected source manifest.
+    pub source_captured_unix_millis: u64,
+    /// Retention deadline authenticated by the selected source manifest.
+    pub source_retain_until_unix_millis: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -634,6 +638,8 @@ struct RestoreMarker {
     restored_family_records: u64,
     source_logical_checksum: String,
     source_logical_documents: u64,
+    source_captured_unix_millis: u64,
+    source_retain_until_unix_millis: u64,
 }
 
 /// Reads the encrypted restore marker from an already published target.
@@ -680,6 +686,8 @@ pub fn read_restore_marker(
         restored_family_records: marker.restored_family_records,
         source_logical_checksum: marker.source_logical_checksum,
         source_logical_documents: marker.source_logical_documents,
+        source_captured_unix_millis: marker.source_captured_unix_millis,
+        source_retain_until_unix_millis: marker.source_retain_until_unix_millis,
     }))
 }
 
@@ -1554,6 +1562,8 @@ fn write_restore_metadata(
         restored_family_records: facts.restored_family_records,
         source_logical_checksum: selected.logical_checksum().to_owned(),
         source_logical_documents: selected.logical_documents(),
+        source_captured_unix_millis: selected.captured_unix_millis(),
+        source_retain_until_unix_millis: selected.retain_until_unix_millis(),
     })
     .map_err(|_| BackupError::DestinationUnavailable)?;
     let mut guard = engine.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
@@ -1615,6 +1625,8 @@ fn verify_restore_metadata(
         || marker.restored_family_records != facts.restored_family_records
         || marker.source_logical_checksum != selected.logical_checksum()
         || marker.source_logical_documents != selected.logical_documents()
+        || marker.source_captured_unix_millis != selected.captured_unix_millis()
+        || marker.source_retain_until_unix_millis != selected.retain_until_unix_millis()
     {
         return Err(BackupError::ChecksumMismatch);
     }

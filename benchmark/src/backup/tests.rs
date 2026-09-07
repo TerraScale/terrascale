@@ -483,10 +483,14 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
         expected_journal_boundary: backup.manifest().boundary_sequence().get(),
         restore_epoch: 1,
     };
-    assert!(
-        crate::backup::restore::read_restore_marker(&reopened, &restore_identity)
-            .unwrap()
-            .is_some()
+    let marker =
+        crate::backup::restore::read_restore_marker(&reopened, &restore_identity).unwrap().unwrap();
+    assert_eq!(marker.source_logical_checksum, backup.manifest().logical_checksum());
+    assert_eq!(marker.source_logical_documents, backup.manifest().logical_documents());
+    assert_eq!(marker.source_captured_unix_millis, backup.manifest().captured_unix_millis());
+    assert_eq!(
+        marker.source_retain_until_unix_millis,
+        backup.manifest().retain_until_unix_millis()
     );
     let mut wrong_identity = restore_identity.clone();
     wrong_identity.operation_id = "unpublished-operation".into();

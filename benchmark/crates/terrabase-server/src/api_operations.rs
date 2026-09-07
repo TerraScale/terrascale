@@ -4,6 +4,43 @@ use super::{ApiError, ApiState, Arc, Extension, Response, State, StatusCode};
 use axum::{extract::Query, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 
+fn member_id(state: &ApiState) -> &str {
+    &state.member_id
+}
+
+fn export_state(status: &crate::export_api::JobStatus) -> &'static str {
+    match status {
+        crate::export_api::JobStatus::Accepted => "queued",
+        crate::export_api::JobStatus::Running => "running",
+        crate::export_api::JobStatus::Cancelled => "cancelled",
+        crate::export_api::JobStatus::Complete => "succeeded",
+        crate::export_api::JobStatus::Failed => "failed",
+    }
+}
+
+fn export_phase(phase: crate::export_api::ExportPhase) -> &'static str {
+    match phase {
+        crate::export_api::ExportPhase::Documents => "documents",
+        crate::export_api::ExportPhase::History => "history",
+        crate::export_api::ExportPhase::Done => "done",
+    }
+}
+
+fn recovery_state(phase: &str) -> &'static str {
+    match phase {
+        "accepted" => "queued",
+        "capturing" | "measuring" => "running",
+        "complete" => "succeeded",
+        "failed" => "failed",
+        _ => "running",
+    }
+}
+
+fn rfc3339_millis(millis: u64) -> Option<String> {
+    chrono::DateTime::from_timestamp_millis(i64::try_from(millis).ok()?)
+        .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+}
+
 /// Versioned state for the operation scan. It is sealed before crossing the
 /// API boundary; the plaintext contains only resume positions, never foreign
 /// database identities that a caller is not already authorized to inspect.
@@ -150,13 +187,13 @@ fn list_member_operations(
             token,
             &scope.tenant_id,
             &scope.project_id,
-            state.region.as_str(),
+            member_id(&state),
         )
         .map_err(|_| ())?,
         None => DiscoveryCursor {
             version: 1,
             phase: "member".into(),
-            member_id: state.region.as_str().into(),
+            member_id: member_id(&state).into(),
             db_after: String::new(),
             current_db: None,
             owner_after: String::new(),
@@ -191,15 +228,15 @@ fn list_member_operations(
                 break;
             }
             owner_after = row.job_id.clone();
-            let state_name = format!("{:?}", row.status).to_lowercase();
+            let state_name = export_state(&row.status);
             operations.push(OperationSummary {
                 operation_id: row.job_id,
                 kind: "export".into(),
                 database_id: database.record.database_id.clone(),
                 name: database.record.database_id.clone(),
-                state: state_name,
-                stage: format!("{:?}", row.phase).to_lowercase(),
-                created_at: (row.created_at_millis != 0).then(|| row.created_at_millis.to_string()),
+                state: state_name.into(),
+                stage: export_phase(row.phase).into(),
+                created_at: rfc3339_millis(row.created_at_millis),
                 revision: None,
                 cancellable: matches!(
                     row.cancellation,
@@ -209,6 +246,7 @@ fn list_member_operations(
                 cancellation_reason: String::new(),
             });
         }
+        let mut recovery_added = false;
         if operations.len() < limit {
             if let Some(recovery) = &state.native_recovery {
                 let recovery_rows = recovery
@@ -228,12 +266,13 @@ fn list_member_operations(
                         .map_err(|_| ())?
                         .and_then(|operation| operation.facts);
                     owner_after = row.operation_id.clone();
+                    recovery_added = true;
                     operations.push(OperationSummary {
                         operation_id: row.operation_id,
                         kind: "recovery".into(),
                         database_id: database.record.database_id.clone(),
                         name: database.record.database_id.clone(),
-                        state: format!("{:?}", row.phase).to_lowercase(),
+                        state: recovery_state(&row.phase),
                         stage: row.phase,
                         created_at: facts
                             .as_ref()
@@ -247,11 +286,11 @@ fn list_member_operations(
             }
         }
         if operations.len() == limit {
-            phase = if scanning_recovery { "recovery" } else { "export" }.into();
+            phase = if scanning_recovery || recovery_added { "recovery" } else { "export" }.into();
             let next = DiscoveryCursor {
                 version: 1,
                 phase,
-                member_id: state.region.as_str().into(),
+                member_id: member_id(&state).into(),
                 db_after: cursor.db_after.clone(),
                 current_db,
                 owner_after,
@@ -259,7 +298,7 @@ fn list_member_operations(
             return Ok(OperationPage {
                 operations,
                 next_cursor: Some(
-                    next.seal(exports, &scope.tenant_id, &scope.project_id, state.region.as_str())
+                    next.seal(exports, &scope.tenant_id, &scope.project_id, member_id(&state))
                         .map_err(|_| ())?,
                 ),
                 covered_kinds: vec!["export".into(), "recovery".into()],
@@ -273,12 +312,12 @@ fn list_member_operations(
             DiscoveryCursor {
                 version: 1,
                 phase: "member".into(),
-                member_id: state.region.as_str().into(),
+                member_id: member_id(&state).into(),
                 db_after,
                 current_db: None,
                 owner_after: String::new(),
             }
-            .seal(exports, &scope.tenant_id, &scope.project_id, state.region.as_str())
+            .seal(exports, &scope.tenant_id, &scope.project_id, member_id(&state))
             .map_err(|_| ())
         })
         .transpose()?;
@@ -310,8 +349,10 @@ mod tests {
             route["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
             "#/components/schemas/OperationPage"
         );
-        assert!(document["components"]["schemas"]["OperationSummary"]["properties"]
-            .get("key_version")
-            .is_none());
+        assert!(
+            document["components"]["schemas"]["OperationSummary"]["properties"]
+                .get("key_version")
+                .is_none()
+        );
     }
 }
