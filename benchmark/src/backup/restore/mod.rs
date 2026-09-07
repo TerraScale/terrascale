@@ -619,6 +619,10 @@ pub struct RestoreMarkerFacts {
     pub restored_documents: u64,
     /// Restored family record count.
     pub restored_family_records: u64,
+    /// Logical checksum authenticated by the selected source manifest.
+    pub source_logical_checksum: String,
+    /// Logical document count authenticated by the selected source manifest.
+    pub source_logical_documents: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -628,6 +632,8 @@ struct RestoreMarker {
     logical_checksum: String,
     restored_documents: u64,
     restored_family_records: u64,
+    source_logical_checksum: String,
+    source_logical_documents: u64,
 }
 
 /// Reads the encrypted restore marker from an already published target.
@@ -659,7 +665,11 @@ pub fn read_restore_marker(
     if marker.identity != *identity {
         return Err(BackupError::ChecksumMismatch);
     }
-    if marker.target_sequence == 0 || marker.target_sequence > snapshot.get() {
+    if marker.target_sequence == 0
+        || marker.target_sequence > snapshot.get()
+        || marker.source_logical_checksum.len() != 64
+        || !marker.source_logical_checksum.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
         return Err(BackupError::ChecksumMismatch);
     }
     Ok(Some(RestoreMarkerFacts {
@@ -668,6 +678,8 @@ pub fn read_restore_marker(
         logical_checksum: marker.logical_checksum,
         restored_documents: marker.restored_documents,
         restored_family_records: marker.restored_family_records,
+        source_logical_checksum: marker.source_logical_checksum,
+        source_logical_documents: marker.source_logical_documents,
     }))
 }
 
@@ -1412,8 +1424,9 @@ fn execute_configured_restore(
         verify_manifest_logical_facts(chain, cutoff, &verification)?;
         drop(guard);
         let facts = replay.into_facts(verification);
-        write_restore_metadata(&reopened, identity, &facts)?;
-        verify_restore_metadata(&reopened, identity, &facts)?;
+        let selected = chain.last().ok_or(BackupError::ChainIncomplete)?;
+        write_restore_metadata(&reopened, identity, &facts, selected)?;
+        verify_restore_metadata(&reopened, identity, &facts, selected)?;
         if replace_existing {
             reopened
                 .activate_origin_epoch(identity.restore_epoch)
@@ -1527,6 +1540,7 @@ fn write_restore_metadata(
     engine: &Engine,
     identity: &RestoreIdentity,
     facts: &RunFacts,
+    selected: &BackupManifest,
 ) -> Result<(), BackupError> {
     let tenant = TenantId::try_new(engine.database_owner().tenant().to_text().as_str())
         .map_err(|_| BackupError::DestinationUnavailable)?;
@@ -1538,6 +1552,8 @@ fn write_restore_metadata(
         logical_checksum: facts.logical_checksum.clone(),
         restored_documents: facts.restored_documents,
         restored_family_records: facts.restored_family_records,
+        source_logical_checksum: selected.logical_checksum().to_owned(),
+        source_logical_documents: selected.logical_documents(),
     })
     .map_err(|_| BackupError::DestinationUnavailable)?;
     let mut guard = engine.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
@@ -1575,6 +1591,7 @@ fn verify_restore_metadata(
     engine: &Engine,
     identity: &RestoreIdentity,
     facts: &RunFacts,
+    selected: &BackupManifest,
 ) -> Result<(), BackupError> {
     let tenant = TenantId::try_new(engine.database_owner().tenant().to_text().as_str())
         .map_err(|_| BackupError::DestinationUnavailable)?;
@@ -1596,6 +1613,8 @@ fn verify_restore_metadata(
         || marker.logical_checksum != facts.logical_checksum
         || marker.restored_documents != facts.restored_documents
         || marker.restored_family_records != facts.restored_family_records
+        || marker.source_logical_checksum != selected.logical_checksum()
+        || marker.source_logical_documents != selected.logical_documents()
     {
         return Err(BackupError::ChecksumMismatch);
     }

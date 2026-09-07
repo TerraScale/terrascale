@@ -932,6 +932,7 @@ fn extract_column_value(document: &Document, field: &str) -> Option<ColumnValue>
 
 /// The schema statements every location carries.
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS participant_prepares (tenant TEXT NOT NULL, incarnation TEXT NOT NULL, operation TEXT NOT NULL, participant TEXT NOT NULL, owner TEXT NOT NULL, digest BLOB NOT NULL, epoch INTEGER NOT NULL, snapshot INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(tenant,incarnation,operation,participant));
 CREATE TABLE IF NOT EXISTS database_lifecycle (tenant TEXT PRIMARY KEY, body BLOB NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS lifecycle_operations (tenant TEXT NOT NULL, operation_id TEXT NOT NULL, action TEXT NOT NULL, paused INTEGER NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(tenant, operation_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS webhook_metadata (
@@ -4485,6 +4486,21 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
+    fn prepare_participant(&mut self, prepare: &crate::storage::ParticipantPrepare) -> Result<crate::storage::ParticipantPrepareReceipt, ()> {
+        let identity = &prepare.identity;
+        if !prepare.metadata.is_empty() { return Err(()); }
+        let payload = prepare.writes.iter().map(crate::storage::participant::encode_write).collect::<Result<Vec<_>,_>>()?.into_iter().flatten().collect::<Vec<_>>();
+        let computed = *blake3::hash(&payload).as_bytes();
+        if computed != identity.digest { return Err(()); }
+        let connection = self.writer.lock().map_err(|_| ())?;
+        connection.execute("INSERT INTO participant_prepares(tenant,incarnation,operation,participant,owner,digest,epoch,snapshot,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(tenant,incarnation,operation,participant) DO NOTHING", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant, identity.owner, identity.digest.as_slice(), i64::try_from(identity.epoch).map_err(|_| ())?, i64::try_from(identity.snapshot.get()).map_err(|_| ())?, payload]).map_err(|_| ())?;
+        Ok(crate::storage::ParticipantPrepareReceipt { identity: identity.clone() })
+    }
+    fn resolve_participant(&mut self, identity: &crate::storage::ParticipantIdentity) -> Result<Option<crate::storage::ParticipantPrepareReceipt>, ()> {
+        let connection = self.writer.lock().map_err(|_| ())?;
+        let found: Option<(String, i64, i64, Vec<u8>)> = connection.query_row("SELECT owner,epoch,snapshot,digest FROM participant_prepares WHERE tenant=?1 AND incarnation=?2 AND operation=?3 AND participant=?4", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional().map_err(|_| ())?;
+        match found { Some((owner, epoch, snapshot, digest)) if owner == identity.owner && epoch == i64::try_from(identity.epoch).map_err(|_| ())? && snapshot == i64::try_from(identity.snapshot.get()).map_err(|_| ())? && digest == identity.digest => Ok(Some(crate::storage::ParticipantPrepareReceipt { identity: identity.clone() })), Some(_) => Err(()), None => Ok(None) }
+    }
     fn local_replication_origin(&self) -> &str {
         &self.local_origin
     }

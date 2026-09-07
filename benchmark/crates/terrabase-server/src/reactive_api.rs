@@ -999,7 +999,9 @@ pub async fn attach_view(
     if request.database_id.is_empty() || request.database_id.len() > 256 {
         return invalid_attach("databaseId").into_response();
     }
-    if !principal.reactive_allowed() || !principal.scope().admits(crate::api_keys::Verbs::READ, &request.database_id) {
+    if !principal.reactive_allowed()
+        || !principal.scope().admits(crate::api_keys::Verbs::READ, &request.database_id)
+    {
         return ApiError::forbidden("read on the requested database").into_response();
     }
     let host = match crate::api::document_host(&state, &request.database_id) {
@@ -1042,7 +1044,9 @@ pub async fn attach_view(
             return error.into_response();
         }
     };
-    if let Err(error) = bind_membership_capability(&state, &mut response, principal.membership_scope()) {
+    if let Err(error) =
+        bind_membership_capability(&state, &mut response, principal.membership_scope())
+    {
         return error.into_response();
     }
     observe_authorized_activity(&state, &request.database_id);
@@ -1073,9 +1077,7 @@ pub async fn snapshot(
     if chunk != "0" {
         return unknown_view().into_response();
     }
-    if let Err(error) =
-        verify_view_header(&headers, &view, generation, proof.is_some(), &state)
-    {
+    if let Err(error) = verify_view_header(&headers, &view, generation, proof.is_some(), &state) {
         return error.into_response();
     }
     observe_authorized_view(&state, &view);
@@ -1099,9 +1101,7 @@ pub async fn view_log(
     let Some(offset) = query.offset else {
         return invalid_offset().into_response();
     };
-    if let Err(error) =
-        verify_view_header(&headers, &view, generation, proof.is_some(), &state)
-    {
+    if let Err(error) = verify_view_header(&headers, &view, generation, proof.is_some(), &state) {
         return error.into_response();
     }
     observe_authorized_view(&state, &view);
@@ -1173,8 +1173,7 @@ pub async fn view_websocket(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    let credential = match websocket_capability(&headers, &view, generation, &state)
-    {
+    let credential = match websocket_capability(&headers, &view, generation, &state) {
         Ok(credential) => credential,
         Err(error) => return error.into_response(),
     };
@@ -1274,7 +1273,9 @@ fn verify_socket_capability(
     state: &ApiState,
 ) -> Result<(), ApiError> {
     let expected = store().capability_claims(view, generation)?;
-    let claims = state.capability_keys.verifier()
+    let claims = state
+        .capability_keys
+        .verifier()
         .ok_or_else(capability_error)?
         .verify_claims(credential, &expected, now_seconds())
         .map_err(|_| capability_error())?;
@@ -1285,20 +1286,37 @@ fn check_membership_scope(state: &ApiState, scope: &str) -> Result<(), ApiError>
     if let Some((database, membership)) = scope.split_once(':')
         && crate::membership_revocations::valid_scope(database)
     {
-        if !state.delegated_identity.as_ref().is_some_and(|identity| identity.membership.admits(membership, now_seconds())) {
+        if !state
+            .delegated_identity
+            .as_ref()
+            .is_some_and(|identity| identity.membership.admits(membership, now_seconds()))
+        {
             return Err(capability_error());
         }
     }
     Ok(())
 }
 
-fn bind_membership_capability(state: &ApiState, response: &mut AttachResponse, membership: Option<&str>) -> Result<(), ApiError> {
-    let Some(membership) = membership else { return Ok(()); };
+fn bind_membership_capability(
+    state: &ApiState,
+    response: &mut AttachResponse,
+    membership: Option<&str>,
+) -> Result<(), ApiError> {
+    let Some(membership) = membership else {
+        return Ok(());
+    };
     let expected = store().capability_claims(&response.view, response.generation)?;
     let scope = format!("{}:{membership}", expected.authorization_scope);
     check_membership_scope(state, &scope)?;
-    response.capability = capability_for_region(&response.view, response.generation, &scope,
-        expected.entitlement_epoch, expected.region, now_seconds(), &state.capability_keys);
+    response.capability = capability_for_region(
+        &response.view,
+        response.generation,
+        &scope,
+        expected.entitlement_epoch,
+        expected.region,
+        now_seconds(),
+        &state.capability_keys,
+    );
     Ok(())
 }
 
@@ -1570,7 +1588,8 @@ fn verify_view_header(
         return Err(capability_error());
     };
     let expected = store().capability_claims(view, generation)?;
-    let claims = state.capability_keys
+    let claims = state
+        .capability_keys
         .verifier()
         .ok_or_else(capability_error)?
         .verify_claims(raw, &expected, now_seconds())

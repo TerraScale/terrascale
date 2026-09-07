@@ -342,11 +342,16 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
             assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
         }
         let mut first = None;
-        for _ in 0..2 {
+        for attempt in 0..2 {
             let response = app.clone().oneshot(put()).await.unwrap();
             let status = response.status();
             let body = response.into_body().collect().await.unwrap().to_bytes();
-            assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "paid={paid}, attempt={attempt}: {}",
+                String::from_utf8_lossy(&body)
+            );
             if let Some(expected) = &first {
                 assert_eq!(&body, expected);
             } else {

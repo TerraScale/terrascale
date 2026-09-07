@@ -156,8 +156,6 @@ fn pending_is_not_membership_and_acceptance_survives_restart_without_control_ser
 fn authenticated_wrong_tuple_digest_genesis_and_signer_never_admit() {
     let fixture = tests::Fixture::new();
     let journal = fixture.open();
-    let proposal = stage(&journal, fixture.request.clone(), "lifecycle-proof");
-    journal.configure_transition_trust(trust(&proposal)).unwrap();
     let proposal = stage(&journal, fixture.request.clone(), "first");
     journal.configure_transition_trust(trust(&proposal)).unwrap();
     let valid = proof(&proposal, "first", None, &[]);
@@ -211,6 +209,8 @@ fn authenticated_wrong_tuple_digest_genesis_and_signer_never_admit() {
 fn signed_lifecycle_grant_replays_and_rejects_mutation_after_reopen() {
     let fixture = tests::Fixture::new();
     let journal = fixture.open();
+    let proposal = stage(&journal, fixture.request.clone(), "lifecycle-proof");
+    journal.configure_transition_trust(trust(&proposal)).unwrap();
     let grant = terrabase::lifecycle::LifecycleOperationGrant {
         version: 1,
         domain: "terrascale-lifecycle-operation-v1".into(),

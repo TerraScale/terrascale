@@ -96,8 +96,15 @@ pub(super) fn mint(
         return Err(());
     }
 
-    if intent.usage_admission.is_some() {
-        return Err(());
+    if let Some(admission) = &intent.usage_admission {
+        // stage_intent already minted the verified admission fact inside this
+        // transaction. Check it covers the actual local write set, then leave
+        // that single fact authoritative instead of minting a duplicate.
+        return if admission.integer_units() == i128::from(billed_writes) {
+            Ok(())
+        } else {
+            Err(())
+        };
     }
     let at = provenance.hlc() >> 16;
     if at == 0 {

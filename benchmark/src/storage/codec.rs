@@ -65,24 +65,24 @@ pub(super) fn push_str(out: &mut Vec<u8>, value: &str) {
 }
 
 /// A forward-only reader over private encoded bytes.
-pub(super) struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
     position: usize,
 }
 
 impl<'a> Reader<'a> {
     /// Creates a reader positioned at the start of `bytes`.
-    pub(super) const fn new(bytes: &'a [u8]) -> Self {
+    pub(crate) const fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, position: 0 }
     }
 
     /// Reports how many bytes remain.
-    pub(super) fn remaining(&self) -> usize {
+    pub(crate) fn remaining(&self) -> usize {
         self.bytes.len() - self.position
     }
 
     /// Reports whether the payload region is structurally complete.
-    pub(super) fn take(&mut self, length: usize) -> Option<&'a [u8]> {
+    pub(crate) fn take(&mut self, length: usize) -> Option<&'a [u8]> {
         if self.remaining() < length {
             return None;
         }
@@ -92,22 +92,22 @@ impl<'a> Reader<'a> {
     }
 
     /// Reads one byte.
-    pub(super) fn read_u8(&mut self) -> Option<u8> {
+    pub(crate) fn read_u8(&mut self) -> Option<u8> {
         self.take(1).map(|slice| slice[0])
     }
 
     /// Reads one `u32` in little-endian order.
-    pub(super) fn read_u32(&mut self) -> Option<u32> {
+    pub(crate) fn read_u32(&mut self) -> Option<u32> {
         self.take(4).map(|slice| u32::from_le_bytes(slice.try_into().expect("four bytes")))
     }
 
     /// Reads one `u64` in little-endian order.
-    pub(super) fn read_u64(&mut self) -> Option<u64> {
+    pub(crate) fn read_u64(&mut self) -> Option<u64> {
         self.take(8).map(|slice| u64::from_le_bytes(slice.try_into().expect("eight bytes")))
     }
 
     /// Reads one length-prefixed UTF-8 string.
-    pub(super) fn read_string(&mut self) -> Option<String> {
+    pub(crate) fn read_string(&mut self) -> Option<String> {
         let length = self.read_u32()? as usize;
         let bytes = self.take(length)?;
         String::from_utf8(bytes.to_owned()).ok()
@@ -115,7 +115,7 @@ impl<'a> Reader<'a> {
 }
 
 /// Appends the encoded expected-version clause.
-pub(super) fn encode_expected(out: &mut Vec<u8>, expected: ExpectedVersion) {
+pub(crate) fn encode_expected(out: &mut Vec<u8>, expected: ExpectedVersion) {
     match expected {
         ExpectedVersion::Any => push_u8(out, 0),
         ExpectedVersion::New => push_u8(out, 1),
@@ -203,7 +203,7 @@ fn decode_value(reader: &mut Reader<'_>, depth: usize) -> Option<DocumentValue> 
 }
 
 /// Appends the encoded logical document.
-pub(super) fn encode_document(out: &mut Vec<u8>, document: &Document) {
+pub(crate) fn encode_document(out: &mut Vec<u8>, document: &Document) {
     push_str(out, document.collection().as_str());
     push_str(out, document.id().as_str());
     push_u64(out, document.metadata().version());
@@ -211,7 +211,7 @@ pub(super) fn encode_document(out: &mut Vec<u8>, document: &Document) {
 }
 
 /// Reads one encoded logical document.
-pub(super) fn decode_document(reader: &mut Reader<'_>) -> Option<Document> {
+pub(crate) fn decode_document(reader: &mut Reader<'_>) -> Option<Document> {
     let collection = CollectionName::try_new(&reader.read_string()?).ok()?;
     let id = DocumentId::try_new(&reader.read_string()?).ok()?;
     let version = reader.read_u64()?;

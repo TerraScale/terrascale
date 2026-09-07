@@ -328,7 +328,7 @@ impl ProvisioningClient {
                             | ("succeeded", "ready")
                     )
                     || operation.cancellable
-                    || operation.revision == 0
+                    || !matches!(operation.revision, Some(revision) if revision > 0)
             })
         {
             return Err(ProvisioningError::Unavailable);

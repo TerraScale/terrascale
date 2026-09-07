@@ -1285,7 +1285,7 @@ impl ProductionAdmissionRuntime {
     /// durably paused. The caller supplies the already authenticated source
     /// fleet and operation identity; this method never opens a source engine
     /// by path or falls back to a local provider.
-    pub async fn restore_native_to_target(
+    async fn restore_native_to_target(
         &self,
         backups: &crate::native_backup_runtime::NativeBackupRuntime,
         source: &str,

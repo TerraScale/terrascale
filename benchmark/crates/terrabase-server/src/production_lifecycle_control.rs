@@ -73,12 +73,9 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
             .journal
             .accepted_proof_digest()
             .map_err(|_| "accepted lifecycle placement digest is unavailable")?;
+        verify_restore_request_digest(&grant, expected_restore_digest)?;
         if grant.action != action
             || grant.operation_id != operation
-            || (expected_restore_digest
-                .is_some_and(|expected| grant.accepted_restore_request_digest != expected)
-                || (expected_restore_digest.is_none()
-                    && !grant.accepted_restore_request_digest.is_empty()))
             || grant.environment != assignment.environment
             || grant.tenant != assignment.tenant
             || grant.project != assignment.project
@@ -96,6 +93,18 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
             .admit_lifecycle_operation(&grant)
             .map_err(|_| "lifecycle operation admission is stale or conflicting")?;
         Ok(())
+    }
+}
+
+fn verify_restore_request_digest(
+    grant: &terrabase_tbep::lifecycle::LifecycleOperationGrant,
+    expected: Option<&str>,
+) -> Result<(), String> {
+    match expected {
+        Some(expected) if grant.accepted_restore_request_digest == expected => Ok(()),
+        Some(_) => Err("lifecycle restore request digest does not match".into()),
+        None if grant.accepted_restore_request_digest.is_empty() => Ok(()),
+        None => Err("non-restore lifecycle grant carries restore request digest".into()),
     }
 }
 
@@ -809,7 +818,8 @@ impl ProductionLifecycleControl {
 
 #[cfg(test)]
 mod restore_digest_tests {
-    use super::restore_request_digest;
+    use super::{restore_request_digest, verify_restore_request_digest};
+    use terrabase_tbep::lifecycle::{LifecycleGrantAction, LifecycleOperationGrant};
     use terrabase_tbep::proto::terrabase::v1::{RestoreProvider, RestoreToTargetRequest};
 
     #[test]
@@ -830,6 +840,50 @@ mod restore_digest_tests {
             restore_request_digest(&request).expect("digest"),
             "8de75d48c6ed3bba6d0b05f266c390a3fb36c155ba423a225e8e733fae64413d"
         );
+        let mut altered = request.clone();
+        altered.source_owner = "other-owner".into();
+        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        let mut altered = request.clone();
+        altered.recovery_point_digest = "other-digest".into();
+        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        let mut altered = request.clone();
+        altered.target_database = "other-target".into();
+        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        let mut altered = request.clone();
+        altered.journal_cut = "other-cut".into();
+        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        let mut altered = request.clone();
+        altered.restore_epoch = 8;
+        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        let mut altered = request;
+        altered.provider = RestoreProvider::Tigris as i32;
+        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&RestoreToTargetRequest {
+            provider: RestoreProvider::Oci as i32,
+            source_owner: "source-owner".into(), source_database: "source-database".into(),
+            recovery_point_id: "recovery-point".into(), recovery_point_digest: "recovery-digest".into(),
+            target_owner: "target-owner".into(), target_database: "target-database".into(), journal_cut: "journal-cut".into(), restore_epoch: 7, ..Default::default()
+        }).unwrap());
+    }
+
+    #[test]
+    fn lifecycle_verifier_binds_restore_digest_and_rejects_non_restore_digest() {
+        let expected = "a".repeat(64);
+        let mut grant = LifecycleOperationGrant {
+            version: 1,
+            domain: "terrascale-lifecycle-operation-v1".into(),
+            environment: "production".into(), tenant: "tenant".into(), project: "project".into(),
+            database: "database".into(), region: "GRU".into(), member: "member".into(),
+            action: LifecycleGrantAction::RestoreToTarget, operation_id: "op".into(),
+            accepted_proof_digest: "b".repeat(64), accepted_placement_revision: 1,
+            authority_epoch: 1, authority_lease: "lease".into(),
+            accepted_restore_request_digest: expected.clone(), issued_at_unix_millis: 1,
+            expires_at_unix_millis: 2,
+        };
+        assert!(verify_restore_request_digest(&grant, Some(&expected)).is_ok());
+        grant.accepted_restore_request_digest = "c".repeat(64);
+        assert!(verify_restore_request_digest(&grant, Some(&expected)).is_err());
+        grant.action = LifecycleGrantAction::CloseDatabase;
+        assert!(verify_restore_request_digest(&grant, None).is_err());
     }
 }
 

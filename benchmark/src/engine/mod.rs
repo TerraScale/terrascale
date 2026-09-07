@@ -60,6 +60,8 @@ mod metadata_tests;
 mod patch_tests;
 #[cfg(test)]
 mod shard_split_tests;
+#[cfg(test)]
+mod cross_file_tests;
 
 #[cfg(test)]
 mod tests;

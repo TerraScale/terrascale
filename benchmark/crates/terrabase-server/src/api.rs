@@ -56,12 +56,12 @@ use crate::api_keys::Verbs;
 
 #[path = "api_development.rs"]
 mod development;
-#[path = "api_operations.rs"]
-pub(crate) mod operations;
 #[path = "api_exports.rs"]
 mod exports;
 #[path = "api_lifecycle.rs"]
 mod lifecycle;
+#[path = "api_operations.rs"]
+pub(crate) mod operations;
 
 pub use development::DevelopmentRuntime;
 pub use webhooks::DispatchWorker;
@@ -1481,6 +1481,33 @@ async fn authenticate(
             Err(error) => error.into_response(),
         };
     }
+    // The canonical attach has its database in a bounded JSON body. Bind the
+    // identity authority to that same database, then restore the exact bytes
+    // for the handler; never accept a caller-provided owner header here.
+    let attach_database =
+        if request.method() == Method::POST && request.uri().path() == "/api/v1/reactive/views" {
+            let body = std::mem::replace(request.body_mut(), axum::body::Body::empty());
+            let bytes = match axum::body::to_bytes(body, 65_536).await {
+                Ok(bytes) => bytes,
+                Err(_) => return ApiError::unauthorized().into_response(),
+            };
+            let parsed = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
+            let database = parsed
+                .as_ref()
+                .and_then(|value| value.get("databaseId"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| {
+                    !value.is_empty() && value.len() <= 128 && !value.contains(['/', '?', '#'])
+                })
+                .map(str::to_owned);
+            *request.body_mut() = axum::body::Body::from(bytes);
+            let Some(database) = database else {
+                return ApiError::unauthorized().into_response();
+            };
+            Some(database)
+        } else {
+            None
+        };
     let token = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -1490,7 +1517,10 @@ async fn authenticate(
         return ApiError::malformed_credential().into_response();
     };
     let request_method = request.method().clone();
-    let request_path = request.uri().path().to_owned();
+    let request_path = attach_database.as_ref().map_or_else(
+        || request.uri().path().to_owned(),
+        |database| format!("/api/v1/databases/{database}/sql"),
+    );
     let request_headers = request.headers().clone();
     let (principal, verified_project) =
         match admit_bearer(&state, &request_method, &request_path, &request_headers, token).await {

@@ -407,12 +407,23 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     };
     let control = production.control.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
     let receipt_signer = crate::native_recovery_receipt::NativeRecoveryReceiptSigner::from_file(
-        control.receipt_signing_key_id.clone().ok_or(DaemonError::ProductionConfigurationMissing)?,
-        control.receipt_signing_key_file.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?,
-    ).map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-    let receipts = Arc::new(crate::native_recovery_receipt::NativeRecoveryReceiptStore::open(
-        &control.proposal_journal.with_extension("restore-receipts.sqlite"), receipt_signer,
-    ).map_err(|_| DaemonError::ProductionConfigurationMissing)?);
+        control
+            .receipt_signing_key_id
+            .clone()
+            .ok_or(DaemonError::ProductionConfigurationMissing)?,
+        control
+            .receipt_signing_key_file
+            .as_ref()
+            .ok_or(DaemonError::ProductionConfigurationMissing)?,
+    )
+    .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+    let receipts = Arc::new(
+        crate::native_recovery_receipt::NativeRecoveryReceiptStore::open(
+            &control.proposal_journal.with_extension("restore-receipts.sqlite"),
+            receipt_signer,
+        )
+        .map_err(|_| DaemonError::ProductionConfigurationMissing)?,
+    );
     let region = public_api_region(config.region)?;
     let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
     let prepared_metrics = crate::production_metrics::PreparedMetrics::bind(
@@ -455,7 +466,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         production
             .control
             .as_ref()
-            .and_then(|control| control.receipt_signing_key_file.as_ref())
+            .and_then(|control| control.export_cursor_key_file.as_ref())
             .ok_or(DaemonError::ProductionConfigurationMissing)?,
     )
     .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
@@ -483,11 +494,10 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
                 },
             )
             .map(|verifier| {
-                {
-                    let verifier = Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
-                    verifier.start_membership_poll();
-                    verifier
-                }
+                let verifier =
+                    Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
+                verifier.start_membership_poll();
+                verifier
             })
             .map_err(|_| DaemonError::ProductionConfigurationMissing)
         })
@@ -1211,11 +1221,10 @@ async fn serve_public_api(
                 },
             )
             .map(|verifier| {
-                {
-                    let verifier = Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
-                    verifier.start_membership_poll();
-                    verifier
-                }
+                let verifier =
+                    Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
+                verifier.start_membership_poll();
+                verifier
             })
             .map_err(|_| DaemonError::Engine("invalid identity authority configuration".into()))
         })

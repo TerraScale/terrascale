@@ -249,6 +249,8 @@ pub struct ProductionControl {
     pub receipt_signing_key_file: Option<PathBuf>,
     /// Explicit provisioned Ed25519 receipt signing identity.
     pub receipt_signing_key_id: Option<String>,
+    /// Dedicated owner-private export cursor HMAC key.
+    pub export_cursor_key_file: Option<PathBuf>,
 }
 
 /// Public signing pins for membership acceptance and old-epoch fences.
@@ -612,6 +614,8 @@ struct FileProductionControl {
     receipt_signing_key_file: Option<PathBuf>,
     #[serde(default)]
     receipt_signing_key_id: Option<String>,
+    #[serde(default)]
+    export_cursor_key_file: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -1106,6 +1110,8 @@ impl ServerConfig {
                     .receipt_signing_key_file
                     .map(|path| production_path(&path))
                     .transpose()?;
+                let export_cursor_key_file = control.export_cursor_key_file.map(|path| production_path(&path)).transpose()?;
+                if let Some(path) = &export_cursor_key_file { paths.push(path.clone()); }
                 if control.receipt_signing_key_id.is_some() != receipt_signing_key_file.is_some()
                     || control.receipt_signing_key_id.as_ref().is_some_and(|id| {
                         id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_graphic())
@@ -1150,6 +1156,7 @@ impl ServerConfig {
                     transition: control.transition,
                     receipt_signing_key_file,
                     receipt_signing_key_id: control.receipt_signing_key_id,
+                    export_cursor_key_file,
                 })
             })
             .transpose()?;

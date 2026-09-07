@@ -13,6 +13,7 @@ use tokio::sync::Notify;
 
 mod admission;
 mod checkpoint;
+mod discovery;
 mod lifecycle;
 mod persistence;
 mod status;
@@ -586,30 +587,17 @@ impl NativeRecoveryRuntime {
             .journal_cut
             .parse::<u64>()
             .map_err(|_| NativeRecoveryError::VerificationFailed)?;
-        let manifest = self
-            .fleet
-            .lock()
-            .map_err(|_| NativeRecoveryError::Unavailable)?
-            .retained_points(&request.source_database_id)
-            .map_err(map_fleet_error)?
-            .into_iter()
-            .find(|point| point.identity() == request.recovery_point_id)
-            .ok_or(NativeRecoveryError::Unavailable)?;
-        if manifest.identity() != request.recovery_point_digest
-            || manifest.database_id() != request.source_database_id
-            || manifest.boundary_sequence().get() != cut
-        {
-            return Err(NativeRecoveryError::VerificationFailed);
-        }
+        let marker =
+            self.read_published_marker(&operation)?.ok_or(NativeRecoveryError::Unavailable)?;
         Ok(RecoveryPointFacts {
-            recovery_point_id: manifest.identity().to_owned(),
-            source_database_id: manifest.database_id().to_owned(),
+            recovery_point_id: request.recovery_point_id.clone(),
+            source_database_id: request.source_database_id.clone(),
             journal_cut: cut,
-            captured_at_millis: manifest.captured_unix_millis(),
-            checksum: manifest.logical_checksum().to_owned(),
-            row_count: manifest.logical_documents(),
+            captured_at_millis: marker.source_captured_unix_millis,
+            checksum: marker.source_logical_checksum,
+            row_count: marker.source_logical_documents,
             placement: request.placement.clone(),
-            retained_until_millis: manifest.retain_until_unix_millis(),
+            retained_until_millis: marker.source_retain_until_unix_millis,
         })
     }
 
@@ -761,22 +749,7 @@ impl NativeRecoveryRuntime {
         let Some(bytes) = row else { return Ok(false) };
         let mut operation: NativeRestoreOperation =
             serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)?;
-        // Validate immutable source admission before inspecting or executing
-        // any target operation. This is authorization metadata, not provider
-        // I/O, and binds the marker to the original source owner and placement.
         let request = &operation.request;
-        let admitted = self
-            .registry
-            .resolve(&request.source_database_id)
-            .map_err(|_| NativeRecoveryError::Unavailable)?
-            .ok_or(NativeRecoveryError::Unavailable)?;
-        if admitted.host.engine().database_id().to_text() != request.source_database_id
-            || admitted.record.regions != request.placement
-            || format!("{}/{}", admitted.record.tenant_id, admitted.record.project_id)
-                != request.source_owner
-        {
-            return Err(NativeRecoveryError::VerificationFailed);
-        }
         if matches!(
             operation.phase,
             NativeRestorePhase::Restoring
@@ -810,6 +783,20 @@ impl NativeRecoveryRuntime {
             self.save_restore(&operation)?;
             return Ok(true);
         }
+        // Fresh provider execution requires current source admission. Published
+        // marker reconciliation above remains possible after the source moves.
+        let admitted = self
+            .registry
+            .resolve(&request.source_database_id)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::Unavailable)?;
+        if admitted.host.engine().database_id().to_text() != request.source_database_id
+            || admitted.record.regions != request.placement
+            || format!("{}/{}", admitted.record.tenant_id, admitted.record.project_id)
+                != request.source_owner
+        {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
         operation.phase = NativeRestorePhase::Restoring;
         self.save_restore(&operation)?;
         let receipt = match self.restore_executor.execute(request).await {
@@ -832,6 +819,24 @@ impl NativeRecoveryRuntime {
         &self,
         operation: &NativeRestoreOperation,
     ) -> Result<Option<NativeRestoreReceipt>, NativeRecoveryError> {
+        let Some(marker) = self.read_published_marker(operation)? else {
+            return Ok(None);
+        };
+        Ok(Some(NativeRestoreReceipt {
+            selected_identity: operation.request.recovery_point_id.clone(),
+            logical_content_checksum: marker.logical_checksum,
+            restored_documents: marker
+                .restored_documents
+                .checked_add(marker.restored_family_records)
+                .ok_or(NativeRecoveryError::VerificationFailed)?,
+            journal_cut: marker.identity.expected_journal_boundary,
+        }))
+    }
+
+    fn read_published_marker(
+        &self,
+        operation: &NativeRestoreOperation,
+    ) -> Result<Option<terrabase::backup::RestoreMarkerFacts>, NativeRecoveryError> {
         // Read through the retained admitted MemberHost lease. Opening a
         // second Engine by path would bypass restore exclusion.
         let request = &operation.request;
@@ -885,15 +890,7 @@ impl NativeRecoveryRuntime {
             }
             return Ok(None);
         };
-        Ok(Some(NativeRestoreReceipt {
-            selected_identity: request.recovery_point_id.clone(),
-            logical_content_checksum: marker.logical_checksum,
-            restored_documents: marker
-                .restored_documents
-                .checked_add(marker.restored_family_records)
-                .ok_or(NativeRecoveryError::VerificationFailed)?,
-            journal_cut,
-        }))
+        Ok(Some(marker))
     }
 
     fn save_restore(&self, operation: &NativeRestoreOperation) -> Result<(), NativeRecoveryError> {

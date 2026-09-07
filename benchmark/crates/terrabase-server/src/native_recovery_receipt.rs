@@ -88,7 +88,10 @@ impl NativeRecoveryReceiptSigner {
     /// Loads an owner-private, bounded PKCS#8 DER file under the configured identity.
     /// # Errors
     /// Rejects symlinks, public file permissions, invalid keys and missing identities.
-    pub fn from_file(key_id: String, path: &std::path::Path) -> Result<Self, NativeRecoveryReceiptError> {
+    pub fn from_file(
+        key_id: String,
+        path: &std::path::Path,
+    ) -> Result<Self, NativeRecoveryReceiptError> {
         use std::io::Read as _;
         let mut file = crate::runtime::open_readonly(path)
             .map_err(|_| NativeRecoveryReceiptError::InvalidBinding)?;
@@ -104,7 +107,9 @@ impl NativeRecoveryReceiptSigner {
             }
         }
         let mut bytes = Vec::new();
-        file.by_ref().take(16 * 1024 + 1).read_to_end(&mut bytes)
+        file.by_ref()
+            .take(16 * 1024 + 1)
+            .read_to_end(&mut bytes)
             .map_err(|_| NativeRecoveryReceiptError::InvalidBinding)?;
         Self::from_pkcs8(key_id, &bytes)
     }
@@ -153,7 +158,10 @@ impl NativeRecoveryReceiptStore {
     /// Opens the owner-private receipt journal with fully durable commits.
     /// # Errors
     /// Rejects unavailable journals and malformed signing material.
-    pub fn open(path: &std::path::Path, signer: NativeRecoveryReceiptSigner) -> Result<Self, NativeRecoveryReceiptError> {
+    pub fn open(
+        path: &std::path::Path,
+        signer: NativeRecoveryReceiptSigner,
+    ) -> Result<Self, NativeRecoveryReceiptError> {
         crate::export_api::ensure_no_symlink_components(path)
             .map_err(|_| NativeRecoveryReceiptError::InvalidBinding)?;
         let journal = rusqlite::Connection::open(path)
@@ -178,7 +186,9 @@ impl NativeRecoveryReceiptStore {
         use crate::native_recovery::NativeRestorePhase;
         use rusqlite::OptionalExtension as _;
         let invalid = NativeRecoveryReceiptError::InvalidBinding;
-        if operation.phase != NativeRestorePhase::Complete { return Err(invalid); }
+        if operation.phase != NativeRestorePhase::Complete {
+            return Err(invalid);
+        }
         let restored = operation.receipt.as_ref().ok_or(invalid)?;
         let request = &operation.request;
         let (tenant, project) = request.target_owner.split_once('/').ok_or(invalid)?;
@@ -191,36 +201,58 @@ impl NativeRecoveryReceiptStore {
             || source.placement != request.placement
             || source.checksum != restored.logical_content_checksum
             || source.row_count != restored.restored_documents
-        { return Err(invalid); }
+        {
+            return Err(invalid);
+        }
         let mut facts = NativeRecoveryReceipt {
-            schema_version: 1, tenant_id: tenant.into(), project_id: project.into(),
+            schema_version: 1,
+            tenant_id: tenant.into(),
+            project_id: project.into(),
             source_database_id: request.source_database_id.clone(),
             target_database_id: request.target_database_id.clone(),
             target_incarnation: request.target_database_id.clone(),
-            source_journal_cut: source.journal_cut, captured_at_millis: source.captured_at_millis,
-            source_checksum: source.checksum.clone(), source_row_count: source.row_count,
-            target_checksum: restored.logical_content_checksum.clone(), target_row_count: restored.restored_documents,
-            restore_epoch: request.restore_epoch, idempotency_key: request.operation_id.clone(),
-            operation_id: request.operation_id.clone(), recovery_point_id: request.recovery_point_id.clone(),
-            recovery_point_digest: request.recovery_point_digest.clone(), placement: request.placement.clone(),
+            source_journal_cut: source.journal_cut,
+            captured_at_millis: source.captured_at_millis,
+            source_checksum: source.checksum.clone(),
+            source_row_count: source.row_count,
+            target_checksum: restored.logical_content_checksum.clone(),
+            target_row_count: restored.restored_documents,
+            restore_epoch: request.restore_epoch,
+            idempotency_key: request.operation_id.clone(),
+            operation_id: request.operation_id.clone(),
+            recovery_point_id: request.recovery_point_id.clone(),
+            recovery_point_digest: request.recovery_point_digest.clone(),
+            placement: request.placement.clone(),
             completed_at_millis: source.captured_at_millis,
         };
         facts.validate()?;
         let mut journal = self.journal.lock().map_err(|_| invalid)?;
-        let transaction = journal.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|_| invalid)?;
+        let transaction = journal
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|_| invalid)?;
         let stored: Option<(Vec<u8>, Vec<u8>)> = transaction.query_row(
             "SELECT payload, envelope FROM receipts WHERE tenant=?1 AND project=?2 AND operation=?3",
             rusqlite::params![tenant, project, request.operation_id], |row| Ok((row.get(0)?, row.get(1)?))
         ).optional().map_err(|_| invalid)?;
         if let Some((payload, envelope)) = stored {
-            let previous: NativeRecoveryReceipt = serde_json::from_slice(&payload).map_err(|_| invalid)?;
+            let previous: NativeRecoveryReceipt =
+                serde_json::from_slice(&payload).map_err(|_| invalid)?;
             facts.completed_at_millis = previous.completed_at_millis;
-            if facts != previous { return Err(NativeRecoveryReceiptError::RequestMismatch); }
+            if facts != previous {
+                return Err(NativeRecoveryReceiptError::RequestMismatch);
+            }
             use aws_lc_rs::signature::KeyPair as _;
-            verify_receipt(&envelope, &self.signer.key_id, self.signer.key.public_key().as_ref())?.matches_request(&facts)?;
+            verify_receipt(&envelope, &self.signer.key_id, self.signer.key.public_key().as_ref())?
+                .matches_request(&facts)?;
             return Ok(envelope);
         }
-        facts.completed_at_millis = u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| invalid)?.as_millis()).map_err(|_| invalid)?;
+        facts.completed_at_millis = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| invalid)?
+                .as_millis(),
+        )
+        .map_err(|_| invalid)?;
         let envelope = self.signer.sign_verified(&facts)?;
         let payload = serde_json::to_vec(&facts).map_err(|_| invalid)?;
         transaction.execute("INSERT INTO receipts (tenant,project,operation,payload,envelope) VALUES (?1,?2,?3,?4,?5)", rusqlite::params![tenant, project, request.operation_id, payload, envelope]).map_err(|_| invalid)?;
@@ -382,6 +414,82 @@ mod tests {
         let der = Ed25519KeyPair::generate_pkcs8(&aws_lc_rs::rand::SystemRandom::new()).unwrap();
         NativeRecoveryReceiptSigner::from_pkcs8("key-1".into(), der.as_ref()).unwrap()
     }
+    #[test]
+    fn durable_completed_observation_rejects_pending_rebinding_and_replays_exactly() {
+        use crate::native_recovery::*;
+        let directory = std::env::temp_dir().join(format!(
+            "native-receipt-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let store =
+            NativeRecoveryReceiptStore::open(&directory.join("receipts.sqlite"), signer()).unwrap();
+        let expected = facts();
+        let mut operation = NativeRestoreOperation {
+            request: NativeRestoreRequest {
+                operation_id: expected.operation_id.clone(),
+                source_owner: format!("{}/{}", expected.tenant_id, expected.project_id),
+                source_database_id: expected.source_database_id.clone(),
+                recovery_point_id: expected.recovery_point_id.clone(),
+                recovery_point_digest: expected.recovery_point_digest.clone(),
+                target_owner: format!("{}/{}", expected.tenant_id, expected.project_id),
+                target_database_id: expected.target_database_id.clone(),
+                journal_cut: expected.source_journal_cut.to_string(),
+                restore_epoch: expected.restore_epoch,
+                provider: "oci".into(),
+                selection: NativeRestoreSelection::PointId(expected.recovery_point_id.clone()),
+                placement: expected.placement.clone(),
+            },
+            phase: NativeRestorePhase::Accepted,
+            receipt: Some(NativeRestoreReceipt {
+                selected_identity: expected.recovery_point_digest.clone(),
+                logical_content_checksum: expected.target_checksum.clone(),
+                restored_documents: expected.target_row_count,
+                journal_cut: expected.source_journal_cut,
+            }),
+            error: None,
+        };
+        let source = RecoveryPointFacts {
+            recovery_point_id: expected.recovery_point_id.clone(),
+            source_database_id: expected.source_database_id.clone(),
+            journal_cut: expected.source_journal_cut,
+            captured_at_millis: expected.captured_at_millis,
+            checksum: expected.source_checksum.clone(),
+            row_count: expected.source_row_count,
+            placement: expected.placement.clone(),
+            retained_until_millis: 100_000,
+        };
+        assert!(store.completed(&operation, &source).is_err());
+        operation.phase = NativeRestorePhase::Complete;
+        let first = store.completed(&operation, &source).unwrap();
+        assert_eq!(store.completed(&operation, &source).unwrap(), first);
+        let NativeRecoveryReceiptStore { signer, journal } = store;
+        drop(journal);
+        let store =
+            NativeRecoveryReceiptStore::open(&directory.join("receipts.sqlite"), signer).unwrap();
+        assert_eq!(store.completed(&operation, &source).unwrap(), first);
+        operation.request.restore_epoch += 1;
+        assert!(store.completed(&operation, &source).is_err());
+        operation.request.restore_epoch -= 1;
+        operation.request.target_owner =
+            "01ARZ3NDEKTSV4RRFFQ69G5FAZ/01ARZ3NDEKTSV4RRFFQ69G5FAW".into();
+        assert!(store.completed(&operation, &source).is_err());
+        operation.request.target_owner = operation.request.source_owner.clone();
+        let mut wrong_source = source.clone();
+        wrong_source.checksum = "f".repeat(64);
+        assert!(store.completed(&operation, &wrong_source).is_err());
+        store
+            .journal
+            .lock()
+            .unwrap()
+            .execute("UPDATE receipts SET envelope=?1", [b"tampered".as_slice()])
+            .unwrap();
+        assert!(store.completed(&operation, &source).is_err());
+        drop(store);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn binds_domain_raw_payload_and_pinned_identity() {
         let signer = signer();
