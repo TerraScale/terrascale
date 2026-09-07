@@ -19,3 +19,5 @@ pub mod wal_route;
 pub mod wal_snapshot;
 /// Database-scoped physical WAL wire protocol.
 pub mod wal_wire;
+/// Cluster-owned RF2 qualification for DB-local cross-file receipts.
+pub mod cross_file;

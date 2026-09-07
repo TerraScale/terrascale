@@ -170,7 +170,8 @@ impl UsageAdmissionJournal {
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS identity (singleton INTEGER PRIMARY KEY CHECK(singleton=1), environment TEXT NOT NULL, member TEXT NOT NULL, region TEXT NOT NULL) STRICT;
             CREATE TABLE IF NOT EXISTS registrations (database_id TEXT NOT NULL, epoch TEXT NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(database_id,epoch)) STRICT, WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS allocations (operation TEXT PRIMARY KEY, database_id TEXT NOT NULL, payload BLOB NOT NULL) STRICT, WITHOUT ROWID;").map_err(|_| "usage admission schema unavailable")?;
+            CREATE TABLE IF NOT EXISTS allocations (operation TEXT PRIMARY KEY, database_id TEXT NOT NULL, payload BLOB NOT NULL) STRICT, WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS operation_admissions (tenant TEXT NOT NULL, project TEXT NOT NULL, database_id TEXT NOT NULL, operation TEXT NOT NULL, payload_digest BLOB NOT NULL, accepted_at_millis INTEGER NOT NULL CHECK(accepted_at_millis>0), PRIMARY KEY(tenant,project,database_id,operation)) STRICT, WITHOUT ROWID;").map_err(|_| "usage admission schema unavailable")?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| "usage admission transaction unavailable")?;
@@ -280,6 +281,42 @@ impl UsageAdmissionJournal {
         }
         tx.commit().map_err(|_| "allocation persistence failed")?;
         Ok(verified)
+    }
+
+    /// Retains the first local admission time across retries and journal reopen.
+    /// The caller must freshly verify the allocation before reusing this time;
+    /// it is accounting identity, never evidence that an expired grant is valid.
+    pub(crate) fn operation_admitted_at(
+        &self,
+        allocation: &terrabase::usage::VerifiedAllocation,
+        project: &str,
+        now_millis: u64,
+    ) -> Result<u64, String> {
+        let grant = allocation.grant();
+        let now = i64::try_from(now_millis).map_err(|_| "admission time invalid")?;
+        if now <= 0 || project.is_empty() {
+            return Err("admission identity invalid".into());
+        }
+        let mut connection = self.connection.lock().map_err(|_| "admission storage unavailable")?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| "admission transaction unavailable")?;
+        tx.execute(
+            "INSERT OR IGNORE INTO operation_admissions(tenant,project,database_id,operation,payload_digest,accepted_at_millis) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![grant.organization_id, project, grant.database_id, grant.operation_id,
+                allocation.payload_digest().as_slice(), now],
+        ).map_err(|_| "admission persistence failed")?;
+        let (digest, accepted): (Vec<u8>, i64) = tx.query_row(
+            "SELECT payload_digest,accepted_at_millis FROM operation_admissions WHERE tenant=?1 AND project=?2 AND database_id=?3 AND operation=?4",
+            params![grant.organization_id, project, grant.database_id, grant.operation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(|_| "admission persistence failed")?;
+        if digest != allocation.payload_digest().as_slice() {
+            return Err("admission allocation identity conflict".into());
+        }
+        let accepted = u64::try_from(accepted).map_err(|_| "admission time invalid")?;
+        tx.commit().map_err(|_| "admission persistence failed")?;
+        Ok(accepted)
     }
 
     /// Reloads the exact persisted allocation for one operation and verifies

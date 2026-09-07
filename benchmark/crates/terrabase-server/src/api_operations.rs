@@ -272,7 +272,7 @@ fn list_member_operations(
                         kind: "recovery".into(),
                         database_id: database.record.database_id.clone(),
                         name: database.record.database_id.clone(),
-                        state: recovery_state(&row.phase),
+                        state: recovery_state(&row.phase).into(),
                         stage: row.phase,
                         created_at: facts
                             .as_ref()

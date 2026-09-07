@@ -391,6 +391,20 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
             "SELECT COUNT(*), SUM(units_total), SUM(units_remaining) FROM usage_budget_allocations WHERE operation='api-put-idem-budget'",
             [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
         assert_eq!(consumption, (1, 1, 0), "paid={paid}");
+        let journal_connection =
+            rusqlite::Connection::open(fixture.root.join("usage-admissions.sqlite")).unwrap();
+        let admitted_at: i64 = journal_connection.query_row(
+            "SELECT accepted_at_millis FROM operation_admissions WHERE operation='api-put-idem-budget'",
+            [], |row| row.get(0),
+        ).unwrap();
+        let fact_at: i64 = connection
+            .query_row(
+                "SELECT start_millis FROM usage_facts WHERE fact_id='api-put-idem-budget'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fact_at, admitted_at, "the retry retains the first local accounting window");
         let facts: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM usage_facts WHERE fact_id='api-put-idem-budget'",

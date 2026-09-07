@@ -31,9 +31,9 @@ fn decisions_are_independent_terminal_and_restart_safe() {
     let second = identity(&engine, "logical-second");
     engine.prepare_cross_file(&scope, first.clone()).unwrap();
     engine.prepare_cross_file(&scope, second.clone()).unwrap();
-    assert_eq!(engine.decide_cross_file(&scope, &first, CrossFileDecision::Committed), Ok(CrossFileDecision::Committed));
-    assert_eq!(engine.decide_cross_file(&scope, &second, CrossFileDecision::Aborted), Ok(CrossFileDecision::Aborted));
-    assert_eq!(engine.decide_cross_file(&scope, &first, CrossFileDecision::Committed), Ok(CrossFileDecision::Committed));
+    assert_eq!(engine.decide_cross_file(&scope, &first, CrossFileDecision::Committed).unwrap().0.decision, Some(CrossFileDecision::Committed));
+    assert_eq!(engine.decide_cross_file(&scope, &second, CrossFileDecision::Aborted).unwrap().0.decision, Some(CrossFileDecision::Aborted));
+    assert_eq!(engine.decide_cross_file(&scope, &first, CrossFileDecision::Committed).unwrap().0.decision, Some(CrossFileDecision::Committed));
     assert_eq!(engine.decide_cross_file(&scope, &first, CrossFileDecision::Aborted), Err(EngineError::Conflict));
     assert_eq!(engine.decide_cross_file(&scope, &second, CrossFileDecision::Committed), Err(EngineError::Conflict));
     engine.shutdown().unwrap();
@@ -86,13 +86,16 @@ fn participant_prepare_resolves_exactly_across_engine_reopen() {
     let tenant = TenantId::try_new("tenant").unwrap();
     let operation = OperationId::try_new("participant-op").unwrap();
     let write = ParticipantWrite::Put { document: Document::new(DocumentId::try_new("doc").unwrap(), CollectionName::try_new("items").unwrap(), DocumentValue::Object(BTreeMap::new())), expected: ExpectedVersion::Any };
-    let payload = crate::storage::participant::encode_write(&write).unwrap();
+    let payload = crate::storage::participant::encode_prepare_payload(std::slice::from_ref(&write), &[], &[]).unwrap();
     let identity = ParticipantIdentity { tenant: tenant.clone(), database_incarnation: u128::from_be_bytes(engine.database_id().as_bytes().to_owned()), operation, participant: "file-a".into(), owner: "owner".into(), digest: *blake3::hash(&payload).as_bytes(), epoch: 1, snapshot: StorageSequence::new(1) };
-    let prepare = ParticipantPrepare { identity: identity.clone(), writes: vec![write], metadata: Vec::new() };
+    let prepare = ParticipantPrepare { identity: identity.clone(), writes: vec![write], metadata: Vec::new(), schema_envelopes: Vec::new() };
     engine.storage.lock().unwrap().port.prepare_participant(&prepare).unwrap();
     assert!(engine.storage.lock().unwrap().port.resolve_participant(&identity).unwrap().is_some());
     engine.shutdown().unwrap();
     let reopened = Engine::open(EngineConfig::durable(path).unwrap()).unwrap();
     assert!(reopened.storage.lock().unwrap().port.resolve_participant(&identity).unwrap().is_some());
+    let mut foreign = identity.clone();
+    foreign.owner = "foreign".into();
+    assert!(reopened.storage.lock().unwrap().port.resolve_participant(&foreign).is_err());
     reopened.shutdown().unwrap();
 }

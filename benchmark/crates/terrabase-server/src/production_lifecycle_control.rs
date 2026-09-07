@@ -167,7 +167,11 @@ impl TbepLifecycleControl {
         use terrabase_tbep::proto::terrabase::v1::{LifecycleControlResponse, LifecycleStatus};
         match operation.phase {
             NativeRestorePhase::Complete => {
-                let signed_completed_receipt = self.control.worker.signed_completed_receipt(&operation.request.operation_id).await?;
+                let signed_completed_receipt = self
+                    .control
+                    .worker
+                    .signed_completed_receipt(&operation.request.operation_id)
+                    .await?;
                 let receipt =
                     operation.receipt.ok_or("complete restore has no verified receipt")?;
                 Ok(LifecycleControlResponse {
@@ -476,15 +480,19 @@ pub struct RegistryLifecycleWorker {
 impl NativeLifecycleWorker for RegistryLifecycleWorker {
     async fn signed_completed_receipt(&self, operation: &str) -> Result<Vec<u8>, String> {
         let recovery = self.recovery.as_ref().ok_or("native recovery owner unavailable")?;
-        let operation = recovery.restore_status(operation)
+        let operation = recovery
+            .restore_status(operation)
             .map_err(|_| "native restore observation unavailable")?
             .ok_or("native restore observation absent")?;
         if operation.phase != crate::native_recovery::NativeRestorePhase::Complete {
             return Err("native restore is not complete".into());
         }
-        let source = recovery.verified_restore_source_facts(&operation.request).await
+        let source = recovery
+            .verified_restore_source_facts(&operation.request)
+            .await
             .map_err(|_| "authenticated restore source facts unavailable")?;
-        self.receipts.completed(&operation, &source)
+        self.receipts
+            .completed(&operation, &source)
             .map_err(|_| "native restore signed observation unavailable".into())
     }
 
@@ -543,10 +551,37 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
     ) -> Result<crate::native_recovery::NativeRestoreOperation, String> {
         let recovery = self.recovery.as_ref().ok_or("native recovery owner is not composed")?;
-        let source = self
+        // Exact durable retries must remain observable after the source moves.
+        // Admission below compares every immutable field, including placement.
+        let retained = recovery
+            .restore_request(&request.operation_id, &request.target_database, &request.target_owner)
+            .map_err(|_| "native restore request mismatch")?;
+        let placement = if let Some(retained) = &retained {
+            retained.placement.clone()
+        } else {
+            let source = self
+                .registry
+                .resolve(&request.source_database)?
+                .ok_or("restore source is not admitted")?;
+            if format!("{}/{}", source.record.tenant_id, source.record.project_id)
+                != request.source_owner
+            {
+                return Err("restore source owner mismatch".into());
+            }
+            source.record.regions.clone()
+        };
+        let target = self
             .registry
-            .resolve(&request.source_database)?
-            .ok_or("restore source is not admitted")?;
+            .retained_snapshot()?
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == request.target_database)
+            .ok_or("restore target is not retained")?;
+        if target.database.record.regions != placement
+            || format!("{}/{}", target.database.record.tenant_id, target.database.record.project_id)
+                != request.target_owner
+        {
+            return Err("restore target placement or owner mismatch".into());
+        }
         let operation = crate::native_recovery::NativeRestoreRequest {
             operation_id: request.operation_id.clone(),
             source_owner: request.source_owner.clone(),
@@ -568,7 +603,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             selection: crate::native_recovery::NativeRestoreSelection::PointId(
                 request.recovery_point_id.clone(),
             ),
-            placement: source.record.regions.clone(),
+            placement,
         };
         let admitted = recovery
             .admit_restore(operation)
@@ -724,7 +759,8 @@ impl ProductionLifecycleControl {
             Some(&request_digest),
         )?;
         let receipt = self.worker.restore_stats(request).await?;
-        let signed_completed_receipt = self.worker.signed_completed_receipt(&request.operation_id).await?;
+        let signed_completed_receipt =
+            self.worker.signed_completed_receipt(&request.operation_id).await?;
         Ok(terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse {
             operation_id: request.operation_id.clone(),
             target_owner: request.target_owner.clone(),
@@ -842,27 +878,52 @@ mod restore_digest_tests {
         );
         let mut altered = request.clone();
         altered.source_owner = "other-owner".into();
-        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        assert_ne!(
+            restore_request_digest(&altered).unwrap(),
+            restore_request_digest(&request).unwrap()
+        );
         let mut altered = request.clone();
         altered.recovery_point_digest = "other-digest".into();
-        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        assert_ne!(
+            restore_request_digest(&altered).unwrap(),
+            restore_request_digest(&request).unwrap()
+        );
         let mut altered = request.clone();
         altered.target_database = "other-target".into();
-        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        assert_ne!(
+            restore_request_digest(&altered).unwrap(),
+            restore_request_digest(&request).unwrap()
+        );
         let mut altered = request.clone();
         altered.journal_cut = "other-cut".into();
-        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        assert_ne!(
+            restore_request_digest(&altered).unwrap(),
+            restore_request_digest(&request).unwrap()
+        );
         let mut altered = request.clone();
         altered.restore_epoch = 8;
-        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&request).unwrap());
+        assert_ne!(
+            restore_request_digest(&altered).unwrap(),
+            restore_request_digest(&request).unwrap()
+        );
         let mut altered = request;
         altered.provider = RestoreProvider::Tigris as i32;
-        assert_ne!(restore_request_digest(&altered).unwrap(), restore_request_digest(&RestoreToTargetRequest {
-            provider: RestoreProvider::Oci as i32,
-            source_owner: "source-owner".into(), source_database: "source-database".into(),
-            recovery_point_id: "recovery-point".into(), recovery_point_digest: "recovery-digest".into(),
-            target_owner: "target-owner".into(), target_database: "target-database".into(), journal_cut: "journal-cut".into(), restore_epoch: 7, ..Default::default()
-        }).unwrap());
+        assert_ne!(
+            restore_request_digest(&altered).unwrap(),
+            restore_request_digest(&RestoreToTargetRequest {
+                provider: RestoreProvider::Oci as i32,
+                source_owner: "source-owner".into(),
+                source_database: "source-database".into(),
+                recovery_point_id: "recovery-point".into(),
+                recovery_point_digest: "recovery-digest".into(),
+                target_owner: "target-owner".into(),
+                target_database: "target-database".into(),
+                journal_cut: "journal-cut".into(),
+                restore_epoch: 7,
+                ..Default::default()
+            })
+            .unwrap()
+        );
     }
 
     #[test]
@@ -871,12 +932,20 @@ mod restore_digest_tests {
         let mut grant = LifecycleOperationGrant {
             version: 1,
             domain: "terrascale-lifecycle-operation-v1".into(),
-            environment: "production".into(), tenant: "tenant".into(), project: "project".into(),
-            database: "database".into(), region: "GRU".into(), member: "member".into(),
-            action: LifecycleGrantAction::RestoreToTarget, operation_id: "op".into(),
-            accepted_proof_digest: "b".repeat(64), accepted_placement_revision: 1,
-            authority_epoch: 1, authority_lease: "lease".into(),
-            accepted_restore_request_digest: expected.clone(), issued_at_unix_millis: 1,
+            environment: "production".into(),
+            tenant: "tenant".into(),
+            project: "project".into(),
+            database: "database".into(),
+            region: "GRU".into(),
+            member: "member".into(),
+            action: LifecycleGrantAction::RestoreToTarget,
+            operation_id: "op".into(),
+            accepted_proof_digest: "b".repeat(64),
+            accepted_placement_revision: 1,
+            authority_epoch: 1,
+            authority_lease: "lease".into(),
+            accepted_restore_request_digest: expected.clone(),
+            issued_at_unix_millis: 1,
             expires_at_unix_millis: 2,
         };
         assert!(verify_restore_request_digest(&grant, Some(&expected)).is_ok());

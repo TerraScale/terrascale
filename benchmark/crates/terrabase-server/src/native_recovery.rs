@@ -767,14 +767,6 @@ impl NativeRecoveryRuntime {
                 operation.receipt = Some(receipt);
                 operation.phase = NativeRestorePhase::Complete;
                 operation.error = None;
-            } else if operation.phase == NativeRestorePhase::Verifying
-                && operation.receipt.is_none()
-            {
-                // An explicit retry found the original paused target. Atomic
-                // publication always includes the marker, so no replacement
-                // was committed and provider execution may safely restart.
-                operation.phase = NativeRestorePhase::Accepted;
-                operation.error = None;
             } else {
                 operation.phase = NativeRestorePhase::Uncertain;
                 operation.error =
@@ -1199,6 +1191,135 @@ mod tests {
         );
         drop(member);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn original_restore_rpc_reaches_readback_without_source_and_rejects_changed_request() {
+        use crate::production_lifecycle_control::*;
+        use terrabase_tbep::lifecycle::LifecycleGrantAction;
+        use terrabase_tbep::proto::terrabase::v1::{
+            LifecycleControlContext, RestoreProvider, RestoreToTargetRequest,
+        };
+        struct Authority;
+        impl LifecycleAuthority for Authority {
+            fn verify(
+                &self,
+                _: &AcceptedLifecycleAssignment,
+                _: LifecycleGrantAction,
+                _: &str,
+                _: &[u8],
+                _: &[u8],
+                digest: Option<&str>,
+            ) -> Result<(), String> {
+                if digest.is_some_and(|value| value.len() == 64) {
+                    Ok(())
+                } else {
+                    Err("missing request binding".into())
+                }
+            }
+        }
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &root.join("rpc-retry"),
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+            Arc::new(RejectRestore),
+        )
+        .unwrap();
+        worker.shutdown().await.unwrap();
+        let target = &records[1];
+        let source = terrabase::identity::DatabaseUlid::generate().to_string();
+        assert!(registry.resolve(&source).unwrap().is_none());
+        let owner = format!("{}/{}", target.tenant_id, target.project_id);
+        let request = NativeRestoreRequest {
+            operation_id: "published-before-receipt-save".into(),
+            source_owner: owner.clone(),
+            source_database_id: source.clone(),
+            recovery_point_id: "a".repeat(64),
+            recovery_point_digest: "a".repeat(64),
+            target_owner: owner.clone(),
+            target_database_id: target.database_id.clone(),
+            journal_cut: "1".into(),
+            restore_epoch: 1,
+            provider: "oci".into(),
+            selection: NativeRestoreSelection::PointId("a".repeat(64)),
+            placement: target.regions.clone(),
+        };
+        runtime.admit_restore(request.clone()).unwrap();
+        runtime
+            .save_restore(&NativeRestoreOperation {
+                request: request.clone(),
+                phase: NativeRestorePhase::Uncertain,
+                receipt: None,
+                error: Some("receipt persistence interrupted".into()),
+            })
+            .unwrap();
+        let der = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(
+            &aws_lc_rs::rand::SystemRandom::new(),
+        )
+        .unwrap();
+        let signer = crate::native_recovery_receipt::NativeRecoveryReceiptSigner::from_pkcs8(
+            "test".into(),
+            der.as_ref(),
+        )
+        .unwrap();
+        let receipts = Arc::new(
+            crate::native_recovery_receipt::NativeRecoveryReceiptStore::open(
+                &root.join("rpc-receipts.sqlite"),
+                signer,
+            )
+            .unwrap(),
+        );
+        let rpc = TbepLifecycleControl::new(Arc::new(ProductionLifecycleControl {
+            worker: Arc::new(RegistryLifecycleWorker {
+                registry: Arc::clone(&registry),
+                backups: None,
+                recovery: Some(Arc::clone(&runtime)),
+                receipts,
+            }),
+            authority: Arc::new(Authority),
+        }));
+        let wire = RestoreToTargetRequest {
+            context: Some(LifecycleControlContext {
+                database: target.database_id.clone(),
+                tenant: target.tenant_id.clone(),
+                project: target.project_id.clone(),
+                ..Default::default()
+            }),
+            operation_id: request.operation_id.clone(),
+            source_owner: owner.clone(),
+            source_database: source,
+            recovery_point_id: request.recovery_point_id.clone(),
+            recovery_point_digest: request.recovery_point_digest.clone(),
+            target_owner: owner,
+            target_database: target.database_id.clone(),
+            journal_cut: "1".into(),
+            restore_epoch: 1,
+            provider: RestoreProvider::Oci as i32,
+        };
+        rpc.restore_to_target(&wire)
+            .await
+            .expect("original RPC reaches durable readback without source");
+        assert_eq!(
+            runtime.restore_status(&request.operation_id).unwrap().unwrap().phase,
+            NativeRestorePhase::Verifying
+        );
+        let mut changed = wire.clone();
+        changed.recovery_point_digest = "b".repeat(64);
+        assert!(rpc.restore_to_target(&changed).await.is_err());
+        let mut changed = wire.clone();
+        changed.source_owner.push_str("-changed");
+        assert!(rpc.restore_to_target(&changed).await.is_err());
+        let mut changed = wire;
+        changed.restore_epoch += 1;
+        assert!(rpc.restore_to_target(&changed).await.is_err());
+        drop(rpc);
+        drop(runtime);
+        drop(registry);
+        drop(member);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

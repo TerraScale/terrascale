@@ -476,6 +476,12 @@ mod tests {
             "01ARZ3NDEKTSV4RRFFQ69G5FAZ/01ARZ3NDEKTSV4RRFFQ69G5FAW".into();
         assert!(store.completed(&operation, &source).is_err());
         operation.request.target_owner = operation.request.source_owner.clone();
+        let mut wrong_target = operation.clone();
+        wrong_target.receipt.as_mut().unwrap().logical_content_checksum = "e".repeat(64);
+        assert!(store.completed(&wrong_target, &source).is_err());
+        wrong_target = operation.clone();
+        wrong_target.receipt.as_mut().unwrap().restored_documents += 1;
+        assert!(store.completed(&wrong_target, &source).is_err());
         let mut wrong_source = source.clone();
         wrong_source.checksum = "f".repeat(64);
         assert!(store.completed(&operation, &wrong_source).is_err());
@@ -533,7 +539,7 @@ mod tests {
             let mut expected = facts();
             match field {
                 0 => expected.target_database_id = "01ARZ3NDEKTSV4RRFFQ69G5FAZ".into(),
-                1 => expected.operation_id = "other".into(),
+                1 => expected.operation_id = "foreign-operation".into(),
                 2 => expected.restore_epoch += 1,
                 3 => expected.source_journal_cut += 1,
                 _ => expected.source_database_id = "01ARZ3NDEKTSV4RRFFQ69G5FAZ".into(),

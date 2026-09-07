@@ -151,7 +151,7 @@ async fn create() -> Fixture {
         .collect();
     let endpoints = endpoints(&ids);
     let keys = crate::test_keys::key_delivery();
-    let group = format!("auth-four-{}", Ulid::new());
+    let group = Ulid::new().to_string();
     let boundary = AuthBootstrapBoundary::new(
         "production",
         &cluster.to_text(),
@@ -282,7 +282,9 @@ async fn create() -> Fixture {
         let voter_map = voter_map.clone();
         let placement = placement.clone();
         workers.push(tokio::spawn(async move {
+            let mut requests = tokio::task::JoinSet::new();
             loop {
+                while requests.try_join_next().is_some() {}
                 let connection = match endpoint.accept().await {
                     Ok(Some(c)) => c,
                     Ok(None) => break,
@@ -292,7 +294,10 @@ async fn create() -> Fixture {
                 let network =
                     AuthNetwork::new(endpoint.clone(), &group, voter_map.clone(), &placement)
                         .unwrap();
-                let _ = network.receive(&connection, &authority).await;
+                let authority = authority.clone();
+                requests.spawn(async move {
+                    let _ = network.receive(&connection, &authority).await;
+                });
             }
         }));
     }

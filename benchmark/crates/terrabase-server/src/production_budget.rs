@@ -102,13 +102,15 @@ impl ProductionBudgetRuntime {
         }
         let request_id = UsageFactId::try_new(operation_id)
             .map_err(|_| "write operation identity is invalid")?;
+        let accepted_at =
+            self.journal.operation_admitted_at(&allocation, project_id, unix_millis())?;
         let context = UsageAdmissionContext::try_new(
             project_id,
             database_id,
             &allocation.grant().branch_id,
             origin_region,
             request_id,
-            unix_millis(),
+            accepted_at,
             1,
             i128::from(units),
         )
