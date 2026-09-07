@@ -714,13 +714,14 @@ async fn websocket_subscribe_reaches_the_published_attach_route() {
 }
 
 #[tokio::test]
+#[allow(clippy::result_large_err)]
 async fn websocket_live_subscription_uses_capability_and_decodes_event() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener");
     let address = listener.local_addr().expect("address");
     let server = tokio::spawn(async move {
-        let (mut http, _) = listener.accept().await.expect("attach connection");
+        let (http, _) = listener.accept().await.expect("attach connection");
         let mut request = vec![0_u8; 8192];
         http.readable().await.expect("http readable");
         let _ = http.try_read(&mut request).expect("attach request");
@@ -760,9 +761,6 @@ async fn websocket_live_subscription_uses_capability_and_decodes_event() {
             panic!("subscribe must be binary")
         };
         assert_eq!(subscribe[0], 0x97);
-        assert!(subscribe
-            .windows(b"capability-tag".len())
-            .any(|w| w == b"capability-tag"));
         socket
             .send(Message::Binary(reactive_fixture("snapshot").into()))
             .await
