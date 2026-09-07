@@ -32,9 +32,9 @@ Policy: https://docs.terrascale.tech/legal/security
 
 ## Vulnerability disclosure
 
-Report vulnerabilities to **security@terrascale.tech** (draft address;
-encrypted with the PGP key above once published — [PLACEHOLDER — key and
-inbox monitoring pending]). Include the affected endpoint or component,
+The proposed **security@terrascale.tech** inbox and PGP key are unverified.
+Do not send reports or sensitive information there until the channel is
+confirmed and published. A future report should include the affected endpoint or component,
 reproduction steps, and impact, while omitting credentials and customer
 data. We do not offer phone support for reports or otherwise ([support
 policy](./support.md)).

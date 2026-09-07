@@ -6,7 +6,7 @@ import { authorId, posts, publishedAt, title } from "../schema";
 
 type Post = { id: string; title: string };
 const databaseId = process.env.NEXT_PUBLIC_TERRASCALE_DATABASE_ID?.trim() ?? "";
-const apiBaseUrl = process.env.NEXT_PUBLIC_TERRASCALE_API_URL;
+const apiBaseUrl = process.env.NEXT_PUBLIC_TERRASCALE_API_URL ?? "https://api.terrascale.tech";
 const authBaseUrl = process.env.NEXT_PUBLIC_TERRASCALE_AUTH_URL ?? "https://app.terrascale.tech";
 const redirectUri = process.env.NEXT_PUBLIC_TERRASCALE_REDIRECT_URI;
 const oauthClientId = "terrascale-starter-web";
@@ -28,12 +28,18 @@ export default function Page() {
   const [credential, setCredential] = useState("");
   const [authenticating, setAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string>();
+  const callbackHandled = useRef(false);
 
   useEffect(() => {
+    // React StrictMode replays effects in development; a code is single-use.
+    if (callbackHandled.current) return;
     const query = new URLSearchParams(window.location.search);
     const code = query.get("code");
     const state = query.get("state");
-    if (!code || !state) return;
+    const oauthError = query.get("error");
+    if (!code && !oauthError) return;
+    callbackHandled.current = true;
+    window.history.replaceState({}, document.title, window.location.pathname);
     const expectedState = sessionStorage.getItem("terrascale.oauth.state");
     const verifier = sessionStorage.getItem("terrascale.oauth.verifier");
     sessionStorage.removeItem("terrascale.oauth.state");
@@ -42,9 +48,16 @@ export default function Page() {
       setAuthError("The sign-in response could not be verified. Please try again.");
       return;
     }
+    if (oauthError) {
+      setAuthError(query.get("error_description") ?? "Sign-in was declined. Please try again.");
+      return;
+    }
+    if (!code) {
+      setAuthError("Sign-in did not return an authorization code. Please try again.");
+      return;
+    }
     setAuthenticating(true);
     void exchangeAuthorizationCode(code, verifier).then((token) => {
-      window.history.replaceState({}, document.title, window.location.pathname);
       setCredential(token);
     }).catch((cause: unknown) => {
       setAuthError(cause instanceof Error ? cause.message : "Sign-in failed.");
@@ -53,24 +66,30 @@ export default function Page() {
 
   async function signIn() {
     setAuthError(undefined);
+    setAuthenticating(true);
+    try {
     const verifier = randomString(32);
     const state = randomString(24);
     sessionStorage.setItem("terrascale.oauth.verifier", verifier);
     sessionStorage.setItem("terrascale.oauth.state", state);
     const challenge = await pkceChallenge(verifier);
-    const callback = redirectUri ?? window.location.href.split("?")[0];
+    const callback = redirectUri ?? `${window.location.origin}${window.location.pathname}`;
     const authorize = new URL("/api/auth/oauth2/authorize", authBaseUrl);
     authorize.search = new URLSearchParams({
       client_id: oauthClientId,
       response_type: "code",
       redirect_uri: callback,
       scope: oauthScopes.join(" "),
-      resource: apiBaseUrl ?? "",
+      resource: apiBaseUrl,
       state,
       code_challenge: challenge,
       code_challenge_method: "S256",
     }).toString();
     window.location.assign(authorize);
+    } catch (cause: unknown) {
+      setAuthError(cause instanceof Error ? cause.message : "Sign-in could not be started.");
+      setAuthenticating(false);
+    }
   }
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "4rem 1.5rem", fontFamily: "system-ui, sans-serif" }}>
@@ -84,7 +103,7 @@ export default function Page() {
         </>
       ) : (
         <>
-          <p>Sign in to TerraScale to authorize this starter with only posts read/write access.</p>
+          <p>Sign in to TerraScale to authorize this starter to read and write your development database.</p>
           <button onClick={() => void signIn()} disabled={authenticating}>{authenticating ? "Signing in…" : "Sign in with TerraScale"}</button>
           {authError ? <p role="alert">{authError}</p> : null}
         </>
@@ -111,7 +130,7 @@ function base64url(value: Uint8Array): string {
 }
 
 async function exchangeAuthorizationCode(code: string, verifier: string): Promise<string> {
-  const callback = redirectUri ?? window.location.href.split("?")[0];
+  const callback = redirectUri ?? `${window.location.origin}${window.location.pathname}`;
   const response = await fetch(new URL("/api/auth/oauth2/token", authBaseUrl), {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -121,7 +140,7 @@ async function exchangeAuthorizationCode(code: string, verifier: string): Promis
       code,
       redirect_uri: callback,
       code_verifier: verifier,
-      resource: apiBaseUrl ?? "",
+      resource: apiBaseUrl,
     }),
   });
   const body = await response.json() as { access_token?: unknown; error_description?: unknown };

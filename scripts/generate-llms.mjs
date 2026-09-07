@@ -11,9 +11,9 @@ const check = process.argv.includes("--check");
 
 const base = "https://docs.terrascale.tech";
 const routes = [
-  ["/", "TerraScale docs home: what TerraScale is, 5-minute quickstart."],
+  ["/", "TerraScale docs home: what TerraScale is, quickstart with an unqualified five-minute target."],
   ["/getting-started", "Quickstart: create-terrascale-app to development write and live query; sign-in journey unqualified."],
-  ["/getting-started/", "Quickstart (guides IA): cloud dev branch, seed, codegen, first live query."],
+  ["/getting-started/", "Quickstart: cloud dev branch, document write, and live query; real browser journey unqualified."],
   ["/concepts", "Core concepts: documents, SQL-only queries (D-78), live queries vs collection sync (D-38), branches, tenants, placement."],
   ["/concepts/replication", "Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable."],
   ["/concepts/sync", "Sync model: shared views, immutable delta log, CDN delivery."],
@@ -84,11 +84,11 @@ ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
 
 - REST first contact: https://api.terrascale.tech — routes to the nearest
-  healthy region hosting the database; returns 421 Misdirected Request with
-  X-TerraScale-Placement, after which the SDK pins REST (reads and writes).
+  healthy eligible Region hosting the database. Placement responses guide
+  regional pinning; 421 Misdirected Request can signal stale placement.
 - Pinned regional REST: https://gru.api.terrascale.tech,
   https://sfo.api.terrascale.tech, https://fra.api.terrascale.tech
-- Regions list: GET https://api.terrascale.tech/regions
+- Regions list: GET https://api.terrascale.tech/api/v1/regions
 - Reactive HTTP (live queries; CDN-backed long-polling, capability header):
   https://sync.api.terrascale.tech
 - SQL (read-only; JSON or MessagePack):
@@ -104,11 +104,11 @@ Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
 
 ## SDKs
 
-TypeScript (@terrascale/sdk), C#, Go, Rust — all generated from a pinned
-contract with the same surface: document CRUD, typed SQL builder, raw
-parameterized SQL, subscribe/execute, checkpoints and typed resets, region
-pinning, tenants, management. Framework adapters (React, TanStack, Better
-Auth) are TypeScript.
+TypeScript (@terrascale/sdk), C#, Go, and Rust are supported SDK projects.
+Use each published package's pinned public contract for its available methods;
+cross-SDK parity and connected customer journeys still require qualification.
+Tenant provisioning is awaiting its producer contract. Framework adapters
+(React, TanStack, Better Auth) are TypeScript-only launch scope.
 `;
 
 if (check) {

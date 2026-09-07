@@ -49,13 +49,20 @@ builder over generated schema types that compiles to parameterized SQL; raw
 parameterized SQL is always available when you need it.
 
 ```ts
-ts
-  .from('posts')
-  .where(c => c.authorId.eq(user.id))
-  .orderBy(c => c.publishedAt.desc())
+import { Direction, select } from '@terrascale/sdk'
+import { posts, authorId, publishedAt } from './schema'
+
+const query = select(posts)
+  .whereEq(authorId, user.id)
+  .orderByField(publishedAt, Direction.Desc)
   .limit(20)
-  .subscribe({ onRows })
+  .subscribe()
 ```
+
+Here `posts` and its fields are schema definitions. The builder returns a
+parameterized subscription descriptor; it does not open a subscription itself.
+Pass its SQL and parameters to `TerraScaleSyncV1Client.subscribe` with the
+branch's `databaseId`, as shown in the [quickstart](/es/getting-started/).
 
 ## Indexes: automatic, never stale
 

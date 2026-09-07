@@ -72,8 +72,8 @@ email intake and staffed response coverage are not advertised as available.
 - **$1 per 1M** writes
 - **$0.20 per GB-month** per region
 
-These are draft targets; any change requires an owner decision, measured unit
-economics, and publication approval.
+These are draft targets; increases require an owner decision. Publication
+requires measured unit economics and owner approval of the final price sheet.
 
 ## Shared organization allowances
 
@@ -117,8 +117,9 @@ Free databases pause after 30 idle days; a request resumes them. They may be del
 
 ## How billing works
 
-Engine usage facts are the source of truth. A write is billed once, regardless
-of how many shared views it affects or how many clients are attached. Optional
+Metered usage facts are the source of truth. A write is billed once per
+selected Region, regardless of how many shared views it affects or how many
+clients are attached. Optional
 WebSocket concurrency and distinct-view caps are unbilled abuse guards, not
 prices.
 
