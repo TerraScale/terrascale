@@ -21,6 +21,8 @@ pub enum ProvisioningError {
     InvalidRequest,
     /// An immutable database or operation identity conflicts with durable state.
     Conflict,
+    /// No authority-owned operation has this identity in the verified scope.
+    NotFound,
     /// The authority denied admission.
     Forbidden,
     /// A trustworthy authority result could not be obtained.
@@ -429,6 +431,7 @@ impl ProvisioningClient {
                     hyper::StatusCode::BAD_REQUEST => ProvisioningError::InvalidRequest,
                     hyper::StatusCode::CONFLICT => ProvisioningError::Conflict,
                     hyper::StatusCode::FORBIDDEN => ProvisioningError::Forbidden,
+                    hyper::StatusCode::NOT_FOUND => ProvisioningError::NotFound,
                     _ => ProvisioningError::Unavailable,
                 });
             }

@@ -614,8 +614,13 @@ pub(crate) fn validate_admission_residency(
     constraint: &str,
     placement: &[RegionCode],
 ) -> Result<(), String> {
-    validate_residency(&RegionCatalog::production(), constraint, placement)
-        .map_err(|error| error.to_string())
+    validate_residency(&RegionCatalog::production(), constraint, placement).map_err(|error| {
+        match error {
+            ControlError::InvalidResidency(_) => "invalid residency".to_owned(),
+            ControlError::ResidencyViolation { .. } => "residency violates placement".to_owned(),
+            _ => "residency validation failed".to_owned(),
+        }
+    })
 }
 
 /// Wall-clock unix milliseconds. The registry's timestamps are display and

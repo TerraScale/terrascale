@@ -1917,7 +1917,7 @@ async fn list_databases(State(state): State<Arc<ApiState>>) -> Response {
     }
 }
 
-#[utoipa::path(get, path = "/api/v1/operations/{operation_id}", responses((status = 200, description = "Durable provisioning operation", body = crate::provisioning::ProvisioningOperation)))]
+#[utoipa::path(get, path = "/api/v1/operations/{operation_id}", responses((status = 200, description = "Durable operation", body = crate::api::operations::OperationSummary)))]
 async fn get_provisioning_operation(
     State(state): State<Arc<ApiState>>,
     Path(operation_id): Path<String>,
@@ -1926,22 +1926,25 @@ async fn get_provisioning_operation(
     let Some(Extension(scope)) = scope else {
         return ApiError::control_unavailable().into_response();
     };
-    match operations::member_operation(&state, &scope, &operation_id) {
-        Ok(Some(operation)) => match serde_json::to_string(&operation) {
-            Ok(body) => return json_response(StatusCode::OK, body),
-            Err(_) => return ApiError::control_unavailable().into_response(),
-        },
-        Ok(None) => {}
-        Err(()) => return ApiError::control_unavailable().into_response(),
-    }
     let Some(authority) = &state.provisioning else {
         return ApiError::control_unavailable().into_response();
     };
     match authority.status(&scope, &operation_id).await {
-        Ok(operation) => match serde_json::to_string(&operation) {
+        Ok(operation) => match serde_json::to_string(&operations::provisioning_summary(operation)) {
             Ok(body) => json_response(StatusCode::OK, body),
             Err(_) => ApiError::control_unavailable().into_response(),
         },
+        Err(crate::provisioning::ProvisioningError::NotFound) => {
+            match operations::member_operation(&state, &scope, &operation_id) {
+                Ok(Some(operation)) => match serde_json::to_string(&operation) {
+                    Ok(body) => json_response(StatusCode::OK, body),
+                    Err(_) => ApiError::control_unavailable().into_response(),
+                },
+                Ok(None) => provisioning_error(crate::provisioning::ProvisioningError::NotFound)
+                    .into_response(),
+                Err(()) => ApiError::control_unavailable().into_response(),
+            }
+        }
         Err(error) => provisioning_error(error).into_response(),
     }
 }
@@ -1999,6 +2002,12 @@ fn provisioning_error(error: crate::provisioning::ProvisioningError) -> ApiError
             "provisioning_conflict",
             "the request conflicts with an existing immutable database or operation",
             "retry the original request with its unchanged operation identifier",
+        ),
+        ProvisioningError::NotFound => (
+            StatusCode::NOT_FOUND,
+            "operation_not_found",
+            "the operation does not exist in this project",
+            "verify the operation identifier and project credentials",
         ),
         ProvisioningError::Forbidden => (
             StatusCode::FORBIDDEN,

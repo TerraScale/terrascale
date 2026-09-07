@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::get_provisioning_operation;
 use crate::native_recovery::*;
 use axum::{Router, body::Body, http::Request};
 use std::{future::Future, pin::Pin, sync::Mutex};
@@ -159,13 +160,19 @@ async fn production_handler_paginates_authority_export_recovery_after_restart() 
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(
                         TokioIo::new(stream),
-                        hyper::service::service_fn(move |_| {
+                        hyper::service::service_fn(move |request| {
                             let body = body.clone();
                             calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             async move {
-                                Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(
-                                    Bytes::from(body),
-                                )))
+                                if request.uri().path() == "/internal/v1/databases/status" {
+                                    return Ok::<_, std::convert::Infallible>(
+                                        hyper::Response::builder()
+                                            .status(hyper::StatusCode::NOT_FOUND)
+                                            .body(Full::new(Bytes::new()))
+                                            .unwrap(),
+                                    );
+                                }
+                                Ok(hyper::Response::new(Full::new(Bytes::from(body))))
                             }
                         }),
                     )
@@ -213,8 +220,8 @@ async fn production_handler_paginates_authority_export_recovery_after_restart() 
     assert_eq!(ids, vec!["a".repeat(32), "b".repeat(32), "recovery-a".into(), "recovery-b".into()]);
     assert_eq!(
         calls.load(std::sync::atomic::Ordering::Relaxed),
-        1,
-        "member continuation returned to authority"
+        2,
+        "member GET plus continuation should each use the authority"
     );
     // With no authority fallback, foreign project/member tokens fail closed.
     Arc::get_mut(&mut state).unwrap().provisioning = None;

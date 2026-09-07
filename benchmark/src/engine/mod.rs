@@ -1133,17 +1133,17 @@ pub(crate) struct StorageState {
     pub(crate) port: Box<dyn StoragePort>,
 }
 
+type AutoIndexShadowSamples = BTreeMap<
+    (String, String, [u8; 32]),
+    (u64, Vec<crate::auto_index::LogicalCost>, Vec<crate::auto_index::LogicalCost>),
+>;
+
 /// The database-owned Engine.
 ///
 /// ```compile_fail
 /// // There is no in-memory durable constructor. This must not compile.
 /// let engine = terrabase::engine::Engine::ephemeral();
 /// ```
-type AutoIndexShadowSamples = BTreeMap<
-    (String, String, [u8; 32]),
-    (u64, Vec<crate::auto_index::LogicalCost>, Vec<crate::auto_index::LogicalCost>),
->;
-
 pub struct Engine {
     storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     identity: u128,

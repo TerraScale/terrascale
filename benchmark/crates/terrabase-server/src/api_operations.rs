@@ -36,6 +36,16 @@ fn recovery_state(phase: &str) -> &'static str {
     }
 }
 
+fn recovery_phase(phase: &crate::native_recovery::NativeRecoveryPhase) -> &'static str {
+    match phase {
+        crate::native_recovery::NativeRecoveryPhase::Accepted => "accepted",
+        crate::native_recovery::NativeRecoveryPhase::Capturing => "capturing",
+        crate::native_recovery::NativeRecoveryPhase::Measuring => "measuring",
+        crate::native_recovery::NativeRecoveryPhase::Complete => "complete",
+        crate::native_recovery::NativeRecoveryPhase::Failed => "failed",
+    }
+}
+
 fn export_summary(database_id: &str, row: crate::export_api::ExportStatus) -> OperationSummary {
     OperationSummary {
         operation_id: row.job_id,
@@ -60,12 +70,36 @@ fn recovery_summary(database_id: &str, row: crate::native_recovery::NativeRecove
         kind: "recovery".into(),
         database_id: database_id.into(),
         name: database_id.into(),
-        state: recovery_state(&row.phase).into(),
-        stage: row.phase,
+        state: recovery_state(recovery_phase(&row.phase)).into(),
+        stage: recovery_phase(&row.phase).into(),
         created_at: None,
         revision: None,
         cancellable: false,
         cancellation_reason: "Native recovery has no safe cancellation action".into(),
+    }
+}
+
+pub(super) fn provisioning_summary(
+    row: crate::provisioning::ProvisioningOperation,
+) -> OperationSummary {
+    let (state, stage) = match row.state.as_str() {
+        "accepted" => ("queued", "accepted"),
+        "pending" => ("running", "pending"),
+        "ready" => ("succeeded", "ready"),
+        "failed" => ("failed", "failed"),
+        _ => ("running", row.state.as_str()),
+    };
+    OperationSummary {
+        operation_id: row.operation_id,
+        kind: "database_create".into(),
+        database_id: row.database_id,
+        name: row.name,
+        state: state.into(),
+        stage: stage.into(),
+        created_at: None,
+        revision: None,
+        cancellable: false,
+        cancellation_reason: "Provisioning has no safe cancellation action".into(),
     }
 }
 
