@@ -267,7 +267,7 @@ const collection = terrascaleCollectionOptions({
   getKey: row => String(row.id),
   transport: { send: frame => { frames.push(frame); } },
   mutate: async request => {
-    assert.equal(request.operation, "update");
+    assert.equal(request.operation, "insert");
     assert.equal(typeof request.idempotencyKey, "string");
     assert.equal(request.signal.aborted, false);
     return { status: "rejected", error: new Error("controlled producer rejection") };
@@ -279,10 +279,10 @@ const cleanup = collection.adapter.options.sync.sync({
 });
 await new Promise(resolve => setTimeout(resolve, 0));
 assert.equal(frames.length, 1);
-await assert.rejects(
-  collection.onUpdate({ transaction: {
+  await assert.rejects(
+  collection.onInsert({ transaction: {
     id: "tx-packaged",
-    mutations: [{ type: "update", key: "todo-1", original: { id: "todo-1", done: false }, modified: { id: "todo-1", done: true } }],
+    mutations: [{ type: "insert", key: "todo-1", modified: { id: "todo-1", done: true } }],
   } }),
   /controlled producer rejection/u,
 );
