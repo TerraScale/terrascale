@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::json;
 use terrascale::management::{
-    CancellationToken, CreateDatabaseRequest, CreateIndexRequest, OperationOptions, PageOptions,
-    PlacementLock, RestoreRequest,
+    CancellationToken, CreateDatabaseRequest, CreateIndexRequest, OperationListOptions,
+    OperationOptions, PageOptions, PlacementLock, RestoreRequest,
 };
 use terrascale::{
     ClientConfig, HttpTransport, Method, RegionCode, Request, Response, Result, TerraScaleClient,
@@ -715,6 +715,79 @@ async fn operations_poll_durable_provisioning_with_get() {
     assert_eq!(mock.last().method, Method::Get);
     assert!(mock.last().url.ends_with("/api/v1/operations/op"));
     assert!(mock.last().body.is_none());
+}
+
+#[tokio::test]
+async fn operations_list_is_project_scoped_paged_and_preserves_u64_revision() {
+    let mock = Mock::new(vec![Response::json(
+        200,
+        &json!({
+            "operations": [{
+                "operation_id": "op/one",
+                "kind": "database_create",
+                "database_id": "db-1",
+                "name": "demo",
+                "state": "running",
+                "stage": "admitted",
+                "created_at": "2026-09-06T12:00:00Z",
+                "revision": u64::MAX,
+                "cancellable": false,
+                "cancellation_reason": "Provisioning has no safe cancellation action"
+            }],
+            "next_cursor": "opaque",
+            "covered_kinds": ["database_create", "branch_create"]
+        }),
+    )]);
+    let sdk = client(Arc::clone(&mock));
+    let page = sdk
+        .management()
+        .operations()
+        .list(Some("cursor previous"), Some(50))
+        .await
+        .expect("operation page");
+    assert_eq!(page.operations[0].revision, u64::MAX);
+    assert_eq!(page.next_cursor.as_deref(), Some("opaque"));
+    assert_eq!(page.covered_kinds, ["database_create", "branch_create"]);
+    assert_eq!(mock.last().method, Method::Get);
+    assert_eq!(
+        mock.last().url,
+        "https://api.terrascale.tech/api/v1/operations?after=cursor%20previous&limit=50"
+    );
+    assert!(mock
+        .last()
+        .headers
+        .iter()
+        .any(|(name, value)| { name == "x-terrascale-project-id" && value == "ignored" }));
+}
+
+#[tokio::test]
+async fn operations_list_rejects_unbounded_limit_and_pre_cancel() {
+    let mock = Mock::new(vec![]);
+    let sdk = client(Arc::clone(&mock));
+    assert!(sdk
+        .management()
+        .operations()
+        .list(None, Some(51))
+        .await
+        .expect_err("limit")
+        .code
+        .eq("invalid_limit"));
+    let token = CancellationToken::new();
+    token.cancel();
+    let error = sdk
+        .management()
+        .operations()
+        .list_with_options(
+            None,
+            None,
+            OperationListOptions {
+                cancellation: Some(token),
+            },
+        )
+        .await
+        .expect_err("cancelled");
+    assert_eq!(error.code, "cancelled");
+    assert!(mock.requests.lock().expect("requests mutex").is_empty());
 }
 
 #[tokio::test]

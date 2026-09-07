@@ -1720,6 +1720,40 @@ impl Development {
 pub struct Operations {
     shared: SharedClient,
 }
+
+/// A page of durable operations visible in the configured project scope.
+///
+/// `covered_kinds` is explicit because this endpoint is backed by the
+/// provisioning journal only; callers must not infer that every asynchronous
+/// operation owner is represented here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OperationPage {
+    pub operations: Vec<OperationSummary>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+    pub covered_kinds: Vec<String>,
+}
+
+/// Read-only operation state projected from the authoritative journal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OperationSummary {
+    pub operation_id: String,
+    pub kind: String,
+    pub database_id: String,
+    pub name: String,
+    pub state: String,
+    pub stage: String,
+    pub created_at: String,
+    pub revision: u64,
+    pub cancellable: bool,
+    pub cancellation_reason: String,
+}
+
+/// Controls cancellation of an operation discovery request.
+#[derive(Debug, Clone, Default)]
+pub struct OperationListOptions {
+    pub cancellation: Option<CancellationToken>,
+}
 impl Operations {
     /// Read the durable provisioning operation without resubmitting creation.
     pub async fn get(&self, operation_id: &str) -> Result<ProvisioningOperation> {
@@ -1736,6 +1770,65 @@ impl Operations {
                 body: None,
             })
             .await
+    }
+
+    /// List durable provisioning operations in the configured project scope.
+    pub async fn list(&self, after: Option<&str>, limit: Option<u16>) -> Result<OperationPage> {
+        self.list_with_options(after, limit, OperationListOptions::default())
+            .await
+    }
+
+    /// List durable provisioning operations with cooperative cancellation.
+    pub async fn list_with_options(
+        &self,
+        after: Option<&str>,
+        limit: Option<u16>,
+        options: OperationListOptions,
+    ) -> Result<OperationPage> {
+        if limit.is_some_and(|limit| !(1..=50).contains(&limit)) {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_limit",
+                "limit must be between 1 and 50.",
+            ));
+        }
+        if options
+            .cancellation
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "cancelled",
+                "The operation discovery request was cancelled before it was sent.",
+            ));
+        }
+        let mut url = format!("{}/operations", self.shared.pinned_base_url(None)?);
+        let mut query = Vec::new();
+        if let Some(after) = after {
+            query.push(format!("after={}", encode_segment(after, "after")?));
+        }
+        if let Some(limit) = limit {
+            query.push(format!("limit={limit}"));
+        }
+        if !query.is_empty() {
+            url.push('?');
+            url.push_str(&query.join("&"));
+        }
+        let request = Request {
+            route_name: "operations.list".into(),
+            method: Method::Get,
+            url,
+            headers: vec![],
+            body: None,
+        };
+        let Some(token) = options.cancellation else {
+            return self.shared.send_typed(request).await;
+        };
+        tokio::select! {
+            result = self.shared.send_typed(request) => result,
+            () = wait_cancelled(token) => Err(Error::new(ErrorKind::Transport, "cancelled", "The operation discovery request was cancelled.")),
+        }
     }
 }
 
