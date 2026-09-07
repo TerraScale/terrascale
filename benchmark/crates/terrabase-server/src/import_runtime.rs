@@ -43,7 +43,12 @@ impl ImportLeaseCipher {
 
 impl ImportCipher for ImportLeaseCipher {
     fn seal_chunk(&self, operation_id: &str, chunk: u64, plaintext: &[u8]) -> io::Result<Vec<u8>> {
-        let tag = chunk_tag(operation_id, chunk, plaintext);
+        use aws_lc_rs::rand::{SecureRandom as _, SystemRandom};
+        let mut nonce = [0u8; 32];
+        SystemRandom::new()
+            .fill(&mut nonce)
+            .map_err(|_| io::Error::other("import randomness unavailable"))?;
+        let tag = chunk_artifact_id(operation_id, chunk, &nonce);
         let context = EncryptionContext::new_with_project(
             self.lease.metadata().scope().environment(),
             &self.tenant,
@@ -62,7 +67,7 @@ impl ImportCipher for ImportLeaseCipher {
             ArtifactCipher::from_database_key_lease(&self.lease, context, 0).map_err(|_| {
                 io::Error::new(io::ErrorKind::PermissionDenied, "import key lease unavailable")
             })?;
-        let mut output = tag.to_vec();
+        let mut output = nonce.to_vec();
         output.extend(
             cipher
                 .seal(plaintext)
@@ -72,11 +77,12 @@ impl ImportCipher for ImportLeaseCipher {
     }
 
     fn open_chunk(&self, operation_id: &str, chunk: u64, ciphertext: &[u8]) -> io::Result<Vec<u8>> {
-        let tag: [u8; 32] = ciphertext
+        let nonce: [u8; 32] = ciphertext
             .get(..32)
             .ok_or_else(invalid_input)?
             .try_into()
             .map_err(|_| invalid_input())?;
+        let tag = chunk_artifact_id(operation_id, chunk, &nonce);
         let context = EncryptionContext::new_with_project(
             self.lease.metadata().scope().environment(),
             &self.tenant,
@@ -92,9 +98,6 @@ impl ImportCipher for ImportLeaseCipher {
         let cipher = ArtifactCipher::from_database_key_lease(&self.lease, context, 0)
             .map_err(|_| permission_error())?;
         let plaintext = cipher.open(&ciphertext[32..]).map_err(|_| invalid_input())?;
-        if chunk_tag(operation_id, chunk, &plaintext) != tag {
-            return Err(invalid_input());
-        }
         Ok(plaintext)
     }
 }
@@ -105,9 +108,9 @@ fn invalid_input() -> io::Error {
 fn permission_error() -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, "import encryption context unavailable")
 }
-fn chunk_tag(operation_id: &str, chunk: u64, plaintext: &[u8]) -> [u8; 32] {
+fn chunk_artifact_id(operation_id: &str, chunk: u64, nonce: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Hasher::new();
-    for value in [operation_id.as_bytes(), &chunk.to_be_bytes(), plaintext] {
+    for value in [operation_id.as_bytes(), &chunk.to_be_bytes(), nonce] {
         hasher.update(&(value.len() as u64).to_be_bytes());
         hasher.update(value);
     }
@@ -340,6 +343,22 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).expect("root");
         root
+    }
+
+    #[test]
+    fn randomized_chunks_bind_operation_ordinal_and_database() {
+        let cipher = leased_cipher();
+        let first = cipher.seal_chunk("operation", 0, b"same low-entropy secret").unwrap();
+        let second = cipher.seal_chunk("operation", 0, b"same low-entropy secret").unwrap();
+        assert_ne!(first, second, "fresh artifact IDs must not reveal plaintext equality");
+        assert_eq!(cipher.open_chunk("operation", 0, &first).unwrap(), b"same low-entropy secret");
+        assert_eq!(cipher.open_chunk("operation", 0, &second).unwrap(), b"same low-entropy secret");
+        assert!(cipher.open_chunk("other-operation", 0, &first).is_err());
+        assert!(cipher.open_chunk("operation", 1, &first).is_err());
+        assert!(leased_cipher().open_chunk("operation", 0, &first).is_err());
+        let mut tampered = first;
+        tampered[0] ^= 1;
+        assert!(cipher.open_chunk("operation", 0, &tampered).is_err());
     }
 
     #[test]

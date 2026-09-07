@@ -375,7 +375,7 @@ where
         }
     }
     if let Err(error) = result {
-        let text = match &error {
+        let text: String = match &error {
             ImportExecutionError::Cancelled => "import cancelled".into(),
             ImportExecutionError::Input(_) | ImportExecutionError::Codec(_) => {
                 "invalid import input".into()
@@ -621,9 +621,9 @@ pub(super) async fn upload_import(
     State(state): State<Arc<ApiState>>,
     Path((name, id)): Path<(String, String)>,
     Extension(principal): Extension<Principal>,
-    body: axum::body::Body,
+    mut body: axum::body::Body,
 ) -> Response {
-    use futures_util::StreamExt;
+    use http_body_util::BodyExt;
     let (runtime, host) = match resolve(&state, &name, &principal, true) {
         Ok(value) => value,
         Err(error) => return error,
@@ -644,10 +644,12 @@ pub(super) async fn upload_import(
             Ok(writer) => writer,
             Err(_) => return refusal(StatusCode::CONFLICT, "import upload is already in progress"),
         };
-    let mut stream = body.into_data_stream();
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = body.frame().await {
         let chunk = match chunk {
-            Ok(chunk) => chunk,
+            Ok(frame) => match frame.into_data() {
+                Ok(chunk) => chunk,
+                Err(_) => continue,
+            },
             Err(_) => return refusal(StatusCode::BAD_REQUEST, "import upload interrupted"),
         };
         for chunk in chunk.chunks(65536) {

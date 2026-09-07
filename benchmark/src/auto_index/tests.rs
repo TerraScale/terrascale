@@ -166,7 +166,7 @@ fn shadow_guards_reject_component_and_tail_regressions() {
     let (outcome, evidence) = verify_shadow(&baseline, &candidate).unwrap();
     assert!(evidence.improvement > MIN_IMPROVEMENT_FRACTION);
     assert!(evidence.regression);
-    assert_eq!(outcome, ShadowOutcome::ActivateWithPins);
+    assert_eq!(outcome, ShadowOutcome::Abandon);
 }
 
 #[test]

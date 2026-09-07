@@ -4718,6 +4718,8 @@ mod tests {
     mod byo_router_tests;
     #[path = "conditional_create.rs"]
     mod conditional_create;
+    #[path = "api_session_query_tests.rs"]
+    mod api_session_query_tests;
     mod cors;
     pub(super) mod rf2;
     mod shared_journal;

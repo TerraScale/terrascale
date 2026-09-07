@@ -893,20 +893,22 @@ fn stored_sequence(result: &CommitResult) -> u64 {
 #[test]
 fn stale_ttl_expiry_work_item_cannot_delete_a_renewed_document() {
     let (dir, mut storage) = sqlite_store("ttl-renewal-guard");
-    let expiry_now = 10_i64;
+    let expiry_now = super::unix_millis();
+    let expired_at = expiry_now - 1;
+    let renewed_until = expiry_now + 3_600_000;
     let expired = Document::new(
         DocumentId::try_new("session").expect("identifier"),
         CollectionName::try_new("sessions").expect("collection"),
         DocumentValue::Object(
             [
                 ("value".to_owned(), DocumentValue::String("v1".to_owned())),
-                ("expires_at".to_owned(), DocumentValue::Integer(5)),
+                ("expires_at".to_owned(), DocumentValue::Integer(expired_at)),
             ]
             .into_iter()
             .collect(),
         ),
     );
-    let first = stored_sequence(&commit(
+    stored_sequence(&commit(
         &mut storage,
         "ttl-v1",
         vec![StagedWrite::Put { document: expired, expected: ExpectedVersion::New }],
@@ -919,7 +921,7 @@ fn stale_ttl_expiry_work_item_cannot_delete_a_renewed_document() {
         .next()
         .expect("v1 is expired");
     assert_eq!(key.version, 1);
-    assert_eq!(key.expires_at, 5);
+    assert_eq!(key.expires_at, expired_at);
 
     let renewed = Document::new(
         DocumentId::try_new("session").expect("identifier"),
@@ -927,7 +929,7 @@ fn stale_ttl_expiry_work_item_cannot_delete_a_renewed_document() {
         DocumentValue::Object(
             [
                 ("value".to_owned(), DocumentValue::String("v2".to_owned())),
-                ("expires_at".to_owned(), DocumentValue::Integer(1_000)),
+                ("expires_at".to_owned(), DocumentValue::Integer(renewed_until)),
             ]
             .into_iter()
             .collect(),
@@ -936,10 +938,12 @@ fn stale_ttl_expiry_work_item_cannot_delete_a_renewed_document() {
     let second = stored_sequence(&commit(
         &mut storage,
         "ttl-v2",
-        vec![StagedWrite::Put { document: renewed, expected: ExpectedVersion::Exact(1) }],
+        vec![StagedWrite::Put { document: renewed, expected: ExpectedVersion::New }],
     ));
 
-    // Recreate the sweep's already-staged delete against its old snapshot.
+    // Expiry hides the old row, so renewal is a new put and reuses version 1.
+    // Discovery predates renewal, but the sweep snapshot already includes it:
+    // neither the public version nor ordinary snapshot conflict detects this race.
     let mut stale = intent(
         "ttl-stale-delete",
         vec![StagedWrite::Delete {
@@ -950,9 +954,12 @@ fn stale_ttl_expiry_work_item_cannot_delete_a_renewed_document() {
         }],
         LocalDurability::Written,
     );
-    stale.snapshot_sequence = StorageSequence::new(first);
+    stale.snapshot_sequence = StorageSequence::new(second);
     stale.internal_maintenance = true;
-    assert!(matches!(storage.commit(stale), CommitResult::Rejected(_)));
+    assert!(matches!(
+        storage.commit(stale),
+        CommitResult::Rejected(crate::storage::CommitRejection::Conflict)
+    ));
 
     let current = storage
         .read_document_in_collection_at(
@@ -962,12 +969,13 @@ fn stale_ttl_expiry_work_item_cannot_delete_a_renewed_document() {
             &key.id,
         )
         .expect("renewed document survives");
+    assert_eq!(current.metadata().version(), key.version, "renewal reuses the public version");
     assert_eq!(
         current.value(),
         &DocumentValue::Object(
             [
                 ("value".to_owned(), DocumentValue::String("v2".to_owned())),
-                ("expires_at".to_owned(), DocumentValue::Integer(1_000)),
+                ("expires_at".to_owned(), DocumentValue::Integer(renewed_until)),
             ]
             .into_iter()
             .collect(),

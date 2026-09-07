@@ -4166,28 +4166,39 @@ fn conflict_between(
     snapshot_sequence: u64,
     published_sequence: u64,
 ) -> Result<bool, ()> {
+    if let Some(guard) = ttl_guard {
+        // TTL maintenance deletes a stored expired row, which ordinary reads
+        // intentionally hide. Bind both views to its exact discovery identity;
+        // a renewal may reuse public version 1 after the old row expires.
+        let ttl_matches = |sequence| -> Result<bool, ()> {
+            let row = transaction
+                .query_row(
+                    "SELECT version, deleted, revision, expires_at FROM documents
+                     WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
+                     ORDER BY commit_seq DESC LIMIT 1",
+                    rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str(), sequence as i64],
+                    |row| Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    )),
+                )
+                .optional()
+                .map_err(|_| ())?;
+            Ok(row.is_some_and(|(version, deleted, revision, expires_at)| {
+                deleted == 0
+                    && revision == guard.revision
+                    && expires_at == Some(guard.expires_at)
+                    && codec::matches_expectation(u64::try_from(version).ok(), expected)
+            }))
+        };
+        return Ok(!ttl_matches(snapshot_sequence)? || !ttl_matches(published_sequence)?);
+    }
     let snapshot_version = version_at(transaction, tenant, collection, id, snapshot_sequence)?;
     let published_version = version_at(transaction, tenant, collection, id, published_sequence)?;
-    let ttl_matches = |sequence| -> Result<bool, ()> {
-        let Some(guard) = ttl_guard else { return Ok(true) };
-        let row = transaction
-            .query_row(
-                "SELECT revision, expires_at FROM documents
-                 WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
-                 ORDER BY commit_seq DESC LIMIT 1",
-                rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str(), sequence as i64],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)),
-            )
-            .optional()
-            .map_err(|_| ())?;
-        Ok(row.is_some_and(|(revision, expires_at)| {
-            revision == guard.revision && expires_at == Some(guard.expires_at)
-        }))
-    };
     Ok(snapshot_version != published_version
-        || !codec::matches_expectation(snapshot_version, expected)
-        || !ttl_matches(snapshot_sequence)?
-        || !ttl_matches(published_sequence)?)
+        || !codec::matches_expectation(snapshot_version, expected))
 }
 
 /// Checks a delete of an identifier the snapshot does not contain.
