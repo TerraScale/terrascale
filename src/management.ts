@@ -95,6 +95,7 @@ export type CreateDatabaseResult = TerraScaleFailure
   | (TerraScaleSuccess<ProvisioningOperation> & { readonly status: 202 });
 export type RestoreBackupResult = TerraScaleFailure
   | (TerraScaleSuccess<ProvisioningOperation> & { readonly status: 202 });
+export type CreateBranchResult = RestoreBackupResult;
 
 export type CreateDatabaseRequest = {
   readonly name: string;
@@ -112,7 +113,7 @@ export type CreateDatabaseRequest = {
   }
 );
 export type DatabaseListResponse = { readonly databases: readonly Database[] };
-export type RestoreRequest = { readonly name: string; readonly at?: number };
+export type RestoreRequest = { readonly name: string; readonly operation_id: string; readonly at?: number };
 export type BranchListResponse = { readonly branches: readonly Database[] };
 export type BackupStatusResponse = { readonly ready: boolean; readonly streaming: boolean };
 export type CollectionsResponse = { readonly collections: readonly string[] };
@@ -248,19 +249,19 @@ export class ManagementBranchesClient {
     });
   }
 
-  create(databaseId: string, request: RestoreRequest): Promise<TerraScaleResult<Database>> {
+  create(databaseId: string, request: RestoreRequest): Promise<CreateBranchResult> {
     validateRestoreRequest(request);
-    return this.#http.request({
+    return this.#http.request<unknown>({
       method: "POST",
       path: `${databasePath(databaseId)}/branches`,
       routeName: "databases.createBranch",
       body: request,
       idempotencyKey: false,
-    });
+    }).then(decodeRestoreBackupResult);
   }
 
   listBranches(databaseId: string): Promise<TerraScaleResult<BranchListResponse>> { return this.list(databaseId); }
-  createBranch(databaseId: string, request: RestoreRequest): Promise<TerraScaleResult<Database>> { return this.create(databaseId, request); }
+  createBranch(databaseId: string, request: RestoreRequest): Promise<CreateBranchResult> { return this.create(databaseId, request); }
 }
 
 export class ManagementBackupsClient {
@@ -654,6 +655,7 @@ function parseCanonicalUInt64Header(value: string | null): Contracts.UInt64Value
 
 function validateRestoreRequest(request: RestoreRequest): void {
   idSegment(request?.name, "database name");
+  requireText(request?.operation_id, "operation_id", 256);
   if (request.at !== undefined && (!Number.isSafeInteger(request.at) || request.at < 0)) {
     throw new TypeError("at must be a non-negative safe integer.");
   }

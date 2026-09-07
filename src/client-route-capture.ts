@@ -322,7 +322,7 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "databases", operation: "restoreBackup", routeName: "databases.restoreBackup",
-    invoke: (_client, management) => management.backups.restoreBackup(sampleIds.database, { name: "restored", at: 123 }),
+    invoke: (_client, management) => management.backups.restoreBackup(sampleIds.database, { name: "restored", operation_id: "operation-restore", at: 123 }),
   },
   {
     client: "databases", operation: "listBranches", routeName: "databases.listBranches",
@@ -330,7 +330,7 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "databases", operation: "createBranch", routeName: "databases.createBranch",
-    invoke: (_client, management) => management.branches.create(sampleIds.database, { name: "branch", at: 123 }),
+    invoke: (_client, management) => management.branches.create(sampleIds.database, { name: "branch", operation_id: "operation-branch", at: 123 }),
   },
   {
     client: "databases", operation: "listCollections", routeName: "databases.listCollections",

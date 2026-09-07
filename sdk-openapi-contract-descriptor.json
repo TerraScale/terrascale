@@ -11,6 +11,22 @@
       "operationId": "delete_database",
       "parameters": [
         {
+          "in": "header",
+          "name": "idempotency-key",
+          "parameter": {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "in": "path",
           "name": "name",
           "parameter": {
@@ -37,121 +53,219 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseRecord",
+                  "$ref": "#/components/schemas/DeletionOperation",
                   "siblings": {
                     "resolved": {
+                      "description": "Durable asynchronous database deletion progress.",
                       "properties": {
-                        "created_at": {
-                          "format": "int64",
-                          "type": "integer"
-                        },
-                        "deleted": {
-                          "type": "boolean"
-                        },
-                        "name": {
+                        "cutoff": {
+                          "format": "date-time",
                           "type": "string"
                         },
-                        "parent": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
+                        "request": {
+                          "properties": {
+                            "database_id": {
+                              "type": "string"
+                            },
+                            "environment": {
+                              "type": "string"
+                            },
+                            "operation_id": {
+                              "type": "string"
+                            },
+                            "project_id": {
+                              "type": "string"
+                            },
+                            "tenant_id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "environment",
+                            "tenant_id",
+                            "project_id",
+                            "database_id",
+                            "operation_id"
+                          ],
+                          "type": "object"
                         },
-                        "placement": {
+                        "state": {
+                          "enum": [
+                            "preparing",
+                            "stopping",
+                            "cleanup_pending"
+                          ],
                           "type": "string"
                         },
-                        "residency": {
-                          "type": "string"
+                        "targets": {
+                          "items": {
+                            "properties": {
+                              "stop": {
+                                "additionalProperties": true,
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "stop"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
                         }
                       },
                       "required": [
-                        "name",
-                        "placement",
-                        "residency",
-                        "deleted",
-                        "created_at",
-                        "parent"
+                        "request",
+                        "state",
+                        "cutoff",
+                        "targets"
                       ],
                       "type": "object"
                     },
                     "siblings": {
                       "resolved": {
+                        "description": "Durable asynchronous database deletion progress.",
                         "properties": {
-                          "created_at": {
-                            "format": "int64",
-                            "type": "integer"
-                          },
-                          "deleted": {
-                            "type": "boolean"
-                          },
-                          "name": {
+                          "cutoff": {
+                            "format": "date-time",
                             "type": "string"
                           },
-                          "parent": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
+                          "request": {
+                            "properties": {
+                              "database_id": {
+                                "type": "string"
+                              },
+                              "environment": {
+                                "type": "string"
+                              },
+                              "operation_id": {
+                                "type": "string"
+                              },
+                              "project_id": {
+                                "type": "string"
+                              },
+                              "tenant_id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "environment",
+                              "tenant_id",
+                              "project_id",
+                              "database_id",
+                              "operation_id"
+                            ],
+                            "type": "object"
                           },
-                          "placement": {
+                          "state": {
+                            "enum": [
+                              "preparing",
+                              "stopping",
+                              "cleanup_pending"
+                            ],
                             "type": "string"
                           },
-                          "residency": {
-                            "type": "string"
+                          "targets": {
+                            "items": {
+                              "properties": {
+                                "stop": {
+                                  "additionalProperties": true,
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "stop"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
                           }
                         },
                         "required": [
-                          "name",
-                          "placement",
-                          "residency",
-                          "deleted",
-                          "created_at",
-                          "parent"
+                          "request",
+                          "state",
+                          "cutoff",
+                          "targets"
                         ],
                         "type": "object"
                       }
                     }
                   },
                   "resolved": {
+                    "description": "Durable asynchronous database deletion progress.",
                     "properties": {
-                      "created_at": {
-                        "format": "int64",
-                        "type": "integer"
-                      },
-                      "deleted": {
-                        "type": "boolean"
-                      },
-                      "name": {
+                      "cutoff": {
+                        "format": "date-time",
                         "type": "string"
                       },
-                      "parent": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
+                      "request": {
+                        "properties": {
+                          "database_id": {
+                            "type": "string"
+                          },
+                          "environment": {
+                            "type": "string"
+                          },
+                          "operation_id": {
+                            "type": "string"
+                          },
+                          "project_id": {
+                            "type": "string"
+                          },
+                          "tenant_id": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "environment",
+                          "tenant_id",
+                          "project_id",
+                          "database_id",
+                          "operation_id"
+                        ],
+                        "type": "object"
                       },
-                      "placement": {
+                      "state": {
+                        "enum": [
+                          "preparing",
+                          "stopping",
+                          "cleanup_pending"
+                        ],
                         "type": "string"
                       },
-                      "residency": {
-                        "type": "string"
+                      "targets": {
+                        "items": {
+                          "properties": {
+                            "stop": {
+                              "additionalProperties": true,
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "stop"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       }
                     },
                     "required": [
-                      "name",
-                      "placement",
-                      "residency",
-                      "deleted",
-                      "created_at",
-                      "parent"
+                      "request",
+                      "state",
+                      "cutoff",
+                      "targets"
                     ],
                     "type": "object"
                   }
                 }
               }
             },
-            "description": "Database soft-deleted",
+            "description": "Durable database deletion accepted",
             "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              },
               "X-TerraScale-Placement": {
                 "schema": {
                   "type": "string"
@@ -164,7 +278,7 @@
               }
             }
           },
-          "status": "200"
+          "status": "202"
         }
       ],
       "routeName": "databases.deleteDatabase",
@@ -3337,8 +3451,24 @@
                         "history": {
                           "items": {
                             "properties": {
+                              "commitUlid": {
+                                "type": "string"
+                              },
                               "deleted": {
                                 "type": "boolean"
+                              },
+                              "explanation": {
+                                "type": "string"
+                              },
+                              "hlc": {
+                                "format": "int64",
+                                "type": "integer"
+                              },
+                              "origin": {
+                                "type": "string"
+                              },
+                              "policy": {
+                                "type": "string"
                               },
                               "revision": {
                                 "type": "string"
@@ -3346,7 +3476,12 @@
                             },
                             "required": [
                               "revision",
-                              "deleted"
+                              "deleted",
+                              "commitUlid",
+                              "hlc",
+                              "origin",
+                              "policy",
+                              "explanation"
                             ],
                             "type": "object"
                           },
@@ -3364,8 +3499,24 @@
                           "history": {
                             "items": {
                               "properties": {
+                                "commitUlid": {
+                                  "type": "string"
+                                },
                                 "deleted": {
                                   "type": "boolean"
+                                },
+                                "explanation": {
+                                  "type": "string"
+                                },
+                                "hlc": {
+                                  "format": "int64",
+                                  "type": "integer"
+                                },
+                                "origin": {
+                                  "type": "string"
+                                },
+                                "policy": {
+                                  "type": "string"
                                 },
                                 "revision": {
                                   "type": "string"
@@ -3373,7 +3524,12 @@
                               },
                               "required": [
                                 "revision",
-                                "deleted"
+                                "deleted",
+                                "commitUlid",
+                                "hlc",
+                                "origin",
+                                "policy",
+                                "explanation"
                               ],
                               "type": "object"
                             },
@@ -3392,8 +3548,24 @@
                       "history": {
                         "items": {
                           "properties": {
+                            "commitUlid": {
+                              "type": "string"
+                            },
                             "deleted": {
                               "type": "boolean"
+                            },
+                            "explanation": {
+                              "type": "string"
+                            },
+                            "hlc": {
+                              "format": "int64",
+                              "type": "integer"
+                            },
+                            "origin": {
+                              "type": "string"
+                            },
+                            "policy": {
+                              "type": "string"
                             },
                             "revision": {
                               "type": "string"
@@ -3401,7 +3573,12 @@
                           },
                           "required": [
                             "revision",
-                            "deleted"
+                            "deleted",
+                            "commitUlid",
+                            "hlc",
+                            "origin",
+                            "policy",
+                            "explanation"
                           ],
                           "type": "object"
                         },
@@ -10554,7 +10731,21 @@
                 }
               }
             },
-            "description": "Decrypted immutable export member"
+            "description": "Decrypted immutable export member",
+            "headers": {
+              "X-TerraScale-Artifact-Checksum": {
+                "description": "Lowercase 64-hex-character BLAKE3 checksum of plaintext bytes",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-TerraScale-Artifact-Length": {
+                "description": "Canonical unsigned decimal plaintext byte length",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "status": "200"
         }
@@ -13943,7 +14134,7 @@
               "$ref": "#/components/schemas/CreateDatabaseRequest",
               "siblings": {
                 "resolved": {
-                  "description": "Production provisioning also requires operation_id and residency; operation_id identifies an idempotent placement admission.",
+                  "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.",
                   "properties": {
                     "name": {
                       "type": "string"
@@ -13959,21 +14150,20 @@
                       "type": "array"
                     },
                     "residency": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "type": "string"
                     }
                   },
                   "required": [
                     "name",
-                    "placement"
+                    "placement",
+                    "residency",
+                    "operation_id"
                   ],
                   "type": "object"
                 },
                 "siblings": {
                   "resolved": {
-                    "description": "Production provisioning also requires operation_id and residency; operation_id identifies an idempotent placement admission.",
+                    "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.",
                     "properties": {
                       "name": {
                         "type": "string"
@@ -13989,22 +14179,21 @@
                         "type": "array"
                       },
                       "residency": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
+                        "type": "string"
                       }
                     },
                     "required": [
                       "name",
-                      "placement"
+                      "placement",
+                      "residency",
+                      "operation_id"
                     ],
                     "type": "object"
                   }
                 }
               },
               "resolved": {
-                "description": "Production provisioning also requires operation_id and residency; operation_id identifies an idempotent placement admission.",
+                "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.",
                 "properties": {
                   "name": {
                     "type": "string"
@@ -14020,15 +14209,14 @@
                     "type": "array"
                   },
                   "residency": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
+                    "type": "string"
                   }
                 },
                 "required": [
                   "name",
-                  "placement"
+                  "placement",
+                  "residency",
+                  "operation_id"
                 ],
                 "type": "object"
               }
@@ -14042,7 +14230,7 @@
                 "$ref": "#/components/schemas/CreateDatabaseRequest",
                 "siblings": {
                   "resolved": {
-                    "description": "Production provisioning also requires operation_id and residency; operation_id identifies an idempotent placement admission.",
+                    "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.",
                     "properties": {
                       "name": {
                         "type": "string"
@@ -14058,21 +14246,20 @@
                         "type": "array"
                       },
                       "residency": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
+                        "type": "string"
                       }
                     },
                     "required": [
                       "name",
-                      "placement"
+                      "placement",
+                      "residency",
+                      "operation_id"
                     ],
                     "type": "object"
                   },
                   "siblings": {
                     "resolved": {
-                      "description": "Production provisioning also requires operation_id and residency; operation_id identifies an idempotent placement admission.",
+                      "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.",
                       "properties": {
                         "name": {
                           "type": "string"
@@ -14088,22 +14275,21 @@
                           "type": "array"
                         },
                         "residency": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
+                          "type": "string"
                         }
                       },
                       "required": [
                         "name",
-                        "placement"
+                        "placement",
+                        "residency",
+                        "operation_id"
                       ],
                       "type": "object"
                     }
                   }
                 },
                 "resolved": {
-                  "description": "Production provisioning also requires operation_id and residency; operation_id identifies an idempotent placement admission.",
+                  "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.",
                   "properties": {
                     "name": {
                       "type": "string"
@@ -14119,15 +14305,14 @@
                       "type": "array"
                     },
                     "residency": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "type": "string"
                     }
                   },
                   "required": [
                     "name",
-                    "placement"
+                    "placement",
+                    "residency",
+                    "operation_id"
                   ],
                   "type": "object"
                 }
@@ -14139,140 +14324,6 @@
         "required": true
       },
       "responses": [
-        {
-          "response": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DatabaseRecord",
-                  "siblings": {
-                    "resolved": {
-                      "properties": {
-                        "created_at": {
-                          "format": "int64",
-                          "type": "integer"
-                        },
-                        "deleted": {
-                          "type": "boolean"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "parent": {
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        },
-                        "placement": {
-                          "type": "string"
-                        },
-                        "residency": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "name",
-                        "placement",
-                        "residency",
-                        "deleted",
-                        "created_at",
-                        "parent"
-                      ],
-                      "type": "object"
-                    },
-                    "siblings": {
-                      "resolved": {
-                        "properties": {
-                          "created_at": {
-                            "format": "int64",
-                            "type": "integer"
-                          },
-                          "deleted": {
-                            "type": "boolean"
-                          },
-                          "name": {
-                            "type": "string"
-                          },
-                          "parent": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          },
-                          "placement": {
-                            "type": "string"
-                          },
-                          "residency": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "name",
-                          "placement",
-                          "residency",
-                          "deleted",
-                          "created_at",
-                          "parent"
-                        ],
-                        "type": "object"
-                      }
-                    }
-                  },
-                  "resolved": {
-                    "properties": {
-                      "created_at": {
-                        "format": "int64",
-                        "type": "integer"
-                      },
-                      "deleted": {
-                        "type": "boolean"
-                      },
-                      "name": {
-                        "type": "string"
-                      },
-                      "parent": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "placement": {
-                        "type": "string"
-                      },
-                      "residency": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name",
-                      "placement",
-                      "residency",
-                      "deleted",
-                      "created_at",
-                      "parent"
-                    ],
-                    "type": "object"
-                  }
-                }
-              }
-            },
-            "description": "Database created",
-            "headers": {
-              "X-TerraScale-Placement": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-TerraScale-Residency": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "status": "201"
-        },
         {
           "response": {
             "content": {
@@ -14490,7 +14541,19 @@
                 }
               }
             },
-            "description": "Durable provisioning accepted; not ready to serve"
+            "description": "Durable provisioning accepted; not ready to serve",
+            "headers": {
+              "X-TerraScale-Placement": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-TerraScale-Residency": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "status": "202"
         }
@@ -32116,10 +32179,14 @@
                     },
                     "name": {
                       "type": "string"
+                    },
+                    "operation_id": {
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "name"
+                    "name",
+                    "operation_id"
                   ],
                   "type": "object"
                 },
@@ -32132,10 +32199,14 @@
                       },
                       "name": {
                         "type": "string"
+                      },
+                      "operation_id": {
+                        "type": "string"
                       }
                     },
                     "required": [
-                      "name"
+                      "name",
+                      "operation_id"
                     ],
                     "type": "object"
                   }
@@ -32149,10 +32220,14 @@
                   },
                   "name": {
                     "type": "string"
+                  },
+                  "operation_id": {
+                    "type": "string"
                   }
                 },
                 "required": [
-                  "name"
+                  "name",
+                  "operation_id"
                 ],
                 "type": "object"
               }
@@ -32173,10 +32248,14 @@
                       },
                       "name": {
                         "type": "string"
+                      },
+                      "operation_id": {
+                        "type": "string"
                       }
                     },
                     "required": [
-                      "name"
+                      "name",
+                      "operation_id"
                     ],
                     "type": "object"
                   },
@@ -32189,10 +32268,14 @@
                         },
                         "name": {
                           "type": "string"
+                        },
+                        "operation_id": {
+                          "type": "string"
                         }
                       },
                       "required": [
-                        "name"
+                        "name",
+                        "operation_id"
                       ],
                       "type": "object"
                     }
@@ -32206,10 +32289,14 @@
                     },
                     "name": {
                       "type": "string"
+                    },
+                    "operation_id": {
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "name"
+                    "name",
+                    "operation_id"
                   ],
                   "type": "object"
                 }
@@ -32226,120 +32313,219 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseRecord",
+                  "$ref": "#/components/schemas/ProvisioningOperation",
                   "siblings": {
                     "resolved": {
+                      "description": "The durable authority result. Creation only acknowledges pending work.",
                       "properties": {
-                        "created_at": {
-                          "format": "int64",
-                          "type": "integer"
-                        },
-                        "deleted": {
-                          "type": "boolean"
-                        },
-                        "name": {
+                        "database_id": {
+                          "description": "Canonical database ULID allocated durably by the authority.",
                           "type": "string"
                         },
-                        "parent": {
+                        "environment": {
+                          "description": "Deployment environment owning the operation.",
+                          "type": "string"
+                        },
+                        "key_version": {
+                          "description": "Persisted encryption key version.",
+                          "type": "string"
+                        },
+                        "name": {
+                          "description": "Immutable database name.",
+                          "type": "string"
+                        },
+                        "operation_id": {
+                          "description": "Stable operation identifier supplied by the caller.",
+                          "type": "string"
+                        },
+                        "parent_database_id": {
+                          "description": "Parent identity of a provisioned branch.",
                           "type": [
                             "string",
                             "null"
                           ]
                         },
-                        "placement": {
+                        "project_id": {
+                          "description": "Authoritatively bound project identity.",
                           "type": "string"
                         },
+                        "regions": {
+                          "description": "Immutable requested serving regions.",
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
                         "residency": {
+                          "description": "Immutable residency constraint.",
+                          "type": "string"
+                        },
+                        "state": {
+                          "description": "Authority progress; create never implies serving readiness.",
+                          "type": "string"
+                        },
+                        "tenant_id": {
+                          "description": "Authoritatively bound tenant identity.",
                           "type": "string"
                         }
                       },
                       "required": [
+                        "environment",
+                        "tenant_id",
+                        "project_id",
+                        "operation_id",
+                        "database_id",
+                        "key_version",
                         "name",
-                        "placement",
+                        "regions",
                         "residency",
-                        "deleted",
-                        "created_at",
-                        "parent"
+                        "state"
                       ],
                       "type": "object"
                     },
                     "siblings": {
                       "resolved": {
+                        "description": "The durable authority result. Creation only acknowledges pending work.",
                         "properties": {
-                          "created_at": {
-                            "format": "int64",
-                            "type": "integer"
-                          },
-                          "deleted": {
-                            "type": "boolean"
-                          },
-                          "name": {
+                          "database_id": {
+                            "description": "Canonical database ULID allocated durably by the authority.",
                             "type": "string"
                           },
-                          "parent": {
+                          "environment": {
+                            "description": "Deployment environment owning the operation.",
+                            "type": "string"
+                          },
+                          "key_version": {
+                            "description": "Persisted encryption key version.",
+                            "type": "string"
+                          },
+                          "name": {
+                            "description": "Immutable database name.",
+                            "type": "string"
+                          },
+                          "operation_id": {
+                            "description": "Stable operation identifier supplied by the caller.",
+                            "type": "string"
+                          },
+                          "parent_database_id": {
+                            "description": "Parent identity of a provisioned branch.",
                             "type": [
                               "string",
                               "null"
                             ]
                           },
-                          "placement": {
+                          "project_id": {
+                            "description": "Authoritatively bound project identity.",
                             "type": "string"
                           },
+                          "regions": {
+                            "description": "Immutable requested serving regions.",
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "residency": {
+                            "description": "Immutable residency constraint.",
+                            "type": "string"
+                          },
+                          "state": {
+                            "description": "Authority progress; create never implies serving readiness.",
+                            "type": "string"
+                          },
+                          "tenant_id": {
+                            "description": "Authoritatively bound tenant identity.",
                             "type": "string"
                           }
                         },
                         "required": [
+                          "environment",
+                          "tenant_id",
+                          "project_id",
+                          "operation_id",
+                          "database_id",
+                          "key_version",
                           "name",
-                          "placement",
+                          "regions",
                           "residency",
-                          "deleted",
-                          "created_at",
-                          "parent"
+                          "state"
                         ],
                         "type": "object"
                       }
                     }
                   },
                   "resolved": {
+                    "description": "The durable authority result. Creation only acknowledges pending work.",
                     "properties": {
-                      "created_at": {
-                        "format": "int64",
-                        "type": "integer"
-                      },
-                      "deleted": {
-                        "type": "boolean"
-                      },
-                      "name": {
+                      "database_id": {
+                        "description": "Canonical database ULID allocated durably by the authority.",
                         "type": "string"
                       },
-                      "parent": {
+                      "environment": {
+                        "description": "Deployment environment owning the operation.",
+                        "type": "string"
+                      },
+                      "key_version": {
+                        "description": "Persisted encryption key version.",
+                        "type": "string"
+                      },
+                      "name": {
+                        "description": "Immutable database name.",
+                        "type": "string"
+                      },
+                      "operation_id": {
+                        "description": "Stable operation identifier supplied by the caller.",
+                        "type": "string"
+                      },
+                      "parent_database_id": {
+                        "description": "Parent identity of a provisioned branch.",
                         "type": [
                           "string",
                           "null"
                         ]
                       },
-                      "placement": {
+                      "project_id": {
+                        "description": "Authoritatively bound project identity.",
                         "type": "string"
                       },
+                      "regions": {
+                        "description": "Immutable requested serving regions.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "residency": {
+                        "description": "Immutable residency constraint.",
+                        "type": "string"
+                      },
+                      "state": {
+                        "description": "Authority progress; create never implies serving readiness.",
+                        "type": "string"
+                      },
+                      "tenant_id": {
+                        "description": "Authoritatively bound tenant identity.",
                         "type": "string"
                       }
                     },
                     "required": [
+                      "environment",
+                      "tenant_id",
+                      "project_id",
+                      "operation_id",
+                      "database_id",
+                      "key_version",
                       "name",
-                      "placement",
+                      "regions",
                       "residency",
-                      "deleted",
-                      "created_at",
-                      "parent"
+                      "state"
                     ],
                     "type": "object"
                   }
                 }
               }
             },
-            "description": "Backup restored into a new database",
+            "description": "Backup restore accepted",
             "headers": {
               "X-TerraScale-Placement": {
                 "schema": {
@@ -32353,7 +32539,7 @@
               }
             }
           },
-          "status": "201"
+          "status": "202"
         }
       ],
       "routeName": "databases.restoreBackup",
@@ -32390,53 +32576,56 @@
           {
             "mediaType": "application/json",
             "schema": {
-              "$ref": "#/components/schemas/RestoreRequest",
+              "$ref": "#/components/schemas/CreateBranchRequest",
               "siblings": {
                 "resolved": {
+                  "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.",
                   "properties": {
-                    "at": {
-                      "format": "int64",
-                      "type": "integer"
-                    },
                     "name": {
+                      "type": "string"
+                    },
+                    "operation_id": {
                       "type": "string"
                     }
                   },
                   "required": [
-                    "name"
+                    "name",
+                    "operation_id"
                   ],
                   "type": "object"
                 },
                 "siblings": {
                   "resolved": {
+                    "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.",
                     "properties": {
-                      "at": {
-                        "format": "int64",
-                        "type": "integer"
-                      },
                       "name": {
+                        "type": "string"
+                      },
+                      "operation_id": {
                         "type": "string"
                       }
                     },
                     "required": [
-                      "name"
+                      "name",
+                      "operation_id"
                     ],
                     "type": "object"
                   }
                 }
               },
               "resolved": {
+                "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.",
                 "properties": {
-                  "at": {
-                    "format": "int64",
-                    "type": "integer"
-                  },
                   "name": {
+                    "type": "string"
+                  },
+                  "operation_id": {
                     "type": "string"
                   }
                 },
                 "required": [
-                  "name"
+                  "name",
+                  "operation_id"
                 ],
                 "type": "object"
               }
@@ -32447,53 +32636,56 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RestoreRequest",
+                "$ref": "#/components/schemas/CreateBranchRequest",
                 "siblings": {
                   "resolved": {
+                    "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.",
                     "properties": {
-                      "at": {
-                        "format": "int64",
-                        "type": "integer"
-                      },
                       "name": {
+                        "type": "string"
+                      },
+                      "operation_id": {
                         "type": "string"
                       }
                     },
                     "required": [
-                      "name"
+                      "name",
+                      "operation_id"
                     ],
                     "type": "object"
                   },
                   "siblings": {
                     "resolved": {
+                      "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.",
                       "properties": {
-                        "at": {
-                          "format": "int64",
-                          "type": "integer"
-                        },
                         "name": {
+                          "type": "string"
+                        },
+                        "operation_id": {
                           "type": "string"
                         }
                       },
                       "required": [
-                        "name"
+                        "name",
+                        "operation_id"
                       ],
                       "type": "object"
                     }
                   }
                 },
                 "resolved": {
+                  "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.",
                   "properties": {
-                    "at": {
-                      "format": "int64",
-                      "type": "integer"
-                    },
                     "name": {
+                      "type": "string"
+                    },
+                    "operation_id": {
                       "type": "string"
                     }
                   },
                   "required": [
-                    "name"
+                    "name",
+                    "operation_id"
                   ],
                   "type": "object"
                 }
@@ -32510,120 +32702,219 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatabaseRecord",
+                  "$ref": "#/components/schemas/ProvisioningOperation",
                   "siblings": {
                     "resolved": {
+                      "description": "The durable authority result. Creation only acknowledges pending work.",
                       "properties": {
-                        "created_at": {
-                          "format": "int64",
-                          "type": "integer"
-                        },
-                        "deleted": {
-                          "type": "boolean"
-                        },
-                        "name": {
+                        "database_id": {
+                          "description": "Canonical database ULID allocated durably by the authority.",
                           "type": "string"
                         },
-                        "parent": {
+                        "environment": {
+                          "description": "Deployment environment owning the operation.",
+                          "type": "string"
+                        },
+                        "key_version": {
+                          "description": "Persisted encryption key version.",
+                          "type": "string"
+                        },
+                        "name": {
+                          "description": "Immutable database name.",
+                          "type": "string"
+                        },
+                        "operation_id": {
+                          "description": "Stable operation identifier supplied by the caller.",
+                          "type": "string"
+                        },
+                        "parent_database_id": {
+                          "description": "Parent identity of a provisioned branch.",
                           "type": [
                             "string",
                             "null"
                           ]
                         },
-                        "placement": {
+                        "project_id": {
+                          "description": "Authoritatively bound project identity.",
                           "type": "string"
                         },
+                        "regions": {
+                          "description": "Immutable requested serving regions.",
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
                         "residency": {
+                          "description": "Immutable residency constraint.",
+                          "type": "string"
+                        },
+                        "state": {
+                          "description": "Authority progress; create never implies serving readiness.",
+                          "type": "string"
+                        },
+                        "tenant_id": {
+                          "description": "Authoritatively bound tenant identity.",
                           "type": "string"
                         }
                       },
                       "required": [
+                        "environment",
+                        "tenant_id",
+                        "project_id",
+                        "operation_id",
+                        "database_id",
+                        "key_version",
                         "name",
-                        "placement",
+                        "regions",
                         "residency",
-                        "deleted",
-                        "created_at",
-                        "parent"
+                        "state"
                       ],
                       "type": "object"
                     },
                     "siblings": {
                       "resolved": {
+                        "description": "The durable authority result. Creation only acknowledges pending work.",
                         "properties": {
-                          "created_at": {
-                            "format": "int64",
-                            "type": "integer"
-                          },
-                          "deleted": {
-                            "type": "boolean"
-                          },
-                          "name": {
+                          "database_id": {
+                            "description": "Canonical database ULID allocated durably by the authority.",
                             "type": "string"
                           },
-                          "parent": {
+                          "environment": {
+                            "description": "Deployment environment owning the operation.",
+                            "type": "string"
+                          },
+                          "key_version": {
+                            "description": "Persisted encryption key version.",
+                            "type": "string"
+                          },
+                          "name": {
+                            "description": "Immutable database name.",
+                            "type": "string"
+                          },
+                          "operation_id": {
+                            "description": "Stable operation identifier supplied by the caller.",
+                            "type": "string"
+                          },
+                          "parent_database_id": {
+                            "description": "Parent identity of a provisioned branch.",
                             "type": [
                               "string",
                               "null"
                             ]
                           },
-                          "placement": {
+                          "project_id": {
+                            "description": "Authoritatively bound project identity.",
                             "type": "string"
                           },
+                          "regions": {
+                            "description": "Immutable requested serving regions.",
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "residency": {
+                            "description": "Immutable residency constraint.",
+                            "type": "string"
+                          },
+                          "state": {
+                            "description": "Authority progress; create never implies serving readiness.",
+                            "type": "string"
+                          },
+                          "tenant_id": {
+                            "description": "Authoritatively bound tenant identity.",
                             "type": "string"
                           }
                         },
                         "required": [
+                          "environment",
+                          "tenant_id",
+                          "project_id",
+                          "operation_id",
+                          "database_id",
+                          "key_version",
                           "name",
-                          "placement",
+                          "regions",
                           "residency",
-                          "deleted",
-                          "created_at",
-                          "parent"
+                          "state"
                         ],
                         "type": "object"
                       }
                     }
                   },
                   "resolved": {
+                    "description": "The durable authority result. Creation only acknowledges pending work.",
                     "properties": {
-                      "created_at": {
-                        "format": "int64",
-                        "type": "integer"
-                      },
-                      "deleted": {
-                        "type": "boolean"
-                      },
-                      "name": {
+                      "database_id": {
+                        "description": "Canonical database ULID allocated durably by the authority.",
                         "type": "string"
                       },
-                      "parent": {
+                      "environment": {
+                        "description": "Deployment environment owning the operation.",
+                        "type": "string"
+                      },
+                      "key_version": {
+                        "description": "Persisted encryption key version.",
+                        "type": "string"
+                      },
+                      "name": {
+                        "description": "Immutable database name.",
+                        "type": "string"
+                      },
+                      "operation_id": {
+                        "description": "Stable operation identifier supplied by the caller.",
+                        "type": "string"
+                      },
+                      "parent_database_id": {
+                        "description": "Parent identity of a provisioned branch.",
                         "type": [
                           "string",
                           "null"
                         ]
                       },
-                      "placement": {
+                      "project_id": {
+                        "description": "Authoritatively bound project identity.",
                         "type": "string"
                       },
+                      "regions": {
+                        "description": "Immutable requested serving regions.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "residency": {
+                        "description": "Immutable residency constraint.",
+                        "type": "string"
+                      },
+                      "state": {
+                        "description": "Authority progress; create never implies serving readiness.",
+                        "type": "string"
+                      },
+                      "tenant_id": {
+                        "description": "Authoritatively bound tenant identity.",
                         "type": "string"
                       }
                     },
                     "required": [
+                      "environment",
+                      "tenant_id",
+                      "project_id",
+                      "operation_id",
+                      "database_id",
+                      "key_version",
                       "name",
-                      "placement",
+                      "regions",
                       "residency",
-                      "deleted",
-                      "created_at",
-                      "parent"
+                      "state"
                     ],
                     "type": "object"
                   }
                 }
               }
             },
-            "description": "Branch created",
+            "description": "Durable branch provisioning accepted; not ready to serve",
             "headers": {
               "X-TerraScale-Placement": {
                 "schema": {
@@ -32637,7 +32928,7 @@
               }
             }
           },
-          "status": "201"
+          "status": "202"
         }
       ],
       "routeName": "databases.createBranch",
@@ -34882,9 +35173,65 @@
                 "resolved": {
                   "additionalProperties": false,
                   "properties": {
+                    "format": {
+                      "$ref": "#/components/schemas/TransferFormat",
+                      "siblings": {
+                        "resolved": {
+                          "description": "Supported import/export interchange formats.",
+                          "enum": [
+                            "native",
+                            "jsonl",
+                            "csv",
+                            "mongo_json",
+                            "cosmos_json",
+                            "dynamo_json"
+                          ],
+                          "type": "string"
+                        },
+                        "siblings": {
+                          "description": "Output encoding. Defaults to JSONL for existing callers."
+                        }
+                      },
+                      "resolved": {
+                        "description": "Supported import/export interchange formats.",
+                        "enum": [
+                          "native",
+                          "jsonl",
+                          "csv",
+                          "mongo_json",
+                          "cosmos_json",
+                          "dynamo_json"
+                        ],
+                        "type": "string"
+                      }
+                    },
                     "idempotency_key": {
                       "description": "Stable retry identity. Reusing it returns the same admitted operation.",
                       "type": "string"
+                    },
+                    "scope": {
+                      "$ref": "#/components/schemas/ExportScope",
+                      "siblings": {
+                        "resolved": {
+                          "description": "Logical record scope for an export.",
+                          "enum": [
+                            "all",
+                            "documents"
+                          ],
+                          "type": "string"
+                        },
+                        "siblings": {
+                          "description": "Converted formats require an explicit documents-only scope."
+                        }
+                      },
+                      "resolved": {
+                        "description": "Logical record scope for an export.",
+                        "enum": [
+                          "all",
+                          "documents"
+                        ],
+                        "type": "string"
+                      }
                     }
                   },
                   "required": [
@@ -34896,9 +35243,89 @@
                   "resolved": {
                     "additionalProperties": false,
                     "properties": {
+                      "format": {
+                        "$ref": "#/components/schemas/TransferFormat",
+                        "siblings": {
+                          "resolved": {
+                            "description": "Supported import/export interchange formats.",
+                            "enum": [
+                              "native",
+                              "jsonl",
+                              "csv",
+                              "mongo_json",
+                              "cosmos_json",
+                              "dynamo_json"
+                            ],
+                            "type": "string"
+                          },
+                          "siblings": {
+                            "resolved": {
+                              "description": "Supported import/export interchange formats.",
+                              "enum": [
+                                "native",
+                                "jsonl",
+                                "csv",
+                                "mongo_json",
+                                "cosmos_json",
+                                "dynamo_json"
+                              ],
+                              "type": "string"
+                            },
+                            "siblings": {
+                              "description": "Output encoding. Defaults to JSONL for existing callers."
+                            }
+                          }
+                        },
+                        "resolved": {
+                          "description": "Supported import/export interchange formats.",
+                          "enum": [
+                            "native",
+                            "jsonl",
+                            "csv",
+                            "mongo_json",
+                            "cosmos_json",
+                            "dynamo_json"
+                          ],
+                          "type": "string"
+                        }
+                      },
                       "idempotency_key": {
                         "description": "Stable retry identity. Reusing it returns the same admitted operation.",
                         "type": "string"
+                      },
+                      "scope": {
+                        "$ref": "#/components/schemas/ExportScope",
+                        "siblings": {
+                          "resolved": {
+                            "description": "Logical record scope for an export.",
+                            "enum": [
+                              "all",
+                              "documents"
+                            ],
+                            "type": "string"
+                          },
+                          "siblings": {
+                            "resolved": {
+                              "description": "Logical record scope for an export.",
+                              "enum": [
+                                "all",
+                                "documents"
+                              ],
+                              "type": "string"
+                            },
+                            "siblings": {
+                              "description": "Converted formats require an explicit documents-only scope."
+                            }
+                          }
+                        },
+                        "resolved": {
+                          "description": "Logical record scope for an export.",
+                          "enum": [
+                            "all",
+                            "documents"
+                          ],
+                          "type": "string"
+                        }
                       }
                     },
                     "required": [
@@ -34911,9 +35338,41 @@
               "resolved": {
                 "additionalProperties": false,
                 "properties": {
+                  "format": {
+                    "$ref": "#/components/schemas/TransferFormat",
+                    "siblings": {
+                      "description": "Output encoding. Defaults to JSONL for existing callers."
+                    },
+                    "resolved": {
+                      "description": "Supported import/export interchange formats.",
+                      "enum": [
+                        "native",
+                        "jsonl",
+                        "csv",
+                        "mongo_json",
+                        "cosmos_json",
+                        "dynamo_json"
+                      ],
+                      "type": "string"
+                    }
+                  },
                   "idempotency_key": {
                     "description": "Stable retry identity. Reusing it returns the same admitted operation.",
                     "type": "string"
+                  },
+                  "scope": {
+                    "$ref": "#/components/schemas/ExportScope",
+                    "siblings": {
+                      "description": "Converted formats require an explicit documents-only scope."
+                    },
+                    "resolved": {
+                      "description": "Logical record scope for an export.",
+                      "enum": [
+                        "all",
+                        "documents"
+                      ],
+                      "type": "string"
+                    }
                   }
                 },
                 "required": [
@@ -34933,9 +35392,65 @@
                   "resolved": {
                     "additionalProperties": false,
                     "properties": {
+                      "format": {
+                        "$ref": "#/components/schemas/TransferFormat",
+                        "siblings": {
+                          "resolved": {
+                            "description": "Supported import/export interchange formats.",
+                            "enum": [
+                              "native",
+                              "jsonl",
+                              "csv",
+                              "mongo_json",
+                              "cosmos_json",
+                              "dynamo_json"
+                            ],
+                            "type": "string"
+                          },
+                          "siblings": {
+                            "description": "Output encoding. Defaults to JSONL for existing callers."
+                          }
+                        },
+                        "resolved": {
+                          "description": "Supported import/export interchange formats.",
+                          "enum": [
+                            "native",
+                            "jsonl",
+                            "csv",
+                            "mongo_json",
+                            "cosmos_json",
+                            "dynamo_json"
+                          ],
+                          "type": "string"
+                        }
+                      },
                       "idempotency_key": {
                         "description": "Stable retry identity. Reusing it returns the same admitted operation.",
                         "type": "string"
+                      },
+                      "scope": {
+                        "$ref": "#/components/schemas/ExportScope",
+                        "siblings": {
+                          "resolved": {
+                            "description": "Logical record scope for an export.",
+                            "enum": [
+                              "all",
+                              "documents"
+                            ],
+                            "type": "string"
+                          },
+                          "siblings": {
+                            "description": "Converted formats require an explicit documents-only scope."
+                          }
+                        },
+                        "resolved": {
+                          "description": "Logical record scope for an export.",
+                          "enum": [
+                            "all",
+                            "documents"
+                          ],
+                          "type": "string"
+                        }
                       }
                     },
                     "required": [
@@ -34947,9 +35462,89 @@
                     "resolved": {
                       "additionalProperties": false,
                       "properties": {
+                        "format": {
+                          "$ref": "#/components/schemas/TransferFormat",
+                          "siblings": {
+                            "resolved": {
+                              "description": "Supported import/export interchange formats.",
+                              "enum": [
+                                "native",
+                                "jsonl",
+                                "csv",
+                                "mongo_json",
+                                "cosmos_json",
+                                "dynamo_json"
+                              ],
+                              "type": "string"
+                            },
+                            "siblings": {
+                              "resolved": {
+                                "description": "Supported import/export interchange formats.",
+                                "enum": [
+                                  "native",
+                                  "jsonl",
+                                  "csv",
+                                  "mongo_json",
+                                  "cosmos_json",
+                                  "dynamo_json"
+                                ],
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "description": "Output encoding. Defaults to JSONL for existing callers."
+                              }
+                            }
+                          },
+                          "resolved": {
+                            "description": "Supported import/export interchange formats.",
+                            "enum": [
+                              "native",
+                              "jsonl",
+                              "csv",
+                              "mongo_json",
+                              "cosmos_json",
+                              "dynamo_json"
+                            ],
+                            "type": "string"
+                          }
+                        },
                         "idempotency_key": {
                           "description": "Stable retry identity. Reusing it returns the same admitted operation.",
                           "type": "string"
+                        },
+                        "scope": {
+                          "$ref": "#/components/schemas/ExportScope",
+                          "siblings": {
+                            "resolved": {
+                              "description": "Logical record scope for an export.",
+                              "enum": [
+                                "all",
+                                "documents"
+                              ],
+                              "type": "string"
+                            },
+                            "siblings": {
+                              "resolved": {
+                                "description": "Logical record scope for an export.",
+                                "enum": [
+                                  "all",
+                                  "documents"
+                                ],
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "description": "Converted formats require an explicit documents-only scope."
+                              }
+                            }
+                          },
+                          "resolved": {
+                            "description": "Logical record scope for an export.",
+                            "enum": [
+                              "all",
+                              "documents"
+                            ],
+                            "type": "string"
+                          }
                         }
                       },
                       "required": [
@@ -34962,9 +35557,41 @@
                 "resolved": {
                   "additionalProperties": false,
                   "properties": {
+                    "format": {
+                      "$ref": "#/components/schemas/TransferFormat",
+                      "siblings": {
+                        "description": "Output encoding. Defaults to JSONL for existing callers."
+                      },
+                      "resolved": {
+                        "description": "Supported import/export interchange formats.",
+                        "enum": [
+                          "native",
+                          "jsonl",
+                          "csv",
+                          "mongo_json",
+                          "cosmos_json",
+                          "dynamo_json"
+                        ],
+                        "type": "string"
+                      }
+                    },
                     "idempotency_key": {
                       "description": "Stable retry identity. Reusing it returns the same admitted operation.",
                       "type": "string"
+                    },
+                    "scope": {
+                      "$ref": "#/components/schemas/ExportScope",
+                      "siblings": {
+                        "description": "Converted formats require an explicit documents-only scope."
+                      },
+                      "resolved": {
+                        "description": "Logical record scope for an export.",
+                        "enum": [
+                          "all",
+                          "documents"
+                        ],
+                        "type": "string"
+                      }
                     }
                   },
                   "required": [
@@ -49428,7 +50055,7 @@
     }
   ],
   "sources": {
-    "openApiSha256": "0c14374467957a836e24e4e3aef554aff5d1405c6d08cf7323938c288f7e1833",
+    "openApiSha256": "1db95e5dd6044bb35328377551447bdadc691b774122e42706025b22a5916b79",
     "routeManifestSha256": "d17509fb2f1cfbbc30de40176461c2047472161964b587581774ffd5c0926973"
   }
 }

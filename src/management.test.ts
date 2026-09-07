@@ -40,10 +40,10 @@ function fixtureFetch(requests: Request[]): typeof fetch {
     requests.push(request);
     const body = request.method === "POST" && new URL(request.url).pathname === "/api/v1/databases"
       ? { created_at: 1, deleted: false, name: "primary", placement: "GRU", residency: "", parent: null }
-      : request.method === "POST" && new URL(request.url).pathname.endsWith("/backups/restore")
+      : request.method === "POST" && (new URL(request.url).pathname.endsWith("/backups/restore") || new URL(request.url).pathname.endsWith("/branches"))
         ? { environment: "production", tenant_id: "tenant-1", project_id: "project-1", operation_id: "op-restore", database_id: "db-restore", key_version: "key-1", name: "restored", regions: ["GRU"], residency: "br-only", parent_database_id: "primary", state: "accepted" }
       : {};
-    return Response.json(body, { status: request.method === "POST" && new URL(request.url).pathname.endsWith("/backups/restore") ? 202 : request.method === "POST" ? 201 : 200 });
+    return Response.json(body, { status: request.method === "POST" && (new URL(request.url).pathname.endsWith("/backups/restore") || new URL(request.url).pathname.endsWith("/branches")) ? 202 : request.method === "POST" ? 201 : 200 });
   };
 }
 
@@ -113,9 +113,9 @@ describe("management entrypoint", () => {
     const deleted = await client.databases.delete("primary", { confirm: true });
     const restored = await client.databases.restore("primary");
     const branches = await client.branches.list("primary");
-    const branch = await client.branches.create("primary", { name: "branch" });
+    const branch = await client.branches.create("primary", { name: "branch", operation_id: "op-branch" });
     const backups = await client.backups.listBackups("primary");
-    const backupRestore = await client.backups.restoreBackup("primary", { name: "restored" });
+    const backupRestore = await client.backups.restoreBackup("primary", { name: "restored", operation_id: "op-restore" });
 
     for (const result of [listed, created, fetched, deleted, restored, branches, branch, backups, backupRestore]) {
       expect(result.ok).toBe(true);
@@ -134,8 +134,8 @@ describe("management entrypoint", () => {
       "POST /api/v1/databases/primary/backups/restore",
     ]);
     expect(JSON.parse(await requests[1]!.text())).toEqual({ name: "primary", placement: ["GRU"], residency: null });
-    expect(JSON.parse(await requests[6]!.text())).toEqual({ name: "branch" });
-    expect(JSON.parse(await requests[8]!.text())).toEqual({ name: "restored" });
+    expect(JSON.parse(await requests[6]!.text())).toEqual({ name: "branch", operation_id: "op-branch" });
+    expect(JSON.parse(await requests[8]!.text())).toEqual({ name: "restored", operation_id: "op-restore" });
   });
 
   it("fails closed before validating or sending unsupported management routes", async () => {
