@@ -22,12 +22,9 @@ credentials only to the configured API origin; reactive snapshot and log
 requests use the short-lived view capability header.
 
 The runnable examples target the published `@terrascale/sdk` 0.3.0 surface.
-Database-scoped branch listing/creation, backup listing/restoration, and
-logical export routes are in the pinned public contract. The fixtures below
-that require project-scoped producer operations remain skipped until those
-operations are published and qualified. Tenant provisioning is also still
-unavailable because its producer contract is absent. Downloads return
-plaintext artifact bytes with the declared length
+Tenant, branch, backup, and export fixtures remain source-only until their
+producer contracts are published and qualified. Downloads return plaintext
+artifact bytes with the declared length
 and BLAKE3 checksum from the `X-TerraScale-Artifact-Length` and
 `X-TerraScale-Artifact-Checksum` headers. The stub mode is deterministic and
 never counts as remote qualification.
@@ -57,7 +54,8 @@ workflow.
 
 This fixture exercises the project-scoped branch producer, which is not in the
 pinned public contract yet. It is intentionally skipped in both modes.
-Database-scoped branch listing and creation are published separately.
+Database-scoped branch listing and creation are also awaiting publication and
+qualification.
 
 <<< ./snippets/branches.ts
 
@@ -65,18 +63,17 @@ Database-scoped branch listing and creation are published separately.
 
 This fixture exercises project-scoped backup policy and confirmation routes,
 which are not in the pinned public contract yet. It is intentionally skipped
-in both modes. Database-scoped backup listing and restoration are published
-separately.
+in both modes. Database-scoped backup listing and restoration are also
+awaiting publication and qualification.
 
 <<< ./snippets/backups.ts
 
 ## Logical export
 
-The database-scoped typed export operation is available in the pinned public
-contract, but this fixture's producer qualification is still pending. It
-remains in the source tree and is intentionally skipped by both runner modes.
-The API returns plaintext artifact
-bytes plus the declared length and BLAKE3 checksum metadata from response
+The database-scoped typed export operation remains pending its producer
+contract and qualification. This fixture remains in the source tree and is
+intentionally skipped by both runner modes. The intended API returns plaintext
+artifact bytes plus declared length and BLAKE3 checksum metadata from response
 headers.
 
 <<< ./snippets/exports.ts
