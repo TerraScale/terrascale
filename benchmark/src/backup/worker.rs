@@ -1159,6 +1159,38 @@ async fn enforce_retention_at(
             return Ok(());
         }
     }
+    // A local upload journal is only an acknowledgement of an earlier
+    // successful PUT. Before deleting any predecessor, fetch and authenticate
+    // the retained root from every current provider against the local sealed
+    // manifest. This closes the window where provider-side loss or rollback
+    // leaves the journal claiming protection that no longer exists.
+    for (_, destination) in &stream.config.destinations {
+        let verification_root = stream
+            .config
+            .staging
+            .join(format!(".retention-verify-{}", destination.identity()));
+        if verification_root.exists() {
+            return Err(FleetError::Capture);
+        }
+        let verification_point =
+            verification_root.join(super::manifest::point_directory(root.identity()));
+        std::fs::create_dir_all(&verification_root).map_err(|_| FleetError::Capture)?;
+        let result = destination
+            .download_point_with_byte_limit(
+                &format!("{identity}/{root_name}"),
+                &verification_point,
+                limits.staging_bytes_per_stream,
+            )
+            .await
+            .and_then(|_| {
+                super::verify_members(&verification_root, root.identity(), root.members())
+                    .map_err(|_| super::object_store::TransferError::InvalidPoint)
+            });
+        let cleanup = std::fs::remove_dir_all(&verification_root);
+        if result.is_err() || cleanup.is_err() {
+            return Err(FleetError::Capture);
+        }
+    }
     // Authentication plus every member digest was verified before admission to
     // deletion. Exclusive fleet execution excludes concurrent local restores.
     for point in &points {

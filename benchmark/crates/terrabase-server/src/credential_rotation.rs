@@ -87,16 +87,11 @@ impl LiveKeys {
 }
 
 fn materials_disjoint(keys: &LiveKeys) -> bool {
-    let capability = [
-        keys.capability.current.as_slice(),
-        keys.capability.previous.as_deref().unwrap_or(&[]),
-    ];
-    let origin = [
-        keys.origin.current.as_slice(),
-        keys.origin.previous.as_deref().unwrap_or(&[]),
-    ];
+    let capability =
+        [keys.capability.current.as_slice(), keys.capability.previous.as_deref().unwrap_or(&[])];
+    let origin = [keys.origin.current.as_slice(), keys.origin.previous.as_deref().unwrap_or(&[])];
     capability.iter().all(|candidate| {
-        candidate.is_empty() || origin.iter().all(|other| other.is_empty() || *candidate != other)
+        candidate.is_empty() || origin.iter().all(|other| other.is_empty() || *candidate != *other)
     })
 }
 
@@ -473,9 +468,7 @@ fn stage_rotation(service: &Service, request: &Request, next: &mut Durable) -> i
     if current == origin_current
         || (!previous.is_empty() && previous == origin_current)
         || (!origin_previous.is_empty() && current == origin_previous)
-        || (!previous.is_empty()
-            && !origin_previous.is_empty()
-            && previous == origin_previous)
+        || (!previous.is_empty() && !origin_previous.is_empty() && previous == origin_previous)
     {
         return Err(invalid());
     }
@@ -503,11 +496,9 @@ fn stage_rotation(service: &Service, request: &Request, next: &mut Durable) -> i
     {
         return Err(invalid());
     }
-    let mut origin_keys = KeyMaterial::new(
-        &origin_current,
-        origin_overlap.then_some(origin_previous.as_slice()),
-    )
-    .ok_or_else(invalid)?;
+    let mut origin_keys =
+        KeyMaterial::new(&origin_current, origin_overlap.then_some(origin_previous.as_slice()))
+            .ok_or_else(invalid)?;
     origin_keys.expires_at = request.origin_expires_at;
     origin_keys.previous_expires_at = request.origin_previous_expires_at;
     if overlap
@@ -625,9 +616,10 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
         }
         "verify" => {
             if request.generation != next.generation
-                || next.staged.as_ref().is_none_or(|s| {
-                    s.origin.usable().is_none() || s.capability.usable().is_none()
-                })
+                || next
+                    .staged
+                    .as_ref()
+                    .is_none_or(|s| s.origin.usable().is_none() || s.capability.usable().is_none())
             {
                 return Err(invalid());
             }

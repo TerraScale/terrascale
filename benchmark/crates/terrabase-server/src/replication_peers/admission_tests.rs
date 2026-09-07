@@ -514,13 +514,19 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     .await
     .expect("replacement session");
     assert!(second > first);
-    assert!(progress.regional_covers(scope, 8).is_err(), "fenced evidence must not cover before a fresh response");
+    assert!(
+        progress.regional_covers(scope, 8).is_err(),
+        "fenced evidence must not cover before a fresh response"
+    );
     let facts = observations.lock().unwrap();
     let facts = facts.get(&(peer.member().as_str().to_owned(), scope)).unwrap();
     assert!(facts.physical.is_none(), "closed session must not publish physical proof");
     assert!(facts.readiness.is_none(), "closed session must not publish readiness proof");
     drop(facts);
-    assert!(peers.ensure_running().is_ok(), "terminal command path remains usable after session restart");
+    assert!(
+        peers.ensure_running().is_ok(),
+        "terminal command path remains usable after session restart"
+    );
     peers.drain().await.unwrap();
     remote_task.await.unwrap();
     drop(runtime);

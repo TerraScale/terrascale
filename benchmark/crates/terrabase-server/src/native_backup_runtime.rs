@@ -89,6 +89,7 @@ impl std::error::Error for NativeBackupRuntimeError {}
 pub struct NativeBackupRuntime {
     fleet: Arc<Mutex<NativeBackupFleet>>,
     databases: Mutex<BTreeSet<String>>,
+    incidents: Mutex<Vec<(String, FleetError)>>,
 }
 
 impl NativeBackupRuntime {
@@ -119,7 +120,11 @@ impl NativeBackupRuntime {
                 .map_err(NativeBackupRuntimeError::Fleet)?;
             databases.insert(database.clone());
         }
-        Ok(Self { fleet: Arc::new(Mutex::new(fleet)), databases: Mutex::new(databases) })
+        Ok(Self {
+            fleet: Arc::new(Mutex::new(fleet)),
+            databases: Mutex::new(databases),
+            incidents: Mutex::new(Vec::new()),
+        })
     }
 
     /// Returns the shared fleet for observations and native recovery lanes.
@@ -131,7 +136,41 @@ impl NativeBackupRuntime {
     /// Executes one bounded asynchronous fleet tick.
     pub async fn tick(&self) -> Result<Vec<(String, FleetError)>, NativeBackupRuntimeError> {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        Ok(fleet.sync_once().await)
+        let errors = fleet.sync_once().await;
+        if !errors.is_empty() {
+            self.incidents
+                .lock()
+                .map_err(|_| NativeBackupRuntimeError::Poisoned)?
+                .extend(errors.iter().copied());
+        }
+        Ok(errors)
+    }
+
+    /// Runs recurring fleet synchronization until the caller signals shutdown.
+    /// Each tick is serialized by the fleet owner; provider failures are
+    /// retained as incidents and do not alter admitted write ownership.
+    pub async fn supervise(
+        self: Arc<Self>,
+        period: std::time::Duration,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), NativeBackupRuntimeError> {
+        let mut interval = tokio::time::interval(period);
+        loop {
+            tokio::select! {
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() { return Ok(()); }
+                }
+                _ = interval.tick() => { self.tick().await?; }
+            }
+        }
+    }
+
+    /// Returns provider failures observed by recurring synchronization.
+    pub fn incidents(&self) -> Result<Vec<(String, FleetError)>, NativeBackupRuntimeError> {
+        self.incidents
+            .lock()
+            .map(|incidents| incidents.clone())
+            .map_err(|_| NativeBackupRuntimeError::Poisoned)
     }
 
     /// Captures one operation-bound point and verifies its complete chain.

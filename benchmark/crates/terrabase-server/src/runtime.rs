@@ -402,6 +402,13 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         ))) as Box<dyn Error + Send + Sync>
     })?;
     let mut recovery_worker = Some(recovery_worker);
+    let (native_stop, native_signal) = tokio::sync::watch::channel(false);
+    let native_supervisor = Arc::clone(&native);
+    let mut native_task = Some(tokio::spawn(async move {
+        native_supervisor
+            .supervise(std::time::Duration::from_secs(1), native_signal)
+            .await
+    }));
     let native_for_startup_cleanup = Arc::clone(&native);
     let admission_for_startup_cleanup = Arc::clone(&admission);
     let member_for_startup_cleanup = Arc::clone(&member);
@@ -666,8 +673,16 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         .take()
         .ok_or(DaemonError::ShutdownTimeout)?;
     let _ = recovery_worker.shutdown().await;
-    native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
+    let _ = native_stop.send(true);
+    let native_task = native_task
+        .take()
+        .ok_or(DaemonError::ShutdownTimeout)?;
+    let _ = native_task
+        .await
+        .map_err(|_| DaemonError::ShutdownTimeout)?
+        .map_err(|_| DaemonError::ShutdownTimeout)?;
     admission.drain().await.map_err(|_| DaemonError::ShutdownTimeout)?;
+    native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
     serving.store(false, std::sync::atomic::Ordering::Release);
     let report = member.drain().await;
     report.storage.map_err(|error| {
@@ -683,6 +698,8 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     if let Err(error) = startup_result {
         cleanup_failed_production_startup(
             recovery_worker.take(),
+            native_stop.clone(),
+            native_task.take(),
             &admission_for_startup_cleanup,
             &native_for_startup_cleanup,
             &member_for_startup_cleanup,
@@ -695,12 +712,18 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
 
 async fn cleanup_failed_production_startup(
     recovery_worker: Option<crate::native_recovery::NativeRecoveryWorker>,
+    native_stop: tokio::sync::watch::Sender<bool>,
+    native_task: Option<tokio::task::JoinHandle<Result<(), crate::native_backup_runtime::NativeBackupRuntimeError>>>,
     admission: &crate::production_data_runtime::ProductionAdmissionRuntime,
     native: &crate::native_backup_runtime::NativeBackupRuntime,
     member: &terrabase_cluster::production::ProductionMemberRuntime,
 ) {
     if let Some(recovery_worker) = recovery_worker {
         let _ = recovery_worker.shutdown().await;
+    }
+    let _ = native_stop.send(true);
+    if let Some(native_task) = native_task {
+        let _ = native_task.await;
     }
     let _ = admission.drain().await;
     let _ = native.drain();
