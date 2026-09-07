@@ -81,6 +81,29 @@ describe("management entrypoint", () => {
     expect(requests).toHaveLength(0);
   });
 
+  it("parses the canonical operation GET as an OperationSummary", async () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleManagementClient({
+      apiBaseUrl: "https://api.example.test",
+      fetch: async input => {
+        requests.push(new Request(input));
+        return new Response('{"operation_id":"op-1","kind":"database_create","database_id":"db-1","name":"primary","state":"running","stage":"accepted","created_at":"2026-09-06T12:00:00Z","revision":18446744073709551615,"cancellable":false,"cancellation_reason":"Provisioning has no safe cancellation action"}', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const result = await client.operations.get("op-1");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.kind).toBe("database_create");
+      expect(result.value.stage).toBe("accepted");
+      expect(result.value.revision).toBe(18446744073709551615n);
+    }
+    expect(new URL(requests[0]!.url).pathname).toBe("/api/v1/operations/op-1");
+  });
+
   it("preserves omitted metadata and the maximum producer u64 revision", async () => {
     const client = createTerraScaleManagementClient({
       apiBaseUrl: "https://api.example.test",

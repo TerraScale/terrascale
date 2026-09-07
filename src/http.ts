@@ -617,6 +617,7 @@ function parseSuccessResponse(raw: string, routeName: TerraScaleRouteName): unkn
 
 const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {
   "databases.listOperations": ["operations.*.revision"],
+  "databases.getProvisioningOperation": ["revision"],
   "databases.insertUnique": ["expiresAtMs"],
   "databases.compareAndSwap": ["expiresAtMs"],
   "databases.consumeOne": ["expiresAtMs"],

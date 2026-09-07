@@ -222,7 +222,8 @@ export class ManagementOperationsClient {
     });
   }
 
-  get(operationId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<ProvisioningOperation>> {
+  /** Gets the canonical cross-owner operation summary. */
+  get(operationId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<OperationSummary>> {
     requireText(operationId, "operationId", 128);
     return this.#http.request({ method: "GET", path: `${apiRoot}/operations/${idSegment(operationId, "operation id")}`, routeName: "databases.getProvisioningOperation", signal: options.signal });
   }
