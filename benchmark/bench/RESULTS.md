@@ -22,7 +22,7 @@ comparison. There is no unfenced gating mode.
 | family | workloads | status |
 | --- | --- | --- |
 | point ops | read, write | rendered below |
-| indexed query | query | <!-- E-13 indexed-query STATUS -->unavailable<!-- E-13 indexed-query STATUS-END --> |
+| indexed query | query | <!-- E-13 indexed-query STATUS -->failed<!-- E-13 indexed-query STATUS-END --> |
 | ingest | bulk load | <!-- E-13 ingest STATUS -->unavailable<!-- E-13 ingest STATUS-END --> |
 | auto-indexing | index build / shadow verify | <!-- E-13 auto-indexing STATUS -->unavailable<!-- E-13 auto-indexing STATUS-END --> |
 | sync | view attach / delta log | <!-- E-13 sync STATUS -->unavailable<!-- E-13 sync STATUS-END --> |
@@ -42,16 +42,17 @@ attempt failed, older complete attempts are superseded.
 
 | workload | side | status | ops/s | p50 us | p95 us | p99 us | wall ms |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| read | terrabase | invalid | - | - | - | - | - |
+| read | terrabase | failed | - | - | - | - | - |
 | read | postgresql | failed | - | - | - | - | - |
 | read | pg-fullstack | invalid | - | - | - | - | - |
 | read | ravendb | invalid | - | - | - | - | - |
-| write | terrabase | missing | - | - | - | - | - |
+| write | terrabase | failed | - | - | - | - | - |
 | write | postgresql | failed | - | - | - | - | - |
 | write | pg-fullstack | invalid | - | - | - | - | - |
 | write | ravendb | invalid | - | - | - | - | - |
 
 <!-- E-13 point-ops END -->
+
 
 
 <!-- E-13 benchmark-history BEGIN -->
@@ -76,9 +77,11 @@ per `LaneConfig::RECORD_MINIMUM`.
 
 Only rows with a valid comparability contract may join a workload comparison; no verdict is produced by this renderer. Failed/raw attempts remain retained and never contribute measurements.
 
+- terrabase/read: failed/raw — `bench/results/terrabase-read-1788816291301969015-821228-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
 - postgresql/read: failed/raw — `bench/results/postgresql-read-1788137614741020195-272364-0.json` — cannot connect to the pinned reference: error connecting to server
 - pg-fullstack/read: invalid/raw — `bench/results/pg-fullstack-read-1788187005634601753-306703-0.json` — comparability.run_digest is not a SHA-256 digest
 - ravendb/read: invalid/raw — `bench/results/ravendb-read-1788135679661528717-4010795-0.json` — comparability.run_digest is not a SHA-256 digest
+- terrabase/write: failed/raw — `bench/results/terrabase-write-1788816291307716735-821233-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
 - postgresql/write: failed/raw — `bench/results/postgresql-write-1788137614935028280-272475-0.json` — cannot connect to the pinned reference: error connecting to server
 - pg-fullstack/write: invalid/raw — `bench/results/pg-fullstack-write-1788187050721866209-310755-0.json` — comparability.run_digest is not a SHA-256 digest
 - ravendb/write: invalid/raw — `bench/results/ravendb-write-1788135716237245380-4013312-0.json` — comparability.run_digest is not a SHA-256 digest
@@ -97,6 +100,7 @@ Only rows with a valid comparability contract may join a workload comparison; no
 
 These attempts are retained for audit and are never used as complete measurements.
 
+- `bench/results/auto-index-1788816336-828597.json` — missing required TERRABASE_BENCH_TERRABASE_ENDPOINT
 - `bench/results/postgresql-mixed-1788135184461262373-3832326-0.json` — cannot connect to the pinned reference: error connecting to server
 - `bench/results/postgresql-mixed-1788137615313202308-272578-0.json` — cannot connect to the pinned reference: error connecting to server
 - `bench/results/postgresql-query-1788135183790116747-3831866-0.json` — cannot connect to the pinned reference: error connecting to server
@@ -111,16 +115,18 @@ These attempts are retained for audit and are never used as complete measurement
 - `bench/results/terrabase-read-1788128658931014378-1.json` — seed operation 0: terrabase: usage_unavailable (grpc FailedPrecondition): a production network mutation requires trusted usage admission
 - `bench/results/terrabase-read-1788128659735477939-2.json` — Go benchmark adapter exited with status exit status: 1
 - `bench/results/terrabase-read-1788128992385733234-2.json` — invalid adapter result: config operation counts must be divisible by concurrency
+- `bench/results/terrabase-read-1788816291301969015-821228-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
+- `bench/results/terrabase-write-1788816291307716735-821233-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
 
 ## Results (median across samples)
 
 | workload | side | status | ops/s | p50 µs (median–max) | p95 µs | p99 µs | sample wall ms |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| read | terrabase | diagnostic | — | — | — | — | — |
+| read | terrabase | failed | — | — | — | — | — |
 | read | postgresql | failed | — | — | — | — | — |
 | read | pg-fullstack | invalid | — | — | — | — | — |
 | read | ravendb | invalid | — | — | — | — | — |
-| write | terrabase | missing | — | — | — | — | — |
+| write | terrabase | failed | — | — | — | — | — |
 | write | postgresql | failed | — | — | — | — | — |
 | write | pg-fullstack | invalid | — | — | — | — | — |
 | write | ravendb | invalid | — | — | — | — | — |
@@ -133,31 +139,29 @@ These attempts are retained for audit and are never used as complete measurement
 | mixed | pg-fullstack | invalid | — | — | — | — | — |
 | mixed | ravendb | invalid | — | — | — | — | — |
 
-## TerraBase diagnostic trajectory (not a comparison)
-
-These rows come from the diagnostic single-member loopback mTLS boundary (diagnostic qualification run). They carry no comparison contract, never join the comparison table above, and are facts about this host at the moment of the run.
-
-- **terrabase**: tbep-qualification-harness/network-mtls/v1
-
-| workload | ops/s | p50 µs | p95 µs | p99 µs |
-| --- | --- | --- | --- | --- |
-| read | 2651 | 2985 | 24259 | 49755 |
-
 <!-- E-13 benchmark-history END -->
+
 
 <!-- E-13 indexed-query BEGIN -->
 
-### Indexed query
+# E-13 indexed query (e-13-indexed-query-production-v1)
 
-Status: **unavailable** — no served-boundary report was retained.
+Status: **failed - fail-closed**  
+Topology: unknown (single-node and RF=2 results are separate comparison groups)  
+Boundary: production-member-unknown (TerraBase served member)  
+Launch member resource evidence: **2 OCPU / 12 GiB RAM**  
+Admission error: TERRABASE_BENCH_INDEXED_QUERY_RUN_DIGEST is required
 
 | side | status | p50 us | p95 us | p99 us | rows returned | rows examined | pages read | logical work |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| terrabase | unavailable | - | - | - | - | - | - | - |
-| postgresql-jsonb | unavailable | - | - | - | - | - | - | - |
-| ravendb | unavailable | - | - | - | - | - | - | - |
+| terrabase | failed - not launched: OCI launch-member resource evidence file is missing | - | - | - | - | - | - | - |
+| postgresql-jsonb | failed - adapter unavailable (TERRABASE_BENCH_INDEXED_QUERY_POSTGRESQL_JSONB_CMD is not set) | - | - | - | - | - | - | - |
+| ravendb | failed - adapter unavailable (TERRABASE_BENCH_INDEXED_QUERY_RAVENDB_CMD is not set) | - | - | - | - | - | - | - |
+
+Numbers are admitted only from side adapters with observed identities, immutable image digests, five or more samples, and logical_work = pages_read + rows_examined. Missing comparators and the served TerraBase member remain failed/unavailable and cannot support a performance claim.
 
 <!-- E-13 indexed-query END -->
+
 
 <!-- E-13 ingest BEGIN -->
 
@@ -176,17 +180,20 @@ The launch-member contract is exactly 2 OCPU / 12 GiB; single-node and RF=2 rows
 
 <!-- E-13 ingest END -->
 
+
 <!-- E-13 auto-indexing BEGIN -->
 
 ### Auto-indexing
 
-Status: **unavailable** — no served-boundary receipt was retained.
+Status: **failed** · topology: **unknown** · documents: **-** · receipt: `bench/results/auto-index-1788816336-828597.json`
 
 | phase | subject | value |
 | --- | --- | --- |
-| all | all | unavailable |
+
+Required gates: 5% regression rollback, fixed-point replay, 12 visible-index cap, and no more than 2× no-index write maintenance cost.
 
 <!-- E-13 auto-indexing END -->
+
 
 <!-- E-13 sync BEGIN -->
 
@@ -201,3 +208,4 @@ Status: **unavailable** — no served-boundary receipt was retained.
 | unknown | cross_region | unavailable | - | - | - |
 
 <!-- E-13 sync END -->
+

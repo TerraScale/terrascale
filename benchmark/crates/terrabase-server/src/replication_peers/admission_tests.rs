@@ -523,6 +523,7 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
             if let Some(facts) =
                 observations.lock().unwrap().get(&(peer.member().as_str().to_owned(), scope))
                 && facts.session_id > first
+                && checkpoint_sent.load(Ordering::Acquire)
             {
                 break facts.session_id;
             }

@@ -419,9 +419,106 @@ fn validate_operation_id(operation_id: &str) -> Result<(), NativeBackupRuntimeEr
 #[cfg(test)]
 mod restore_tests {
     use super::*;
+    use object_store::ObjectStore;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct BlockingStore {
+        inner: Arc<object_store::memory::InMemory>,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        puts: AtomicUsize,
+    }
+
+    impl std::fmt::Display for BlockingStore {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("blocking test object store")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl object_store::ObjectStore for BlockingStore {
+        async fn put_opts(
+            &self,
+            location: &object_store::path::Path,
+            payload: object_store::PutPayload,
+            opts: object_store::PutOptions,
+        ) -> object_store::Result<object_store::PutResult> {
+            let put_number = self.puts.fetch_add(1, Ordering::Relaxed);
+            if put_number == 0 {
+                self.entered.notify_one();
+                self.release.notified().await;
+            }
+            self.inner.put_opts(location, payload, opts).await
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &object_store::path::Path,
+            opts: object_store::PutMultipartOptions,
+        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
+            self.inner.put_multipart_opts(location, opts).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &object_store::path::Path,
+            opts: object_store::GetOptions,
+        ) -> object_store::Result<object_store::GetResult> {
+            self.inner.get_opts(location, opts).await
+        }
+
+        async fn delete(&self, location: &object_store::path::Path) -> object_store::Result<()> {
+            self.inner.delete(location).await
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&object_store::path::Path>,
+        ) -> futures_util::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
+        {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&object_store::path::Path>,
+        ) -> object_store::Result<object_store::ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy(
+            &self,
+            from: &object_store::path::Path,
+            to: &object_store::path::Path,
+        ) -> object_store::Result<()> {
+            self.inner.copy(from, to).await
+        }
+
+        async fn copy_if_not_exists(
+            &self,
+            from: &object_store::path::Path,
+            to: &object_store::path::Path,
+        ) -> object_store::Result<()> {
+            self.inner.copy_if_not_exists(from, to).await
+        }
+    }
 
     fn runtime_fixture(
         label: &str,
+    ) -> (
+        Arc<NativeBackupRuntime>,
+        Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+        terrabase::member::Member,
+        std::path::PathBuf,
+        String,
+    ) {
+        runtime_fixture_with_store(label, Arc::new(object_store::memory::InMemory::new()))
+    }
+
+    fn runtime_fixture_with_store(
+        label: &str,
+        store: Arc<dyn object_store::ObjectStore>,
     ) -> (
         Arc<NativeBackupRuntime>,
         Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
@@ -464,7 +561,7 @@ mod restore_tests {
                     terrabase::backup::object_store::Provider::Oci,
                     Arc::new(terrabase::backup::object_store::ObjectDestination::for_test(
                         terrabase::backup::object_store::Provider::Oci,
-                        Arc::new(object_store::memory::InMemory::new()),
+                        store,
                         4 * 1024 * 1024,
                         8 * 1024 * 1024,
                     )),
@@ -484,8 +581,13 @@ mod restore_tests {
     async fn pre_signalled_supervisor_does_not_tick_and_drain_releases_host_lease() {
         let (runtime, registry, member, root, database) = runtime_fixture("supervisor-pre-stop");
         let (shutdown, receiver) = tokio::sync::watch::channel(true);
-        runtime.supervise(std::time::Duration::from_millis(1), receiver).await.unwrap();
-        assert!(!root.join("supervisor-pre-stop").exists());
+        Arc::clone(&runtime)
+            .supervise(std::time::Duration::from_millis(1), receiver)
+            .await
+            .unwrap();
+        let staging = root.join("supervisor-pre-stop");
+        assert!(staging.exists());
+        assert!(std::fs::read_dir(staging).unwrap().next().is_none());
         assert!(runtime.contains(&database));
 
         registry.pause(&database, "supervisor-drain").unwrap();
@@ -493,6 +595,39 @@ mod restore_tests {
         assert!(!runtime.contains(&database));
         assert!(registry.reserve_restore(&database).is_ok());
         drop(shutdown);
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_waits_for_in_flight_provider_tick() {
+        let store = Arc::new(BlockingStore {
+            inner: Arc::new(object_store::memory::InMemory::new()),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+            puts: AtomicUsize::new(0),
+        });
+        let (runtime, registry, member, root, database) = runtime_fixture_with_store(
+            "supervisor-blocked",
+            Arc::clone(&store) as Arc<dyn object_store::ObjectStore>,
+        );
+        let (shutdown, receiver) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(
+            Arc::clone(&runtime).supervise(std::time::Duration::from_millis(1), receiver),
+        );
+        store.entered.notified().await;
+        assert_eq!(store.puts.load(Ordering::Relaxed), 1);
+        shutdown.send(true).unwrap();
+        assert!(!task.is_finished());
+        assert!(runtime.contains(&database));
+        store.release.notify_one();
+        task.await.unwrap().unwrap();
+        let puts_after_tick = store.puts.load(Ordering::Relaxed);
+        tokio::task::yield_now().await;
+        assert_eq!(store.puts.load(Ordering::Relaxed), puts_after_tick);
+        runtime.drain().unwrap();
+        assert!(!runtime.contains(&database));
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();

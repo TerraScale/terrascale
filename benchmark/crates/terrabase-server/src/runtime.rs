@@ -663,8 +663,12 @@ async fn serve_admitted_production(
         }));
         serving.store(true, std::sync::atomic::Ordering::Release);
         let status = public_status;
+        let (public_stop, public_signal) = tokio::sync::oneshot::channel();
         let mut public_task = tokio::spawn(prepared.serve(async {
-            let _ = wait_for_shutdown().await;
+            tokio::select! {
+                _ = wait_for_shutdown() => {},
+                _ = public_signal => {},
+            }
         }));
         let readiness = tokio::time::timeout(config.shutdown_grace, async {
             loop {
@@ -683,24 +687,26 @@ async fn serve_admitted_production(
             }
         })
         .await
-        .map_err(|_| DaemonError::ShutdownTimeout)?;
-        if let Err(error) = readiness {
+        .unwrap_or(Err(DaemonError::ShutdownTimeout));
+        if readiness.is_err() {
             serving.store(false, std::sync::atomic::Ordering::Release);
-            grpc_handle.begin_drain();
-            let _ = tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait()).await;
-            let _ = metrics_stop.send(());
-            let _ = metrics_task.await;
-            return Err(Box::new(error) as Box<dyn Error + Send + Sync>);
+            let _ = public_stop.send(());
         }
-        let result = public_task.await.map_err(|_| DaemonError::ShutdownTimeout)?;
+        // Every post-listener result, including readiness timeout and task
+        // panic, joins all listeners before any error can drain their owners.
+        let public_result = (&mut public_task).await;
+        serving.store(false, std::sync::atomic::Ordering::Release);
         let _ = metrics_stop.send(());
-        metrics_task
-            .await
+        grpc_handle.begin_drain();
+        let grpc_drain = tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait());
+        let metrics_result = metrics_task.await;
+        let grpc_result = grpc_drain.await;
+        readiness?;
+        let result = public_result.map_err(|_| DaemonError::ShutdownTimeout)?;
+        metrics_result
             .map_err(|_| DaemonError::ShutdownTimeout)?
             .map_err(|_| DaemonError::ShutdownTimeout)?;
-        grpc_handle.begin_drain();
-        tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait())
-            .await
+        grpc_result
             .map_err(|_| DaemonError::ShutdownTimeout)?
             .map_err(|_| DaemonError::ShutdownTimeout)?;
         let recovery_worker = recovery_worker.take().ok_or(DaemonError::ShutdownTimeout)?;
@@ -727,6 +733,7 @@ async fn serve_admitted_production(
     }
     .await;
     if let Err(error) = startup_result {
+        serving.store(false, std::sync::atomic::Ordering::Release);
         cleanup_failed_production_startup(
             recovery_worker.take(),
             native_stop.clone(),
@@ -1699,7 +1706,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[tokio::test]
-    async fn post_worker_startup_failure_joins_owners_and_releases_ledger() {
+    async fn post_listener_startup_failure_joins_owners_and_releases_ledger() {
         use crate::native_backup_runtime::{
             AdmittedBackupEngine, NativeBackupInput, NativeBackupRuntime,
         };
@@ -1743,14 +1750,38 @@ mod tests {
             &root,
             &keys,
         );
+        let receipt_key = root.join("receipt-signing.key");
+        let receipt_der = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(
+            &aws_lc_rs::rand::SystemRandom::new(),
+        ).unwrap();
+        std::fs::write(&receipt_key, receipt_der.as_ref()).unwrap();
+        let export_key = root.join("export-cursor.key");
+        std::fs::write(&export_key, [7u8; 32]).unwrap();
+        let tls_key = rcgen::KeyPair::generate().unwrap();
+        let mut tls_params = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap();
+        tls_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let certificate = tls_params.self_signed(&tls_key).unwrap();
+        std::fs::write(&production.transport.server_certificate, certificate.pem()).unwrap();
+        std::fs::write(&production.transport.client_ca, certificate.pem()).unwrap();
+        std::fs::write(&production.transport.server_private_key, tls_key.serialize_pem()).unwrap();
+        for path in [&receipt_key, &export_key, &production.transport.server_private_key] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        // Reserve three distinct known ports, then relinquish them to the
+        // real public, metrics and mTLS listeners.
+        let reservations: Vec<_> = (0..3).map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap()).collect();
+        let addresses: Vec<_> = reservations.iter().map(|listener| listener.local_addr().unwrap()).collect();
+        production.transport.tbep_listen = addresses[0];
+        production.transport.metrics_listen = addresses[1];
+        drop(reservations);
         production.control = Some(crate::config::ProductionControl {
             proposal_journal: root.join("placement.sqlite"),
             orchestrator_principals: BTreeSet::new(),
             observer_principals: BTreeSet::new(),
             transition: None,
-            receipt_signing_key_file: Some(root.join("missing-receipt-signing.key")),
+            receipt_signing_key_file: Some(receipt_key),
             receipt_signing_key_id: Some("startup-receipt".into()),
-            export_cursor_key_file: None,
+            export_cursor_key_file: Some(export_key),
         });
         let placement = ProductionPlacement::try_new(
             local,
@@ -1843,6 +1874,23 @@ mod tests {
         );
         drop(target);
         let admission = Arc::new(admission.with_native_deletion(native.fleet()).unwrap());
+        let publication_key = root.join("lifecycle-publisher.key");
+        std::fs::write(&publication_key, "p".repeat(32)).unwrap();
+        let outbox = root.join("lifecycle-outbox.sqlite");
+        // Corrupt durable publisher state is a reachable failure inside the
+        // public task, after metrics and gRPC have started. All key/TLS/export
+        // inputs above are valid, so no earlier missing-fixture branch wins.
+        std::fs::write(&outbox, b"corrupt SQLite outbox").unwrap();
+        let mut public = crate::auth_runtime::tests::admitted_fixture::public_config(
+            &root, root.join("bootstrap.key"),
+        );
+        public.listen = addresses[2];
+        public.lifecycle_publication = Some(crate::config::LifecyclePublicationConfig {
+            endpoint: "https://dashboard.example/api/internal/lifecycle/publish".into(),
+            key_file: publication_key,
+            outbox_path: outbox,
+        });
+        let serving = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let config = ServerConfig {
             mode: ServerMode::Production,
             production: Some(production.clone()),
@@ -1858,10 +1906,7 @@ mod tests {
             client_ca: root.join("missing-ca.crt"),
             member_principals: BTreeSet::new(),
             uds: None,
-            public_api: Some(crate::auth_runtime::tests::admitted_fixture::public_config(
-                &root,
-                root.join("bootstrap.key"),
-            )),
+            public_api: Some(public),
             replication_peers: Vec::new(),
             observability_listen: "127.0.0.1:0".parse().unwrap(),
             max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,
@@ -1880,7 +1925,7 @@ mod tests {
                     admission: admission.clone(),
                     registry: registry.clone(),
                     progress,
-                    serving: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    serving: serving.clone(),
                     journal: Some(journal),
                     auth: None,
                 },
@@ -1890,7 +1935,13 @@ mod tests {
         .await
         .unwrap()
         .unwrap_err();
-        assert!(error.to_string().contains("no typed production configuration"));
+        assert!(error.to_string().contains("production public listener stopped during startup"), "{error}");
+        assert!(!serving.load(Ordering::Acquire), "failed startup must close admission");
+        for address in addresses {
+            let reopened = std::net::TcpListener::bind(address)
+                .expect("all public, metrics and gRPC listener tasks were joined");
+            drop(reopened);
+        }
         let recovery_root = parts_root_for_recovery(&production);
         assert!(
             recovery_root.join("recovery.worker.lock").exists(),

@@ -1502,9 +1502,13 @@ impl Drop for PeerInbox {
         // advertising observations from a session whose owner no longer exists.
         self.progress.fence_peer(&self.peer);
         if let Ok(mut observations) = self.observations.lock() {
-            for ((peer, _), facts) in observations.iter_mut() {
-                if peer == &self.peer && facts.session_id == self.worker_id {
-                    *facts = PeerFacts::default();
+            if !live.contains(&self.peer) {
+                observations.retain(|(peer, _), _| peer != &self.peer);
+            } else {
+                for ((peer, _), facts) in observations.iter_mut() {
+                    if peer == &self.peer && facts.session_id == self.worker_id {
+                        *facts = PeerFacts::default();
+                    }
                 }
             }
         }

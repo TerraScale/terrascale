@@ -6877,6 +6877,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header("authorization", auth)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(
                         r#"{"name":"prod","placement":["GRU","SFO","FRA"],"residency":null}"#,
                     ))
