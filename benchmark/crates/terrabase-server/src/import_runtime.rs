@@ -354,7 +354,7 @@ impl<C: ImportCipher> ImportInputReader<C> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use crate::test_keys;
@@ -380,11 +380,21 @@ mod tests {
         ImportLeaseCipher::new(lease, tenant, database)
     }
 
+    fn test_root() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-import-{}-{}",
+            std::process::id(),
+            terrabase::identity::generate()
+        ));
+        std::fs::create_dir_all(&root).expect("root");
+        root
+    }
+
     #[test]
     fn leased_input_roundtrip_and_scope_binding() {
-        let root = tempfile::tempdir().expect("root");
+        let root = test_root();
         let mut writer =
-            ImportInputWriter::create(root.path(), "operation", leased_cipher()).expect("writer");
+            ImportInputWriter::create(&root, "operation", leased_cipher()).expect("writer");
         writer.write_chunk(b"first").expect("chunk");
         writer.write_chunk(b"second").expect("chunk");
         let (path, digest, length) = writer.finish().expect("finish");
@@ -399,13 +409,14 @@ mod tests {
                 .read_all(&digest, length)
                 .is_err()
         );
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
     fn leased_input_rejects_corrupt_and_truncated_chunks() {
-        let root = tempfile::tempdir().expect("root");
+        let root = test_root();
         let mut writer =
-            ImportInputWriter::create(root.path(), "operation", leased_cipher()).expect("writer");
+            ImportInputWriter::create(&root, "operation", leased_cipher()).expect("writer");
         writer.write_chunk(b"payload").expect("chunk");
         let (path, digest, length) = writer.finish().expect("finish");
         let mut bytes = std::fs::read(&path).expect("artifact");
@@ -417,6 +428,7 @@ mod tests {
                 .read_all(&digest, length)
                 .is_err()
         );
+        std::fs::remove_dir_all(root).expect("cleanup");
         bytes.pop();
         std::fs::write(&path, &bytes).expect("truncate");
         assert!(

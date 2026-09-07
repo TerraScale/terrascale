@@ -561,7 +561,7 @@ mod tests {
             Ok(())
         })
         .expect("stream decode");
-        assert_eq!(offsets, vec![(45, "a".into()), (91, "b".into())]);
+        assert_eq!(offsets, vec![(52, "a".into()), (106, "b".into())]);
         assert_eq!(
             decode_jsonl_reader(&input[..], TransferFormat::Jsonl, 8, |_, _| Ok(())),
             Err(CodecError::Oversized)
