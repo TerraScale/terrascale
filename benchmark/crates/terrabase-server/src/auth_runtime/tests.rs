@@ -205,7 +205,8 @@ pub(crate) mod admitted_fixture {
         ProductionConfig {
             backup_disk: crate::config::ProductionBackupDisk {
                 staging_bytes_per_stream: 8 * 1024 * 1024 * 1024,
-                total_staging_bytes: 8 * 1024 * 1024 * 1024,
+                inventory_bytes_per_stream: 16 * 1024 * 1024,
+                total_staging_bytes: 8 * 1024 * 1024 * 1024 + 16 * 1024 * 1024,
             },
             environment: ProductionEnvironment { name: environment, cluster, member },
             databases: vec![ProductionDatabase {

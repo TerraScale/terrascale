@@ -216,7 +216,9 @@ pub struct ProductionConfig {
 pub struct ProductionBackupDisk {
     /// Per-database disk bytes: half active archives, half rotation/restore scratch.
     pub staging_bytes_per_stream: u64,
-    /// Aggregate bytes reserved on this member's backup filesystem.
+    /// Bytes reserved per database for authenticated retained-point manifests.
+    pub inventory_bytes_per_stream: u64,
+    /// Aggregate archive and inventory bytes reserved on this member's backup filesystem.
     pub total_staging_bytes: u64,
 }
 
@@ -232,8 +234,14 @@ impl ProductionConfig {
             .checked_sub(2 * 1024 * 1024)
             .filter(|bytes| *bytes > 0)
             .ok_or(ConfigError::InvalidProductionBoundary)?;
-        let reserved = disk
+        if disk.inventory_bytes_per_stream < 4 * 1024 * 1024 {
+            return Err(ConfigError::InvalidProductionBoundary);
+        }
+        let per_stream = disk
             .staging_bytes_per_stream
+            .checked_add(disk.inventory_bytes_per_stream)
+            .ok_or(ConfigError::InvalidProductionBoundary)?;
+        let reserved = per_stream
             .checked_mul(
                 u64::try_from(streams).map_err(|_| ConfigError::InvalidProductionBoundary)?,
             )
@@ -259,6 +267,7 @@ impl ProductionConfig {
         Ok(terrabase::backup::worker::FleetLimits {
             streams,
             staging_bytes_per_stream: disk.staging_bytes_per_stream,
+            inventory_bytes_per_stream: disk.inventory_bytes_per_stream,
             // This bounds only the local active chain and replacement root;
             // provider retention uses the separate authenticated inventory.
             points_per_stream: 64,
@@ -1091,7 +1100,10 @@ impl ServerConfig {
                             || !destination
                                 .permitted_geographies
                                 .contains(&destination.verified_geography)
-                            || destination.max_artifact_bytes == 0
+                            // The default 8 MiB member can include one final encoded
+                            // document (<2 MiB from the 1 MiB storage codec bound),
+                            // plus the authenticated envelope. Reserve 16 MiB.
+                            || destination.max_artifact_bytes < 16 * 1024 * 1024
                             || destination.max_artifact_bytes > 256 * 1024 * 1024
                             || destination.max_point_bytes < destination.max_artifact_bytes
                             || (provider == Provider::Oci
@@ -1983,7 +1995,8 @@ mode = "production"
 
 [backup_disk]
 staging_bytes_per_stream = 8589934592
-total_staging_bytes = 8589934592
+inventory_bytes_per_stream = 16777216
+total_staging_bytes = 8606711808
 
 [environment]
 name = "prod"
@@ -2007,7 +2020,7 @@ enabled = true
 [databases.backup]
 policy_revision = "backup-policy-1"
 retention_days = 7
-destinations = [{ provider = "oci", endpoint = "https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com", signing_region = "sa-saopaulo-1", bucket = "backup-a", verified_geography = "br", permitted_geographies = ["br"], placement_revision = "placement-4", access_key_file = "/run/secrets/backup-access", secret_key_file = "/run/secrets/backup-secret", max_artifact_bytes = 1048576, max_point_bytes = 4294967296 }]
+destinations = [{ provider = "oci", endpoint = "https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com", signing_region = "sa-saopaulo-1", bucket = "backup-a", verified_geography = "br", permitted_geographies = ["br"], placement_revision = "placement-4", access_key_file = "/run/secrets/backup-access", secret_key_file = "/run/secrets/backup-secret", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }]
 
 [placement]
 generation = 4
@@ -2059,10 +2072,12 @@ capabilities = ["production", "tbep", "quic", "metrics", "oci-vault"]
     fn production_backup_disk_requires_explicit_rotation_and_aggregate_capacity() {
         let valid = production_valid();
         for invalid in [
-            valid.replace("[backup_disk]\nstaging_bytes_per_stream = 8589934592\ntotal_staging_bytes = 8589934592\n", ""),
-            valid.replace("total_staging_bytes = 8589934592", "total_staging_bytes = 8589934591"),
+            valid.replace("[backup_disk]\nstaging_bytes_per_stream = 8589934592\ninventory_bytes_per_stream = 16777216\ntotal_staging_bytes = 8606711808\n", ""),
+            valid.replace("total_staging_bytes = 8606711808", "total_staging_bytes = 8589934592"),
             valid.replace("staging_bytes_per_stream = 8589934592", "staging_bytes_per_stream = 16777216"),
             valid.replace("max_point_bytes = 4294967296", "max_point_bytes = 16777216"),
+            valid.replace("max_artifact_bytes = 16777216", "max_artifact_bytes = 1048576"),
+            valid.replace("inventory_bytes_per_stream = 16777216", "inventory_bytes_per_stream = 0"),
         ] {
             assert!(ServerConfig::parse(&invalid).is_err());
         }

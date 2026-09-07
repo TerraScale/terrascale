@@ -1864,6 +1864,7 @@ mod tests {
                 FleetLimits {
                     streams: 2,
                     staging_bytes_per_stream: 4 * 1024 * 1024,
+                    inventory_bytes_per_stream: 16 * 1024 * 1024,
                     points_per_stream: 4,
                 },
                 [NativeBackupInput {

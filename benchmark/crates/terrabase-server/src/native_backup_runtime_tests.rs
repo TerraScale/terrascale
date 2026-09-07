@@ -8,7 +8,12 @@ mod tests {
     #[test]
     fn rejects_invalid_fleet_limits_without_a_fallback_owner() {
         let result = NativeBackupRuntime::new(
-            FleetLimits { streams: 0, staging_bytes_per_stream: 0, points_per_stream: 0 },
+            FleetLimits {
+                streams: 0,
+                staging_bytes_per_stream: 0,
+                inventory_bytes_per_stream: 0,
+                points_per_stream: 0,
+            },
             std::iter::empty(),
         );
         assert!(matches!(

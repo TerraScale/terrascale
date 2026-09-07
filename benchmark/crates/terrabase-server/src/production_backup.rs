@@ -118,7 +118,12 @@ mod tests {
     #[test]
     fn invalid_limits_fail_before_an_owner_is_published() {
         let result = compose_native_backup(
-            FleetLimits { streams: 0, staging_bytes_per_stream: 0, points_per_stream: 0 },
+            FleetLimits {
+                streams: 0,
+                staging_bytes_per_stream: 0,
+                inventory_bytes_per_stream: 0,
+                points_per_stream: 0,
+            },
             Vec::new(),
         );
         assert!(matches!(

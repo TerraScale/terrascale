@@ -45,12 +45,24 @@ impl ScopedShardEngine {
     /// Opens (or reopens) the target file with the parent database's owner and
     /// encryption lease. Data movement owns the returned handle in its worker.
     pub(crate) fn open_target(&self, context: &SplitContext) -> Result<Engine, EngineOpenError> {
+        self.open_target_with_mode(context, true)
+    }
+
+    fn open_target_with_mode(
+        &self,
+        context: &SplitContext,
+        create: bool,
+    ) -> Result<Engine, EngineOpenError> {
         let path = self.target_path(context);
         std::fs::create_dir_all(path.parent().expect("target has shard directory"))
             .map_err(|_| EngineOpenError::StorageUnavailable)?;
-        let mut config = super::EngineConfig::durable(path)
-            .map_err(|_| EngineOpenError::InvalidConfig)?
-            .with_owner(self.engine.database_owner().clone());
+        let mut config = if create {
+            super::EngineConfig::durable(path)
+        } else {
+            super::EngineConfig::existing_durable(path)
+        }
+        .map_err(|_| EngineOpenError::InvalidConfig)?
+        .with_owner(self.engine.database_owner().clone());
         if let Some(keys) = &self.engine.storage_keys {
             config = config.with_storage_keys(std::sync::Arc::clone(keys));
         }
@@ -70,7 +82,68 @@ impl ScopedShardEngine {
         if !crate::storage::database_file(&self.target_path(context)).is_file() {
             return Err(EngineOpenError::StorageUnavailable);
         }
-        self.open_target(context)
+        self.open_target_with_mode(context, false)
+    }
+
+    /// Records the exact verified target snapshot before route publication.
+    pub(crate) fn prepare_split_verification(
+        &self,
+        context: &SplitContext,
+        through: u64,
+    ) -> Result<(), EngineError> {
+        let state =
+            self.load().map_err(|_| EngineError::StorageFailure)?.ok_or(EngineError::Conflict)?;
+        let identity = Self::target_identity(*context, &state)?;
+        let target = self.open_existing_target(context).map_err(|_| EngineError::StorageFailure)?;
+        let scope = Self::target_scope(&target, &self.scope);
+        if Self::target_identity_at(&target, &scope)?.as_deref() != Some(identity.as_slice()) {
+            return Err(EngineError::Conflict);
+        }
+        let snapshot = target.read_snapshot(&scope)?;
+        let existing = target
+            .lock_storage()?
+            .port
+            .private_metadata_at(scope.tenant(), TARGET_VERIFICATION_KEY, snapshot.sequence())
+            .map_err(|()| EngineError::StorageFailure)?;
+        let pinned = match existing {
+            None => None,
+            Some(DocumentValue::String(receipt)) => {
+                let receipt = hex::decode(receipt).map_err(|_| EngineError::Conflict)?;
+                let receipt: [u8; 16] = receipt.try_into().map_err(|_| EngineError::Conflict)?;
+                let prior =
+                    u64::from_be_bytes(receipt[..8].try_into().map_err(|_| EngineError::Conflict)?);
+                let boundary =
+                    u64::from_be_bytes(receipt[8..].try_into().map_err(|_| EngineError::Conflict)?);
+                (prior == through).then_some(StorageSequence::new(boundary))
+            }
+            Some(_) => return Err(EngineError::Conflict),
+        };
+        let boundary = pinned.unwrap_or(snapshot.sequence());
+        if range_fingerprint(&self.engine, &self.scope, StorageSequence::new(through), &state)?
+            != range_fingerprint(&target, &scope, boundary, &state)?
+        {
+            return Err(EngineError::Conflict);
+        }
+        // A proof transaction advances the target sequence itself. Reuse the
+        // pinned boundary on retry instead of rebinding its operation identity
+        // to a new current sequence after a lost response or failed route CAS.
+        if pinned.is_some() {
+            return Ok(());
+        }
+        let mut receipt = through.to_be_bytes().to_vec();
+        receipt.extend_from_slice(&boundary.get().to_be_bytes());
+        let operation =
+            OperationId::try_new(&format!("shard-proof-{:032x}-{through}", context.split_id()))
+                .map_err(|_| EngineError::InvalidDocument)?;
+        let mut tx = target.begin(&scope, target.read_snapshot(&scope)?, operation)?;
+        tx.internal_maintenance = true;
+        tx.put_private_metadata(TARGET_VERIFICATION_KEY, value(&receipt))?;
+        match tx.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
+                Err(EngineError::StorageFailure)
+            }
+        }
     }
 
     fn target_scope(target: &Engine, source_scope: &TenantScope) -> TenantScope {
@@ -174,6 +247,8 @@ impl ScopedShardEngine {
     }
 }
 
+const TARGET_VERIFICATION_KEY: &str = "control:shard-target/v1/verified-boundary";
+
 const fn target_identity_key() -> &'static str {
     "control:shard-target/v1/identity"
 }
@@ -199,6 +274,14 @@ impl SplitEngineAdapter for ScopedShardEngine {
             Some(existing) if existing == identity => Ok(()),
             Some(_) => Err(EngineError::Conflict),
             None => {
+                // The staging target inherits only an admitted, still-open
+                // source writer epoch. Owned Engine creation starts fenced;
+                // writing its identity before this admission always conflicts.
+                let (epoch, fenced) = self.engine.origin_epoch()?;
+                if epoch == 0 || fenced {
+                    return Err(EngineError::Conflict);
+                }
+                target.activate_origin_epoch(epoch)?;
                 self.copy_schema_metadata(&target, &target_scope, *context)?;
                 Self::persist_target_identity(&target, &target_scope, *context, &identity)
             }
@@ -245,8 +328,25 @@ impl SplitEngineAdapter for ScopedShardEngine {
             StorageSequence::new(state.source_high_water()),
             &state,
         )?;
-        let copied =
-            range_fingerprint(&target, &scope, target.read_snapshot(&scope)?.sequence(), &state)?;
+        let snapshot = target.read_snapshot(&scope)?;
+        let receipt = target
+            .lock_storage()?
+            .port
+            .private_metadata_at(scope.tenant(), TARGET_VERIFICATION_KEY, snapshot.sequence())
+            .map_err(|()| EngineError::StorageFailure)?;
+        let Some(DocumentValue::String(receipt)) = receipt else {
+            return Err(EngineError::Conflict);
+        };
+        let receipt = hex::decode(receipt).map_err(|_| EngineError::Conflict)?;
+        let receipt: [u8; 16] = receipt.try_into().map_err(|_| EngineError::Conflict)?;
+        let through =
+            u64::from_be_bytes(receipt[..8].try_into().map_err(|_| EngineError::Conflict)?);
+        let boundary =
+            u64::from_be_bytes(receipt[8..].try_into().map_err(|_| EngineError::Conflict)?);
+        if through != state.source_high_water() {
+            return Err(EngineError::Conflict);
+        }
+        let copied = range_fingerprint(&target, &scope, StorageSequence::new(boundary), &state)?;
         if source != copied {
             return Err(EngineError::Conflict);
         }
@@ -384,6 +484,9 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
     type Error = EngineError;
 
     fn apply_copy_batch(&mut self, batch: &CopyBatch) -> Result<(), Self::Error> {
+        if batch.entries().is_empty() {
+            return Ok(());
+        }
         let mut digest = blake3::Hasher::new();
         digest.update(b"shard-copy-page-v1\0");
         for entry in batch.entries() {
@@ -812,6 +915,9 @@ impl Engine {
         let replacement = encode_catalog(&RouteCatalog { table, generation })?;
         let mut lifecycle = ShardSplit::from_durable_state(state.clone())
             .map_err(|_| RouteCatalogError::Malformed)?;
+        // The drained source frontier is the actual snapshot represented by
+        // this route, even when the worker's last persisted checkpoint lagged.
+        lifecycle.note_source_high_water(context.drained_through);
         lifecycle.cut_over_with_permit(context.permit).map_err(|_| RouteCatalogError::Conflict)?;
         tx.put_private_metadata(&route_key, value(&replacement))?;
         tx.put_private_metadata(

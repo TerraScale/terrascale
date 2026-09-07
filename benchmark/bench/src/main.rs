@@ -33,6 +33,7 @@
 //! ```
 
 mod auto_index;
+mod auto_index_local;
 mod config;
 mod history;
 mod indexed_query;
@@ -42,8 +43,8 @@ mod metrics;
 mod pg;
 mod pg_fullstack;
 mod raven;
-mod terrabase_http;
 mod sync;
+mod terrabase_http;
 
 use std::path::PathBuf;
 
@@ -74,6 +75,11 @@ fn main() {
         let result = match family.as_str() {
             "indexed-query" => indexed_query::run_cli(family_arguments),
             "ingest" => ingest::run_cli(family_arguments),
+            "auto-index"
+                if family_arguments.windows(2).any(|pair| pair == ["--target", "terrabase"]) =>
+            {
+                auto_index_local::run(family_arguments)
+            }
             "auto-index" => {
                 Err("auto-index is a served-boundary shell family; run bench/scripts/auto-index.sh"
                     .to_owned())
@@ -114,7 +120,7 @@ fn main() {
     let mut workload = None;
     let mut out = PathBuf::from("bench/results");
     let mut lane_config = LaneConfig::RECORD_MINIMUM;
-    let mut boundary = "production-member".to_owned();
+    let mut boundary = "diagnostic-qualification".to_owned();
 
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
@@ -214,11 +220,13 @@ fn main() {
     let started = std::time::Instant::now();
     let result = match target {
         Target::TerraBase => {
-            execute::<terrabase_http::TerraBaseHttpBackend>(workload, lane_config)
+            execute::<terrabase_http::TerraBaseHttpBackend>(workload, lane_config, &boundary)
         }
-        Target::PostgreSql => execute::<pg::PostgreSqlBackend>(workload, lane_config),
-        Target::PgFullstack => execute::<pg_fullstack::PgFullstackBackend>(workload, lane_config),
-        Target::RavenDb => execute::<raven::RavenDbBackend>(workload, lane_config),
+        Target::PostgreSql => execute::<pg::PostgreSqlBackend>(workload, lane_config, &boundary),
+        Target::PgFullstack => {
+            execute::<pg_fullstack::PgFullstackBackend>(workload, lane_config, &boundary)
+        }
+        Target::RavenDb => execute::<raven::RavenDbBackend>(workload, lane_config, &boundary),
     };
     match result {
         Ok((results, summary)) => {
@@ -245,7 +253,7 @@ fn main() {
                     &lane_config,
                     target.as_str(),
                     &environment,
-                    None,
+                    Some(&boundary),
                 ),
                 environment,
                 samples: Vec::new(),
@@ -277,11 +285,14 @@ fn parse_count(flag: &str, value: &str) -> usize {
 fn execute<B: Backend>(
     workload: Workload,
     lane_config: LaneConfig,
+    boundary: &str,
 ) -> Result<(String, String), String> {
     let mut backend =
         B::connect().map_err(|error| format!("cannot connect to the pinned reference: {error}"))?;
-    let results =
+    let mut results =
         lane::run(&mut backend, workload, lane_config).map_err(|error| error.to_string())?;
+    results.comparability =
+        metrics::comparability(&lane_config, results.target, &results.environment, Some(boundary));
     let summary = metrics::render_summary(target_of(results.target), workload, &results);
     let json = serde_json::to_string_pretty(&results).expect("serialize results");
     Ok((json, summary))
@@ -289,7 +300,7 @@ fn execute<B: Backend>(
 
 fn endpoint_for(target: Target) -> String {
     let variable = match target {
-        Target::TerraBase => "TERRABASE_BENCH_ENDPOINT",
+        Target::TerraBase => "TERRABASE_BENCH_TERRABASE_API",
         Target::PostgreSql => "TERRABASE_PG_REFERENCE_ENDPOINT",
         Target::PgFullstack => "TERRABASE_PG_FULLSTACK_ENDPOINT",
         Target::RavenDb => "TERRABASE_RAVEN_REFERENCE_ENDPOINT",
@@ -299,7 +310,7 @@ fn endpoint_for(target: Target) -> String {
 
 fn transport_for(target: Target) -> &'static str {
     match target {
-        Target::TerraBase => "Rust-owned served runner; network mTLS contract",
+        Target::TerraBase => "ureq 2 HTTP/1.1 public API; Bearer API key",
         Target::PostgreSql => "postgres reference client; identity unavailable",
         Target::PgFullstack => "pgrest HTTP/JSON reference client; identity unavailable",
         Target::RavenDb => "RavenDB HTTP reference client; identity unavailable",

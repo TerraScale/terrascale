@@ -35,10 +35,12 @@ pub(super) fn inventory_points(
     Ok(points.into_values().collect())
 }
 
-pub(super) fn persist_inventory(stream: &Stream) -> Result<(), FleetError> {
+pub(super) fn persist_inventory(stream: &Stream, limits: FleetLimits) -> Result<(), FleetError> {
     let root = inventory_path(stream);
     std::fs::create_dir_all(&root).map_err(|_| FleetError::Capture)?;
     super::super::sync_directory(&stream.config.staging).map_err(|_| FleetError::Capture)?;
+    cleanup_evictions(&stream.config.staging)?;
+    cleanup_evictions(&root)?;
     for point in super::super::restore::discover_encrypted_points(
         &stream.config.staging,
         stream.config.keys.as_ref(),
@@ -66,6 +68,11 @@ pub(super) fn persist_inventory(stream: &Stream) -> Result<(), FleetError> {
             }
             continue;
         }
+        let source = stream.config.staging.join(&name).join(manifest);
+        let additional = std::fs::metadata(&source).map_err(|_| FleetError::Capture)?.len();
+        if staged_bytes(&root)?.saturating_add(additional) > limits.inventory_bytes_per_stream {
+            return Err(FleetError::StagingFull);
+        }
         let temporary = root.join(format!(".pending-{}", point.identity()));
         std::fs::create_dir_all(&temporary).map_err(|_| FleetError::Capture)?;
         std::fs::copy(stream.config.staging.join(&name).join(manifest), temporary.join(manifest))
@@ -84,6 +91,9 @@ pub(super) fn evict_retired_local_chains(
     stream: &Stream,
     limits: FleetLimits,
 ) -> Result<(), FleetError> {
+    if super::rotation::read(stream)?.is_some() {
+        return Ok(());
+    }
     let chain = super::super::verify_latest_chain_encrypted(
         &stream.config.staging,
         stream.config.keys.as_ref(),
@@ -108,8 +118,7 @@ pub(super) fn evict_retired_local_chains(
         if !inventory_path(stream).join(name).exists() {
             return Err(FleetError::Capture);
         }
-        std::fs::remove_dir_all(&point).map_err(|_| FleetError::Capture)?;
-        super::super::sync_directory(&stream.config.staging).map_err(|_| FleetError::Capture)?;
+        remove_point(&point)?;
     }
     // Journals track cache transfer work only; retained provider metadata lives
     // in the independent inventory and never consumes this bounded queue.
@@ -121,4 +130,37 @@ pub(super) fn evict_retired_local_chains(
         persist_upload_journal(&journal, &stream.config.policy_revision, &retained)?;
     }
     Ok(())
+}
+
+/// Hide a complete point atomically before unlinking its member files. Restart
+/// discovery never observes a half-deleted rp directory.
+pub(super) fn remove_point(point: &Path) -> Result<(), FleetError> {
+    if !point.exists() {
+        return Ok(());
+    }
+    let parent = point.parent().ok_or(FleetError::Capture)?;
+    let name = point.file_name().and_then(|name| name.to_str()).ok_or(FleetError::Capture)?;
+    let tombstone = parent.join(format!(".evict-{name}"));
+    std::fs::rename(point, &tombstone).map_err(|_| FleetError::Capture)?;
+    super::super::sync_directory(parent).map_err(|_| FleetError::Capture)?;
+    std::fs::remove_dir_all(tombstone).map_err(|_| FleetError::Capture)?;
+    super::super::sync_directory(parent).map_err(|_| FleetError::Capture)
+}
+
+fn cleanup_evictions(directory: &Path) -> Result<(), FleetError> {
+    for entry in std::fs::read_dir(directory).map_err(|_| FleetError::Capture)? {
+        let entry = entry.map_err(|_| FleetError::Capture)?;
+        if entry.file_name().to_str().is_some_and(|name| name.starts_with(".evict-rp-")) {
+            std::fs::remove_dir_all(entry.path()).map_err(|_| FleetError::Capture)?;
+        }
+    }
+    super::super::sync_directory(directory).map_err(|_| FleetError::Capture)
+}
+
+pub(super) fn has_capacity(stream: &Stream, limits: FleetLimits, additional: usize) -> Result<bool, FleetError> {
+    let count = point_paths(&inventory_path(stream), inventory_point_limit(stream))?.len();
+    let bytes = staged_bytes(&inventory_path(stream))?;
+    let reserve = (additional as u64).saturating_mul((super::super::manifest::MAX_MANIFEST_BYTES + 4096) as u64);
+    Ok(count.saturating_add(additional) <= inventory_point_limit(stream)
+        && bytes.saturating_add(reserve) <= limits.inventory_bytes_per_stream)
 }

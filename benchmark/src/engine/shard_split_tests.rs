@@ -155,6 +155,8 @@ fn supervisor_resumes_committed_route_and_retries_frontier_publication() {
     let mut fence = WriterFence::new();
     fence.begin_drain(through).unwrap();
     let permit = fence.try_fence(through).unwrap();
+    adapter.prepare_split_verification(&context, through).unwrap();
+    adapter.prepare_split_verification(&context, through).unwrap();
     engine
         .install_shard_split_route(
             &scope,
@@ -168,9 +170,37 @@ fn supervisor_resumes_committed_route_and_retries_frontier_publication() {
             super::tests::operation("resume-route-cutover"),
         )
         .unwrap();
+    // A target write after cutover must not alter the retained verification
+    // snapshot, including when completion runs after a restart.
+    {
+        let target = adapter.open_existing_target(&context).unwrap();
+        let target_scope = target.scope_for(&tenant);
+        let mut tx = target
+            .begin(
+                &target_scope,
+                target.read_snapshot(&target_scope).unwrap(),
+                super::tests::operation("post-cutover-target-write"),
+            )
+            .unwrap();
+        tx.internal_maintenance = true;
+        tx.put(
+            crate::types::Document::new(
+                crate::types::DocumentId::try_new("a").unwrap(),
+                crate::types::CollectionName::try_new("docs").unwrap(),
+                crate::types::DocumentValue::Integer(1),
+            ),
+            crate::types::ExpectedVersion::Any,
+        )
+        .unwrap();
+        assert!(matches!(
+            tx.commit(crate::types::LocalDurability::Synced),
+            super::CommitOutcome::Committed(_)
+        ));
+    }
     // The atomic route commit persisted CutOver. Simulate losing the process
     // before any frontier publication or completion work ran.
     assert_eq!(adapter.load().unwrap().unwrap().phase(), SplitPhase::CutOver);
+    assert_eq!(adapter.load().unwrap().unwrap().source_high_water(), through);
     let publications = Arc::new(AtomicUsize::new(0));
     let orchestrator = Orchestrator(publications.clone());
     let mut supervisor = ShardSplitSupervisor::resume(
@@ -243,6 +273,7 @@ fn split_verification_rejects_empty_or_missing_target_without_recreating_it() {
     adapter.save(&split.durable_state()).unwrap();
     adapter.create_split_target(&context).unwrap();
     let through = engine.published_sequence().unwrap().get();
+    assert_eq!(adapter.prepare_split_verification(&context, through), Err(EngineError::Conflict));
     split.begin_catch_up(through).unwrap();
     split.note_target_applied(through);
     split.cut_over().unwrap();

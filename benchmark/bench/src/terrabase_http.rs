@@ -42,28 +42,16 @@ fn configuration() -> Result<(String, String, String), Box<dyn Error + Send + Sy
     let api = api.trim_end_matches('/').to_owned();
     let auth = std::env::var(AUTH_VARIABLE)
         .map_err(|_| format!("{AUTH_VARIABLE} is not set (the Authorization header value)"))?;
-    let database =
-        std::env::var(DATABASE_VARIABLE).unwrap_or_else(|_| "local".to_owned());
+    let database = std::env::var(DATABASE_VARIABLE).unwrap_or_else(|_| "local".to_owned());
     Ok((api, auth, database))
 }
 
 impl TerraBaseHttpBackend {
-    fn documents_url(&self, id: &str) -> String {
-        format!(
-            "{}/api/v1/databases/{}/collections/{}/documents/{}",
-            self.api, self.database, COLLECTION, id
-        )
-    }
-
     fn batch_url(&self) -> String {
         format!(
             "{}/api/v1/databases/{}/collections/{}/documents/batch",
             self.api, self.database, COLLECTION
         )
-    }
-
-    fn sql_url(&self) -> String {
-        format!("{}/api/v1/databases/{}/sql", self.api, self.database)
     }
 }
 

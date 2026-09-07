@@ -221,6 +221,15 @@ where
                 }
                 return Ok(SplitStep::Progress);
             }
+            let context = self
+                .runtime
+                .split()
+                .and_then(ShardSplit::context)
+                .ok_or(SplitSupervisorError::MissingRoute)?;
+            ScopedShardEngine::new(Arc::clone(&self.engine), self.scope.clone())
+                .map_err(|_| SplitSupervisorError::MissingRoute)?
+                .prepare_split_verification(&context, high)
+                .map_err(|error| SplitSupervisorError::Runtime(SplitRuntimeError::Data(error)))?;
             // Each attempt obtains a fresh permit. The engine's exclusive
             // commit barrier performs the actual fence and may reject a stale
             // frontier when a writer wins the race.

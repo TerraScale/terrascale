@@ -312,7 +312,10 @@ impl NativeRecoveryRuntime {
         selection_kind: &str,
         point_id: &str,
         placement: &[String],
-    ) -> Result<(terrabase::backup::BackupManifest, terrabase::backup::object_store::Provider), NativeRecoveryError> {
+    ) -> Result<
+        (terrabase::backup::BackupManifest, terrabase::backup::object_store::Provider),
+        NativeRecoveryError,
+    > {
         let database = self
             .registry
             .resolve(source)
@@ -340,10 +343,7 @@ impl NativeRecoveryRuntime {
             .ok_or(NativeRecoveryError::VerificationFailed)?;
             (point, providers)
         };
-        let provider = providers
-            .into_iter()
-            .next()
-            .ok_or(NativeRecoveryError::Unavailable)?;
+        let provider = providers.into_iter().next().ok_or(NativeRecoveryError::Unavailable)?;
         Ok((manifest, provider))
     }
 
@@ -1095,6 +1095,7 @@ mod tests {
             NativeBackupFleet::new(FleetLimits {
                 streams: 2,
                 staging_bytes_per_stream: 3 * 1024 * 1024,
+                inventory_bytes_per_stream: 16 * 1024 * 1024,
                 points_per_stream: 2,
             })
             .unwrap(),

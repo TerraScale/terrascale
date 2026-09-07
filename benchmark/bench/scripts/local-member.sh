@@ -12,15 +12,17 @@
 #   bench/scripts/local-member.sh env     # print eval-able exports for families
 #   bench/scripts/local-member.sh down    # stop the member (state is kept)
 #   LOCAL_MEMBER_FRESH=1 ... up           # wipe state first
+#   LOCAL_MEMBER_DIR=/absolute/path      # isolated benchmark state
+#   LOCAL_MEMBER_BIN=/absolute/binary    # explicitly pinned release build
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-MEMBER_DIR="$REPO_ROOT/bench/.member"
+MEMBER_DIR="${LOCAL_MEMBER_DIR:-$REPO_ROOT/bench/.member}"
 API_PORT="${LOCAL_MEMBER_API_PORT:-7211}"
 TBEP_PORT="${LOCAL_MEMBER_TBEP_PORT:-8531}"
 OBS_PORT="${LOCAL_MEMBER_OBS_PORT:-9571}"
-BIN="$REPO_ROOT/target/release/terrabase-server"
+BIN="${LOCAL_MEMBER_BIN:-$REPO_ROOT/target/release/terrabase-server}"
 REGION="${LOCAL_MEMBER_REGION:-GRU}"
 
 # shellcheck disable=SC1091
@@ -136,8 +138,13 @@ cmd_up() {
   write_config
   # Always run the incremental build: a stale pre-built binary silently
   # serves an older contract than the checkout (cargo is a no-op when fresh).
-  log "ensuring release terrabase-server is current"
-  (cd "$REPO_ROOT" && nice -n 19 cargo build --release --locked -p terrabase-server)
+  if [[ -n "${LOCAL_MEMBER_BIN:-}" ]]; then
+    [[ -x "$BIN" ]] || die "LOCAL_MEMBER_BIN must name an executable release binary"
+    log "using explicitly pinned release binary $BIN"
+  else
+    log "ensuring release terrabase-server is current"
+    (cd "$REPO_ROOT" && nice -n 19 cargo build --release --locked -p terrabase-server)
+  fi
   envelope_require
   local cpus
   cpus="$(envelope_cpu_set)"
@@ -202,7 +209,7 @@ cmd_up() {
 cmd_env() {
   [[ -n "$(member_pid)" ]] || die "member is not up; run local-member.sh up"
   local digest key version run_group
-  digest="$(sha256sum "$BIN" | awk '{print $1}')"
+  digest="$(sha256sum "/proc/$(member_pid)/exe" | awk '{print $1}')"
   key="$(cat "$MEMBER_DIR/bootstrap.key")"
   version="$(healthy | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
   run_group="e13-local-$(date -u +%Y%m%dT%H%MZ)"
