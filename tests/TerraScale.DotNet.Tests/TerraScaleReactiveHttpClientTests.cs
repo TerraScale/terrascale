@@ -113,11 +113,24 @@ public sealed class TerraScaleReactiveHttpClientTests
         var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { BaseAddress = new Uri($"http://127.0.0.1:{port}") });
 
         await using var subscription = await client.SubscribeAsync("db", "orders", "SELECT * FROM orders", new byte[] { 0, 255, 1 }, transport: TerraScaleReactiveTransport.WebSocket, cancellationToken: serverDone.Token);
-        var result = await subscription.ReadNextAsync(serverDone.Token);
+        TerraScaleReactivePollResult? result;
+        try
+        {
+            result = await subscription.ReadNextAsync(serverDone.Token);
+        }
+        catch
+        {
+            // Surface a server assertion instead of masking it with the resulting client EOF.
+            await server;
+            throw;
+        }
         await server;
 
         await Assert.That(result!.Frame).IsTypeOf<TerraScaleReactiveDelta>();
         await Assert.That(subscription.Offset).IsEqualTo(1ul);
+        await subscription.DisposeAsync();
+        await Assert.That(subscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Closed);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => subscription.ReadNextAsync(serverDone.Token));
     }
 
     [Test]
@@ -444,7 +457,7 @@ public sealed class TerraScaleReactiveHttpClientTests
             {
                 var frame = await ReadWebSocketFrameAsync(stream, cancellationToken);
                 await Assert.That(frame.Length > 40).IsTrue();
-                await Assert.That(frame[..7]).IsEqualTo(new byte[] { 0x97, 0x01, 0x00, 0x00, 0x01, 0x01, 0x00 });
+                await Assert.That(frame.AsSpan(0, 7).SequenceEqual(new byte[] { 0x97, 0x01, 0x00, 0x00, 0x01, 0x01, 0x00 })).IsTrue();
             }
             var payload = responseFrame ?? new byte[] { 0x90 };
             if (payload.Length > 125) throw new InvalidOperationException("Test frame helper only supports short payloads.");
