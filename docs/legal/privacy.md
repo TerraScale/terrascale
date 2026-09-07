@@ -25,7 +25,7 @@ retention and communications choices pending O-5 review.]
 ## What we store
 
 - **Account identity**: your email, credentials, and organization membership,
-  managed by our identity provider and stored in our control-plane database.
+  managed by our identity provider.
 - **Usage and billing records**: writes and storage metered per database,
   invoices and payments (intended to be processed by Stripe; Stripe Tax is
   intended from day one to calculate applicable taxes). [PLACEHOLDER —
@@ -54,11 +54,10 @@ subprocessor is approved for this draft.
 
 ## Residency
 
-A database's bytes at rest exist only in its selected Regions — enforced at
-placement, replication, backup, restore, export, and branching. A placement
+A database's bytes at rest exist only in its selected Regions. A placement
 lock (`eu-only`, `br-only`, or an explicit region list), once set, cannot be
-widened. Cloudflare's edge decrypts reactive traffic at the PoP nearest the
-reader; we do not promise in-region edge processing at launch.
+widened. Reactive delivery may be processed through the listed delivery
+provider; in-region edge processing is not promised at launch.
 
 ## Cookies
 
@@ -82,21 +81,17 @@ configured.
 ## Retention and deletion
 
 Account data is kept while your account is active. Deleting your account
-revokes sessions and API keys, stops new writes, requests purge of all
-Cloudflare cache entries tagged for the database, and destroys the database's
-per-database encryption keys (crypto-shred), rendering database files, WAL,
-backups, exports, and branches unreadable. Cache purge is a separate
-defense-in-depth step; revoked capabilities prevent new authorized reads
-while the provider processes the purge. Backups age out under lifecycle
-rules. Billing records are retained as required by law. [PLACEHOLDER —
-statutory retention periods, OCI backup lifecycle, and Cloudflare purge
-completion behavior pending O-4/O-5; do not publish specific windows yet.]
+revokes sessions and API keys, stops new writes, and begins removal of retained
+copies under the applicable deletion workflow. Access remains blocked while
+that workflow completes. Billing records are retained as required by law.
+[PLACEHOLDER — statutory retention periods, provider retention terms, and
+retained-copy completion behavior pending O-4/O-5; do not publish specific
+windows yet.]
 
 ## Security
 
-Databases are encrypted with per-database keys wrapped by regional key
-encryption keys in OCI Vault; API keys are stored hashed; administrative
-access requires hardware two-factor authentication. See
+We apply encryption, API-key protection, and restricted administrative access
+appropriate to the service. See
 [Security](./security.md) for the full summary and how to report
 vulnerabilities.
 

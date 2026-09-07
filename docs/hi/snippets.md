@@ -6,7 +6,7 @@
 # Snippets
 
 Runnable snippets run against a real cloud sandbox branch pre-filled with the
-reader's key (D-56). `npm test` is the remote, fail-closed launch gate. It
+reader's key. `npm test` is the remote, fail-closed launch gate. It
 requires all three environment variables below and exits non-zero when the
 sandbox is unavailable; an absent sandbox is a failed gate, not a passing
 fixture run. `npm run test:stub` is an explicit local-development harness and
@@ -27,10 +27,12 @@ credentials only to the configured API origin; reactive snapshot and log
 requests use the short-lived view capability header.
 
 The runnable examples target the published `@terrascale/sdk` 0.3.0 surface.
-Tenant, branch, and backup fixtures are retained below but skipped until their
-producer contracts are published. The typed export API is available in the
-SDK, but its producer qualification remains pending, so its fixture is still
-skipped. Downloads return plaintext artifact bytes with the declared length
+Database-scoped branch listing/creation, backup listing/restoration, and
+logical export routes are in the pinned public contract. The fixtures below
+that require project-scoped producer operations remain skipped until those
+operations are published and qualified. Tenant provisioning is also still
+unavailable because its producer contract is absent. Downloads return
+plaintext artifact bytes with the declared length
 and BLAKE3 checksum from the `X-TerraScale-Artifact-Length` and
 `X-TerraScale-Artifact-Checksum` headers. The stub mode is deterministic and
 never counts as remote qualification.
@@ -49,30 +51,36 @@ never counts as remote qualification.
 
 ## Database per tenant
 
-Tenant = database (D-51). The producer route is not published yet, so this
-fixture is intentionally skipped in both modes.
+Tenant = database. Tenant provisioning is not published yet, so this fixture
+is intentionally skipped in both modes. Ordinary database CRUD remains
+available after a database is provisioned through its published control-plane
+workflow.
 
 <<< @/snippets/tenants.ts
 
 ## Cloud branch
 
-The project-scoped branch producer route is not published yet, so this fixture
-is intentionally skipped in both modes.
+This fixture exercises the project-scoped branch producer, which is not in the
+pinned public contract yet. It is intentionally skipped in both modes.
+Database-scoped branch listing and creation are published separately.
 
 <<< @/snippets/branches.ts
 
 ## Backups
 
-The project-scoped backup producer routes are not published yet, so this
-fixture is intentionally skipped in both modes.
+This fixture exercises project-scoped backup policy and confirmation routes,
+which are not in the pinned public contract yet. It is intentionally skipped
+in both modes. Database-scoped backup listing and restoration are published
+separately.
 
 <<< @/snippets/backups.ts
 
 ## Logical export
 
-The typed export operation is available in the pinned SDK, but producer
-qualification is still pending. Its fixture remains in the source tree and is
-intentionally skipped by both runner modes. The API returns plaintext artifact
+The database-scoped typed export operation is available in the pinned public
+contract, but this fixture's producer qualification is still pending. It
+remains in the source tree and is intentionally skipped by both runner modes.
+The API returns plaintext artifact
 bytes plus the declared length and BLAKE3 checksum metadata from response
 headers.
 

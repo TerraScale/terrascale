@@ -49,30 +49,22 @@ review.]
 
 ## Security measures
 
-- Per-database data encryption keys (DEKs), wrapped by per-region key
-  encryption keys (KEKs) in OCI Vault; account deletion crypto-shreds the
-  DEKs.
-- API keys stored hashed; keys are shown once and prefixed for leak scanning.
-- Internal control traffic uses mutual TLS with SPIFFE identity; it never
-  carries customer data.
-- Server binaries run under hardened systemd units on plain Linux hosts; no
-  containers.
-- Members refuse new writes when a host's clock offset exceeds 500 ms.
+- Encryption for customer data and retained copies.
+- API-key protection and restricted administrative access.
+- Authenticated internal service communication and access controls.
 - Restore drills and incident paging are intended operational controls; their
   launch availability remains awaiting qualification.
 
-On account deletion, we revoke access, stop new writes, request purge of
-Cloudflare cache entries carrying the database's cache tags, and then
-destroy the database DEKs (crypto-shred). Revocation makes capabilities
-invalid while the CDN processes the purge. [PLACEHOLDER — exact purge
-completion and OCI backup-retention windows pending written provider
+On account deletion, we revoke access, stop new writes, and remove retained
+copies under the applicable deletion workflow. [PLACEHOLDER — exact retained-
+copy completion and provider retention windows pending written provider
 confirmation (O-4).]
 
 ## Single-provider risk
 
-All customer data lives in one OCI tenancy plus the Cloudflare edge named
-above. This single-provider risk is accepted and documented; we revisit it
-at our first $10k MRR.
+The service depends on its approved hosting and delivery providers. This
+provider-concentration risk is accepted and documented; we revisit it at our
+first $10k MRR.
 
 ## Audits and questionnaires
 

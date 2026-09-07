@@ -101,29 +101,22 @@ side by side.
 
 ## Your data and account deletion
 
-You own your data. You may export the whole logical database at any time
-yourself, without a support ticket, via the dashboard or CLI. Deleting your
-account begins the following intended sequence: access and API keys are
-revoked, new writes are stopped, Cloudflare cache entries tagged for the
-database (including reactive snapshots and logs) are submitted for purge,
-and the database's encryption keys are destroyed (crypto-shred). Destroying
-the per-database keys renders database files, WAL, backups, exports, and
-branches unreadable. Capability expiry prevents access while a CDN purge is
-being processed; cache purge is an additional deletion control, not a promise
-that an already-served response can be recalled.
+You own your data. Export and recovery workflows are being qualified against
+their producer contracts; dashboard and CLI availability is not promised until
+that qualification is complete. When account deletion is authorized, access
+and API keys are revoked, new writes stop, and retained copies are removed
+under the applicable deletion workflow. Access remains blocked while retained
+copies are being removed. Previously incurred charges and legally required
+records follow their applicable lifecycle.
 
-Backups and legally required billing records follow their applicable
-lifecycle. [PLACEHOLDER — exact Cloudflare purge completion behavior and OCI
-backup-retention window are pending written provider confirmation (O-4) and
-owner legal review.]
+ [PLACEHOLDER — exact retained-copy completion behavior and backup-retention
+window are pending written provider confirmation (O-4) and owner legal review.]
 
 ## Sub-processors
 
-We process customer data on Oracle Cloud Infrastructure (hosting, storage,
-backups, email delivery) and deliver authorized reactive data over
-Cloudflare (DNS, TLS, WAF, CDN; edge decryption at the PoP nearest the
-reader worldwide). [PLACEHOLDER — applicable Cloudflare DPA and CDN terms
-pending O-4.] Billing and tax processing is
+We process customer data through the listed hosting, delivery, identity, and
+billing providers. [PLACEHOLDER — applicable provider roles, locations, and
+processing terms, including CDN and tax terms, pending O-4.] Billing and tax processing is
 handled by Stripe (Stripe Tax is intended from day one). [PLACEHOLDER —
 provider roles, applicable terms, and written confirmations are pending O-4;
 see the marked draft tables in Privacy and the DPA.] See [Privacy
