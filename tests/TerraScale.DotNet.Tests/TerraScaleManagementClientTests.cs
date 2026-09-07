@@ -172,8 +172,9 @@ public sealed class TerraScaleManagementClientTests
                 response.Content = new StringContent(media == "application/octet-stream" ? body.GetString()! : body.GetRawText(), Encoding.UTF8, media);
                 if (media == "application/octet-stream")
                 {
-                    response.Headers.Add("X-TerraScale-Artifact-Length", response.Content.Headers.ContentLength!.Value.ToString());
-                    response.Headers.Add("X-TerraScale-Artifact-Checksum", new string('a', 64));
+                    var headers = fixture.GetProperty("headers");
+                    response.Headers.Add("X-TerraScale-Artifact-Length", headers.GetProperty("x-terrascale-artifact-length").GetString()!);
+                    response.Headers.Add("X-TerraScale-Artifact-Checksum", headers.GetProperty("x-terrascale-artifact-checksum").GetString()!);
                 }
             }
             return response;

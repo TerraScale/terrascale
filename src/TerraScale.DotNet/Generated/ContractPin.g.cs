@@ -9,8 +9,8 @@ public static class TerraScaleContractPin
     public const int ManifestSchemaVersion = 1;
     public const string Version = "v1";
     public const string ContractVersion = Version;
-    public const string ManifestSha256 = "0ba19cac156ef614d6448df8fcc7b0b85cf3187bf228317eca32bad5334ce4d6";
-    public const string Blake3_ConformanceHttpJson = "360dd77ff93132b677d8e0ad987f3bcd420f6e15baea400d7cc6dda04e42ad77";
+    public const string ManifestSha256 = "2831326446fda4cfbd09e784434d6e77f2bb5f643f0cdc95861c3e0045227a73";
+    public const string Blake3_ConformanceHttpJson = "cf70549f56d34107f315fb47b7b9366e2c8d6a5754fdf18fc215b16dc7d03ad8";
     public const string Blake3_ConformanceMsgpackHostileVectorsJson = "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3";
     public const string Blake3_ConformanceMsgpackMessageVectorsJson = "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c";
     public const string Blake3_ConformanceReactiveJson = "20f4f63ea988a78bb352de7796e68c0e493e558cb79a77bd7e502aaddbf3f4d8";
