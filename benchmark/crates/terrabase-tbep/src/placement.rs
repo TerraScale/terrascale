@@ -980,6 +980,24 @@ impl PlacementJournal {
         Ok(proof.digest.clone())
     }
 
+    /// Returns the currently accepted authority pins from the validated chain.
+    ///
+    /// # Errors
+    /// Fails when no accepted record exists or the retained chain is unavailable.
+    pub fn accepted_authority(&self) -> Result<(u64, String, String), PlacementError> {
+        let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
+        let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let chain = self.verified_chain(&connection, trust)?;
+        let (_, _, proof) = chain.last().ok_or(PlacementError::NotFound)?;
+        if proof.proof.authority_epoch == 0 || proof.proof.lease_id.is_empty()
+            || proof.digest.is_empty()
+        {
+            return Err(PlacementError::Invalid);
+        }
+        Ok((proof.proof.authority_epoch, proof.proof.lease_id.clone(), proof.digest.clone()))
+    }
+
     /// Returns the digest of the canonical proposal backing the accepted proof.
     /// This is the placement binding used by data-plane readiness receipts.
     pub fn accepted_placement_digest(&self) -> Result<String, PlacementError> {

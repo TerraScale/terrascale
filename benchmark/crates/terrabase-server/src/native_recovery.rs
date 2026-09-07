@@ -159,6 +159,12 @@ pub struct NativeRestoreRequest {
     pub journal_cut: String,
     /// Restore epoch.
     pub restore_epoch: u64,
+    /// Authority epoch retained from the verified lifecycle context.
+    pub authority_epoch: u64,
+    /// Authority lease retained from the verified lifecycle context.
+    pub authority_lease: String,
+    /// Accepted placement proof identity retained from the verified context.
+    pub accepted_proof_digest: String,
     /// Selected provider name.
     pub provider: String,
     /// Point or exact millisecond selection.
