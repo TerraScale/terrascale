@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use terrascale::reactive::{
     ApplyOutcome, CancellationToken, PollOptions, PollOutcome, PollResponse, ResetFrame,
@@ -11,6 +12,7 @@ use terrascale::{
     AttachedView, ClientConfig, DatabaseScope, Error, HttpTransport, Query, RegionCode, Request,
     Response, Result, SubscribeOptions, TerraScaleClient, Transport,
 };
+use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Debug)]
 struct Mock {
@@ -709,4 +711,90 @@ async fn websocket_subscribe_reaches_the_published_attach_route() {
         .expect("published attach route");
     assert_eq!(view.view_id, "view-1");
     assert_eq!(mock.requests.lock().expect("request mutex").len(), 1);
+}
+
+#[tokio::test]
+async fn websocket_live_subscription_uses_capability_and_decodes_event() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move {
+        let (mut http, _) = listener.accept().await.expect("attach connection");
+        let mut request = vec![0_u8; 8192];
+        http.readable().await.expect("http readable");
+        let _ = http.try_read(&mut request).expect("attach request");
+        let body = br#"{"view":"v-conformance-view","generation":1,"snapshot_chunks":[],"log":"/api/v1/reactive/views/v-conformance-view/1/log","checkpoint":"Y3Ax","capability":"capability-tag","offset":0}"#;
+        let response = format!("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+        http.writable().await.expect("http writable");
+        http.try_write(response.as_bytes()).expect("attach headers");
+        http.try_write(body).expect("attach body");
+
+        let (stream, _) = listener.accept().await.expect("websocket connection");
+        let mut socket = tokio_tungstenite::accept_hdr_async(
+            stream,
+            |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+             mut response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+            let protocols = request
+                .headers()
+                .get("sec-websocket-protocol")
+                .and_then(|value| value.to_str().ok())
+                .expect("protocol header");
+            assert!(protocols.contains("terrascale.sync.v1"));
+            assert!(protocols.contains("terrascale.cap.capability-tag"));
+            response.headers_mut().insert(
+                "sec-websocket-protocol",
+                "terrascale.sync.v1".parse().expect("protocol value"),
+            );
+                Ok(response)
+            },
+        )
+        .await
+        .expect("websocket handshake");
+        let subscribe = socket
+            .next()
+            .await
+            .expect("subscribe frame")
+            .expect("frame");
+        let Message::Binary(subscribe) = subscribe else {
+            panic!("subscribe must be binary")
+        };
+        assert_eq!(subscribe[0], 0x97);
+        assert!(subscribe
+            .windows(b"capability-tag".len())
+            .any(|w| w == b"capability-tag"));
+        socket
+            .send(Message::Binary(reactive_fixture("snapshot").into()))
+            .await
+            .expect("opening frame");
+        socket
+            .send(Message::Binary(reactive_fixture("log").into()))
+            .await
+            .expect("event frame");
+    });
+
+    let sdk = TerraScaleClient::new(
+        ClientConfig::builder()
+            .api_base_url(format!("http://{address}"))
+            .build()
+            .expect("config"),
+    );
+    let mut live = sdk
+        .reactive()
+        .subscribe_live(
+            &DatabaseScope::new("db"),
+            &Query::raw("SELECT id FROM orders".to_owned(), vec![]),
+            SubscribeOptions::new()
+                .with_transport(Transport::WebSocket)
+                .with_subscription("sub"),
+        )
+        .await
+        .expect("live websocket");
+    assert!(matches!(
+        live.next().await.expect("event"),
+        PollOutcome::Data { .. }
+    ));
+    live.cancel();
+    assert!(live.next().await.expect_err("cancelled").code == "cancelled");
+    server.await.expect("server");
 }
