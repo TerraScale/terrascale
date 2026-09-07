@@ -64,7 +64,13 @@ test("public HTTP clients consume the pinned producer response and error corpus"
         assert.equal(result.status, expected.status, routeName);
         for (const [name, value] of Object.entries(expected.headers ?? {})) assert.equal(result.headers?.get(name), value, `${routeName}: ${name}`);
         assert.equal(result.ok, status === undefined, routeName);
-        if (result.ok) assert.deepEqual(result.value, expected.status === 204 ? undefined : expected.mediaType === "application/octet-stream" ? new TextEncoder().encode(String(expected.body)) : expected.body, routeName);
+        if (result.ok) {
+          const expectedValue = expected.status === 204 ? undefined
+            : expected.mediaType === "application/octet-stream"
+              ? { bytes: new TextEncoder().encode(String(expected.body)), length: Number(expected.headers?.["x-terrascale-artifact-length"] ?? "0"), checksum: expected.headers?.["x-terrascale-artifact-checksum"] }
+              : expected.body;
+          assert.deepEqual(result.value, expectedValue, routeName);
+        }
         else {
           const body = expected.body as { error: { code: string; message: string; fix: string } };
           assert.equal(result.error.code, body.error.code, routeName);

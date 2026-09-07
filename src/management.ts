@@ -192,7 +192,7 @@ export class ManagementDatabasesClient {
     });
   }
 
-  delete(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<Database>> {
+  delete(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<DeletionOperation>> {
     if (options?.confirm !== true) throw new TypeError("Database deletion requires options.confirm to be true.");
     requireText(options.idempotencyKey, "idempotencyKey", 128);
     return this.#http.request({
@@ -226,7 +226,7 @@ export class ManagementDatabasesClient {
   listDatabases(): Promise<TerraScaleResult<DatabaseListResponse>> { return this.list(); }
   createDatabase(request: CreateDatabaseRequest): Promise<CreateDatabaseResult> { return this.create(request); }
   getDatabase(databaseId: string): Promise<TerraScaleResult<Database>> { return this.get(databaseId); }
-  deleteDatabase(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<Database>> { return this.delete(databaseId, options); }
+  deleteDatabase(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<DeletionOperation>> { return this.delete(databaseId, options); }
   restoreDatabase(databaseId: string): Promise<TerraScaleResult<Database>> { return this.restore(databaseId); }
 }
 
