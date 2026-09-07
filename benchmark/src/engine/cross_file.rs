@@ -94,22 +94,9 @@ impl CrossFileIdentity {
             && !self.participants.is_empty()
             && self.participants.len() <= MAX_PARTICIPANTS
             && self.participants.iter().all(|(name, sequence)| {
-                !name.is_empty() && name.len() <= 255 && *sequence <= i64::MAX as u64
+                !name.is_empty() && name.len() <= 255 && i64::try_from(*sequence).is_ok()
             })
     }
-}
-
-/// Durable cross-file coordinator phase.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CrossFilePhase {
-    /// Participant prepare records are durable.
-    Prepare,
-    /// The coordinator decision is durable but not visible.
-    Decision,
-    /// Every participant has durably installed the decision.
-    Installed,
-    /// The database visible frontier has advanced.
-    Visible,
 }
 
 /// Durable coordinator decision. A committed decision alone is not visible.
@@ -236,9 +223,6 @@ fn integer(fields: &BTreeMap<String, DocumentValue>, name: &str) -> Option<u64> 
 }
 
 fn decode(value: DocumentValue) -> Result<CrossFileRecord, EngineError> {
-    let DocumentValue::Object(fields) = value else {
-        return Err(EngineError::InvalidDocument);
-    };
     const FIELDS: &[&str] = &[
         "tenant",
         "incarnation",
@@ -251,6 +235,9 @@ fn decode(value: DocumentValue) -> Result<CrossFileRecord, EngineError> {
         "decision_epoch",
         "phase",
     ];
+    let DocumentValue::Object(fields) = value else {
+        return Err(EngineError::InvalidDocument);
+    };
     if fields.keys().any(|key| !FIELDS.contains(&key.as_str())) {
         return Err(EngineError::InvalidDocument);
     }
@@ -324,7 +311,7 @@ impl Engine {
     /// Advances the local DB-visible frontier after every named participant
     /// has reported its installed snapshot. This method performs no RF2 or
     /// Global finality claim; those proofs remain cluster-owned.
-    pub fn advance_cross_file_visible(
+    pub(crate) fn advance_cross_file_visible(
         &self,
         scope: &TenantScope,
         identity: &CrossFileIdentity,
@@ -390,7 +377,7 @@ impl Engine {
         }
     }
     /// Reads a durable cross-file prepare record for one operation.
-    pub fn read_cross_file_decision(
+    pub(crate) fn read_cross_file_decision(
         &self,
         scope: &TenantScope,
         operation: &OperationId,
@@ -405,7 +392,7 @@ impl Engine {
     }
 
     /// Creates an immutable prepare record with exact-identity replay.
-    pub fn prepare_cross_file(
+    pub(crate) fn prepare_cross_file(
         &self,
         scope: &TenantScope,
         identity: CrossFileIdentity,
@@ -467,7 +454,7 @@ impl Engine {
     }
 
     /// Durably decides a prepared operation exactly once.
-    pub fn decide_cross_file(
+    pub(crate) fn decide_cross_file(
         &self,
         scope: &TenantScope,
         identity: &CrossFileIdentity,

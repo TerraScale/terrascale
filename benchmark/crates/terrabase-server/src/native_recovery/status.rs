@@ -43,6 +43,16 @@ pub(super) fn read(
             let state: NativeRecoveryOperation = serde_json::from_slice(&record)
                 .map_err(|_| NativeRecoveryError::VerificationFailed)?;
             validate(&state, source, operation, &phase)?;
+            let checkpoint = super::persistence::load_checkpoint(connection, source, operation)?;
+            if let Some(point) = checkpoint.as_ref() {
+                super::checkpoint::validate(Some(point), source, &point.placement)?;
+            }
+            if state.phase == NativeRecoveryPhase::Complete {
+                let point = checkpoint.as_ref().ok_or(NativeRecoveryError::VerificationFailed)?;
+                if !state.facts.as_ref().is_some_and(|facts| point.matches_facts(facts)) {
+                    return Err(NativeRecoveryError::VerificationFailed);
+                }
+            }
             Ok(state)
         })
         .transpose()

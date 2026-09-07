@@ -439,6 +439,7 @@ mod tests {
                 restore_epoch: expected.restore_epoch,
                 provider: "oci".into(),
                 selection: NativeRestoreSelection::PointId(expected.recovery_point_id.clone()),
+                residency: "GRU".into(),
                 placement: expected.placement.clone(),
             },
             phase: NativeRestorePhase::Accepted,

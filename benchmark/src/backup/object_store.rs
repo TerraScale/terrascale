@@ -127,6 +127,10 @@ impl ObjectDestination {
     /// Publishes one bounded opaque member through the authenticated provider.
     /// Export composition uses this seam for resumable artifact members; the
     /// caller retains manifest and completion-marker ordering.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when the key or artifact exceeds bounds, the
+    /// key is invalid, or the provider rejects the upload.
     pub async fn put_member(&self, key: &str, bytes: Vec<u8>) -> Result<(), TransferError> {
         if key.is_empty() || key.len() > 1024 || bytes.len() as u64 > self.max_artifact_bytes {
             return Err(TransferError::InvalidPoint);
@@ -140,6 +144,10 @@ impl ObjectDestination {
     }
 
     /// Reads one bounded opaque member through the authenticated provider.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when the key or downloaded artifact exceeds
+    /// bounds, the key is invalid, or the provider rejects the download.
     pub async fn get_member(&self, key: &str) -> Result<Vec<u8>, TransferError> {
         if key.is_empty() || key.len() > 1024 {
             return Err(TransferError::InvalidPoint);
@@ -159,6 +167,10 @@ impl ObjectDestination {
     }
 
     /// Lists opaque export members under a bounded prefix.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when the prefix is invalid, the result exceeds
+    /// the file bound, or the provider rejects the listing.
     pub async fn list_members(&self, prefix: &str) -> Result<Vec<String>, TransferError> {
         if prefix.is_empty() || prefix.len() > 1024 {
             return Err(TransferError::InvalidPoint);

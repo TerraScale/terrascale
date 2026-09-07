@@ -34,10 +34,10 @@ impl Engine {
             return Err(EngineOpenError::InvalidConfig);
         }
         let target = &config.location;
-        if let Ok(metadata) = fs::symlink_metadata(target) {
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err(EngineOpenError::InvalidConfig);
-            }
+        if let Ok(metadata) = fs::symlink_metadata(target)
+            && (!metadata.is_dir() || metadata.file_type().is_symlink())
+        {
+            return Err(EngineOpenError::InvalidConfig);
         }
         let marker =
             format!("{}:{}:{}", operation.as_str(), source_owner.database(), child.database());

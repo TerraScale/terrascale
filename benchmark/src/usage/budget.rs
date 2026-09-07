@@ -263,7 +263,7 @@ fn parse_millis(value: &str) -> Option<u64> {
     let hour: i64 = clock_parts.next()?.parse().ok()?;
     let minute: i64 = clock_parts.next()?.parse().ok()?;
     let second_fraction = clock_parts.next()?;
-    let (second, fraction) = second_fraction.split_once('.').map_or((second_fraction, ""), |v| v);
+    let (second, fraction) = second_fraction.split_once('.').unwrap_or((second_fraction, ""));
     let second: i64 = second.parse().ok()?;
     if hour > 23 || minute > 59 || second > 59 {
         return None;

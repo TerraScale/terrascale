@@ -1,8 +1,7 @@
 //! Immutable participant preparation records for cross-file storage commits.
 use crate::storage::{PrivateMetadataWrite, SchemaEnvelopeWrite};
 use crate::types::{
-    CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, OperationId,
-    StorageSequence, TenantId,
+    CollectionName, Document, DocumentId, ExpectedVersion, OperationId, StorageSequence, TenantId,
 };
 
 #[derive(Clone, Debug)]

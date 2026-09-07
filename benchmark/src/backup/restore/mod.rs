@@ -647,6 +647,9 @@ struct RestoreMarker {
 /// `None` means the target has no marker for this operation. A malformed
 /// marker is reported as a checksum failure so callers cannot treat it as a
 /// successful replay.
+/// # Errors
+/// Returns a backup error when the engine scope, marker bytes, or persisted
+/// restore metadata cannot be read or validated.
 pub fn read_restore_marker(
     engine: &Engine,
     identity: &RestoreIdentity,
@@ -659,7 +662,7 @@ pub fn read_restore_marker(
     let Some(value) = guard
         .port
         .private_metadata_at(&tenant, &key, snapshot)
-        .map_err(|_| BackupError::DestinationUnavailable)?
+        .map_err(|()| BackupError::DestinationUnavailable)?
     else {
         return Ok(None);
     };
@@ -1611,7 +1614,7 @@ fn verify_restore_metadata(
     let value = guard
         .port
         .private_metadata_at(&tenant, &key, snapshot)
-        .map_err(|_| BackupError::DestinationUnavailable)?
+        .map_err(|()| BackupError::DestinationUnavailable)?
         .ok_or(BackupError::DestinationUnavailable)?;
     let crate::types::DocumentValue::String(value) = value else {
         return Err(BackupError::ChecksumMismatch);

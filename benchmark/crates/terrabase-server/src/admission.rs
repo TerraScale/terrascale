@@ -406,8 +406,10 @@ mod tests {
         assert!(host.admit(&negative_time).is_err());
         assert!(host.admit(&record).is_err());
         let mut invalid_residency = record.clone();
+        invalid_residency.database_id = DatabaseUlid::generate().to_string();
         invalid_residency.residency = "eu-only".into();
         assert!(host.admit(&invalid_residency).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
         drop(host);
         let host =
             AdmissionHost::open(&root, "production".into(), RegionCode::GRU, member, callback)

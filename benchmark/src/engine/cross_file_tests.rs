@@ -96,7 +96,6 @@ fn invalid_identity_and_foreign_owner_are_rejected() {
 #[test]
 fn terminal_record_preserves_identity_and_decision() {
     let (_path, engine) = open("record");
-    let scope = engine.scope_for(&TenantId::try_new("tenant").unwrap());
     let value = CrossFileRecord {
         identity: identity(&engine, "record"),
         decision: Some(CrossFileDecision::Committed),
@@ -107,7 +106,6 @@ fn terminal_record_preserves_identity_and_decision() {
 
 #[test]
 fn participant_prepare_resolves_exactly_across_engine_reopen() {
-    use crate::storage::StoragePort;
     use crate::storage::participant::{ParticipantIdentity, ParticipantPrepare, ParticipantWrite};
     use crate::types::{
         CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, StorageSequence,

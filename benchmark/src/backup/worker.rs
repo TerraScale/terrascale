@@ -202,6 +202,10 @@ pub struct LifecycleReceipt {
 
 impl NativeBackupFleet {
     /// Captures and verifies one native point for a lifecycle operation.
+    ///
+    /// # Errors
+    /// Returns [`FleetError`] if capture, retention lookup, or verification
+    /// fails.
     pub async fn lifecycle_snapshot(
         &mut self,
         database: &str,
@@ -222,6 +226,9 @@ impl NativeBackupFleet {
     }
 
     /// Verifies that the native fleet retains an authenticated point.
+    ///
+    /// # Errors
+    /// Returns [`FleetError`] if retention lookup fails or no point exists.
     pub fn lifecycle_verify(
         &self,
         database: &str,
@@ -242,6 +249,9 @@ impl NativeBackupFleet {
     }
 
     /// Deletes all retained points through the fleet-owned historical destinations.
+    ///
+    /// # Errors
+    /// Returns [`FleetError`] if the database is unknown or purge fails.
     pub async fn lifecycle_delete(
         &mut self,
         database: &str,
@@ -557,6 +567,10 @@ impl NativeBackupFleet {
 
     /// Releases a paused target's engine while retaining its exact backup policy.
     /// The fleet lock serializes this with in-flight provider work.
+    ///
+    /// # Errors
+    /// Returns [`FleetError`] when the target is unavailable or cannot be
+    /// suspended safely.
     pub fn suspend_for_restore(&mut self, database: &str) -> Result<(), FleetError> {
         if self.suspended.contains_key(database) {
             return Ok(());
@@ -599,6 +613,10 @@ impl NativeBackupFleet {
     }
 
     /// Rebinds the retained policy to the reopened target after restore or rollback.
+    ///
+    /// # Errors
+    /// Returns [`FleetError`] when the engine identity or retained policy is
+    /// invalid, or attachment fails.
     pub fn resume_after_restore(
         &mut self,
         database: &str,
@@ -634,6 +652,9 @@ impl NativeBackupFleet {
     }
 
     /// Pauses capture for one stream while retaining its policy and artifacts.
+    ///
+    /// # Errors
+    /// Returns [`FleetError`] when the database is unknown or closing.
     pub fn pause(&mut self, database: &str) -> Result<(), FleetError> {
         let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
         if stream.closing {
@@ -644,6 +665,9 @@ impl NativeBackupFleet {
     }
 
     /// Resumes capture for one retained stream without changing its identity.
+    ///
+    /// # Errors
+    /// Returns [`FleetError`] when the database is unknown or closing.
     pub fn resume(&mut self, database: &str) -> Result<(), FleetError> {
         let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
         if stream.closing {

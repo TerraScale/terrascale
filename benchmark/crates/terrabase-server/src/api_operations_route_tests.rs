@@ -46,6 +46,36 @@ async fn page(
     (status, serde_json::from_slice(&body).unwrap())
 }
 
+async fn operation(
+    state: Arc<ApiState>,
+    tenant: &str,
+    project: &str,
+    operation_id: &str,
+) -> (StatusCode, serde_json::Value) {
+    let app = Router::new()
+        .route(
+            "/api/v1/operations/:operation_id",
+            axum::routing::get(get_provisioning_operation),
+        )
+        .layer(Extension(crate::delegated_identity::VerifiedProjectScope {
+            tenant_id: tenant.into(),
+            project_id: project.into(),
+        }))
+        .with_state(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/operations/{operation_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
 #[tokio::test]
 async fn production_handler_paginates_authority_export_recovery_after_restart() {
     use bytes::Bytes;
@@ -164,6 +194,11 @@ async fn production_handler_paginates_authority_export_recovery_after_restart() 
     Arc::get_mut(&mut state).unwrap().exports = Some(Arc::new(
         crate::export_api::ExportRuntime::local(&exports_root, terrabase::RegionCode::GRU).unwrap(),
     ));
+    let (status, result) =
+        operation(state.clone(), &record.tenant_id, &record.project_id, &"a".repeat(32)).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["operation_id"], "a".repeat(32));
+    assert_eq!(result["kind"], "export");
     let mut ids = Vec::new();
     for _ in 0..8 {
         let (status, result) =

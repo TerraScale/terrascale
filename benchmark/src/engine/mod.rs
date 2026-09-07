@@ -93,7 +93,6 @@ pub use patch::{
 };
 pub use recovery_statistics::RecoveryStatistics;
 pub(crate) use recovery_statistics::{logical_document_digest, logical_state_hasher};
-pub(crate) use shard_split::{RouteCatalog, RouteCatalogError, ScopedShardEngine};
 
 use crate::{
     families::FamilyStore,
@@ -1140,6 +1139,11 @@ pub(crate) struct StorageState {
 /// // There is no in-memory durable constructor. This must not compile.
 /// let engine = terrabase::engine::Engine::ephemeral();
 /// ```
+type AutoIndexShadowSamples = BTreeMap<
+    (String, String, [u8; 32]),
+    (u64, Vec<crate::auto_index::LogicalCost>, Vec<crate::auto_index::LogicalCost>),
+>;
+
 pub struct Engine {
     storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     identity: u128,
@@ -1187,12 +1191,7 @@ pub struct Engine {
     /// candidates. Values are logical pages/rows only; document bodies never
     /// enter this sketch.
     pub(crate) auto_index_observations: Mutex<crate::auto_index::WorkloadSketch>,
-    pub(crate) auto_index_shadow_samples: Mutex<
-        BTreeMap<
-            (String, String, [u8; 32]),
-            (u64, Vec<crate::auto_index::LogicalCost>, Vec<crate::auto_index::LogicalCost>),
-        >,
-    >,
+    pub(crate) auto_index_shadow_samples: Mutex<AutoIndexShadowSamples>,
     /// The Storage Tier Mover's control state (P4): the configured
     /// policy and the pause gate. The handle is [`Engine::tiers`].
     /// The group-commit mailbox: waiting intents and the leader flag.

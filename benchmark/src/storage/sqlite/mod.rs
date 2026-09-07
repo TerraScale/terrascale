@@ -4508,7 +4508,7 @@ impl StoragePort for SqliteStorage {
         if *blake3::hash(&payload).as_bytes() != identity.digest {
             return Err(());
         }
-        let mut connection = self.writer.lock().map_err(|_| ())?;
+        let connection = self.writer.lock().map_err(|_| ())?;
         connection.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())?;
         let transaction = connection.unchecked_transaction().map_err(|_| ())?;
         transaction.execute("INSERT INTO participant_prepares(tenant,incarnation,operation,participant,owner,digest,epoch,snapshot,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(tenant,incarnation,operation,participant) DO NOTHING", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant, identity.owner, identity.digest.as_slice(), i64::try_from(identity.epoch).map_err(|_| ())?, i64::try_from(identity.snapshot.get()).map_err(|_| ())?, payload]).map_err(|_| ())?;

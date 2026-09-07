@@ -163,6 +163,8 @@ pub struct NativeRestoreRequest {
     pub provider: String,
     /// Point or exact millisecond selection.
     pub selection: NativeRestoreSelection,
+    /// Inherited immutable residency, equal for source and target at admission.
+    pub residency: String,
     /// Inherited immutable placement.
     pub placement: Vec<String>,
 }
@@ -286,20 +288,23 @@ pub struct NativeRecoveryRuntime {
 impl NativeRecoveryRuntime {
     fn restore_residency_matches(
         &self,
-        source_database_id: &str,
-        target_database_id: &str,
+        request: &NativeRestoreRequest,
     ) -> Result<bool, NativeRecoveryError> {
         let source = self
             .registry
-            .resolve(source_database_id)
+            .resolve(&request.source_database_id)
             .map_err(|_| NativeRecoveryError::Unavailable)?
             .ok_or(NativeRecoveryError::VerificationFailed)?;
         let target = self
             .registry
-            .resolve(target_database_id)
+            .retained_snapshot()
             .map_err(|_| NativeRecoveryError::Unavailable)?
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == request.target_database_id)
             .ok_or(NativeRecoveryError::VerificationFailed)?;
-        Ok(source.record.residency == target.record.residency)
+        Ok(!request.residency.is_empty()
+            && source.record.residency == request.residency
+            && target.database.record.residency == request.residency)
     }
 
     /// Opens durable native recovery operations for the admitted worker fleet.
@@ -449,6 +454,8 @@ impl NativeRecoveryRuntime {
                 }
                 let mut connection =
                     runtime.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+                // Validate retained checkpoint/facts before admission can replay or retry a row.
+                status::read(&connection, &source, &operation_id)?;
                 let admitted =
                     admission::admit_operation(&mut connection, runtime.limits, proposed)?;
                 runtime.notify.notify_one();
@@ -490,6 +497,7 @@ impl NativeRecoveryRuntime {
             || request.journal_cut.is_empty()
             || request.restore_epoch == 0
             || !matches!(request.provider.as_str(), "oci" | "tigris")
+            || request.residency.is_empty()
             || request.placement.is_empty()
             || request
                 .placement
@@ -524,6 +532,9 @@ impl NativeRecoveryRuntime {
             }
             tx.commit().map_err(|_| NativeRecoveryError::Unavailable)?;
             return Ok(existing);
+        }
+        if !self.restore_residency_matches(&request)? {
+            return Err(NativeRecoveryError::VerificationFailed);
         }
         tx.execute(
             "INSERT INTO native_restore_operations(operation_id,source_database_id,target_database_id,phase,record) VALUES(?1,?2,?3,'accepted',?4)",
@@ -647,54 +658,30 @@ impl NativeRecoveryRuntime {
         let pending = {
             let connection =
                 self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-            let mut statement = connection.prepare("SELECT source_database_id, operation_id, phase, record FROM native_recovery_operations ORDER BY operation_id").map_err(|_| NativeRecoveryError::Unavailable)?;
+            let mut statement = connection.prepare("SELECT source_database_id, operation_id FROM native_recovery_operations ORDER BY operation_id").map_err(|_| NativeRecoveryError::Unavailable)?;
             let rows = statement
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Vec<u8>>(3)?,
-                    ))
-                })
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
                 .map_err(|_| NativeRecoveryError::Unavailable)?;
             let mut found = None;
-            let mut malformed = None;
             for row in rows {
-                let (source, operation, phase, bytes) =
-                    row.map_err(|_| NativeRecoveryError::Unavailable)?;
-                let state = match serde_json::from_slice::<NativeRecoveryOperation>(&bytes) {
-                    Ok(state) => state,
-                    Err(_) => {
-                        malformed = Some((source, operation));
-                        break;
-                    }
-                };
-                if status::validate(&state, &source, &operation, &phase).is_err() {
-                    malformed = Some((source, operation));
-                    break;
-                }
-                if matches!(phase.as_str(), "accepted" | "capturing" | "measuring") {
-                    found = Some((source, operation, state));
-                    break;
+                let (source, operation) = row.map_err(|_| NativeRecoveryError::Unavailable)?;
+                // Corruption is an error, never a fabricated terminal transition.
+                let state = status::read(&connection, &source, &operation)?
+                    .ok_or(NativeRecoveryError::VerificationFailed)?;
+                if found.is_none()
+                    && matches!(
+                        state.phase,
+                        NativeRecoveryPhase::Accepted
+                            | NativeRecoveryPhase::Capturing
+                            | NativeRecoveryPhase::Measuring
+                    )
+                {
+                    found = Some((source, operation));
                 }
             }
-            (found, malformed)
+            found
         };
-        let (pending, malformed) = pending;
-        if let Some((source, operation)) = malformed {
-            let connection =
-                self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-            persistence::fail_row(
-                &connection,
-                &operation,
-                &source,
-                "native recovery record verification failed; retry the existing operation",
-            )?;
-            self.notify.notify_one();
-            return Ok(true);
-        }
-        let Some((source, operation, _state)) = pending else {
+        let Some((source, operation)) = pending else {
             return Ok(false);
         };
         let admitted = match self.registry.resolve(&source) {
@@ -728,6 +715,11 @@ impl NativeRecoveryRuntime {
                 let Some(mut latest) = self.status(&source, &operation)? else {
                     return Err(NativeRecoveryError::Unavailable);
                 };
+                if latest.phase == NativeRecoveryPhase::Capturing
+                    && self.load_checkpoint(&source, &operation)?.is_none()
+                {
+                    return Err(error);
+                }
                 if !matches!(
                     latest.phase,
                     NativeRecoveryPhase::Complete | NativeRecoveryPhase::Failed
@@ -804,10 +796,7 @@ impl NativeRecoveryRuntime {
             || admitted.record.regions != request.placement
             || format!("{}/{}", admitted.record.tenant_id, admitted.record.project_id)
                 != request.source_owner
-            || !self.restore_residency_matches(
-                &request.source_database_id,
-                &request.target_database_id,
-            )?
+            || !self.restore_residency_matches(request)?
         {
             return Err(NativeRecoveryError::VerificationFailed);
         }
@@ -864,10 +853,8 @@ impl NativeRecoveryRuntime {
         if format!("{}/{}", target.database.record.tenant_id, target.database.record.project_id)
             != request.target_owner
             || target.database.record.regions != request.placement
-            || !self.restore_residency_matches(
-                &request.source_database_id,
-                &request.target_database_id,
-            )?
+            || request.residency.is_empty()
+            || target.database.record.residency != request.residency
         {
             return Err(NativeRecoveryError::VerificationFailed);
         }
@@ -951,17 +938,7 @@ impl NativeRecoveryRuntime {
         if state.operation_id != operation || state.source_database_id != source {
             return Err(NativeRecoveryError::VerificationFailed);
         }
-        let checkpoint = match self.load_checkpoint(source, operation) {
-            Ok(value) => value,
-            Err(error) => {
-                state.phase = NativeRecoveryPhase::Failed;
-                state.error = Some(
-                    "native recovery verification failed; retry the existing operation".into(),
-                );
-                self.save_record_only(&state)?;
-                return Err(error);
-            }
-        };
+        let checkpoint = self.load_checkpoint(source, operation)?;
         let capture = || {
             let manifest = {
                 let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -1144,9 +1121,9 @@ mod tests {
                 .unwrap();
         }
         runtime.notify.notify_one();
-        worker.shutdown().await.unwrap();
+        assert_eq!(worker.shutdown().await, Err(NativeRecoveryError::Unavailable));
         let result = runtime.status(&state.source_database_id, &state.operation_id).unwrap();
-        assert!(matches!(result.map(|value| value.phase), Some(NativeRecoveryPhase::Failed)));
+        assert!(matches!(result.map(|value| value.phase), Some(NativeRecoveryPhase::Capturing)));
         drop(member);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1179,23 +1156,25 @@ mod tests {
             restore_epoch: 1,
             provider: "oci".into(),
             selection: NativeRestoreSelection::PointId("point".into()),
+            residency: records[0].residency.clone(),
             placement: records[0].regions.clone(),
         };
+        let mut wrong_residency = request.clone();
+        wrong_residency.residency.push_str("-mismatch");
+        assert_eq!(
+            runtime.admit_restore(wrong_residency),
+            Err(NativeRecoveryError::VerificationFailed)
+        );
+        // A paused target is retained but deliberately absent from resolve().
+        assert!(registry.resolve(&request.target_database_id).unwrap().is_none());
+        runtime.admit_restore(request.clone()).unwrap();
         let operation = NativeRestoreOperation {
             request,
             phase: NativeRestorePhase::Uncertain,
             receipt: None,
             error: Some("unknown".into()),
         };
-        runtime
-            .operations
-            .lock()
-            .unwrap()
-            .execute(
-                "INSERT INTO native_restore_operations(operation_id,source_database_id,target_database_id,phase,record) VALUES(?1,?2,?3,'uncertain',?4)",
-                rusqlite::params!["uncertain-operation", records[0].database_id, records[1].database_id, serde_json::to_vec(&operation).unwrap()],
-            )
-            .unwrap();
+        runtime.save_restore(&operation).unwrap();
         let retried = runtime.retry_restore_readback("uncertain-operation").unwrap();
         assert_eq!(retried.phase, NativeRestorePhase::Verifying);
         assert!(retried.receipt.is_none());
@@ -1253,8 +1232,7 @@ mod tests {
         .unwrap();
         worker.shutdown().await.unwrap();
         let target = &records[1];
-        let source = terrabase::identity::DatabaseUlid::generate().to_string();
-        assert!(registry.resolve(&source).unwrap().is_none());
+        let source = records[0].database_id.clone();
         let owner = format!("{}/{}", target.tenant_id, target.project_id);
         let request = NativeRestoreRequest {
             operation_id: "published-before-receipt-save".into(),
@@ -1268,9 +1246,12 @@ mod tests {
             restore_epoch: 1,
             provider: "oci".into(),
             selection: NativeRestoreSelection::PointId("a".repeat(64)),
+            residency: target.residency.clone(),
             placement: target.regions.clone(),
         };
         runtime.admit_restore(request.clone()).unwrap();
+        registry.pause(&source, "source-moved").unwrap();
+        assert!(registry.resolve(&source).unwrap().is_none());
         runtime
             .save_restore(&NativeRestoreOperation {
                 request: request.clone(),
@@ -1363,7 +1344,7 @@ mod tests {
             request: NativeRestoreRequest {
                 operation_id: "active-readback".into(),
                 source_owner: format!("{}/{}", record.tenant_id, record.project_id),
-                source_database_id: record.database_id.clone(),
+                source_database_id: terrabase::identity::DatabaseUlid::generate().to_string(),
                 recovery_point_id: "point".into(),
                 recovery_point_digest: "a".repeat(64),
                 target_owner: format!("{}/{}", record.tenant_id, record.project_id),
@@ -1372,30 +1353,37 @@ mod tests {
                 restore_epoch: 1,
                 provider: "oci".into(),
                 selection: NativeRestoreSelection::PointId("point".into()),
+                residency: record.residency.clone(),
                 placement: record.regions.clone(),
             },
             phase: NativeRestorePhase::Verifying,
             receipt: None,
             error: None,
         };
+        assert!(registry.resolve(&operation.request.source_database_id).unwrap().is_none());
         assert_eq!(
             runtime.read_published_restore(&operation),
             Err(NativeRecoveryError::VerificationFailed)
         );
         registry.pause(&record.database_id, "pause-readback").unwrap();
         assert!(runtime.read_published_restore(&operation).unwrap().is_none());
+        let mut mismatched = operation.clone();
+        mismatched.request.residency.push_str("-mismatch");
+        assert_eq!(
+            runtime.read_published_restore(&mismatched),
+            Err(NativeRecoveryError::VerificationFailed)
+        );
         worker.shutdown().await.unwrap();
         drop(member);
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
-    async fn runtime_rejects_corrupt_complete_checkpoint_and_durably_fails_row() {
+    async fn runtime_complete_status_and_capture_replay_validate_checkpoint_without_mutation() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
-        let runtime_root = root.join("native-recovery-corrupt-complete");
         let (runtime, worker) = NativeRecoveryRuntime::new(
-            &runtime_root,
+            &root.join("complete-validation"),
             fleet(),
             Arc::clone(&registry),
             limits(),
@@ -1403,51 +1391,127 @@ mod tests {
         )
         .unwrap();
         worker.shutdown().await.unwrap();
-        let record = &records[0];
-        let state = NativeRecoveryOperation {
-            operation_id: "corrupt-complete".into(),
-            source_database_id: record.database_id.clone(),
+        // Keep the public admission path available with the worker stopped so
+        // the durable replay can be examined without background interference.
+        *runtime.lifecycle.lock().unwrap() = false;
+        let source = records[0].database_id.clone();
+        let key = "complete-replay";
+        let accepted = runtime.capture(source.clone(), key.into()).await.unwrap();
+        let point = Checkpoint {
+            recovery_point_id: "point".into(),
+            source_database_id: source.clone(),
+            journal_cut: 1,
+            captured_at_millis: 2,
+            retained_until_millis: 3,
+            placement: records[0].regions.clone(),
+        };
+        let complete = NativeRecoveryOperation {
             phase: NativeRecoveryPhase::Complete,
             facts: Some(RecoveryPointFacts {
-                recovery_point_id: "point".into(),
-                source_database_id: record.database_id.clone(),
+                recovery_point_id: point.recovery_point_id.clone(),
+                source_database_id: source.clone(),
                 journal_cut: 1,
                 captured_at_millis: 2,
+                retained_until_millis: 3,
+                placement: point.placement.clone(),
                 checksum: blake3::hash(b"facts").to_hex().to_string(),
                 row_count: 0,
-                placement: record.regions.clone(),
-                retained_until_millis: 3,
             }),
-            error: None,
+            ..accepted
         };
-        {
-            let connection = runtime.operations.lock().unwrap();
-            connection
-                .execute(
-                    "INSERT INTO native_recovery_operations(operation_id,source_database_id,phase,record,checkpoint) VALUES(?1,?2,'complete',?3,?4)",
-                    rusqlite::params![
-                        state.operation_id,
-                        state.source_database_id,
-                        serde_json::to_vec(&state).unwrap(),
-                        b"{malformed checkpoint".as_slice()
-                    ],
-                )
-                .unwrap();
+        let mut mismatched = point.clone();
+        mismatched.journal_cut += 1;
+        for checkpoint in [
+            None,
+            Some(b"{malformed checkpoint".to_vec()),
+            Some(mismatched.encode().unwrap()),
+            Some(point.encode().unwrap()),
+        ] {
+            let bytes = serde_json::to_vec(&complete).unwrap();
+            runtime.operations.lock().unwrap().execute(
+                "UPDATE native_recovery_operations SET phase='complete',record=?2,checkpoint=?3 WHERE operation_id=?1",
+                rusqlite::params![complete.operation_id, bytes, checkpoint],
+            ).unwrap();
+            let valid = checkpoint == Some(point.encode().unwrap());
+            if valid {
+                assert_eq!(
+                    runtime.status(&source, &complete.operation_id).unwrap(),
+                    Some(complete.clone())
+                );
+                assert_eq!(runtime.capture(source.clone(), key.into()).await.unwrap(), complete);
+                assert!(!runtime.process_pending().await.unwrap());
+            } else {
+                assert_eq!(
+                    runtime.status(&source, &complete.operation_id),
+                    Err(NativeRecoveryError::VerificationFailed)
+                );
+                assert_eq!(
+                    runtime.capture(source.clone(), key.into()).await,
+                    Err(NativeRecoveryError::VerificationFailed)
+                );
+                assert_eq!(
+                    runtime.process_pending().await,
+                    Err(NativeRecoveryError::VerificationFailed)
+                );
+            }
+            let stored: (String, Vec<u8>, Option<Vec<u8>>) = runtime.operations.lock().unwrap().query_row(
+                "SELECT phase,record,checkpoint FROM native_recovery_operations WHERE operation_id=?1",
+                [&complete.operation_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).unwrap();
+            assert_eq!(stored, ("complete".into(), bytes, checkpoint));
         }
-        let admitted = registry.resolve(&record.database_id).unwrap().unwrap();
-        assert_eq!(
-            runtime.run_capture(
-                &admitted.host,
-                record.regions.clone(),
-                &record.database_id,
-                "corrupt-complete"
-            ),
-            Err(NativeRecoveryError::VerificationFailed)
-        );
-        assert_eq!(
-            runtime.status(&record.database_id, "corrupt-complete").unwrap().unwrap().phase,
-            NativeRecoveryPhase::Failed
-        );
+        drop(member);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn runtime_capturing_checkpoint_enters_measurement_and_unknown_capture_cannot_retry() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &root.join("capturing-resume"),
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+            Arc::new(RejectRestore),
+        )
+        .unwrap();
+        worker.shutdown().await.unwrap();
+        *runtime.lifecycle.lock().unwrap() = false;
+        let source = records[0].database_id.clone();
+        let accepted = runtime.capture(source.clone(), "resume".into()).await.unwrap();
+        let capturing =
+            NativeRecoveryOperation { phase: NativeRecoveryPhase::Capturing, ..accepted };
+        let point = Checkpoint {
+            recovery_point_id: "point".into(),
+            source_database_id: source.clone(),
+            journal_cut: 1,
+            captured_at_millis: 2,
+            retained_until_millis: 3,
+            placement: records[0].regions.clone(),
+        };
+        runtime.save(&capturing, None).unwrap();
+        assert_eq!(runtime.process_pending().await, Err(NativeRecoveryError::VerificationFailed));
+        assert_eq!(runtime.capture(source.clone(), "resume".into()).await.unwrap(), capturing);
+        runtime.save(&capturing, Some(&point)).unwrap();
+        runtime.operations.lock().unwrap().execute_batch(
+            "CREATE TABLE observed_phases(phase TEXT);
+             CREATE TRIGGER observe_phase AFTER UPDATE ON native_recovery_operations BEGIN INSERT INTO observed_phases VALUES(NEW.phase); END;"
+        ).unwrap();
+        assert!(runtime.process_pending().await.unwrap());
+        let connection = runtime.operations.lock().unwrap();
+        let phases: Vec<String> = connection
+            .prepare("SELECT phase FROM observed_phases")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        // The empty fleet cannot verify the retained artifact, so measurement
+        // fails. Reaching Measuring proves the actual dispatcher consumed the
+        // checkpoint; any recapture would persist Capturing first.
+        assert_eq!(phases, vec!["measuring", "failed"]);
+        drop(connection);
         drop(member);
         let _ = std::fs::remove_dir_all(root);
     }

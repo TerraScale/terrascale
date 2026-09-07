@@ -36,6 +36,39 @@ fn recovery_state(phase: &str) -> &'static str {
     }
 }
 
+fn export_summary(database_id: &str, row: crate::export_api::ExportStatus) -> OperationSummary {
+    OperationSummary {
+        operation_id: row.job_id,
+        kind: "export".into(),
+        database_id: database_id.into(),
+        name: database_id.into(),
+        state: export_state(&row.status).into(),
+        stage: export_phase(row.phase).into(),
+        created_at: rfc3339_millis(row.created_at_millis),
+        revision: None,
+        cancellable: matches!(
+            row.cancellation,
+            crate::export_api::ExportCancellation::Available
+        ),
+        cancellation_reason: String::new(),
+    }
+}
+
+fn recovery_summary(database_id: &str, row: crate::native_recovery::NativeRecoveryOperation) -> OperationSummary {
+    OperationSummary {
+        operation_id: row.operation_id,
+        kind: "recovery".into(),
+        database_id: database_id.into(),
+        name: database_id.into(),
+        state: recovery_state(&row.phase).into(),
+        stage: row.phase,
+        created_at: None,
+        revision: None,
+        cancellable: false,
+        cancellation_reason: "Native recovery has no safe cancellation action".into(),
+    }
+}
+
 fn rfc3339_millis(millis: u64) -> Option<String> {
     chrono::DateTime::from_timestamp_millis(i64::try_from(millis).ok()?)
         .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
@@ -125,10 +158,81 @@ pub(crate) struct OperationSummary {
     pub created_at: Option<String>,
     /// Durable journal revision; viewing does not advance it.
     /// Optional because member-local journals may not expose a revision.
+    #[schema(format = "uint64", minimum = 0)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<u64>,
     pub cancellable: bool,
     pub cancellation_reason: String,
+}
+
+/// Finds a member-owned operation only after checking every admitted database
+/// in the verified project scope. `Ok(None)` means no local owner recognizes
+/// the identity; owner storage failures are returned and never masked by a
+/// fallback to another owner.
+pub(super) fn member_operation(
+    state: &ApiState,
+    scope: &crate::delegated_identity::VerifiedProjectScope,
+    operation_id: &str,
+) -> Result<Option<OperationSummary>, ()> {
+    let Some(registry) = &state.admitted_databases else { return Ok(None) };
+    let (mut databases, mut after) = registry
+        .discovery_page(&scope.tenant_id, &scope.project_id, "")
+        .map_err(|_| ())?;
+    let mut found = None;
+    loop {
+        for database in databases.drain(..) {
+            if let Some(exports) = &state.exports {
+                let mut owner_after = None;
+                loop {
+                    let rows = exports
+                        .discover(&database.record.database_id, owner_after.as_deref(), 51)
+                        .map_err(|_| ())?;
+                    if rows.is_empty() {
+                        break;
+                    }
+                    let mut stop = false;
+                    for row in rows {
+                        if row.job_id == operation_id {
+                            if found.is_some() {
+                                return Err(());
+                            }
+                            found = Some(export_summary(&database.record.database_id, row));
+                            break;
+                        }
+                        if row.job_id.as_str() > operation_id {
+                            stop = true;
+                            break;
+                        }
+                        owner_after = Some(row.job_id);
+                    }
+                    if stop || owner_after.is_none() {
+                        break;
+                    }
+                }
+            }
+            if let Some(recovery) = &state.native_recovery {
+                match recovery
+                    .status(&database.record.database_id, operation_id)
+                    .map_err(|_| ())?
+                {
+                    Some(row) if row.operation_id == operation_id => {
+                        if found.is_some() {
+                            return Err(());
+                        }
+                        found = Some(recovery_summary(&database.record.database_id, row));
+                    }
+                    Some(_) => return Err(()),
+                    None => {}
+                }
+            }
+        }
+        let Some(cursor) = after.take() else { return Ok(found) };
+        let (next, cursor) = registry
+            .discovery_page(&scope.tenant_id, &scope.project_id, &cursor)
+            .map_err(|_| ())?;
+        databases = next;
+        after = cursor;
+    }
 }
 
 #[utoipa::path(get, path = "/api/v1/operations", params(OperationListQuery),

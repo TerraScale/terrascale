@@ -559,8 +559,8 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         let retained = recovery
             .restore_request(&request.operation_id, &request.target_database, &request.target_owner)
             .map_err(|_| "native restore request mismatch")?;
-        let placement = if let Some(retained) = &retained {
-            retained.placement.clone()
+        let (placement, residency) = if let Some(retained) = &retained {
+            (retained.placement.clone(), retained.residency.clone())
         } else {
             let source = self
                 .registry
@@ -571,7 +571,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             {
                 return Err("restore source owner mismatch".into());
             }
-            source.record.regions.clone()
+            (source.record.regions.clone(), source.record.residency.clone())
         };
         let target = self
             .registry
@@ -580,6 +580,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             .find(|entry| entry.database.record.database_id == request.target_database)
             .ok_or("restore target is not retained")?;
         if target.database.record.regions != placement
+            || target.database.record.residency != residency
             || format!("{}/{}", target.database.record.tenant_id, target.database.record.project_id)
                 != request.target_owner
         {
@@ -606,6 +607,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             selection: crate::native_recovery::NativeRestoreSelection::PointId(
                 request.recovery_point_id.clone(),
             ),
+            residency,
             placement,
         };
         let admitted = recovery

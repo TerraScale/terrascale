@@ -1926,6 +1926,14 @@ async fn get_provisioning_operation(
     let Some(Extension(scope)) = scope else {
         return ApiError::control_unavailable().into_response();
     };
+    match operations::member_operation(&state, &scope, &operation_id) {
+        Ok(Some(operation)) => match serde_json::to_string(&operation) {
+            Ok(body) => return json_response(StatusCode::OK, body),
+            Err(_) => return ApiError::control_unavailable().into_response(),
+        },
+        Ok(None) => {}
+        Err(()) => return ApiError::control_unavailable().into_response(),
+    }
     let Some(authority) = &state.provisioning else {
         return ApiError::control_unavailable().into_response();
     };

@@ -105,7 +105,7 @@ where
         }
         return Ok(());
     }
-    if matches!(state.phase, NativeRecoveryPhase::Capturing) {
+    if matches!(state.phase, NativeRecoveryPhase::Capturing) && checkpoint.is_none() {
         return Err(NativeRecoveryError::VerificationFailed);
     }
     if matches!(state.phase, NativeRecoveryPhase::Failed)

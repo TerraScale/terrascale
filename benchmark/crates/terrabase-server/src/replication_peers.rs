@@ -588,9 +588,8 @@ fn spawn_peer_owner(
                 result = workers.join_next(), if !workers.is_empty() => {
                     match result {
                         Some(Ok(exit)) if !*stopped.borrow() && exit.restart => {
-                            // The old inbox Drop fences its session evidence. A
-                            // replacement gets a new identity and must rebuild
-                            // evidence through the normal checkpoint exchange.
+                            // Fence ended-session evidence before replacement;
+                            // the new worker must rebuild it through wire proofs.
                             let mut context = exit.context;
                             let peer = context.id.as_str().to_owned();
                             let worker_id = NEXT_WORKER_ID.fetch_add(1, Ordering::Relaxed);
@@ -768,6 +767,29 @@ async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
                     restart: false,
                 };
             }
+            if session_result.is_err() {
+                // A transport/protocol failure invalidates every receipt from
+                // this authenticated session. Keep the command receiver and
+                // lanes owned by this worker, then reconnect through the normal
+                // handshake path.
+                progress.fence_peer(id.as_str());
+                observe(&observations, id.as_str(), &lanes, false, worker_id);
+                return PeerWorkerExit {
+                    context: PeerWorkerContext {
+                        runtime,
+                        progress,
+                        id,
+                        lanes,
+                        incoming,
+                        stopped,
+                        observations,
+                        new_lanes,
+                        cuts,
+                        worker_id,
+                    },
+                    restart: true,
+                };
+            }
             observe(&observations, id.as_str(), &lanes, false, worker_id);
         } else if !dial {
             return PeerWorkerExit {
@@ -783,7 +805,7 @@ async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
                     cuts,
                     worker_id,
                 },
-                restart: true,
+                restart: false,
             };
         }
         tokio::select! {

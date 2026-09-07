@@ -1165,7 +1165,7 @@ pub async fn websocket(
 /// Offer `terrascale.sync.v1` and `terrascale.cap.<capability>` as subprotocols.
 /// The response selects only `terrascale.sync.v1`, never the credential.
 #[utoipa::path(get, path = "/api/v1/reactive/views/{view}/{generation}/websocket",
-    description = "Offer Sec-WebSocket-Protocol: terrascale.sync.v1, terrascale.cap.<view capability>. The capability is header-only and grants only the attached view and generation. The server selects terrascale.sync.v1 and revalidates expiry during delivery.",
+    description = "Offer Sec-WebSocket-Protocol: terrascale.sync.v1, terrascale.cap.<view capability>. The capability credential is carried in the subprotocol offer and grants only the attached view and generation. The server selects terrascale.sync.v1 and revalidates expiry during delivery.",
     responses((status = 101, description = "Canonical view WebSocket"), (status = 401, description = "Invalid view capability")))]
 pub async fn view_websocket(
     State(state): State<Arc<ApiState>>,
