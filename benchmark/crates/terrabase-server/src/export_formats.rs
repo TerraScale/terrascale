@@ -332,6 +332,8 @@ fn dynamo_attribute(value: &Value) -> Result<Value, CodecError> {
         serde_json::json!({"S":s})
     } else if let Some(n) = value.as_i64() {
         serde_json::json!({"N":n.to_string()})
+    } else if let Some(n) = value.as_u64() {
+        serde_json::json!({"N":n.to_string()})
     } else if let Some(b) = value.as_bool() {
         serde_json::json!({"BOOL":b})
     } else if value.is_null() {
@@ -356,7 +358,15 @@ fn from_dynamo_attr(value: &Value) -> Result<Value, CodecError> {
         return Ok(Value::String(v.into()));
     }
     if let Some(v) = o.get("N").and_then(Value::as_str) {
-        return serde_json::from_str(v).map_err(|_| CodecError::Malformed);
+        let number: Value = serde_json::from_str(v).map_err(|_| CodecError::Malformed)?;
+        // TerraBase's canonical JSON number domain is signed/unsigned 64-bit
+        // integers at this interchange boundary. Reject decimal, exponent,
+        // and arbitrary-precision Dynamo numbers instead of narrowing them
+        // through f64 or accepting a value that cannot be exported again.
+        if number.as_i64().is_none() && number.as_u64().is_none() {
+            return Err(CodecError::Malformed);
+        }
+        return Ok(number);
     }
     if let Some(v) = o.get("BOOL").and_then(Value::as_bool) {
         return Ok(Value::Bool(v));
@@ -436,5 +446,39 @@ mod tests {
         let input = br#"{"Item":{"id":{"S":"a"},"value":{"M":{"n":{"N":"9007199254740993"}}}}}"#;
         let records = decode(input, TransferFormat::DynamoJson, 1024).expect("dynamo record");
         assert_eq!(records[0].value, br#"{"n":9007199254740993}"#);
+    }
+
+    #[test]
+    fn roundtrips_full_signed_and_unsigned_dynamo_integer_domain() {
+        let records = vec![ImportRecord {
+            collection: String::new(),
+            id: "limits".into(),
+            value: serde_json::to_vec(&serde_json::json!({
+                "min": i64::MIN,
+                "max_signed": i64::MAX,
+                "max_unsigned": u64::MAX,
+            }))
+            .unwrap(),
+        }];
+        let encoded = encode(&records, TransferFormat::DynamoJson).unwrap();
+        assert_eq!(decode(&encoded, TransferFormat::DynamoJson, 4096).unwrap(), records);
+    }
+
+    #[test]
+    fn rejects_dynamo_integers_outside_signed_unsigned_domain() {
+        for number in ["18446744073709551616", "-9223372036854775809"] {
+            let input = serde_json::json!({
+                "Item": {
+                    "id": {"S": "a"},
+                    "value": {"M": {"n": {"N": number}}},
+                },
+            });
+            let input = serde_json::to_vec(&input).unwrap();
+            assert_eq!(
+                decode(&input, TransferFormat::DynamoJson, 1024),
+                Err(CodecError::Malformed),
+                "{number}"
+            );
+        }
     }
 }

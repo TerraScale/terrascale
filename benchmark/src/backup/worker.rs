@@ -1598,6 +1598,8 @@ mod tests {
         engine: &Engine,
         staging: &std::path::Path,
         limits: FleetLimits,
+        first: &Arc<ObjectDestination>,
+        second: &Arc<ObjectDestination>,
     ) {
         let identity = engine.database_id().to_string();
         let key_provider = fleet.streams.get(&identity).unwrap().config.keys.clone();
@@ -1629,6 +1631,10 @@ mod tests {
         .unwrap();
         fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
         assert!(fleet.sync_once().await.is_empty());
+        let root_name = format!("rp-{}", root.manifest().identity());
+        // An uploaded journal is only a hint: loss of the retained root from
+        // one provider must block pruning of every older local point.
+        first.delete_point(&format!("{identity}/{root_name}")).await.unwrap();
         enforce_retention_at(
             &identity,
             fleet.streams.get(&identity).unwrap(),
@@ -1636,7 +1642,16 @@ mod tests {
             root.manifest().captured_unix_millis() + 86_400_001,
         )
         .await
-        .unwrap();
+        .expect_err("provider root loss must preserve the older chain");
+        assert_eq!(point_paths(staging, 8).unwrap().len(), 2);
+
+        // Re-establish the authenticated root at the failed provider. The
+        // original upload journal remains an acknowledgement, but pruning is
+        // allowed only after a fresh remote download and member digest check.
+        first
+            .upload_point(&staging.join(&root_name), &format!("{identity}/{root_name}"))
+            .await
+            .unwrap();
         assert_eq!(point_paths(staging, 8).unwrap().len(), 1);
         for provider in [Provider::Oci, Provider::Tigris] {
             let (target_owner, target_config) =
@@ -1663,6 +1678,14 @@ mod tests {
             assert_eq!(receipt.restored_documents(), 3);
             assert_eq!(receipt.chain_depth(), 1);
         }
+        assert_eq!(
+            first.list_points(&identity, 8).await.unwrap(),
+            vec![format!("{identity}/{root_name}")]
+        );
+        assert_eq!(
+            second.list_points(&identity, 8).await.unwrap(),
+            vec![format!("{identity}/{root_name}")]
+        );
     }
 
     #[test]
@@ -1777,7 +1800,7 @@ mod tests {
                 fleet.health(&identity).unwrap().providers,
                 vec![(Provider::Oci, true), (Provider::Tigris, true)]
             );
-            verify_fleet_retention(&mut fleet, &engine, &staging, limits).await;
+            verify_fleet_retention(&mut fleet, &engine, &staging, limits, &first, &second).await;
             verify_fleet_policy_and_purge(&mut fleet, &engine, &first, &second).await;
             assert!(!staging.exists());
         });

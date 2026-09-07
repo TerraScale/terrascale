@@ -17,6 +17,8 @@ use terrabase::backup::{PlacementLock, object_store::ObjectDestination};
 use terrabase::engine::Engine;
 use terrabase_tbep::member_host::MemberHost;
 
+const MAX_RETAINED_INCIDENTS: usize = 1024;
+
 /// Retains the exact admitted Member host for a backup stream.
 ///
 /// The wrapper is deliberately local because `BackupEngineHandle` and
@@ -138,10 +140,15 @@ impl NativeBackupRuntime {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         let errors = fleet.sync_once().await;
         if !errors.is_empty() {
-            self.incidents
+            let mut incidents = self
+                .incidents
                 .lock()
-                .map_err(|_| NativeBackupRuntimeError::Poisoned)?
-                .extend(errors.iter().copied());
+                .map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+            incidents.extend(errors.iter().cloned());
+            if incidents.len() > MAX_RETAINED_INCIDENTS {
+                let excess = incidents.len() - MAX_RETAINED_INCIDENTS;
+                incidents.drain(..excess);
+            }
         }
         Ok(errors)
     }
@@ -160,7 +167,14 @@ impl NativeBackupRuntime {
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() { return Ok(()); }
                 }
-                _ = interval.tick() => { self.tick().await?; }
+                _ = interval.tick() => {
+                    let runtime = Arc::clone(&self);
+                    tokio::task::spawn_blocking(move || {
+                        tokio::runtime::Handle::current().block_on(runtime.tick())
+                    })
+                    .await
+                    .map_err(|_| NativeBackupRuntimeError::Unavailable)??;
+                }
             }
         }
     }

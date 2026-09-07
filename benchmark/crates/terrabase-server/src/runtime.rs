@@ -378,6 +378,36 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         .with_native_deletion(native.fleet())
         .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
     let admission = Arc::new(admission);
+    serve_admitted_production(
+        &config,
+        production,
+        AdmittedProduction { member, admission, registry, progress, serving, journal, auth },
+        native,
+    )
+    .await
+}
+
+struct AdmittedProduction {
+    member: Arc<terrabase_cluster::production::ProductionMemberRuntime>,
+    admission: Arc<crate::production_data_runtime::ProductionAdmissionRuntime>,
+    registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+    progress: Arc<crate::replication_runtime::ReplicationProgress>,
+    serving: Arc<std::sync::atomic::AtomicBool>,
+    journal: Option<Arc<terrabase_tbep::placement::PlacementJournal>>,
+    auth: Option<Arc<crate::auth_runtime::AuthRuntime>>,
+}
+
+// This boundary owns every task created after native recovery composition.
+// Startup errors must join these owners before the ledger can be reopened.
+async fn serve_admitted_production(
+    config: &ServerConfig,
+    production: &crate::config::ProductionConfig,
+    owners: AdmittedProduction,
+    native: Arc<crate::native_backup_runtime::NativeBackupRuntime>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let AdmittedProduction { member, admission, registry, progress, serving, journal, auth } =
+        owners;
+    let public = config.public_api.as_ref();
     let native_shutdown = Arc::clone(&native);
     let recovery_root = parts_root_for_recovery(production);
     let (recovery, recovery_worker) = crate::native_recovery::NativeRecoveryRuntime::new(
@@ -405,296 +435,289 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     let (native_stop, native_signal) = tokio::sync::watch::channel(false);
     let native_supervisor = Arc::clone(&native);
     let mut native_task = Some(tokio::spawn(async move {
-        native_supervisor
-            .supervise(std::time::Duration::from_secs(1), native_signal)
-            .await
+        native_supervisor.supervise(std::time::Duration::from_secs(1), native_signal).await
     }));
     let native_for_startup_cleanup = Arc::clone(&native);
     let admission_for_startup_cleanup = Arc::clone(&admission);
     let member_for_startup_cleanup = Arc::clone(&member);
     let startup_result: Result<(), Box<dyn Error + Send + Sync>> = async {
-    let lifecycle_fleet = native.fleet();
-    let Some(public) = public else {
-        return Err(
-            Box::new(DaemonError::ProductionConfigurationMissing)
-                as Box<dyn Error + Send + Sync>,
-        );
-    };
-    let control = production.control.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
-    let receipt_signer = crate::native_recovery_receipt::NativeRecoveryReceiptSigner::from_file(
-        control
-            .receipt_signing_key_id
-            .clone()
-            .ok_or(DaemonError::ProductionConfigurationMissing)?,
-        control
-            .receipt_signing_key_file
-            .as_ref()
-            .ok_or(DaemonError::ProductionConfigurationMissing)?,
-    )
-    .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-    let receipts = Arc::new(
-        crate::native_recovery_receipt::NativeRecoveryReceiptStore::open(
-            &control.proposal_journal.with_extension("restore-receipts.sqlite"),
-            receipt_signer,
-        )
-        .map_err(|_| DaemonError::ProductionConfigurationMissing)?,
-    );
-    let region = public_api_region(config.region)?;
-    let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
-    let prepared_metrics = crate::production_metrics::PreparedMetrics::bind(
-        production.transport.metrics_listen,
-        Arc::clone(&metrics),
-    )
-    .await
-    .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-    let native_restore_target: Arc<
-        dyn Fn(
-                &str,
-            ) -> Result<
-                (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
-                String,
-            > + Send
-            + Sync,
-    > = {
-        let admission = Arc::clone(&admission);
-        Arc::new(move |database| admission.resolve_native_restore_target(database))
-    };
-    let primary = production
-        .databases
-        .iter()
-        .find(|database| database.enabled)
-        .ok_or(DaemonError::ProductionConfigurationMissing)?;
-    let export_prefix = "exports".to_owned();
-    let exports = crate::production_export::new_production_export(
-        primary.backup_root.join("exports"),
-        Arc::new(crate::production_export::ProductionArtifactFactory {
-            resolver: admission.native_backup_input_resolver(),
-            root: primary.backup_root.join("exports"),
-            prefix: export_prefix.clone(),
-        }),
-        crate::export_api::ExportDestination::ObjectStorage {
-            endpoint: "https://native-backup-owner.invalid".into(),
-            bucket: "per-database".into(),
-            prefix: export_prefix,
-            region,
-        },
-        production
-            .control
-            .as_ref()
-            .and_then(|control| control.export_cursor_key_file.as_ref())
-            .ok_or(DaemonError::ProductionConfigurationMissing)?,
-    )
-    .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-    let byo_jwt = public
-        .byo_jwt
-        .as_ref()
-        .map(crate::auth_runtime::byo_config::build_signature_admission)
-        .transpose()
-        .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-    let delegated_identity = public
-        .identity
-        .as_ref()
-        .map(|identity| {
-            let secret = String::from_utf8(
-                read_secret_key(&identity.service_key_file)
-                    .map_err(|_| DaemonError::ProductionConfigurationMissing)?,
+        let lifecycle_fleet = native.fleet();
+        let Some(public) = public else {
+            return Err(Box::new(DaemonError::ProductionConfigurationMissing)
+                as Box<dyn Error + Send + Sync>);
+        };
+        let control =
+            production.control.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
+        let receipt_signer =
+            crate::native_recovery_receipt::NativeRecoveryReceiptSigner::from_file(
+                control
+                    .receipt_signing_key_id
+                    .clone()
+                    .ok_or(DaemonError::ProductionConfigurationMissing)?,
+                control
+                    .receipt_signing_key_file
+                    .as_ref()
+                    .ok_or(DaemonError::ProductionConfigurationMissing)?,
             )
             .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-            crate::delegated_identity::IdentityVerifier::new(
-                crate::delegated_identity::IdentityConfig {
-                    endpoint: identity.endpoint.clone(),
-                    issuer: identity.issuer.clone(),
-                    audience: identity.audience.clone(),
-                    service_key: secret,
-                },
+        let receipts = Arc::new(
+            crate::native_recovery_receipt::NativeRecoveryReceiptStore::open(
+                &control.proposal_journal.with_extension("restore-receipts.sqlite"),
+                receipt_signer,
             )
-            .map(|verifier| {
-                let verifier =
-                    Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
-                verifier.start_membership_poll();
-                verifier
-            })
-            .map_err(|_| DaemonError::ProductionConfigurationMissing)
-        })
-        .transpose()?;
-    let provisioning = public
-        .provisioning
-        .as_ref()
-        .map(|authority| {
-            crate::provisioning::ProvisioningClient::new(
-                authority.socket.clone(),
-                authority.authority_uid,
-                authority.environment.clone(),
-            )
-            .map(Arc::new)
-            .map_err(|_| DaemonError::ProductionConfigurationMissing)
-        })
-        .transpose()?;
-    let state = crate::api::ApiState::production(
-        native,
-        Arc::clone(&recovery),
-        native_restore_target,
-        region,
-        production.environment.member.to_text(),
-        Arc::clone(&metrics),
-        Arc::clone(&registry),
-        Arc::clone(&progress),
-        (primary.tenant.to_text(), primary.project.to_text()),
-        provisioning,
-        None,
-        parts_root_for_recovery(production),
-        None,
-        Arc::new(crate::guards::AbuseGuards::default()),
-        Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
-        Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
-        None,
-        delegated_identity,
-        byo_jwt,
-        None,
-        Some(Arc::new(exports)),
-        admission.budget_runtime().map(Arc::new),
-    );
-    let prepared = admission.prepare_public(public, state, auth).await.map_err(|_| {
-        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
-            crate::production::ProductionComponentError {
-                component: crate::production::ProductionComponent::PublicApi,
-                detail: "production public API could not be prepared",
-            },
-        ))) as Box<dyn Error + Send + Sync>
-    })?;
-    let public_status = prepared.status();
-    let metrics_status = prepared_metrics.observation();
-    member
-        .attach_data_plane(Arc::new(crate::production_runtime::ProductionRuntime::new(
-            admission.lifecycle(),
-            metrics_status,
-            public_status.clone(),
-        )))
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?,
+        );
+        let region = public_api_region(config.region)?;
+        let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
+        let prepared_metrics = crate::production_metrics::PreparedMetrics::bind(
+            production.transport.metrics_listen,
+            Arc::clone(&metrics),
+        )
+        .await
         .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-    let (metrics_stop, metrics_signal) = tokio::sync::oneshot::channel();
-    let metrics_task = tokio::spawn(prepared_metrics.serve(async {
-        let _ = metrics_signal.await;
-    }));
-    // The production TBEP endpoint uses the same retained-host registry as
-    // the HTTP surface.  It is created only after native composition, so no
-    // second engine or location based adapter can be opened.
-    let grpc_config = TbepGrpcConfig::try_new(
-        config.max_message_bytes,
-        config.max_inflight,
-        config.request_timeout,
-        config.tls_handshake_timeout,
-        config.shutdown_grace,
-        config.member_principals.clone(),
-    )?;
-    let grpc_host =
-        Arc::new(crate::production_tbep_host::ProductionTbepHost::new(Arc::clone(&registry)));
-    let lifecycle_worker = Arc::new(crate::production_lifecycle_control::RegistryLifecycleWorker {
-        registry: Arc::clone(&registry),
-        backups: Some(lifecycle_fleet),
-        recovery: Some(Arc::clone(&recovery)),
-        receipts,
-        journal: Some(
-            journal
-                .clone()
-                .ok_or_else(|| {
+        let native_restore_target: Arc<
+            dyn Fn(
+                    &str,
+                ) -> Result<
+                    (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
+                    String,
+                > + Send
+                + Sync,
+        > = {
+            let admission = Arc::clone(&admission);
+            Arc::new(move |database| admission.resolve_native_restore_target(database))
+        };
+        let primary = production
+            .databases
+            .iter()
+            .find(|database| database.enabled)
+            .ok_or(DaemonError::ProductionConfigurationMissing)?;
+        let export_prefix = "exports".to_owned();
+        let exports = crate::production_export::new_production_export(
+            primary.backup_root.join("exports"),
+            Arc::new(crate::production_export::ProductionArtifactFactory {
+                resolver: admission.native_backup_input_resolver(),
+                root: primary.backup_root.join("exports"),
+                prefix: export_prefix.clone(),
+            }),
+            crate::export_api::ExportDestination::ObjectStorage {
+                endpoint: "https://native-backup-owner.invalid".into(),
+                bucket: "per-database".into(),
+                prefix: export_prefix,
+                region,
+            },
+            production
+                .control
+                .as_ref()
+                .and_then(|control| control.export_cursor_key_file.as_ref())
+                .ok_or(DaemonError::ProductionConfigurationMissing)?,
+        )
+        .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+        let byo_jwt = public
+            .byo_jwt
+            .as_ref()
+            .map(crate::auth_runtime::byo_config::build_signature_admission)
+            .transpose()
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+        let delegated_identity = public
+            .identity
+            .as_ref()
+            .map(|identity| {
+                let secret = String::from_utf8(
+                    read_secret_key(&identity.service_key_file)
+                        .map_err(|_| DaemonError::ProductionConfigurationMissing)?,
+                )
+                .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+                crate::delegated_identity::IdentityVerifier::new(
+                    crate::delegated_identity::IdentityConfig {
+                        endpoint: identity.endpoint.clone(),
+                        issuer: identity.issuer.clone(),
+                        audience: identity.audience.clone(),
+                        service_key: secret,
+                    },
+                )
+                .map(|verifier| {
+                    let verifier =
+                        Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
+                    verifier.start_membership_poll();
+                    verifier
+                })
+                .map_err(|_| DaemonError::ProductionConfigurationMissing)
+            })
+            .transpose()?;
+        let provisioning = public
+            .provisioning
+            .as_ref()
+            .map(|authority| {
+                crate::provisioning::ProvisioningClient::new(
+                    authority.socket.clone(),
+                    authority.authority_uid,
+                    authority.environment.clone(),
+                )
+                .map(Arc::new)
+                .map_err(|_| DaemonError::ProductionConfigurationMissing)
+            })
+            .transpose()?;
+        let state = crate::api::ApiState::production(
+            native,
+            Arc::clone(&recovery),
+            native_restore_target,
+            region,
+            production.environment.member.to_text(),
+            Arc::clone(&metrics),
+            Arc::clone(&registry),
+            Arc::clone(&progress),
+            (primary.tenant.to_text(), primary.project.to_text()),
+            provisioning,
+            None,
+            parts_root_for_recovery(production),
+            None,
+            Arc::new(crate::guards::AbuseGuards::default()),
+            Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
+            Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
+            None,
+            delegated_identity,
+            byo_jwt,
+            None,
+            Some(Arc::new(exports)),
+            admission.budget_runtime().map(Arc::new),
+        );
+        let prepared = admission.prepare_public(public, state, auth).await.map_err(|_| {
+            Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                crate::production::ProductionComponentError {
+                    component: crate::production::ProductionComponent::PublicApi,
+                    detail: "production public API could not be prepared",
+                },
+            ))) as Box<dyn Error + Send + Sync>
+        })?;
+        let public_status = prepared.status();
+        let metrics_status = prepared_metrics.observation();
+        member
+            .attach_data_plane(Arc::new(crate::production_runtime::ProductionRuntime::new(
+                admission.lifecycle(),
+                metrics_status,
+                public_status.clone(),
+            )))
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+        let (metrics_stop, metrics_signal) = tokio::sync::oneshot::channel();
+        let metrics_task = tokio::spawn(prepared_metrics.serve(async {
+            let _ = metrics_signal.await;
+        }));
+        // The production TBEP endpoint uses the same retained-host registry as
+        // the HTTP surface.  It is created only after native composition, so no
+        // second engine or location based adapter can be opened.
+        let grpc_config = TbepGrpcConfig::try_new(
+            config.max_message_bytes,
+            config.max_inflight,
+            config.request_timeout,
+            config.tls_handshake_timeout,
+            config.shutdown_grace,
+            config.member_principals.clone(),
+        )?;
+        let grpc_host =
+            Arc::new(crate::production_tbep_host::ProductionTbepHost::new(Arc::clone(&registry)));
+        let lifecycle_worker =
+            Arc::new(crate::production_lifecycle_control::RegistryLifecycleWorker {
+                registry: Arc::clone(&registry),
+                backups: Some(lifecycle_fleet),
+                recovery: Some(Arc::clone(&recovery)),
+                receipts,
+                journal: Some(journal.clone().ok_or_else(|| {
+                    Box::new(DaemonError::ProductionConfigurationMissing)
+                        as Box<dyn Error + Send + Sync>
+                })?),
+            });
+        let lifecycle_authority =
+            Arc::new(crate::production_lifecycle_control::PlacementLifecycleAuthority::new(
+                journal.clone().ok_or_else(|| {
                     Box::new(DaemonError::ProductionConfigurationMissing)
                         as Box<dyn Error + Send + Sync>
                 })?,
-        ),
-    });
-    let lifecycle_authority =
-        Arc::new(crate::production_lifecycle_control::PlacementLifecycleAuthority::new(
-            journal.clone().ok_or_else(|| {
-                Box::new(DaemonError::ProductionConfigurationMissing)
-                    as Box<dyn Error + Send + Sync>
-            })?,
+            ));
+        let lifecycle = Arc::new(crate::production_lifecycle_control::TbepLifecycleControl::new(
+            Arc::new(crate::production_lifecycle_control::ProductionLifecycleControl {
+                worker: lifecycle_worker,
+                authority: lifecycle_authority,
+            }),
         ));
-    let lifecycle = Arc::new(crate::production_lifecycle_control::TbepLifecycleControl::new(
-        Arc::new(crate::production_lifecycle_control::ProductionLifecycleControl {
-            worker: lifecycle_worker,
-            authority: lifecycle_authority,
-        }),
-    ));
-    let grpc_metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
-    let grpc = Arc::new(
-        TbepGrpcServer::with_config_and_metrics(
-            grpc_host as Arc<dyn TbepHost>,
-            pb::BindingKind::NetworkMtls,
-            grpc_config,
-            config.region,
-            grpc_metrics,
-        )
-        .with_lifecycle_control(lifecycle),
-    );
-    let certificate = read_pem(&production.transport.server_certificate, false)?;
-    let private_key = read_pem(&production.transport.server_private_key, true)?;
-    let client_ca = read_pem(&production.transport.client_ca, false)?;
-    let grpc_tls = terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(
-        &certificate,
-        &private_key,
-        &client_ca,
-    )?;
-    let mut grpc_handle = grpc.serve_tls_reloadable(production.transport.tbep_listen, grpc_tls)?;
-    serving.store(true, std::sync::atomic::Ordering::Release);
-    let status = public_status;
-    let mut public_task = tokio::spawn(prepared.serve(async {
-        let _ = wait_for_shutdown().await;
-    }));
-    tokio::time::timeout(config.shutdown_grace, async {
-        loop {
-            if status.is_serving() {
-                break Ok::<(), DaemonError>(());
+        let grpc_metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
+        let grpc = Arc::new(
+            TbepGrpcServer::with_config_and_metrics(
+                grpc_host as Arc<dyn TbepHost>,
+                pb::BindingKind::NetworkMtls,
+                grpc_config,
+                config.region,
+                grpc_metrics,
+            )
+            .with_lifecycle_control(lifecycle),
+        );
+        let certificate = read_pem(&production.transport.server_certificate, false)?;
+        let private_key = read_pem(&production.transport.server_private_key, true)?;
+        let client_ca = read_pem(&production.transport.client_ca, false)?;
+        let grpc_tls = terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(
+            &certificate,
+            &private_key,
+            &client_ca,
+        )?;
+        let mut grpc_handle =
+            grpc.serve_tls_reloadable(production.transport.tbep_listen, grpc_tls)?;
+        serving.store(true, std::sync::atomic::Ordering::Release);
+        let status = public_status;
+        let mut public_task = tokio::spawn(prepared.serve(async {
+            let _ = wait_for_shutdown().await;
+        }));
+        tokio::time::timeout(config.shutdown_grace, async {
+            loop {
+                if status.is_serving() {
+                    break Ok::<(), DaemonError>(());
+                }
+                if public_task.is_finished() {
+                    break Err(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                        crate::production::ProductionComponentError {
+                            component: crate::production::ProductionComponent::PublicApi,
+                            detail: "production public listener stopped during startup",
+                        },
+                    )));
+                }
+                tokio::task::yield_now().await;
             }
-            if public_task.is_finished() {
-                break Err(DaemonError::ProductionStartup(ProductionStartupError::Component(
-                    crate::production::ProductionComponentError {
-                        component: crate::production::ProductionComponent::PublicApi,
-                        detail: "production public listener stopped during startup",
-                    },
-                )));
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .map_err(|_| DaemonError::ShutdownTimeout)??;
-    let result = public_task.await.map_err(|_| DaemonError::ShutdownTimeout)?;
-    let _ = metrics_stop.send(());
-    metrics_task
+        })
         .await
-        .map_err(|_| DaemonError::ShutdownTimeout)?
-        .map_err(|_| DaemonError::ShutdownTimeout)?;
-    grpc_handle.begin_drain();
-    tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait())
-        .await
-        .map_err(|_| DaemonError::ShutdownTimeout)?
-        .map_err(|_| DaemonError::ShutdownTimeout)?;
-    let recovery_worker = recovery_worker
-        .take()
-        .ok_or(DaemonError::ShutdownTimeout)?;
-    let _ = recovery_worker.shutdown().await;
-    let _ = native_stop.send(true);
-    let native_task = native_task
-        .take()
-        .ok_or(DaemonError::ShutdownTimeout)?;
-    let _ = native_task
-        .await
-        .map_err(|_| DaemonError::ShutdownTimeout)?
-        .map_err(|_| DaemonError::ShutdownTimeout)?;
-    admission.drain().await.map_err(|_| DaemonError::ShutdownTimeout)?;
-    native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
-    serving.store(false, std::sync::atomic::Ordering::Release);
-    let report = member.drain().await;
-    report.storage.map_err(|error| {
-        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
-            crate::production::ProductionComponentError {
-                component: crate::production::ProductionComponent::Replication,
-                detail: "production Member drain failed",
-            },
-        ))) as Box<dyn Error + Send + Sync>
-    })?;
-    result.map_err(|_| Box::new(DaemonError::ShutdownTimeout) as Box<dyn Error + Send + Sync>)
-    }.await;
+        .map_err(|_| DaemonError::ShutdownTimeout)??;
+        let result = public_task.await.map_err(|_| DaemonError::ShutdownTimeout)?;
+        let _ = metrics_stop.send(());
+        metrics_task
+            .await
+            .map_err(|_| DaemonError::ShutdownTimeout)?
+            .map_err(|_| DaemonError::ShutdownTimeout)?;
+        grpc_handle.begin_drain();
+        tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait())
+            .await
+            .map_err(|_| DaemonError::ShutdownTimeout)?
+            .map_err(|_| DaemonError::ShutdownTimeout)?;
+        let recovery_worker = recovery_worker.take().ok_or(DaemonError::ShutdownTimeout)?;
+        let _ = recovery_worker.shutdown().await;
+        let _ = native_stop.send(true);
+        let native_task = native_task.take().ok_or(DaemonError::ShutdownTimeout)?;
+        let _ = native_task
+            .await
+            .map_err(|_| DaemonError::ShutdownTimeout)?
+            .map_err(|_| DaemonError::ShutdownTimeout)?;
+        admission.drain().await.map_err(|_| DaemonError::ShutdownTimeout)?;
+        native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
+        serving.store(false, std::sync::atomic::Ordering::Release);
+        let report = member.drain().await;
+        report.storage.map_err(|error| {
+            Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                crate::production::ProductionComponentError {
+                    component: crate::production::ProductionComponent::Replication,
+                    detail: "production Member drain failed",
+                },
+            ))) as Box<dyn Error + Send + Sync>
+        })?;
+        result.map_err(|_| Box::new(DaemonError::ShutdownTimeout) as Box<dyn Error + Send + Sync>)
+    }
+    .await;
     if let Err(error) = startup_result {
         cleanup_failed_production_startup(
             recovery_worker.take(),
@@ -713,7 +736,9 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
 async fn cleanup_failed_production_startup(
     recovery_worker: Option<crate::native_recovery::NativeRecoveryWorker>,
     native_stop: tokio::sync::watch::Sender<bool>,
-    native_task: Option<tokio::task::JoinHandle<Result<(), crate::native_backup_runtime::NativeBackupRuntimeError>>>,
+    native_task: Option<
+        tokio::task::JoinHandle<Result<(), crate::native_backup_runtime::NativeBackupRuntimeError>>,
+    >,
     admission: &crate::production_data_runtime::ProductionAdmissionRuntime,
     native: &crate::native_backup_runtime::NativeBackupRuntime,
     member: &terrabase_cluster::production::ProductionMemberRuntime,
@@ -1662,6 +1687,218 @@ mod tests {
         let path = temporary_path(label);
         std::fs::write(&path, bytes).expect("temporary PEM writes");
         path
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn post_worker_startup_failure_joins_owners_and_releases_ledger() {
+        use crate::native_backup_runtime::{
+            AdmittedBackupEngine, NativeBackupInput, NativeBackupRuntime,
+        };
+        use crate::native_recovery::{NativeRecoveryLimits, NativeRecoveryRuntime};
+        use terrabase::backup::object_store::{ObjectDestination, Provider};
+        use terrabase::backup::{
+            PlacementLock,
+            worker::{FleetLimits, OciBackupKeys},
+        };
+        use terrabase::identity::{ClusterUlid, MemberUlid};
+        use terrabase::member::DatabaseScope;
+        use terrabase::regions::RegionCode;
+        use terrabase_cluster::production::{
+            DatabaseRouteScope, DatabaseRoutingCatalog, ProductionMemberRuntime,
+            ProductionPlacement, ProductionRegionSeats,
+        };
+        use terrabase_tbep::placement::{PlacementBoundary, PlacementJournal};
+
+        let keys = crate::test_keys::key_delivery();
+        let (registry, storage, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let record = &records[0];
+        let scope = DatabaseScope::new(
+            "production",
+            record.tenant_id.parse().unwrap(),
+            record.project_id.parse().unwrap(),
+            record.database_id.parse().unwrap(),
+            RegionCode::GRU,
+        )
+        .unwrap();
+        let local = MemberUlid::generate();
+        let peer = MemberUlid::generate();
+        let cluster = ClusterUlid::generate();
+        let production = crate::auth_runtime::tests::admitted_fixture::production_config(
+            (scope.tenant(), scope.project(), scope.database()),
+            cluster,
+            local,
+            peer,
+            &root,
+            &keys,
+        );
+        let placement = ProductionPlacement::try_new(
+            local,
+            1,
+            1,
+            [ProductionRegionSeats::try_new(RegionCode::GRU, [local, peer]).unwrap()],
+        )
+        .unwrap();
+        let (transport, remote) = crate::production::tests::transport_pair(&placement);
+        let routes = DatabaseRoutingCatalog::try_new(records.iter().map(|record| {
+            DatabaseRouteScope::try_new(&record.tenant_id, &record.project_id, &record.database_id)
+                .unwrap()
+        }))
+        .unwrap();
+        let member = Arc::new(
+            ProductionMemberRuntime::try_new(placement, routes, storage.clone(), transport)
+                .unwrap(),
+        );
+        let boundary = PlacementBoundary::new(
+            "production",
+            &cluster.to_text(),
+            &local.to_text(),
+            1,
+            1,
+            records.iter().map(|record| {
+                (
+                    DatabaseRouteScope::try_new(
+                        &record.tenant_id,
+                        &record.project_id,
+                        &record.database_id,
+                    )
+                    .unwrap(),
+                    Some("GRU".to_owned()),
+                    BTreeSet::from(["GRU".to_owned()]),
+                )
+            }),
+        )
+        .unwrap();
+        let journal =
+            Arc::new(PlacementJournal::open(&root.join("placement.sqlite"), boundary).unwrap());
+        let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
+        let admission = crate::production_data_runtime::ProductionAdmissionRuntime::new(
+            member.clone(),
+            storage.clone(),
+            production.clone(),
+            journal.clone(),
+            registry.clone(),
+            progress.clone(),
+            8,
+            1,
+            64 * 1024 * 1024,
+            Arc::new(crate::production::tests::NoControlFrames),
+        )
+        .unwrap();
+        let target = registry
+            .retained_snapshot()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == record.database_id)
+            .unwrap();
+        // Controlled object transport exercises the concrete fleet without OCI qualification.
+        let native = Arc::new(
+            NativeBackupRuntime::new(
+                FleetLimits {
+                    streams: 2,
+                    staging_bytes_per_stream: 4 * 1024 * 1024,
+                    points_per_stream: 4,
+                },
+                [NativeBackupInput {
+                    engine: Arc::new(AdmittedBackupEngine::new(target.database.host.clone())),
+                    keys: Arc::new(
+                        OciBackupKeys::new(crate::test_keys::backup_keys(&scope)).unwrap(),
+                    ),
+                    destinations: vec![(
+                        Provider::Oci,
+                        Arc::new(ObjectDestination::for_test(
+                            Provider::Oci,
+                            Arc::new(object_store::memory::InMemory::new()),
+                            4 * 1024 * 1024,
+                            8 * 1024 * 1024,
+                        )),
+                    )],
+                    policy_revision: "startup-cleanup".into(),
+                    retention_days: 1,
+                    staging: root.join("backup-staging"),
+                    placement: PlacementLock::explicit([RegionCode::GRU]).unwrap(),
+                }],
+            )
+            .unwrap(),
+        );
+        drop(target);
+        let admission = Arc::new(admission.with_native_deletion(native.fleet()).unwrap());
+        let config = ServerConfig {
+            mode: ServerMode::Production,
+            production: Some(production.clone()),
+            engine_location: root.clone(),
+            tenant: record.tenant_id.clone(),
+            project: record.project_id.clone(),
+            database: record.database_id.clone(),
+            instance_id: 1,
+            region: Region::Gru,
+            tbep_listen: "127.0.0.1:0".parse().unwrap(),
+            server_certificate: root.join("missing.crt"),
+            server_private_key: root.join("missing.key"),
+            client_ca: root.join("missing-ca.crt"),
+            member_principals: BTreeSet::new(),
+            uds: None,
+            public_api: None,
+            replication_peers: Vec::new(),
+            observability_listen: "127.0.0.1:0".parse().unwrap(),
+            max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,
+            max_inflight: 1,
+            request_timeout: std::time::Duration::from_secs(1),
+            tls_handshake_timeout: std::time::Duration::from_secs(1),
+            shutdown_grace: std::time::Duration::from_secs(1),
+        };
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            serve_admitted_production(
+                &config,
+                &production,
+                AdmittedProduction {
+                    member: member.clone(),
+                    admission: admission.clone(),
+                    registry: registry.clone(),
+                    progress,
+                    serving: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    journal: Some(journal),
+                    auth: None,
+                },
+                native.clone(),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(error.to_string().contains("no typed production configuration"));
+        let recovery_root = parts_root_for_recovery(&production);
+        assert!(
+            recovery_root.join("recovery.worker.lock").exists(),
+            "failure must occur after worker creation"
+        );
+        assert_eq!(
+            Arc::strong_count(&native),
+            1,
+            "supervisor and restore executor must be joined and released"
+        );
+        assert!(!native.contains(&record.database_id), "native fleet must be drained");
+        assert!(
+            registry.retained_snapshot().unwrap().is_empty(),
+            "admission must release retained hosts"
+        );
+        let (reopened, worker) = NativeRecoveryRuntime::new(
+            &recovery_root,
+            native.fleet(),
+            registry.clone(),
+            NativeRecoveryLimits { pending_operations: 128, retained_operations: 512 },
+            Arc::new(crate::production_data_runtime::ProductionRestoreExecutor::new(
+                admission.clone(),
+                native.clone(),
+            )),
+        )
+        .expect("cleanup released the live worker ledger lock");
+        worker.shutdown().await.unwrap();
+        drop(reopened);
+        drop((admission, native, registry, member, storage, remote));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

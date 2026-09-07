@@ -96,7 +96,7 @@ pub(crate) use recovery_statistics::{logical_document_digest, logical_state_hash
 
 use crate::{
     families::FamilyStore,
-    observability::{CommitResult as MetricCommitResult, MetricsRegistry},
+    observability::{CommitResult as MetricCommitResult, MetricsRegistry, Outcome},
     operations::{EngineRequest, EngineResponse},
     query::QueryStore,
     storage::{
@@ -4690,21 +4690,31 @@ impl Engine {
                             kind: crate::storage::InvisibleColumnKind::Text,
                         })
                         .collect::<Vec<_>>();
-                    let _ = self.begin_index_build(
+                    let started = Instant::now();
+                    let result = self.begin_index_build(
                         &tenant,
                         &index.id,
                         &columns,
                         generation,
                         Self::now_millis(),
                     );
+                    self.metrics.record_index(
+                        if result.is_ok() { Outcome::Success } else { Outcome::Error },
+                        started.elapsed(),
+                    );
                 }
                 crate::auto_index::LifecyclePhase::Building => {
-                    let _ = self.advance_index_build(
+                    let started = Instant::now();
+                    let result = self.advance_index_build(
                         &tenant,
                         &index.id,
                         32,
                         generation,
                         Self::now_millis(),
+                    );
+                    self.metrics.record_index(
+                        if result.is_ok() { Outcome::Success } else { Outcome::Error },
+                        started.elapsed(),
                     );
                 }
                 crate::auto_index::LifecyclePhase::Shadowing => {
@@ -4714,18 +4724,28 @@ impl Engine {
                             self.auto_index_shadow_evidence(&tenant, &index.id, digest, 64)
                     {
                         if evidence.regression {
-                            let _ = self.auto_index_revert(
+                            let started = Instant::now();
+                            let result = self.auto_index_revert(
                                 &tenant,
                                 &index.id,
                                 generation,
                                 Self::now_millis(),
                             );
+                            self.metrics.record_index(
+                                if result.is_ok() { Outcome::Success } else { Outcome::Error },
+                                started.elapsed(),
+                            );
                         } else if evidence.baseline.len() >= 20 {
-                            let _ = self.auto_index_activate(
+                            let started = Instant::now();
+                            let result = self.auto_index_activate(
                                 &tenant,
                                 &index.id,
                                 generation,
                                 Self::now_millis(),
+                            );
+                            self.metrics.record_index(
+                                if result.is_ok() { Outcome::Success } else { Outcome::Error },
+                                started.elapsed(),
                             );
                         }
                     }

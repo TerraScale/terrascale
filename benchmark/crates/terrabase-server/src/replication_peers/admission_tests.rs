@@ -418,8 +418,10 @@ async fn real_worker_suspension_releases_engine_and_rebinds_same_assignment() {
 #[tokio::test]
 async fn real_session_io_failure_fences_old_session_before_restart() {
     use crate::production::tests::{AcceptedMembership, Writer, opened_bootstrap, transport_pair};
-    use terrabase_cluster::wal_driver::WalEngineHandle;
-    use terrabase_cluster::wal_follower::WalTail;
+    use terrabase_cluster::wal_driver::{
+        WalAuthenticatedPeer, WalCheckpointMessage, WalEngineHandle, WalFollowerDriver,
+    };
+    use terrabase_cluster::wal_follower::{WalFollower, WalTail};
 
     let (bootstrap, root, spec) = opened_bootstrap("replication-session-restart");
     let parts = bootstrap.into_parts();
@@ -429,6 +431,8 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     let (transport, remote) = transport_pair(&placement);
     let config = transport.config();
     let peer = config.peers().next().unwrap().identity().clone();
+    let remote_config = remote.config();
+    let remote_peer = remote_config.peers().next().unwrap().identity().clone();
     let database_scope = spec.scope().unwrap();
     let scope = DatabaseRouteScope::new(
         database_scope.tenant(),
@@ -468,6 +472,20 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     )
     .unwrap();
     let observations = peers.observations();
+    let follower_binding = WalReplicaBinding::new(
+        scope,
+        &placement,
+        remote_config.local_identity().clone(),
+        remote_peer,
+    )
+    .unwrap();
+    let follower_engine = runtime.acquire_replication(&scope).unwrap();
+    let (follower_replica, _) =
+        WalFollower::bootstrap_engine(follower_engine.engine(), &root.join("real-follower"))
+            .unwrap();
+    let mut follower = WalFollowerDriver::new(follower_binding, follower_replica);
+    let checkpoint_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let checkpoint_sent_remote = checkpoint_sent.clone();
     let remote_task = tokio::spawn(async move {
         for index in 0..2 {
             let Some(connection) = remote.accept().await.unwrap() else { return };
@@ -475,10 +493,10 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
             let Some(checkpoint) = connection.receive_frame().await.ok() else { return };
             let request = WalCheckpointMessage::decode(&checkpoint).expect("encoded checkpoint");
             if index == 1 {
-                // Echoing the request is deliberately not a valid response:
-                // the writer must refuse it and keep readiness fenced until a
-                // real follower checkpoint and readiness cut arrive.
-                connection.send_frame(&request.encode().unwrap()).await.unwrap();
+                let peer = WalAuthenticatedPeer::from_connection(&connection);
+                let response = follower.checkpoint(&peer, request).await.unwrap();
+                connection.send_frame(&response.encode().unwrap()).await.unwrap();
+                checkpoint_sent_remote.store(true, Ordering::Release);
             }
             // Closing immediately after authentication forces the real session
             // owner through its transport-error fence and restart path.
@@ -514,6 +532,10 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     .await
     .expect("replacement session");
     assert!(second > first);
+    assert!(
+        checkpoint_sent.load(Ordering::Acquire),
+        "replacement must receive a real follower checkpoint"
+    );
     assert!(
         progress.regional_covers(scope, 8).is_err(),
         "fenced evidence must not cover before a fresh response"
