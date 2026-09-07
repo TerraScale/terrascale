@@ -1157,7 +1157,25 @@ fn validate_match_values(parsed: &ParsedSql, parameters: &SqlParameters) -> Resu
         type Break = ();
 
         fn pre_visit_expr(&mut self, expression: &Expr) -> ControlFlow<Self::Break> {
-            let Expr::BinaryOp { op: BinaryOperator::Match, right, .. } = expression else {
+            let is_match = matches!(expression, Expr::BinaryOp { op: BinaryOperator::Match, .. });
+            if !is_match {
+                // SQLite assigns bare `?` markers the next available slot
+                // after explicit numbered markers. Keep this cursor in sync
+                // while the AST walk visits every non-MATCH placeholder, so
+                // a MATCH operand after `?1` uses SQLite's slot too.
+                if let Expr::Value(value) = expression
+                    && let Value::Placeholder(name) = &value.value
+                {
+                    let normalized = name.trim_start_matches(['$', ':', '@', '?']);
+                    if normalized.is_empty() {
+                        self.next_ordinal = self.next_ordinal.saturating_add(1);
+                    } else if let Ok(ordinal) = normalized.parse::<u64>() {
+                        self.next_ordinal = self.next_ordinal.max(ordinal.saturating_add(1));
+                    }
+                }
+                return ControlFlow::Continue(());
+            }
+            let Expr::BinaryOp { right, .. } = expression else {
                 return ControlFlow::Continue(());
             };
             let value = match right.as_ref() {
@@ -1170,7 +1188,6 @@ fn validate_match_values(parsed: &ParsedSql, parameters: &SqlParameters) -> Resu
                         let mut name = name.trim_start_matches(['$', ':', '@', '?']).to_owned();
                         if bare {
                             name = self.next_ordinal.to_string();
-                            self.next_ordinal = self.next_ordinal.saturating_add(1);
                         }
                         let Some(value) = self.parameters.get(&name) else {
                             // Leave missing bindings to the normal collector
@@ -1611,5 +1628,19 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn match_guard_uses_sqlite_slot_after_numbered_binding() {
+        // SQLite gives the bare marker slot 2 because ?1 already occupies
+        // slot 1. The guard must validate the text binding used by MATCH,
+        // rather than reusing the numeric scalar binding.
+        let parameters = SqlParameters::try_new(&[
+            ("1", DocumentValue::Integer(30)),
+            ("2", DocumentValue::String("quick".to_owned())),
+        ])
+        .unwrap();
+        validate_parameters("SELECT * FROM users WHERE age >= ?1 AND body MATCH ?", &parameters)
+            .unwrap();
     }
 }

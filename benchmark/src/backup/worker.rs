@@ -172,6 +172,19 @@ pub struct NativeBackupFleet {
     suspended: BTreeMap<String, SuspendedStream>,
 }
 
+impl NativeBackupFleet {
+    /// Returns the admitted provider set for a database in its stable policy order.
+    pub fn configured_providers(&self, database: &str) -> Result<Vec<Provider>, FleetError> {
+        if let Some(stream) = self.streams.get(database) {
+            return Ok(stream.config.destinations.iter().map(|(provider, _)| *provider).collect());
+        }
+        if let Some(stream) = self.suspended.get(database) {
+            return Ok(stream.destinations.iter().map(|(provider, _)| *provider).collect());
+        }
+        Err(FleetError::Configuration)
+    }
+}
+
 /// Redacted scheduling/capture refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FleetError {

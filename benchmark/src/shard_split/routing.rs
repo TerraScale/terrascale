@@ -94,6 +94,13 @@ impl RouteTable {
     /// Builds a validated table from routes.
     pub fn new(mut routes: Vec<ShardRoute>) -> Result<Self, RouteError> {
         routes.sort_by(|left, right| left.lower.cmp(&right.lower));
+        // A shard identifier names one owner.  Allowing it twice would make
+        // admission validation depend on whichever duplicate happened to be
+        // encountered first, even when the key ranges do not overlap.
+        let mut shard_ids = std::collections::BTreeSet::new();
+        if routes.iter().any(|route| !shard_ids.insert(route.shard_id)) {
+            return Err(RouteError::TargetExists);
+        }
         if routes.windows(2).any(|pair| match pair[0].upper.as_deref() {
             // A route without an upper bound owns the remainder of the key
             // space, so any following route overlaps it.
@@ -185,6 +192,39 @@ impl RouteTable {
         next.generation = self.generation.checked_add(1).ok_or(RouteError::GenerationExhausted)?;
         *self = next;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shard_split::WriterFence;
+
+    #[test]
+    fn route_table_rejects_duplicate_shard_owners() {
+        let first = ShardRoute::new(7, None, Some(b"m".to_vec())).unwrap();
+        let middle = ShardRoute::new(8, Some(b"m".to_vec()), Some(b"t".to_vec())).unwrap();
+        let second = ShardRoute::new(7, Some(b"t".to_vec()), None).unwrap();
+        assert_eq!(RouteTable::new(vec![first, middle, second]), Err(RouteError::TargetExists));
+    }
+
+    #[test]
+    fn stale_target_cannot_cut_over_with_a_writer_permit() {
+        let mut split = crate::shard_split::ShardSplit::plan(None, b"m".to_vec()).unwrap();
+        split.begin_backfill().unwrap();
+        split.begin_catch_up(0).unwrap();
+        let mut fence = WriterFence::new();
+        fence.begin_drain(10).unwrap();
+        fence.note_acked(10).unwrap();
+        let permit = fence.try_fence(10).unwrap();
+        assert_eq!(
+            split.cut_over_with_permit(permit),
+            Err(crate::shard_split::SplitCutoverError::NotCaughtUp {
+                target_applied: 0,
+                required: 10,
+            })
+        );
+        assert_eq!(split.phase(), crate::shard_split::SplitPhase::CatchingUp);
     }
 }
 

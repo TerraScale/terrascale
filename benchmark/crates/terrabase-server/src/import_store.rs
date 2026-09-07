@@ -170,4 +170,20 @@ impl ImportStore {
         }
         Ok(())
     }
+
+    /// Marks an import complete without changing its last proven cursor.
+    pub(crate) fn complete(&self, operation_id: &str) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().expect("import store lock");
+        let changed = connection.execute(
+            "UPDATE import_jobs SET state='completed', error=NULL
+             WHERE operation_id=?1 AND input_committed=1 AND state IN ('queued','running','failed')",
+            [operation_id],
+        )?;
+        if changed != 1 {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "import operation is unavailable".into(),
+            ));
+        }
+        Ok(())
+    }
 }

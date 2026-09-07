@@ -7,10 +7,7 @@
 
 use base64::Engine as _;
 use serde_json::Value;
-use std::{
-    fmt,
-    io::{self, Read},
-};
+use std::{fmt, io::{self, BufRead, Read}};
 
 /// Supported import/export interchange formats.
 #[derive(
@@ -92,6 +89,20 @@ pub struct ImportRecord {
     pub value: Vec<u8>,
 }
 
+/// Derives the operation identity for one import batch. The source operation
+/// and input digest bind retries to the same upload, while the ordinal keeps
+/// each committed batch independently idempotent.
+#[must_use]
+pub fn batch_operation_id(operation_id: &str, input_digest: &str, ordinal: u64) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(operation_id.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(input_digest.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(&ordinal.to_be_bytes());
+    format!("import-batch-{ordinal}-{}", hasher.finalize().to_hex())
+}
+
 /// Codec failures are deliberately free of source contents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CodecError {
@@ -156,55 +167,208 @@ pub fn decode_jsonl_reader<R: Read, F>(
 where
     F: FnMut(u64, ImportRecord) -> io::Result<()>,
 {
-    if max_record == 0
-        || !matches!(
-            format,
-            TransferFormat::Native | TransferFormat::Jsonl | TransferFormat::DynamoJson
-        )
-    {
-        return Err(CodecError::Malformed);
+    decode_reader(input, format, max_record, consume)
+}
+
+/// Incrementally decodes any supported transfer format. The callback offset
+/// is exclusive: it includes the record terminator (newline, CSV row ending,
+/// or the comma/closing bracket following an array element). This makes the
+/// offset safe to persist after the corresponding write commits.
+pub fn decode_reader<R: Read, F>(
+    input: R,
+    format: TransferFormat,
+    max_record: usize,
+    mut consume: F,
+) -> Result<(), CodecError>
+where
+    F: FnMut(u64, ImportRecord) -> io::Result<()>,
+{
+    if max_record == 0 {
+        return Err(CodecError::Oversized);
     }
     let mut input = io::BufReader::new(input);
-    let mut line = Vec::new();
+    match format {
+        TransferFormat::Native | TransferFormat::Jsonl | TransferFormat::DynamoJson => {
+            let mut record = Vec::new();
+            let mut offset = 0u64;
+            loop {
+                record.clear();
+                let mut ended = false;
+                while let Some(byte) = next_byte(&mut input, &mut offset)? {
+                    if byte == b'\n' {
+                        ended = true;
+                        break;
+                    }
+                    if record.len() >= max_record {
+                        return Err(CodecError::Oversized);
+                    }
+                    record.push(byte);
+                }
+                if record.is_empty() && !ended {
+                    break;
+                }
+                if record.last() == Some(&b'\r') {
+                    record.pop();
+                }
+                if !record.iter().all(u8::is_ascii_whitespace) {
+                    consume(offset, decode_one(&record, format, max_record)?)
+                        .map_err(|_| CodecError::Malformed)?;
+                }
+                if !ended {
+                    break;
+                }
+            }
+            Ok(())
+        }
+        TransferFormat::Csv => decode_csv_reader(&mut input, max_record, &mut consume),
+        TransferFormat::MongoJson | TransferFormat::CosmosJson => {
+            decode_json_array_reader(&mut input, format, max_record, &mut consume)
+        }
+    }
+}
+
+fn next_byte<R: Read>(input: &mut R, offset: &mut u64) -> Result<Option<u8>, CodecError> {
+    let mut byte = [0u8; 1];
+    let count = input.read(&mut byte).map_err(|_| CodecError::Malformed)?;
+    if count == 0 {
+        return Ok(None);
+    }
+    *offset = offset.checked_add(1).ok_or(CodecError::Oversized)?;
+    Ok(Some(byte[0]))
+}
+
+fn decode_csv_reader<R: Read, F: FnMut(u64, ImportRecord) -> io::Result<()>>(
+    input: &mut R,
+    max_record: usize,
+    consume: &mut F,
+) -> Result<(), CodecError> {
+    let mut row = Vec::new();
     let mut offset = 0u64;
+    let mut header = true;
     loop {
-        line.clear();
-        let mut read = 0usize;
-        loop {
-            let mut byte = [0u8; 1];
-            let count = input.read(&mut byte).map_err(|_| CodecError::Malformed)?;
-            if count == 0 {
-                break;
-            }
-            read += count;
-            if byte[0] == b'\n' {
-                break;
-            }
-            if line.len() >= max_record {
+        row.clear();
+        let mut quoted = false;
+        let mut ended = false;
+        while let Some(byte) = next_byte(input, &mut offset)? {
+            if row.len() >= max_record {
                 return Err(CodecError::Oversized);
             }
-            line.push(byte[0]);
-        }
-        if read == 0 {
-            break;
-        }
-        let read_len = u64::try_from(read).map_err(|_| CodecError::Oversized)?;
-        if line.last() == Some(&b'\n') {
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
+            row.push(byte);
+            if byte == b'"' {
+                if quoted {
+                    if peek_byte(input)? == Some(b'"') {
+                        if row.len() >= max_record { return Err(CodecError::Oversized); }
+                        row.push(next_byte(input, &mut offset)?.expect("peeked byte"));
+                    } else { quoted = false; }
+                } else if row.len() == 1 || row[row.len() - 2] == b',' {
+                    quoted = true;
+                } else { return Err(CodecError::Malformed); }
+            } else if byte == b'\n' && !quoted {
+                ended = true;
+                break;
             }
         }
-        if line.iter().all(u8::is_ascii_whitespace) {
-            offset = offset.checked_add(read_len).ok_or(CodecError::Oversized)?;
-            continue;
+        if row.is_empty() && !ended {
+            break;
         }
-        let record = decode_one(&line, format, max_record)?;
-        let next = offset.checked_add(read_len).ok_or(CodecError::Oversized)?;
-        consume(next, record).map_err(|_| CodecError::Malformed)?;
-        offset = next;
+        if quoted {
+            return Err(CodecError::Malformed);
+        }
+        if row.last() == Some(&b'\n') { row.pop(); }
+        if row.last() == Some(&b'\r') { row.pop(); }
+        let fields = parse_csv_row(&row)?;
+        if header {
+            if fields.as_slice() != ["collection", "id", "value"] { return Err(CodecError::Malformed); }
+            header = false;
+        } else {
+            if fields.len() != 3 { return Err(CodecError::Malformed); }
+            let value = serde_json::from_str::<Value>(&fields[2]).map_err(|_| CodecError::Malformed)?;
+            let value = serde_json::to_vec(&value).map_err(|_| CodecError::Malformed)?;
+            if value.len() > max_record { return Err(CodecError::Oversized); }
+            consume(offset, ImportRecord { collection: fields[0].clone(), id: fields[1].clone(), value })
+                .map_err(|_| CodecError::Malformed)?;
+        }
+        if !ended { break; }
     }
-    Ok(())
+    if header { Err(CodecError::Malformed) } else { Ok(()) }
+}
+
+fn peek_byte<R: BufRead>(input: &mut R) -> Result<Option<u8>, CodecError> {
+    input.fill_buf().map(|buf| buf.first().copied()).map_err(|_| CodecError::Malformed)
+}
+
+fn parse_csv_row(row: &[u8]) -> Result<Vec<String>, CodecError> {
+    let mut fields = Vec::new();
+    let mut field = Vec::new();
+    let mut index = 0;
+    while index < row.len() {
+        if row[index] == b'"' {
+            index += 1;
+            loop {
+                if index >= row.len() { return Err(CodecError::Malformed); }
+                match row[index] {
+                    b'"' if row.get(index + 1) == Some(&b'"') => { field.push(b'"'); index += 2; }
+                    b'"' => {
+                        index += 1;
+                        if row.get(index).is_some_and(|byte| *byte != b',') { return Err(CodecError::Malformed); }
+                        break;
+                    }
+                    byte => { field.push(byte); index += 1; }
+                }
+            }
+        } else {
+            while index < row.len() && row[index] != b',' { field.push(row[index]); index += 1; }
+        }
+        fields.push(String::from_utf8(std::mem::take(&mut field)).map_err(|_| CodecError::Utf8)?);
+        if index < row.len() { index += 1; }
+    }
+    if row.last() == Some(&b',') { fields.push(String::new()); }
+    Ok(fields)
+}
+
+fn decode_json_array_reader<R: Read, F: FnMut(u64, ImportRecord) -> io::Result<()>>(
+    input: &mut R, format: TransferFormat, max_record: usize, consume: &mut F,
+) -> Result<(), CodecError> {
+    let mut offset = 0u64;
+    loop { match next_byte(input, &mut offset)? { Some(b) if b.is_ascii_whitespace() => continue, Some(b'[') => break, _ => return Err(CodecError::Malformed) } }
+    let mut after_comma = false;
+    loop {
+        while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) { let _ = next_byte(input, &mut offset)?; }
+        if peek_byte(input)? == Some(b']') {
+            if after_comma { return Err(CodecError::Malformed); }
+            let _ = next_byte(input, &mut offset)?;
+            while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) { let _ = next_byte(input, &mut offset)?; }
+            return if peek_byte(input)?.is_none() { Ok(()) } else { Err(CodecError::Malformed) };
+        }
+        let mut value = Vec::new();
+        let mut depth = 0usize;
+        let mut string = false;
+        let mut escaped = false;
+        loop {
+            let byte = next_byte(input, &mut offset)?.ok_or(CodecError::Malformed)?;
+            if value.len() >= max_record { return Err(CodecError::Oversized); }
+            value.push(byte);
+            if string {
+                if escaped { escaped = false; } else if byte == b'\\' { escaped = true; } else if byte == b'"' { string = false; }
+                continue;
+            }
+            match byte { b'"' => string = true, b'{' | b'[' => depth += 1, b'}' | b']' => depth = depth.checked_sub(1).ok_or(CodecError::Malformed)?, _ => {} }
+            if depth == 0 { break; }
+        }
+        let parsed: Value = serde_json::from_slice(&value).map_err(|_| CodecError::Malformed)?;
+        let record = decode_value(parsed, format, max_record)?;
+        while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) { let _ = next_byte(input, &mut offset)?; }
+        match next_byte(input, &mut offset)? {
+            Some(b',') => { consume(offset, record).map_err(|_| CodecError::Malformed)?; after_comma = true; }
+            Some(b']') => {
+                consume(offset, record).map_err(|_| CodecError::Malformed)?;
+                while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) { let _ = next_byte(input, &mut offset)?; }
+                return if peek_byte(input)?.is_none() { Ok(()) } else { Err(CodecError::Malformed) };
+            }
+            _ => return Err(CodecError::Malformed),
+        }
+        after_comma = true;
+    }
 }
 
 /// Encodes records into the selected format. Values must already be canonical
@@ -566,5 +730,13 @@ mod tests {
             decode_jsonl_reader(&input[..], TransferFormat::Jsonl, 8, |_, _| Ok(())),
             Err(CodecError::Oversized)
         );
+    }
+
+    #[test]
+    fn batch_identity_is_stable_and_ordinal_bound() {
+        let first = batch_operation_id("import-1", &"a".repeat(64), 0);
+        assert_eq!(first, batch_operation_id("import-1", &"a".repeat(64), 0));
+        assert_ne!(first, batch_operation_id("import-1", &"a".repeat(64), 1));
+        assert_ne!(first, batch_operation_id("import-2", &"a".repeat(64), 0));
     }
 }

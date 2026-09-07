@@ -47,6 +47,7 @@ mod replication_dependencies;
 mod replication_wire;
 mod schema_indexes;
 mod schema_metadata;
+pub(crate) mod shard_catchup;
 mod shard_split;
 mod webhook_metadata;
 

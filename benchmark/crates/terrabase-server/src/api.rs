@@ -58,6 +58,8 @@ use crate::api_keys::Verbs;
 mod development;
 #[path = "api_exports.rs"]
 mod exports;
+#[path = "api_imports.rs"]
+pub(crate) mod imports;
 #[path = "api_lifecycle.rs"]
 mod lifecycle;
 #[path = "api_operations.rs"]
@@ -4336,6 +4338,14 @@ async fn create_branch(
             ),
             Err(error) => provisioning_error(error).into_response(),
         };
+    }
+    // A composed native owner must never silently cross back into the local
+    // control/catalog adapter. Native branch admission is performed by the
+    // authenticated provisioning ingress and its orchestrator pipeline; an
+    // incomplete production composition therefore fails closed.
+    if state.native_backups.is_some() || state.native_recovery.is_some() {
+        return ApiError::backup("native branch provisioning authority is unavailable")
+            .into_response();
     }
     restore_or_branch(state, name, body, RestoreFlavor::Branch).await
 }

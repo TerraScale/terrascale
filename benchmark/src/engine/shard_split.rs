@@ -3,11 +3,14 @@
 use super::{CommitError, CommitOutcome, Engine, EngineError, EngineOpenError};
 use crate::{
     shard_split::{
-        AtomicSplitCutover, CommittedSplitRoute, CutoverContext, DurableSplitState, RouteTable,
-        ShardAdmissionToken, ShardRoute, ShardSplit, SplitContext, SplitEngineAdapter, SplitPhase,
-        SplitStateStore,
+        AtomicSplitCutover, CommittedSplitRoute, CopyBatch, CopyEntry, CutoverContext,
+        DurableSplitState, RangeCopySource, RangeCopyTarget, RouteTable, ShardAdmissionToken,
+        ShardRoute, ShardSplit, SplitContext, SplitEngineAdapter, SplitPhase, SplitStateStore,
+        canonical_shard_key, decode_canonical_shard_key,
     },
-    types::{DocumentValue, LocalDurability, OperationId, TenantScope},
+    types::{
+        DocumentValue, ExpectedVersion, LocalDurability, OperationId, StorageSequence, TenantScope,
+    },
 };
 
 const VERSION: u8 = 1;
@@ -129,6 +132,34 @@ impl ScopedShardEngine {
             }
         }
     }
+
+    fn copy_schema_metadata(
+        &self,
+        target: &Engine,
+        target_scope: &TenantScope,
+        context: SplitContext,
+    ) -> Result<(), EngineError> {
+        let database = self.engine.database_owner().database().to_text();
+        let records = self.engine.schema_metadata_list(&database, "main", None, 64)?;
+        if records.is_empty() {
+            return Ok(());
+        }
+        let operation = OperationId::try_new(&format!("shard-schema-{:032x}", context.split_id()))
+            .map_err(|_| EngineError::InvalidDocument)?;
+        let mut tx = target.begin(target_scope, target.read_snapshot(target_scope)?, operation)?;
+        tx.internal_maintenance = true;
+        for (collection, envelope) in records {
+            tx.stage_schema_metadata(&database, "main", &collection, None, &envelope)?;
+        }
+        match tx.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_)
+            | CommitOutcome::Rejected(CommitError::OperationIdReuse { .. }) => Ok(()),
+            CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict),
+            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
+                Err(EngineError::StorageFailure)
+            }
+        }
+    }
 }
 
 const fn target_identity_key() -> &'static str {
@@ -155,7 +186,10 @@ impl SplitEngineAdapter for ScopedShardEngine {
         match Self::target_identity_at(&target, &target_scope)? {
             Some(existing) if existing == identity => Ok(()),
             Some(_) => Err(EngineError::Conflict),
-            None => Self::persist_target_identity(&target, &target_scope, *context, &identity),
+            None => {
+                self.copy_schema_metadata(&target, &target_scope, *context)?;
+                Self::persist_target_identity(&target, &target_scope, *context, &identity)
+            }
         }
     }
 
@@ -183,6 +217,125 @@ impl SplitEngineAdapter for ScopedShardEngine {
         // Source deletion requires the range-copy worker's durable cursor and
         // is intentionally left to that worker after verification.
         Ok(())
+    }
+}
+
+/// Snapshot reader for one immutable source boundary. The cursor is the
+/// canonical `(collection, id)` key, so duplicate IDs across collections are
+/// retained and page boundaries never skip rows.
+pub(crate) struct ScopedShardRangeSource {
+    engine: std::sync::Arc<Engine>,
+    tenant: crate::types::TenantId,
+    boundary: StorageSequence,
+}
+
+impl ScopedShardRangeSource {
+    pub(crate) fn new(
+        engine: std::sync::Arc<Engine>,
+        scope: &TenantScope,
+    ) -> Result<Self, EngineError> {
+        Ok(Self {
+            boundary: engine.read_snapshot(scope)?.sequence(),
+            engine,
+            tenant: scope.tenant().clone(),
+        })
+    }
+}
+
+impl RangeCopySource for ScopedShardRangeSource {
+    type Error = EngineError;
+
+    fn read_range(
+        &mut self,
+        lower: Option<&[u8]>,
+        after_key: Option<&[u8]>,
+        upper: &[u8],
+        limit: usize,
+    ) -> Result<CopyBatch, Self::Error> {
+        if upper.is_empty() || lower.is_some_and(|bound| bound.is_empty() || bound >= upper) {
+            return Err(EngineError::InvalidDocument);
+        }
+        let after = after_key
+            .map(decode_canonical_shard_key)
+            .transpose()
+            .map_err(|_| EngineError::InvalidDocument)?;
+        let records = self.engine.snapshot_records_from(
+            self.tenant.clone(),
+            self.boundary,
+            after,
+            u32::try_from(limit.max(1)).map_err(|_| EngineError::InvalidDocument)?,
+        )?;
+        let raw_len = records.len();
+        let mut entries = Vec::with_capacity(raw_len);
+        let mut reached_upper = false;
+        for record in records {
+            let key = canonical_shard_key(record.document().collection(), record.document().id());
+            if key.as_slice() >= upper {
+                reached_upper = true;
+                break;
+            }
+            if lower.is_some_and(|bound| key.as_slice() < bound) {
+                continue;
+            }
+            let value = crate::storage::encode_document_body(record.document());
+            entries.push(CopyEntry::new(key, value));
+        }
+        let done = reached_upper || raw_len < limit.max(1);
+        Ok(CopyBatch::new(entries, self.boundary.get(), done))
+    }
+}
+
+/// Target-side page applier. Each page is one durable transaction and uses a
+/// stable operation identity derived from its canonical bytes, making a crash
+/// retry safe while preserving the source document version in its envelope.
+pub(crate) struct ScopedShardRangeTarget {
+    engine: Engine,
+    scope: TenantScope,
+}
+
+impl ScopedShardRangeTarget {
+    pub(crate) fn open(engine: Engine, source_scope: &TenantScope) -> Self {
+        let scope = engine.scope_for(source_scope.tenant());
+        Self { engine, scope }
+    }
+}
+
+impl RangeCopyTarget for ScopedShardRangeTarget {
+    type Error = EngineError;
+
+    fn apply_copy_batch(&mut self, batch: &CopyBatch) -> Result<(), Self::Error> {
+        let mut digest = blake3::Hasher::new();
+        digest.update(b"shard-copy-page-v1\0");
+        for entry in batch.entries() {
+            digest.update(entry.key());
+            digest.update(entry.value());
+        }
+        let operation = OperationId::try_new(&format!(
+            "shard-copy-{}",
+            hex::encode(&digest.finalize().as_bytes()[..16])
+        ))
+        .map_err(|_| EngineError::InvalidDocument)?;
+        let mut tx =
+            self.engine.begin(&self.scope, self.engine.read_snapshot(&self.scope)?, operation)?;
+        tx.internal_maintenance = true;
+        for entry in batch.entries() {
+            let (collection, id) = decode_canonical_shard_key(entry.key())
+                .map_err(|_| EngineError::InvalidDocument)?;
+            let document = crate::storage::decode_document_body(entry.value())
+                .ok_or(EngineError::InvalidDocument)?;
+            if document.collection() != &collection || document.id() != &id {
+                return Err(EngineError::Conflict);
+            }
+            tx.put(document, ExpectedVersion::Any)?;
+        }
+        match tx.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Rejected(CommitError::OperationIdReuse { .. }) => Ok(()),
+            CommitOutcome::Rejected(CommitError::Conflict) | CommitOutcome::Unknown(_) => {
+                Err(EngineError::StorageFailure)
+            }
+            CommitOutcome::Rejected(_) => Err(EngineError::StorageFailure),
+        }
     }
 }
 

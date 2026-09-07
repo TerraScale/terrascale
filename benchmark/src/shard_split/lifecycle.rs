@@ -262,7 +262,12 @@ impl ShardSplit {
             return Err(SplitCutoverError::InvalidFencePermit);
         }
         let required = self.source_high_water.max(self.acked_through);
-        if permit.required() < required {
+        // The permit describes the writer sequence that was drained.  The
+        // lifecycle must also have observed that sequence on the target;
+        // otherwise a caller could fence writers and publish a route while
+        // the target still trails the fenced writes.
+        let required = required.max(permit.required());
+        if self.target_applied_through < required {
             return Err(SplitCutoverError::NotCaughtUp {
                 target_applied: self.target_applied_through,
                 required,

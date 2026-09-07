@@ -285,6 +285,14 @@ impl TbepLifecycleControl {
 }
 
 impl terrabase_tbep::lifecycle::LifecycleControl for TbepLifecycleControl {
+    fn resolve_recovery_point(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointRequest,
+    ) -> terrabase_tbep::lifecycle::ResolveRecoveryPointFuture<'_> {
+        let request = request.clone();
+        Box::pin(async move { self.resolve_recovery_point(&request).await })
+    }
+
     fn restore_stats(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest,
@@ -393,6 +401,15 @@ pub struct AcceptedLifecycleAssignment {
 /// Native lifecycle owner supplied by member and backup composition.
 #[async_trait::async_trait]
 pub trait NativeLifecycleWorker: Send + Sync {
+    /// Resolves one retained, sealed recovery manifest under the accepted source scope.
+    async fn resolve_recovery_point(
+        &self,
+        _assignment: &AcceptedLifecycleAssignment,
+        _request: &terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointRequest,
+    ) -> Result<terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointResponse, String> {
+        Err("native recovery point resolver is not composed".into())
+    }
+
     /// Signs only durable completed observations under the explicitly provisioned key.
     async fn signed_completed_receipt(&self, _operation: &str) -> Result<Vec<u8>, String> {
         Err("native receipt signer is not composed".into())
@@ -483,6 +500,55 @@ pub struct RegistryLifecycleWorker {
 
 #[async_trait::async_trait]
 impl NativeLifecycleWorker for RegistryLifecycleWorker {
+    async fn resolve_recovery_point(
+        &self,
+        assignment: &AcceptedLifecycleAssignment,
+        request: &terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointRequest,
+    ) -> Result<terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointResponse, String> {
+        if request.operation_id.is_empty() || request.operation_id.len() > 128 {
+            return Err("recovery point operation identity is invalid".into());
+        }
+        let recovery = self.recovery.as_ref().ok_or("native recovery owner is not composed")?;
+        let database = self
+            .registry
+            .resolve(&assignment.database)?
+            .ok_or("recovery source is not admitted")?;
+        if database.record.environment != assignment.environment
+            || database.record.tenant_id != assignment.tenant
+            || database.record.project_id != assignment.project
+            || database.record.database_id != assignment.database
+            || database.record.region != assignment.region
+            || database.record.member_id != assignment.member
+            || !database.record.regions.iter().any(|region| region == &assignment.region)
+        {
+            return Err("recovery source scope or placement mismatch".into());
+        }
+        let (manifest, provider) = recovery
+            .resolve_recovery_point(
+                &assignment.database,
+                &request.selection_kind,
+                &request.point_id,
+                &database.record.regions,
+            )
+            .map_err(|_| "retained recovery point is unavailable or unverified")?;
+        let provider = match provider {
+            terrabase::backup::object_store::Provider::Oci => terrabase_tbep::proto::terrabase::v1::RestoreProvider::Oci,
+            terrabase::backup::object_store::Provider::Tigris => terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris,
+        };
+        Ok(terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointResponse {
+            operation_id: request.operation_id.clone(),
+            source_database: manifest.database_id().to_owned(),
+            recovery_point_id: manifest.identity().to_owned(),
+            recovery_point_digest: manifest.identity().to_owned(),
+            journal_cut: manifest.boundary_sequence().get().to_string(),
+            provider: provider as i32,
+            captured_at_millis: manifest.captured_unix_millis(),
+            checksum: manifest.logical_checksum().to_owned(),
+            row_count: manifest.logical_documents(),
+            placement: database.record.regions.clone(),
+        })
+    }
+
     async fn signed_completed_receipt(&self, operation: &str) -> Result<Vec<u8>, String> {
         let recovery = self.recovery.as_ref().ok_or("native recovery owner unavailable")?;
         let operation = recovery
@@ -770,6 +836,24 @@ pub struct ProductionLifecycleControl {
 }
 
 impl ProductionLifecycleControl {
+    /// Resolves a retained source point only after accepted lifecycle authority verification.
+    pub async fn resolve_recovery_point(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointRequest,
+    ) -> Result<terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointResponse, String> {
+        let context = request.context.as_ref().ok_or("recovery point context is missing")?;
+        let assignment = TbepLifecycleControl::assignment(context);
+        self.authority.verify(
+            &assignment,
+            LifecycleGrantAction::ResolveRecoveryPoint,
+            &request.operation_id,
+            &context.authority_signature,
+            &context.operation_grant,
+            None,
+        )?;
+        self.worker.resolve_recovery_point(&assignment, request).await
+    }
+
     /// Returns durable restore progress for the authorized request.
     pub async fn restore_stats(
         &self,

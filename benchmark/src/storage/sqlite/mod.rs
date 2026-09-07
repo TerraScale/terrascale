@@ -164,8 +164,7 @@ use super::{
         StorageReceipt,
     },
 };
-pub(crate) use json_codec::decode_document_body;
-use json_codec::encode_document_body;
+pub(crate) use json_codec::{decode_document_body, encode_document_body};
 
 /// The wall-clock commit time of a row, in Unix milliseconds (the D-42
 /// 30-day history floor is evaluated against it).

@@ -305,6 +305,48 @@ pub struct NativeRecoveryRuntime {
 }
 
 impl NativeRecoveryRuntime {
+    /// Resolves an authenticated retained manifest without creating recovery state.
+    pub fn resolve_recovery_point(
+        &self,
+        source: &str,
+        selection_kind: &str,
+        point_id: &str,
+        placement: &[String],
+    ) -> Result<(terrabase::backup::BackupManifest, terrabase::backup::object_store::Provider), NativeRecoveryError> {
+        let database = self
+            .registry
+            .resolve(source)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::VerificationFailed)?;
+        if database.record.regions != placement || database.record.database_id != source {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
+        let (manifest, providers) = {
+            let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            let mut points = fleet.retained_points(source).map_err(map_fleet_error)?;
+            let providers = fleet.configured_providers(source).map_err(map_fleet_error)?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| NativeRecoveryError::Unavailable)?
+                .as_millis() as u64;
+            points.retain(|point| point.retain_until_unix_millis() > now);
+            let point = match selection_kind {
+                "latest" if point_id.is_empty() => points
+                    .into_iter()
+                    .max_by_key(|point| (point.captured_unix_millis(), point.boundary_sequence())),
+                "point_id" => points.into_iter().find(|point| point.identity() == point_id),
+                _ => None,
+            }
+            .ok_or(NativeRecoveryError::VerificationFailed)?;
+            (point, providers)
+        };
+        let provider = providers
+            .into_iter()
+            .next()
+            .ok_or(NativeRecoveryError::Unavailable)?;
+        Ok((manifest, provider))
+    }
+
     fn restore_residency_matches(
         &self,
         request: &NativeRestoreRequest,

@@ -164,10 +164,11 @@ pub fn verify_origin_proof(
         return false;
     }
     let Ok(bucket) = fields[1].parse::<u64>() else { return false };
-    // The edge carries the bucket's aligned Unix timestamp. Accept exactly
-    // the current and preceding bucket during one rotation overlap.
-    let current_bucket = now / CAPABILITY_BUCKET * CAPABILITY_BUCKET;
-    if bucket != current_bucket && bucket.saturating_add(CAPABILITY_BUCKET) != current_bucket {
+    // The edge carries the ten-minute bucket index (Unix seconds / 600).
+    // Accept exactly the current and preceding bucket during one rotation
+    // overlap.
+    let current_bucket = now / CAPABILITY_BUCKET;
+    if bucket != current_bucket && bucket.saturating_add(1) != current_bucket {
         return false;
     }
     let target = uri
@@ -2190,7 +2191,7 @@ mod tests {
         let previous = b"origin-previous-key-material";
         let keys = OriginProofKeyRing::new(current, Some(previous)).expect("valid key ring");
         let now = 1_800;
-        let bucket = now / CAPABILITY_BUCKET * CAPABILITY_BUCKET;
+        let bucket = now / CAPABILITY_BUCKET;
         let target = "/api/v1/reactive/views/view-1/1/log?offset=0";
         let mut headers = HeaderMap::new();
         headers.insert(

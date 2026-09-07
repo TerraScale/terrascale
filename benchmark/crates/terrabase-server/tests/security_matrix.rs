@@ -206,7 +206,7 @@ fn origin_proofs_accept_current_previous_and_reject_expired_or_wrong_scope() {
     let previous = b"e17-origin-previous-key";
     let keys = OriginProofKeyRing::new(current, Some(previous)).expect("key ring");
     let now = unix_seconds();
-    let bucket = now / 600 * 600;
+    let bucket = now / 600;
     let target = "/api/v1/reactive/views/v1/1/log?offset=0";
     let verify = |proof: String, uri: &str| {
         let mut headers = HeaderMap::new();
@@ -262,6 +262,37 @@ fn origin_proofs_accept_current_previous_and_reject_expired_or_wrong_scope() {
             terrabase::regions::RegionCode::GRU
         ),
         "/api/v1/reactive/views/other/1/log?offset=0"
+    ));
+}
+
+#[test]
+fn origin_proof_cross_runtime_vector_uses_bucket_index_wire() {
+    let vector: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../contracts/conformance/origin-proof.json"
+    ))
+    .expect("origin proof vector");
+    let now = vector["now"].as_u64().expect("vector now");
+    let bucket = vector["bucket"].as_u64().expect("vector bucket");
+    assert_eq!(now / 600, bucket, "wire bucket is Unix seconds / 600");
+
+    let keys = OriginProofKeyRing::new(
+        vector["secret"].as_str().expect("vector secret").as_bytes(),
+        None::<&[u8]>,
+    )
+    .expect("key ring");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-terrascale-origin-proof",
+        HeaderValue::from_str(vector["proof"].as_str().expect("vector proof"))
+            .expect("proof header"),
+    );
+    assert!(verify_origin_proof(
+        &headers,
+        &Method::GET,
+        &Uri::try_from(vector["target"].as_str().expect("vector target")).expect("target URI"),
+        &keys,
+        now,
+        RegionCode::GRU,
     ));
 }
 
@@ -364,7 +395,7 @@ async fn origin_proof_admits_only_the_real_reactive_delivery_route() {
     let generation = response["generation"].as_u64().expect("generation");
     let path = format!("/api/v1/reactive/views/{view}/{generation}/snapshot/0?cut=0");
     let now = unix_seconds();
-    let bucket = now / 600 * 600;
+    let bucket = now / 600;
     let proof = origin_proof_for(
         &Method::GET,
         &path,
