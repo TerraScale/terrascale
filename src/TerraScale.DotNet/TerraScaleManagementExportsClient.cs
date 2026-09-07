@@ -4,6 +4,8 @@ using TerraScale.DotNet.Generated;
 #pragma warning disable CS1591
 namespace TerraScale.DotNet;
 
+public sealed record ExportDownload(byte[] Bytes, ulong Length, string Checksum);
+
 /// <summary>Durable export jobs and streaming artifact downloads.</summary>
 public sealed class TerraScaleManagementExportsClient(TerraScaleClient client)
 {
@@ -35,9 +37,9 @@ public sealed class TerraScaleManagementExportsClient(TerraScaleClient client)
     public Task<ExportStatus> CancelAsync(string database, string jobId, CancellationToken cancellationToken = default) =>
         client.SendJsonAsync(HttpMethod.Post, Job(database, jobId) + "/cancel", TerraScaleContractJsonContext.Default.ExportStatus, cancellationToken, idempotencyKey: string.Empty);
 
-    /// <summary>Copies one immutable artifact to the caller-owned destination without buffering the complete export.</summary>
-    public Task DownloadArtifactAsync(string database, string jobId, string member, Stream destination, CancellationToken cancellationToken = default) =>
-        client.DownloadExportArtifactAsync(Job(database, jobId) + "/artifacts/" + TerraScaleManagementPaths.Escape(member), destination, cancellationToken);
+    /// <summary>Downloads one immutable artifact and returns its published integrity metadata.</summary>
+    public Task<ExportDownload> DownloadArtifactAsync(string database, string jobId, string member, CancellationToken cancellationToken = default) =>
+        client.DownloadExportArtifactAsync(Job(database, jobId) + "/artifacts/" + TerraScaleManagementPaths.Escape(member), cancellationToken);
 
     private static string Route(string database) => TerraScaleManagementPaths.Database(database) + "/exports";
     private static string Job(string database, string jobId) => Route(database) + "/" + TerraScaleManagementPaths.Escape(jobId);

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -247,17 +248,33 @@ public sealed class TerraScaleClient
         return await ReadJsonResponseAsync(response, TerraScaleContractJsonContext.Default.SchemaDocument, activity: null, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task DownloadExportArtifactAsync(string route, Stream destination, CancellationToken cancellationToken)
+    internal async Task<ExportDownload> DownloadExportArtifactAsync(string route, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(destination);
-        if (!destination.CanWrite) throw new ArgumentException("The export destination must be writable.", nameof(destination));
         using var response = await SendWithRetriesAsync(HttpMethod.Get, route, static () => null, RequestAuthenticationMode.Authenticated,
             request => request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream")), activity: null, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
             throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode != HttpStatusCode.OK || response.Content.Headers.ContentType?.MediaType != "application/octet-stream")
             throw new TerraScaleApiException(response.StatusCode, "The export artifact response must be HTTP 200 application/octet-stream.", null, ReadRequestId(response), null, null);
-        await response.Content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+        var lengthHeader = ExactlyOneHeader(response, "X-TerraScale-Artifact-Length");
+        if (lengthHeader is null || !ulong.TryParse(lengthHeader, NumberStyles.None, CultureInfo.InvariantCulture, out var length) ||
+            length.ToString(CultureInfo.InvariantCulture) != lengthHeader)
+            throw new TerraScaleApiException(response.StatusCode, "The export artifact length header is invalid.", null, ReadRequestId(response), null, null);
+        var checksum = ExactlyOneHeader(response, "X-TerraScale-Artifact-Checksum");
+        if (checksum is null || checksum.Length != 64 || checksum.Any(character => !Uri.IsHexDigit(character)))
+            throw new TerraScaleApiException(response.StatusCode, "The export artifact checksum header is invalid.", null, ReadRequestId(response), null, null);
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        if ((ulong)bytes.LongLength != length)
+            throw new TerraScaleApiException(response.StatusCode, "The export artifact length header does not match the response body.", null, ReadRequestId(response), null, null);
+        return new ExportDownload(bytes, length, checksum.ToLowerInvariant());
+    }
+
+    private static string? ExactlyOneHeader(HttpResponseMessage response, string name)
+    {
+        var values = response.Headers.TryGetValues(name, out var responseValues)
+            ? responseValues.ToArray()
+            : response.Content.Headers.TryGetValues(name, out var contentValues) ? contentValues.ToArray() : [];
+        return values.Length == 1 && !values[0].Contains(',', StringComparison.Ordinal) ? values[0] : null;
     }
 
     internal async Task<TerraScaleDatabaseCreationResult> CreateDatabaseAsync(CreateDatabaseRequest request, string operationId, CancellationToken cancellationToken)

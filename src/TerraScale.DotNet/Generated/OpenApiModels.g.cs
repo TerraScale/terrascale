@@ -12,6 +12,7 @@ public sealed record ArtifactFact(
     [property: JsonPropertyName("path"), JsonRequired] string Path
 );
 
+
 public sealed record AttachViewRequest(
     [property: JsonPropertyName("checkpoint"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Checkpoint,
     [property: JsonPropertyName("databaseId"), JsonRequired] string DatabaseId,
@@ -502,4 +503,3 @@ public sealed record SqlResponseRows(
 );
 
 public sealed record UniqueInsertRecord;
-
