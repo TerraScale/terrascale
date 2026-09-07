@@ -42,29 +42,7 @@ impl Engine {
         let marker =
             format!("{}:{}:{}", operation.as_str(), source_owner.database(), child.database());
         if fs::read_dir(target).ok().and_then(|entries| entries.into_iter().next()).is_some() {
-            let engine = Self::open(config.clone())?;
-            let connection = engine
-                .open_sqlite_read_connection()
-                .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            let found: String = connection
-                .query_row(
-                    "SELECT value FROM meta WHERE key='branch_restore_operation'",
-                    [],
-                    |row| row.get(0),
-                )
-                .map_err(|_| EngineOpenError::InvalidConfig)?;
-            if found != marker {
-                return Err(EngineOpenError::InvalidConfig);
-            }
-            let sequence: i64 = connection
-                .query_row("SELECT value FROM meta WHERE key='branch_restore_cut'", [], |row| {
-                    row.get(0)
-                })
-                .map_err(|_| EngineOpenError::FormatMismatch)?;
-            sync_parent(target)?;
-            return Ok(StorageSequence::new(
-                u64::try_from(sequence).map_err(|_| EngineOpenError::FormatMismatch)?,
-            ));
+            return read_installed_branch_cut(config, target, &marker);
         }
         // `EngineConfig::durable` creates the target directory up front. An
         // empty directory is only a reservation; remove it so the prepared
@@ -156,6 +134,29 @@ fn sync_parent(target: &Path) -> Result<(), EngineOpenError> {
     fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
         .map_err(|_| EngineOpenError::StorageUnavailable)
+}
+
+fn read_installed_branch_cut(
+    config: &EngineConfig,
+    target: &Path,
+    marker: &str,
+) -> Result<StorageSequence, EngineOpenError> {
+    let engine = Engine::open(config.clone())?;
+    let connection =
+        engine.open_sqlite_read_connection().map_err(|_| EngineOpenError::StorageUnavailable)?;
+    let found: String = connection
+        .query_row("SELECT value FROM meta WHERE key='branch_restore_operation'", [], |row| {
+            row.get(0)
+        })
+        .map_err(|_| EngineOpenError::InvalidConfig)?;
+    if found != marker {
+        return Err(EngineOpenError::InvalidConfig);
+    }
+    let sequence: i64 = connection
+        .query_row("SELECT value FROM meta WHERE key='branch_restore_cut'", [], |row| row.get(0))
+        .map_err(|_| EngineOpenError::FormatMismatch)?;
+    sync_parent(target)?;
+    Ok(StorageSequence::new(u64::try_from(sequence).map_err(|_| EngineOpenError::FormatMismatch)?))
 }
 
 fn installed_cut(config: &EngineConfig, marker: &str) -> Option<u64> {

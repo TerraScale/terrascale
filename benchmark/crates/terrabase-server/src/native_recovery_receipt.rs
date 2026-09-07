@@ -440,6 +440,7 @@ mod tests {
                 authority_epoch: 7,
                 authority_lease: "lease".into(),
                 accepted_proof_digest: "b".repeat(64),
+                operation_grant: vec![1],
                 provider: "oci".into(),
                 selection: NativeRestoreSelection::PointId(expected.recovery_point_id.clone()),
                 residency: "GRU".into(),

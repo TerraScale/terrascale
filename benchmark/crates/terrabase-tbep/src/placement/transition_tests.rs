@@ -232,7 +232,12 @@ fn signed_lifecycle_grant_replays_and_rejects_mutation_after_reopen() {
     };
     let signed = envelope(&serde_json::to_value(&grant).unwrap());
     let verified = journal.verify_lifecycle_grant(&signed).unwrap();
+    assert_eq!(
+        journal.verify_admitted_lifecycle_operation(&signed),
+        Err(PlacementError::RetryMismatch)
+    );
     assert!(journal.admit_lifecycle_operation(&verified).unwrap());
+    assert_eq!(journal.verify_admitted_lifecycle_operation(&signed).unwrap(), verified);
     assert!(!journal.admit_lifecycle_operation(&verified).unwrap());
     drop(journal);
     let reopened = fixture.open();
@@ -248,6 +253,14 @@ fn signed_lifecycle_grant_replays_and_rejects_mutation_after_reopen() {
     let mut renewed = verified.clone();
     renewed.authority_epoch = 2;
     assert!(!reopened.admit_lifecycle_operation(&renewed).unwrap());
+    assert_eq!(reopened.verify_admitted_lifecycle_operation(&signed).unwrap(), verified);
+    let mut altered_scope = verified.clone();
+    altered_scope.member = "other-member".into();
+    let altered = envelope(&serde_json::to_value(&altered_scope).unwrap());
+    assert_eq!(
+        reopened.verify_admitted_lifecycle_operation(&altered),
+        Err(PlacementError::RetryMismatch)
+    );
     let mut stale = verified;
     stale.operation_id = "lifecycle-stale-new".into();
     stale.authority_epoch = 1;

@@ -108,7 +108,7 @@ fn verify_restore_request_digest(
     }
 }
 
-fn restore_request_digest(
+pub(crate) fn restore_request_digest(
     request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
 ) -> Result<String, String> {
     use aws_lc_rs::digest::{SHA256, digest};
@@ -588,12 +588,13 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         {
             return Err("restore target placement or owner mismatch".into());
         }
-        let (authority_epoch, authority_lease, accepted_proof_digest) =
+        let (authority_epoch, authority_lease, accepted_proof_digest, operation_grant) =
             if let Some(retained) = retained.as_ref() {
                 (
                     retained.authority_epoch,
                     retained.authority_lease.clone(),
                     retained.accepted_proof_digest.clone(),
+                    retained.operation_grant.clone(),
                 )
             } else {
                 let context = request.context.as_ref().ok_or("restore context is missing")?;
@@ -604,7 +605,12 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
                     .verify_lifecycle_grant(&context.operation_grant)
                     .map_err(|_| "lifecycle operation grant is invalid")?
                     .accepted_proof_digest;
-                (context.authority_epoch, context.authority_lease.clone(), proof_digest)
+                (
+                    context.authority_epoch,
+                    context.authority_lease.clone(),
+                    proof_digest,
+                    context.operation_grant.clone(),
+                )
             };
         let operation = crate::native_recovery::NativeRestoreRequest {
             operation_id: request.operation_id.clone(),
@@ -619,6 +625,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             authority_epoch,
             authority_lease,
             accepted_proof_digest,
+            operation_grant,
             provider: match terrabase_tbep::proto::terrabase::v1::RestoreProvider::try_from(
                 request.provider,
             ) {

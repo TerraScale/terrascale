@@ -1182,7 +1182,7 @@ async fn enforce_retention_at(
                 limits.staging_bytes_per_stream,
             )
             .await
-            .and_then(|_| {
+            .and_then(|()| {
                 super::verify_members(&verification_root, root.identity(), root.members())
                     .map_err(|_| super::object_store::TransferError::InvalidPoint)
             });
@@ -1414,6 +1414,34 @@ mod tests {
         (target_owner, config)
     }
 
+    fn latest_restore_identity(
+        fleet: &NativeBackupFleet,
+        staging: &std::path::Path,
+        identity: &str,
+        target_owner: &crate::storage::DatabaseOwner,
+        operation_id: String,
+        provider: Provider,
+    ) -> crate::backup::restore::RestoreIdentity {
+        let point = crate::backup::restore::discover_encrypted_points(
+            staging,
+            fleet.streams.get(identity).unwrap().config.keys.as_ref(),
+        )
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+        crate::backup::restore::RestoreIdentity {
+            operation_id,
+            source_database_id: identity.to_owned(),
+            target_database_id: target_owner.database().to_string(),
+            provider: format!("{provider:?}").to_lowercase(),
+            selection: "latest".into(),
+            expected_manifest_digest: point.identity().to_owned(),
+            expected_journal_boundary: point.boundary_sequence().get(),
+            restore_epoch: 1,
+        }
+    }
+
     #[test]
     fn provider_outage_preserves_independent_success_and_source_journal_floor() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -1489,34 +1517,14 @@ mod tests {
                     Provider::Oci,
                     None,
                     &target_config,
-                    &crate::backup::restore::RestoreIdentity {
-                        operation_id: "fleet-outage-restore-op".into(),
-                        source_database_id: identity.clone(),
-                        target_database_id: target_owner.database().to_string(),
-                        provider: "oci".into(),
-                        selection: "latest".into(),
-                        expected_manifest_digest:
-                            crate::backup::restore::discover_encrypted_points(
-                                &staging,
-                                fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
-                            )
-                            .unwrap()
-                            .last()
-                            .unwrap()
-                            .identity()
-                            .to_owned(),
-                        expected_journal_boundary:
-                            crate::backup::restore::discover_encrypted_points(
-                                &staging,
-                                fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
-                            )
-                            .unwrap()
-                            .last()
-                            .unwrap()
-                            .boundary_sequence()
-                            .get(),
-                        restore_epoch: 1,
-                    },
+                    &latest_restore_identity(
+                        &fleet,
+                        &staging,
+                        &identity,
+                        &target_owner,
+                        "fleet-outage-restore-op".into(),
+                        Provider::Oci,
+                    ),
                 )
                 .await
                 .unwrap();
@@ -1762,34 +1770,14 @@ mod tests {
                         provider,
                         None,
                         &target_config,
-                        &crate::backup::restore::RestoreIdentity {
-                            operation_id: format!("fleet-restore-{provider:?}"),
-                            source_database_id: identity.clone(),
-                            target_database_id: target_owner.database().to_string(),
-                            provider: format!("{provider:?}").to_lowercase(),
-                            selection: "latest".into(),
-                            expected_manifest_digest:
-                                crate::backup::restore::discover_encrypted_points(
-                                    &staging,
-                                    fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
-                                )
-                                .unwrap()
-                                .last()
-                                .unwrap()
-                                .identity()
-                                .to_owned(),
-                            expected_journal_boundary:
-                                crate::backup::restore::discover_encrypted_points(
-                                    &staging,
-                                    fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
-                                )
-                                .unwrap()
-                                .last()
-                                .unwrap()
-                                .boundary_sequence()
-                                .get(),
-                            restore_epoch: 1,
-                        },
+                        &latest_restore_identity(
+                            &fleet,
+                            &staging,
+                            &identity,
+                            &target_owner,
+                            format!("fleet-restore-{provider:?}"),
+                            provider,
+                        ),
                     )
                     .await
                     .unwrap();

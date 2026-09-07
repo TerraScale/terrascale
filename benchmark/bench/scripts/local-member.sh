@@ -143,8 +143,16 @@ cmd_up() {
   cpus="$(envelope_cpu_set)"
   log "starting $REGION member: api 127.0.0.1:$API_PORT under $TERRABASE_BENCH_ENVELOPE_SPEC on cpus $cpus"
   # The measured subject and the bench drivers share one fenced scope, which
-  # is exactly the evidence shape the drivers record.
-  systemd-run --user --scope --quiet \
+  # is exactly the evidence shape the drivers record. The system scope is
+  # used when the user manager cannot delegate cpuset (see
+  # resource-envelope.sh); taskset additionally pins threads inside it.
+  local -a scope
+  if envelope_user_manager_up && envelope_user_manager_has_cpuset; then
+    scope=(systemd-run --user --scope --quiet)
+  else
+    scope=(sudo -nE systemd-run --scope --quiet --uid "$(id -u)" --gid "$(id -g)")
+  fi
+  "${scope[@]}" \
     -p MemoryMax="$TERRABASE_BENCH_ENVELOPE_MEMORY" \
     -p CPUQuota=200% -p AllowedCPUs="$cpus" -p TasksMax=4096 \
     -- taskset -c "$cpus" nice -n 19 \

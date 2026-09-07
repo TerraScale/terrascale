@@ -540,6 +540,55 @@ impl ProductionRestoreExecutor {
     }
 }
 
+fn verify_restore_authority(
+    journal: &terrabase_tbep::placement::PlacementJournal,
+    request: &crate::native_recovery::NativeRestoreRequest,
+) -> Result<(), String> {
+    let grant = journal
+        .verify_admitted_lifecycle_operation(&request.operation_grant)
+        .map_err(|_| "restore operation authorization is unavailable")?;
+    let digest = native_restore_request_digest(request)?;
+    let placement = journal.accepted().map_err(|_| "accepted placement unavailable")?;
+    if grant.action != terrabase_tbep::lifecycle::LifecycleGrantAction::RestoreToTarget
+        || grant.operation_id != request.operation_id
+        || grant.database != request.target_database_id
+        || format!("{}/{}", grant.tenant, grant.project) != request.target_owner
+        || grant.authority_epoch != request.authority_epoch
+        || grant.authority_lease != request.authority_lease
+        || grant.accepted_restore_request_digest != digest
+        || grant.accepted_proof_digest != request.accepted_proof_digest
+        || placement.proof_digest != request.accepted_proof_digest
+        || placement.proposal_revision != grant.accepted_placement_revision
+    {
+        return Err("restore authority pins are stale or mismatched".into());
+    }
+    Ok(())
+}
+
+fn native_restore_request_digest(
+    request: &crate::native_recovery::NativeRestoreRequest,
+) -> Result<String, String> {
+    let provider = match request.provider.as_str() {
+        "oci" => 1,
+        "tigris" => 2,
+        _ => return Err("restore provider is not approved".into()),
+    };
+    crate::production_lifecycle_control::restore_request_digest(
+        &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest {
+            source_owner: request.source_owner.clone(),
+            source_database: request.source_database_id.clone(),
+            recovery_point_id: request.recovery_point_id.clone(),
+            recovery_point_digest: request.recovery_point_digest.clone(),
+            target_owner: request.target_owner.clone(),
+            target_database: request.target_database_id.clone(),
+            journal_cut: request.journal_cut.clone(),
+            restore_epoch: request.restore_epoch,
+            provider,
+            ..Default::default()
+        },
+    )
+}
+
 impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
     fn reconcile<'a>(
         &'a self,
@@ -596,16 +645,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
             {
                 return Err("restore source facts do not match accepted admission".into());
             }
-            let (accepted_epoch, accepted_lease, accepted_proof_digest) = runtime
-                .journal
-                .accepted_authority()
-                .map_err(|_| "accepted placement authority unavailable")?;
-            if request.authority_epoch != accepted_epoch
-                || request.authority_lease != accepted_lease
-                || request.accepted_proof_digest != accepted_proof_digest
-            {
-                return Err("restore authority pins are stale or mismatched".into());
-            }
+            verify_restore_authority(&runtime.journal, &request)?;
             let target = runtime
                 .registry
                 .retained_snapshot()
@@ -619,7 +659,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                 || target.database.record.residency != admitted.record.residency
             {
                 return Err(
-                    "restore target facts do not match source residency or admission".into(),
+                    "restore target facts do not match source residency or admission".into()
                 );
             }
             let provider = match request.provider.as_str() {

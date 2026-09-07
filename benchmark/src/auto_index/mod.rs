@@ -1051,6 +1051,35 @@ enum LifecycleDetail<'a> {
     Pin(&'a [u8; 32]),
 }
 
+struct ReplayHeader {
+    sequence: u64,
+    kind: u8,
+    generation: u64,
+    tenant: String,
+    id: String,
+    collection: String,
+    fields: Vec<String>,
+    at_millis: u64,
+    digest: [u8; 32],
+}
+
+struct LifecycleFrame<'a> {
+    sequence: u64,
+    kind: u8,
+    generation: u64,
+    tenant: &'a str,
+    id: &'a str,
+    collection: &'a str,
+    view: Option<&'a LifecycleIndexView>,
+    phase: LifecyclePhase,
+    covered: u64,
+    target: Option<u64>,
+    pinned: bool,
+    forbidden: bool,
+    at_millis: u64,
+    digest: [u8; 32],
+}
+
 impl LifecycleDetail<'_> {
     fn kind(&self) -> u8 {
         match self {
@@ -1088,11 +1117,47 @@ impl LifecycleStore {
 
     fn replay(&mut self, payload: &[u8]) -> Result<(), ()> {
         let mut cursor = ByteCursor::new(payload);
+        let header = self.decode_replay_header(&mut cursor)?;
+        let ReplayHeader {
+            sequence,
+            kind,
+            generation,
+            tenant,
+            id,
+            collection,
+            fields,
+            at_millis,
+            digest,
+        } = header;
+        let key = (tenant.clone(), id.clone());
+        self.replay_detail(
+            &mut cursor,
+            kind,
+            generation,
+            &tenant,
+            &id,
+            &collection,
+            &fields,
+            digest,
+            &key,
+        )?;
+        self.next_sequence = sequence.checked_add(1).ok_or(())?;
+        if cursor.offset != payload.len() {
+            return Err(());
+        }
+        if kind != 4 && kind != 5 {
+            self.invalidate_evidence(&key.0, &key.1);
+        }
+        self.record_replay_audit(
+            sequence, kind, generation, tenant, collection, id, at_millis, digest,
+        )
+    }
+
+    fn decode_replay_header(&self, cursor: &mut ByteCursor<'_>) -> Result<ReplayHeader, ()> {
         let sequence = cursor.u64()?;
         if sequence != self.next_sequence {
             return Err(());
         }
-        self.next_sequence = sequence.checked_add(1).ok_or(())?;
         let kind = cursor.byte()?;
         let generation = cursor.u64()?;
         let tenant = cursor.string()?;
@@ -1103,23 +1168,45 @@ impl LifecycleStore {
         {
             return Err(());
         }
-        self.generations.insert(tenant.clone(), generation);
-        let key = (tenant.clone(), id.clone());
         let collection = cursor.string()?;
         let count = usize::from(u16::from_le_bytes(cursor.take(2)?.try_into().map_err(|_| ())?));
         let mut fields = Vec::new();
         for _ in 0..count {
             fields.push(cursor.string()?);
         }
-        let at_millis = cursor.u64()?;
-        let digest = cursor.array32()?;
+        Ok(ReplayHeader {
+            sequence,
+            kind,
+            generation,
+            tenant,
+            id,
+            collection,
+            fields,
+            at_millis: cursor.u64()?,
+            digest: cursor.array32()?,
+        })
+    }
+
+    fn replay_detail(
+        &mut self,
+        cursor: &mut ByteCursor<'_>,
+        kind: u8,
+        generation: u64,
+        tenant: &str,
+        id: &str,
+        collection: &str,
+        fields: &[String],
+        digest: [u8; 32],
+        key: &(String, String),
+    ) -> Result<(), ()> {
+        self.generations.insert(tenant.to_owned(), generation);
         match kind {
             1 => {
                 self.indexes.insert(
                     key.clone(),
                     cursor.lifecycle_view(
-                        (tenant.clone(), id.clone(), collection.clone()),
-                        fields,
+                        (tenant.to_owned(), id.to_owned(), collection.to_owned()),
+                        fields.to_owned(),
                         generation,
                     )?,
                 );
@@ -1151,7 +1238,7 @@ impl LifecycleStore {
                 if evidence.digest != digest {
                     return Err(());
                 }
-                let evidence_key = self.evidence_key(&tenant, &id, template_digest)?;
+                let evidence_key = self.evidence_key(tenant, id, template_digest)?;
                 self.evidence.insert(evidence_key, evidence);
                 self.indexes.get_mut(&key).ok_or(())?.generation = generation;
             }
@@ -1163,16 +1250,24 @@ impl LifecycleStore {
                 }
                 view.pinned = true;
                 view.generation = generation;
-                self.pins.insert((tenant.clone(), id.clone(), template_digest));
+                self.pins.insert((tenant.to_owned(), id.to_owned(), template_digest));
             }
             _ => return Err(()),
         }
-        if cursor.offset != payload.len() {
-            return Err(());
-        }
-        if kind != 4 && kind != 5 {
-            self.invalidate_evidence(&key.0, &key.1);
-        }
+        Ok(())
+    }
+
+    fn record_replay_audit(
+        &mut self,
+        sequence: u64,
+        kind: u8,
+        generation: u64,
+        tenant: String,
+        collection: String,
+        id: String,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), ()> {
         self.audits.push_back((
             tenant,
             collection,
@@ -1232,54 +1327,25 @@ impl LifecycleStore {
                 )
             },
         );
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&sequence.to_le_bytes());
-        payload.push(kind);
-        payload.extend_from_slice(&generation.to_le_bytes());
-        put_string(&mut payload, tenant)?;
-        put_string(&mut payload, id)?;
-        put_string(&mut payload, collection)?;
-        let fields = view.map_or(&[][..], |view| view.fields.as_slice());
-        payload.extend_from_slice(&u16::try_from(fields.len()).map_err(|_| ())?.to_le_bytes());
-        for field in fields {
-            put_string(&mut payload, field)?;
-        }
-        payload.extend_from_slice(&at_millis.to_le_bytes());
-        payload.extend_from_slice(&digest);
-        if kind == 1 {
-            payload.push(phase_to_byte(phase));
-            payload.extend_from_slice(&covered.to_le_bytes());
-            match target {
-                Some(value) => {
-                    payload.push(1);
-                    payload.extend_from_slice(&value.to_le_bytes());
-                }
-                None => payload.push(0),
-            }
-            payload.push(u8::from(pinned));
-            payload.push(u8::from(forbidden));
-            let view = view.ok_or(())?;
-            payload.extend_from_slice(&view.maintenance_cost.to_le_bytes());
-            match view.last_used_millis {
-                Some(value) => {
-                    payload.push(1);
-                    payload.extend_from_slice(&value.to_le_bytes());
-                }
-                None => payload.push(0),
-            }
-            payload.push(u8::from(view.visible));
-            payload.push(u8::from(view.zero_stale_reads));
-            payload.push(u8::from(view.regression_free));
-        }
-        match detail {
-            LifecycleDetail::Evidence(evidence) => {
-                payload.extend_from_slice(&evidence.template_digest);
-                put_samples(&mut payload, &evidence.baseline)?;
-                put_samples(&mut payload, &evidence.candidate)?;
-            }
-            LifecycleDetail::Pin(template_digest) => payload.extend_from_slice(template_digest),
-            _ => {}
-        }
+        let payload = encode_lifecycle_payload(
+            detail,
+            LifecycleFrame {
+                sequence,
+                kind,
+                generation,
+                tenant,
+                id,
+                collection,
+                view,
+                phase,
+                covered,
+                target,
+                pinned,
+                forbidden,
+                at_millis,
+                digest,
+            },
+        )?;
         if payload.len() > LIFECYCLE_MAX_FRAME {
             return Err(());
         }
@@ -1647,6 +1713,80 @@ fn make_evidence(
         regression: verified.regression,
         digest: *blake3::hash(&bytes).as_bytes(),
     })
+}
+
+fn encode_lifecycle_payload(
+    detail: LifecycleDetail<'_>,
+    frame: LifecycleFrame<'_>,
+) -> Result<Vec<u8>, ()> {
+    let LifecycleFrame {
+        sequence,
+        kind,
+        generation,
+        tenant,
+        id,
+        collection,
+        view,
+        phase,
+        covered,
+        target,
+        pinned,
+        forbidden,
+        at_millis,
+        digest,
+    } = frame;
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&sequence.to_le_bytes());
+    payload.push(kind);
+    payload.extend_from_slice(&generation.to_le_bytes());
+    put_string(&mut payload, tenant)?;
+    put_string(&mut payload, id)?;
+    put_string(&mut payload, collection)?;
+    let fields = view.map_or(&[][..], |value| value.fields.as_slice());
+    payload.extend_from_slice(&u16::try_from(fields.len()).map_err(|_| ())?.to_le_bytes());
+    for field in fields {
+        put_string(&mut payload, field)?;
+    }
+    payload.extend_from_slice(&at_millis.to_le_bytes());
+    payload.extend_from_slice(&digest);
+    if kind == 1 {
+        payload.push(phase_to_byte(phase));
+        payload.extend_from_slice(&covered.to_le_bytes());
+        match target {
+            Some(value) => {
+                payload.push(1);
+                payload.extend_from_slice(&value.to_le_bytes());
+            }
+            None => payload.push(0),
+        }
+        payload.push(u8::from(pinned));
+        payload.push(u8::from(forbidden));
+        let view = view.ok_or(())?;
+        payload.extend_from_slice(&view.maintenance_cost.to_le_bytes());
+        match view.last_used_millis {
+            Some(value) => {
+                payload.push(1);
+                payload.extend_from_slice(&value.to_le_bytes());
+            }
+            None => payload.push(0),
+        }
+        payload.push(u8::from(view.visible));
+        payload.push(u8::from(view.zero_stale_reads));
+        payload.push(u8::from(view.regression_free));
+    }
+    match detail {
+        LifecycleDetail::Evidence(evidence) => {
+            payload.extend_from_slice(&evidence.template_digest);
+            put_samples(&mut payload, &evidence.baseline)?;
+            put_samples(&mut payload, &evidence.candidate)?;
+        }
+        LifecycleDetail::Pin(template_digest) => payload.extend_from_slice(template_digest),
+        _ => {}
+    }
+    if payload.len() > LIFECYCLE_MAX_FRAME {
+        return Err(());
+    }
+    Ok(payload)
 }
 
 fn put_samples(out: &mut Vec<u8>, samples: &[LogicalCost]) -> Result<(), ()> {

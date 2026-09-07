@@ -68,13 +68,25 @@ print(f"{cpus[0]}-{cpus[1]}")
 PY
 }
 
+# A user systemd manager may run without controller delegation for cpuset
+# (common on NixOS and locked-down hosts): the scope then silently loses
+# AllowedCPUs and every cpuset-dependent admission check fails. When the
+# user manager cannot delegate cpuset and passwordless sudo is usable, the
+# system scope provides the complete fence.
+envelope_user_manager_has_cpuset() {
+  local service
+  service="$(awk -F: '$1 == 0 {print "/sys/fs/cgroup" $3}' /proc/self/cgroup 2>/dev/null \
+    | sed 's|/[^/]*\.scope$||')"
+  grep -qw cpuset "${service:-/nonexistent}/cgroup.controllers" 2>/dev/null
+}
+
 envelope_wrap() {
   envelope_require
   local cpus
   cpus="$(envelope_cpu_set)" || return 1
   local systemd_run="$(command -v systemd-run)"
   local -a scope
-  if envelope_user_manager_up; then
+  if envelope_user_manager_up && envelope_user_manager_has_cpuset; then
     scope=("$systemd_run" --user --scope --quiet)
     export TERRABASE_BENCH_ENVELOPE_SCOPE=user
   else

@@ -54,12 +54,7 @@ fn seed_branch_source(source: &Engine, tenant: &TenantId) {
     assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
 }
 
-#[test]
-fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
-    let root = std::env::temp_dir()
-        .join(format!("terrabase-branch-restore-{}", crate::identity::generate()));
-    let source_path = root.join("source");
-    let target_path = root.join("target");
+fn open_branch_source(root: &std::path::Path) -> (Engine, crate::storage::DatabaseOwner, TenantId) {
     let source_owner = crate::storage::DatabaseOwner::try_new(
         "branch-test",
         crate::identity::TenantUlid::generate(),
@@ -68,18 +63,50 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
         crate::RegionCode::GRU,
     )
     .unwrap();
-    let project = source_owner.project();
-    let source_keys = test_storage_keys(&source_owner, 141);
     let source = Engine::open(
-        EngineConfig::durable(&source_path)
+        EngineConfig::durable(root.join("source"))
             .unwrap()
             .with_owner(source_owner.clone())
-            .with_storage_keys(source_keys),
+            .with_storage_keys(test_storage_keys(&source_owner, 141)),
     )
     .unwrap();
     source.activate_origin_epoch(1).unwrap();
     let tenant = TenantId::try_new(&source_owner.tenant().to_string()).unwrap();
     seed_branch_source(&source, &tenant);
+    (source, source_owner, tenant)
+}
+
+fn restore_concurrently(
+    source: &Engine,
+    config: &EngineConfig,
+    first_operation: &OperationId,
+    second_operation: &OperationId,
+) -> (
+    Result<crate::types::StorageSequence, EngineOpenError>,
+    Result<crate::types::StorageSequence, EngineOpenError>,
+) {
+    std::thread::scope(|threads| {
+        let first_config = config.clone();
+        let second_config = config.clone();
+        let first_operation = first_operation.clone();
+        let second_operation = second_operation.clone();
+        let first = threads.spawn(move || {
+            Engine::restore_encrypted_sqlite_branch(source, &first_config, &first_operation)
+        });
+        let second = threads.spawn(move || {
+            Engine::restore_encrypted_sqlite_branch(source, &second_config, &second_operation)
+        });
+        (first.join().unwrap(), second.join().unwrap())
+    })
+}
+
+#[test]
+fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
+    let root = std::env::temp_dir()
+        .join(format!("terrabase-branch-restore-{}", crate::identity::generate()));
+    let (source, source_owner, tenant) = open_branch_source(&root);
+    let target_path = root.join("target");
+    let project = source_owner.project();
 
     let child_owner = crate::storage::DatabaseOwner::new(
         source_owner.environment().clone(),
@@ -94,21 +121,8 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
         .with_owner(child_owner.clone())
         .with_storage_keys(child_keys);
     let operation = OperationId::try_new("restore-branch").unwrap();
-    let (same_first, same_second) = std::thread::scope(|threads| {
-        let first_config = child_config.clone();
-        let second_config = child_config.clone();
-        let source_ref = &source;
-        let first_operation = operation.clone();
-        let second_operation = operation.clone();
-        let first = threads.spawn(move || {
-            Engine::restore_encrypted_sqlite_branch(source_ref, &first_config, &first_operation)
-        });
-        let source_ref = &source;
-        let second = threads.spawn(move || {
-            Engine::restore_encrypted_sqlite_branch(source_ref, &second_config, &second_operation)
-        });
-        (first.join().unwrap(), second.join().unwrap())
-    });
+    let (same_first, same_second) =
+        restore_concurrently(&source, &child_config, &operation, &operation);
     let same_first = same_first.unwrap();
     let same_second = same_second.unwrap();
     assert_eq!(same_first, same_second);
@@ -135,25 +149,8 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
         .with_storage_keys(test_storage_keys(&child_owner, 146));
     let first_operation = OperationId::try_new("distinct-first").unwrap();
     let second_operation = OperationId::try_new("distinct-second").unwrap();
-    let (distinct_first, distinct_second) = std::thread::scope(|threads| {
-        let first_config = distinct_config.clone();
-        let second_config = distinct_config.clone();
-        let first_operation_ref = &first_operation;
-        let second_operation_ref = &second_operation;
-        let source_ref = &source;
-        let first = threads.spawn(move || {
-            Engine::restore_encrypted_sqlite_branch(source_ref, &first_config, first_operation_ref)
-        });
-        let source_ref = &source;
-        let second = threads.spawn(move || {
-            Engine::restore_encrypted_sqlite_branch(
-                source_ref,
-                &second_config,
-                second_operation_ref,
-            )
-        });
-        (first.join().unwrap(), second.join().unwrap())
-    });
+    let (distinct_first, distinct_second) =
+        restore_concurrently(&source, &distinct_config, &first_operation, &second_operation);
     assert_ne!(distinct_first.is_ok(), distinct_second.is_ok());
     assert!(
         std::fs::read_dir(&root)

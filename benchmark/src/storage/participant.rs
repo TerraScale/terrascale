@@ -78,6 +78,13 @@ pub(crate) struct ParticipantReplicationPublication {
     pub(crate) conflicts: Vec<(CollectionName, DocumentId, crate::storage::MergeConflictEntry)>,
 }
 
+type DecodedPreparePayload = (
+    Vec<ParticipantWrite>,
+    Vec<PrivateMetadataWrite>,
+    Vec<SchemaEnvelopeWrite>,
+    Option<ParticipantReplicationPublication>,
+);
+
 #[cfg(test)]
 mod publication_tests {
     use super::*;
@@ -379,34 +386,8 @@ pub(crate) fn encode_prepare_payload(
         out.extend_from_slice(&u32::try_from(encoded.len()).map_err(|_| ())?.to_be_bytes());
         out.extend_from_slice(&encoded);
     }
-    out.extend_from_slice(&u32::try_from(metadata.len()).map_err(|_| ())?.to_be_bytes());
-    for change in metadata {
-        crate::storage::codec::push_str(&mut out, &change.key);
-        out.push(u8::from(change.value.is_some()));
-        if let Some(value) = &change.value {
-            out.extend_from_slice(
-                &u32::try_from(crate::storage::codec::encode_private_value(value).ok_or(())?.len())
-                    .map_err(|_| ())?
-                    .to_be_bytes(),
-            );
-            out.extend_from_slice(&crate::storage::codec::encode_private_value(value).ok_or(())?);
-        }
-    }
-    out.extend_from_slice(&u32::try_from(schemas.len()).map_err(|_| ())?.to_be_bytes());
-    for schema in schemas {
-        crate::storage::codec::push_str(&mut out, &schema.database);
-        crate::storage::codec::push_str(&mut out, &schema.branch);
-        crate::storage::codec::push_str(&mut out, &schema.collection);
-        out.push(u8::from(schema.expected.is_some()));
-        if let Some(expected) = &schema.expected {
-            out.extend_from_slice(&u32::try_from(expected.len()).map_err(|_| ())?.to_be_bytes());
-            out.extend_from_slice(expected);
-        }
-        out.extend_from_slice(
-            &u32::try_from(schema.replacement.len()).map_err(|_| ())?.to_be_bytes(),
-        );
-        out.extend_from_slice(&schema.replacement);
-    }
+    encode_metadata(&mut out, metadata)?;
+    encode_schemas(&mut out, schemas)?;
     out.push(u8::from(replication.is_some()));
     if let Some(replication) = replication {
         crate::storage::codec::push_str(&mut out, &replication.origin);
@@ -482,18 +463,41 @@ pub(crate) fn encode_prepare_payload(
     (out.len() <= 64 * 1024 * 1024).then_some(out).ok_or(())
 }
 
+fn encode_metadata(out: &mut Vec<u8>, metadata: &[PrivateMetadataWrite]) -> Result<(), ()> {
+    out.extend_from_slice(&u32::try_from(metadata.len()).map_err(|_| ())?.to_be_bytes());
+    for change in metadata {
+        crate::storage::codec::push_str(out, &change.key);
+        out.push(u8::from(change.value.is_some()));
+        if let Some(value) = &change.value {
+            let encoded = crate::storage::codec::encode_private_value(value).ok_or(())?;
+            out.extend_from_slice(&u32::try_from(encoded.len()).map_err(|_| ())?.to_be_bytes());
+            out.extend_from_slice(&encoded);
+        }
+    }
+    Ok(())
+}
+
+fn encode_schemas(out: &mut Vec<u8>, schemas: &[SchemaEnvelopeWrite]) -> Result<(), ()> {
+    out.extend_from_slice(&u32::try_from(schemas.len()).map_err(|_| ())?.to_be_bytes());
+    for schema in schemas {
+        crate::storage::codec::push_str(out, &schema.database);
+        crate::storage::codec::push_str(out, &schema.branch);
+        crate::storage::codec::push_str(out, &schema.collection);
+        out.push(u8::from(schema.expected.is_some()));
+        if let Some(expected) = &schema.expected {
+            out.extend_from_slice(&u32::try_from(expected.len()).map_err(|_| ())?.to_be_bytes());
+            out.extend_from_slice(expected);
+        }
+        out.extend_from_slice(
+            &u32::try_from(schema.replacement.len()).map_err(|_| ())?.to_be_bytes(),
+        );
+        out.extend_from_slice(&schema.replacement);
+    }
+    Ok(())
+}
+
 /// Decodes a complete framed participant payload.
-pub(crate) fn decode_prepare_payload(
-    bytes: &[u8],
-) -> Result<
-    (
-        Vec<ParticipantWrite>,
-        Vec<PrivateMetadataWrite>,
-        Vec<SchemaEnvelopeWrite>,
-        Option<ParticipantReplicationPublication>,
-    ),
-    (),
-> {
+pub(crate) fn decode_prepare_payload(bytes: &[u8]) -> Result<DecodedPreparePayload, ()> {
     if bytes.len() > 64 * 1024 * 1024 || bytes.first() != Some(&2) {
         return Err(());
     }
@@ -559,129 +563,140 @@ pub(crate) fn decode_prepare_payload(
         let replacement = r.take(n).ok_or(())?.to_vec();
         schemas.push(SchemaEnvelopeWrite { database, branch, collection, expected, replacement });
     }
-    let replication = match r.read_u8().ok_or(())? {
-        0 => None,
-        1 => {
-            let origin = r.read_string().ok_or(())?;
-            let origin_sequence = r.read_u64().ok_or(())?;
-            let hlc = r.read_u64().ok_or(())?;
-            let commit_ulid = r.read_string().ok_or(())?;
-            let n = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
-            let context = r.take(n).ok_or(())?.to_vec();
-            let n = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
-            let private_payload = r.take(n).ok_or(())?.to_vec();
-            let count = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
-            if count > 1024 {
-                return Err(());
-            }
-            let mut records = Vec::with_capacity(count);
-            for _ in 0..count {
-                let collection =
-                    CollectionName::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
-                let id = DocumentId::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
-                let body = crate::storage::codec::decode_value(&mut r, 0).ok_or(())?;
-                let deleted = match r.read_u8().ok_or(())? {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(()),
-                };
-                let commit_ulid_r = r.read_string().ok_or(())?;
-                let hlc_r = r.read_u64().ok_or(())?;
-                let origin_r = r.read_string().ok_or(())?;
-                let origin_sequence_r = r.read_u64().ok_or(())?;
-                let n = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
-                let context_r = r.take(n).ok_or(())?.to_vec();
-                records.push(crate::engine::ReplicatedRecord {
-                    collection,
-                    id,
-                    body,
-                    deleted,
-                    commit_ulid: commit_ulid_r,
-                    hlc: hlc_r,
-                    origin: origin_r,
-                    origin_sequence: origin_sequence_r,
-                    context: context_r,
-                });
-            }
-            let count = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
-            if count > 1024 {
-                return Err(());
-            }
-            let mut observations = Vec::with_capacity(count);
-            for _ in 0..count {
-                observations.push((
-                    CollectionName::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?,
-                    DocumentId::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?,
-                ));
-            }
-            let count = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
-            if count > 1024 {
-                return Err(());
-            }
-            let mut schema_observations = Vec::with_capacity(count);
-            for _ in 0..count {
-                let c = CollectionName::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
-                let b = match r.read_u8().ok_or(())? {
-                    0 => None,
-                    1 => Some(r.read_string().ok_or(())?),
-                    _ => return Err(()),
-                };
-                schema_observations.push((c, b));
-            }
-            let count = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
-            if count > 1024 {
-                return Err(());
-            }
-            let mut conflicts = Vec::with_capacity(count);
-            for _ in 0..count {
-                let c = CollectionName::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
-                let id = DocumentId::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
-                let loser_commit_ulid = r.read_string().ok_or(())?;
-                let loser_hlc = r.read_u64().ok_or(())?;
-                let loser_origin = r.read_string().ok_or(())?;
-                let loser_deleted = match r.read_u8().ok_or(())? {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(()),
-                };
-                let winner_commit_ulid = r.read_string().ok_or(())?;
-                let winner_hlc = r.read_u64().ok_or(())?;
-                let winner_origin = r.read_string().ok_or(())?;
-                let policy = r.read_string().ok_or(())?;
-                let explanation = r.read_string().ok_or(())?;
-                conflicts.push((
-                    c,
-                    id,
-                    crate::storage::MergeConflictEntry {
-                        loser_commit_ulid,
-                        loser_hlc,
-                        loser_origin,
-                        loser_deleted,
-                        winner_commit_ulid,
-                        winner_hlc,
-                        winner_origin,
-                        policy,
-                        explanation,
-                    },
-                ));
-            }
-            Some(ParticipantReplicationPublication {
-                origin,
-                origin_sequence,
-                hlc,
-                commit_ulid,
-                context,
-                records,
-                private_payload,
-                observations,
-                schema_observations,
-                conflicts,
-            })
-        }
-        _ => return Err(()),
-    };
+    let replication = decode_replication_payload(&mut r)?;
     if r.remaining() != 0 {
         return Err(());
     }
     Ok((out, metadata, schemas, replication))
+}
+
+fn decode_replication_payload(
+    r: &mut crate::storage::codec::Reader<'_>,
+) -> Result<Option<ParticipantReplicationPublication>, ()> {
+    match r.read_u8().ok_or(())? {
+        0 => return Ok(None),
+        1 => {}
+        _ => return Err(()),
+    }
+    let origin = r.read_string().ok_or(())?;
+    let origin_sequence = r.read_u64().ok_or(())?;
+    let hlc = r.read_u64().ok_or(())?;
+    let commit_ulid = r.read_string().ok_or(())?;
+    let n = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
+    let context = r.take(n).ok_or(())?.to_vec();
+    let n = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
+    let private_payload = r.take(n).ok_or(())?.to_vec();
+    let records = decode_replication_records(r)?;
+    let count = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
+    if count > 1024 {
+        return Err(());
+    }
+    let mut observations = Vec::with_capacity(count);
+    for _ in 0..count {
+        observations.push((
+            CollectionName::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?,
+            DocumentId::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?,
+        ));
+    }
+    let count = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
+    if count > 1024 {
+        return Err(());
+    }
+    let mut schema_observations = Vec::with_capacity(count);
+    for _ in 0..count {
+        let c = CollectionName::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
+        let b = match r.read_u8().ok_or(())? {
+            0 => None,
+            1 => Some(r.read_string().ok_or(())?),
+            _ => return Err(()),
+        };
+        schema_observations.push((c, b));
+    }
+    let count = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
+    if count > 1024 {
+        return Err(());
+    }
+    let mut conflicts = Vec::with_capacity(count);
+    for _ in 0..count {
+        let c = CollectionName::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
+        let id = DocumentId::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
+        let loser_commit_ulid = r.read_string().ok_or(())?;
+        let loser_hlc = r.read_u64().ok_or(())?;
+        let loser_origin = r.read_string().ok_or(())?;
+        let loser_deleted = match r.read_u8().ok_or(())? {
+            0 => false,
+            1 => true,
+            _ => return Err(()),
+        };
+        let winner_commit_ulid = r.read_string().ok_or(())?;
+        let winner_hlc = r.read_u64().ok_or(())?;
+        let winner_origin = r.read_string().ok_or(())?;
+        let policy = r.read_string().ok_or(())?;
+        let explanation = r.read_string().ok_or(())?;
+        conflicts.push((
+            c,
+            id,
+            crate::storage::MergeConflictEntry {
+                loser_commit_ulid,
+                loser_hlc,
+                loser_origin,
+                loser_deleted,
+                winner_commit_ulid,
+                winner_hlc,
+                winner_origin,
+                policy,
+                explanation,
+            },
+        ));
+    }
+    Ok(Some(ParticipantReplicationPublication {
+        origin,
+        origin_sequence,
+        hlc,
+        commit_ulid,
+        context,
+        records,
+        private_payload,
+        observations,
+        schema_observations,
+        conflicts,
+    }))
+}
+
+fn decode_replication_records(
+    r: &mut crate::storage::codec::Reader<'_>,
+) -> Result<Vec<crate::engine::ReplicatedRecord>, ()> {
+    let count = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
+    if count > 1024 {
+        return Err(());
+    }
+    let mut records = Vec::with_capacity(count);
+    for _ in 0..count {
+        let collection = CollectionName::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
+        let id = DocumentId::try_new(&r.read_string().ok_or(())?).map_err(|_| ())?;
+        let body = crate::storage::codec::decode_value(r, 0).ok_or(())?;
+        let deleted = match r.read_u8().ok_or(())? {
+            0 => false,
+            1 => true,
+            _ => return Err(()),
+        };
+        let commit_ulid_r = r.read_string().ok_or(())?;
+        let hlc_r = r.read_u64().ok_or(())?;
+        let origin_r = r.read_string().ok_or(())?;
+        let origin_sequence_r = r.read_u64().ok_or(())?;
+        let n = usize::try_from(r.read_u32().ok_or(())?).map_err(|_| ())?;
+        let context_r = r.take(n).ok_or(())?.to_vec();
+        records.push(crate::engine::ReplicatedRecord {
+            collection,
+            id,
+            body,
+            deleted,
+            commit_ulid: commit_ulid_r,
+            hlc: hlc_r,
+            origin: origin_r,
+            origin_sequence: origin_sequence_r,
+            context: context_r,
+        });
+    }
+    Ok(records)
 }

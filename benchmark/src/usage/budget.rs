@@ -391,7 +391,8 @@ mod tests {
         let mut wrapped = b"TSCS".to_vec();
         wrapped.extend_from_slice(&[1, 1]);
         wrapped.extend_from_slice(digest(&SHA256, &public_spki).as_ref());
-        wrapped.extend_from_slice(&(signature.as_ref().len() as u16).to_be_bytes());
+        let signature_length = u16::try_from(signature.as_ref().len()).unwrap();
+        wrapped.extend_from_slice(&signature_length.to_be_bytes());
         wrapped.extend_from_slice(signature.as_ref());
         let wire = serde_json::to_vec(&SignedAllocation {
             payload,

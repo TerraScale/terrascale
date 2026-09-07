@@ -538,6 +538,34 @@ impl PlacementJournal {
         Ok(true)
     }
 
+    /// Verifies retained signed authorization against the immutable admitted operation.
+    /// Renewal may update the observation lease; the original signed mutation grant
+    /// remains valid evidence for durable execution and is never rewritten here.
+    pub fn verify_admitted_lifecycle_operation(
+        &self,
+        encoded: &[u8],
+    ) -> Result<LifecycleOperationGrant, PlacementError> {
+        let grant = self.verify_lifecycle_grant(encoded)?;
+        // Admission already enforced wall-clock validity. Replay checks the original
+        // signed structure without expiring an operation that was durably authorized.
+        grant.validate(grant.issued_at_unix_millis).map_err(|_| PlacementError::Invalid)?;
+        let action = serde_json::to_string(&grant.action).map_err(|_| PlacementError::Invalid)?;
+        let revision = i64::try_from(grant.accepted_placement_revision)
+            .map_err(|_| PlacementError::Invalid)?;
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let admitted: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM lifecycle_operations WHERE operation_id=?1 AND action=?2 AND environment=?3 AND tenant=?4 AND project=?5 AND database=?6 AND region=?7 AND member=?8 AND placement_revision=?9 AND proof_digest=?10 AND restore_request_digest=?11)",
+            params![grant.operation_id, action, grant.environment, grant.tenant, grant.project,
+                grant.database, grant.region, grant.member, revision, grant.accepted_proof_digest,
+                grant.accepted_restore_request_digest],
+            |row| row.get(0),
+        ).map_err(|_| PlacementError::Storage)?;
+        if !admitted {
+            return Err(PlacementError::RetryMismatch);
+        }
+        Ok(grant)
+    }
+
     /// Verifies one signed lifecycle grant with the retained authority pins.
     pub fn verify_lifecycle_grant(
         &self,
@@ -990,7 +1018,8 @@ impl PlacementJournal {
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let chain = self.verified_chain(&connection, trust)?;
         let (_, _, proof) = chain.last().ok_or(PlacementError::NotFound)?;
-        if proof.proof.authority_epoch == 0 || proof.proof.lease_id.is_empty()
+        if proof.proof.authority_epoch == 0
+            || proof.proof.lease_id.is_empty()
             || proof.digest.is_empty()
         {
             return Err(PlacementError::Invalid);

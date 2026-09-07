@@ -176,6 +176,8 @@ pub struct NativeRestoreRequest {
     pub authority_lease: String,
     /// Accepted placement proof identity retained from the verified context.
     pub accepted_proof_digest: String,
+    /// Original signed lifecycle mutation authorization, retained across observation renewals.
+    pub operation_grant: Vec<u8>,
     /// Selected provider name.
     pub provider: String,
     /// Point or exact millisecond selection.
@@ -516,6 +518,7 @@ impl NativeRecoveryRuntime {
             || request.authority_epoch == 0
             || request.authority_lease.is_empty()
             || request.accepted_proof_digest.len() != 64
+            || request.operation_grant.is_empty()
             || !matches!(request.provider.as_str(), "oci" | "tigris")
             || request.residency.is_empty()
             || request.placement.is_empty()
@@ -1155,6 +1158,7 @@ mod tests {
                 authority_epoch: 7,
                 authority_lease: "lease".into(),
                 accepted_proof_digest: "a".repeat(64),
+                operation_grant: vec![1],
                 provider: "oci".into(),
                 selection: NativeRestoreSelection::PointId("point".into()),
                 residency: records[0].residency.clone(),
@@ -1289,6 +1293,7 @@ mod tests {
             authority_epoch: 7,
             authority_lease: "lease".into(),
             accepted_proof_digest: "a".repeat(64),
+            operation_grant: vec![1],
             provider: "oci".into(),
             selection: NativeRestoreSelection::PointId("point".into()),
             residency: records[0].residency.clone(),
@@ -1307,6 +1312,12 @@ mod tests {
         altered_authority.authority_epoch = 8;
         assert_eq!(
             runtime.admit_restore(altered_authority),
+            Err(NativeRecoveryError::VerificationFailed)
+        );
+        let mut altered_grant = request.clone();
+        altered_grant.operation_grant.push(2);
+        assert_eq!(
+            runtime.admit_restore(altered_grant),
             Err(NativeRecoveryError::VerificationFailed)
         );
         let mut altered_restore = request.clone();
@@ -1413,6 +1424,7 @@ mod tests {
             authority_epoch: 7,
             authority_lease: "lease".into(),
             accepted_proof_digest: "a".repeat(64),
+            operation_grant: vec![1],
             provider: "oci".into(),
             selection: NativeRestoreSelection::PointId("a".repeat(64)),
             residency: target.residency.clone(),
@@ -1429,6 +1441,26 @@ mod tests {
                 error: Some("receipt persistence interrupted".into()),
             })
             .unwrap();
+        drop(runtime);
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &root.join("rpc-retry"),
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+            Arc::new(RejectRestore),
+        )
+        .unwrap();
+        worker.shutdown().await.unwrap();
+        assert_eq!(
+            runtime
+                .restore_request(
+                    &request.operation_id,
+                    &request.target_database_id,
+                    &request.target_owner
+                )
+                .unwrap(),
+            Some(request.clone())
+        );
         let der = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(
             &aws_lc_rs::rand::SystemRandom::new(),
         )
@@ -1460,6 +1492,9 @@ mod tests {
                 database: target.database_id.clone(),
                 tenant: target.tenant_id.clone(),
                 project: target.project_id.clone(),
+                authority_epoch: 9,
+                authority_lease: "renewed-observation".into(),
+                operation_grant: vec![9],
                 ..Default::default()
             }),
             operation_id: request.operation_id.clone(),
@@ -1479,6 +1514,16 @@ mod tests {
         assert_eq!(
             runtime.restore_status(&request.operation_id).unwrap().unwrap().phase,
             NativeRestorePhase::Verifying
+        );
+        assert_eq!(
+            runtime
+                .restore_request(
+                    &request.operation_id,
+                    &request.target_database_id,
+                    &request.target_owner
+                )
+                .unwrap(),
+            Some(request.clone())
         );
         let mut changed = wire.clone();
         changed.recovery_point_digest = "b".repeat(64);
@@ -1524,6 +1569,7 @@ mod tests {
                 authority_epoch: 7,
                 authority_lease: "lease".into(),
                 accepted_proof_digest: "a".repeat(64),
+                operation_grant: vec![1],
                 provider: "oci".into(),
                 selection: NativeRestoreSelection::PointId("point".into()),
                 residency: record.residency.clone(),

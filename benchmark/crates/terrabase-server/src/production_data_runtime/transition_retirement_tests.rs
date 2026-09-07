@@ -333,3 +333,165 @@ fn cancelled_retirement_retains_barrier_until_queued_fencing_finishes() {
         std::fs::remove_dir_all(root).unwrap();
     });
 }
+
+#[tokio::test]
+async fn restore_authority_separates_placement_lifecycle_and_restore_epochs() {
+    use crate::native_recovery::{NativeRestoreRequest, NativeRestoreSelection};
+    use terrabase_tbep::lifecycle::{LifecycleGrantAction, LifecycleOperationGrant};
+    let (runtime, root, _) = crate::production::tests::runtime_for_readiness("restore-authority");
+    let (journal, placement_digest) = staged_journal(&runtime, &root);
+    let config = runtime.transport().config();
+    let local = config.local_identity();
+    let peer = config.peers().next().unwrap().identity();
+    let environment = local.environment();
+    let cluster = local.cluster();
+    let authority = key(1);
+    let genesis = key(2);
+    let mut members = vec![member(local.as_str().to_owned()), member(peer.as_str().to_owned())];
+    for member in &mut members {
+        member.placement_digest.clone_from(&placement_digest);
+    }
+    members.sort_by(|left, right| left.identity.cmp(&right.identity));
+    let request = Request {
+        operation_id: "retirement-prior".into(),
+        scope_id: format!("{environment}/{cluster}"),
+        prior_epoch: 0,
+        epoch: config.replica_set_epoch(),
+        generation: config.placement_generation(),
+        members,
+    };
+    let request_bytes = serde_json::to_vec(&request).unwrap();
+    let request_digest = hash(&request_bytes);
+    let genesis_payload = serde_json::to_vec(&serde_json::json!({
+        "kind": "genesis_grant", "grant_id": "grant", "request_digest": request_digest,
+    }))
+    .unwrap();
+    let accepted_payload = serde_json::to_vec(&serde_json::json!({
+        "schema_version": 1, "kind": "accepted_epoch", "request": request,
+        "request_digest": request_digest, "authority_epoch": 7,
+        "journal_revision": 1, "genesis_grant_id": "grant", "receipt_digests": [],
+        "drain_receipts": [], "prior_generation": 0, "previous_proof_digest": "",
+        "lease_id": "lease-placement", "genesis_grant": serde_json::from_slice::<serde_json::Value>(&signed("genesis", &genesis, &genesis_payload)).unwrap(),
+    })).unwrap();
+    let accepted = signed("authority", &authority, &accepted_payload);
+    journal
+        .accept(
+            "retirement-prior",
+            &terrabase_tbep::proto::terrabase::v1::PlacementAcceptRequest {
+                proposal_revision: 1,
+                proof: accepted,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(journal.accepted_authority().unwrap().0, 7);
+    let mut request = NativeRestoreRequest {
+        operation_id: "restore-operation".into(),
+        source_owner: "tenant/project".into(),
+        source_database_id: "source".into(),
+        recovery_point_id: "point".into(),
+        recovery_point_digest: "a".repeat(64),
+        target_owner: "tenant/project".into(),
+        target_database_id: "target".into(),
+        journal_cut: "42".into(),
+        restore_epoch: 2,
+        authority_epoch: 8,
+        authority_lease: "lease-lifecycle".into(),
+        accepted_proof_digest: journal.accepted_proof_digest().unwrap(),
+        operation_grant: Vec::new(),
+        provider: "oci".into(),
+        selection: NativeRestoreSelection::PointId("point".into()),
+        residency: "GRU".into(),
+        placement: vec!["GRU".into()],
+    };
+    let grant = LifecycleOperationGrant {
+        version: 1,
+        domain: "terrascale-lifecycle-operation-v1".into(),
+        environment: environment.into(),
+        tenant: "tenant".into(),
+        project: "project".into(),
+        database: "target".into(),
+        region: "GRU".into(),
+        member: local.member().as_str().into(),
+        action: LifecycleGrantAction::RestoreToTarget,
+        operation_id: request.operation_id.clone(),
+        accepted_proof_digest: request.accepted_proof_digest.clone(),
+        accepted_placement_revision: 1,
+        authority_epoch: 8,
+        authority_lease: "lease-lifecycle".into(),
+        accepted_restore_request_digest: native_restore_request_digest(&request).unwrap(),
+        issued_at_unix_millis: 1,
+        expires_at_unix_millis: 2,
+    };
+    request.operation_grant = signed("authority", &authority, &serde_json::to_vec(&grant).unwrap());
+    assert!(verify_restore_authority(&journal, &request).is_err());
+    journal.admit_lifecycle_operation(&grant).unwrap();
+    assert!(verify_restore_authority(&journal, &request).is_ok());
+    for field in [
+        "lifecycle_epoch",
+        "lifecycle_lease",
+        "restore_epoch",
+        "placement",
+        "grant",
+        "source",
+        "operation",
+    ] {
+        let mut changed = request.clone();
+        match field {
+            "lifecycle_epoch" => changed.authority_epoch = 7,
+            "lifecycle_lease" => changed.authority_lease = "lease-placement".into(),
+            "restore_epoch" => changed.restore_epoch = 8,
+            "placement" => changed.accepted_proof_digest = "b".repeat(64),
+            "grant" => changed.operation_grant[0] ^= 1,
+            "source" => changed.source_database_id = "other-source".into(),
+            "operation" => changed.operation_id = "other-operation".into(),
+            _ => unreachable!(),
+        }
+        assert!(verify_restore_authority(&journal, &changed).is_err(), "{field}");
+    }
+    let mut renewed = grant.clone();
+    renewed.authority_epoch = 9;
+    renewed.authority_lease = "lease-observation".into();
+    journal.admit_lifecycle_operation(&renewed).unwrap();
+    assert!(verify_restore_authority(&journal, &request).is_ok());
+    // Reopen both durable evidence and the serialized immutable native request.
+    let encoded = serde_json::to_vec(&request).unwrap();
+    drop(journal);
+    let config = runtime.transport().config();
+    let boundary = terrabase_tbep::placement::PlacementBoundary::new(
+        environment,
+        cluster,
+        local.member().as_str(),
+        config.placement_generation(),
+        config.replica_set_epoch(),
+        std::iter::empty(),
+    )
+    .unwrap();
+    let journal = terrabase_tbep::placement::PlacementJournal::open(
+        &root.join("transition-journal/placement.sqlite"),
+        boundary,
+    )
+    .unwrap();
+    journal
+        .configure_transition_trust(
+            terrabase_tbep::placement::transition::TransitionTrust::new(
+                BTreeMap::from([("authority".into(), authority.public_key().as_ref().to_vec())]),
+                BTreeMap::from([("genesis".into(), genesis.public_key().as_ref().to_vec())]),
+                BTreeMap::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let retained: NativeRestoreRequest = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(retained, request);
+    assert!(verify_restore_authority(&journal, &retained).is_ok());
+    let mut changed_grant = grant;
+    changed_grant.accepted_placement_revision = 2;
+    let mut changed = retained.clone();
+    changed.operation_grant =
+        signed("authority", &authority, &serde_json::to_vec(&changed_grant).unwrap());
+    assert!(verify_restore_authority(&journal, &changed).is_err());
+    runtime.drain().await.storage.unwrap();
+    drop(journal);
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -18,6 +18,7 @@ pub(crate) struct ImportJob {
     pub format: String,
     pub input_digest: Option<String>,
     pub input_length: Option<u64>,
+    pub input_path: Option<String>,
     pub input_committed: bool,
     pub cursor: u64,
     pub committed_records: u64,
@@ -41,7 +42,7 @@ impl ImportStore {
                operation_id TEXT PRIMARY KEY NOT NULL,
                tenant_id TEXT NOT NULL, project_id TEXT NOT NULL,
                database_id TEXT NOT NULL, format TEXT NOT NULL,
-               input_digest TEXT, input_length INTEGER,
+               input_digest TEXT, input_length INTEGER, input_path TEXT,
                input_committed INTEGER NOT NULL DEFAULT 0,
                cursor INTEGER NOT NULL DEFAULT 0,
                committed_records INTEGER NOT NULL DEFAULT 0,
@@ -65,28 +66,29 @@ impl ImportStore {
     pub(crate) fn get(&self, operation_id: &str) -> rusqlite::Result<Option<ImportJob>> {
         let connection = self.connection.lock().expect("import store lock");
         connection.query_row(
-            "SELECT operation_id,tenant_id,project_id,database_id,format,input_digest,input_length,
+            "SELECT operation_id,tenant_id,project_id,database_id,format,input_digest,input_length,input_path,
              input_committed,cursor,committed_records,state,error FROM import_jobs WHERE operation_id=?1",
             [operation_id],
             |row| Ok(ImportJob {
                 operation_id: row.get(0)?, tenant_id: row.get(1)?, project_id: row.get(2)?,
                 database_id: row.get(3)?, format: row.get(4)?, input_digest: row.get(5)?,
                 input_length: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
-                input_committed: row.get::<_, i64>(7)? != 0, cursor: row.get::<_, i64>(8)? as u64,
-                committed_records: row.get::<_, i64>(9)? as u64, state: row.get(10)?, error: row.get(11)?,
+                input_path: row.get(7)?,
+                input_committed: row.get::<_, i64>(8)? != 0, cursor: row.get::<_, i64>(9)? as u64,
+                committed_records: row.get::<_, i64>(10)? as u64, state: row.get(11)?, error: row.get(12)?,
             }),
         ).optional()
     }
 
-    pub(crate) fn commit_input(&self, operation_id: &str, digest: &str, length: u64) -> rusqlite::Result<()> {
+    pub(crate) fn commit_input(&self, operation_id: &str, digest: &str, length: u64, path: &Path) -> rusqlite::Result<()> {
         if length > MAX_INPUT_BYTES || digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(rusqlite::Error::InvalidParameterName("invalid staged input".into()));
         }
         let connection = self.connection.lock().expect("import store lock");
         connection.execute(
-            "UPDATE import_jobs SET input_digest=?2,input_length=?3,input_committed=1,state='queued'
+            "UPDATE import_jobs SET input_digest=?2,input_length=?3,input_path=?4,input_committed=1,state='queued'
              WHERE operation_id=?1 AND input_committed=0",
-            params![operation_id, digest, i64::try_from(length).map_err(|_| rusqlite::Error::InvalidQuery)?],
+            params![operation_id, digest, i64::try_from(length).map_err(|_| rusqlite::Error::InvalidQuery)?, path.to_string_lossy().as_ref()],
         )?;
         Ok(())
     }

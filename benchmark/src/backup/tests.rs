@@ -396,6 +396,28 @@ fn restore_latest_reopens_the_engine_and_replays_the_sealed_state() {
     assert_eq!(document.value(), &text("restored"));
 }
 
+fn assert_restore_marker_facts(
+    reopened: &Engine,
+    restore_identity: &crate::backup::restore::RestoreIdentity,
+    manifest: &crate::backup::BackupManifest,
+) {
+    let marker = crate::backup::restore::read_restore_marker(reopened, restore_identity)
+        .unwrap()
+        .unwrap();
+    assert_eq!(marker.source_logical_checksum, manifest.logical_checksum());
+    assert_eq!(marker.source_logical_documents, manifest.logical_documents());
+    assert_eq!(marker.source_captured_unix_millis, manifest.captured_unix_millis());
+    assert_eq!(marker.source_retain_until_unix_millis, manifest.retain_until_unix_millis());
+    let mut wrong_identity = restore_identity.clone();
+    wrong_identity.operation_id = "unpublished-operation".into();
+    assert!(crate::backup::restore::read_restore_marker(reopened, &wrong_identity)
+        .unwrap()
+        .is_none());
+    let mut wrong_identity = restore_identity.clone();
+    wrong_identity.provider = "tigris".into();
+    assert!(crate::backup::restore::read_restore_marker(reopened, &wrong_identity).is_err());
+}
+
 #[test]
 fn encrypted_restore_authenticates_the_native_backup_archive() {
     let owner = DatabaseOwner::local_development();
@@ -483,23 +505,7 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
         expected_journal_boundary: backup.manifest().boundary_sequence().get(),
         restore_epoch: 1,
     };
-    let marker =
-        crate::backup::restore::read_restore_marker(&reopened, &restore_identity).unwrap().unwrap();
-    assert_eq!(marker.source_logical_checksum, backup.manifest().logical_checksum());
-    assert_eq!(marker.source_logical_documents, backup.manifest().logical_documents());
-    assert_eq!(marker.source_captured_unix_millis, backup.manifest().captured_unix_millis());
-    assert_eq!(
-        marker.source_retain_until_unix_millis,
-        backup.manifest().retain_until_unix_millis()
-    );
-    let mut wrong_identity = restore_identity.clone();
-    wrong_identity.operation_id = "unpublished-operation".into();
-    assert!(
-        crate::backup::restore::read_restore_marker(&reopened, &wrong_identity).unwrap().is_none()
-    );
-    let mut wrong_identity = restore_identity.clone();
-    wrong_identity.provider = "tigris".into();
-    assert!(crate::backup::restore::read_restore_marker(&reopened, &wrong_identity).is_err());
+    assert_restore_marker_facts(&reopened, &restore_identity, backup.manifest());
     reopened.lifecycle_resume(&restored_scope, "resume-restored").unwrap();
     let snapshot = reopened.read_snapshot(&restored_scope).unwrap();
     let transaction =
@@ -1175,7 +1181,7 @@ fn incremental_with_an_unservable_base_fails_closed() {
 
 #[test]
 fn snapshot_backup_pins_its_boundary_and_stays_self_contained() {
-    let (_dir, engine) = open_engine("snapshot");
+    let (dir, engine) = open_engine("snapshot");
     let destination = location("snapshot-dest");
 
     let pinned = committed(put(
@@ -1222,7 +1228,7 @@ fn snapshot_backup_pins_its_boundary_and_stays_self_contained() {
 
     // Recovery is independent of the source host and its newer state.
     drop(engine);
-    std::fs::remove_dir_all(&_dir).expect("source host storage removed");
+    std::fs::remove_dir_all(&dir).expect("source host storage removed");
     let target = location("historical-logical-target");
     let receipt = RestorePlan::restore_recovery_point(manifest.identity(), &destination, &target)
         .expect("historical manifest restores without source storage");
