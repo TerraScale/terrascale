@@ -172,8 +172,7 @@ describe("P-3 journey chapter 1: CRUD/SQL (mock)", () => {
       databaseId,
       projectId,
       name: "primary",
-      deleted: true,
-      physicalDatabasesDeleted: 1,
+      deletion: { operationId: "delete-operation-1", state: "preparing" },
     };
     const client = createTerraScaleClient({
       apiBaseUrl: "https://api.terrascale.test",
@@ -190,7 +189,7 @@ describe("P-3 journey chapter 1: CRUD/SQL (mock)", () => {
           return jsonResponse(journeyDb, 201);
         }
         if (request.method === "GET") return jsonResponse(journeyDb);
-        return jsonResponse(deleted);
+        return jsonResponse(deleted, 202);
       },
     });
 
@@ -215,6 +214,8 @@ describe("P-3 journey chapter 1: CRUD/SQL (mock)", () => {
     const deleteKey = "journey-db-delete-1";
     const removed = await client.databases.delete(databaseId, { confirm: true, idempotencyKey: deleteKey });
     assert.equal(removed.ok, true);
+    assert.equal(removed.status, 202);
+    if (removed.ok) assert.deepEqual(removed.value.deletion, deleted.deletion);
 
     assert.deepEqual(
       requests.map((r) => [r.method, new URL(r.url).pathname]),

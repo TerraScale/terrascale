@@ -331,7 +331,10 @@ async function deleteDatabase(context: LocalRequestContext, projectId: string, d
     return problemResponse(400, "delete_confirmation_required", "Database deletion requires confirmation.");
   }
   await remove(context.store, `${keyPrefix}database/${projectId}/${databaseId}`, `${keyPrefix}database-index/${projectId}`, databaseId);
-  return jsonResponse({ databaseId, projectId, name: value.name, deleted: true, physicalDatabasesDeleted: 1 });
+  return jsonResponse({
+    databaseId, projectId, name: value.name,
+    deletion: { operationId: createUlid(), state: "complete" },
+  }, 202);
 }
 
 function stripInternal(value: Entity): Entity { const { id: _id, ...rest } = value; return rest as Entity; }

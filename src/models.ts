@@ -316,8 +316,13 @@ export type DeletedProjectDatabaseResponse = {
   readonly databaseId: DatabaseId;
   readonly projectId: ProjectId;
   readonly name: string;
-  readonly deleted: boolean;
-  readonly physicalDatabasesDeleted: number;
+  readonly deletion: DatabaseDeletionReceipt;
+};
+
+/** Accepted deletion work; acceptance does not confirm removal of retained copies. */
+export type DatabaseDeletionReceipt = {
+  readonly operationId: string;
+  readonly state: "preparing" | "stopping" | "cleanup_pending" | "complete";
 };
 
 export type ConfigureBackupPolicyRequest = {

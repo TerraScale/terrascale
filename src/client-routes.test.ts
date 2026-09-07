@@ -115,8 +115,7 @@ describe("TerraScaleClient route contracts", () => {
       databaseId,
       projectId,
       name: "primary",
-      deleted: true,
-      physicalDatabasesDeleted: 1,
+      deletion: { operationId: "delete-operation-1", state: "preparing" },
     };
     const { client, requests } = createCapturingClientWithResponses([
       deletedDatabase,
