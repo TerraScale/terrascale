@@ -5,7 +5,7 @@ import type * as Models from "./models.js";
 import { validateSchema, type CollectionSchema } from "./schema.js";
 import type * as Contracts from "./management-contracts.js";
 export type * from "./management-contracts.js";
-import type { TerraScaleResult, TerraScaleSuccess, TerraScaleFailure } from "./result.js";
+import { err, type TerraScaleResult, type TerraScaleSuccess, type TerraScaleFailure } from "./result.js";
 
 export type { TerraScaleRuntimeConfig } from "./config.js";
 
@@ -110,6 +110,11 @@ export type StartRestoreRequest = Models.StartRestoreRequest;
 export type RestoreJobResponse = Models.RestoreJobResponse;
 export type UsageSummary = Models.UsageSummary;
 export type OrganizationUsage = Models.OrganizationUsage;
+export type ExportDownload = {
+  readonly bytes: Uint8Array;
+  readonly length: Contracts.UInt64Value;
+  readonly checksum: string;
+};
 
 export class ManagementDatabasesClient {
   readonly #http: TerraScaleHttp;
@@ -376,8 +381,8 @@ export class ManagementExportsClient {
     return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}`, routeName: "databases.getExport", signal: options.signal });
   }
 
-  download(databaseId: string, jobId: string, member: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Uint8Array>> {
-    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}/artifacts/${idSegment(member, "artifact member")}`, routeName: "databases.downloadExport", signal: options.signal });
+  download(databaseId: string, jobId: string, member: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<ExportDownload>> {
+    return this.#http.request<Uint8Array>({ method: "GET", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}/artifacts/${idSegment(member, "artifact member")}`, routeName: "databases.downloadExport", signal: options.signal }).then(decodeExportDownload);
   }
 
   resume(databaseId: string, jobId: string, request: Contracts.ResumeExportRequest, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ExportStatus>> {
@@ -572,6 +577,34 @@ function validateCreateDatabase(request: CreateDatabaseRequest): void {
   if (request.residency !== undefined && request.residency !== null &&
     (typeof request.residency !== "string" || request.residency.trim().length === 0)) {
     throw new TypeError("residency must be null or a nonblank string.");
+  }
+}
+
+function decodeExportDownload(result: TerraScaleResult<Uint8Array>): TerraScaleResult<ExportDownload> {
+  if (!result.ok) return result;
+  const lengthHeader = result.headers.get("x-terrascale-artifact-length");
+  const checksumHeader = result.headers.get("x-terrascale-artifact-checksum");
+  const length = parseCanonicalUInt64Header(lengthHeader);
+  if (length === undefined) {
+    return err(result.routeName, { kind: "invalid-response", code: "invalid_artifact_length", message: "Export artifact length header is invalid.", status: result.status }, result.status, result.headers);
+  }
+  if (checksumHeader === null || checksumHeader.includes(",") || !/^[0-9a-fA-F]{64}$/u.test(checksumHeader)) {
+    return err(result.routeName, { kind: "invalid-response", code: "invalid_artifact_checksum", message: "Export artifact checksum header is invalid.", status: result.status }, result.status, result.headers);
+  }
+  if (BigInt(result.value.byteLength) !== BigInt(length)) {
+    return err(result.routeName, { kind: "invalid-response", code: "artifact_length_mismatch", message: "Export artifact length header does not match the response body.", status: result.status }, result.status, result.headers);
+  }
+  return { ...result, value: { bytes: result.value, length, checksum: checksumHeader.toLowerCase() } };
+}
+
+function parseCanonicalUInt64Header(value: string | null): Contracts.UInt64Value | undefined {
+  if (value === null || value.includes(",") || !/^(?:0|[1-9][0-9]*)$/u.test(value)) return undefined;
+  try {
+    const parsed = BigInt(value);
+    if (parsed > 18446744073709551615n) return undefined;
+    return parsed <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(parsed) : parsed;
+  } catch {
+    return undefined;
   }
 }
 

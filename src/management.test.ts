@@ -194,6 +194,40 @@ it("cancels an in-flight export download through its typed options", async () =>
   if (!result.ok) expect(result.error.kind).toBe("transport");
 });
 
+it("returns typed export artifact metadata and rejects invalid headers", async () => {
+  const bytes = new Uint8Array([1, 2, 3]);
+  const client = createTerraScaleManagementClient({
+    fetch: async () => new Response(bytes, {
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-terrascale-artifact-length": "3",
+        "x-terrascale-artifact-checksum": "A".repeat(64),
+      },
+    }),
+  });
+  const result = await client.exports.download("db", "job", "member");
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.value.bytes).toEqual(bytes);
+    expect(result.value.length).toBe(3);
+    expect(result.value.checksum).toBe("a".repeat(64));
+  }
+
+  for (const headers of [
+    { "x-terrascale-artifact-length": "03" },
+    { "x-terrascale-artifact-length": "18446744073709551616" },
+    { "x-terrascale-artifact-length": "3, 3" },
+    { "x-terrascale-artifact-length": "4" },
+    { "x-terrascale-artifact-length": "3", "x-terrascale-artifact-checksum": "0".repeat(64) + ", " + "0".repeat(64) },
+  ]) {
+    const invalid = createTerraScaleManagementClient({
+      fetch: async () => new Response(bytes, { headers: { "content-type": "application/octet-stream", "x-terrascale-artifact-checksum": "0".repeat(64), ...headers } }),
+    });
+    const rejected = await invalid.exports.download("db", "job", "member");
+    expect(rejected.ok).toBe(false);
+  }
+});
+
 it("distinguishes accepted production provisioning from a ready database", async () => {
   const accepted = {
     environment: "production", tenant_id: "tenant-id", project_id: "project-id",

@@ -1525,8 +1525,8 @@ function documentReadRequestOptions(options: DocumentReadOptions): {
   };
 }
 
-function validateJsonPayload(value: unknown, name: string): void {
-  validateJsonValue(value, name, new WeakSet<object>());
+function validateJsonPayload(value: unknown, name: string, rejectUnsafeIntegers = false): void {
+  validateJsonValue(value, name, new WeakSet<object>(), rejectUnsafeIntegers);
   let encoded: string | undefined;
   try {
     encoded = JSON.stringify(value) as string | undefined;
@@ -1541,10 +1541,15 @@ function validateJsonPayload(value: unknown, name: string): void {
   }
 }
 
-function validateJsonValue(value: unknown, path: string, seen: WeakSet<object>): void {
+function validateJsonValue(value: unknown, path: string, seen: WeakSet<object>, rejectUnsafeIntegers = false): void {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
-    if (Number.isFinite(value)) return;
+    if (Number.isFinite(value)) {
+      if (rejectUnsafeIntegers && Number.isInteger(value) && !Number.isSafeInteger(value)) {
+        throw new TypeError(`${path} must not contain unsafe integer numbers.`);
+      }
+      return;
+    }
     throw new TypeError(`${path} must contain only finite numbers.`);
   }
   if (typeof value !== "object") throw new TypeError(`${path} must be a JSON value.`);
@@ -1553,14 +1558,14 @@ function validateJsonValue(value: unknown, path: string, seen: WeakSet<object>):
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index++) {
       if (!Object.hasOwn(value, index)) throw new TypeError(`${path}[${index}] must be defined.`);
-      validateJsonValue(value[index], `${path}[${index}]`, seen);
+      validateJsonValue(value[index], `${path}[${index}]`, seen, rejectUnsafeIntegers);
     }
   } else {
     if (typeof (value as { readonly toJSON?: unknown }).toJSON === "function") {
       throw new TypeError(`${path} must not define toJSON.`);
     }
     for (const [key, item] of Object.entries(value)) {
-      validateJsonValue(item, `${path}.${key}`, seen);
+      validateJsonValue(item, `${path}.${key}`, seen, rejectUnsafeIntegers);
     }
   }
   seen.delete(value);
@@ -1577,7 +1582,7 @@ function validateSqlRequest(request: SqlExecuteRequest): void {
     if (typeof request.parameters !== "object" || request.parameters === null || Array.isArray(request.parameters)) {
       throw new TypeError("parameters must be an object.");
     }
-    validateJsonPayload(request.parameters, "parameters");
+    validateJsonPayload(request.parameters, "parameters", true);
   }
   if (request.explain !== undefined && typeof request.explain !== "boolean") {
     throw new TypeError("explain must be a boolean.");

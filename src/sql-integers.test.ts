@@ -71,6 +71,22 @@ test("SQL rejects unsafe integers when the runtime does not provide original num
   }
 });
 
+test("SQL parameters reject unsafe integer numbers while preserving finite fractions", async () => {
+  let requests = 0;
+  const client = createTerraScaleClient({
+    fetch: async () => {
+      requests++;
+      return new Response('{"matched":1,"rows":[]}', { headers: { "content-type": "application/json" } });
+    },
+  });
+  for (const value of [9007199254740992, -9007199254740992, 1e20]) {
+    assert.throws(() => client.sql.execute("demo", "SELECT :value", { value }), TypeError);
+  }
+  const result = await client.sql.execute("demo", "SELECT :value", { value: 1.5 });
+  assert.ok(result.ok);
+  assert.equal(requests, 1);
+});
+
 test("management uint64 fields preserve full range and reject out-of-range values", async () => {
   const request = async (raw: string) => createTerraScaleManagementClient({
     fetch: async () => new Response(raw, { headers: { "content-type": "application/json" } }),
