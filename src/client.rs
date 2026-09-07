@@ -399,11 +399,6 @@ impl Shared {
         }
     }
 
-    /// Send a request and preserve the raw success body.
-    pub async fn send_bytes(&self, request: Request) -> Result<Vec<u8>> {
-        Ok(self.send_response(request).await?.body)
-    }
-
     pub async fn send_response(&self, mut request: Request) -> Result<Response> {
         self.decorate(&mut request);
         let route = request.route_name.clone();

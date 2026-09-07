@@ -115,6 +115,30 @@ fn validate_bounded(value: &str, field: &str, max: usize) -> Result<()> {
     }
     Ok(())
 }
+
+fn exactly_one_header<'a>(response: &'a crate::transport::Response, name: &str) -> Option<&'a str> {
+    let mut values = response
+        .headers
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str());
+    let value = values.next()?;
+    if values.next().is_some() || value.contains(',') {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn parse_canonical_u64(value: &str) -> Option<u64> {
+    if value.is_empty()
+        || (value.len() > 1 && value.starts_with('0'))
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    value.parse().ok()
+}
 fn encode_segment(value: &str, field: &str) -> Result<String> {
     validate_non_empty(value, field)?;
     Ok(value
@@ -952,6 +976,12 @@ pub struct ExportArtifact {
     pub length: u64,
     pub checksum: String,
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportDownload {
+    pub bytes: Vec<u8>,
+    pub length: u64,
+    pub checksum: String,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExportStatus {
     pub created_at_millis: u64,
@@ -1083,10 +1113,16 @@ impl Exports {
             })
             .await
     }
-    /// Download one export artifact without decoding or transforming its bytes.
-    pub async fn download(&self, database_id: &str, job_id: &str, member: &str) -> Result<Vec<u8>> {
-        self.shared
-            .send_bytes(Request {
+    /// Download one export artifact and return its published integrity metadata.
+    pub async fn download(
+        &self,
+        database_id: &str,
+        job_id: &str,
+        member: &str,
+    ) -> Result<ExportDownload> {
+        let response = self
+            .shared
+            .send_response(Request {
                 route_name: "exports.download".into(),
                 method: Method::Get,
                 url: format!(
@@ -1098,7 +1134,33 @@ impl Exports {
                 headers: vec![("accept".into(), "application/octet-stream".into())],
                 body: None,
             })
-            .await
+            .await?;
+        let content_type = response
+            .header("content-type")
+            .and_then(|value| value.split(';').next())
+            .map(str::trim);
+        if content_type != Some("application/octet-stream") {
+            return Err(Error::invalid_response(
+                "export artifacts require application/octet-stream",
+            ));
+        }
+        let length = exactly_one_header(&response, "x-terrascale-artifact-length")
+            .and_then(parse_canonical_u64)
+            .ok_or_else(|| Error::invalid_response("invalid artifact length header"))?;
+        let checksum = exactly_one_header(&response, "x-terrascale-artifact-checksum")
+            .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .map(str::to_owned)
+            .ok_or_else(|| Error::invalid_response("invalid artifact checksum header"))?;
+        if response.body.len() as u64 != length {
+            return Err(Error::invalid_response(
+                "artifact length header does not match body",
+            ));
+        }
+        Ok(ExportDownload {
+            bytes: response.body,
+            length,
+            checksum: checksum.to_ascii_lowercase(),
+        })
     }
     pub async fn resume(
         &self,

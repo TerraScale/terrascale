@@ -412,18 +412,25 @@ async fn export_download_preserves_binary_body_and_authentication() {
     let bytes = vec![0, 0xff, b'"', b'\n'];
     let mock = Mock::new(vec![Response {
         status: 200,
-        headers: vec![("content-type".into(), "application/octet-stream".into())],
+        headers: vec![
+            ("content-type".into(), "application/octet-stream".into()),
+            (
+                "x-terrascale-artifact-length".into(),
+                bytes.len().to_string(),
+            ),
+            ("x-terrascale-artifact-checksum".into(), "A".repeat(64)),
+        ],
         body: bytes.clone(),
     }]);
-    assert_eq!(
-        client(Arc::clone(&mock))
-            .management()
-            .exports()
-            .download("db", "job", "part.bin")
-            .await
-            .unwrap(),
-        bytes
-    );
+    let download = client(Arc::clone(&mock))
+        .management()
+        .exports()
+        .download("db", "job", "part.bin")
+        .await
+        .unwrap();
+    assert_eq!(download.bytes, bytes);
+    assert_eq!(download.length, 4);
+    assert_eq!(download.checksum, "a".repeat(64));
     let request = mock.last();
     assert_eq!(request.method, Method::Get);
     assert!(request.url.ends_with("/exports/job/artifacts/part.bin"));
@@ -436,6 +443,53 @@ async fn export_download_preserves_binary_body_and_authentication() {
         .iter()
         .any(|(name, value)| name.eq_ignore_ascii_case("accept")
             && value == "application/octet-stream"));
+}
+
+#[tokio::test]
+async fn export_download_rejects_malformed_metadata_and_length_mismatch() {
+    for headers in [
+        vec![
+            ("x-terrascale-artifact-length".into(), "03".into()),
+            ("x-terrascale-artifact-checksum".into(), "0".repeat(64)),
+        ],
+        vec![
+            ("x-terrascale-artifact-length".into(), "3, 3".into()),
+            ("x-terrascale-artifact-checksum".into(), "0".repeat(64)),
+        ],
+        vec![
+            ("x-terrascale-artifact-length".into(), "3".into()),
+            ("x-terrascale-artifact-length".into(), "3".into()),
+            ("x-terrascale-artifact-checksum".into(), "0".repeat(64)),
+        ],
+        vec![
+            ("x-terrascale-artifact-length".into(), "3".into()),
+            ("x-terrascale-artifact-checksum".into(), "bad".into()),
+        ],
+        vec![
+            ("x-terrascale-artifact-length".into(), "4".into()),
+            ("x-terrascale-artifact-checksum".into(), "0".repeat(64)),
+        ],
+    ] {
+        let mock = Mock::new(vec![Response {
+            status: 200,
+            headers: {
+                let mut all = vec![("content-type".into(), "application/octet-stream".into())];
+                all.extend(headers);
+                all
+            },
+            body: vec![1, 2, 3],
+        }]);
+        let result = client(Arc::clone(&mock))
+            .management()
+            .exports()
+            .download("db", "job", "part.bin")
+            .await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().kind,
+            terrascale::ErrorKind::InvalidResponse
+        );
+    }
 }
 
 #[tokio::test]
