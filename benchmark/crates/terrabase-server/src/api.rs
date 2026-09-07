@@ -567,6 +567,10 @@ pub struct ApiState {
     pub admitted_databases: Option<Arc<crate::admitted_databases::AdmittedDatabaseRegistry>>,
     /// Actual peer acknowledgements; absent progress cannot certify durable writes.
     pub replication_progress: Option<Arc<crate::replication_runtime::ReplicationProgress>>,
+    /// True only on the standalone local composition: this member is the
+    /// whole placement, so a synced local commit IS the regional fact and
+    /// the progress ledger is advanced locally instead of by followers.
+    pub standalone_durability: bool,
     /// Bounded branch-only development admission faults.
     pub development: Arc<DevelopmentRuntime>,
     /// Durable production create authority; absent configuration denies production create.
@@ -666,6 +670,7 @@ impl ApiState {
             native_restore_target: Some(native_restore_target),
             admitted_databases: Some(admitted_databases),
             replication_progress: Some(replication_progress),
+            standalone_durability: false,
             development: Arc::default(),
             provisioning,
             region,
@@ -1938,10 +1943,12 @@ async fn get_provisioning_operation(
         return ApiError::control_unavailable().into_response();
     };
     match authority.status(&scope, &operation_id).await {
-        Ok(operation) => match serde_json::to_string(&operations::provisioning_summary(operation)) {
-            Ok(body) => json_response(StatusCode::OK, body),
-            Err(_) => ApiError::control_unavailable().into_response(),
-        },
+        Ok(operation) => {
+            match serde_json::to_string(&operations::provisioning_summary(operation)) {
+                Ok(body) => json_response(StatusCode::OK, body),
+                Err(_) => ApiError::control_unavailable().into_response(),
+            }
+        }
         Err(crate::provisioning::ProvisioningError::NotFound) => {
             match operations::member_operation(&state, &scope, &operation_id) {
                 Ok(Some(operation)) => match serde_json::to_string(&operation) {
@@ -2469,6 +2476,7 @@ struct WriteDurability {
     progress: Arc<crate::replication_runtime::ReplicationProgress>,
     scope: terrabase_cluster::production::DatabaseRouteScope,
     timeout: std::time::Duration,
+    standalone: bool,
 }
 
 fn durability_unavailable(global: bool) -> ApiError {
@@ -2516,6 +2524,16 @@ impl WriteDurability {
             owner.project(),
             owner.database(),
         );
+        // Standalone composition: this member is the entire placement, so
+        // the scope is admitted for its own region. Identical admission is
+        // idempotent; the ledger entry is what sequence-zero checks read.
+        let standalone = state.standalone_durability;
+        if standalone {
+            let selected = std::collections::BTreeSet::from([state.region.as_str().to_owned()]);
+            progress
+                .admit(scope, selected)
+                .map_err(|_| durability_unavailable(class == Durability::Global))?;
+        }
         let timeout_ms = match headers.get("x-terrascale-timeout-ms") {
             Some(value) => value
                 .to_str()
@@ -2538,7 +2556,7 @@ impl WriteDurability {
         } else {
             None
         };
-        Ok(Self { class, uniform_context, progress, scope, timeout })
+        Ok(Self { class, uniform_context, progress, scope, timeout, standalone })
     }
 
     fn guard(&self, transaction: &mut terrabase::Transaction<'_>) -> Result<(), ApiError> {
@@ -2559,6 +2577,13 @@ impl WriteDurability {
         #[cfg(test)]
         tests::rf2::replicate(&self.progress, engine, engine_scope);
         let sequence = receipt.sequence().get();
+        // Standalone composition: the synced local commit above already
+        // established the regional fact (there are no followers to prove
+        // it separately), so the ledger is advanced to the receipt before
+        // the wait, which then observes exactly what was committed.
+        if self.standalone {
+            self.progress.advance_regional(self.scope, sequence);
+        }
         self.progress
             .wait_regional(self.scope, sequence, self.timeout)
             .await
@@ -4748,6 +4773,7 @@ mod tests {
             provisioning: None,
             admitted_databases: None,
             replication_progress: None,
+            standalone_durability: false,
             region: RegionCode::GRU,
             member_id: "test-member".into(),
             metrics: Arc::new(MetricsRegistry::new()),
@@ -4802,6 +4828,7 @@ mod tests {
             provisioning: None,
             admitted_databases: None,
             replication_progress: Some(rf2::progress()),
+            standalone_durability: false,
             region: RegionCode::GRU,
             member_id: "test-member".into(),
             metrics: Arc::new(MetricsRegistry::new()),

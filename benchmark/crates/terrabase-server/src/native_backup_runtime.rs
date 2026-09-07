@@ -140,10 +140,8 @@ impl NativeBackupRuntime {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         let errors = fleet.sync_once().await;
         if !errors.is_empty() {
-            let mut incidents = self
-                .incidents
-                .lock()
-                .map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+            let mut incidents =
+                self.incidents.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
             incidents.extend(errors.iter().cloned());
             if incidents.len() > MAX_RETAINED_INCIDENTS {
                 let excess = incidents.len() - MAX_RETAINED_INCIDENTS;

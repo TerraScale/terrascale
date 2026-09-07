@@ -1379,7 +1379,14 @@ async fn serve_public_api(
         delegated_identity,
         byo_jwt: None,
         development: Arc::default(),
-        replication_progress: None,
+        // The standalone composition is its whole placement: the progress
+        // ledger exists, every database is admitted for this region, and a
+        // synced local commit is the regional fact (no followers exist to
+        // advance it). api.rs reads `standalone_durability` for that step.
+        replication_progress: Some(Arc::new(
+            crate::replication_runtime::ReplicationProgress::default(),
+        )),
+        standalone_durability: true,
         admitted_databases: None,
         provisioning,
         capability_keys: Arc::new(capability_keys),

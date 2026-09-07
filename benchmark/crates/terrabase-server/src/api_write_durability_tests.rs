@@ -67,6 +67,7 @@ async fn postcommit_timeout_is_unknown_and_identical_operation_replays() {
         progress: state.replication_progress.clone().unwrap(),
         scope: route_scope,
         timeout: Duration::from_millis(1),
+        standalone: false,
     };
     let receipt = commit(engine, &scope, "retry-key");
     let error = durability.confirm(engine, &scope, &receipt).await.unwrap_err();
@@ -94,6 +95,7 @@ async fn another_database_receipt_cannot_confirm_this_write() {
         progress,
         scope: route_scope,
         timeout: Duration::from_millis(1),
+        standalone: false,
     };
     assert_eq!(
         durability.confirm(engine, &scope, &receipt).await.unwrap_err().code,
@@ -141,6 +143,7 @@ async fn global_receipt_requires_every_selected_region_for_exact_origin_commit()
         progress: progress.clone(),
         scope: route_scope,
         timeout: Duration::from_millis(1),
+        standalone: false,
     };
     assert_eq!(
         durability.confirm(engine, &scope, &receipt).await.unwrap_err().code,

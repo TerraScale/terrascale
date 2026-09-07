@@ -401,18 +401,17 @@ fn assert_restore_marker_facts(
     restore_identity: &crate::backup::restore::RestoreIdentity,
     manifest: &crate::backup::BackupManifest,
 ) {
-    let marker = crate::backup::restore::read_restore_marker(reopened, restore_identity)
-        .unwrap()
-        .unwrap();
+    let marker =
+        crate::backup::restore::read_restore_marker(reopened, restore_identity).unwrap().unwrap();
     assert_eq!(marker.source_logical_checksum, manifest.logical_checksum());
     assert_eq!(marker.source_logical_documents, manifest.logical_documents());
     assert_eq!(marker.source_captured_unix_millis, manifest.captured_unix_millis());
     assert_eq!(marker.source_retain_until_unix_millis, manifest.retain_until_unix_millis());
     let mut wrong_identity = restore_identity.clone();
     wrong_identity.operation_id = "unpublished-operation".into();
-    assert!(crate::backup::restore::read_restore_marker(reopened, &wrong_identity)
-        .unwrap()
-        .is_none());
+    assert!(
+        crate::backup::restore::read_restore_marker(reopened, &wrong_identity).unwrap().is_none()
+    );
     let mut wrong_identity = restore_identity.clone();
     wrong_identity.provider = "tigris".into();
     assert!(crate::backup::restore::read_restore_marker(reopened, &wrong_identity).is_err());

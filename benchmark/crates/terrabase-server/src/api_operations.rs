@@ -56,15 +56,15 @@ fn export_summary(database_id: &str, row: crate::export_api::ExportStatus) -> Op
         stage: export_phase(row.phase).into(),
         created_at: rfc3339_millis(row.created_at_millis),
         revision: None,
-        cancellable: matches!(
-            row.cancellation,
-            crate::export_api::ExportCancellation::Available
-        ),
+        cancellable: matches!(row.cancellation, crate::export_api::ExportCancellation::Available),
         cancellation_reason: String::new(),
     }
 }
 
-fn recovery_summary(database_id: &str, row: crate::native_recovery::NativeRecoveryOperation) -> OperationSummary {
+fn recovery_summary(
+    database_id: &str,
+    row: crate::native_recovery::NativeRecoveryOperation,
+) -> OperationSummary {
     OperationSummary {
         operation_id: row.operation_id,
         kind: "recovery".into(),
@@ -209,9 +209,8 @@ pub(super) fn member_operation(
     operation_id: &str,
 ) -> Result<Option<OperationSummary>, ()> {
     let Some(registry) = &state.admitted_databases else { return Ok(None) };
-    let (mut databases, mut after) = registry
-        .discovery_page(&scope.tenant_id, &scope.project_id, "")
-        .map_err(|_| ())?;
+    let (mut databases, mut after) =
+        registry.discovery_page(&scope.tenant_id, &scope.project_id, "").map_err(|_| ())?;
     let mut found = None;
     loop {
         for database in databases.drain(..) {
@@ -245,10 +244,7 @@ pub(super) fn member_operation(
                 }
             }
             if let Some(recovery) = &state.native_recovery {
-                match recovery
-                    .status(&database.record.database_id, operation_id)
-                    .map_err(|_| ())?
-                {
+                match recovery.status(&database.record.database_id, operation_id).map_err(|_| ())? {
                     Some(row) if row.operation_id == operation_id => {
                         if found.is_some() {
                             return Err(());

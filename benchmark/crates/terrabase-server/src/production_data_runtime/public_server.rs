@@ -217,6 +217,7 @@ mod tests {
             native_restore_target: None,
             admitted_databases: None,
             replication_progress: None,
+            standalone_durability: false,
             development: Arc::default(),
             provisioning: None,
             region: RegionCode::GRU,

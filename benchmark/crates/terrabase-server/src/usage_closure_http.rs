@@ -191,6 +191,7 @@ mod tests {
             provisioning: None,
             admitted_databases: None,
             replication_progress: None,
+            standalone_durability: false,
             region: terrabase::regions::RegionCode::GRU,
             member_id: "test-member".into(),
             metrics: Arc::new(terrabase::observability::MetricsRegistry::new()),

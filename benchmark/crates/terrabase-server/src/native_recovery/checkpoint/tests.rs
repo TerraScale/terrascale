@@ -386,11 +386,7 @@ fn capturing_failure_and_persist_failure_do_not_recapture() {
             || Ok(point()),
             |_, cp| {
                 persists.set(persists.get() + 1);
-                if cp.is_some() {
-                    Err(NativeRecoveryError::Unavailable)
-                } else {
-                    Ok(())
-                }
+                if cp.is_some() { Err(NativeRecoveryError::Unavailable) } else { Ok(()) }
             },
             |_| {
                 measures.set(measures.get() + 1);

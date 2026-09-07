@@ -1,8 +1,29 @@
 use super::shard_split::{RouteCatalog, RouteCatalogError, decode_catalog, encode_catalog};
 use crate::shard_split::{
     CutoverContext, DurableSplitState, RouteTable, ShardRoute, ShardSplit, SplitContext,
-    SplitPhase, WriterFence,
+    SplitEngineAdapter, SplitPhase, WriterFence,
 };
+
+#[test]
+fn encrypted_target_creation_is_durable_and_exactly_idempotent() {
+    let (dir, source, tenant) = super::tests::open_owned_engine("split-target-lifecycle");
+    let scope = source.scope_for(&tenant);
+    let source = std::sync::Arc::new(source);
+    let incarnation = u128::from_be_bytes(source.database_id().as_bytes().to_owned());
+    let context = SplitContext::new(7, incarnation, 11, 12, 3, 0);
+    let mut split = ShardSplit::plan_with_context(Some(b"a".to_vec()), b"m".to_vec(), context)
+        .expect("split plan");
+    split.begin_backfill().expect("backfill");
+    let mut adapter = super::shard_split::ScopedShardEngine::new(source.clone(), scope).unwrap();
+    adapter.save(&split.durable_state()).expect("durable split state");
+    adapter.create_split_target(&context).expect("first target create");
+    adapter.create_split_target(&context).expect("idempotent target create");
+    let target_path = dir.join("shards").join("000000000000000c.sqlite3");
+    assert!(target_path.is_dir(), "target is an Engine durable location");
+    drop(adapter);
+    drop(source);
+    let _ = std::fs::remove_dir_all(dir);
+}
 
 #[test]
 fn catalog_codec_round_trip_and_rejects_bad_inputs() {

@@ -7,7 +7,10 @@
 
 use base64::Engine as _;
 use serde_json::Value;
-use std::fmt;
+use std::{
+    fmt,
+    io::{self, Read},
+};
 
 /// Supported import/export interchange formats.
 #[derive(
@@ -138,6 +141,70 @@ pub fn decode(
         }
         TransferFormat::Csv => decode_csv(input, max_record),
     }
+}
+
+/// Incrementally decodes newline framed imports. The callback is invoked
+/// after each complete record with its exclusive source byte offset, so a
+/// caller can checkpoint only after the matching engine commit. At most one
+/// bounded line is retained in memory.
+pub fn decode_jsonl_reader<R: Read, F>(
+    input: R,
+    format: TransferFormat,
+    max_record: usize,
+    mut consume: F,
+) -> Result<(), CodecError>
+where
+    F: FnMut(u64, ImportRecord) -> io::Result<()>,
+{
+    if max_record == 0
+        || !matches!(
+            format,
+            TransferFormat::Native | TransferFormat::Jsonl | TransferFormat::DynamoJson
+        )
+    {
+        return Err(CodecError::Malformed);
+    }
+    let mut input = io::BufReader::new(input);
+    let mut line = Vec::new();
+    let mut offset = 0u64;
+    loop {
+        line.clear();
+        let mut read = 0usize;
+        loop {
+            let mut byte = [0u8; 1];
+            let count = input.read(&mut byte).map_err(|_| CodecError::Malformed)?;
+            if count == 0 {
+                break;
+            }
+            read += count;
+            if byte[0] == b'\n' {
+                break;
+            }
+            if line.len() >= max_record {
+                return Err(CodecError::Oversized);
+            }
+            line.push(byte[0]);
+        }
+        if read == 0 {
+            break;
+        }
+        let read_len = u64::try_from(read).map_err(|_| CodecError::Oversized)?;
+        if line.last() == Some(&b'\n') {
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+        }
+        if line.iter().all(u8::is_ascii_whitespace) {
+            offset = offset.checked_add(read_len).ok_or(CodecError::Oversized)?;
+            continue;
+        }
+        let record = decode_one(&line, format, max_record)?;
+        let next = offset.checked_add(read_len).ok_or(CodecError::Oversized)?;
+        consume(next, record).map_err(|_| CodecError::Malformed)?;
+        offset = next;
+    }
+    Ok(())
 }
 
 /// Encodes records into the selected format. Values must already be canonical
@@ -480,5 +547,24 @@ mod tests {
                 "{number}"
             );
         }
+    }
+
+    #[test]
+    fn streams_jsonl_with_bounded_lines_and_offsets() {
+        let input = br#"{"collection":"users","id":"a","value":{"ok":true}}
+
+{"collection":"users","id":"b","value":{"ok":false}}
+"#;
+        let mut offsets = Vec::new();
+        decode_jsonl_reader(&input[..], TransferFormat::Jsonl, 128, |offset, record| {
+            offsets.push((offset, record.id));
+            Ok(())
+        })
+        .expect("stream decode");
+        assert_eq!(offsets, vec![(45, "a".into()), (91, "b".into())]);
+        assert_eq!(
+            decode_jsonl_reader(&input[..], TransferFormat::Jsonl, 8, |_, _| Ok(())),
+            Err(CodecError::Oversized)
+        );
     }
 }

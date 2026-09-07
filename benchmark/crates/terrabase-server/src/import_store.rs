@@ -58,7 +58,14 @@ impl ImportStore {
             "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state)
              VALUES(?1,?2,?3,?4,?5,?6)
              ON CONFLICT(operation_id) DO NOTHING",
-            params![job.operation_id, job.tenant_id, job.project_id, job.database_id, job.format, job.state],
+            params![
+                job.operation_id,
+                job.tenant_id,
+                job.project_id,
+                job.database_id,
+                job.format,
+                job.state
+            ],
         )?;
         Ok(())
     }
@@ -80,16 +87,87 @@ impl ImportStore {
         ).optional()
     }
 
-    pub(crate) fn commit_input(&self, operation_id: &str, digest: &str, length: u64, path: &Path) -> rusqlite::Result<()> {
-        if length > MAX_INPUT_BYTES || digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+    pub(crate) fn commit_input(
+        &self,
+        operation_id: &str,
+        digest: &str,
+        length: u64,
+        path: &Path,
+    ) -> rusqlite::Result<()> {
+        if length > MAX_INPUT_BYTES
+            || digest.len() != 64
+            || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+        {
             return Err(rusqlite::Error::InvalidParameterName("invalid staged input".into()));
         }
+        let metadata = std::fs::symlink_metadata(path).map_err(|_| {
+            rusqlite::Error::InvalidParameterName("staged input is unavailable".into())
+        })?;
+        if path.extension().and_then(|value| value.to_str()) != Some("upload")
+            || !metadata.is_file()
+            || (length == 0 && metadata.len() != 0)
+            || (length != 0 && metadata.len() == 0)
+        {
+            return Err(rusqlite::Error::InvalidParameterName("staged input is incomplete".into()));
+        }
         let connection = self.connection.lock().expect("import store lock");
-        connection.execute(
+        let changed = connection.execute(
             "UPDATE import_jobs SET input_digest=?2,input_length=?3,input_path=?4,input_committed=1,state='queued'
              WHERE operation_id=?1 AND input_committed=0",
             params![operation_id, digest, i64::try_from(length).map_err(|_| rusqlite::Error::InvalidQuery)?, path.to_string_lossy().as_ref()],
         )?;
+        if changed != 1 {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "import operation is missing or already committed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Advances the import cursor only after the corresponding engine batch
+    /// has committed. The monotonic predicate makes replay after a crash
+    /// idempotent and refuses a caller that attempts to move the checkpoint
+    /// backwards or account more records than it has committed.
+    pub(crate) fn checkpoint(
+        &self,
+        operation_id: &str,
+        cursor: u64,
+        committed_records: u64,
+    ) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().expect("import store lock");
+        let changed = connection.execute(
+            "UPDATE import_jobs SET cursor=?2, committed_records=?3, state='running'
+             WHERE operation_id=?1 AND input_committed=1
+               AND cursor<=?2 AND committed_records<=?3
+               AND state IN ('queued','running','failed')",
+            params![
+                operation_id,
+                i64::try_from(cursor).map_err(|_| rusqlite::Error::InvalidQuery)?,
+                i64::try_from(committed_records).map_err(|_| rusqlite::Error::InvalidQuery)?,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "import checkpoint is stale or operation is unavailable".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Records a terminal failure at the last committed cursor. This leaves
+    /// the operation resumable and never advances billing/accounting state.
+    pub(crate) fn fail(&self, operation_id: &str, error: &str) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().expect("import store lock");
+        let changed = connection.execute(
+            "UPDATE import_jobs SET state='failed', error=?2
+             WHERE operation_id=?1 AND input_committed=1 AND state IN ('queued','running')",
+            params![operation_id, error],
+        )?;
+        if changed != 1 {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "import operation is unavailable".into(),
+            ));
+        }
         Ok(())
     }
 }

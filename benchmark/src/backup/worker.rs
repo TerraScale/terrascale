@@ -1165,10 +1165,8 @@ async fn enforce_retention_at(
     // manifest. This closes the window where provider-side loss or rollback
     // leaves the journal claiming protection that no longer exists.
     for (_, destination) in &stream.config.destinations {
-        let verification_root = stream
-            .config
-            .staging
-            .join(format!(".retention-verify-{}", destination.identity()));
+        let verification_root =
+            stream.config.staging.join(format!(".retention-verify-{}", destination.identity()));
         if verification_root.exists() {
             return Err(FleetError::Capture);
         }

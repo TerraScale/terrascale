@@ -4,7 +4,8 @@ use super::{CommitError, CommitOutcome, Engine, EngineError, EngineOpenError};
 use crate::{
     shard_split::{
         AtomicSplitCutover, CommittedSplitRoute, CutoverContext, DurableSplitState, RouteTable,
-        ShardAdmissionToken, ShardRoute, ShardSplit, SplitContext, SplitPhase, SplitStateStore,
+        ShardAdmissionToken, ShardRoute, ShardSplit, SplitContext, SplitEngineAdapter, SplitPhase,
+        SplitStateStore,
     },
     types::{DocumentValue, LocalDurability, OperationId, TenantScope},
 };
@@ -55,6 +56,133 @@ impl ScopedShardEngine {
                 .map_err(|_| EngineOpenError::InvalidConfig)?;
         config = config.with_replication_origin(origin);
         Engine::open(config)
+    }
+
+    fn target_scope(target: &Engine, source_scope: &TenantScope) -> TenantScope {
+        target.scope_for(source_scope.tenant())
+    }
+
+    fn target_identity(
+        context: SplitContext,
+        state: &DurableSplitState,
+    ) -> Result<Vec<u8>, EngineError> {
+        if state.context() != Some(context) || state.split_key().is_empty() {
+            return Err(EngineError::Conflict);
+        }
+        let lower = state.lower().unwrap_or_default();
+        let lower_len = u32::try_from(lower.len()).map_err(|_| EngineError::InvalidDocument)?;
+        let upper_len =
+            u32::try_from(state.split_key().len()).map_err(|_| EngineError::InvalidDocument)?;
+        let mut bytes =
+            Vec::with_capacity(1 + 16 + 16 + 8 + 8 + 4 + lower.len() + 4 + state.split_key().len());
+        bytes.extend_from_slice(b"TSPLIT1");
+        bytes.extend_from_slice(&context.split_id().to_be_bytes());
+        bytes.extend_from_slice(&context.database_incarnation().to_be_bytes());
+        bytes.extend_from_slice(&context.source_shard().to_be_bytes());
+        bytes.extend_from_slice(&context.target_shard().to_be_bytes());
+        bytes.extend_from_slice(&context.placement_epoch().to_be_bytes());
+        bytes.extend_from_slice(&context.session_frontier().to_be_bytes());
+        bytes.extend_from_slice(&lower_len.to_be_bytes());
+        bytes.extend_from_slice(lower);
+        bytes.extend_from_slice(&upper_len.to_be_bytes());
+        bytes.extend_from_slice(state.split_key());
+        Ok(bytes)
+    }
+
+    fn target_identity_at(
+        target: &Engine,
+        scope: &TenantScope,
+    ) -> Result<Option<Vec<u8>>, EngineError> {
+        let snapshot = target.read_snapshot(scope)?;
+        let value = target
+            .lock_storage()?
+            .port
+            .private_metadata_at(scope.tenant(), &target_identity_key(), snapshot.sequence())
+            .map_err(|()| EngineError::StorageFailure)?;
+        match value {
+            None => Ok(None),
+            Some(DocumentValue::String(value)) => {
+                hex::decode(value).map(Some).map_err(|_| EngineError::Conflict)
+            }
+            Some(_) => Err(EngineError::Conflict),
+        }
+    }
+
+    fn persist_target_identity(
+        target: &Engine,
+        scope: &TenantScope,
+        context: SplitContext,
+        identity: &[u8],
+    ) -> Result<(), EngineError> {
+        let operation = OperationId::try_new(&format!("shard-target-{:032x}", context.split_id()))
+            .map_err(|_| EngineError::InvalidDocument)?;
+        let mut tx = target.begin(scope, target.read_snapshot(scope)?, operation)?;
+        tx.internal_maintenance = true;
+        tx.put_private_metadata(&target_identity_key(), value(identity))?;
+        match tx.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Rejected(
+                CommitError::Conflict | CommitError::OperationIdReuse { .. },
+            ) => Err(EngineError::Conflict),
+            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
+                Err(EngineError::StorageFailure)
+            }
+        }
+    }
+}
+
+const fn target_identity_key() -> &'static str {
+    "control:shard-target/v1/identity"
+}
+
+impl SplitEngineAdapter for ScopedShardEngine {
+    type DataError = EngineError;
+
+    fn create_split_target(&mut self, context: &SplitContext) -> Result<(), Self::DataError> {
+        if context.database_incarnation() != self.incarnation {
+            return Err(EngineError::Conflict);
+        }
+        let state =
+            self.load().map_err(|_| EngineError::StorageFailure)?.ok_or(EngineError::Conflict)?;
+        let identity = Self::target_identity(*context, &state)?;
+        let target = self.open_target(context).map_err(|error| match error {
+            EngineOpenError::InvalidConfig | EngineOpenError::FormatMismatch => {
+                EngineError::Conflict
+            }
+            EngineOpenError::StorageUnavailable => EngineError::StorageFailure,
+        })?;
+        let target_scope = Self::target_scope(&target, &self.scope);
+        match Self::target_identity_at(&target, &target_scope)? {
+            Some(existing) if existing == identity => Ok(()),
+            Some(_) => Err(EngineError::Conflict),
+            None => Self::persist_target_identity(&target, &target_scope, *context, &identity),
+        }
+    }
+
+    fn rollback_split_target(&mut self, context: &SplitContext) -> Result<(), Self::DataError> {
+        if context.database_incarnation() != self.incarnation {
+            return Err(EngineError::Conflict);
+        }
+        // A route lookup error is deliberately propagated: deleting a target
+        // while its commit state is unknown could destroy the serving shard.
+        if self.recover_split_route(context).map_err(|_| EngineError::StorageFailure)?.is_some() {
+            return Err(EngineError::Conflict);
+        }
+        let path = self.target_path(context);
+        if path.exists() {
+            std::fs::remove_dir_all(path).map_err(|_| EngineError::StorageFailure)?;
+        }
+        Ok(())
+    }
+
+    fn verify_split_target(&mut self, context: &SplitContext) -> Result<(), Self::DataError> {
+        self.create_split_target(context)
+    }
+
+    fn cleanup_split_source(&mut self, _context: &SplitContext) -> Result<(), Self::DataError> {
+        // Source deletion requires the range-copy worker's durable cursor and
+        // is intentionally left to that worker after verification.
+        Ok(())
     }
 }
 
