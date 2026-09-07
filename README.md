@@ -86,3 +86,9 @@ update, one-time consume, paging, and transaction operations without a framework
 adapter. Supply stable operation identities. Unknown commits return the typed
 error without automatic retries or callback replay; resolve using the same
 transaction and idempotency identities. Auth record values remain raw JSON.
+
+Document reads expose the exact response `ETag` and session token. Pass that
+ETag to `WithIfMatch` for conditional PUT, PATCH, or DELETE; `"*"` requires
+an existing document. Retain the same condition and `WithIdempotencyKey` when
+retrying an uncertain write. A failed precondition returns HTTP 412 without
+automatic retry. Use `Put` or `Upsert` for document replacement.

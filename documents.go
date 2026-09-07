@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -151,16 +152,13 @@ func (d *DocumentsClient) Put(ctx context.Context, databaseID, collection, docID
 		return nil, err
 	}
 	var out DocumentWriteResponse
+	var headers http.Header
+	opts = append(opts, func(rc *requestConfig) { rc.responseHeaders = &headers })
 	if err := d.c.do(ctx, "PUT", path, nil, payload, &out, "documents.put", opts...); err != nil {
 		return nil, err
 	}
-	// TerraBase derives the strong ETag from the returned revision. Keep this
-	// useful metadata available even on clients whose shared transport only
-	// exposes the decoded response body.
-	if out.ETag == "" && out.Revision != "" {
-		out.ETag = strconv.Quote(out.Revision)
-	}
-	out.Session = d.c.SessionToken()
+	out.ETag = headers.Get("ETag")
+	out.Session = headers.Get("X-TerraScale-Session")
 	return &out, nil
 }
 
@@ -178,10 +176,12 @@ func (d *DocumentsClient) Get(ctx context.Context, databaseID, collection, docID
 		return nil, err
 	}
 	var body json.RawMessage
+	var headers http.Header
+	opts = append(opts, func(rc *requestConfig) { rc.responseHeaders = &headers })
 	if err := d.c.do(ctx, "GET", path, nil, nil, &body, "documents.get", opts...); err != nil {
 		return nil, err
 	}
-	return &Document{ID: docID, Collection: collection, Body: body, Session: d.c.SessionToken()}, nil
+	return &Document{ID: docID, Collection: collection, Body: body, ETag: headers.Get("ETag"), Session: headers.Get("X-TerraScale-Session")}, nil
 }
 
 // List pages documents in canonical key order. after is the last ID from the
@@ -209,12 +209,6 @@ func (d *DocumentsClient) List(ctx context.Context, databaseID, collection strin
 	return &out, nil
 }
 
-// Update is retained as a source-compatible name for the PUT upsert route.
-// Its response is the server's revision receipt, not a synthetic document.
-func (d *DocumentsClient) Update(ctx context.Context, databaseID, collection, docID string, value any, opts ...RequestOption) (*DocumentWriteResponse, error) {
-	return d.Put(ctx, databaseID, collection, docID, value, opts...)
-}
-
 // Patch applies an RFC 7386 JSON merge patch to a document.
 func (d *DocumentsClient) Patch(ctx context.Context, databaseID, collection, docID string, patch any, opts ...RequestOption) (*DocumentWriteResponse, error) {
 	path, err := documentPath(databaseID, collection, docID)
@@ -226,13 +220,13 @@ func (d *DocumentsClient) Patch(ctx context.Context, databaseID, collection, doc
 		return nil, err
 	}
 	var out DocumentWriteResponse
+	var headers http.Header
+	opts = append(opts, func(rc *requestConfig) { rc.responseHeaders = &headers })
 	if err := d.c.do(ctx, "PATCH", path, nil, payload, &out, "documents.patch", opts...); err != nil {
 		return nil, err
 	}
-	if out.ETag == "" && out.Revision != "" {
-		out.ETag = strconv.Quote(out.Revision)
-	}
-	out.Session = d.c.SessionToken()
+	out.ETag = headers.Get("ETag")
+	out.Session = headers.Get("X-TerraScale-Session")
 	return &out, nil
 }
 

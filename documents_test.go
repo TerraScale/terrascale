@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	sdk "terrascale.tech/sdk"
 )
@@ -173,5 +174,90 @@ func TestDocumentHistoryPageUsesPublishedPagination(t *testing.T) {
 	}
 	if query.Get("limit") != "25" || query.Get("after") != "rev-1" {
 		t.Fatalf("history query = %v", query)
+	}
+}
+
+func TestConditionalDocumentReadModifyWriteRetriesOriginalCondition(t *testing.T) {
+	patches := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			w.Header().Set("ETag", `"18446744073709551615-0"`)
+			w.Header().Set("X-TerraScale-Session", "7")
+			_, _ = w.Write([]byte(`{"count":1}`))
+			return
+		}
+		if r.Header.Get("If-Match") != `"18446744073709551615-0"` || r.Header.Get("Idempotency-Key") != "increment-1" {
+			t.Errorf("conditional identity changed: %v", r.Header)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != `{"count":2}` {
+			t.Errorf("patch body = %s", body)
+		}
+		patches++
+		if patches == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"code":"unavailable"}}`))
+			return
+		}
+		w.Header().Set("ETag", `"18446744073709551615-1"`)
+		w.Header().Set("X-TerraScale-Session", "8")
+		_, _ = w.Write([]byte(`{"revision":"18446744073709551615-1"}`))
+	}))
+	defer server.Close()
+	client, err := sdk.NewClient(sdk.Config{APIBaseURL: server.URL, MaxRetryAttempts: 1, RetryDelay: time.Millisecond, SessionToken: "9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := client.Documents.Get(t.Context(), "db", "counts", "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.ETag != `"18446744073709551615-0"` || document.Session != "7" || client.SessionToken() != "9" {
+		t.Fatalf("response metadata = %+v; frontier = %s", document, client.SessionToken())
+	}
+	written, err := client.Documents.Patch(t.Context(), "db", "counts", "one", map[string]int{"count": 2}, sdk.WithIfMatch(document.ETag), sdk.WithIdempotencyKey("increment-1"))
+	if err != nil || written.ETag != `"18446744073709551615-1"` || written.Session != "8" || patches != 2 {
+		t.Fatalf("write = %+v, err = %v, attempts = %d", written, err, patches)
+	}
+}
+
+func TestDocumentConditionsValidateAndDoNotRetryConflicts(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Header.Get("If-Match") != "*" {
+			t.Errorf("If-Match = %q", r.Header.Get("If-Match"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusPreconditionFailed)
+		_, _ = w.Write([]byte(`{"error":{"code":"precondition_failed"}}`))
+	}))
+	defer server.Close()
+	client, err := sdk.NewClient(sdk.Config{APIBaseURL: server.URL, MaxRetryAttempts: 2, RetryDelay: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, etag := range []string{"", "revision", `W/"revision"`, `"one", "two"`, "\"bad\nvalue\""} {
+		if err := client.Documents.Delete(t.Context(), "db", "users", "one", sdk.WithIfMatch(etag)); err == nil {
+			t.Errorf("invalid ETag accepted: %q", etag)
+		}
+	}
+	if _, err := client.Documents.Get(t.Context(), "db", "users", "one", sdk.WithIfMatch("*")); err == nil {
+		t.Error("GET accepted document condition")
+	}
+	if _, err := client.Documents.Create(t.Context(), "db", "users", "one", map[string]int{"x": 1}, sdk.WithIfMatch("*")); err == nil {
+		t.Error("create accepted conflicting conditions")
+	}
+	if _, err := client.Documents.Put(t.Context(), "db", "users", "one", map[string]int{"x": 1}, sdk.WithIfMatch("*"), sdk.WithSchemaGeneration(1)); err == nil {
+		t.Error("document condition accepted schema generation")
+	}
+	if requests != 0 {
+		t.Fatalf("validation sent %d requests", requests)
+	}
+	err = client.Documents.Delete(t.Context(), "db", "users", "one", sdk.WithIfMatch("*"), sdk.WithIdempotencyKey("delete-1"))
+	var apiErr *sdk.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusPreconditionFailed || requests != 1 {
+		t.Fatalf("conflict = %v, requests = %d", err, requests)
 	}
 }

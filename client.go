@@ -1,13 +1,7 @@
 // Package sdk is the TerraScale Go SDK (terrascale.tech/sdk).
 //
-// Core surface (GOAL D-13): document CRUD, typed schema builder, typed SQL
-// builder plus raw parameterized SQL, subscribe/execute with checkpoints and
-// typed resets, region pinning, tenants, and management.
-//
-// Management routes mirror the ts-typescript src/client.ts path templates
-// (sdk-route-manifest.json, routeCount 60). Document, schema, SQL, reactive,
-// and tenant paths are a hand-written stub against /api/v1 pending the
-// published terrabase openapi.json; see contract.go.
+// Document, schema, SQL, reactive, tenant, and management operations use the
+// pinned TerraBase public API contract; see contract.go.
 package sdk
 
 import (
@@ -458,7 +452,9 @@ type requestConfig struct {
 	sessionToken       string
 	consistency        Consistency
 	deleteConfirmation string
-	schemaIfMatch      string
+	ifMatch            string
+	documentIfMatch    string
+	hasDocumentIfMatch bool
 	responseMediaType  string
 	responseHeaders    *http.Header
 	createOnly         bool
@@ -499,10 +495,17 @@ func WithConsistency(cs Consistency) RequestOption {
 // It is rejected for PATCH, DELETE and other operations.
 func WithCreateOnly() RequestOption { return func(r *requestConfig) { r.createOnly = true } }
 
+// WithIfMatch requires a document PUT, PATCH, or DELETE to match the strong
+// ETag returned by Documents.Get. Use "*" to require an existing document.
+// Keep the same condition and idempotency key when retrying an uncertain write.
+func WithIfMatch(etag string) RequestOption {
+	return func(r *requestConfig) { r.documentIfMatch = etag; r.hasDocumentIfMatch = true }
+}
+
 // WithSchemaGeneration applies a schema only if its strong generation matches.
 // Pass the Generation returned by GetCollectionSchema.
 func WithSchemaGeneration(generation uint64) RequestOption {
-	return func(r *requestConfig) { r.schemaIfMatch = "\"" + strconv.FormatUint(generation, 10) + "\"" }
+	return func(r *requestConfig) { r.ifMatch = "\"" + strconv.FormatUint(generation, 10) + "\"" }
 }
 
 // WithDeleteConfirmation carries the database delete confirmation identity.
@@ -566,7 +569,26 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return fmt.Errorf("sdk: path %q is outside the public /api/v1 contract", path)
 	}
 	rc := resolveRequestOptions(opts)
-	if rc.createOnly && (method != http.MethodPut || route != "documents.put" || rc.schemaIfMatch != "") {
+	if rc.hasDocumentIfMatch {
+		if rc.ifMatch != "" || (route != "documents.put" && route != "documents.patch" && route != "documents.delete") {
+			return &ValidationError{Field: "if-match", Message: "supported only for document PUT, PATCH, or DELETE without a schema generation"}
+		}
+		etag := rc.documentIfMatch
+		valid := etag == "*"
+		if len(etag) >= 2 && etag[0] == '"' && etag[len(etag)-1] == '"' {
+			valid = true
+			for i := 1; i < len(etag)-1; i++ {
+				if etag[i] < 0x21 || etag[i] == '"' || etag[i] == 0x7f {
+					valid = false
+				}
+			}
+		}
+		if !valid || len(etag) > MaxSessionTokenBytes {
+			return &ValidationError{Field: "if-match", Message: "must be one strong quoted ETag or *"}
+		}
+		rc.ifMatch = etag
+	}
+	if rc.createOnly && (method != http.MethodPut || route != "documents.put" || rc.ifMatch != "") {
 		return &ValidationError{Field: "create-only", Message: "supported only for document PUT without If-Match"}
 	}
 	if rc.regionHint != "" {
@@ -782,8 +804,8 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 	if rc.createOnly {
 		h.Set("If-None-Match", "*")
 	}
-	if rc.schemaIfMatch != "" {
-		h.Set("If-Match", rc.schemaIfMatch)
+	if rc.ifMatch != "" {
+		h.Set("If-Match", rc.ifMatch)
 	}
 	if idem != "" {
 		h.Set("Idempotency-Key", idem)
