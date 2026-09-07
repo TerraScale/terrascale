@@ -56,7 +56,7 @@
     {
       "name": "Starter",
       "price": "$5",
-      "writes": "1M writes",
+      "writes": "1M writes/month",
       "storage": "5 GB",
       "databases": 5,
       "pitrDays": 7
@@ -64,7 +64,7 @@
     {
       "name": "Pro",
       "price": "$50",
-      "writes": "100M writes",
+      "writes": "100M writes/month",
       "storage": "25 GB",
       "databases": 25,
       "pitrDays": 30

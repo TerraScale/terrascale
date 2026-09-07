@@ -56,7 +56,7 @@ apply where a guard exists. CDN-delivered reactive data has no bandwidth guard.
 | | Free | Starter | Pro | Scale |
 | --- | --- | --- | --- | --- |
 | Monthly price | $0 | $5 | $50 | $500 |
-| Writes / month | 100k | 1M included | 100M included | PAYG |
+| Writes / month | 100k writes/month | 1M writes/month included | 100M writes/month included | PAYG |
 | Storage | 100 MB | 5 GB included | 25 GB included | PAYG |
 | Regions per database | Up to 3 | Up to 3 | Up to 3 | Up to 3 |
 | Databases per org | 1 | 5 | 25 | soft-unlimited |

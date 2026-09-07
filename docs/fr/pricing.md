@@ -30,7 +30,7 @@
 |  | Free | Starter | Pro | Scale |
 | --- | --- | --- | --- | --- |
 | price | $0 | $5 | $50 | $500 |
-| writes | 100k writes/month | 1M writes | 100M writes | PAYG |
+| writes | 100k writes/month | 1M writes/month | 100M writes/month | PAYG |
 | storage | 100 MB | 5 GB | 25 GB | PAYG |
 | databases | 1 | 5 | 25 | soft-unlimited |
 | pitrDays | 1 | 7 | 30 | 35 |
