@@ -32,7 +32,7 @@ Delivering that write to any number of subscribers is free.
 
 Storage = **logical bytes × regions**, at $/GB-month: the canonical bytes of
 current documents plus retained history, TTL-aware, measured in byte-seconds.
-Indexes, WAL, and backups are not billed.
+Indexes, backups, and service-managed storage overhead are not billed.
 
 ## Free and unbilled
 
@@ -92,9 +92,9 @@ is billed, and exceeding one returns a typed error with the fix.
 | WebSocket connections | 100 | 1,000 | 10,000 | custom |
 | Webhook endpoints | 3 | 10 | 50 | custom |
 
-Direct member read bandwidth means bytes leaving OCI for reads served by
-members, not by the CDN. **CDN-delivered reactive data has no bandwidth
-guard.** Subscribers per view are unlimited on every plan.
+Direct member read bandwidth is the allowance for reads served directly by
+database members, rather than through the CDN. **CDN-delivered reactive data
+has no bandwidth guard.** Subscribers per view are unlimited on every plan.
 
 ## Other limits
 
@@ -105,9 +105,8 @@ guard.** Subscribers per view are unlimited on every plan.
   its selected regions. A placement lock (`eu-only`, `br-only`, or an
   explicit region list) is set at creation and cannot be widened; it is
   enforced at placement, replication, backup, restore, export, and
-  branching. Cloudflare's edge decrypts reactive traffic at the PoP nearest
-  the reader worldwide as a sub-processor under its DPA; we do not promise
-  in-region edge processing at launch.
+  branching. Reactive delivery may be processed through the delivery network;
+  in-region edge processing is not promised at launch.
 
 ## Free eligibility and idle databases
 

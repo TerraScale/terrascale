@@ -32,8 +32,8 @@
     "definition": "Logical bytes (canonical bytes of current documents + retained history, TTL-aware, measured in byte-seconds) x regions, at $/GB-month.",
     "notBilled": [
       "indexes",
-      "WAL",
-      "backups"
+      "backups",
+      "service-managed storage overhead"
     ]
   },
   "freeTier": {

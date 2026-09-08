@@ -16,7 +16,7 @@
 
 - **Writes.** One create/update/patch/delete of <= 4 KiB (ceil(bytes / 4 KiB)). Multiply 4 KiB write units by selected Regions before consuming included allowances; a 5 KiB write across three Regions consumes six units.
 - **Storage.** Logical bytes (canonical bytes of current documents + retained history, TTL-aware, measured in byte-seconds) x regions, at $/GB-month.
-- Not billed as storage: indexes, WAL, backups.
+- Not billed as storage: indexes, backups, service-managed storage overhead.
 - Free and unbilled: reads, queries, egress, CDN delivery, fan-out, concurrent subscribers, WebSocket connections, webhook delivery, catch-up and replay, TTL expiry.
 - Metered for abuse guards and cost attribution (never billed): reads, queries, direct member read egress.
 
