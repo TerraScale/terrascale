@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "origin": "edge",
+  "owner": "ts-proxy",
+  "routes": [
+    {
+      "operationId": "regions.list",
+      "method": "GET",
+      "path": "/api/v1/regions",
+      "contract": "openapi.json"
+    }
+  ]
+}

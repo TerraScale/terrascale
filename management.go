@@ -7,7 +7,6 @@ package sdk
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -48,29 +47,8 @@ type Region struct {
 
 // RegionCatalogResponse is the edge discovery response.
 type RegionCatalogResponse struct {
-	Regions        []Region          `json:"regions"`
-	Hosts          map[string]string `json:"hosts"`
-	regionsPresent bool
-}
-
-func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
-	type wire struct {
-		Regions json.RawMessage   `json:"regions"`
-		Hosts   map[string]string `json:"hosts"`
-	}
-	var v wire
-	if err := json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	*r = RegionCatalogResponse{Hosts: v.Hosts}
-	if len(v.Regions) == 0 || string(v.Regions) == "null" {
-		return nil
-	}
-	if err := json.Unmarshal(v.Regions, &r.Regions); err != nil {
-		return err
-	}
-	r.regionsPresent = true
-	return nil
+	Regions []Region          `json:"regions"`
+	Hosts   map[string]string `json:"hosts"`
 }
 
 // HealthResponse is the generated response model for GET /api/v1/regions
@@ -733,7 +711,7 @@ func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Regi
 	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions.list", opts...); err != nil {
 		return nil, err
 	}
-	if out.regionsPresent {
+	if len(out.Regions) > 0 {
 		for i := range out.Regions {
 			code, err := parseCatalogRegionCode(string(out.Regions[i].Code))
 			if err != nil {
@@ -743,7 +721,7 @@ func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Regi
 		}
 		return out.Regions, nil
 	}
-	return nil, fmt.Errorf("sdk: region catalog response is missing regions")
+	return nil, fmt.Errorf("sdk: region catalog response must contain at least one region")
 }
 
 func parseCatalogRegionCode(value string) (RegionCode, error) {

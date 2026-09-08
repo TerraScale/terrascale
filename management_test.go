@@ -177,7 +177,7 @@ func TestRegionsListDecodesEdgeCatalogAndRejectsMemberHealth(t *testing.T) {
 		want int
 		fail bool
 	}{
-		{name: "explicit empty catalog", body: `{"regions":[],"hosts":{}}`, want: 0},
+		{name: "explicit empty catalog", body: `{"regions":[],"hosts":{}}`, fail: true},
 		{name: "missing regions", body: `{"hosts":{}}`, fail: true},
 		{name: "null regions", body: `{"regions":null,"hosts":{}}`, fail: true},
 	} {
