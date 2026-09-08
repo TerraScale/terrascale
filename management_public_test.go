@@ -423,7 +423,10 @@ func TestProvisioningOperationMatchesProducerScopeAndState(t *testing.T) {
 
 func TestProvisionedBranchAndDeletePreserveAcceptedOperation(t *testing.T) {
 	const operation = `{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"branch-key","database_id":"db-1","parent_database_id":null,"key_version":"key-1","name":"demo","regions":["GRU"],"residency":"br-only","state":"pending"}`
-	const deletion = `{"request":{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","database_id":"db-1","operation_id":"delete-key"},"state":"preparing","cutoff":"2026-09-06T00:00:00Z","targets":[{"stop":{}}]}`
+	deletion, err := json.Marshal(deletionTestOperation("demo", "delete-key", "preparing"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
@@ -445,7 +448,7 @@ func TestProvisionedBranchAndDeletePreserveAcceptedOperation(t *testing.T) {
 			t.Fatalf("delete path = %s", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(deletion))
+		_, _ = w.Write(deletion)
 	}))
 	defer server.Close()
 	client, err := NewClient(Config{APIBaseURL: server.URL})

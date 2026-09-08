@@ -92,3 +92,12 @@ ETag to `WithIfMatch` for conditional PUT, PATCH, or DELETE; `"*"` requires
 an existing document. Retain the same condition and `WithIdempotencyKey` when
 retrying an uncertain write. A failed precondition returns HTTP 412 without
 automatic retry. Use `Put` or `Upsert` for document replacement.
+
+`Databases.GetDeletionStatus(ctx, databaseID, operationID)` reads the original
+accepted deletion through its GET status route. It preserves authoritative
+preparation, regional stop, and edge revocation receipts, including their exact
+scope and timestamps. States are `preparing`, `stopping`, `edge_pending`, and
+`cleanup_pending`; the last state does not claim physical cleanup is complete.
+Canceling the status request does not cancel deletion. `DeleteDatabase` requires
+HTTP 202 and `GetDeletionStatus` requires HTTP 200, with matching operation and
+configured tenant/project scope in both responses.

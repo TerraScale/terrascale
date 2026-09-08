@@ -8,6 +8,7 @@ package sdk
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -874,7 +875,7 @@ func (d *DatabasesClient) GetDatabase(ctx context.Context, name string, opts ...
 	return &out, nil
 }
 
-// DeleteDatabase soft-deletes a direct TerraBase database.
+// DeleteDatabase admits a durable deletion; the response does not imply physical cleanup has completed.
 func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts ...RequestOption) (*DeletionOperation, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
@@ -889,11 +890,14 @@ func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts 
 	if err := deleteConfirmation(opts, name); err != nil {
 		return nil, err
 	}
-	var out DeletionOperation
+	out := deletionResponse{status: http.StatusAccepted}
 	if err := d.c.do(ctx, "DELETE", path, nil, nil, &out, "delete_database", opts...); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	if err := d.validateDeletionScope(&out.DeletionOperation, name, strings.TrimSpace(resolveRequestOptions(opts).idempotencyKey)); err != nil {
+		return nil, err
+	}
+	return &out.DeletionOperation, nil
 }
 
 // RestoreDatabase restores a soft-deleted database within its retention

@@ -29,7 +29,7 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 			}
 			if r.Method == http.MethodDelete {
 				w.WriteHeader(http.StatusAccepted)
-				_, _ = w.Write([]byte(`{"request":{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","database_id":"prod","operation_id":"management-test"},"state":"preparing","cutoff":"2026-09-06T00:00:00Z","targets":[{"stop":{}}]}`))
+				_ = json.NewEncoder(w).Encode(deletionTestOperation("prod", "management-test", "preparing"))
 			} else {
 				_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "prod", Placement: "GRU"})
 			}

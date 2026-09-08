@@ -374,29 +374,6 @@ type CreateDatabaseResult struct {
 	Operation *ProvisioningOperation `json:"operation,omitempty"`
 }
 
-// DeletionRequest identifies the durable deletion admitted by the authority.
-type DeletionRequest struct {
-	Environment string `json:"environment"`
-	TenantID    string `json:"tenant_id"`
-	ProjectID   string `json:"project_id"`
-	DatabaseID  string `json:"database_id"`
-	OperationID string `json:"operation_id"`
-}
-
-// DeletionTarget records one member's deletion stop result.
-type DeletionTarget struct {
-	Stop map[string]any `json:"stop"`
-}
-
-// DeletionOperation is the durable database deletion state returned by the
-// producer. State is one of preparing, stopping, or cleanup_pending.
-type DeletionOperation struct {
-	Request DeletionRequest  `json:"request"`
-	State   string           `json:"state"`
-	Cutoff  string           `json:"cutoff"`
-	Targets []DeletionTarget `json:"targets"`
-}
-
 func decodeProvisioningOperation(status int, body []byte) (*ProvisioningOperation, error) {
 	if status != http.StatusAccepted {
 		return nil, fmt.Errorf("sdk: expected accepted provisioning response, got status %d", status)
@@ -421,19 +398,6 @@ func (o *acceptedProvisioningOperation) decodeHTTPResponse(status int, body []by
 		return err
 	}
 	o.ProvisioningOperation = *operation
-	return nil
-}
-
-func (o *DeletionOperation) decodeHTTPResponse(status int, body []byte) error {
-	if status != http.StatusAccepted {
-		return fmt.Errorf("sdk: expected accepted deletion response, got status %d", status)
-	}
-	if err := json.Unmarshal(body, o); err != nil {
-		return err
-	}
-	if o.Request.Environment == "" || o.Request.TenantID == "" || o.Request.ProjectID == "" || o.Request.DatabaseID == "" || o.Request.OperationID == "" || (o.State != "preparing" && o.State != "stopping" && o.State != "cleanup_pending") || o.Cutoff == "" || len(o.Targets) == 0 {
-		return fmt.Errorf("sdk: accepted deletion has no valid durable identity")
-	}
 	return nil
 }
 
