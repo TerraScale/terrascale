@@ -8,15 +8,15 @@ encrypted restore.
 
 | Run | Restore duration | Unchanged limit | Result |
 | --- | ---: | ---: | --- |
-| Provenance reset, full server suite | 13.421756086 s | 10 s | Failed |
-| Provenance reset, isolated test | 13.338558436 s | 10 s | Failed |
-| Same reset with a temporary request-identity index | 14.942165607 s | 10 s | Failed; candidate removed |
-| Provenance reset with temporary stage timers | 13.3045 s | 10 s | Failed |
-| One-pass rewrite through a temporary identity map | 11.698746991 s | 10 s | Failed; improved over baseline |
-| One-pass rewrite with standard bounded SQLite connection settings | 11.779108996 s | 10 s | Failed |
-| Same bounded settings, complete server regression suite (`26026`) | 11.562381852 s | 10 s | Failed |
-| Remove redundant document identity `EXISTS` probe, complete server suite (`76543`) | 12.119408652 s | 10 s | Failed; no measured speedup |
-| Remove duplicate operation-facts identity index, isolated test (`43182`) | 12.255299851 s | 10 s | Failed; no measured speedup |
+| Provenance reset, full server suite | 13.421756086 s | 1 s | Failed |
+| Provenance reset, isolated test | 13.338558436 s | 1 s | Failed |
+| Same reset with a temporary request-identity index | 14.942165607 s | 1 s | Failed; candidate removed |
+| Provenance reset with temporary stage timers | 13.3045 s | 1 s | Failed |
+| One-pass rewrite through a temporary identity map | 11.698746991 s | 1 s | Failed; improved over baseline |
+| One-pass rewrite with standard bounded SQLite connection settings | 11.779108996 s | 1 s | Failed |
+| Same bounded settings, complete server regression suite (`26026`) | 11.562381852 s | 1 s | Failed |
+| Remove redundant document identity `EXISTS` probe, complete server suite (`76543`) | 12.119408652 s | 1 s | Failed; no measured speedup |
+| Remove duplicate operation-facts identity index, isolated test (`43182`) | 12.255299851 s | 1 s | Failed; no measured speedup |
 
 The reset preserves imported data and causal progress while removing source
 billing and lifecycle state. Removing that reset to improve timing would restore

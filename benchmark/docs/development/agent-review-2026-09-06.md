@@ -801,7 +801,7 @@ preserved. The temporary export function-length allowance was removed.
 
 The subsequent full server library run (`76543`) again passed 338 tests with
 three ignored and the same sole performance failure: restore took 12.119408652
-seconds. The SQL change has not demonstrated a speedup; the ten-second gate
+seconds. The SQL change has not demonstrated a speedup; the one-second gate
 remains unmet. See `/tmp/terrascale-server-reviewed-retest.log`. Usage-index
 let-else/borrow cleanup was made after that run compiled and requires its own
 verification.

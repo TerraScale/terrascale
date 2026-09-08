@@ -1380,10 +1380,7 @@ impl Engine {
         };
         let mut storage: Box<dyn storage::StoragePort> = open_storage
             .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
-            .map_err(|error| {
-                eprintln!("engine open storage failed {location:?}: {error:?}");
-                EngineOpenError::StorageUnavailable
-            })?;
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         let replication_lane_origin = configured_lane
             .or_else(|| {
                 crate::origin_lane::OriginLaneId::parse(storage.local_replication_origin()).ok()
