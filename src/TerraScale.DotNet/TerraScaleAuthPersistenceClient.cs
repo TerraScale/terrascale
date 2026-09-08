@@ -16,11 +16,32 @@ public sealed class TerraScaleAuthPersistenceClient(TerraScaleClient client)
     public Task<AuthResult> ConsumeOneAsync(string database, Consume request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
         Send(database, "consumeOne", request, TerraScaleContractJsonContext.Default.Consume, idempotencyKey, transactionId, cancellationToken);
 
+    public Task<AuthResult> ConsumeMatchingAsync(string database, PredicateOnly request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
+        Send(database, "consumeMatching", request, TerraScaleContractJsonContext.Default.PredicateOnly, idempotencyKey, transactionId, cancellationToken);
+
+    public Task<AuthResult> CountAsync(string database, PredicateOnly request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
+        Send(database, "count", request, TerraScaleContractJsonContext.Default.PredicateOnly, idempotencyKey, transactionId, cancellationToken);
+
+    public Task<AuthResult> DeleteManyAsync(string database, PredicateOnly request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
+        Send(database, "deleteMany", request, TerraScaleContractJsonContext.Default.PredicateOnly, idempotencyKey, transactionId, cancellationToken);
+
+    public Task<AuthResult> DeleteOneAsync(string database, PredicateOnly request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
+        Send(database, "deleteOne", request, TerraScaleContractJsonContext.Default.PredicateOnly, idempotencyKey, transactionId, cancellationToken);
+
+    public Task<AuthResult> IncrementOneAsync(string database, Increment request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
+        Send(database, "incrementOne", request, TerraScaleContractJsonContext.Default.Increment, idempotencyKey, transactionId, cancellationToken);
+
     public Task<AuthResult> CreateIndexAsync(string database, UniqueIndex request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
         Send(database, "index", request, TerraScaleContractJsonContext.Default.UniqueIndex, idempotencyKey, transactionId, cancellationToken);
 
     public Task<AuthResult> FindPageAsync(string database, PageQuery request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
         Send(database, "findPage", request, TerraScaleContractJsonContext.Default.PageQuery, idempotencyKey, transactionId, cancellationToken);
+
+    public Task<AuthResult> UpdateManyAsync(string database, PredicateUpdate request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
+        Send(database, "updateMany", request, TerraScaleContractJsonContext.Default.PredicateUpdate, idempotencyKey, transactionId, cancellationToken);
+
+    public Task<AuthResult> UpdateOneAsync(string database, PredicateUpdate request, string idempotencyKey, string? transactionId = null, CancellationToken cancellationToken = default) =>
+        Send(database, "updateOne", request, TerraScaleContractJsonContext.Default.PredicateUpdate, idempotencyKey, transactionId, cancellationToken);
 
     public Task<AuthResult> GetAsync(string database, string model, string id, CancellationToken cancellationToken = default) =>
         client.SendJsonAsync(HttpMethod.Get, Route(database) + "/records/" + TerraScaleManagementPaths.Escape(model) + "/" + TerraScaleManagementPaths.Escape(id),

@@ -10,7 +10,7 @@ public sealed class TerraScaleManagementClientTests
 {
     private static readonly string[] Operations =
     [
-        "insert_unique", "compare_and_swap", "consume_one", "index", "find_page", "find_one", "begin_transaction", "commit_transaction", "rollback_transaction",
+        "insert_unique", "compare_and_swap", "consume_one", "consume_matching", "count", "delete_many", "delete_one", "increment_one", "update_many", "update_one", "index", "find_page", "find_one", "begin_transaction", "commit_transaction", "rollback_transaction",
         "database_usage", "get_schema", "put_schema", "list_indexes", "create_index", "delete_index", "index_recommendations",
         "list_webhooks", "create_webhook", "delete_webhook", "list_deliveries", "replay_webhook", "rotate_secret",
         "list_exports", "create_export", "get_export", "resume_export", "download_export", "cancel_export",
@@ -108,6 +108,13 @@ public sealed class TerraScaleManagementClientTests
             case "insert_unique": return await client.AuthPersistence.InsertUniqueAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.UniqueInsert), "auth-key", "transaction-key");
             case "compare_and_swap": return await client.AuthPersistence.CompareAndSwapAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.ConditionalUpdate), "auth-key", "transaction-key");
             case "consume_one": return await client.AuthPersistence.ConsumeOneAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.Consume), "auth-key", "transaction-key");
+            case "consume_matching": return await client.AuthPersistence.ConsumeMatchingAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.PredicateOnly), "auth-key", "transaction-key");
+            case "count": return await client.AuthPersistence.CountAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.PredicateOnly), "auth-key", "transaction-key");
+            case "delete_many": return await client.AuthPersistence.DeleteManyAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.PredicateOnly), "auth-key", "transaction-key");
+            case "delete_one": return await client.AuthPersistence.DeleteOneAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.PredicateOnly), "auth-key", "transaction-key");
+            case "increment_one": return await client.AuthPersistence.IncrementOneAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.Increment), "auth-key", "transaction-key");
+            case "update_many": return await client.AuthPersistence.UpdateManyAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.PredicateUpdate), "auth-key", "transaction-key");
+            case "update_one": return await client.AuthPersistence.UpdateOneAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.PredicateUpdate), "auth-key", "transaction-key");
             case "index": return await client.AuthPersistence.CreateIndexAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.UniqueIndex), "auth-key", "transaction-key");
             case "find_page": return await client.AuthPersistence.FindPageAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.PageQuery), "auth-key", "transaction-key");
             case "find_one": return await client.AuthPersistence.GetAsync("sample", "sample", "sample");
