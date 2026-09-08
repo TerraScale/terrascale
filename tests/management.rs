@@ -544,10 +544,11 @@ async fn database_delete_decodes_accepted_provisioning_lifecycle() {
             "/api/v1/databases/orders/deletions/op".into(),
         )],
         body: serde_json::to_vec(&json!({
-            "request": {"operation_id": "op"},
+            "request": {"environment":"production","tenant_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op"},
+            "requested_at": "2026-09-06T00:00:00Z",
             "state": "preparing",
             "cutoff": "2026-09-06T00:00:00Z",
-            "targets": []
+            "targets": [{"stop":{"environment":"production","organization_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op","region":"GRU","cutoff":"2026-09-06T00:00:00Z"}}]
         }))
         .unwrap(),
     }]);
@@ -563,6 +564,34 @@ async fn database_delete_decodes_accepted_provisioning_lifecycle() {
     assert_eq!(accepted.operation_id, "op");
     assert_eq!(accepted.state, "preparing");
     assert_eq!(accepted.location, "/api/v1/databases/orders/deletions/op");
+    assert_eq!(accepted.cutoff, "2026-09-06T00:00:00Z");
+    assert_eq!(accepted.targets.len(), 1);
+}
+
+#[tokio::test]
+async fn database_deletion_status_reads_typed_authoritative_progress() {
+    let body = json!({
+        "request": {"environment":"production","tenant_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op"},
+        "requested_at": "2026-09-06T00:00:00Z",
+        "state": "cleanup_pending",
+        "cutoff": "2026-09-06T00:00:00Z",
+        "targets": [{"stop":{"environment":"production","organization_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op","region":"GRU","cutoff":"2026-09-06T00:00:00Z","retain_until":"2026-09-13T00:00:00Z"},"receipt":{"environment":"production","organization_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op","region":"GRU","cutoff":"2026-09-06T00:00:00Z","access_revoked":true,"usage_stopped":true}}]
+    });
+    let mock = Mock::new(vec![Response::json(200, &body)]);
+    let operation = client(Arc::clone(&mock))
+        .management()
+        .databases()
+        .get_deletion_status("orders", "op", None)
+        .await
+        .expect("deletion status");
+    assert_eq!(operation.state, "cleanup_pending");
+    assert_eq!(operation.targets[0].stop.region, "GRU");
+    assert!(operation.targets[0].receipt.as_ref().unwrap().usage_stopped);
+    assert_eq!(mock.last().method, Method::Get);
+    assert_eq!(
+        mock.last().url,
+        "https://api.terrascale.tech/api/v1/databases/orders/deletions/op"
+    );
 }
 
 #[tokio::test]

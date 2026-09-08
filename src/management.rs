@@ -227,6 +227,170 @@ pub struct DeleteDatabaseAccepted {
     pub operation_id: String,
     pub state: String,
     pub location: String,
+    pub request: DeletionRequest,
+    pub requested_at: String,
+    pub cutoff: String,
+    pub targets: Vec<DeletionTarget>,
+    #[serde(default)]
+    pub edge_receipt: Option<DeletionEdgeReceipt>,
+    #[serde(default)]
+    pub claim: Option<DeletionClaimReceipt>,
+    #[serde(default)]
+    pub automatic_policy_revision: Option<String>,
+    #[serde(default)]
+    pub automatic_grace_condition: Option<String>,
+    #[serde(default)]
+    pub automatic_deadline: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletionRequest {
+    pub environment: String,
+    pub tenant_id: String,
+    pub project_id: String,
+    pub database_id: String,
+    pub operation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletionStop {
+    pub environment: String,
+    pub organization_id: String,
+    pub project_id: String,
+    pub database_id: String,
+    #[serde(default)]
+    pub parent_database_id: Option<String>,
+    pub operation_id: String,
+    pub region: String,
+    pub cutoff: String,
+    #[serde(default)]
+    pub retain_until: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletionPreparation {
+    pub environment: String,
+    pub organization_id: String,
+    pub project_id: String,
+    pub database_id: String,
+    #[serde(default)]
+    pub parent_database_id: Option<String>,
+    pub operation_id: String,
+    pub region: String,
+    pub prepared: bool,
+    pub last_accounted_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletionReceipt {
+    pub environment: String,
+    pub organization_id: String,
+    pub project_id: String,
+    pub database_id: String,
+    #[serde(default)]
+    pub parent_database_id: Option<String>,
+    pub operation_id: String,
+    pub region: String,
+    pub cutoff: String,
+    #[serde(default)]
+    pub retain_until: Option<String>,
+    pub access_revoked: bool,
+    pub usage_stopped: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletionEdgeReceipt {
+    pub request: DeletionRequest,
+    pub cutoff: String,
+    pub access_revoked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletionClaimReceipt {
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: u32,
+    pub environment: String,
+    pub tenant_id: String,
+    pub project_id: String,
+    pub database_id: String,
+    pub operation_id: String,
+    pub policy_revision: String,
+    pub policy_fingerprint: String,
+    pub grace_condition: String,
+    pub deadline: String,
+    pub accepted_at: String,
+    pub authority_epoch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletionTarget {
+    pub stop: DeletionStop,
+    #[serde(default)]
+    pub preparation: Option<DeletionPreparation>,
+    #[serde(default)]
+    pub receipt: Option<DeletionReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletionOperation {
+    pub request: DeletionRequest,
+    pub requested_at: String,
+    pub state: String,
+    pub cutoff: String,
+    pub targets: Vec<DeletionTarget>,
+    #[serde(default)]
+    pub edge_receipt: Option<DeletionEdgeReceipt>,
+    #[serde(default)]
+    pub claim: Option<DeletionClaimReceipt>,
+    #[serde(default)]
+    pub automatic_policy_revision: Option<String>,
+    #[serde(default)]
+    pub automatic_grace_condition: Option<String>,
+    #[serde(default)]
+    pub automatic_deadline: Option<String>,
+}
+
+fn validate_deletion_operation(operation: &DeletionOperation) -> Result<()> {
+    let request = &operation.request;
+    for (value, field) in [
+        (&request.environment, "environment"),
+        (&request.tenant_id, "tenant_id"),
+        (&request.project_id, "project_id"),
+        (&request.database_id, "database_id"),
+        (&request.operation_id, "operation_id"),
+        (&operation.requested_at, "requested_at"),
+        (&operation.cutoff, "cutoff"),
+    ] {
+        validate_non_empty(value, field)?;
+    }
+    if !matches!(
+        operation.state.as_str(),
+        "preparing" | "stopping" | "edge_pending" | "cleanup_pending"
+    ) {
+        return Err(Error::invalid_response(
+            "deletion response has an unknown state",
+        ));
+    }
+    if operation.targets.is_empty() || operation.targets.len() > 3000 {
+        return Err(Error::invalid_response(
+            "deletion response has an invalid target count",
+        ));
+    }
+    for target in &operation.targets {
+        let stop = &target.stop;
+        if stop.environment != request.environment
+            || stop.organization_id != request.tenant_id
+            || stop.project_id != request.project_id
+            || stop.operation_id != request.operation_id
+            || stop.database_id.is_empty()
+            || stop.cutoff.is_empty()
+        {
+            return Err(Error::invalid_response(
+                "deletion response has an inconsistent target",
+            ));
+        }
+    }
+    Ok(())
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProvisioningOperation {
@@ -512,31 +676,87 @@ impl Databases {
                 });
         }
         if response.status == 202 {
-            let operation_id = body
-                .get("request")
-                .and_then(|request| request.get("operation_id"))
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    Error::invalid_response("accepted database deletion has no operation_id")
-                })?;
-            let state = body
-                .get("state")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    Error::invalid_response("accepted database deletion has no state")
-                })?;
+            let operation: DeletionOperation = serde_json::from_value(body).map_err(|error| {
+                Error::invalid_response(format!(
+                    "accepted database deletion response does not match the contract: {error}"
+                ))
+            })?;
+            validate_deletion_operation(&operation)?;
+            if operation.request.database_id != database_id {
+                return Err(Error::invalid_response(
+                    "accepted database deletion is for a different database",
+                ));
+            }
             let location = response.header("location").ok_or_else(|| {
                 Error::invalid_response("accepted database deletion has no Location header")
             })?;
             return Ok(DeleteDatabaseResult::Accepted(DeleteDatabaseAccepted {
-                operation_id: operation_id.to_owned(),
-                state: state.to_owned(),
+                operation_id: operation.request.operation_id.clone(),
+                state: operation.state.clone(),
                 location: location.to_owned(),
+                request: operation.request,
+                requested_at: operation.requested_at,
+                cutoff: operation.cutoff,
+                targets: operation.targets,
+                edge_receipt: operation.edge_receipt,
+                claim: operation.claim,
+                automatic_policy_revision: operation.automatic_policy_revision,
+                automatic_grace_condition: operation.automatic_grace_condition,
+                automatic_deadline: operation.automatic_deadline,
             }));
         }
         Err(Error::invalid_response(
             "database deletion returned an unsupported success status",
         ))
+    }
+
+    /// Reads the durable deletion operation without resubmitting the deletion.
+    pub async fn get_deletion_status(
+        &self,
+        database_id: &str,
+        operation_id: &str,
+        _project_id: Option<&str>,
+    ) -> Result<DeletionOperation> {
+        validate_bounded(operation_id, "operation_id", 128)?;
+        if !operation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_operation_id",
+                "operation_id must contain only ASCII letters, digits, hyphens, or underscores.",
+            ));
+        }
+        let response = self
+            .shared
+            .send_response(Request {
+                route_name: "deletion_status".to_owned(),
+                method: Method::Get,
+                url: format!(
+                    "{}/deletions/{}",
+                    database_url(&self.shared, database_id)?,
+                    encode_segment(operation_id, "operation_id")?
+                ),
+                headers: Vec::new(),
+                body: None,
+            })
+            .await?;
+        if response.status != 200 {
+            return Err(Error::invalid_response(
+                "deletion status returned an unsupported success status",
+            ));
+        }
+        let operation: DeletionOperation = response.json_body()?;
+        validate_deletion_operation(&operation)?;
+        if operation.request.database_id != database_id
+            || operation.request.operation_id != operation_id
+        {
+            return Err(Error::invalid_response(
+                "deletion status response does not match the requested scope",
+            ));
+        }
+        Ok(operation)
     }
     pub async fn restore(
         &self,
