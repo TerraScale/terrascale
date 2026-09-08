@@ -291,7 +291,7 @@ pub const ROUTES: &[Route] = &[
         method: HttpMethod::Get,
         path: "/api/v1/databases/{name}/exports/{job_id}/artifacts/{member}",
         request_model: None,
-        response_model: None,
+        response_model: Some("String"),
     },
     Route {
         operation_id: "execute_sql",
@@ -445,7 +445,7 @@ pub const ROUTES: &[Route] = &[
         method: HttpMethod::Get,
         path: "/api/v1/databases/{name}/imports",
         request_model: None,
-        response_model: None,
+        response_model: Some("Vec<ImportJob>"),
     },
     Route {
         operation_id: "list_indexes",
