@@ -792,6 +792,12 @@ async fn websocket_live_subscription_uses_capability_and_decodes_event() {
         )
         .await
         .expect("live websocket");
+    let opening = live.next().await.expect("opening snapshot");
+    let PollOutcome::Reset(opening) = opening else {
+        panic!("the opening snapshot must be delivered before the log event");
+    };
+    assert_eq!(opening.reason, ResetReason::Reconnect);
+    assert!(opening.snapshot.is_some());
     assert!(matches!(
         live.next().await.expect("event"),
         PollOutcome::Data { .. }

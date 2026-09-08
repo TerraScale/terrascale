@@ -29,6 +29,10 @@ pub(crate) struct Session {
     socket: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
+    /// The opening frame is part of the live stream. Keep it after validating
+    /// the handshake so the first `LiveSubscription::next` can apply the
+    /// server-authoritative snapshot before consuming subsequent updates.
+    pending_frame: Option<Vec<u8>>,
 }
 
 impl Session {
@@ -40,6 +44,13 @@ impl Session {
         &mut self,
         cancellation: &crate::reactive::CancellationToken,
     ) -> Result<Vec<u8>> {
+        if cancellation.is_cancelled() {
+            let _ = self.socket.close(None).await;
+            return Err(crate::reactive::cancelled_error());
+        }
+        if let Some(frame) = self.pending_frame.take() {
+            return Ok(frame);
+        }
         loop {
             let frame = tokio::select! {
                 _ = cancellation.cancelled() => {
@@ -187,9 +198,9 @@ pub(crate) async fn open(request: OpenRequest<'_>) -> Result<Session> {
         .map_err(|_| Error::transport("WebSocket opening frame timed out"))?
         .ok_or_else(|| Error::transport("WebSocket closed before its opening frame"))?
         .map_err(|error| Error::transport(format!("WebSocket receive failed: {error}")))?;
-    let result = match frame {
+    let opening_frame = match frame {
         Message::Binary(bytes) if bytes.len() <= MSGPACK_MAX_MESSAGE_BYTES => {
-            decode_reactive_msgpack_json(&bytes).map(|_| ())
+            decode_reactive_msgpack_json(&bytes).map(|_| bytes.to_vec())
         }
         Message::Binary(_) => Err(Error::invalid_response(
             "reactive WebSocket frame exceeds 8 MiB",
@@ -205,7 +216,10 @@ pub(crate) async fn open(request: OpenRequest<'_>) -> Result<Session> {
             "reactive WebSocket opening frame is not binary MessagePack",
         )),
     };
-    result.map(|_| Session { socket })
+    Ok(Session {
+        socket,
+        pending_frame: Some(opening_frame?),
+    })
 }
 
 fn encode_subscribe(
