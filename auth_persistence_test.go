@@ -14,26 +14,44 @@ func TestAuthPersistenceWireAndUnknownCommit(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Header.Get("Idempotency-Key") == "" && r.Method != "GET" {
-			t.Error("missing stable identity")
-		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/databases/demo/auth/insertUnique":
-			if r.Header.Get("X-TerraScale-Auth-Transaction") != "transaction-1" {
-				t.Error("transaction binding missing")
+			if got := r.Header.Get("Idempotency-Key"); got != "insert-1" {
+				t.Errorf("insert idempotency key = %q, want %q", got, "insert-1")
+			}
+			if got := r.Header.Get("X-TerraScale-Auth-Transaction"); got != "transaction-1" {
+				t.Errorf("insert transaction = %q, want %q", got, "transaction-1")
 			}
 			raw, _ := io.ReadAll(r.Body)
 			assertProducerJSON(t, raw, []byte(`{"model":"users","record":{"id":"u1","counter":9007199254740993}}`))
 			_, _ = w.Write([]byte(`{"record":{"counter":9007199254740993},"matched":true}`))
 		case "/api/v1/databases/demo/auth/transactions/begin":
+			if got := r.Header.Get("Idempotency-Key"); got != "begin-1" {
+				t.Errorf("begin idempotency key = %q, want %q", got, "begin-1")
+			}
+			if got := r.Header.Get("X-TerraScale-Auth-Transaction"); got != "" {
+				t.Errorf("begin transaction = %q, want empty", got)
+			}
 			raw, _ := io.ReadAll(r.Body)
 			assertProducerJSON(t, raw, []byte(`{"transactionId":"transaction-1"}`))
 			_, _ = w.Write([]byte(`{"record":null,"matched":true,"transactionId":"transaction-1","expiresAtMs":18446744073709551615}`))
 		case "/api/v1/databases/demo/auth/transactions/commit":
+			if got := r.Header.Get("Idempotency-Key"); got != "commit-1" {
+				t.Errorf("commit idempotency key = %q, want %q", got, "commit-1")
+			}
+			if got := r.Header.Get("X-TerraScale-Auth-Transaction"); got != "" {
+				t.Errorf("commit transaction = %q, want empty", got)
+			}
 			w.WriteHeader(503)
 			_, _ = w.Write([]byte(`{"error":{"code":"auth_outcome_unknown","message":"uncertain","fix":"resolve same identity"}}`))
 		case "/api/v1/databases/demo/auth/records/users/u1":
+			if got := r.Header.Get("Idempotency-Key"); got != "" {
+				t.Errorf("find one idempotency key = %q, want empty", got)
+			}
+			if got := r.Header.Get("X-TerraScale-Auth-Transaction"); got != "" {
+				t.Errorf("find one transaction = %q, want empty", got)
+			}
 			_, _ = w.Write([]byte(`{"record":null,"matched":false}`))
 		default:
 			t.Errorf("unexpected auth path %s", r.URL)
@@ -80,6 +98,12 @@ func TestAuthPersistenceGeneratedMutationRoutes(t *testing.T) {
 	var path string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
+		if got := r.Header.Get("Idempotency-Key"); got != "auth-key" {
+			t.Errorf("idempotency key = %q, want %q", got, "auth-key")
+		}
+		if got := r.Header.Get("X-TerraScale-Auth-Transaction"); got != "" {
+			t.Errorf("transaction = %q, want empty", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"matched":true}`))
 	}))
