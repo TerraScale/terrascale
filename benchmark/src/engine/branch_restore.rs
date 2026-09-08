@@ -6,7 +6,12 @@ use crate::{
     types::{OperationId, StorageSequence, TenantId},
     usage::UsagePlacement,
 };
-use std::{fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Condvar, LazyLock, Mutex},
+};
 
 /// A cross-process reservation for one branch target.
 ///
@@ -17,13 +22,54 @@ use std::{fs, path::Path};
 pub(super) struct BranchRestoreReservation {
     #[cfg(unix)]
     file: fs::File,
+    _process_guard: ProcessTargetGuard,
 }
+
+struct ProcessTargetLock {
+    held: Mutex<bool>,
+    wake: Condvar,
+}
+
+struct ProcessTargetGuard {
+    lock: Arc<ProcessTargetLock>,
+}
+
+impl ProcessTargetLock {
+    fn acquire(self: &Arc<Self>) -> ProcessTargetGuard {
+        let mut held = self.held.lock().expect("branch target lock poisoned");
+        while *held {
+            held = self.wake.wait(held).expect("branch target lock poisoned");
+        }
+        *held = true;
+        ProcessTargetGuard { lock: Arc::clone(self) }
+    }
+}
+
+impl Drop for ProcessTargetGuard {
+    fn drop(&mut self) {
+        let mut held = self.lock.held.lock().expect("branch target lock poisoned");
+        *held = false;
+        self.lock.wake.notify_one();
+    }
+}
+
+static PROCESS_TARGET_LOCKS: LazyLock<Mutex<BTreeMap<PathBuf, Arc<ProcessTargetLock>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 impl BranchRestoreReservation {
     pub(super) fn acquire(target: &Path) -> Result<Self, EngineOpenError> {
         let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
         let name = target.file_name().ok_or(EngineOpenError::InvalidConfig)?;
         let lock_path = parent.join(format!(".{}.branch-restore.lock", name.to_string_lossy()));
+        let process_lock = PROCESS_TARGET_LOCKS
+            .lock()
+            .map_err(|_| EngineOpenError::StorageUnavailable)?
+            .entry(lock_path.clone())
+            .or_insert_with(|| {
+                Arc::new(ProcessTargetLock { held: Mutex::new(false), wake: Condvar::new() })
+            })
+            .clone();
+        let process_guard = process_lock.acquire();
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -33,21 +79,14 @@ impl BranchRestoreReservation {
                 .write(true)
                 .mode(0o600)
                 .open(&lock_path)
-                .map_err(|error| {
-                    eprintln!("branch lock open {lock_path:?}: {error}");
-                    EngineOpenError::StorageUnavailable
-                })?;
-            rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive).map_err(
-                |error| {
-                    eprintln!("branch lock flock {lock_path:?}: {error}");
-                    EngineOpenError::StorageUnavailable
-                },
-            )?;
-            return Ok(Self { file });
+                .map_err(|_| EngineOpenError::StorageUnavailable)?;
+            rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
+                .map_err(|_| EngineOpenError::StorageUnavailable)?;
+            return Ok(Self { file, _process_guard: process_guard });
         }
         #[cfg(not(unix))]
         {
-            let _ = lock_path;
+            let _ = (lock_path, process_guard);
             Err(EngineOpenError::StorageUnavailable)
         }
     }
@@ -176,10 +215,12 @@ impl Engine {
                 &child_placement,
             )?;
             drop(registration);
+            let mut companion = crate::storage::database_file(&staging).into_os_string(); companion.push(".tbe");
+            eprintln!("stage files db={:?} companion={:?}", fs::symlink_metadata(crate::storage::database_file(&staging)).map(|m| (m.len(), m.is_file())), fs::symlink_metadata(companion).map(|m| (m.len(), m.is_file())));
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
             drop(Self::open(staged).map_err(|error| {
-                eprintln!("branch staged open failed: {error:?}");
+                eprintln!("staged branch open failed: {error:?}");
                 error
             })?);
             fs::File::open(&staging)

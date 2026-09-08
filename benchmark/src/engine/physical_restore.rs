@@ -56,6 +56,11 @@ impl Engine {
             drop(staged);
             crate::storage::import_backup_file(source, backup, &staging, &child_owner)
                 .map_err(|()| EngineOpenError::FormatMismatch)?;
+            // Import rewrites the SQLite provenance, but the resulting
+            // database still has to pass complete Engine admission before it
+            // can be published. This also replays durable lifecycle state
+            // that the low-level importer does not inspect.
+            drop(Self::open(staged_config)?);
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
@@ -196,6 +201,31 @@ mod tests {
             Err(EngineOpenError::FormatMismatch)
         );
         assert_eq!(fs::read_dir(&refused).expect("target").count(), 0);
+
+        // A backup can pass SQLite integrity and the importer's provenance
+        // rewrite while still containing state rejected by Engine admission.
+        // Such a target must never be atomically published.
+        let invalid_backup = root.join("invalid-lifecycle.sqlite3");
+        fs::copy(&backup, &invalid_backup).expect("invalid backup");
+        let connection = rusqlite::Connection::open(&invalid_backup).expect("open backup");
+        connection
+            .execute(
+                "INSERT INTO index_lifecycle_events(sequence, payload, digest)
+                 VALUES(1, ?1, zeroblob(32))",
+                rusqlite::params![vec![0xff_u8]],
+            )
+            .expect("inject lifecycle event");
+        drop(connection);
+        let rejected = root.join("rejected");
+        assert_eq!(
+            Engine::restore_local_sqlite_backup(
+                &source,
+                &invalid_backup,
+                EngineConfig::durable(&rejected).expect("config"),
+            ),
+            Err(EngineOpenError::FormatMismatch)
+        );
+        assert_eq!(fs::read_dir(&rejected).expect("target").count(), 0);
         assert_eq!(fs::read(&backup).expect("backup"), original, "source backup is immutable");
         fs::remove_dir_all(root).expect("cleanup");
     }

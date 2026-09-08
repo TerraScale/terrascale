@@ -328,15 +328,6 @@ fn local_origin_for(path: &Path) -> String {
     format!("lane1.local.{:032x}", u128::from_be_bytes(incarnation))
 }
 
-fn hex_digest(bytes: &[u8; 32]) -> String {
-    use std::fmt::Write as _;
-    let mut output = String::with_capacity(64);
-    for byte in bytes {
-        let _ = write!(output, "{byte:02x}");
-    }
-    output
-}
-
 /// The write path's view of the extracted-column descriptors (D-42): the
 /// per-collection fields whose values the document INSERT carries, the
 /// active descriptors whose conditions a scan may push, and the cached
@@ -1924,7 +1915,10 @@ impl SqliteStorage {
         if allow_create {
             flags |= OpenFlags::SQLITE_OPEN_CREATE;
         }
-        let mut writer = raw_connection(&database_path, flags, encryption.as_deref())?;
+        let mut writer = raw_connection(&database_path, flags, encryption.as_deref()).map_err(|error| {
+            eprintln!("raw connection {:?}: {error:?}", database_path);
+            error
+        })?;
         if database_exists || !allow_create {
             let legacy = validate_database_binding(&writer, &expected_binding)?;
             if !legacy {
