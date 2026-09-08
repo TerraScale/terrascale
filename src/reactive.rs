@@ -1400,6 +1400,9 @@ impl LiveSubscription {
     /// Poll and apply one immutable log response.
     pub async fn next(&mut self) -> Result<PollOutcome> {
         if self.cancellation.is_cancelled() {
+            if let Some(socket) = self.socket.as_mut() {
+                socket.close().await;
+            }
             return Err(cancelled_error());
         }
         let offset = self

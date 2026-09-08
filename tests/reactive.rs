@@ -769,6 +769,10 @@ async fn websocket_live_subscription_uses_capability_and_decodes_event() {
             .send(Message::Binary(reactive_fixture("log").into()))
             .await
             .expect("event frame");
+        assert!(matches!(
+            socket.next().await.expect("close frame"),
+            Ok(Message::Close(_))
+        ));
     });
 
     let sdk = TerraScaleClient::new(

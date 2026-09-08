@@ -32,33 +32,61 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    pub(crate) async fn close(&mut self) {
+        let _ = self.socket.close(None).await;
+    }
+
     pub(crate) async fn next(
         &mut self,
         cancellation: &crate::reactive::CancellationToken,
     ) -> Result<Vec<u8>> {
-        let frame = tokio::select! {
-            _ = cancellation.cancelled() => return Err(crate::reactive::cancelled_error()),
-            frame = self.socket.next() => frame,
-        }
-        .ok_or_else(|| Error::transport("WebSocket closed"))?
-        .map_err(|error| Error::transport(format!("WebSocket receive failed: {error}")))?;
-        match frame {
-            Message::Binary(bytes) if bytes.len() <= MSGPACK_MAX_MESSAGE_BYTES => {
-                Ok(bytes.to_vec())
+        loop {
+            let frame = tokio::select! {
+                _ = cancellation.cancelled() => {
+                    let _ = self.socket.close(None).await;
+                    return Err(crate::reactive::cancelled_error());
+                }
+                frame = self.socket.next() => frame,
             }
-            Message::Binary(_) => Err(Error::invalid_response(
-                "reactive WebSocket frame exceeds 8 MiB",
-            )),
-            Message::Text(_) => Err(Error::new(
-                ErrorKind::InvalidResponse,
-                "malformed_frame",
-                "reactive WebSocket frames must be binary MessagePack",
-            )),
-            _ => Err(Error::new(
-                ErrorKind::InvalidResponse,
-                "malformed_frame",
-                "reactive WebSocket frame is not binary MessagePack",
-            )),
+            .ok_or_else(|| Error::transport("WebSocket closed"))?
+            .map_err(|error| Error::transport(format!("WebSocket receive failed: {error}")))?;
+            match frame {
+                Message::Binary(bytes) if bytes.len() <= MSGPACK_MAX_MESSAGE_BYTES => {
+                    return Ok(bytes.to_vec());
+                }
+                Message::Binary(_) => {
+                    return Err(Error::invalid_response(
+                        "reactive WebSocket frame exceeds 8 MiB",
+                    ));
+                }
+                Message::Ping(payload) => {
+                    self.socket
+                        .send(Message::Pong(payload))
+                        .await
+                        .map_err(|error| {
+                            Error::transport(format!("WebSocket pong failed: {error}"))
+                        })?;
+                }
+                Message::Pong(_) => {}
+                Message::Close(frame) => {
+                    let _ = self.socket.close(frame);
+                    return Err(Error::transport("WebSocket closed"));
+                }
+                Message::Text(_) => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidResponse,
+                        "malformed_frame",
+                        "reactive WebSocket frames must be binary MessagePack",
+                    ));
+                }
+                Message::Frame(_) => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidResponse,
+                        "malformed_frame",
+                        "reactive WebSocket frame is not binary MessagePack",
+                    ));
+                }
+            }
         }
     }
 }
