@@ -1459,12 +1459,7 @@ async fn placement_headers(
         .admitted_databases
         .as_ref()
         .and_then(|registry| registry.resolve_metadata(&database).ok().flatten())
-        .map(|database| {
-            (
-                database.record.regions.join(","),
-                database.record.residency.clone(),
-            )
-        });
+        .map(|database| (database.record.regions.join(","), database.record.residency.clone()));
     let headers = match headers {
         Some(headers) => headers,
         None => match database_record(&state, &database) {
