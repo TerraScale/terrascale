@@ -213,6 +213,16 @@ export class ReactiveQueryObserver<TValue> {
   #onError(generation: number, cause: unknown): void {
     if (generation !== this.#generation || this.#abort?.signal.aborted) return;
     const error = normalizeReactiveError(cause, "subscription");
+    // A subscription error is terminal for this delivery generation. Fence
+    // late stream events before aborting and disposing the transport so an
+    // already reported error cannot be replaced by a subsequent value.
+    ++this.#generation;
+    this.#abort?.abort();
+    this.#abort = undefined;
+    const cleanup = this.#cleanup;
+    this.#cleanup = undefined;
+    this.#started = false;
+    cleanup?.();
     this.#setState({
       ...this.#state,
       status: "error",

@@ -5,6 +5,7 @@ import {
   ReactiveMutationObserver,
   ReactiveQueryObserver,
   createReactiveHttpQuery,
+  type ReactiveQueryCallbacks,
   type ReactiveHttpEvent,
   type ReactiveQuerySource,
 } from "./core.js";
@@ -48,6 +49,45 @@ describe("reactive hook core", () => {
     assert.equal(observer.getSnapshot().error?.kind, "subscription");
     assert.equal(observer.getSnapshot().error?.message, "expired");
     unsubscribe();
+  });
+
+  test("terminates a failed stream and preserves its final error", () => {
+    let emit: ReactiveQueryCallbacks<string> | undefined;
+    let signal: AbortSignal | undefined;
+    let disposed = 0;
+    const observer = new ReactiveQueryObserver<string>({
+      subscribe: (callbacks, context) => {
+        emit = callbacks;
+        signal = context.signal;
+        return () => { disposed++; };
+      },
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    emit!.error(new Error("stream failed"));
+    assert.equal(observer.getSnapshot().status, "error");
+    assert.equal(observer.getSnapshot().error?.message, "stream failed");
+    assert.equal(disposed, 1);
+    emit!.next("late");
+    emit!.reset({ reason: "generation-changed" });
+    assert.equal(observer.getSnapshot().status, "error");
+    assert.equal(observer.getSnapshot().data, undefined);
+    assert.equal(signal?.aborted, true);
+    unsubscribe();
+  });
+
+  test("disposes an asynchronously acquired stream after cancellation", async () => {
+    let resolveCleanup!: () => void;
+    let disposed = 0;
+    const observer = new ReactiveQueryObserver<string>({
+      subscribe: () => new Promise<() => void>(resolve => {
+        resolveCleanup = () => resolve(() => { disposed++; });
+      }),
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    unsubscribe();
+    resolveCleanup();
+    await flush();
+    assert.equal(disposed, 1);
   });
 
   test("maps typed HTTP events without owning a route or fetch implementation", () => {
