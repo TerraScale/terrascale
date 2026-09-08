@@ -4,13 +4,15 @@
 //! journal with `synchronous = FULL` and a five-second busy timeout on every
 //! connection; one table `users(tenant, id, name, "group", payload)` with a
 //! primary key on `(tenant, id)` and an index on `(tenant, name)` created
-//! before warm-up; one connection per concurrency slot with prepared
-//! statements reused for every operation; autocommit per statement. Each
-//! slot drives its connection through its own current-thread tokio runtime,
-//! `block_on` per operation — the standard shape for a synchronous caller
-//! of an async engine, and the closest embedded match to how every other
-//! reference in this lane is driven. There is no server: the measured member
-//! is this driver's own process, which the receipt states in `limits`.
+//! before warm-up; one connection per concurrency slot taking a statement
+//! from the connection's cache per operation (a statement held across the
+//! lane pins its prepare-time snapshot, which sibling writers invalidate —
+//! the stale-snapshot failure the first smoke run caught); autocommit per
+//! statement. Each slot drives its connection through its own current-thread
+//! tokio runtime, `block_on` per operation — the standard shape for a
+//! synchronous caller of an async engine, and the closest embedded match to
+//! how every other reference in this lane is driven. There is no server: the
+//! measured member is this driver's own process, stated in `limits`.
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -98,7 +100,8 @@ impl Backend for TursoBackend {
 
     fn client_transport(&self) -> &'static str {
         "turso crate, one embedded async connection per concurrency slot driven through a \
-         current-thread runtime, prepared statements, autocommit per statement"
+         current-thread runtime, connection-cached statement per operation, autocommit per \
+         statement"
     }
 
     fn setup(&mut self, _config: &LaneConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -149,33 +152,8 @@ impl Backend for TursoBackend {
             .enable_all()
             .build()?;
         let connection = self.database.connect()?;
-        let (read, write, query) = runtime.block_on(async {
-            pin(&connection).await?;
-            let read = connection
-                .prepare(
-                    "SELECT tenant, id, name, \"group\", payload FROM users \
-                     WHERE tenant = ?1 AND id = ?2",
-                )
-                .await?;
-            let write = connection
-                .prepare(
-                    "INSERT INTO users(tenant, id, name, \"group\", payload) \
-                     VALUES (?1, ?2, ?3, ?4, ?5) \
-                     ON CONFLICT (tenant, id) DO UPDATE SET \
-                         name = excluded.name, \
-                         \"group\" = excluded.\"group\", \
-                         payload = excluded.payload",
-                )
-                .await?;
-            let query = connection
-                .prepare(
-                    "SELECT id, name FROM users WHERE tenant = ?1 AND name = ?2 \
-                     ORDER BY name LIMIT 1",
-                )
-                .await?;
-            Ok::<_, turso::Error>((read, write, query))
-        })?;
-        Ok(Box::new(TursoSlot { runtime, connection, read, write, query }))
+        runtime.block_on(pin(&connection))?;
+        Ok(Box::new(TursoSlot { runtime, connection }))
     }
 
     fn limits(&self) -> Vec<String> {
@@ -195,17 +173,14 @@ impl Backend for TursoBackend {
     }
 }
 
-/// One concurrency slot: statements prepared once on its own connection and
-/// the current-thread runtime that drives them. The connection stays in the
-/// slot because a stale-snapshot failure leaves a dangling transaction that
-/// only a connection-level `ROLLBACK` clears — retrying the statement alone
-/// would reuse the stale snapshot forever.
+/// One concurrency slot: its own connection and the current-thread runtime
+/// that drives it. Statements come from the connection's cache per
+/// operation: a statement reused across the lane pinning its prepare-time
+/// snapshot is exactly the stale-snapshot failure the smoke run caught, so
+/// the slot deliberately keeps no long-lived statements.
 struct TursoSlot {
     runtime: tokio::runtime::Runtime,
     connection: turso::Connection,
-    read: turso::Statement,
-    write: turso::Statement,
-    query: turso::Statement,
 }
 
 impl TursoSlot {
@@ -235,11 +210,16 @@ impl Slot for TursoSlot {
     fn read(&mut self, seeded_index: usize) -> Result<(), Box<dyn Error + Send + Sync>> {
         let tenant = document::TENANT.to_owned();
         let id = document::seeded_id(seeded_index);
-        let statement = &mut self.read;
-        let runtime = &self.runtime;
         Self::drive(
-            runtime,
+            &self.runtime,
             async {
+                let mut statement = self
+                    .connection
+                    .prepare_cached(
+                        "SELECT tenant, id, name, \"group\", payload FROM users \
+                         WHERE tenant = ?1 AND id = ?2",
+                    )
+                    .await?;
                 let mut rows = statement.query(turso::params![tenant, id]).await?;
                 match rows.next().await? {
                     Some(_) => Ok(()),
@@ -255,7 +235,6 @@ impl Slot for TursoSlot {
         let id = document::measured_id(doc_index);
         let name = document::MEASURED_NAME.to_owned();
         let payload = document::payload();
-        let statement = &mut self.write;
         let runtime = &self.runtime;
         let connection = &self.connection;
         let deadline = std::time::Instant::now() + WRITE_RETRY_DEADLINE;
@@ -267,7 +246,6 @@ impl Slot for TursoSlot {
             // (a reused prepared statement pins its prepare-time snapshot,
             // which any sibling writer instantly invalidates), autocommit,
             // retry on conflict.
-            let _ = &mut *statement;
             let result = runtime.block_on(async {
                 connection
                     .execute(
@@ -313,11 +291,16 @@ impl Slot for TursoSlot {
     fn query(&mut self, seeded_index: usize) -> Result<(), Box<dyn Error + Send + Sync>> {
         let tenant = document::TENANT.to_owned();
         let name = document::seeded_name(seeded_index);
-        let statement = &mut self.query;
-        let runtime = &self.runtime;
         Self::drive(
-            runtime,
+            &self.runtime,
             async {
+                let mut statement = self
+                    .connection
+                    .prepare_cached(
+                        "SELECT id, name FROM users WHERE tenant = ?1 AND name = ?2 \
+                         ORDER BY name LIMIT 1",
+                    )
+                    .await?;
                 let mut rows = statement.query(turso::params![tenant, name]).await?;
                 match rows.next().await? {
                     Some(_) => Ok(()),
