@@ -177,9 +177,7 @@ impl Engine {
             use std::os::unix::fs::DirBuilderExt;
             builder.mode(0o700);
         }
-        builder.create(&staging).map_err(|error| {
-            EngineOpenError::StorageUnavailable
-        })?;
+        builder.create(&staging).map_err(|_| EngineOpenError::StorageUnavailable)?;
         let result = (|| {
             crate::storage::load_or_create(
                 &staging,
@@ -189,7 +187,7 @@ impl Engine {
             .map_err(|_| EngineOpenError::FormatMismatch)?;
             let source_owner = source.database_owner();
             let mut source_path = None;
-        let registration = source
+            let registration = source
                 .with_quiescent_wal(|source_location| {
                     source_path = Some(source_location.to_owned());
                     crate::storage::copy_encrypted_snapshot(
@@ -217,7 +215,7 @@ impl Engine {
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            if let Err(error) = fs::rename(&staging, target) {
+            if fs::rename(&staging, target).is_err() {
                 // Another restore may have won the target rename while this
                 // source was quiesced. Re-read the durable marker to make an
                 // exact same-operation loser idempotent; a different marker
@@ -354,7 +352,8 @@ fn transform_snapshot(
         .execute("INSERT INTO meta(key,value) VALUES('branch_restore_cut',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [cut])
         .map_err(|_| EngineOpenError::StorageUnavailable)?;
     transaction.commit().map_err(|_| EngineOpenError::StorageUnavailable)?;
-    connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
         .map_err(|_| EngineOpenError::StorageUnavailable)?;
     Ok(cut)
 }

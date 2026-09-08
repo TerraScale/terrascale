@@ -1907,7 +1907,10 @@ impl SqliteStorage {
         let encryption = keys
             .map(|keys| encrypted_vfs::EncryptedVfs::register(&database_path, keys))
             .transpose()
-            .map_err(|_| StorageOpenError::Unavailable)?;
+            .map_err(|error| {
+                eprintln!("register fail {:?}: {error:?}", database_path);
+                StorageOpenError::Unavailable
+            })?;
         let expected_binding = database_binding(dir)
             .map_err(|_| StorageOpenError::Unavailable)?
             .unwrap_or_else(|| format!("path-{}", local_origin_for(&database_path)));
@@ -1918,9 +1921,17 @@ impl SqliteStorage {
         if allow_create {
             flags |= OpenFlags::SQLITE_OPEN_CREATE;
         }
-        let mut writer = raw_connection(&database_path, flags, encryption.as_deref())?;
+        let mut writer =
+            raw_connection(&database_path, flags, encryption.as_deref()).map_err(|error| {
+                eprintln!("raw open {:?}: {error:?}", database_path);
+                error
+            })?;
         if database_exists || !allow_create {
-            let legacy = validate_database_binding(&writer, &expected_binding)?;
+            let legacy =
+                validate_database_binding(&writer, &expected_binding).map_err(|error| {
+                    eprintln!("binding {:?}: {error:?}", database_path);
+                    error
+                })?;
             if !legacy {
                 // A bound file with a missing root is corrupt, not a fresh
                 // legacy file.  Do this check before WAL/schema pragmas so
@@ -1935,9 +1946,15 @@ impl SqliteStorage {
                 }
             }
         }
-        configure_connection(&writer)?;
+        configure_connection(&writer).map_err(|error| {
+            eprintln!("configure {:?}: {error:?}", database_path);
+            error
+        })?;
         {
-            let transaction = writer.transaction().map_err(|_| StorageOpenError::Unavailable)?;
+            let transaction = writer.transaction().map_err(|error| {
+                eprintln!("writer tx {:?}: {error:?}", database_path);
+                StorageOpenError::Unavailable
+            })?;
             let has_pruning_watermarks: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'journal_pruning')",
                 [], |row| row.get(0),

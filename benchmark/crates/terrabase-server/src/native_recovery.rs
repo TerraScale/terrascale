@@ -474,6 +474,25 @@ impl NativeRecoveryRuntime {
             && target.database.record.residency == request.residency)
     }
 
+    fn restore_target_is_paused(
+        &self,
+        request: &NativeRestoreRequest,
+    ) -> Result<bool, NativeRecoveryError> {
+        let target = self
+            .registry
+            .resolve_lifecycle(&request.target_database_id)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::VerificationFailed)?;
+        let tenant = terrabase::types::TenantId::try_new(&target.record.tenant_id)
+            .map_err(|_| NativeRecoveryError::VerificationFailed)?;
+        let lifecycle = target
+            .host
+            .engine()
+            .lifecycle_state(&target.host.engine().scope_for(&tenant))
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
+        Ok(lifecycle.paused && !lifecycle.access_revoked())
+    }
+
     /// Opens durable native recovery operations for the admitted worker fleet.
     ///
     /// # Errors
@@ -717,6 +736,9 @@ impl NativeRecoveryRuntime {
             }
             tx.commit().map_err(|_| NativeRecoveryError::Unavailable)?;
             return Ok(existing);
+        }
+        if !self.restore_target_is_paused(&request)? {
+            return Err(NativeRecoveryError::VerificationFailed);
         }
         if !self.restore_residency_matches(&request)? {
             return Err(NativeRecoveryError::VerificationFailed);
@@ -1474,6 +1496,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn active_restore_target_is_rejected_before_durable_acceptance() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let runtime_root = root.join("restore-active-target");
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+            Arc::new(RejectRestore),
+        )
+        .unwrap();
+        worker.shutdown().await.unwrap();
+        *runtime.lifecycle.lock().unwrap() = false;
+        let request = NativeRestoreRequest {
+            operation_id: "active-target".into(),
+            source_owner: format!("{}/{}", records[0].tenant_id, records[0].project_id),
+            source_database_id: records[0].database_id.clone(),
+            recovery_point_id: "a".repeat(64),
+            recovery_point_digest: "a".repeat(64),
+            target_owner: format!("{}/{}", records[1].tenant_id, records[1].project_id),
+            target_database_id: records[1].database_id.clone(),
+            journal_cut: "1".into(),
+            restore_epoch: 1,
+            authority_epoch: 7,
+            authority_lease: "lease".into(),
+            accepted_proof_digest: "a".repeat(64),
+            operation_grant: vec![1],
+            provider: "oci".into(),
+            selection: NativeRestoreSelection::PointId("a".repeat(64)),
+            residency: records[0].residency.clone(),
+            placement: records[0].regions.clone(),
+        };
+        assert_eq!(
+            runtime.admit_restore(request.clone()),
+            Err(NativeRecoveryError::VerificationFailed)
+        );
+        assert!(runtime.restore_status(&request.operation_id).unwrap().is_none());
+        drop(runtime);
+        drop(member);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn real_constructor_idle_shutdown_closes_admission_fence() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
@@ -1539,6 +1605,7 @@ mod tests {
     async fn restore_admission_bounds_survive_concurrency_pruning_failure_and_reopen() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
+        registry.pause(&records[1].database_id, "restore-bounds").unwrap();
         let runtime_root = root.join("restore-bounds");
         let bounds = NativeRecoveryLimits { pending_operations: 2, retained_operations: 3 };
         let (runtime, worker) = NativeRecoveryRuntime::new(
@@ -1812,6 +1879,7 @@ mod tests {
         .unwrap();
         worker.shutdown().await.unwrap();
         let target = &records[1];
+        registry.pause(&target.database_id, "rpc-retry-target").unwrap();
         *runtime.lifecycle.lock().unwrap() = false;
         let source = records[0].database_id.clone();
         let owner = format!("{}/{}", target.tenant_id, target.project_id);

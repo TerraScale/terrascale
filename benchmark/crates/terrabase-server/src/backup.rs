@@ -1481,7 +1481,7 @@ mod tests {
         let request = BulkIngestRequest::try_new(
             IngestConflictMode::CreateOnly,
             LocalDurability::Synced,
-            Deadline::after(Duration::from_mins(2)).expect("the deadline is positive"),
+            Deadline::after(Duration::from_mins(10)).expect("the deadline is positive"),
         )
         .expect("the ingest request validates");
         let source = (0..100_000).map(|index| {

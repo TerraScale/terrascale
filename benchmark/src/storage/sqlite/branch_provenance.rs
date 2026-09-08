@@ -107,37 +107,46 @@ pub(crate) fn transform_provenance(
         }
     }
     // Keep request and commit replacements independent because a document may
-    // reference different source operations. Preserve unmapped legacy request
-    // identities while avoiding the redundant third EXISTS probe.
+    // reference different source operations. Joining the map lets SQLite drive
+    // these updates from the compact temporary primary key instead of running
+    // a correlated lookup for every retained row.
     transaction
         .execute(
             "UPDATE documents
-             SET client_request_ulid = COALESCE(
-                     (SELECT replacement FROM branch_identity_map
-                      WHERE tenant=documents.tenant AND original=documents.client_request_ulid),
-                     client_request_ulid),
-                 commit_ulid = COALESCE(
-                     (SELECT replacement FROM branch_identity_map
-                      WHERE tenant=documents.tenant AND original=documents.commit_ulid),
-                     commit_ulid)",
+             SET client_request_ulid = map.replacement
+             FROM branch_identity_map AS map
+             WHERE documents.tenant = map.tenant
+               AND documents.client_request_ulid = map.original",
+            [],
+        )
+        .map_err(|_| ())?;
+    transaction
+        .execute(
+            "UPDATE documents
+             SET commit_ulid = map.replacement
+             FROM branch_identity_map AS map
+             WHERE documents.tenant = map.tenant
+               AND documents.commit_ulid = map.original",
             [],
         )
         .map_err(|_| ())?;
     transaction
         .execute(
             "UPDATE merge_conflicts
-             SET loser_commit_ulid = COALESCE(
-                     (SELECT replacement FROM branch_identity_map
-                      WHERE tenant=merge_conflicts.tenant AND original=merge_conflicts.loser_commit_ulid),
-                     loser_commit_ulid),
-                 winner_commit_ulid = COALESCE(
-                     (SELECT replacement FROM branch_identity_map
-                      WHERE tenant=merge_conflicts.tenant AND original=merge_conflicts.winner_commit_ulid),
-                     winner_commit_ulid)
-             WHERE EXISTS (SELECT 1 FROM branch_identity_map
-                           WHERE tenant=merge_conflicts.tenant
-                             AND (original=merge_conflicts.loser_commit_ulid
-                               OR original=merge_conflicts.winner_commit_ulid))",
+             SET loser_commit_ulid = map.replacement
+             FROM branch_identity_map AS map
+             WHERE merge_conflicts.tenant = map.tenant
+               AND merge_conflicts.loser_commit_ulid = map.original",
+            [],
+        )
+        .map_err(|_| ())?;
+    transaction
+        .execute(
+            "UPDATE merge_conflicts
+             SET winner_commit_ulid = map.replacement
+             FROM branch_identity_map AS map
+             WHERE merge_conflicts.tenant = map.tenant
+               AND merge_conflicts.winner_commit_ulid = map.original",
             [],
         )
         .map_err(|_| ())?;
@@ -153,13 +162,12 @@ pub(crate) fn transform_provenance(
     transaction
         .execute(
             "UPDATE operation_facts
-             SET client_request_ulid = (SELECT replacement FROM branch_identity_map
-                                        WHERE tenant=operation_facts.tenant
-                                          AND original=operation_facts.client_request_ulid),
-                 writes=0, bytes=0
-             WHERE EXISTS (SELECT 1 FROM branch_identity_map
-                           WHERE tenant=operation_facts.tenant
-                             AND original=operation_facts.client_request_ulid)",
+             SET client_request_ulid = map.replacement,
+                 writes = 0,
+                 bytes = 0
+             FROM branch_identity_map AS map
+             WHERE operation_facts.tenant = map.tenant
+               AND operation_facts.client_request_ulid = map.original",
             [],
         )
         .map_err(|_| ())?;
