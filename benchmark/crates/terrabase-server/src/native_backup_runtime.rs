@@ -6,12 +6,13 @@
 //! intentionally has no default provider, key, filesystem, or subprocess
 //! fallback.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use terrabase::backup::object_store::Provider;
+pub use terrabase::backup::worker::FleetError;
 use terrabase::backup::worker::{
-    BackupEngineHandle, BackupKeys, FleetError, FleetLimits, NativeBackupFleet, StreamConfig,
+    BackupEngineHandle, BackupKeys, FleetLimits, NativeBackupFleet, StreamConfig,
 };
 use terrabase::backup::{
     BackupEnvelope, BackupEnvelopeParticipant, BackupManifest, PlacementLock,
@@ -99,7 +100,7 @@ impl std::error::Error for NativeBackupRuntimeError {}
 /// Shared production owner for all admitted database backup streams.
 pub struct NativeBackupRuntime {
     fleet: Arc<Mutex<NativeBackupFleet>>,
-    databases: Mutex<BTreeSet<String>>,
+    databases: Mutex<BTreeMap<String, PlacementLock>>,
     incidents: Mutex<Vec<(String, FleetError)>>,
 }
 
@@ -179,9 +180,10 @@ impl NativeBackupRuntime {
         inputs: impl IntoIterator<Item = NativeBackupInput>,
     ) -> Result<Self, NativeBackupRuntimeError> {
         let mut fleet = NativeBackupFleet::new(limits).map_err(NativeBackupRuntimeError::Fleet)?;
-        let mut databases = BTreeSet::new();
+        let mut databases = BTreeMap::new();
         for input in inputs {
             let database = input.engine.engine().database_id().to_string();
+            let placement = input.placement.clone();
             fleet
                 .attach(StreamConfig {
                     engine: input.engine,
@@ -194,7 +196,7 @@ impl NativeBackupRuntime {
                     placement: input.placement,
                 })
                 .map_err(NativeBackupRuntimeError::Fleet)?;
-            databases.insert(database.clone());
+            databases.insert(database.clone(), placement);
         }
         Ok(Self {
             fleet: Arc::new(Mutex::new(fleet)),
@@ -303,14 +305,7 @@ impl NativeBackupRuntime {
         identity: &terrabase::backup::RestoreIdentity,
     ) -> Result<terrabase::backup::RecoveryReceipt, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
-        if !self
-            .databases
-            .lock()
-            .map_err(|_| NativeBackupRuntimeError::Poisoned)?
-            .contains(database)
-        {
-            return Err(NativeBackupRuntimeError::Unavailable);
-        }
+        self.validate_restore_placement(database, placement)?;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet
             .restore_from_provider(database, provider, point, target, identity)
@@ -331,14 +326,7 @@ impl NativeBackupRuntime {
     ) -> Result<terrabase::backup::RecoveryReceipt, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
         let millis = Self::unix_seconds_to_millis(at_seconds)?;
-        if !self
-            .databases
-            .lock()
-            .map_err(|_| NativeBackupRuntimeError::Poisoned)?
-            .contains(database)
-        {
-            return Err(NativeBackupRuntimeError::Unavailable);
-        }
+        self.validate_restore_placement(database, placement)?;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet
             .restore_at_from_provider(database, provider, millis, target, identity)
@@ -358,14 +346,7 @@ impl NativeBackupRuntime {
         identity: &terrabase::backup::RestoreIdentity,
     ) -> Result<terrabase::backup::RecoveryReceipt, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
-        if !self
-            .databases
-            .lock()
-            .map_err(|_| NativeBackupRuntimeError::Poisoned)?
-            .contains(database)
-        {
-            return Err(NativeBackupRuntimeError::Unavailable);
-        }
+        self.validate_restore_placement(database, placement)?;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet
             .restore_at_from_provider(database, provider, at_millis, target, identity)
@@ -376,6 +357,7 @@ impl NativeBackupRuntime {
     /// Dynamically admits one accepted stream under the shared fleet lock.
     pub fn attach(&self, input: NativeBackupInput) -> Result<(), NativeBackupRuntimeError> {
         let database = input.engine.engine().database_id().to_string();
+        let placement = input.placement.clone();
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet
             .attach(StreamConfig {
@@ -389,7 +371,10 @@ impl NativeBackupRuntime {
                 placement: input.placement,
             })
             .map_err(NativeBackupRuntimeError::Fleet)?;
-        self.databases.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?.insert(database);
+        self.databases
+            .lock()
+            .map_err(|_| NativeBackupRuntimeError::Poisoned)?
+            .insert(database, placement);
         Ok(())
     }
 
@@ -424,7 +409,10 @@ impl NativeBackupRuntime {
     pub fn detach(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet.detach(database);
-        self.databases.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?.remove(database);
+        self.databases
+            .lock()
+            .map_err(|_| NativeBackupRuntimeError::Poisoned)?
+            .remove(database);
         Ok(())
     }
 
@@ -436,7 +424,7 @@ impl NativeBackupRuntime {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         let databases =
             self.databases.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?.clone();
-        for database in &databases {
+        for database in databases.keys() {
             fleet.detach(database);
         }
         self.databases.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?.clear();
@@ -446,7 +434,7 @@ impl NativeBackupRuntime {
     /// Returns whether this owner still has an admitted stream.
     #[must_use]
     pub fn contains(&self, database: &str) -> bool {
-        self.databases.lock().map(|databases| databases.contains(database)).unwrap_or(false)
+        self.databases.lock().map(|databases| databases.contains_key(database)).unwrap_or(false)
     }
 
     /// Returns whether a canonical admitted database has a native stream.
@@ -459,7 +447,7 @@ impl NativeBackupRuntime {
             .databases
             .lock()
             .map_err(|_| NativeBackupRuntimeError::Poisoned)?
-            .contains(database))
+            .contains_key(database))
     }
 
     /// Reads current protection from every configured provider and the source
@@ -469,12 +457,24 @@ impl NativeBackupRuntime {
             .databases
             .lock()
             .map_err(|_| NativeBackupRuntimeError::Poisoned)?
-            .contains(database)
+            .contains_key(database)
         {
             return Err(NativeBackupRuntimeError::Unavailable);
         }
         let fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         Ok(fleet.observe_protection(database).map_err(NativeBackupRuntimeError::Fleet)?.protected)
+    }
+
+    fn validate_restore_placement(
+        &self,
+        database: &str,
+        placement: &PlacementLock,
+    ) -> Result<(), NativeBackupRuntimeError> {
+        let databases = self.databases.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+        if databases.get(database) != Some(placement) {
+            return Err(NativeBackupRuntimeError::Unavailable);
+        }
+        Ok(())
     }
 }
 

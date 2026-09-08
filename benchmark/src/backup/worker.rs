@@ -23,6 +23,7 @@ use super::{
 };
 use crate::encryption::{DatabaseKeyLease, EncryptionError};
 use crate::engine::Engine;
+use crate::observability::{BackupMode, TaskOutcome};
 use crate::types::StorageSequence;
 
 /// Retains the admitted engine owner for the complete backup worker lifetime.
@@ -195,6 +196,10 @@ pub struct NativeBackupFleet {
     limits: FleetLimits,
     streams: BTreeMap<String, Stream>,
     suspended: BTreeMap<String, SuspendedStream>,
+    // Detached databases remain addressable until the lifecycle owner has
+    // completed physical deletion. Their stream is closed, but its policy
+    // history is still required to purge every retained destination.
+    detached: BTreeMap<String, Stream>,
 }
 
 impl NativeBackupFleet {
@@ -205,6 +210,9 @@ impl NativeBackupFleet {
         }
         if let Some(stream) = self.suspended.get(database) {
             return Ok(stream.destinations.iter().map(|(provider, _)| *provider).collect());
+        }
+        if let Some(stream) = self.detached.get(database) {
+            return Ok(stream.config.destinations.iter().map(|(provider, _)| *provider).collect());
         }
         Err(FleetError::Configuration)
     }
@@ -434,6 +442,14 @@ impl NativeBackupFleet {
         database: &str,
         operation_id: &str,
     ) -> Result<LifecycleReceipt, FleetError> {
+        // A soft-delete detaches capture while retaining this closed stream's
+        // policy history. Reattach it only for the serialized purge so the
+        // physical deletion path can reach every historical destination.
+        if !self.streams.contains_key(database)
+            && let Some(stream) = self.detached.remove(database)
+        {
+            self.streams.insert(database.to_owned(), stream);
+        }
         let destinations = self
             .streams
             .get(database)
@@ -444,6 +460,7 @@ impl NativeBackupFleet {
             .map(|(_, destination)| Arc::clone(destination))
             .collect::<Vec<_>>();
         let removed = self.purge_retained(database, &destinations).await?;
+        self.streams.remove(database);
         Ok(LifecycleReceipt {
             operation_id: operation_id.to_owned(),
             database: database.to_owned(),
@@ -467,7 +484,12 @@ impl NativeBackupFleet {
         {
             return Err(FleetError::Configuration);
         }
-        Ok(Self { limits, streams: BTreeMap::new(), suspended: BTreeMap::new() })
+        Ok(Self {
+            limits,
+            streams: BTreeMap::new(),
+            suspended: BTreeMap::new(),
+            detached: BTreeMap::new(),
+        })
     }
 
     /// Attaches one explicitly catalogued stream and pins its retention floor.
@@ -481,9 +503,11 @@ impl NativeBackupFleet {
         if !matches!(config.retention_days, 1 | 7 | 30 | 35)
             || config.policy_revision.len() > 256
             || config.policy_revision.chars().any(char::is_control)
-            || self.streams.len() + self.suspended.len() >= self.limits.streams
+            || self.streams.len() + self.suspended.len() + self.detached.len()
+                >= self.limits.streams
             || self.streams.contains_key(&identity)
             || self.suspended.contains_key(&identity)
+            || self.detached.contains_key(&identity)
             || config.policy_revision.trim().is_empty()
             || config.destinations.is_empty()
             || config.destinations.iter().any(|(provider, destination)| {
@@ -602,7 +626,11 @@ impl NativeBackupFleet {
         &self,
         database: &str,
     ) -> Result<Vec<super::BackupManifest>, FleetError> {
-        let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        let stream = self
+            .streams
+            .get(database)
+            .or_else(|| self.detached.get(database))
+            .ok_or(FleetError::Configuration)?;
         let mut points = inventory_points(stream)?;
         points.sort_by_key(|point| (point.captured_unix_millis(), point.boundary_sequence()));
         Ok(points)
@@ -815,7 +843,11 @@ impl NativeBackupFleet {
     /// access, stops metering and performs authorized key/artifact deletion.
     /// A running tick must finish before this exclusive operation can execute.
     pub fn detach(&mut self, database: &str) {
-        self.streams.remove(database);
+        if let Some(mut stream) = self.streams.remove(database) {
+            stream.closing = true;
+            stream.paused = true;
+            self.detached.insert(database.to_owned(), stream);
+        }
         self.suspended.remove(database);
     }
 
@@ -977,6 +1009,14 @@ impl NativeBackupFleet {
             }
             let result = sync_stream(identity, stream, self.limits).await;
             stream.due = Instant::now() + Duration::from_secs(10);
+            let metrics = stream.config.engine.engine().metrics();
+            metrics.record_backup(
+                BackupMode::Continuous,
+                result.as_ref().map_or(TaskOutcome::Error, |_| TaskOutcome::Success),
+            );
+            if let Some(verified_at) = stream.verified_at {
+                metrics.set_backup_last_success_age(BackupMode::Continuous, verified_at.elapsed());
+            }
             match result {
                 Ok(()) => {
                     stream.health.failures = 0;
@@ -1954,6 +1994,11 @@ mod tests {
         assert_eq!(fleet.retained_points(&identity).unwrap().len(), 1);
         tokio::time::sleep(Duration::from_millis(10_010)).await;
         assert!(fleet.sync_once().await.is_empty());
+        let metrics = engine.metrics().snapshot();
+        assert_eq!(metrics.backup_runs(), &[(BackupMode::Continuous, TaskOutcome::Success, 1)]);
+        assert_eq!(metrics.backup_last_success_age().len(), 1);
+        assert_eq!(metrics.backup_last_success_age()[0].0, BackupMode::Continuous);
+        assert!(metrics.backup_last_success_age()[0].1 < 1.0);
         let latest = fleet.retained_points(&identity).unwrap().pop().unwrap();
         assert_eq!(latest.boundary_sequence(), first.boundary_sequence());
         assert!(latest.recoverable_through_unix_millis() > first.recoverable_through_unix_millis());
@@ -2615,6 +2660,10 @@ mod tests {
             fleet.health(&identity).unwrap().protected,
             "observation leaves historical receipt unchanged"
         );
+        // Soft-delete detaches capture but keeps the historical destination
+        // catalog alive until the physical deletion boundary.
+        fleet.detach(&identity);
+        assert!(fleet.retained_points(&identity).is_ok());
         let receipt =
             fleet.lifecycle_delete(&identity, "delete-after-policy-switch").await.unwrap();
         assert_eq!(receipt.action, "delete_owned_data");
@@ -2994,5 +3043,80 @@ mod tests {
         );
         assert!(source.list_points(&identity, 10).await.unwrap().is_empty());
         assert!(target.list_points(&identity, 10).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_delete_after_detach_purges_historical_destinations_at_boundary() {
+        let (_, engine) = open_engine("detached-delete-boundary");
+        let engine = Arc::new(engine);
+        let identity = engine.database_id().to_string();
+        let staging = location("detached-delete-boundary-staging");
+        let first = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            Arc::new(object_store::memory::InMemory::new()),
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let second = Arc::new(ObjectDestination::for_test(
+            Provider::Tigris,
+            Arc::new(object_store::memory::InMemory::new()),
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let mut fleet = NativeBackupFleet::new(FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
+            inventory_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 4,
+        })
+        .unwrap();
+        fleet
+            .attach(StreamConfig {
+                engine: Arc::clone(&engine) as Arc<dyn BackupEngineHandle>,
+                keys: keys(&engine),
+                destinations: vec![(Provider::Oci, Arc::clone(&first))],
+                historical_destinations: Vec::new(),
+                policy_revision: "initial".into(),
+                retention_days: 1,
+                staging: staging.clone(),
+                placement: PlacementLock::br_only(),
+            })
+            .unwrap();
+        committed(put(
+            &engine,
+            engine.database_owner().tenant().to_text().as_str(),
+            "detached-op",
+            "detached-doc",
+            "users",
+            text("value"),
+            LocalDurability::Synced,
+        ));
+        assert!(fleet.sync_once().await.is_empty());
+        assert_eq!(first.list_points(&identity, 4).await.unwrap().len(), 1);
+
+        fleet
+            .change_policy(&identity, "migrated", vec![(Provider::Tigris, Arc::clone(&second))])
+            .await
+            .unwrap();
+        assert_eq!(second.list_points(&identity, 4).await.unwrap().len(), 1);
+        fleet.detach(&identity);
+
+        // Detachment closes capture but retains the catalog needed to delete
+        // both the active and retired provider copies.
+        assert!(fleet.sync_once().await.is_empty());
+        assert!(fleet.retained_until_unix_millis(&identity).unwrap().is_some());
+        assert_eq!(
+            fleet.lifecycle_verify(&identity, "verify-detached").unwrap().database,
+            identity
+        );
+        assert_eq!(fleet.configured_providers(&identity).unwrap(), vec![Provider::Tigris]);
+
+        let receipt = fleet.lifecycle_delete(&identity, "delete-detached").await.unwrap();
+        assert_eq!(receipt.action, "delete_owned_data");
+        assert!(first.list_points(&identity, 4).await.unwrap().is_empty());
+        assert!(second.list_points(&identity, 4).await.unwrap().is_empty());
+        assert!(fleet.retained_until_unix_millis(&identity).is_err());
+        assert!(fleet.configured_providers(&identity).is_err());
+        assert!(!staging.exists());
     }
 }

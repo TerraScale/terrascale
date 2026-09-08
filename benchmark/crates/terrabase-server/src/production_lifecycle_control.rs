@@ -523,8 +523,8 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         {
             return Err("recovery source scope or placement mismatch".into());
         }
-        let (manifest, provider) = recovery
-            .resolve_recovery_point(
+        let envelope = recovery
+            .resolve_recovery_envelope(
                 &assignment.database,
                 &request.selection_kind,
                 &request.point_id,
@@ -532,6 +532,50 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             )
             .await
             .map_err(|_| "retained recovery point is unavailable or unverified")?;
+        let (
+            source_database,
+            recovery_point_id,
+            journal_cut,
+            captured_at_millis,
+            checksum,
+            row_count,
+            provider,
+        ) = if let Some((envelope, provider)) = envelope {
+            let journal_cut = envelope
+                .participants()
+                .iter()
+                .map(|participant| participant.boundary)
+                .max()
+                .unwrap_or_default();
+            (
+                envelope.database_id().to_owned(),
+                envelope.digest().to_owned(),
+                journal_cut.to_string(),
+                envelope.captured_unix_millis(),
+                envelope.logical_checksum(),
+                envelope.logical_documents(),
+                provider,
+            )
+        } else {
+            let (manifest, provider) = recovery
+                .resolve_recovery_point(
+                    &assignment.database,
+                    &request.selection_kind,
+                    &request.point_id,
+                    &database.record.regions,
+                )
+                .await
+                .map_err(|_| "retained recovery point is unavailable or unverified")?;
+            (
+                manifest.database_id().to_owned(),
+                manifest.identity().to_owned(),
+                manifest.boundary_sequence().get().to_string(),
+                manifest.captured_unix_millis(),
+                manifest.logical_checksum().to_owned(),
+                manifest.logical_documents(),
+                provider,
+            )
+        };
         let provider = match provider {
             terrabase::backup::object_store::Provider::Oci => {
                 terrabase_tbep::proto::terrabase::v1::RestoreProvider::Oci
@@ -542,14 +586,14 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         };
         Ok(terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointResponse {
             operation_id: request.operation_id.clone(),
-            source_database: manifest.database_id().to_owned(),
-            recovery_point_id: manifest.identity().to_owned(),
-            recovery_point_digest: manifest.identity().to_owned(),
-            journal_cut: manifest.boundary_sequence().get().to_string(),
+            source_database,
+            recovery_point_id: recovery_point_id.clone(),
+            recovery_point_digest: recovery_point_id,
+            journal_cut,
             provider: provider as i32,
-            captured_at_millis: manifest.captured_unix_millis(),
-            checksum: manifest.logical_checksum().to_owned(),
-            row_count: manifest.logical_documents(),
+            captured_at_millis,
+            checksum,
+            row_count,
             placement: database.record.regions.clone(),
         })
     }

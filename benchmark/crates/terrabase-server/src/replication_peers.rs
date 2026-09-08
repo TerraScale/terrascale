@@ -980,7 +980,10 @@ async fn session(
                 } else if bytes.starts_with(b"TBRP") {
                     let selected_cut = select_cut(cuts, runtime, progress, observations, scope, &connection).await?;
                     let repair = repair_lanes.get(&scope).cloned().ok_or("unassigned repair lane")?;
-                    let worker = runtime.clone();
+                    // `runtime` is borrowed through the session context; clone the
+                    // owned Arc before moving it into the blocking task so the
+                    // session can reacquire the engine for retention acknowledgement.
+                    let worker = Arc::clone(runtime);
                     let causal = lane.causal.clone().ok_or("repair requires causal lane")?;
                     let responses = tokio::task::spawn_blocking(move || {
                         let engine = worker.acquire_replication(&scope).map_err(failure)?;
@@ -1031,7 +1034,7 @@ async fn session(
                     sent.remove(&scope);
                 } else {
                     let causal = lane.causal.clone().ok_or_else(|| "unassigned causal lane".to_owned())?;
-                    let worker = runtime.clone();
+                    let worker = Arc::clone(runtime);
                     let (result, sequence, frontier, source_sequence) = tokio::task::spawn_blocking(move || {
                         let engine = worker.acquire_replication(&scope).map_err(failure)?;
                         let mut causal = causal.lock().map_err(failure)?;
@@ -1093,7 +1096,7 @@ async fn session(
                             },
                             WalCaptureStep::UpToDate => {
                                 let scope = lane.scope;
-                                let worker = runtime.clone();
+                                let worker = Arc::clone(runtime);
                                 let (tenant, frontier) = tokio::task::spawn_blocking(move || {
                                     let engine = worker.acquire_replication(&scope).map_err(failure)?;
                                     let tenant = engine.scope_for(&terrabase::types::TenantId::try_new(&scope.tenant().to_text()).map_err(failure)?);
@@ -1126,7 +1129,7 @@ async fn session(
                     }
                     if let Some(repair) = repair_lanes.get(&lane.scope).cloned() {
                         let selected_cut = select_cut(cuts, runtime, progress, observations, lane.scope, &connection).await?;
-                        let worker = runtime.clone();
+                        let worker = Arc::clone(runtime);
                         let scope = lane.scope;
                         let causal = lane.causal.clone().ok_or("repair requires causal lane")?;
                         let now = millis(started);
@@ -1155,7 +1158,7 @@ async fn session(
                         for frame in frames { connection.send_frame(&frame).await.map_err(failure)?; }
                     }
                     if let Some(causal) = lane.causal.clone() {
-                        let worker = runtime.clone();
+                        let worker = Arc::clone(runtime);
                         let scope = lane.scope;
                         let now = millis(started);
                         let (bytes, caught_up) = tokio::task::spawn_blocking(move || {
