@@ -12,7 +12,7 @@ import {
 } from "./regions.js";
 
 describe("RegionCode contract", () => {
-  test("exposes only the three registered uppercase codes", () => {
+  test("exposes launch codes while accepting dynamic catalog codes", () => {
     assert.deepEqual(terraScaleRegionCodes, ["GRU", "SFO", "FRA"]);
     assert.deepEqual(
       terraScaleRegions.map((region) => region.code),
@@ -31,6 +31,8 @@ describe("RegionCode contract", () => {
       assert.equal(isRegionCode(code), true);
       assert.equal(findRegion(code)?.code, code);
     }
+    assert.equal(parseRegionCode("IAD"), "IAD");
+    assert.equal(normalizeRegionCodes(["IAD", "GRU"]), ["IAD", "GRU"]);
   });
 
   test("rejects lowercase, aliases, whitespace, wrong lengths, non-ASCII, and unregistered codes", () => {
@@ -40,7 +42,6 @@ describe("RegionCode contract", () => {
       "fra",
       "Gru",
       "GRu",
-      "SJC",
       " GRU",
       "GRU ",
       "GRU\n",
@@ -50,16 +51,17 @@ describe("RegionCode contract", () => {
       "GRUU",
       "京",
       "GÉ",
-      "JFK",
-      "ABC",
-      "ZZZ",
+      "ABCDEFGHIJKLMNOPQ",
+      "AB/CD",
+      "ABC_1",
+      "ABC.",
     ];
 
     for (const code of invalidCodes) {
       assert.equal(canonicalRegionCode(code), undefined, code);
       assert.equal(isRegionCode(code), false, code);
       assert.equal(findRegion(code), undefined, code);
-      assert.throws(() => parseRegionCode(code), /exactly one of GRU, SFO, or FRA/u, code);
+      assert.throws(() => parseRegionCode(code), /uppercase Region code/u, code);
     }
     assert.equal(canonicalRegionCode(undefined), undefined);
   });
@@ -78,8 +80,8 @@ describe("RegionCode contract", () => {
       () => normalizeRegionCodes(Array.from({ length: 21 }, () => "GRU")),
       /between 1 and 20/u,
     );
-    for (const selection of [["gru"], [" GRU "], ["SJC"], ["京"], ["GRU", "JFK"]]) {
-      assert.throws(() => normalizeRegionCodes(selection), /exactly one of GRU, SFO, or FRA/u);
+    for (const selection of [["gru"], [" GRU "], ["京"], ["GRU", "ABC_"]]) {
+      assert.throws(() => normalizeRegionCodes(selection), /uppercase Region code/u);
     }
   });
 });

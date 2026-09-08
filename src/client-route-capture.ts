@@ -386,6 +386,10 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) => client.sql.execute(sampleIds.database, { sql: "SELECT * FROM users WHERE active = :active", parameters: { active: true } }),
   },
   {
+    client: "regions", operation: "list", routeName: "regions.list",
+    invoke: (client) => client.regions.list(),
+  },
+  {
     client: "regions", operation: "regions", routeName: "regions.regions",
     invoke: (client) => client.regions.memberStatus("GRU"),
   },

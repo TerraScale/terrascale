@@ -21,10 +21,20 @@ export type ContractBundle = {
   readonly cleanup: () => Promise<void>;
 };
 
+/** Resolve the edge-owned bundle separately from the TerraBase bundle. */
+export async function resolveEdgeContractBundle(): Promise<ContractBundle> {
+  const source = process.env.EDGE_CONTRACT_SOURCE ?? process.env.TERRASCALE_EDGE_CONTRACT_SOURCE;
+  if (source === undefined) {
+    throw new Error("contracts: edge contract source is not published; set EDGE_CONTRACT_SOURCE.");
+  }
+  return validateContractBundle(path.resolve(process.cwd(), source), async () => undefined, "edge");
+}
+
 type ContractManifest = {
   readonly schemaVersion: number;
   readonly contractVersion: string;
-  readonly artifacts: readonly { readonly path: string; readonly blake3: string }[];
+  readonly origin?: "terrabase" | "edge";
+  readonly artifacts: readonly { readonly path: string; readonly blake3?: string; readonly sha256?: string }[];
 };
 
 /** Resolve the producer-owned bundle; no Dashboard or sibling checkout inference is allowed. */
@@ -35,7 +45,7 @@ export async function resolveContractBundle(): Promise<ContractBundle> {
     ?? process.env.CONTRACT_REGISTRY_URL ?? process.env.TERRASCALE_CONTRACT_REGISTRY_URL
     ?? process.env.CONTRACT_REGISTRY ?? process.env.TERRASCALE_CONTRACT_REGISTRY;
   if (source && url) throw new Error("contracts: set only CONTRACT_SOURCE or CONTRACT_URL, not both.");
-  if (source) return validateContractBundle(path.resolve(process.cwd(), source), async () => undefined);
+  if (source) return validateContractBundle(path.resolve(process.cwd(), source), async () => undefined, "terrabase");
   if (!url) throw new Error(`contracts: pinned terrabase ${version} is not published; set CONTRACT_SOURCE=../terrabase/contracts for local development or CONTRACT_URL with CONTRACT_ARCHIVE_SHA256 for the immutable registry bundle.`);
   const archiveSha256 = process.env.CONTRACT_ARCHIVE_SHA256 ?? process.env.TERRASCALE_CONTRACT_ARCHIVE_SHA256
     ?? process.env.CONTRACT_BUNDLE_SHA256 ?? process.env.TERRASCALE_CONTRACT_BUNDLE_SHA256;
@@ -60,7 +70,7 @@ export async function resolveContractBundle(): Promise<ContractBundle> {
     let root: string | undefined;
     for (const candidate of candidates) if (await existsManifest(candidate)) { root = candidate; break; }
     if (!root) throw new Error("contracts: archive does not contain manifest.json.");
-    return await validateContractBundle(root, () => rm(temporary, { recursive: true, force: true }));
+    return await validateContractBundle(root, () => rm(temporary, { recursive: true, force: true }), "terrabase");
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
     throw error;
@@ -74,7 +84,7 @@ export async function contractOpenApiPath(bundle?: ContractBundle): Promise<stri
   return specPath;
 }
 
-async function validateContractBundle(root: string, cleanup: () => Promise<void>): Promise<ContractBundle> {
+async function validateContractBundle(root: string, cleanup: () => Promise<void>, expectedOrigin: "terrabase" | "edge" = "terrabase"): Promise<ContractBundle> {
   const rootLink = await lstat(root).catch(() => undefined);
   if (rootLink?.isSymbolicLink()) throw new Error(`contracts: source is a symlink: ${root}.`);
   const info = await stat(root).catch(() => undefined);
@@ -82,19 +92,33 @@ async function validateContractBundle(root: string, cleanup: () => Promise<void>
   const manifestPath = path.join(root, "manifest.json");
   await regularFile(manifestPath, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as ContractManifest;
-  if (manifest.schemaVersion !== 1 || manifest.contractVersion !== version) throw new Error(`contracts: manifest contractVersion must be ${version}.`);
+  if (manifest.schemaVersion !== 1 || manifest.contractVersion !== version ||
+    (manifest.origin !== undefined && manifest.origin !== expectedOrigin)) {
+    throw new Error(`contracts: manifest must be ${version} ${expectedOrigin}.`);
+  }
   if (!Array.isArray(manifest.artifacts) || manifest.artifacts.length === 0) throw new Error("contracts: manifest has no artifacts.");
   const digests = new Map<string, string>();
   for (const artifact of manifest.artifacts) {
-    if (typeof artifact?.path !== "string" || !safeRelative(artifact.path) || typeof artifact.blake3 !== "string" || !hexPattern.test(artifact.blake3)) throw new Error("contracts: manifest contains an invalid artifact entry.");
+    if (typeof artifact?.path !== "string" || !safeRelative(artifact.path) ||
+      (typeof artifact.blake3 !== "string" && typeof artifact.sha256 !== "string") ||
+      !hexPattern.test((artifact.blake3 ?? artifact.sha256) as string)) {
+      throw new Error("contracts: manifest contains an invalid artifact entry.");
+    }
     if (digests.has(artifact.path)) throw new Error(`contracts: manifest repeats ${artifact.path}.`);
     const artifactPath = path.join(root, artifact.path);
     await regularFile(artifactPath, artifact.path);
-    const actual = blake3(await readFile(artifactPath));
-    if (actual !== artifact.blake3.toLowerCase()) throw new Error(`contracts: BLAKE3 mismatch for ${artifact.path}.`);
-    digests.set(artifact.path, artifact.blake3.toLowerCase());
+    const bytes = await readFile(artifactPath);
+    const actual = artifact.blake3 === undefined
+      ? createHash("sha256").update(bytes).digest("hex")
+      : blake3(bytes);
+    const expected = (artifact.blake3 ?? artifact.sha256)!.toLowerCase();
+    if (actual !== expected) throw new Error(`contracts: digest mismatch for ${artifact.path}.`);
+    digests.set(artifact.path, expected);
   }
-  for (const required of ["openapi.json", "msgpack/terrascale.sync.v1.msgpack.json"]) if (!digests.has(required)) throw new Error(`contracts: manifest does not pin ${required}.`);
+  if (!digests.has("openapi.json")) throw new Error("contracts: manifest does not pin openapi.json.");
+  if (expectedOrigin === "terrabase" && !digests.has("msgpack/terrascale.sync.v1.msgpack.json")) {
+    throw new Error("contracts: manifest does not pin msgpack/terrascale.sync.v1.msgpack.json.");
+  }
   return { root, manifest, artifactDigests: digests, cleanup };
 }
 

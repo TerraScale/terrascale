@@ -3,40 +3,62 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractOpenApiPath, pinnedContractVersion, resolveContractBundle } from "./openapi-contract-paths.ts";
+import { contractOpenApiPath, pinnedContractVersion, resolveContractBundle, resolveEdgeContractBundle } from "./openapi-contract-paths.ts";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = path.join(repositoryRoot, "sdk-route-manifest.json");
 const checkOnly = process.argv.includes("--check");
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "trace"]);
 const bundle = await resolveContractBundle();
+const edgeBundle = await resolveEdgeContractBundle();
 try {
   const specPath = await contractOpenApiPath(bundle);
+  const edgeSpecPath = await contractOpenApiPath(edgeBundle);
   const spec = JSON.parse(await readFile(specPath, "utf8")) as OpenApiDocument;
-  const routes = Object.entries(spec.paths ?? {}).flatMap(([pathTemplate, pathItem]) =>
+  const edgeSpec = JSON.parse(await readFile(edgeSpecPath, "utf8")) as OpenApiDocument;
+  const routes = [...Object.entries(spec.paths ?? {}).flatMap(([pathTemplate, pathItem]) =>
     Object.entries(pathItem).filter(([method]) => HTTP_METHODS.has(method)).map(([method, operation]) => {
       const operationValue = operation as OpenApiOperation;
       const operationId = operationValue.operationId;
       if (!operationId) throw new Error(`contracts: OpenAPI operation ${method.toUpperCase()} ${pathTemplate} has no operationId.`);
       return {
         base: "api",
+        producer: "terrabase",
         client: clientName(pathTemplate),
-        operation: camelCase(operationId),
+        operation: operationName(operationId),
         operationId,
-        routeName: `${clientName(pathTemplate)}.${camelCase(operationId)}`,
+        routeName: `${clientName(pathTemplate)}.${operationName(operationId)}`,
         method: method.toUpperCase(),
         pathTemplate,
         requestType: requestType(operationValue.requestBody),
         responseType: responseType(operationValue.responses),
       };
     }),
-  ).sort((left, right) => `${left.pathTemplate} ${left.method}`.localeCompare(`${right.pathTemplate} ${right.method}`));
+  ), ...Object.entries(edgeSpec.paths ?? {}).flatMap(([pathTemplate, pathItem]) =>
+    Object.entries(pathItem).filter(([method]) => HTTP_METHODS.has(method)).map(([method, operation]) => {
+      const operationValue = operation as OpenApiOperation;
+      const operationId = operationValue.operationId;
+      if (!operationId) throw new Error(`contracts: OpenAPI operation ${method.toUpperCase()} ${pathTemplate} has no operationId.`);
+      return {
+        base: "api",
+        producer: "edge",
+        client: clientName(pathTemplate),
+        operation: operationName(operationId),
+        operationId,
+        routeName: `${clientName(pathTemplate)}.${operationName(operationId)}`,
+        method: method.toUpperCase(),
+        pathTemplate,
+        requestType: requestType(operationValue.requestBody),
+        responseType: responseType(operationValue.responses),
+      };
+    }),
+  )].sort((left, right) => `${left.pathTemplate} ${left.method} ${left.producer}`.localeCompare(`${right.pathTemplate} ${right.method} ${right.producer}`));
   const manifest = {
     manifestVersion: 2,
     contractVersion: pinnedContractVersion,
     source: {
-      repository: "terrabase",
-      bundle: "contracts",
+      repository: "terrabase+ts-proxy",
+      bundle: "contracts/v1",
       openapi: "openapi.json",
     },
     routeCount: routes.length,
@@ -51,6 +73,7 @@ try {
     console.log(`Wrote sdk-route-manifest.json with ${routes.length} routes from terrabase ${pinnedContractVersion}.`);
   }
 } finally {
+  await edgeBundle.cleanup();
   await bundle.cleanup();
 }
 
@@ -58,6 +81,10 @@ type OpenApiDocument = { readonly paths?: Record<string, Record<string, unknown>
 type OpenApiOperation = { readonly operationId?: string; readonly requestBody?: OpenApiSchemaRef; readonly responses?: Record<string, OpenApiResponse> };
 type OpenApiSchemaRef = { readonly $ref?: string; readonly content?: Record<string, { readonly schema?: OpenApiSchemaRef }> };
 type OpenApiResponse = { readonly content?: Record<string, { readonly schema?: OpenApiSchemaRef }> };
+
+function operationName(value: string): string {
+  return camelCase(value.split(".").at(-1) ?? value);
+}
 
 function schemaName(value: OpenApiSchemaRef | undefined): string | undefined {
   const reference = value && "$ref" in value && typeof value.$ref === "string" ? value.$ref : undefined;

@@ -41,10 +41,10 @@ describe("RegionsClient", () => {
       },
     });
 
-    for (const code of ["gru", "SJC", " GRU", "GRU ", "GR", "GRUU", "京", "JFK"]) {
+    for (const code of ["gru", " GRU", "GRU ", "ABCDEFGHIJKLMNOPQ", "京", "ABC_"]) {
       await assert.rejects(
         client.regions.get(code as never),
-        /regionCode must be exactly one of GRU, SFO, or FRA/u,
+        /regionCode must be an uppercase Region code/u,
       );
     }
     assert.equal(requestCount, 0);
@@ -73,7 +73,7 @@ describe("RegionsClient", () => {
         regions: ["gru" as never],
         backupRegion: "GRU",
       }),
-      /regions\[\] must be exactly one of GRU, SFO, or FRA/u,
+      /regions\[\] must be an uppercase Region code/u,
     );
     assert.throws(
       () => client.organizations.createProject(organizationId, {
@@ -81,7 +81,7 @@ describe("RegionsClient", () => {
         regions: ["GRU"],
         backupRegion: " GRU " as never,
       }),
-      /backupRegion must be exactly one of GRU, SFO, or FRA/u,
+      /backupRegion must be an uppercase Region code/u,
     );
     assert.equal(requestCount, 0);
   });
@@ -89,7 +89,7 @@ describe("RegionsClient", () => {
   test("turns hostile successful list bodies into typed invalid-response failures", async () => {
     const hostileBodies = [
       { regions: [{ ...gru, code: "gru" }] },
-      { regions: [{ ...gru, code: "JFK" }] },
+      { regions: [{ ...gru, code: "ABC_" }] },
       { regions: [gru, { ...gru }] },
       { regions: [{ ...gru, available: "yes" }] },
       { regions: [{ ...gru, ociRegionCode: "sa-saopaulo-1" }] },

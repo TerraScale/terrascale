@@ -2,28 +2,31 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export async function generateOpenApiContractDescriptor({ manifestPath, specPath }) {
-  const [manifestBytes, specBytes] = await Promise.all([
+export async function generateOpenApiContractDescriptor({ manifestPath, specPath, specPaths = {} }) {
+  const [manifestBytes, specBytes, edgeSpecBytes] = await Promise.all([
     readFile(path.resolve(process.cwd(), manifestPath)),
     readFile(path.resolve(process.cwd(), specPath)),
+    specPaths.edge === undefined ? undefined : readFile(path.resolve(process.cwd(), specPaths.edge)),
   ]);
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
   const spec = JSON.parse(specBytes.toString("utf8"));
+  const specs = { terrabase: spec, ...(edgeSpecBytes === undefined ? {} : { edge: JSON.parse(edgeSpecBytes.toString("utf8")) }) };
   if (!Array.isArray(manifest.routes) || !spec.paths || typeof spec.paths !== "object") {
     throw new Error("Route manifest and OpenAPI spec must contain routes and paths.");
   }
 
   const routes = manifest.routes.map((route) => {
-    const operation = findOperation(spec, route);
+    const routeSpec = specs[route.producer ?? "terrabase"] ?? spec;
+    const operation = findOperation(routeSpec, route);
     if (operation === undefined) {
       throw new Error(`SDK route has no OpenAPI operation: ${route.method} ${route.pathTemplate}.`);
     }
     if (typeof operation.operationId !== "string" || operation.operationId.length === 0) {
       throw new Error(`OpenAPI operation has no operationId: ${route.method} ${route.pathTemplate}.`);
     }
-    const pathItem = findPathItem(spec, route);
-    const request = requestDescriptor(operation, spec);
-    const responses = successfulResponses(operation, spec);
+    const pathItem = findPathItem(routeSpec, route);
+    const request = requestDescriptor(operation, routeSpec);
+    const responses = successfulResponses(operation, routeSpec);
     assertSdkContract(route, request, responses);
     return canonicalize({
       base: route.base,
@@ -32,7 +35,7 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
       operation: route.operation,
       operationId: operation.operationId,
       parameters: [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])]
-        .map((parameter) => parameterDescriptor(parameter, spec))
+        .map((parameter) => parameterDescriptor(parameter, routeSpec))
         .sort(compareParameter),
       pathTemplate: route.pathTemplate,
       request,
@@ -41,19 +44,20 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
       sdkRequestType: route.requestType ?? "void",
       sdkResponseType: route.responseType ?? "void",
       sourceContract: route.sourceContract,
-    }, spec);
+    }, routeSpec);
   }).sort((left, right) => `${left.method} ${left.pathTemplate} ${left.routeName}`.localeCompare(`${right.method} ${right.pathTemplate} ${right.routeName}`));
 
-  return canonicalize({
+  return {
     descriptorVersion: 2,
     ...(typeof manifest.contractVersion === "string" ? { contractVersion: manifest.contractVersion } : {}),
     routeCount: routes.length,
     routes,
     sources: {
       openApiSha256: sha256(specBytes),
+      ...(edgeSpecBytes === undefined ? {} : { edgeOpenApiSha256: sha256(edgeSpecBytes) }),
       routeManifestSha256: sha256(manifestBytes),
     },
-  }, spec);
+  };
 }
 
 function assertSdkContract(route, request, responses) {
@@ -75,8 +79,8 @@ function assertSdkContract(route, request, responses) {
   }
 }
 
-export async function writeOpenApiContractDescriptor({ manifestPath, outputPath, specPath }) {
-  const descriptor = await generateOpenApiContractDescriptor({ manifestPath, specPath });
+export async function writeOpenApiContractDescriptor({ manifestPath, outputPath, specPath, specPaths }) {
+  const descriptor = await generateOpenApiContractDescriptor({ manifestPath, specPath, specPaths });
   await writeFile(outputPath, `${JSON.stringify(descriptor, null, 2)}\n`);
   return descriptor;
 }

@@ -9,10 +9,10 @@ const databaseId = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
 
 describe("regional routing consistency", () => {
   test("rejects invalid or incomplete strict regional configuration", () => {
-    for (const preferredRegion of ["gru", "SJC", " GRU", "GRU ", "GR", "GRUU", "京", "JFK"]) {
+    for (const preferredRegion of ["gru", " GRU", "GRU ", "ABCDEFGHIJKLMNOPQ", "京", "ABC_"]) {
       assert.throws(
         () => resolveRuntimeConfig({ preferredRegion: preferredRegion as never, fetch: globalThis.fetch }),
-        /preferredRegion must be exactly one of GRU, SFO, or FRA/u,
+        /preferredRegion must be an uppercase Region code/u,
       );
     }
     assert.throws(
