@@ -1636,6 +1636,24 @@ fn required_frontiers_are_registered_before_retention_can_prune() {
     assert_eq!(storage.journal_records(), 1, "the newest row remains the live-state pin");
 }
 
+#[test]
+fn reopened_location_does_not_retain_process_owned_sync_lease() {
+    let (dir, mut storage) = sqlite_store("sync-lease-restart");
+    storage.register_consumer_frontier("sync", 7).expect("registers sync lease");
+    drop(storage);
+
+    let reopened = SqliteStorage::open(&dir).expect("reopens location");
+    let sync_rows: i64 = reopened
+        .raw_writer_connection()
+        .query_row(
+            "SELECT COUNT(*) FROM consumer_frontiers WHERE name = 'sync'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("reads consumer leases");
+    assert_eq!(sync_rows, 0, "a process-owned sync lease cannot survive restart");
+}
+
 // ---- SQLite-focused: crash atomicity against the file --------------------
 
 /// Asserts the folded row model's crash invariant directly against the

@@ -1,0 +1,107 @@
+[package]
+name = "terrabase"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+description = "TerraBase Rust engine foundation"
+repository = "ssh://git@git.terrascale.tech/TerraScale/TerraBase.git"
+readme = "README.md"
+publish = false
+
+[workspace]
+resolver = "3"
+members = [
+  "crates/terrabase-causal",
+  "crates/terrabase-auth",
+  "crates/terrabase-crdt",
+  "crates/terrabase-sync-core",
+  "crates/terrabase-member-transport",
+  "crates/terrabase-cluster",
+  "crates/terrabase-replication-core",
+  "crates/terrabase-tbep",
+  "crates/terrabase-server",
+  "crates/terrabase-sim",
+]
+
+[lib]
+name = "terrabase"
+path = "src/lib.rs"
+
+[[bin]]
+name = "terrabase-bench-served"
+path = "src/bin/terrabase-bench-served.rs"
+required-features = ["bench-tools"]
+
+[features]
+# Single non-FIPS crypto profile (D-41 defers FIPS builds past the first
+# customer): aws-lc-rs builds its non-FIPS module on every build.
+# Enables the audited served benchmark command. This is kept opt-in so the
+# engine's normal library build does not include benchmark orchestration.
+bench-tools = []
+# Injected fixtures for cross-crate regression tests; never enable in production.
+test-support = []
+
+[[test]]
+name = "observability"
+path = "tests/observability/main.rs"
+
+[[test]]
+name = "encryption"
+path = "tests/encryption/main.rs"
+
+[[test]]
+name = "member"
+path = "tests/member/main.rs"
+
+[dependencies]
+# Standard codecs and error derives replace repository-owned implementations.
+hex = "0.4"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+thiserror = "2"
+terrabase-replication-core = { path = "crates/terrabase-replication-core" }
+object_store = { version = "0.12.4", features = ["aws"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+futures-util = "0.3"
+aws-lc-rs = { version = "1.18.0", default-features = false, features = ["non-fips"] }
+
+blake3 = "1.8.2"
+zeroize = "1.9.0"
+memmap2 = "0.9.9"
+rustix = { version = "1.1.4", features = ["net", "process", "fs"] }
+# ADR 0027: enable the crate's OS-seeded random generation behind src/identity/.
+ulid = { version = "1", default-features = false, features = ["std"] }
+# D-27: the SQLite storage core (src/storage/sqlite/) rides mainline SQLite
+# compiled from the amalgamation (bundled), pinned exactly so the persisted
+# format never silently moves with a new SQLite build. TerraBase selects the
+# native bundled engine and prepared-statement cache explicitly; rusqlite's
+# default wasm VFS is not part of this native server product.
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache", "hooks"] }
+# D-54/E-4: validate the public SQL AST before authorization or planning.
+sqlparser = { version = "0.62.0", features = ["visitor"] }
+
+
+[target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
+# ARM-first allocator (SHORT_GOAL S-01); x86 dev builds never compile it.
+mimalloc = "0.1"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"
+strip = "symbols"
+
+[profile.dev]
+debug = 1
+
+[package.metadata.terrabase]
+status = "engine-under-active-development"
+status_note = "Native storage, engine, query, automatic index, replication, sync, backup, and recovery modules remain under qualification. See README 'Honest implementation status' for current limits."
+license_gate = "satisfied-mit"
+canonical_product_name = "TerraBase"
+canonical_package_name = "terrabase"
+rename_cutover_completed = "2026-08-30"
+source_compatibility = "canonical package name only; the previous dependency-alias window closed 2026-08-30"

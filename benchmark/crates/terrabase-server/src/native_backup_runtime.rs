@@ -420,6 +420,34 @@ mod restore_tests {
     use object_store::ObjectStore;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    fn commit_marker(host: &crate::admitted_databases::AdmittedDatabaseSnapshot, marker: &str) {
+        let engine = host.database.host.engine();
+        let tenant = terrabase::types::TenantId::try_new(&host.database.record.tenant_id).unwrap();
+        let scope = engine.scope_for(&tenant);
+        let snapshot = engine.read_snapshot(&scope).unwrap();
+        let mut transaction = engine
+            .begin(
+                &scope,
+                snapshot,
+                terrabase::types::OperationId::try_new(format!("native-pitr-{marker}")).unwrap(),
+            )
+            .unwrap();
+        transaction
+            .put(
+                terrabase::types::Document::new(
+                    terrabase::types::DocumentId::try_new("native-pitr-doc").unwrap(),
+                    terrabase::types::CollectionName::try_new("native-pitr").unwrap(),
+                    terrabase::types::DocumentValue::String(marker.into()),
+                ),
+                terrabase::types::ExpectedVersion::Any,
+            )
+            .unwrap();
+        assert!(matches!(
+            transaction.commit(terrabase::types::LocalDurability::Synced),
+            terrabase::CommitOutcome::Committed(_)
+        ));
+    }
+
     #[derive(Debug)]
     struct BlockingStore {
         inner: Arc<object_store::memory::InMemory>,
@@ -627,6 +655,134 @@ mod restore_tests {
         assert_eq!(store.puts.load(Ordering::Relaxed), puts_after_tick);
         runtime.drain().unwrap();
         assert!(!runtime.contains(&database));
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn one_native_fleet_captures_two_encrypted_databases_and_restores_content() {
+        use terrabase::operations::{QueryInput, SqlQueryText};
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let snapshots = registry.retained_snapshot().unwrap();
+        assert_eq!(snapshots.len(), 2);
+        for snapshot in &snapshots {
+            commit_marker(snapshot, &snapshot.database.record.database_id);
+        }
+        let store = Arc::new(object_store::memory::InMemory::new());
+        let mut inputs = Vec::new();
+        for snapshot in &snapshots {
+            let record = &snapshot.database.record;
+            let scope = terrabase::member::DatabaseScope::new(
+                &record.environment,
+                record.tenant_id.parse().unwrap(),
+                record.project_id.parse().unwrap(),
+                record.database_id.parse().unwrap(),
+                record.region.parse().unwrap(),
+            )
+            .unwrap();
+            inputs.push(NativeBackupInput {
+                engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&snapshot.database.host))),
+                keys: Arc::new(
+                    terrabase::backup::worker::OciBackupKeys::new(crate::test_keys::backup_keys(
+                        &scope,
+                    ))
+                    .unwrap(),
+                ),
+                destinations: vec![(
+                    terrabase::backup::object_store::Provider::Oci,
+                    Arc::new(terrabase::backup::object_store::ObjectDestination::for_test(
+                        terrabase::backup::object_store::Provider::Oci,
+                        Arc::clone(&store) as Arc<dyn ObjectStore>,
+                        4 * 1024 * 1024,
+                        8 * 1024 * 1024,
+                    )),
+                )],
+                policy_revision: "native-pitr-fixture".into(),
+                retention_days: 1,
+                staging: root.join(&record.database_id),
+                placement: PlacementLock::explicit([record.region.parse().unwrap()]).unwrap(),
+            });
+        }
+        let runtime = NativeBackupRuntime::new(
+            FleetLimits {
+                streams: 2,
+                staging_bytes_per_stream: 16 * 1024 * 1024,
+                inventory_bytes_per_stream: 16 * 1024 * 1024,
+                points_per_stream: 4,
+            },
+            inputs,
+        )
+        .unwrap();
+        assert!(runtime.attached(&records[0].database_id).unwrap());
+        assert!(runtime.attached(&records[1].database_id).unwrap());
+        for record in &records {
+            runtime.capture_snapshot(&record.database_id).await.unwrap();
+        }
+        let points = runtime.retained_points(&records[0].database_id).unwrap();
+        assert_eq!(points.len(), 1);
+        let target = &snapshots[1];
+        registry.pause(&target.database.record.database_id, "native-pitr-target").unwrap();
+        runtime.suspend_for_restore(&target.database.record.database_id).unwrap();
+        let target_path = root.join("native-pitr-restored-target");
+        let target_tenant = terrabase::types::TenantId::try_new(&target.database.record.tenant_id).unwrap();
+        let target_owner = target.database.host.engine().database_owner().clone();
+        let target_scope = terrabase::member::DatabaseScope::new(
+            &target.database.record.environment,
+            target.database.record.tenant_id.parse().unwrap(),
+            target.database.record.project_id.parse().unwrap(),
+            target.database.record.database_id.parse().unwrap(),
+            target.database.record.region.parse().unwrap(),
+        )
+        .unwrap();
+        let target_config = terrabase::engine::EngineConfig::durable(&target_path)
+            .unwrap()
+            .with_owner(target_owner)
+            .with_storage_keys(
+                crate::test_keys::storage_keys(&target_scope)
+                    .remove(&target.database.record.database_id)
+                    .unwrap(),
+            );
+        let placement = PlacementLock::explicit([target.database.record.region.parse().unwrap()]).unwrap();
+        let point = &points[0];
+        let identity = terrabase::backup::RestoreIdentity {
+            operation_id: "native-pitr-content".into(),
+            source_database_id: records[0].database_id.clone(),
+            target_database_id: records[1].database_id.clone(),
+            provider: "oci".into(),
+            selection: point.identity().to_owned(),
+            expected_manifest_digest: point.identity().to_owned(),
+            expected_journal_boundary: point.boundary_sequence().get(),
+            restore_epoch: 17,
+        };
+        let receipt = runtime
+            .restore_from_provider(
+                &records[0].database_id,
+                terrabase::backup::object_store::Provider::Oci,
+                Some(point.identity()),
+                &target_config,
+                "native-pitr-content",
+                &placement,
+                &identity,
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt.selected_identity(), point.identity());
+        let restored = terrabase::Engine::open(target_config).unwrap();
+        let scope = restored.scope_for(&target_tenant);
+        let snapshot = restored.read_snapshot(&scope).unwrap();
+        let plan = restored
+            .queries()
+            .compile(QueryInput::sql(SqlQueryText::try_new(
+                "SELECT value FROM native-pitr WHERE _id = 'native-pitr-doc'",
+            )
+            .unwrap()))
+            .unwrap();
+        let row = restored.queries().execute(&plan, &snapshot).unwrap();
+        assert_eq!(row.rows().len(), 1);
+        drop(restored);
+        runtime.drain().unwrap();
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();

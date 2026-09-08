@@ -413,7 +413,9 @@ impl EngineHost {
     ) -> Result<terrabase::engine::Transaction<'_>, terrabase::engine::EngineError> {
         match &self.engine {
             HostEngine::Admitted(lease) => lease.begin_routed_batch_keys(scope, keys, operation),
-            HostEngine::Local(engine) => Ok(engine.begin(scope, engine.read_snapshot(scope)?, operation)?),
+            HostEngine::Local(engine) => {
+                Ok(engine.begin(scope, engine.read_snapshot(scope)?, operation)?)
+            }
         }
     }
 
@@ -425,10 +427,17 @@ impl EngineHost {
         id: &terrabase::types::DocumentId,
         operation: OperationId,
         fingerprint: [u8; 32],
-    ) -> Result<Option<(Arc<Engine>, terrabase::CommitReceipt, Option<String>)>, terrabase::engine::EngineError> {
+    ) -> Result<
+        Option<(Arc<Engine>, terrabase::CommitReceipt, Option<String>)>,
+        terrabase::engine::EngineError,
+    > {
         match &self.engine {
-            HostEngine::Admitted(lease) => lease.resolve_routed_document_request(scope, collection, id, operation, fingerprint),
-            HostEngine::Local(engine) => Ok(engine.resolve_document_request(scope, operation, fingerprint)?.map(|(receipt, revision)| (Arc::clone(engine), receipt, revision))),
+            HostEngine::Admitted(lease) => {
+                lease.resolve_routed_document_request(scope, collection, id, operation, fingerprint)
+            }
+            HostEngine::Local(engine) => Ok(engine
+                .resolve_document_request(scope, operation, fingerprint)?
+                .map(|(receipt, revision)| (Arc::clone(engine), receipt, revision))),
         }
     }
 
@@ -440,10 +449,15 @@ impl EngineHost {
         ids: &[terrabase::types::DocumentId],
         operation: OperationId,
         fingerprint: [u8; 32],
-    ) -> Result<Option<(Arc<Engine>, terrabase::CommitReceipt, usize)>, terrabase::EngineError> {
+    ) -> Result<Option<(Arc<Engine>, terrabase::CommitReceipt, usize)>, terrabase::EngineError>
+    {
         match &self.engine {
-            HostEngine::Admitted(lease) => lease.resolve_routed_batch_request(scope, collection, ids, operation, fingerprint),
-            HostEngine::Local(engine) => Ok(engine.resolve_batch_request(scope, operation, fingerprint)?.map(|(receipt, count)| (Arc::clone(engine), receipt, count))),
+            HostEngine::Admitted(lease) => {
+                lease.resolve_routed_batch_request(scope, collection, ids, operation, fingerprint)
+            }
+            HostEngine::Local(engine) => Ok(engine
+                .resolve_batch_request(scope, operation, fingerprint)?
+                .map(|(receipt, count)| (Arc::clone(engine), receipt, count))),
         }
     }
 

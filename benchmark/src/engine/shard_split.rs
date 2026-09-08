@@ -393,9 +393,23 @@ impl SplitEngineAdapter for ScopedShardEngine {
         Ok(())
     }
 
-    fn cleanup_split_source(&mut self, _context: &SplitContext) -> Result<(), Self::DataError> {
-        // Source deletion requires the range-copy worker's durable cursor and
-        // is intentionally left to that worker after verification.
+    fn cleanup_split_source(&mut self, context: &SplitContext) -> Result<(), Self::DataError> {
+        // Original operation receipts and request fingerprints remain on this
+        // file under the existing operation retention policy. The committed
+        // catalog must keep it admitted as a provenance owner. A future file
+        // retirement must first durably transfer that provenance; range-copy
+        // completion alone is never permission to delete this file/metadata.
+        let (router, _) =
+            self.engine.load_shard_router(&self.scope)?.ok_or(EngineError::Conflict)?;
+        if context.database_incarnation() != self.incarnation
+            || !router
+                .table()
+                .routes()
+                .iter()
+                .any(|route| route.shard_id() == context.source_shard())
+        {
+            return Err(EngineError::Conflict);
+        }
         Ok(())
     }
 }
@@ -1068,7 +1082,9 @@ impl Engine {
             .port
             .private_metadata_at(scope.tenant(), &file_shard_key(incarnation), snapshot.sequence())
             .map_err(|()| EngineError::StorageFailure)?;
-        let identity = bytes(identity).map_err(|_| EngineError::StorageFailure)?.ok_or(EngineError::Conflict)?;
+        let identity = bytes(identity)
+            .map_err(|_| EngineError::StorageFailure)?
+            .ok_or(EngineError::Conflict)?;
         let identity = decode_file_identity(&identity)?;
         (identity.shard_id == token.shard_id
             && identity.database_incarnation == incarnation
@@ -1161,8 +1177,11 @@ impl Engine {
                 })),
             )?;
         } else {
-            let identity = decode_file_identity(identity.as_deref().ok_or(RouteCatalogError::Conflict)?)?;
-            if identity.database_incarnation != incarnation || identity.region != self.database_owner().region() {
+            let identity =
+                decode_file_identity(identity.as_deref().ok_or(RouteCatalogError::Conflict)?)?;
+            if identity.database_incarnation != incarnation
+                || identity.region != self.database_owner().region()
+            {
                 return Err(RouteCatalogError::Conflict);
             }
         }
@@ -1223,7 +1242,10 @@ impl Engine {
         let mut tx = self.begin(scope, self.read_snapshot(scope)?, operation)?;
         tx.internal_maintenance = true;
         let route_key = key(context.split.database_incarnation());
-        let identity = bytes(tx.read_private_metadata(&file_shard_key(context.split.database_incarnation()))?)?.ok_or(RouteCatalogError::Conflict)?;
+        let identity = bytes(
+            tx.read_private_metadata(&file_shard_key(context.split.database_incarnation()))?,
+        )?
+        .ok_or(RouteCatalogError::Conflict)?;
         let identity = decode_file_identity(&identity)?;
         if identity.shard_id != context.split.source_shard()
             || identity.database_incarnation != context.split.database_incarnation()

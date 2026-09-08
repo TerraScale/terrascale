@@ -2849,6 +2849,7 @@ async fn batch_documents(
         Ok(engine) => engine,
         Err(_) => return ApiError::control_unavailable().into_response(),
     };
+    let scope = engine.scope_for(scope.tenant());
     let operation = match write_operation(&headers, "api-batch") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
@@ -3005,6 +3006,8 @@ async fn replay_batch_request(
     else {
         return Ok(None);
     };
+    let resolved_scope = engine.scope_for(scope.tenant());
+    let scope = &resolved_scope;
     let durability = WriteDurability::prepare_replay(state, &engine, scope, headers).await?;
     durability.confirm(&engine, scope, &receipt).await?;
     let mut session = open_session(&engine, scope, headers)?;
@@ -3511,6 +3514,8 @@ async fn replay_document_request(
     else {
         return Ok(None);
     };
+    let resolved_scope = resolved_engine.scope_for(scope.tenant());
+    let scope = &resolved_scope;
     let durability = WriteDurability::prepare_replay(state, &resolved_engine, scope, headers).await?;
     durability.confirm(&resolved_engine, scope, &receipt).await?;
     let mut session = open_session(&resolved_engine, scope, headers)?;
@@ -3593,6 +3598,7 @@ async fn get_document(
         Ok(engine) => engine,
         Err(_) => return ApiError::control_unavailable().into_response(),
     };
+    let scope = engine.scope_for(scope.tenant());
 
     if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
         return error.into_response();
@@ -3829,6 +3835,7 @@ async fn put_document(
         Ok(engine) => engine,
         Err(_) => return ApiError::control_unavailable().into_response(),
     };
+    let scope = engine.scope_for(scope.tenant());
 
     let value: serde_json::Value = match serde_json::from_str(&body) {
         Ok(value) => value,
@@ -4057,6 +4064,7 @@ async fn patch_document(
         Ok(engine) => engine,
         Err(_) => return ApiError::control_unavailable().into_response(),
     };
+    let scope = engine.scope_for(scope.tenant());
     if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
         return ApiError::control_unavailable().into_response();
     }
@@ -4334,6 +4342,7 @@ async fn delete_document(
         Ok(engine) => engine,
         Err(_) => return ApiError::control_unavailable().into_response(),
     };
+    let scope = engine.scope_for(scope.tenant());
 
     if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
         return ApiError::control_unavailable().into_response();

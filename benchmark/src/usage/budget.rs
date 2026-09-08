@@ -9,48 +9,49 @@ use aws_lc_rs::{
 use serde::{Deserialize, Serialize};
 
 /// Signature domain shared with the GRU write-budget producer.
-pub const ALLOCATION_SIGNING_DOMAIN: &[u8] = b"terrascale.write-budget.allocation.v1\0";
+pub const ALLOCATION_SIGNING_DOMAIN: &[u8] = b"terrascale.write-budget.pool-refill.v2\0";
 /// Maximum signed allocation payload accepted from the control plane.
 pub const MAX_ALLOCATION_BYTES: usize = 64 << 10;
 
-/// The producer's grant object. `units` is already multiplied by placement
-/// Regions; a regional consumer charges `requested_units` exactly once.
+/// A bounded regional pool refill. Local units are installed once; aggregate
+/// units are the single Region-multiplied reservation at GRU.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AllocationGrant {
+    pub schema_version: u32,
+    pub kind: String,
+    pub refill_operation_id: String,
+    pub pool_id: String,
     pub cycle_id: String,
     pub rate_nano_dollar: i64,
-    pub operation_id: String,
     pub organization_id: String,
     pub database_id: String,
     pub branch_id: String,
     pub holder_id: String,
-    pub requested_units: i64,
-    pub included_units: i64,
-    pub paid_units: i64,
+    pub region: String,
+    #[serde(rename = "selected_regions")]
     pub regions: Vec<String>,
-    pub units: i64,
-    pub cost_nano_dollar: i64,
-    pub policy_epoch: u64,
+    pub placement: String,
+    pub local_units: i64,
+    pub aggregate_units: i64,
+    pub included_local_units: i64,
+    pub paid_local_units: i64,
+    pub included_aggregate_units: i64,
+    pub paid_aggregate_units: i64,
+    pub pool_sequence: u64,
+	pub policy_epoch: u64,
     pub consent_epoch: u64,
     pub writer_epoch: u64,
     pub issued_at: String,
     pub expires_at: String,
-    #[serde(default)]
-    pub revoked: bool,
-    #[serde(default)]
-    pub fenced: bool,
 }
 
-/// Exact signed payload emitted by `writebudget.SignAllocation`.
+/// Exact signed payload emitted by `writebudget.SignPoolRefill`.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AllocationEnvelope {
     pub schema_version: u32,
     pub grant: AllocationGrant,
-    pub cycle_id: String,
-    pub rate_nano_dollar: i64,
-    pub placement: String,
 }
 
 /// Exact signed delivery wrapper emitted by the producer.
@@ -163,38 +164,29 @@ impl VerifiedAllocation {
         let regions = grant.regions.iter().collect::<std::collections::BTreeSet<_>>();
         let valid_times = parse_millis(&grant.issued_at).zip(parse_millis(&grant.expires_at));
         let Some((issued, expires)) = valid_times else { return Err(AllocationError::Binding) };
-        if envelope.schema_version != 1
-            || envelope.cycle_id.is_empty()
-            || envelope.rate_nano_dollar < 0
-            || envelope.placement != expected_placement
-            || grant.cycle_id != envelope.cycle_id
-            || grant.rate_nano_dollar != envelope.rate_nano_dollar
-            || grant.operation_id.is_empty()
+        if envelope.schema_version != 2
+            || grant.schema_version != 2
+            || grant.kind != "regional_write_pool_refill"
+            || grant.cycle_id.is_empty()
+            || grant.rate_nano_dollar < 0
+            || grant.placement != expected_placement
+            || grant.refill_operation_id.is_empty()
+            || grant.pool_id.is_empty()
             || grant.organization_id != expected_organization
             || grant.database_id != expected_database
             || grant.holder_id != expected_holder
-            || grant.requested_units <= 0
-            || grant.units
-                != grant
-                    .requested_units
-                    .checked_mul(
-                        i64::try_from(regions.len()).map_err(|_| AllocationError::Binding)?,
-                    )
-                    .ok_or(AllocationError::Binding)?
-            || grant.units <= 0
-            || grant.included_units < 0
-            || grant.paid_units < 0
-            || grant.included_units.checked_add(grant.paid_units) != Some(grant.units)
-            || grant.cost_nano_dollar
-                != grant
-                    .paid_units
-                    .checked_mul(envelope.rate_nano_dollar)
-                    .ok_or(AllocationError::Binding)?
+            || grant.local_units <= 0
+            || grant.aggregate_units
+                != grant.local_units.checked_mul(i64::try_from(regions.len()).map_err(|_| AllocationError::Binding)?).ok_or(AllocationError::Binding)?
+            || grant.aggregate_units <= 0
+            || grant.included_local_units < 0
+            || grant.paid_local_units < 0
+            || grant.included_local_units.checked_add(grant.paid_local_units) != Some(grant.local_units)
+            || grant.included_aggregate_units.checked_add(grant.paid_aggregate_units) != Some(grant.aggregate_units)
+            || grant.paid_aggregate_units.checked_mul(grant.rate_nano_dollar).is_none()
             || grant.policy_epoch != expected_policy_epoch
             || grant.consent_epoch != expected_consent_epoch
             || grant.writer_epoch != expected_writer_epoch
-            || grant.revoked
-            || grant.fenced
             || issued == 0
             || expires <= now_millis
             || issued > expires
@@ -217,11 +209,11 @@ impl VerifiedAllocation {
     }
     #[must_use]
     pub fn cycle_id(&self) -> &str {
-        &self.envelope.cycle_id
+        &self.envelope.grant.cycle_id
     }
     #[must_use]
     pub fn placement(&self) -> &str {
-        &self.envelope.placement
+        &self.envelope.grant.placement
     }
     #[must_use]
     pub fn payload_digest(&self) -> &[u8; 32] {
@@ -229,7 +221,7 @@ impl VerifiedAllocation {
     }
     #[must_use]
     pub fn local_units(&self) -> i64 {
-        self.envelope.grant.requested_units
+        self.envelope.grant.local_units
     }
     #[must_use]
     pub fn valid_at(&self, now_millis: u64) -> bool {

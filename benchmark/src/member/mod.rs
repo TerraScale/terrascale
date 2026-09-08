@@ -1673,7 +1673,10 @@ impl DatabaseLease {
         collection: &crate::types::CollectionName,
         ids: &[crate::types::DocumentId],
     ) -> Result<&Engine, crate::EngineError> {
-        let keys = ids.iter().map(|id| crate::shard_split::canonical_shard_key(collection, id)).collect::<Vec<_>>();
+        let keys = ids
+            .iter()
+            .map(|id| crate::shard_split::canonical_shard_key(collection, id))
+            .collect::<Vec<_>>();
         self.route_registry.participant(&keys)
     }
 
@@ -1728,7 +1731,10 @@ impl DatabaseLease {
         id: &crate::types::DocumentId,
         operation: OperationId,
         fingerprint: [u8; 32],
-    ) -> Result<Option<(Arc<Engine>, crate::CommitReceipt, Option<String>)>, crate::engine::EngineError> {
+    ) -> Result<
+        Option<(Arc<Engine>, crate::CommitReceipt, Option<String>)>,
+        crate::engine::EngineError,
+    > {
         let key = crate::shard_split::canonical_shard_key(collection, id);
         self.route_registry.resolve_document_request(scope, &key, operation, fingerprint)
     }
@@ -1742,7 +1748,10 @@ impl DatabaseLease {
         operation: OperationId,
         fingerprint: [u8; 32],
     ) -> Result<Option<(Arc<Engine>, crate::CommitReceipt, usize)>, crate::EngineError> {
-        let keys = ids.iter().map(|id| crate::shard_split::canonical_shard_key(collection, id)).collect::<Vec<_>>();
+        let keys = ids
+            .iter()
+            .map(|id| crate::shard_split::canonical_shard_key(collection, id))
+            .collect::<Vec<_>>();
         self.route_registry.resolve_batch_request(scope, &keys, operation, fingerprint)
     }
 

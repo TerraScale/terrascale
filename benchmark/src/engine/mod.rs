@@ -1335,6 +1335,14 @@ impl Engine {
         let mut storage: Box<dyn storage::StoragePort> = open_storage
             .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
             .map_err(|_| EngineOpenError::StorageUnavailable)?;
+        // Sync subscriptions are process-owned. Their in-memory checkpoint
+        // handles cannot survive this Engine admission, so retire an old
+        // sync lease before serving. The required replication, metering, and
+        // backup frontiers were installed by SQLite admission first and keep
+        // the retained journal floor safe for reconnect/reset.
+        storage
+            .retire_consumer_frontier("sync")
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         if config.owner.is_some()
             && storage.origin_epoch().map_err(|()| EngineOpenError::StorageUnavailable)?.0 == 0
         {
@@ -4932,9 +4940,7 @@ impl Transaction<'_> {
         &mut self,
         allocation: crate::usage::VerifiedAllocation,
     ) -> Result<(), UsageCommandError> {
-        if allocation.grant().operation_id != self.operation.as_str()
-            || allocation.grant().database_id.is_empty()
-        {
+        if allocation.grant().pool_id.is_empty() || allocation.grant().database_id.is_empty() {
             return Err(UsageCommandError::IdentityMismatch);
         }
         if self.budget_allocation.is_some() {

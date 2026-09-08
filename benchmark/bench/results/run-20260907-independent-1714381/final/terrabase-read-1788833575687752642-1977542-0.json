@@ -1,0 +1,91 @@
+{
+  "status": "complete",
+  "target": "terrabase",
+  "workload": "read",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0
+  },
+  "environment": {
+    "observed_identity": "{\"region\":\"GRU\",\"healthy\":true,\"version\":\"terrabase-0.1.0\"}",
+    "endpoint": "http://127.0.0.1:7311/api/v1 (database bench-final-read-1788833546165297023)",
+    "client_transport": "ureq 2 HTTP/1.1, one connection-pooled agent per concurrency slot, Bearer API key, acknowledged JSON document operations",
+    "unix_seconds": 1788833546,
+    "kernel": "Linux 7.2.3",
+    "logical_cpus": 2
+  },
+  "comparability": {
+    "run_digest": "436b4016359aae516ee3805db45cf54b966519a472a379f864fffe64a65201d8",
+    "candidate_digest": "f1aa1737eb2ae9c5cf8ce37f3427518fab017b7bb851a89d724e8d46fe5b685e",
+    "workload_digest": "81b42d494289506cedfd157a8adce10536349e35054fd1a7cf8d639678349cf8",
+    "topology_digest": "7c0b5581097a89d270ae9c43ffa59b9547c0a3841f7ca7ed410159e082f50796",
+    "run_group": "e13-local-20260908T0212Z",
+    "config_digest": "bdfe342f5a3e96300b3e54f43585ee347bdb8b213b803ea0dac000ef8eb60d80",
+    "controlled_host_identity": "mariogk-dev;fenced-member=GRU",
+    "time_window": "496898",
+    "window_start_unix_seconds": 1788833546,
+    "window_end_unix_seconds": 1788833575,
+    "workload_version": "terrabase-se15-workload-v1",
+    "boundary_class": "diagnostic-qualification",
+    "concurrency": 16,
+    "samples": 5,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0,
+    "seed_policy": "seed-{index}, tenant benchmark-tenant, index modulo seed count",
+    "document_policy": "seed documents have id seed-{index}, name user-{index}, group index modulo 100, 256-byte payload",
+    "operation_policy": "mixed uses index modulo 10: 0..4 read, 5..7 write, 8..9 query; read/query address index modulo seed count",
+    "write_id_policy": "measured writes use measured-{global operation index}",
+    "durability_semantics": "LocalDurability::Synced acknowledged commits",
+    "server_configuration_provenance": "terrabase-runtime-catalog-v1"
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 5.887669932,
+      "throughput_ops_per_s": 1698.4647773220315,
+      "p50_us": 9107.805,
+      "p95_us": 14702.975,
+      "p99_us": 21284.846
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 5.656764456,
+      "throughput_ops_per_s": 1767.7950138781596,
+      "p50_us": 8783.861,
+      "p95_us": 13398.434000000001,
+      "p99_us": 16973.133
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 5.613402103,
+      "throughput_ops_per_s": 1781.4508593025337,
+      "p50_us": 8744.439999999999,
+      "p95_us": 13264.903999999999,
+      "p99_us": 16029.451000000001
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 5.770153022,
+      "throughput_ops_per_s": 1733.0562918994976,
+      "p50_us": 8921.577,
+      "p95_us": 13742.832999999999,
+      "p99_us": 19381.802
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 5.739948889,
+      "throughput_ops_per_s": 1742.1757916980644,
+      "p50_us": 8875.523,
+      "p95_us": 13684.582,
+      "p99_us": 18243.217
+    }
+  ],
+  "limits": [
+    "the served member is the operator-supplied subject; its envelope and artifact identity ride the run's comparability digests",
+    "reads and writes are acknowledged JSON document operations over HTTP/1.1 with connection reuse; TLS is absent on the loopback dev subject"
+  ]
+}

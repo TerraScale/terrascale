@@ -2842,14 +2842,6 @@ fn stage_intent(
                 .map_err(|_| ())?;
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
         }
-        if allocation.grant().operation_id != intent.operation.as_str() {
-            transaction
-                .execute_batch(
-                    "ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission",
-                )
-                .map_err(|_| ())?;
-            return Ok(CommitResult::Rejected(CommitRejection::Validation));
-        }
         let Some(admission) = intent.usage_admission.as_ref() else {
             transaction
                 .execute_batch(

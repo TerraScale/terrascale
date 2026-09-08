@@ -20,7 +20,7 @@ pub(super) fn consume(
         "INSERT OR IGNORE INTO usage_budget_allocations
          (tenant,operation,database_id,branch_id,holder_id,cycle_id,policy_epoch,consent_epoch,writer_epoch,placement,payload_digest,units_total,units_remaining,expires_at)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12,?13)",
-        params![tenant.as_str(), grant.operation_id, grant.database_id, grant.branch_id, grant.holder_id,
+        params![tenant.as_str(), grant.pool_id, grant.database_id, grant.branch_id, grant.holder_id,
             allocation.cycle_id(), grant.policy_epoch as i64, grant.consent_epoch as i64, grant.writer_epoch as i64, allocation.placement(), allocation.payload_digest().as_slice(), allocation.local_units(), grant.expires_at],
     ).map_err(|_| ())?;
     let changed = transaction
@@ -32,7 +32,7 @@ pub(super) fn consume(
             params![
                 units,
                 tenant.as_str(),
-                grant.operation_id,
+                grant.pool_id,
                 grant.database_id,
                 grant.branch_id,
                 allocation.cycle_id(),
