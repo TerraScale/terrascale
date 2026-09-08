@@ -138,6 +138,33 @@ impl NativeBackupRuntime {
         .map_err(|_| NativeBackupRuntimeError::Envelope)
     }
 
+    /// Captures every admitted physical participant at its retained serving
+    /// cut and publishes one durable envelope catalog entry. Participant
+    /// points are never reported as a complete logical point independently.
+    pub async fn capture_shard_envelope(
+        &self,
+        cut: &terrabase::member::AdmittedShardReadCut,
+    ) -> Result<BackupEnvelope, NativeBackupRuntimeError> {
+        if cut.participants.is_empty() || cut.route_generation.is_none() {
+            return Err(NativeBackupRuntimeError::Envelope);
+        }
+        let requested = cut
+            .participants
+            .iter()
+            .map(|participant| {
+                (participant.engine.database_id().to_string(), participant.snapshot.sequence())
+            })
+            .collect::<Vec<_>>();
+        let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+        let manifests = fleet
+            .capture_participants_at(&requested)
+            .await
+            .map_err(NativeBackupRuntimeError::Fleet)?;
+        let envelope = self.assemble_shard_envelope(cut, manifests)?;
+        fleet.publish_envelope(&envelope).await.map_err(NativeBackupRuntimeError::Fleet)?;
+        Ok(envelope)
+    }
+
     /// Creates and admits the complete accepted stream set.
     ///
     /// Admission is all-or-nothing from the caller's perspective: if any

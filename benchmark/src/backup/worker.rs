@@ -12,7 +12,7 @@ use inventory::{
 
 mod remote;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -134,6 +134,11 @@ pub struct StreamConfig {
     pub keys: Arc<dyn BackupKeys>,
     /// Independently configured providers selected by effective account policy.
     pub destinations: Vec<(Provider, Arc<ObjectDestination>)>,
+    /// Every destination admitted by this database's durable policy history.
+    /// The current `destinations` set is included automatically; callers must
+    /// provide retired destinations again after restart so deletion can purge
+    /// their retained encrypted points.
+    pub historical_destinations: Vec<(Provider, Arc<ObjectDestination>)>,
     /// Persisted effective policy revision; changing policy requires re-admission.
     pub policy_revision: String,
     /// Plan PITR retention: Free/Starter/Pro/Scale use 1/7/30/35 days.
@@ -176,6 +181,7 @@ struct Stream {
 struct SuspendedStream {
     keys: Arc<dyn BackupKeys>,
     destinations: Vec<(Provider, Arc<ObjectDestination>)>,
+    historical_destinations: Vec<(Provider, Arc<ObjectDestination>)>,
     policy_revision: String,
     retention_days: u8,
     staging: PathBuf,
@@ -214,10 +220,15 @@ impl NativeBackupFleet {
         if participants.is_empty() {
             return Err(FleetError::Configuration);
         }
+        let limits = self.limits;
+        let mut seen = BTreeSet::new();
         let mut manifests = Vec::with_capacity(participants.len());
         for (database, boundary) in participants {
+            if !seen.insert(database) || seen.len() > limits.streams {
+                return Err(FleetError::Configuration);
+            }
             let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
-            if stream.closing || stream.paused || boundary.get() == 0 {
+            if stream.closing || stream.paused {
                 return Err(FleetError::Configuration);
             }
             let owner = stream.config.engine.engine().database_owner();
@@ -245,21 +256,21 @@ impl NativeBackupFleet {
                 .with_reader(reader)
                 .with_placement_lock(stream.config.placement.clone())
                 .with_archive_byte_limit(
-                    self.limits
-                        .staging_bytes_per_stream
-                        .saturating_sub(2 * 1024 * 1024),
+                    limits.staging_bytes_per_stream.saturating_sub(2 * 1024 * 1024),
                 );
             let engine = Arc::clone(&stream.config.engine);
             let staging = stream.config.staging.clone();
-            let result =
-                tokio::task::spawn_blocking(move || run_backup(engine.engine(), plan, &staging))
-                    .await
-                    .map_err(|_| FleetError::Capture)?
-                    .map_err(|_| FleetError::Capture)?;
+            let staging_for_run = staging.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                run_backup(engine.engine(), plan, &staging_for_run)
+            })
+            .await
+            .map_err(|_| FleetError::Capture)?
+            .map_err(|_| FleetError::Capture)?;
             let point = result.manifest().clone();
             let point_path = staging.join(format!("rp-{}", point.identity()));
             point.verify(&staging).map_err(|_| FleetError::Capture)?;
-            if upload_destinations(database, stream, std::slice::from_ref(&point_path), self.limits)
+            if upload_destinations(database, stream, std::slice::from_ref(&point_path), limits)
                 .await?
             {
                 return Err(FleetError::Upload);
@@ -273,7 +284,7 @@ impl NativeBackupFleet {
     /// manifests and archive members have verified locally. The catalog lives
     /// beside the first participant's private staging tree and is ignored by
     /// ordinary point discovery until the complete marker is renamed.
-    pub fn publish_envelope(&self, envelope: &BackupEnvelope) -> Result<PathBuf, FleetError> {
+    pub async fn publish_envelope(&self, envelope: &BackupEnvelope) -> Result<PathBuf, FleetError> {
         let first = envelope.participants().first().ok_or(FleetError::Configuration)?;
         for participant in envelope.participants() {
             let stream =
@@ -283,19 +294,60 @@ impl NativeBackupFleet {
         let stream = self.streams.get(&first.database_id).ok_or(FleetError::Configuration)?;
         let catalog = stream.config.staging.join("envelopes");
         std::fs::create_dir_all(&catalog).map_err(|_| FleetError::Capture)?;
-        let name = format!("env-{}.tbv1", envelope.digest());
+        let name = format!("env-{}", envelope.digest());
         let temporary = catalog.join(format!(".{name}.staging"));
-        let published = catalog.join(name);
+        let published = catalog.join(&name);
+        std::fs::create_dir_all(&temporary).map_err(|_| FleetError::Capture)?;
         let bytes = envelope.encode().map_err(|_| FleetError::Capture)?;
-        std::fs::write(&temporary, bytes).map_err(|_| FleetError::Capture)?;
+        let marker = temporary.join("envelope.tbv1");
+        std::fs::write(&marker, bytes).map_err(|_| FleetError::Capture)?;
         let file = std::fs::OpenOptions::new()
             .read(true)
-            .open(&temporary)
+            .open(&marker)
             .map_err(|_| FleetError::Capture)?;
         file.sync_all().map_err(|_| FleetError::Capture)?;
         std::fs::rename(&temporary, &published).map_err(|_| FleetError::Capture)?;
         super::sync_directory(&catalog).map_err(|_| FleetError::Capture)?;
+        for (_provider, destination) in &stream.config.destinations {
+            let prefix = format!("{}/envelopes/{name}", first.database_id);
+            destination
+                .upload_envelope(&published.join("envelope.tbv1"), &prefix)
+                .await
+                .map_err(|_| FleetError::Upload)?;
+        }
         Ok(published)
+    }
+
+    /// Reads and strictly decodes a provider-published envelope catalog entry.
+    /// The provider artifact is the authority for remote restore discovery;
+    /// local staging is never substituted when it is absent or corrupt.
+    pub async fn download_envelope(
+        &self,
+        database: &str,
+        digest: &str,
+        provider: Provider,
+    ) -> Result<BackupEnvelope, FleetError> {
+        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(FleetError::Configuration);
+        }
+        let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        let destination = stream
+            .config
+            .destinations
+            .iter()
+            .find(|(kind, _)| *kind == provider)
+            .map(|(_, destination)| destination)
+            .ok_or(FleetError::Configuration)?;
+        let prefix = format!("{database}/envelopes/env-{digest}");
+        let bytes = destination
+            .download_envelope(&prefix)
+            .await
+            .map_err(|_| FleetError::Upload)?;
+        let envelope = BackupEnvelope::decode(&bytes).map_err(|_| FleetError::Capture)?;
+        if envelope.digest() != digest || envelope.database_id() != database {
+            return Err(FleetError::Capture);
+        }
+        Ok(envelope)
     }
 }
 
@@ -389,7 +441,7 @@ impl NativeBackupFleet {
             .get(database)
             .ok_or(FleetError::Configuration)?
             .config
-            .destinations
+            .historical_destinations
             .iter()
             .map(|(_, destination)| Arc::clone(destination))
             .collect::<Vec<_>>();
@@ -426,7 +478,7 @@ impl NativeBackupFleet {
     ///
     /// # Errors
     /// Rejects duplicate streams, unbounded/empty policies and unavailable keys.
-    pub fn attach(&mut self, config: StreamConfig) -> Result<(), FleetError> {
+    pub fn attach(&mut self, mut config: StreamConfig) -> Result<(), FleetError> {
         let identity = config.engine.engine().database_id().to_string();
         if !matches!(config.retention_days, 1 | 7 | 30 | 35)
             || config.policy_revision.len() > 256
@@ -447,6 +499,17 @@ impl NativeBackupFleet {
         {
             return Err(FleetError::Configuration);
         }
+        let mut historical_destinations = config.historical_destinations.clone();
+        historical_destinations.extend(config.destinations.iter().cloned());
+        let mut seen_destinations = BTreeSet::new();
+        if historical_destinations.iter().any(|(provider, destination)| {
+            *provider != destination.provider()
+                || destination.admitted_region() != config.engine.engine().database_owner().region()
+                || !seen_destinations.insert(destination.identity().to_owned())
+        }) {
+            return Err(FleetError::Configuration);
+        }
+        config.historical_destinations = historical_destinations;
         config.keys.lease().map_err(|_| FleetError::Capture)?;
         let owner = config.engine.engine().database_owner();
         let tenant = crate::types::TenantId::try_new(&owner.tenant().to_text())
@@ -594,8 +657,25 @@ impl NativeBackupFleet {
         remote::migrate_points(database, stream, self.limits, &destinations).await?;
         // Commit the exact configured set only after every survivor/new provider
         // independently verifies a complete chain through the same boundary.
-        persist_upload_journal(&stream.config.staging.join("policy-active"), revision, &names)?;
+        let mut historical_destinations = stream.config.historical_destinations.clone();
+        historical_destinations.extend(destinations.iter().cloned());
+        let mut seen_destinations = BTreeSet::new();
+        historical_destinations
+            .retain(|(_, destination)| seen_destinations.insert(destination.identity().to_owned()));
+        let historical_names = historical_destinations
+            .iter()
+            .map(|(provider, _)| match provider {
+                Provider::Oci => "oci".to_owned(),
+                Provider::Tigris => "tigris".to_owned(),
+            })
+            .collect::<BTreeSet<_>>();
+        persist_upload_journal(
+            &stream.config.staging.join("policy-active"),
+            revision,
+            &historical_names,
+        )?;
         stream.config.destinations = destinations;
+        stream.config.historical_destinations = historical_destinations;
         revision.clone_into(&mut stream.config.policy_revision);
         stream.health.protected_sequence =
             chain.last().ok_or(FleetError::Capture)?.boundary_sequence().get();
@@ -712,6 +792,7 @@ impl NativeBackupFleet {
             engine,
             keys,
             destinations,
+            historical_destinations,
             policy_revision,
             retention_days,
             staging,
@@ -723,6 +804,7 @@ impl NativeBackupFleet {
             SuspendedStream {
                 keys,
                 destinations,
+                historical_destinations,
                 policy_revision,
                 retention_days,
                 staging,
@@ -758,6 +840,7 @@ impl NativeBackupFleet {
             engine,
             keys: policy.keys,
             destinations: policy.destinations,
+            historical_destinations: policy.historical_destinations,
             policy_revision: policy.policy_revision,
             retention_days: policy.retention_days,
             staging: policy.staging,
@@ -1262,10 +1345,12 @@ async fn sync_stream(
             }
             let engine = Arc::clone(&stream.config.engine);
             let staging = stream.config.staging.clone();
-            let result =
-                tokio::task::spawn_blocking(move || run_backup(engine.engine(), plan, &staging))
-                    .await
-                    .map_err(|_| FleetError::Capture)?;
+            let staging_for_backup = staging.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                run_backup(engine.engine(), plan, &staging_for_backup)
+            })
+            .await
+            .map_err(|_| FleetError::Capture)?;
             match result {
                 Ok(backup) => captured_boundary = backup.manifest().boundary_sequence(),
                 Err(_) => capture_refusal = Some(FleetError::Capture),
@@ -1671,6 +1756,7 @@ mod tests {
             engine: engine.clone(),
             keys: key_provider.clone(),
             destinations: vec![(Provider::Oci, destination.clone())],
+            historical_destinations: Vec::new(),
             policy_revision: "idle-policy".into(),
             retention_days: 1,
             staging: staging.clone(),
@@ -1764,6 +1850,7 @@ mod tests {
             engine: engine.clone(),
             keys: key_provider.clone(),
             destinations: vec![(Provider::Oci, destination.clone())],
+            historical_destinations: Vec::new(),
             policy_revision: "policy-1".into(),
             retention_days: 1,
             staging: staging.clone(),
@@ -1846,6 +1933,7 @@ mod tests {
                 engine: engine.clone(),
                 keys: keys(&engine),
                 destinations: vec![(Provider::Oci, destination)],
+                historical_destinations: Vec::new(),
                 policy_revision: "policy-1".into(),
                 retention_days: 1,
                 staging: staging.clone(),
@@ -1930,6 +2018,7 @@ mod tests {
             engine: engine.clone(),
             keys: key_provider.clone(),
             destinations: vec![(Provider::Oci, destination.clone())],
+            historical_destinations: Vec::new(),
             policy_revision: "policy-1".into(),
             retention_days: 1,
             staging: staging.clone(),
@@ -2056,6 +2145,7 @@ mod tests {
                 (Provider::Oci, destination.clone()),
                 (Provider::Tigris, second.clone()),
             ],
+            historical_destinations: Vec::new(),
             policy_revision: "policy-1".into(),
             retention_days: 1,
             staging: staging.clone(),
@@ -2136,6 +2226,7 @@ mod tests {
             engine: engine.clone(),
             keys: keys(&engine),
             destinations: vec![(Provider::Oci, destination.clone())],
+            historical_destinations: Vec::new(),
             policy_revision: "policy-1".into(),
             retention_days: 1,
             staging: location("fleet-pause-restart-staging"),
@@ -2240,6 +2331,7 @@ mod tests {
                     keys: keys(&engine),
                     engine: engine.clone(),
                     destinations: vec![(Provider::Oci, good), (Provider::Tigris, bad)],
+                    historical_destinations: Vec::new(),
                     policy_revision: "policy-1".into(),
                     retention_days: 1,
                     staging: staging.clone(),
@@ -2355,9 +2447,9 @@ mod tests {
             fleet.health(&identity).unwrap().protected,
             "observation leaves historical receipt unchanged"
         );
-        assert!(
-            fleet.purge_retained(&identity, &[first.clone(), second.clone()]).await.unwrap() > 0
-        );
+        let receipt = fleet.lifecycle_delete(&identity, "delete-after-policy-switch").await.unwrap();
+        assert_eq!(receipt.action, "delete_owned_data");
+        assert!(receipt.point_digest.parse::<usize>().unwrap() > 0);
         assert!(first.list_points(&identity, 8).await.unwrap().is_empty());
         assert!(second.list_points(&identity, 8).await.unwrap().is_empty());
         assert!(fleet.sync_once().await.is_empty());
@@ -2493,6 +2585,7 @@ mod tests {
                     (Provider::Oci, first.clone()),
                     (Provider::Tigris, second.clone()),
                 ],
+                historical_destinations: Vec::new(),
                 policy_revision: "policy-1".into(),
                 retention_days: 1,
                 staging: staging.clone(),
@@ -2587,6 +2680,7 @@ mod tests {
             engine: engine.clone(),
             keys: key_provider.clone(),
             destinations: vec![(Provider::Oci, source.clone())],
+            historical_destinations: Vec::new(),
             policy_revision: "initial".into(),
             retention_days: 1,
             staging: staging.clone(),

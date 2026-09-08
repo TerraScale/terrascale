@@ -161,11 +161,18 @@ impl VerifiedAllocation {
         let envelope: AllocationEnvelope =
             serde_json::from_slice(&signed.payload).map_err(|_| AllocationError::Encoding)?;
         let grant = &envelope.grant;
+        // The producer wire contract uses lowercase DNS-style region tokens.
+        // Keep the member's canonical uppercase RegionCode at the API edge,
+        // but reject mixed-case grant tokens before they become budget state.
         let regions = grant
             .regions
             .iter()
-            .map(|region| region.to_ascii_lowercase())
-            .collect::<std::collections::BTreeSet<_>>();
+            .map(|region| {
+                let canonical = region.to_ascii_lowercase();
+                (region == &canonical).then_some(canonical)
+            })
+            .collect::<Option<std::collections::BTreeSet<_>>>();
+        let Some(regions) = regions else { return Err(AllocationError::Binding) };
         let valid_times = parse_millis(&grant.issued_at).zip(parse_millis(&grant.expires_at));
         let Some((issued, expires)) = valid_times else { return Err(AllocationError::Binding) };
         if envelope.schema_version != 2
@@ -202,8 +209,9 @@ impl VerifiedAllocation {
             || expires <= now_millis
             || issued > expires
             || regions.len() != grant.regions.len()
-            || !grant.region.eq_ignore_ascii_case(local_region)
-            || !grant.regions.iter().any(|region| region.eq_ignore_ascii_case(local_region))
+            || grant.region != grant.region.to_ascii_lowercase()
+            || grant.region != local_region.to_ascii_lowercase()
+            || !grant.regions.iter().any(|region| region == &local_region.to_ascii_lowercase())
         {
             return Err(if expires <= now_millis {
                 AllocationError::Expired
@@ -349,6 +357,14 @@ mod tests {
     use base64::Engine as _;
 
     fn signed(holder: &str) -> (Vec<u8>, Vec<u8>, String) {
+        signed_with_regions(holder, "gru", ["gru", "sfo", "fra"])
+    }
+
+    fn signed_with_regions<const N: usize>(
+        holder: &str,
+        region: &str,
+        regions: [&str; N],
+    ) -> (Vec<u8>, Vec<u8>, String) {
         let rng = SystemRandom::new();
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
         let key =
@@ -370,8 +386,8 @@ mod tests {
             database_id: "db-1".into(),
             branch_id: "main".into(),
             holder_id: holder.into(),
-            region: "gru".into(),
-            regions: vec!["gru".into(), "sfo".into(), "fra".into()],
+            region: region.into(),
+            regions: regions.into_iter().map(str::to_owned).collect(),
             placement: "placement-1".into(),
             local_units: 2,
             aggregate_units: 6,
@@ -442,6 +458,29 @@ mod tests {
                 1_800_000_000_000
             )
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn signed_allocation_rejects_noncanonical_region_case() {
+        let (wire, public, key_id) = signed_with_regions("holder-1", "GrU", ["GrU", "sfo", "fra"]);
+        assert_eq!(
+            VerifiedAllocation::verify(
+                &wire,
+                &key_id,
+                &public,
+                "GRU",
+                "placement-1",
+                "org-1",
+                "db-1",
+                "holder-1",
+                4,
+                7,
+                9,
+                1_800_000_000_000,
+            )
+            .unwrap_err(),
+            AllocationError::Binding
         );
     }
 

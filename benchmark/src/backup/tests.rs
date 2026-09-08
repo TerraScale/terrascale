@@ -211,6 +211,16 @@ pub(super) fn committed(outcome: CommitOutcome) -> StorageSequence {
 }
 
 #[test]
+fn plaintext_integration_fixtures_are_available_only_to_in_crate_tests() {
+    let full = BackupPlan::for_integration_tests_full();
+    assert!(matches!(full.kind, crate::backup::BackupKind::Full));
+
+    let incremental =
+        BackupPlan::for_integration_tests_incremental_since(StorageSequence::default());
+    assert!(matches!(incremental.kind, crate::backup::BackupKind::Incremental { .. }));
+}
+
+#[test]
 fn production_backup_capability_rejects_inactive_region_and_non_backup_keys() {
     let owner = DatabaseOwner::local_development();
     let inactive = RegionCode::from_text("JFK").expect("well-formed inactive Region");

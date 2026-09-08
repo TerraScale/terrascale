@@ -196,12 +196,22 @@ impl PlacementLock {
             }
             seen.push(*region);
         }
-        if let Some(residency) = &self.residency
-            && (residency.is_empty()
-                || residency.len() > MAX_IDENTIFIER_BYTES
-                || !residency.is_ascii())
-        {
-            return Err(TenantApiError::InvalidInput("residency"));
+        let catalog = terrabase::regions::RegionCatalog::production();
+        crate::control::validate_placement(&catalog, &self.placement)
+            .map_err(|_| TenantApiError::InvalidInput("placement"))?;
+        if let Some(residency) = &self.residency {
+            if residency.is_empty() || residency.len() > MAX_IDENTIFIER_BYTES || !residency.is_ascii()
+            {
+                return Err(TenantApiError::InvalidInput("residency"));
+            }
+            crate::control::validate_residency(&catalog, residency, &self.placement).map_err(
+                |error| match error {
+                    crate::control::ControlError::ResidencyViolation { .. } => {
+                        TenantApiError::PlacementLockViolation
+                    }
+                    _ => TenantApiError::InvalidInput("residency"),
+                },
+            )?;
         }
         Ok(())
     }

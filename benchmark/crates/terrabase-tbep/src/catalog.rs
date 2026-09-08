@@ -158,7 +158,7 @@ impl HostCatalog {
         }
         // The access-driven idle sweep rides the same lock hold as the
         // open. A dedicated sweep thread is deliberately absent.
-        // ponytail: idle-close must pause a Litestream-style backup child
+        // ponytail: idle-close must pause a backup child
         // before its source database closes — S-06 hooks that here.
         Self::sweep_idle(&mut entries, self.idle_after, now);
         while entries.len() >= self.capacity {

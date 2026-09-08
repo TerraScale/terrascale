@@ -886,7 +886,7 @@ pub type BackupPauseCallback = Arc<dyn Fn(&DatabaseId) + Send + Sync + 'static>;
 /// Callback invoked after a paused database is opened again.
 pub type BackupResumeCallback = Arc<dyn Fn(&DatabaseId) + Send + Sync + 'static>;
 
-/// Explicit lifecycle hooks for a per-file Litestream owner.
+/// Explicit lifecycle hooks for a per-file backup owner.
 #[derive(Clone)]
 pub struct BackupHooks {
     pause: BackupPauseCallback,

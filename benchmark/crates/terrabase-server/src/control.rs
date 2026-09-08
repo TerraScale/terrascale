@@ -556,14 +556,17 @@ fn validate_name(name: &str) -> Result<(), ControlError> {
 }
 
 /// Validates a placement: non-empty, every region a well-formed code.
-fn validate_placement(
+pub(crate) fn validate_placement(
     catalog: &RegionCatalog,
     placement: &[RegionCode],
 ) -> Result<(), ControlError> {
     if placement.is_empty() {
         return Err(ControlError::InvalidPlacement("the region list is empty".into()));
     }
-    if let Some(region) = placement.iter().find(|region| !catalog.is_registered(region)) {
+    let mut seen = std::collections::BTreeSet::new();
+    if let Some(region) = placement.iter().find(|region| {
+        !catalog.is_registered(region) || !seen.insert(**region)
+    }) {
         return Err(ControlError::InvalidPlacement(format!("region {region} is not registered")));
     }
     Ok(())
@@ -574,7 +577,7 @@ fn validate_placement(
 /// placement region must satisfy it.
 // ponytail: the eu/br sets hardcode the launch catalog (GRU/SFO/FRA); an
 // orchestrator-fed geo map replaces this when the 4th region lands.
-fn validate_residency(
+pub(crate) fn validate_residency(
     catalog: &RegionCatalog,
     constraint: &str,
     placement: &[RegionCode],
@@ -589,7 +592,9 @@ fn validate_residency(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| ControlError::InvalidResidency(constraint.to_owned()))?,
     };
-    if allowed.is_empty() {
+    if allowed.is_empty()
+        || allowed.iter().collect::<std::collections::BTreeSet<_>>().len() != allowed.len()
+    {
         return Err(ControlError::InvalidResidency(constraint.to_owned()));
     }
     if allowed.iter().any(|region| !catalog.is_registered(region)) {

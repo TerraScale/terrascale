@@ -31,6 +31,7 @@ pub(crate) const MAX_SQL_INPUT_DOCUMENTS: usize = 65_536;
 pub(crate) const MAX_SQL_INPUT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_SQL_OUTPUT_ROWS: usize = 65_536;
 pub(crate) const MAX_SQL_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+const SQL_INPUT_PAGE: u32 = 256;
 /// `SQLite` invokes the callback at this approximate VM instruction interval.
 pub(crate) const SQL_PROGRESS_INTERVAL: i32 = 1_000;
 pub(crate) const MAX_SQL_STEPS: u64 = 5_000_000;
@@ -446,32 +447,50 @@ fn materialized_connection(
         for table in tables {
             let collection = crate::types::CollectionName::try_new(table)
                 .map_err(|_| QueryError::InvalidSpec)?;
-            let documents = participant
-                .engine
-                .snapshot_documents_in_collection(&scope, &participant.snapshot, &collection)
-                .map_err(|_| QueryError::StorageFailure)?;
-            for document in documents {
-                let key =
-                    crate::shard_split::canonical_shard_key(document.collection(), document.id());
-                if !participant.routes.iter().any(|route| {
-                    route.lower().is_none_or(|lower| key.as_slice() >= lower)
-                        && route.upper().is_none_or(|upper| key.as_slice() < upper)
-                }) || !seen.insert(key)
-                {
-                    continue;
+            let mut after = None;
+            loop {
+                control.check()?;
+                let documents = participant
+                    .engine
+                    .snapshot_documents_in_collection_from(
+                        &scope,
+                        &participant.snapshot,
+                        &collection,
+                        after,
+                        SQL_INPUT_PAGE,
+                    )
+                    .map_err(|_| QueryError::StorageFailure)?;
+                eprintln!("routed shard={} table={} docs={} seq={}", participant.identity.shard_id, table, documents.len(), sequence);
+                if documents.is_empty() {
+                    break;
                 }
-                let body = format!("{{\"$value\":{}}}", json_value(document.value())?);
-                input_documents =
-                    input_documents.checked_add(1).ok_or(QueryError::CandidateBoundExceeded)?;
-                input_bytes = input_bytes
-                    .checked_add(body.len())
-                    .and_then(|bytes| bytes.checked_add(document.id().as_str().len()))
-                    .and_then(|bytes| bytes.checked_add(document.collection().as_str().len()))
-                    .ok_or(QueryError::CandidateBoundExceeded)?;
-                if input_documents > MAX_SQL_INPUT_DOCUMENTS || input_bytes > MAX_SQL_INPUT_BYTES {
-                    return Err(QueryError::CandidateBoundExceeded);
-                }
-                transaction
+                after = documents.last().map(|document| document.id().clone());
+                for document in documents {
+                    let key = crate::shard_split::canonical_shard_key(
+                        document.collection(),
+                        document.id(),
+                    );
+                    if !participant.routes.iter().any(|route| {
+                        route.lower().is_none_or(|lower| key.as_slice() >= lower)
+                            && route.upper().is_none_or(|upper| key.as_slice() < upper)
+                    }) || !seen.insert(key)
+                    {
+                        continue;
+                    }
+                    let body = format!("{{\"$value\":{}}}", json_value(document.value())?);
+                    input_documents =
+                        input_documents.checked_add(1).ok_or(QueryError::CandidateBoundExceeded)?;
+                    input_bytes = input_bytes
+                        .checked_add(body.len())
+                        .and_then(|bytes| bytes.checked_add(document.id().as_str().len()))
+                        .and_then(|bytes| bytes.checked_add(document.collection().as_str().len()))
+                        .ok_or(QueryError::CandidateBoundExceeded)?;
+                    if input_documents > MAX_SQL_INPUT_DOCUMENTS
+                        || input_bytes > MAX_SQL_INPUT_BYTES
+                    {
+                        return Err(QueryError::CandidateBoundExceeded);
+                    }
+                    transaction
                     .execute(
                     "INSERT INTO documents
                      (tenant, collection, id, body, revision, hlc, committed_at, commit_seq, deleted)
@@ -486,6 +505,7 @@ fn materialized_connection(
                     ],
                     )
                     .map_err(|_| QueryError::StorageFailure)?;
+                }
             }
         }
     }

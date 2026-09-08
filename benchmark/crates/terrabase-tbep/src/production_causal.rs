@@ -95,6 +95,10 @@ pub struct CausalDriver {
     prefix: Vec<u8>,
     next_id: u64,
     cursor: u64,
+    /// Highest local outbox sequence inspected while looking for a publication
+    /// from this lane. This is separate from `cursor`, which only advances
+    /// after contiguous peer receipts.
+    outbox_scan_cursor: u64,
     pending: BTreeMap<u64, Pending>,
     durable_peer_frontier: BTreeMap<String, u64>,
     retired: BTreeMap<u64, String>,
@@ -154,6 +158,7 @@ impl CausalDriver {
             )
             .map_err(failure)?,
             cursor: 0,
+            outbox_scan_cursor: 0,
             pending: BTreeMap::new(),
             durable_peer_frontier: BTreeMap::new(),
             retired: BTreeMap::new(),
@@ -172,7 +177,7 @@ impl CausalDriver {
     /// causal acknowledgement cursor. Repair publications do not advance it.
     #[must_use]
     pub const fn acknowledged_source_cursor(&self) -> Option<u64> {
-        (self.cursor != 0).then_some(self.cursor)
+        if self.cursor != 0 { Some(self.cursor) } else { None }
     }
 
     /// Authorizes a missing source group proved by a correlated repair leaf.
@@ -257,13 +262,20 @@ impl CausalDriver {
         let local_origin = &self.local_origin;
         let mut after =
             self.pending.values().filter_map(|p| p.checkpoint).max().unwrap_or(self.cursor);
+        after = after.max(self.outbox_scan_cursor);
         let scope = engine.scope_for(&TenantId::try_new(&self.scope.tenant).map_err(failure)?);
         let mut selected = None;
+        let mut scanned_to = after;
         for _ in 0..8 {
             let rows = engine.replication_publications(&scope, after, 1).map_err(failure)?;
             let Some((sequence, publication)) = rows.into_iter().next() else {
+                self.outbox_scan_cursor = self.outbox_scan_cursor.max(scanned_to);
+                if self.pending.is_empty() {
+                    self.cursor = self.cursor.max(scanned_to);
+                }
                 return Ok(None);
             };
+            scanned_to = sequence;
             if publication.origin == *local_origin {
                 selected = Some((sequence, publication));
                 break;
@@ -274,9 +286,11 @@ impl CausalDriver {
             after = sequence;
         }
         let Some((sequence, publication)) = selected else {
+            self.outbox_scan_cursor = self.outbox_scan_cursor.max(scanned_to);
             return Ok(None);
         };
         let bytes = self.encode_publication(&publication, Some(sequence), now_ms)?;
+        self.outbox_scan_cursor = self.outbox_scan_cursor.max(sequence);
         Ok(Some(bytes))
     }
 
@@ -679,6 +693,86 @@ mod tests {
             .replay_sync_journal(&scope, None, 2, &Cancellation::default())
             .unwrap();
         batch.records()[0].provenance().origin().to_owned()
+    }
+
+    fn commit_test_document(
+        engine: &Engine,
+        scope: &terrabase::types::TenantScope,
+        operation: &str,
+        id: &str,
+        value: i64,
+    ) {
+        let mut tx = engine
+            .begin(
+                scope,
+                engine.read_snapshot(scope).unwrap(),
+                terrabase::types::OperationId::try_new(operation).unwrap(),
+            )
+            .unwrap();
+        tx.put(
+            Document::new(
+                DocumentId::try_new(id).unwrap(),
+                CollectionName::try_new("items").unwrap(),
+                DocumentValue::Integer(value),
+            ),
+            ExpectedVersion::Any,
+        )
+        .unwrap();
+        assert!(matches!(tx.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    }
+
+    #[test]
+    fn outbound_scan_progresses_past_remote_rows_while_local_receipt_is_pending() {
+        let path = std::env::temp_dir().join(format!(
+            "causal-driver-scan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let source = Engine::open(EngineConfig::durable(path.join("source")).unwrap()).unwrap();
+        let remote = Engine::open(
+            EngineConfig::durable(path.join("remote"))
+                .unwrap()
+                .with_replication_origin(terrabase::types::RegionId::try_new("remote").unwrap()),
+        )
+        .unwrap();
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let source_scope = source.scope_for(&tenant);
+        let remote_scope = remote.scope_for(&tenant);
+        commit_test_document(&source, &source_scope, "local-first", "local-first", 1);
+        for index in 0..9 {
+            let operation = format!("remote-{index}");
+            let id = format!("remote-{index}");
+            commit_test_document(&remote, &remote_scope, &operation, &id, index);
+            let publication =
+                remote.replication_publications(&remote_scope, index, 1).unwrap().remove(0).1;
+            source.apply_replicated_publication(&source_scope, &publication).unwrap();
+        }
+        commit_test_document(&source, &source_scope, "local-second", "local-second", 2);
+
+        let bound = BoundScope {
+            principal: "member".into(),
+            tenant: "tenant".into(),
+            project: "project".into(),
+            database: "database".into(),
+        };
+        let local_origin = source.replication_origin().unwrap();
+        let mut sender = CausalDriver::new(
+            MemberId::try_new("a").unwrap(),
+            MemberId::try_new("b").unwrap(),
+            "remote".into(),
+            local_origin,
+            bound,
+            1,
+            1,
+        )
+        .unwrap();
+        assert!(sender.outbound_frame(&source, 0).unwrap().is_some());
+        assert!(sender.outbound_frame(&source, 0).unwrap().is_none());
+        assert!(sender.outbound_frame(&source, 0).unwrap().is_some());
+
+        source.shutdown().unwrap();
+        remote.shutdown().unwrap();
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[test]

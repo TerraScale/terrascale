@@ -33,8 +33,7 @@
 //! the caller's pinned fact, not the run's high-water mark.
 //!
 //! Every production plan is constructed with a database-bound OCI Vault key
-//! lease. Plaintext is available only to the in-crate `cfg(test)` fixtures
-//! and the documented `#[doc(hidden)]` integration-test constructors;
+//! lease. Plaintext is available only to the in-crate `cfg(test)` fixtures;
 //! there is no production plaintext default.
 //!
 //! # Fail-closed and disclosure rules
@@ -406,9 +405,8 @@ pub struct BackupPlan {
 #[derive(Clone, Debug)]
 enum BackupEncryptionMode {
     Encrypted(BackupEncryption),
-    /// Plaintext for tests only. Production constructors never produce it;
-    /// it is reachable only through the `#[doc(hidden)]` integration-test
-    /// constructors and the in-crate `cfg(test)` fixtures.
+    /// Plaintext for in-crate tests only.
+    #[cfg(test)]
     Plaintext,
 }
 
@@ -456,18 +454,10 @@ impl BackupPlan {
         }
     }
 
-    /// Creates a plaintext full plan for integration tests only.
-    ///
-    /// TEST-ONLY: the `tests/recovery` integration target is compiled
-    /// without `cfg(test)`, so it cannot use the in-crate `local_test_*`
-    /// fixtures. This constructor fills that gap so integration tests can
-    /// exercise the public backup seam against empty sources. It writes
-    /// unencrypted members and a plaintext manifest, is hidden from
-    /// documentation, and must never appear in production code: no
-    /// production path uses it.
-    #[doc(hidden)]
+    /// Creates a plaintext full plan for tests inside this crate.
+    #[cfg(test)]
     #[must_use]
-    pub fn for_integration_tests_full() -> Self {
+    pub(crate) fn for_integration_tests_full() -> Self {
         Self {
             kind: BackupKind::Full,
             pinned_boundary: None,
@@ -516,14 +506,10 @@ impl BackupPlan {
         Self { kind: BackupKind::Incremental { base }, ..Self::full(encryption) }
     }
 
-    /// Creates a plaintext incremental plan for integration tests only.
-    ///
-    /// TEST-ONLY: same contract as
-    /// [`BackupPlan::for_integration_tests_full`]; hidden from
-    /// documentation and never used by production code.
-    #[doc(hidden)]
+    /// Creates a plaintext incremental plan for tests inside this crate.
+    #[cfg(test)]
     #[must_use]
-    pub fn for_integration_tests_incremental_since(base: StorageSequence) -> Self {
+    pub(crate) fn for_integration_tests_incremental_since(base: StorageSequence) -> Self {
         Self { kind: BackupKind::Incremental { base }, ..Self::for_integration_tests_full() }
     }
 
@@ -1113,6 +1099,7 @@ fn execute(
             encryption.validate_for_engine(engine)?;
             Some(Arc::clone(&encryption.cipher))
         }
+        #[cfg(test)]
         BackupEncryptionMode::Plaintext => None,
     };
     let mut writer = match &encryption {
@@ -1237,6 +1224,7 @@ fn resolve_boundary(
             // The base must be a sealed recovery-point boundary in this
             // destination, and the range must be provable.
             let points = match &plan.encryption {
+                #[cfg(test)]
                 BackupEncryptionMode::Plaintext => discover_points(destination)?,
                 BackupEncryptionMode::Encrypted(encryption) => {
                     if let Some(reader) = &plan.reader {

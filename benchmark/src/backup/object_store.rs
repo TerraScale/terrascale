@@ -18,6 +18,8 @@ use object_store::{ClientOptions, ObjectStore, PutMode, RetryConfig};
 const INDEX: &str = "transfer-v1.index";
 const INDEX_LIMIT: u64 = 1024 * 1024;
 const MAX_FILES: usize = 4096;
+const ENVELOPE_FILE: &str = "envelope.tbv1";
+const ENVELOPE_LIMIT: u64 = 256 * 1024;
 
 /// A destination's independently managed cloud provider.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -124,6 +126,62 @@ struct Entry {
 }
 
 impl ObjectDestination {
+    /// Publishes one authenticated multi-participant envelope. The envelope
+    /// is written before its commit index and read back before success.
+    pub async fn upload_envelope(
+        &self,
+        envelope: &Path,
+        prefix: &str,
+    ) -> Result<(), TransferError> {
+        validate_prefix(prefix)?;
+        let mut bytes = Vec::new();
+        open_regular(envelope)
+            .map_err(|_| TransferError::LocalIo)?
+            .take(ENVELOPE_LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| TransferError::LocalIo)?;
+        if bytes.is_empty() || bytes.len() as u64 > ENVELOPE_LIMIT {
+            return Err(TransferError::InvalidPoint);
+        }
+        let key = object_key(prefix, ENVELOPE_FILE)?;
+        self.store.put(&key, bytes.clone().into()).await.map_err(|_| TransferError::Unavailable)?;
+        let response = self.store.get(&key).await.map_err(|_| TransferError::Unavailable)?;
+        let mut readback = Vec::new();
+        let mut stream = response.into_stream();
+        while let Some(chunk) = stream.next().await {
+            readback.extend_from_slice(&chunk.map_err(|_| TransferError::Unavailable)?);
+            if readback.len() as u64 > ENVELOPE_LIMIT {
+                return Err(TransferError::Integrity);
+            }
+        }
+        if readback != bytes {
+            return Err(TransferError::Integrity);
+        }
+        Ok(())
+    }
+
+    /// Fetches one envelope and enforces its bounded authenticated artifact size.
+    pub async fn download_envelope(&self, prefix: &str) -> Result<Vec<u8>, TransferError> {
+        validate_prefix(prefix)?;
+        let response = self
+            .store
+            .get(&object_key(prefix, ENVELOPE_FILE)?)
+            .await
+            .map_err(|_| TransferError::Unavailable)?;
+        let mut bytes = Vec::new();
+        let mut stream = response.into_stream();
+        while let Some(chunk) = stream.next().await {
+            bytes.extend_from_slice(&chunk.map_err(|_| TransferError::Unavailable)?);
+            if bytes.len() as u64 > ENVELOPE_LIMIT {
+                return Err(TransferError::Integrity);
+            }
+        }
+        if bytes.is_empty() {
+            return Err(TransferError::Integrity);
+        }
+        Ok(bytes)
+    }
+
     /// Publishes one bounded opaque member through the authenticated provider.
     /// Export composition uses this seam for resumable artifact members; the
     /// caller retains manifest and completion-marker ordering.

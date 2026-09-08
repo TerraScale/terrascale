@@ -399,69 +399,6 @@ impl UsageAdmissionJournal {
         Ok(Some(verified))
     }
 
-    /// Resolves the currently accepted pool for a database. Pool refill
-    /// identity is deliberately separate from the customer operation; the
-    /// caller binds the selected pool to that operation in the commit ledger.
-    pub fn resolve_current_pool(
-        &self,
-        database_id: &str,
-    ) -> Result<Option<terrabase::usage::VerifiedAllocation>, String> {
-        if database_id.is_empty() {
-            return Err("allocation database identity is invalid".into());
-        }
-        let config = self
-            .allocation_verifier
-            .lock()
-            .map_err(|_| "budget verifier lock unavailable")?
-            .clone()
-            .ok_or("budget verifier unavailable")?;
-        let connection = self.connection.lock().map_err(|_| "usage admission lock unavailable")?;
-        let mut query = connection
-            .prepare("SELECT operation,payload FROM allocations WHERE database_id=?1")
-            .map_err(|_| "allocation persistence failed")?;
-        let rows = query
-            .query_map([database_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })
-            .map_err(|_| "allocation persistence failed")?;
-        let mut candidates = Vec::new();
-        for row in rows {
-            let (operation, signed) = row.map_err(|_| "allocation persistence failed")?;
-            let envelope: terrabase::usage::AllocationEnvelope = serde_json::from_slice(
-                &serde_json::from_slice::<terrabase::usage::SignedAllocation>(&signed)
-                    .map_err(|_| "allocation encoding invalid")?
-                    .payload,
-            )
-            .map_err(|_| "allocation payload invalid")?;
-            candidates.push((envelope.grant.expires_at.clone(), operation, signed));
-        }
-        candidates.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-        for (_, _, signed) in candidates {
-            let (organization, holder, placement, writer_epoch, selected_regions) =
-                config.resolver.binding(database_id)?;
-            let verified = terrabase::usage::VerifiedAllocation::verify(
-                &signed,
-                &config.key_id,
-                &config.public_key_spki,
-                &self.region,
-                &placement,
-                &organization,
-                database_id,
-                &holder,
-                config.policy_epoch,
-                config.consent_epoch,
-                writer_epoch,
-                unix_millis(),
-            );
-            let Ok(verified) = verified else { continue };
-            if !same_regions(&verified.grant().regions, &selected_regions) {
-                continue;
-            }
-            return Ok(Some(verified));
-        }
-        Ok(None)
-    }
-
     fn validate(&self, r: &UsageRegistration) -> Result<(), String> {
         TenantUlid::from_text(&r.tenant_id).map_err(|_| "invalid usage tenant")?;
         ProjectUlid::from_text(&r.project_id).map_err(|_| "invalid usage project")?;

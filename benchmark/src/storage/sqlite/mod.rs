@@ -73,7 +73,7 @@
 //! Required consumers register at admission and advance through
 //! [`StoragePort::advance_consumer_frontier`] only after their durable
 //! acknowledgement (replication acks, metering export, and the TB-22 backup
-//! lane's Litestream-position frontier). The optional sync consumer is
+//! lane's backup-position frontier). The optional sync consumer is
 //! registered while a shared subscription exists and retired when the last
 //! reader closes. Usage facts are billing records and are never pruned.
 //!
@@ -228,7 +228,7 @@ fn cache_resident_bytes() -> usize {
 pub(super) const DATABASE_FILE: &str = "terrabase.sqlite3";
 
 /// The database file's path inside one location directory — the file
-/// Litestream streams per database (D-29).
+/// Backup streams per database (D-29).
 #[must_use]
 pub fn database_file(location: &Path) -> PathBuf {
     location.join(DATABASE_FILE)

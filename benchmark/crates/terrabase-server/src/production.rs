@@ -37,7 +37,7 @@ pub enum ProductionComponent {
     PublicApi,
     /// The private TBEP mTLS control host.
     ControlApi,
-    /// Litestream backup and restore workers.
+    /// Backup and restore workers.
     Backup,
     /// Prometheus and lifecycle probe listener.
     Metrics,

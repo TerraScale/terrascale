@@ -455,7 +455,7 @@ impl ApiError {
         }
     }
 
-    /// A backup/restore refusal (S-06): the Litestream side failed or was
+    /// A backup/restore refusal (S-06): the backup side failed or was
     /// never attached; nothing is silently degraded (D-29).
     #[must_use]
     pub fn backup(reason: impl std::fmt::Display) -> Self {
@@ -3731,7 +3731,7 @@ struct AtQuery {
 /// point-in-time restore cached per (database, second) with a bounded
 /// budget (S-06 (d)). The moment must sit inside the plan's PITR retention
 /// (D-25); older moments name their typed remedy instead of restoring
-/// bytes Litestream no longer keeps.
+/// bytes the configured backup retention no longer keeps.
 fn time_travel_document(
     state: &ApiState,
     name: &str,
@@ -4833,7 +4833,7 @@ fn render_explained_plan(plan: &terrabase::query::QueryPlan) -> String {
     explained
 }
 
-/// Backups ride Litestream per file (S-06): readiness is an artifact
+/// Backups run per file (S-06): readiness is an artifact
 /// fact, never "the child process is alive".
 #[utoipa::path(get, path = "/api/v1/databases/{name}/backups", responses((status = 200, description = "Backup readiness")))]
 async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
@@ -5970,7 +5970,7 @@ mod tests {
 
     /// The S-06 journey through the router: create (stream attaches),
     /// write, restore to a new database, branch with parent metadata.
-    /// Skips when Litestream is not packaged on this machine.
+    /// Skips when the external backup executable is not packaged on this machine.
     #[tokio::test]
     async fn backup_restore_and_branch_through_the_router() {
         use crate::backup::BackupStreams;
@@ -6084,7 +6084,7 @@ mod tests {
     /// The S-06 `?at=` retention gate reads the database's plan from the
     /// fleet registry: Free refuses a ten-day-old moment, Pro lets it
     /// through to the restore (which refuses without a stream — the gate
-    /// passed), and an unknown plan fails closed to Free. No Litestream
+    /// passed), and an unknown plan fails closed to Free. No backup process
     /// needed: the gate answers before any restore runs.
     #[test]
     fn time_travel_retention_gate_honors_the_database_plan() {
@@ -6182,8 +6182,8 @@ mod tests {
 
     /// The S-06 time-travel journey through the router: write, wait,
     /// write, then `?at=` between the writes serves the old value while
-    /// the live read serves the new one. Skips when Litestream is not
-    /// packaged on this machine.
+    /// the live read serves the new one. Skips when the external backup
+    /// executable is not packaged on this machine.
     #[tokio::test]
     async fn document_time_travel_at_returns_the_old_value() {
         use crate::backup::BackupStreams;

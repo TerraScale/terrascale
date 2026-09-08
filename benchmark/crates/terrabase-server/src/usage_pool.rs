@@ -260,7 +260,7 @@ impl UsageAdmissionJournal {
             .unwrap_or_else(|| format!("{holder}/{database}/{writer_epoch}/{placement}"));
         let work = PoolWork {
             request: RefillRequest {
-                refill_operation_id: DatabaseUlid::generate().to_text(),
+                refill_operation_id: terrabase::identity::DatabaseUlid::generate().to_text(),
                 pool_id,
                 organization_id: organization,
                 database_id: database.clone(),

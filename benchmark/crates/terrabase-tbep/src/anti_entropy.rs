@@ -21,7 +21,7 @@
 //!   transfer carries the source mutation and source dot.
 //! - **Snapshot bootstrap**: [`snapshot_bootstrap`] copies the peer's
 //!   quiesced durable file set into a fresh location — the in-process form
-//!   of installing the region-local Litestream snapshot (production reads
+//!   of installing the region-local backup snapshot (production reads
 //!   the snapshot artifact from its own region's object storage via the
 //!   S-06 `BackupStreams::restore_to_location` path, which lands the
 //!   identical file set). The tailer's cursor resumes from
@@ -630,7 +630,7 @@ pub struct SnapshotBootstrap {
 /// durable file set (the ownership record when present, `terrabase.sqlite3`,
 /// and its `-wal` when present) so opening the target
 /// serves the peer's state byte-identically — the in-process form of
-/// installing the region-local Litestream snapshot. The caller owns the
+/// installing the region-local backup snapshot. The caller owns the
 /// barrier: the peer must be quiescent (no commit wave or checkpoint in
 /// flight), exactly the bootstrap contract [`wal_follower`](crate::wal_follower)
 /// documents. The target directory must not hold a live engine.

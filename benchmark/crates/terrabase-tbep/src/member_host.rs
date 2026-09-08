@@ -467,9 +467,8 @@ impl MemberHost {
             .map_err(|error| {
                 HostingError::EngineFailure(format!("the shard journal merge failed: {error:?}"))
             })?;
-            let records: Vec<_> =
-                merged.records().iter().map(|entry| entry.record().clone()).collect();
-            self.delivery.apply_durable_lane_records(scope, merged.cursor(), &records)?;
+            self.delivery
+                .apply_durable_lane_records(scope, merged.cursor(), merged.records())?;
             *cursor = Some(merged.cursor().clone());
             if merged.drained() {
                 return Ok(());

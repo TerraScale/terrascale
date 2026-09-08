@@ -282,7 +282,7 @@ pub(crate) fn validate_local_restore_source(source: &Path) -> Result<(), Ownersh
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(OwnershipError::InvalidLocation);
     }
-    // A running Litestream process may keep scratch files beside the database.
+    // A running backup process may keep scratch files beside the database.
     // Reading its owner record does not adopt or open those files.
     let _ = database_binding(source)?.ok_or(OwnershipError::ForeignLocation)?;
     let (_, mode) = read_record(&source.join(FILE_NAME))?;

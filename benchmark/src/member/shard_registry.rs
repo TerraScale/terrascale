@@ -556,4 +556,32 @@ mod tests {
         drop(source);
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn routed_sql_pages_collection_materialization_before_evaluation() {
+        let root = std::env::temp_dir()
+            .join(format!("routed-sql-paged-input-{}", crate::identity::generate()));
+        let source =
+            Arc::new(Engine::open(EngineConfig::durable(root.join("source")).unwrap()).unwrap());
+        let target =
+            Arc::new(Engine::open(EngineConfig::durable(root.join("target")).unwrap()).unwrap());
+        let tenant = TenantId::try_new("tenant").unwrap();
+        for index in 0..257 {
+            put(
+                &source,
+                &tenant,
+                &format!("source-{index}"),
+                &format!("a-record-{index:03}"),
+                "records",
+                &[("state", text("open"))],
+            );
+        }
+
+        let result =
+            execute_routed_sql(&source, &target, &tenant, "SELECT COUNT(*) AS total FROM records");
+        assert_eq!(result.rows()[0].projected()[0].1, DocumentValue::Integer(257));
+        drop(target);
+        drop(source);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
