@@ -868,10 +868,10 @@ function regionEndpoints(raw: string | undefined, fallback: string | undefined, 
     if (region === "" || base === "" || entry.indexOf("=", separator + 1) >= 0) {
       throw new Error(`invalid TERRASCALE_E2E_REGION_BASE_URLS entry: ${entry}`);
     }
-    if (!/^[A-Z]{3}$/u.test(region)) {
+    if (strict && !/^[A-Z]{3}$/u.test(region)) {
       throw new Error(`invalid TERRASCALE_E2E_REGION_BASE_URLS region: ${region}`);
     }
-    if (seen.has(region)) throw new Error(`duplicate TERRASCALE_E2E_REGION_BASE_URLS region: ${region}`);
+    if (strict && seen.has(region)) throw new Error(`duplicate TERRASCALE_E2E_REGION_BASE_URLS region: ${region}`);
     seen.add(region);
     endpoints.push([region, base]);
   }
