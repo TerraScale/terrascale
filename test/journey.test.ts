@@ -850,6 +850,41 @@ const liveEnabled = liveApiBaseUrl !== undefined && liveAccessToken !== undefine
 const strictG1 = process.env.TERRASCALE_G1_STRICT === "1";
 const liveDashboardBaseUrl = process.env.TERRASCALE_DASHBOARD_BASE_URL?.trim() || undefined;
 
+type RegionEndpoint = readonly [region: string, base: string];
+
+function regionEndpoints(raw: string | undefined, fallback: string | undefined, strict: boolean): RegionEndpoint[] {
+  if (raw === undefined || raw.trim() === "") {
+    if (strict) throw new Error("[G1 contract gap] TERRASCALE_E2E_REGION_BASE_URLS is not configured");
+    if (fallback === undefined) throw new Error("TERRASCALE_API_BASE_URL is not configured");
+    raw = `GRU=${fallback}`;
+  }
+
+  const endpoints: RegionEndpoint[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
+    const separator = entry.indexOf("=");
+    const region = separator < 0 ? "" : entry.slice(0, separator).trim();
+    const base = separator < 0 ? "" : entry.slice(separator + 1).trim();
+    if (region === "" || base === "" || entry.indexOf("=", separator + 1) >= 0) {
+      throw new Error(`invalid TERRASCALE_E2E_REGION_BASE_URLS entry: ${entry}`);
+    }
+    if (!/^[A-Z]{3}$/u.test(region)) {
+      throw new Error(`invalid TERRASCALE_E2E_REGION_BASE_URLS region: ${region}`);
+    }
+    if (seen.has(region)) throw new Error(`duplicate TERRASCALE_E2E_REGION_BASE_URLS region: ${region}`);
+    seen.add(region);
+    endpoints.push([region, base]);
+  }
+  if (endpoints.length === 0) throw new Error("at least one local Region endpoint is required");
+  if (strict) {
+    const expected = new Set(["GRU", "SFO", "FRA"]);
+    if (seen.size !== expected.size || [...expected].some((region) => !seen.has(region))) {
+      throw new Error("[G1 contract gap] TERRASCALE_E2E_REGION_BASE_URLS must declare exactly GRU, SFO, and FRA");
+    }
+  }
+  return endpoints;
+}
+
 type LiveContract = {
   readonly paths?: Record<string, Record<string, unknown>>;
 };
@@ -947,6 +982,35 @@ function requirePublishedDomain(contract: LiveContract, domain: string): void {
   }
 }
 
+describe("strict G1 configuration guards", () => {
+  test("requires every live input when strict mode is enabled", () => {
+    if (!strictG1) return;
+    assert.ok(liveApiBaseUrl, "[G1 contract gap] TERRASCALE_API_BASE_URL is not configured");
+    assert.ok(liveAccessToken, "[G1 contract gap] TERRASCALE_E2E_ACCESS_TOKEN is not configured");
+    assert.ok(liveDashboardBaseUrl, "[G1 contract gap] TERRASCALE_DASHBOARD_BASE_URL is not configured");
+    regionEndpoints(process.env.TERRASCALE_E2E_REGION_BASE_URLS, liveApiBaseUrl, true);
+  });
+
+  test("rejects incomplete or malformed strict Region declarations", () => {
+    assert.throws(
+      () => regionEndpoints(undefined, "https://gru.example", true),
+      /TERRASCALE_E2E_REGION_BASE_URLS is not configured/u,
+    );
+    assert.throws(
+      () => regionEndpoints("GRU=https://gru.example,SFO=https://sfo.example", undefined, true),
+      /must declare exactly GRU, SFO, and FRA/u,
+    );
+    assert.throws(
+      () => regionEndpoints("GRU=https://gru.example,GRU=https://other.example,FRA=https://fra.example,SFO=https://sfo.example", undefined, true),
+      /duplicate.*GRU/u,
+    );
+    assert.throws(
+      () => regionEndpoints("GRU=https://gru.example,SFO=https://sfo.example,FRA=https://fra.example=bad", undefined, true),
+      /invalid.*entry/u,
+    );
+  });
+});
+
 describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
   let contract: LiveContract;
 
@@ -968,22 +1032,8 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
   });
 
   test("published contract and all three local Regions are live", async () => {
-
-    const regions = (process.env.TERRASCALE_E2E_REGION_BASE_URLS ?? "GRU=" + liveApiBaseUrl)
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    assert.ok(regions.length >= 1, "at least one local Region endpoint is required");
-    if (process.env.TERRASCALE_E2E_REGION_BASE_URLS !== undefined) {
-      assert.deepEqual(
-        new Set(regions.map((entry) => entry.split("=", 2)[0])),
-        new Set(["GRU", "SFO", "FRA"]),
-        "the local stack must prove all three configured Regions",
-      );
-    }
-    for (const entry of regions) {
-      const [region, base] = entry.split("=", 2);
-      assert.ok(region && base, `invalid TERRASCALE_E2E_REGION_BASE_URLS entry: ${entry}`);
+    const regions = regionEndpoints(process.env.TERRASCALE_E2E_REGION_BASE_URLS, liveApiBaseUrl, strictG1);
+    for (const [region, base] of regions) {
       const health = await liveRequest("/api/v1/health", {}, base);
       expectLiveStatus(health, 200, `${region} health`);
       const healthBody = objectBody(health, `${region} health`);
