@@ -149,6 +149,13 @@ func (o *DeletionOperation) validate() error {
 	if _, present := parents[r.DatabaseID]; !present {
 		return invalid()
 	}
+	rootParent := parents[r.DatabaseID]
+	if rootParent == r.DatabaseID {
+		return invalid()
+	}
+	if _, present := parents[rootParent]; present {
+		return invalid()
+	}
 	resolved := map[string]bool{r.DatabaseID: true}
 	for database := range parents {
 		var path []string

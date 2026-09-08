@@ -134,7 +134,7 @@ func TestDeletionStatusCancellationDoesNotResubmitDeletion(t *testing.T) {
 }
 
 func TestDeletionStatusAcceptsOnlyCompleteDescendantTargetGraphs(t *testing.T) {
-	for _, scenario := range []string{"grandchild", "branch_root", "missing_parent", "cycle", "missing_root", "conflicting_parent"} {
+	for _, scenario := range []string{"grandchild", "branch_root", "missing_parent", "cycle", "root_self", "root_descendant", "missing_root", "conflicting_parent"} {
 		t.Run(scenario, func(t *testing.T) {
 			result := deletionTestOperation("db-1", "delete-1", "preparing")
 			branch := result.Targets[0]
@@ -151,6 +151,10 @@ func TestDeletionStatusAcceptsOnlyCompleteDescendantTargetGraphs(t *testing.T) {
 				result.Targets[0].Stop.ParentDatabaseID = "missing"
 			case "cycle":
 				result.Targets[1].Stop.ParentDatabaseID = "grandchild-1"
+			case "root_self":
+				result.Targets[2].Stop.ParentDatabaseID = "db-1"
+			case "root_descendant":
+				result.Targets[2].Stop.ParentDatabaseID = "branch-1"
 			case "missing_root":
 				result.Targets = result.Targets[:2]
 			case "conflicting_parent":
