@@ -377,9 +377,8 @@ fn independent_storage_instances_fence_claims_and_stale_completion() {
     // metadata CAS, rather than either mutex, must decide the winner.
     let first = EngineWebhookStorage::new(Arc::clone(&engine));
     let second = EngineWebhookStorage::new(Arc::clone(&engine));
-    let endpoint = first
-        .create_endpoint(&scope, "https://hooks.example/events", 100)
-        .expect("endpoint");
+    let endpoint =
+        first.create_endpoint(&scope, "https://hooks.example/events", 100).expect("endpoint");
     let publication = Publication {
         revision: 7,
         write_index: 1,
@@ -388,19 +387,14 @@ fn independent_storage_instances_fence_claims_and_stale_completion() {
         origin_lane: String::new(),
         body: b"payload".to_vec(),
     };
-    let row = first
-        .ensure_delivery(&scope, &endpoint.id, &publication, 100)
-        .expect("delivery");
-    let claimed = first
-        .claim_delivery(&scope, &endpoint.id, &row, 100)
-        .expect("first claim");
+    let row = first.ensure_delivery(&scope, &endpoint.id, &publication, 100).expect("delivery");
+    let claimed = first.claim_delivery(&scope, &endpoint.id, &row, 100).expect("first claim");
     assert!(second.claim_delivery(&scope, &endpoint.id, &row, 100).is_err());
 
     // The first worker crashed after sending. A later worker may reclaim the
     // lease, but the stale worker cannot persist its delayed response.
-    let reclaimed = second
-        .claim_delivery(&scope, &endpoint.id, &claimed, 131)
-        .expect("expired lease reclaim");
+    let reclaimed =
+        second.claim_delivery(&scope, &endpoint.id, &claimed, 131).expect("expired lease reclaim");
     assert_ne!(reclaimed.claim_token, claimed.claim_token);
     assert_eq!(
         first.record_attempt(

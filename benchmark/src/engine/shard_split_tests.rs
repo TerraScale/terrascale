@@ -9,7 +9,11 @@ fn primary_file_identity_is_persisted_with_first_source_publication() {
     let (dir, engine, tenant) = super::tests::open_owned_engine("primary-lane");
     let scope = engine.scope_for(&tenant);
     let mut tx = engine
-        .begin(&scope, engine.read_snapshot(&scope).unwrap(), super::tests::operation("first-lane-write"))
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            super::tests::operation("first-lane-write"),
+        )
         .unwrap();
     tx.put(
         crate::types::Document::new(

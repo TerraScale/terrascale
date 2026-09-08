@@ -93,8 +93,8 @@
 //! admission allows one job at a time per source Engine; a concurrent
 //! attempt is a typed error.
 
-mod manifest;
 mod envelope;
+mod manifest;
 mod records;
 mod restore;
 pub use restore::RestoreIdentity;
@@ -104,8 +104,8 @@ mod tests;
 /// Bounded native backup scheduling shared by hosted databases.
 pub mod worker;
 
-pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
 pub use envelope::{BackupEnvelope, BackupEnvelopeParticipant};
+pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
 pub use restore::{
     RecoveryReceipt, RestoreChainLink, RestoreMarkerFacts, RestoredTenant, read_restore_marker,
     verify_latest_chain_encrypted,

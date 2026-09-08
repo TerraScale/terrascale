@@ -688,7 +688,8 @@ impl SyncDeliveryHost {
         if let Some(current) = state.durable_lane_cursors.get(&delivery_scope)
             && current.lanes().iter().any(|(lane, previous)| {
                 cursor.lanes().get(lane).is_none_or(|next| {
-                    (next.sequence(), next.write_index()) < (previous.sequence(), previous.write_index())
+                    (next.sequence(), next.write_index())
+                        < (previous.sequence(), previous.write_index())
                 })
             })
         {

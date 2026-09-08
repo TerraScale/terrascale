@@ -248,12 +248,12 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
     // for acceptance, but do not open durable member resources only to reject
     // the admitted runtime later in `serve_admitted_production`.
     if config.public_api.is_none() {
-        return Err(Box::new(DaemonError::ProductionStartup(
-            ProductionStartupError::Component(crate::production::ProductionComponentError {
+        return Err(Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+            crate::production::ProductionComponentError {
                 component: crate::production::ProductionComponent::PublicApi,
                 detail: "production public API configuration missing",
-            }),
-        )));
+            },
+        ))));
     }
 
     // This is the production storage boundary. It opens every enabled

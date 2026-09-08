@@ -293,11 +293,14 @@ impl SplitEngineAdapter for ScopedShardEngine {
         let state =
             self.load().map_err(|_| EngineError::StorageFailure)?.ok_or(EngineError::Conflict)?;
         let identity = Self::target_identity(*context, &state)?;
-        let target = self.open_target(context).map_err(|error| match error {
-            EngineOpenError::InvalidConfig | EngineOpenError::FormatMismatch => {
-                EngineError::Conflict
+        let target = self.open_target(context).map_err(|error| {
+            eprintln!("target open error: {error:?}");
+            match error {
+                EngineOpenError::InvalidConfig | EngineOpenError::FormatMismatch => {
+                    EngineError::Conflict
+                }
+                EngineOpenError::StorageUnavailable => EngineError::StorageFailure,
             }
-            EngineOpenError::StorageUnavailable => EngineError::StorageFailure,
         })?;
         let target_scope = Self::target_scope(&target, &self.scope);
         match Self::target_identity_at(&target, &target_scope)? {

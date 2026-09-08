@@ -296,12 +296,16 @@ pub struct ProductionBudgetConfig {
     /// Signed refill lifetime, no more than fifteen minutes.
     #[serde(default = "default_pool_lifetime")]
     pub pool_lifetime_seconds: u64,
-
 }
-const fn default_pool_maximum() -> i64 { 1024 }
-const fn default_pool_low_water() -> i64 { 128 }
-const fn default_pool_lifetime() -> u64 { 900 }
-
+const fn default_pool_maximum() -> i64 {
+    1024
+}
+const fn default_pool_low_water() -> i64 {
+    128
+}
+const fn default_pool_lifetime() -> u64 {
+    900
+}
 
 /// Kernel-authenticated local database admission endpoint.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]

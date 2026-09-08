@@ -776,12 +776,29 @@ impl ProductionAdmissionRuntime {
             let listed_records = records.clone();
             usage = usage.with_pool_runtime(crate::usage_admission::PoolRuntime {
                 engines: Arc::new(move |database| {
-                    let record = budget_records.lock().map_err(|_| "admission registry poisoned")?.get(database).cloned().ok_or("database admission unavailable")?;
+                    let record = budget_records
+                        .lock()
+                        .map_err(|_| "admission registry poisoned")?
+                        .get(database)
+                        .cloned()
+                        .ok_or("database admission unavailable")?;
                     let scope = record_scope(&record)?;
-                    Ok(Arc::new(budget_runtime.acquire_replication(&scope).map_err(failure)?) as Arc<dyn terrabase_cluster::wal_driver::WalEngineHandle>)
+                    Ok(Arc::new(budget_runtime.acquire_replication(&scope).map_err(failure)?)
+                        as Arc<dyn terrabase_cluster::wal_driver::WalEngineHandle>)
                 }),
-                databases: Arc::new(move || Ok(listed_records.lock().map_err(|_| "admission registry poisoned")?.keys().cloned().collect())),
-                limits: crate::usage_admission::PoolLimits { maximum: budget.pool_max_local_units, low_water: budget.pool_low_water_local_units, lifetime_seconds: budget.pool_lifetime_seconds },
+                databases: Arc::new(move || {
+                    Ok(listed_records
+                        .lock()
+                        .map_err(|_| "admission registry poisoned")?
+                        .keys()
+                        .cloned()
+                        .collect())
+                }),
+                limits: crate::usage_admission::PoolLimits {
+                    maximum: budget.pool_max_local_units,
+                    low_water: budget.pool_low_water_local_units,
+                    lifetime_seconds: budget.pool_lifetime_seconds,
+                },
             })?;
         }
         let usage = Arc::new(usage);

@@ -1,8 +1,8 @@
 //! Bounded authenticated peer sessions shared by all assigned databases.
 use crate::replication_cut::ReplicationCuts;
+use crate::replication_frontier::ReplicationRetentionFrontier;
 use crate::replication_proof::{ReadinessCutFrame, VerifiedReadinessCut};
 use crate::replication_runtime::ReplicationProgress;
-use crate::replication_frontier::ReplicationRetentionFrontier;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -261,7 +261,8 @@ impl ReplicationPeers {
         }
         let cuts = Arc::new(ReplicationCuts::default());
         let retention = Arc::new(ReplicationRetentionFrontier::default());
-        let mut required = BTreeMap::<DatabaseRouteScope, std::collections::BTreeSet<String>>::new();
+        let mut required =
+            BTreeMap::<DatabaseRouteScope, std::collections::BTreeSet<String>>::new();
         for (peer, lanes) in &peers {
             for lane in lanes {
                 required.entry(lane.scope).or_default().insert(peer.clone());

@@ -161,7 +161,11 @@ impl VerifiedAllocation {
         let envelope: AllocationEnvelope =
             serde_json::from_slice(&signed.payload).map_err(|_| AllocationError::Encoding)?;
         let grant = &envelope.grant;
-        let regions = grant.regions.iter().map(|region| region.to_ascii_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let regions = grant
+            .regions
+            .iter()
+            .map(|region| region.to_ascii_lowercase())
+            .collect::<std::collections::BTreeSet<_>>();
         let valid_times = parse_millis(&grant.issued_at).zip(parse_millis(&grant.expires_at));
         let Some((issued, expires)) = valid_times else { return Err(AllocationError::Binding) };
         if envelope.schema_version != 2

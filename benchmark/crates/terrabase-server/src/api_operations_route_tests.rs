@@ -221,8 +221,15 @@ async fn production_handler_paginates_authority_export_recovery_after_restart() 
         2,
         "member GET plus continuation should each use the authority"
     );
-    // With no authority fallback, foreign project/member tokens fail closed.
+    // A member-owned operation remains readable after the authority client is
+    // unavailable, matching the collection endpoint's journal fallback.
     Arc::get_mut(&mut state).unwrap().provisioning = None;
+    let (status, result) =
+        operation(state.clone(), &record.tenant_id, &record.project_id, &"a".repeat(32)).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["operation_id"], "a".repeat(32));
+    assert_eq!(result["kind"], "export");
+    // With no authority fallback, foreign project/member tokens fail closed.
     assert_ne!(
         page(state.clone(), &records[1].tenant_id, &records[1].project_id, Some(&cursor)).await.0,
         StatusCode::OK

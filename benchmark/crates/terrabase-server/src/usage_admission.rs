@@ -1,7 +1,6 @@
 //! Durable billing-stream registrations on the authenticated local control socket.
 #[path = "usage_pool.rs"]
 mod pool;
-pub(crate) use pool::{PoolRuntime, PoolLimits};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -9,6 +8,7 @@ use axum::{
     response::IntoResponse,
     routing::post,
 };
+pub(crate) use pool::{PoolLimits, PoolRuntime};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::{

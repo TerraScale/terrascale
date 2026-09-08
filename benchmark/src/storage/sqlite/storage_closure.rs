@@ -81,9 +81,7 @@ pub(super) fn close(
     // The accounting ledger is local to this database. Freeze the regional
     // multiplier into the closure exactly once, before carrying the
     // sub-second remainder into the next window.
-    let observed = observed
-        .checked_mul(u128::from(selected_regions))
-        .ok_or(())?;
+    let observed = observed.checked_mul(u128::from(selected_regions)).ok_or(())?;
     let byte_millis = observed
         .checked_add(
             u128::try_from(previous.map_or(0, |(_, remainder)| remainder)).map_err(|_| ())?,

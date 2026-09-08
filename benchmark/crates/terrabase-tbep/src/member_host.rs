@@ -385,7 +385,8 @@ impl MemberHost {
         let _serial = self.journal_sync.lock().expect("the journal sync lock is not poisoned");
         let Some(cut) = self.engine.admitted_shard_read_cut().map_err(|error| {
             HostingError::EngineFailure(format!("the admitted shard read cut failed: {error:?}"))
-        })? else {
+        })?
+        else {
             return self.synchronize_single_engine(scope);
         };
         let tenant = TenantId::try_new(&scope.tenant)
@@ -458,9 +459,16 @@ impl MemberHost {
                     SyncJournalLanePage::new(records, page.next_checkpoint(), page.drained()),
                 );
             }
-            let merged = terrabase::streaming::merge_sync_journal_pages(&before, pages, terrabase::streaming::MAX_STREAM_BATCH_ITEMS)
-                .map_err(|error| HostingError::EngineFailure(format!("the shard journal merge failed: {error:?}")))?;
-            let records: Vec<_> = merged.records().iter().map(|entry| entry.record().clone()).collect();
+            let merged = terrabase::streaming::merge_sync_journal_pages(
+                &before,
+                pages,
+                terrabase::streaming::MAX_STREAM_BATCH_ITEMS,
+            )
+            .map_err(|error| {
+                HostingError::EngineFailure(format!("the shard journal merge failed: {error:?}"))
+            })?;
+            let records: Vec<_> =
+                merged.records().iter().map(|entry| entry.record().clone()).collect();
             self.delivery.apply_durable_lane_records(scope, merged.cursor(), &records)?;
             *cursor = Some(merged.cursor().clone());
             if merged.drained() {

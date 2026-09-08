@@ -391,7 +391,10 @@ impl CausalDriver {
                     {
                         return Err(refused("invalid duplicate causal receipt"));
                     }
-                    return Ok(CausalReceive::Receipt { operations: Vec::new(), source_sequence: self.acknowledged_source_cursor() });
+                    return Ok(CausalReceive::Receipt {
+                        operations: Vec::new(),
+                        source_sequence: self.acknowledged_source_cursor(),
+                    });
                 }
                 let pending =
                     self.pending.get_mut(&id).ok_or_else(|| refused("unknown causal receipt"))?;
@@ -423,7 +426,10 @@ impl CausalDriver {
                             .or_insert(complete);
                     }
                 }
-                Ok(CausalReceive::Receipt { operations, source_sequence: self.acknowledged_source_cursor() })
+                Ok(CausalReceive::Receipt {
+                    operations,
+                    source_sequence: self.acknowledged_source_cursor(),
+                })
             }
             _ => Err(refused("unsupported causal frame kind")),
         }

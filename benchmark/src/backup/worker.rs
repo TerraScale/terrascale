@@ -18,7 +18,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::object_store::{ObjectDestination, Provider};
-use super::{BackupEncryption, BackupPlan, BackupReader, PlacementLock, run_backup};
+use super::{
+    BackupEncryption, BackupEnvelope, BackupPlan, BackupReader, PlacementLock, run_backup,
+};
 use crate::encryption::{DatabaseKeyLease, EncryptionError};
 use crate::engine::Engine;
 use crate::types::StorageSequence;
@@ -199,6 +201,101 @@ impl NativeBackupFleet {
             return Ok(stream.destinations.iter().map(|(provider, _)| *provider).collect());
         }
         Err(FleetError::Configuration)
+    }
+
+    /// Captures one self-contained snapshot for every physical participant at
+    /// the caller's already admitted read cuts.  Each tuple is a physical
+    /// stream identity and its pinned boundary; no stream chooses a fresh
+    /// high-water mark here.
+    pub async fn capture_participants_at(
+        &mut self,
+        participants: &[(String, StorageSequence)],
+    ) -> Result<Vec<super::BackupManifest>, FleetError> {
+        if participants.is_empty() {
+            return Err(FleetError::Configuration);
+        }
+        let mut manifests = Vec::with_capacity(participants.len());
+        for (database, boundary) in participants {
+            let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
+            if stream.closing || stream.paused || boundary.get() == 0 {
+                return Err(FleetError::Configuration);
+            }
+            let owner = stream.config.engine.engine().database_owner();
+            let tenant = crate::types::TenantId::try_new(&owner.tenant().to_text())
+                .map_err(|_| FleetError::Capture)?;
+            let lifecycle = stream
+                .config
+                .engine
+                .engine()
+                .lifecycle_state(&stream.config.engine.engine().scope_for(&tenant))
+                .map_err(|_| FleetError::Capture)?;
+            if lifecycle.paused || lifecycle.access_revoked() {
+                stream.paused = lifecycle.paused;
+                return Err(FleetError::Configuration);
+            }
+            stream.health.protected = false;
+            stream.verified_at = None;
+            let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
+            let lease = stream.config.keys.lease().map_err(|_| FleetError::Capture)?;
+            let encryption = BackupEncryption::from_database_key_lease(&lease, owner.region(), 0)
+                .map_err(|_| FleetError::Capture)?;
+            let plan = BackupPlan::snapshot_at(*boundary, encryption)
+                .with_retention_days(stream.config.retention_days)
+                .map_err(|_| FleetError::Configuration)?
+                .with_reader(reader)
+                .with_placement_lock(stream.config.placement.clone())
+                .with_archive_byte_limit(
+                    self.limits
+                        .staging_bytes_per_stream
+                        .saturating_sub(2 * 1024 * 1024),
+                );
+            let engine = Arc::clone(&stream.config.engine);
+            let staging = stream.config.staging.clone();
+            let result =
+                tokio::task::spawn_blocking(move || run_backup(engine.engine(), plan, &staging))
+                    .await
+                    .map_err(|_| FleetError::Capture)?
+                    .map_err(|_| FleetError::Capture)?;
+            let point = result.manifest().clone();
+            let point_path = staging.join(format!("rp-{}", point.identity()));
+            point.verify(&staging).map_err(|_| FleetError::Capture)?;
+            if upload_destinations(database, stream, std::slice::from_ref(&point_path), self.limits)
+                .await?
+            {
+                return Err(FleetError::Upload);
+            }
+            manifests.push(point);
+        }
+        Ok(manifests)
+    }
+
+    /// Atomically publishes one envelope catalog entry after all participant
+    /// manifests and archive members have verified locally. The catalog lives
+    /// beside the first participant's private staging tree and is ignored by
+    /// ordinary point discovery until the complete marker is renamed.
+    pub fn publish_envelope(&self, envelope: &BackupEnvelope) -> Result<PathBuf, FleetError> {
+        let first = envelope.participants().first().ok_or(FleetError::Configuration)?;
+        for participant in envelope.participants() {
+            let stream =
+                self.streams.get(&participant.database_id).ok_or(FleetError::Configuration)?;
+            participant.manifest.verify(&stream.config.staging).map_err(|_| FleetError::Capture)?;
+        }
+        let stream = self.streams.get(&first.database_id).ok_or(FleetError::Configuration)?;
+        let catalog = stream.config.staging.join("envelopes");
+        std::fs::create_dir_all(&catalog).map_err(|_| FleetError::Capture)?;
+        let name = format!("env-{}.tbv1", envelope.digest());
+        let temporary = catalog.join(format!(".{name}.staging"));
+        let published = catalog.join(name);
+        let bytes = envelope.encode().map_err(|_| FleetError::Capture)?;
+        std::fs::write(&temporary, bytes).map_err(|_| FleetError::Capture)?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .open(&temporary)
+            .map_err(|_| FleetError::Capture)?;
+        file.sync_all().map_err(|_| FleetError::Capture)?;
+        std::fs::rename(&temporary, &published).map_err(|_| FleetError::Capture)?;
+        super::sync_directory(&catalog).map_err(|_| FleetError::Capture)?;
+        Ok(published)
     }
 }
 

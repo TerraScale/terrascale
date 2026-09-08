@@ -156,8 +156,8 @@ fn range_publication(
                 "control:shard-target/v1/",
                 "control:shard-file/v1/",
             ]
-                .iter()
-                .any(|prefix| entry.key.starts_with(prefix))
+            .iter()
+            .any(|prefix| entry.key.starts_with(prefix))
         });
         if metadata.len() != before {
             selected.private_payload = if metadata.is_empty() && schemas.is_empty() {

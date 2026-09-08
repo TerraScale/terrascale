@@ -218,7 +218,10 @@ fn failed_real_commit_rolls_back_publication_and_frontier() {
 #[test]
 fn engine_per_record_replication_updates_session_frontier_across_gaps_and_reopen() {
     use crate::engine::{Engine, EngineConfig, ReplicatedRecord};
-    use crate::{origin_lane::OriginLaneId, types::{RegionId, TenantScope}};
+    use crate::{
+        origin_lane::OriginLaneId,
+        types::{RegionId, TenantScope},
+    };
     let dir = location("engine");
     let engine = Engine::open(EngineConfig::durable(&dir).unwrap()).unwrap();
     let tenant = TenantId::try_new("t").unwrap();

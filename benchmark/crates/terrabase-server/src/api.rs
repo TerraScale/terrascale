@@ -1979,7 +1979,16 @@ async fn get_provisioning_operation(
         return ApiError::control_unavailable().into_response();
     };
     let Some(authority) = &state.provisioning else {
-        return ApiError::control_unavailable().into_response();
+        return match operations::member_operation(&state, &scope, &operation_id) {
+            Ok(Some(operation)) => match serde_json::to_string(&operation) {
+                Ok(body) => json_response(StatusCode::OK, body),
+                Err(_) => ApiError::control_unavailable().into_response(),
+            },
+            Ok(None) => {
+                provisioning_error(crate::provisioning::ProvisioningError::NotFound).into_response()
+            }
+            Err(()) => ApiError::control_unavailable().into_response(),
+        };
     };
     match authority.status(&scope, &operation_id).await {
         Ok(operation) => {

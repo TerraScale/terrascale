@@ -615,11 +615,19 @@ mod lane_merge_tests {
         let pages = BTreeMap::from([
             (
                 first.clone(),
-                SyncJournalLanePage::new(vec![record(1, 10, "one")], Some(ChangeCheckpoint::after(1, 1)), true),
+                SyncJournalLanePage::new(
+                    vec![record(1, 10, "one")],
+                    Some(ChangeCheckpoint::after(1, 1)),
+                    true,
+                ),
             ),
             (
                 second.clone(),
-                SyncJournalLanePage::new(vec![record(1, 11, "two")], Some(ChangeCheckpoint::after(1, 1)), true),
+                SyncJournalLanePage::new(
+                    vec![record(1, 11, "two")],
+                    Some(ChangeCheckpoint::after(1, 1)),
+                    true,
+                ),
             ),
         ]);
         let merged = merge_sync_journal_pages(&cursor, pages, 2).expect("merge succeeds");
@@ -636,11 +644,19 @@ mod lane_merge_tests {
         let pages = BTreeMap::from([
             (
                 first.clone(),
-                SyncJournalLanePage::new(vec![record(1, 10, "one")], Some(ChangeCheckpoint::after(1, 1)), true),
+                SyncJournalLanePage::new(
+                    vec![record(1, 10, "one")],
+                    Some(ChangeCheckpoint::after(1, 1)),
+                    true,
+                ),
             ),
             (
                 second.clone(),
-                SyncJournalLanePage::new(vec![record(1, 20, "two")], Some(ChangeCheckpoint::after(1, 1)), true),
+                SyncJournalLanePage::new(
+                    vec![record(1, 20, "two")],
+                    Some(ChangeCheckpoint::after(1, 1)),
+                    true,
+                ),
             ),
         ]);
         let merged = merge_sync_journal_pages(&cursor, pages, 1).expect("merge succeeds");

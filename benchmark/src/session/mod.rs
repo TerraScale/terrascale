@@ -28,11 +28,11 @@ use std::{
 };
 
 use crate::engine::{CommitOutcome, Engine, EngineError};
-use crate::origin_lane::OriginLaneId;
 use crate::families::{
     FamilyError, FamilyReadContext, FamilyReadRequest, FamilyReadResult, FamilyWriteRequest,
     IdentityCommand, IdentityRead, IdentityWrite,
 };
+use crate::origin_lane::OriginLaneId;
 use crate::streaming::{
     DocumentStreamSelector, StreamBatch, StreamCursor, StreamError, StreamItem, StreamSource,
 };
@@ -204,7 +204,11 @@ impl SessionFrontier {
     }
 
     /// Advances one origin without allowing a causal regression.
-    pub fn advance(&mut self, origin: OriginLaneId, sequence: u64) -> Result<bool, SessionTokenError> {
+    pub fn advance(
+        &mut self,
+        origin: OriginLaneId,
+        sequence: u64,
+    ) -> Result<bool, SessionTokenError> {
         if sequence == 0 {
             return Err(SessionTokenError::ZeroSequence);
         }
@@ -324,7 +328,11 @@ impl SessionToken {
     }
 
     /// Advances one observed origin monotonically.
-    pub fn advance(&mut self, origin: OriginLaneId, sequence: u64) -> Result<bool, SessionTokenError> {
+    pub fn advance(
+        &mut self,
+        origin: OriginLaneId,
+        sequence: u64,
+    ) -> Result<bool, SessionTokenError> {
         self.frontier.advance(origin, sequence)
     }
 
@@ -399,7 +407,8 @@ impl SessionToken {
             let length = usize::from(reader.u16()?);
             let origin = std::str::from_utf8(reader.take(length)?)
                 .map_err(|_| SessionTokenError::InvalidOrigin)?;
-            let origin = OriginLaneId::parse(origin).map_err(|_| SessionTokenError::InvalidOrigin)?;
+            let origin =
+                OriginLaneId::parse(origin).map_err(|_| SessionTokenError::InvalidOrigin)?;
             let sequence = reader.u64()?;
             entries.push((origin, sequence));
         }
