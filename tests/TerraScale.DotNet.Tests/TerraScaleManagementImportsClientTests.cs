@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using TerraScale.DotNet;
+using TerraScale.DotNet.Generated;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -61,6 +62,43 @@ public sealed class TerraScaleManagementImportsClientTests
         await Assert.That(job.State).IsEqualTo("completed");
     }
 
+    [Test]
+    public async Task ListAndGetAsync_UseImportRoutesAndGeneratedCollectionMetadata()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "[" + ImportJobJson + "]");
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var jobs = await client.Management.Imports.ListAsync("db/one");
+
+        await Assert.That(handler.Method).IsEqualTo(HttpMethod.Get);
+        await Assert.That(handler.Uri).IsEqualTo("https://api.example.invalid/api/v1/databases/db%2Fone/imports");
+        await Assert.That(jobs).Count().IsEqualTo(1);
+        await Assert.That(jobs[0].OperationId).IsEqualTo("import-op-1");
+
+        handler.ResponseBody = ImportJobJson;
+        var job = await client.Management.Imports.GetAsync("db/one", "job/one");
+
+        await Assert.That(handler.Uri).IsEqualTo("https://api.example.invalid/api/v1/databases/db%2Fone/imports/job%2Fone");
+        await Assert.That(job.OperationId).IsEqualTo("import-op-1");
+        await Assert.That(TerraScaleContractJsonContext.Default.IReadOnlyListImportJob).IsNotNull();
+    }
+
+    [Test]
+    public async Task UploadAsync_StreamReadsPayloadAndUsesTheSameBinaryProducer()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.Accepted, ImportJobJson);
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+        await using var content = new MemoryStream([4, 5, 6]);
+
+        var job = await client.Management.Imports.UploadAsync("db/one", "job/one", content);
+
+        await Assert.That(handler.Method).IsEqualTo(HttpMethod.Put);
+        await Assert.That(handler.Bytes).IsEquivalentTo(new byte[] { 4, 5, 6 });
+        await Assert.That(job.OperationId).IsEqualTo("import-op-1");
+    }
+
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),
@@ -69,6 +107,7 @@ public sealed class TerraScaleManagementImportsClientTests
 
     private sealed class RecordingHandler(HttpStatusCode statusCode, string responseBody) : HttpMessageHandler
     {
+        public string ResponseBody { get; set; } = responseBody;
         public HttpMethod? Method { get; private set; }
         public string? Uri { get; private set; }
         public string? Body { get; private set; }
@@ -89,7 +128,7 @@ public sealed class TerraScaleManagementImportsClientTests
             IdempotencyKey = request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.Single() : null;
             return new HttpResponseMessage(statusCode)
             {
-                Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
+                Content = new StringContent(ResponseBody, Encoding.UTF8, "application/json")
             };
         }
     }
