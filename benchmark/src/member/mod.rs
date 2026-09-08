@@ -1667,6 +1667,16 @@ impl DatabaseLease {
         Arc::clone(&self.engine)
     }
 
+    /// Selects the physical participant shared by all supplied document IDs.
+    pub fn document_participant(
+        &self,
+        collection: &crate::types::CollectionName,
+        ids: &[crate::types::DocumentId],
+    ) -> Result<&Engine, crate::EngineError> {
+        let keys = ids.iter().map(|id| crate::shard_split::canonical_shard_key(collection, id)).collect::<Vec<_>>();
+        self.route_registry.participant(&keys)
+    }
+
     /// Begins an origin transaction through the lease-owned durable route.
     /// Callers cannot supply a router or filesystem location.
     pub fn begin_routed_document(
@@ -1721,6 +1731,19 @@ impl DatabaseLease {
     ) -> Result<Option<(Arc<Engine>, crate::CommitReceipt, Option<String>)>, crate::engine::EngineError> {
         let key = crate::shard_split::canonical_shard_key(collection, id);
         self.route_registry.resolve_document_request(scope, &key, operation, fingerprint)
+    }
+
+    /// Resolves batch provenance on its original admitted file.
+    pub fn resolve_routed_batch_request(
+        &self,
+        scope: &TenantScope,
+        collection: &crate::types::CollectionName,
+        ids: &[crate::types::DocumentId],
+        operation: OperationId,
+        fingerprint: [u8; 32],
+    ) -> Result<Option<(Arc<Engine>, crate::CommitReceipt, usize)>, crate::EngineError> {
+        let keys = ids.iter().map(|id| crate::shard_split::canonical_shard_key(collection, id)).collect::<Vec<_>>();
+        self.route_registry.resolve_batch_request(scope, &keys, operation, fingerprint)
     }
 
     /// Converts this sole admitted lease into an exclusive restore permit.

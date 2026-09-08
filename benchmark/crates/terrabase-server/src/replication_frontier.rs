@@ -8,7 +8,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
 use terrabase::Engine;
-use terrabase::types::StorageSequence;
 use terrabase_cluster::production::DatabaseRouteScope;
 
 /// Durable minimum acknowledged frontier for one set of admitted replication
@@ -60,14 +59,14 @@ impl ReplicationRetentionFrontier {
         engine: &Engine,
         scope: DatabaseRouteScope,
         peer: &str,
-        sequence: StorageSequence,
-    ) -> Result<Option<StorageSequence>, &'static str> {
+        sequence: u64,
+    ) -> Result<Option<u64>, &'static str> {
         let mut states = self.state.lock().map_err(|_| "frontier unavailable")?;
         let state = states.get_mut(&scope).ok_or("replication assignment missing")?;
         if !state.required.contains(peer) {
             return Err("acknowledgement from unrequired peer");
         }
-        let value = sequence.get();
+        let value = sequence;
         let previous = state.acknowledged.entry(peer.to_owned()).or_default();
         *previous = (*previous).max(value);
         let Some(minimum) = state
@@ -82,15 +81,15 @@ impl ReplicationRetentionFrontier {
             return Ok(None);
         }
         engine
-            .advance_retention_frontier("replication", StorageSequence::new(minimum))
+            .advance_retention_frontier("replication", minimum)
             .map_err(|_| "durable retention frontier failed")?;
         state.advanced = minimum;
-        Ok(Some(StorageSequence::new(minimum)))
+        Ok(Some(minimum))
     }
 
     /// Returns the last minimum durably submitted for a scope.
-    pub fn advanced(&self, scope: DatabaseRouteScope) -> Option<StorageSequence> {
-        self.state.lock().ok()?.get(&scope).map(|state| StorageSequence::new(state.advanced))
+    pub fn advanced(&self, scope: DatabaseRouteScope) -> Option<u64> {
+        self.state.lock().ok()?.get(&scope).map(|state| state.advanced)
     }
 }
 
@@ -113,7 +112,7 @@ mod tests {
         frontier
             .admit(scope(), BTreeSet::from(["writer-sfo".into(), "writer-fra".into()]))
             .unwrap();
-        assert!(frontier.advanced(scope()).is_some_and(|value| value.get() == 0));
+        assert!(frontier.advanced(scope()).is_some_and(|value| value == 0));
     }
 
     #[test]

@@ -355,6 +355,18 @@ impl EngineHost {
         &self.engine
     }
 
+    /// Selects the engine used for document reads, replay, sessions and durability.
+    pub fn document_participant(
+        &self,
+        collection: &CollectionName,
+        ids: &[terrabase::types::DocumentId],
+    ) -> Result<&Engine, terrabase::EngineError> {
+        match &self.engine {
+            HostEngine::Admitted(lease) => lease.document_participant(collection, ids),
+            HostEngine::Local(engine) => Ok(engine),
+        }
+    }
+
     /// Begins a named document write through the admitted serving registry.
     /// Local development hosts retain their ordinary single-engine path.
     pub fn begin_routed_document(
@@ -417,6 +429,21 @@ impl EngineHost {
         match &self.engine {
             HostEngine::Admitted(lease) => lease.resolve_routed_document_request(scope, collection, id, operation, fingerprint),
             HostEngine::Local(engine) => Ok(engine.resolve_document_request(scope, operation, fingerprint)?.map(|(receipt, revision)| (Arc::clone(engine), receipt, revision))),
+        }
+    }
+
+    /// Resolves a batch on its original participant, preserving its receipt.
+    pub fn resolve_routed_batch_request(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+        ids: &[terrabase::types::DocumentId],
+        operation: OperationId,
+        fingerprint: [u8; 32],
+    ) -> Result<Option<(Arc<Engine>, terrabase::CommitReceipt, usize)>, terrabase::EngineError> {
+        match &self.engine {
+            HostEngine::Admitted(lease) => lease.resolve_routed_batch_request(scope, collection, ids, operation, fingerprint),
+            HostEngine::Local(engine) => Ok(engine.resolve_batch_request(scope, operation, fingerprint)?.map(|(receipt, count)| (Arc::clone(engine), receipt, count))),
         }
     }
 

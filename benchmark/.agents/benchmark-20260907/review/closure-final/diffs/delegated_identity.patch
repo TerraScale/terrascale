@@ -1,0 +1,14 @@
+--- /tmp/terrabase-snapshot-fixer/delegated_identity.before.rs	2026-09-07 22:53:38.399270941 -0300
++++ /tmp/terrabase-qual-20260907.7lF9/crates/terrabase-server/src/delegated_identity.rs	2026-09-07 22:53:38.445271955 -0300
+@@ -473,7 +473,10 @@
+         let tenants = self.authorization.active_tenants(now);
+         // Bounded control work per tenant batch, independent of subscriber count.
+         use futures_util::StreamExt as _;
+-        let outcomes = futures_util::stream::iter(tenants.chunks(32).map(|batch| async move {
++        // Own batches so the spawned poll's Send future does not retain a
++        // higher-ranked borrowed-slice iterator across the exchange await.
++        let batches: Vec<Vec<String>> = tenants.chunks(32).map(<[String]>::to_vec).collect();
++        let outcomes = futures_util::stream::iter(batches.into_iter().map(|batch| async move {
+             let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
+             let body = serde_json::to_vec(&serde_json::json!({"kind":"authorization-leases","audience":self.audience,
+                 "region":self.authorization.region().map_err(|_| IdentityError::Configuration)?,"tenantIds":batch})).map_err(|_| IdentityError::Unavailable)?;

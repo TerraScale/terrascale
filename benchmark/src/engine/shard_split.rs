@@ -1068,8 +1068,11 @@ impl Engine {
             .port
             .private_metadata_at(scope.tenant(), &file_shard_key(incarnation), snapshot.sequence())
             .map_err(|()| EngineError::StorageFailure)?;
-        let identity = bytes(identity).map_err(|_| EngineError::StorageFailure)?;
-        (identity.as_deref() == Some(token.shard_id.to_be_bytes().as_slice())
+        let identity = bytes(identity).map_err(|_| EngineError::StorageFailure)?.ok_or(EngineError::Conflict)?;
+        let identity = decode_file_identity(&identity)?;
+        (identity.shard_id == token.shard_id
+            && identity.database_incarnation == incarnation
+            && identity.region == self.database_owner().region()
             && catalog.generation == token.route_generation
             && token.keys.iter().all(|key| decode_canonical_shard_key(key).is_ok())
             && token.keys.iter().all(|key| catalog.table.route(key) == Some(token.shard_id))
@@ -1150,10 +1153,18 @@ impl Engine {
             }
             tx.put_private_metadata(
                 &file_shard_key(incarnation),
-                value(&route.shard_id().to_be_bytes()),
+                value(&encode_file_identity(crate::shard_split::FileShardIdentity {
+                    database_incarnation: incarnation,
+                    shard_id: route.shard_id(),
+                    region: self.database_owner().region(),
+                    origin_lane_incarnation: incarnation,
+                })),
             )?;
-        } else if identity.as_ref().is_none_or(|bytes| bytes.len() != 8) {
-            return Err(RouteCatalogError::Conflict);
+        } else {
+            let identity = decode_file_identity(identity.as_deref().ok_or(RouteCatalogError::Conflict)?)?;
+            if identity.database_incarnation != incarnation || identity.region != self.database_owner().region() {
+                return Err(RouteCatalogError::Conflict);
+            }
         }
         if current.as_deref() == Some(replacement) {
             return Ok(catalog.generation);
@@ -1212,9 +1223,11 @@ impl Engine {
         let mut tx = self.begin(scope, self.read_snapshot(scope)?, operation)?;
         tx.internal_maintenance = true;
         let route_key = key(context.split.database_incarnation());
-        if bytes(tx.read_private_metadata(&file_shard_key(context.split.database_incarnation()))?)?
-            .as_deref()
-            != Some(context.split.source_shard().to_be_bytes().as_slice())
+        let identity = bytes(tx.read_private_metadata(&file_shard_key(context.split.database_incarnation()))?)?.ok_or(RouteCatalogError::Conflict)?;
+        let identity = decode_file_identity(&identity)?;
+        if identity.shard_id != context.split.source_shard()
+            || identity.database_incarnation != context.split.database_incarnation()
+            || identity.region != self.database_owner().region()
         {
             return Err(RouteCatalogError::Conflict);
         }

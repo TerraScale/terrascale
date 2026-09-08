@@ -473,23 +473,58 @@ impl IdentityVerifier {
         let tenants = self.authorization.active_tenants(now);
         // Bounded control work per tenant batch, independent of subscriber count.
         use futures_util::StreamExt as _;
-        let outcomes = futures_util::stream::iter(tenants.chunks(32).map(|batch| async move {
-            let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
-            let body = serde_json::to_vec(&serde_json::json!({"kind":"authorization-leases","audience":self.audience,
-                "region":self.authorization.region().map_err(|_| IdentityError::Configuration)?,"tenantIds":batch})).map_err(|_| IdentityError::Unavailable)?;
-            let reply = tokio::time::timeout(Duration::from_secs(5), self.exchange::<Reply>(body)).await.map_err(|_| IdentityError::Unavailable)??;
-            if reply.active || reply.authorization_leases.len() > batch.len() { return Err(IdentityError::Unavailable); }
-            let mut seen = std::collections::BTreeSet::new();
-            if reply.authorization_leases.iter().any(|lease| !batch.contains(&lease.tenant_id) || !seen.insert(lease.tenant_id.clone())) {
-                return Err(IdentityError::Unavailable);
+        let outcomes = futures_util::stream::iter(tenants.chunks(32).map(|batch| {
+            let batch = batch.to_vec();
+            async move {
+                let _permit = self
+                    .permits
+                    .try_acquire()
+                    .map_err(|_| IdentityError::Unavailable)?;
+                let body = serde_json::to_vec(&serde_json::json!({
+                    "kind": "authorization-leases",
+                    "audience": self.audience,
+                    "region": self
+                        .authorization
+                        .region()
+                        .map_err(|_| IdentityError::Configuration)?,
+                    "tenantIds": batch,
+                }))
+                .map_err(|_| IdentityError::Unavailable)?;
+                let reply = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    self.exchange::<Reply>(body),
+                )
+                .await
+                .map_err(|_| IdentityError::Unavailable)??;
+                if reply.active || reply.authorization_leases.len() > batch.len() {
+                    return Err(IdentityError::Unavailable);
+                }
+                let mut seen = std::collections::BTreeSet::new();
+                if reply.authorization_leases.iter().any(|lease| {
+                    !batch.contains(&lease.tenant_id) || !seen.insert(lease.tenant_id.clone())
+                }) {
+                    return Err(IdentityError::Unavailable);
+                }
+                let mut failed = false;
+                for lease in reply.authorization_leases {
+                    let received = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(|_| IdentityError::Unavailable)?
+                        .as_secs();
+                    if self.authorization.install(lease, received, false).is_err() {
+                        failed = true;
+                    }
+                }
+                if failed {
+                    Err(IdentityError::Unavailable)
+                } else {
+                    Ok(())
+                }
             }
-            let mut failed = false;
-            for lease in reply.authorization_leases {
-                let received = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| IdentityError::Unavailable)?.as_secs();
-                if self.authorization.install(lease, received, false).is_err() { failed = true; }
-            }
-            if failed { Err(IdentityError::Unavailable) } else { Ok(()) }
-        })).buffer_unordered(8).collect::<Vec<_>>().await;
+        }))
+        .buffer_unordered(8)
+        .collect::<Vec<_>>()
+        .await;
         outcomes.into_iter().collect::<Result<Vec<_>, _>>().map(drop)
     }
 

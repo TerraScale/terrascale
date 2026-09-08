@@ -15,8 +15,7 @@ pub(crate) struct RouteParticipantRegistry {
 }
 
 impl RouteParticipantRegistry {
-    /// Loads the route and refuses a committed multi-file catalog until the
-    /// participant registry and cross-file coordinator are qualified.
+    /// Loads the durable route and validates every committed participant.
     pub(crate) fn load(
         engine: Arc<Engine>,
         scope: &TenantScope,
@@ -24,7 +23,7 @@ impl RouteParticipantRegistry {
         let Some((router, generation)) =
             engine.load_shard_router(scope).map_err(|_| RegistryError::Catalog)?
         else {
-            return Ok(Arc::new(Self { participants: BTreeMap::new(), router: None }));
+            return Ok(Arc::new(Self { participants: BTreeMap::from([(0, engine)]), router: None }));
         };
         let identity = engine
             .file_shard_identity(scope)
@@ -58,6 +57,17 @@ impl RouteParticipantRegistry {
             participants.insert(route.shard_id(), Arc::new(target));
         }
         Ok(Arc::new(Self { participants, router: Some(router) }))
+    }
+
+    pub(crate) fn participant(&self, keys: &[Vec<u8>]) -> Result<&Engine, crate::EngineError> {
+        let shard = if let Some(router) = &self.router {
+            let shard = keys.first().and_then(|key| router.route(key)).ok_or(crate::EngineError::Conflict)?;
+            if keys.iter().any(|key| router.route(key) != Some(shard)) {
+                return Err(crate::EngineError::Conflict);
+            }
+            shard
+        } else { 0 };
+        self.participants.get(&shard).map(AsRef::as_ref).ok_or(crate::EngineError::Conflict)
     }
 
     pub(crate) fn begin(
@@ -106,18 +116,34 @@ impl RouteParticipantRegistry {
         operation: OperationId,
         fingerprint: [u8; 32],
     ) -> Result<Option<(Arc<Engine>, crate::CommitReceipt, Option<String>)>, crate::engine::EngineError> {
-        let Some(router) = &self.router else {
-            let engine = self.participants.values().next().ok_or(crate::engine::EngineError::Conflict)?;
-            return Ok(engine
-                .resolve_document_request(scope, operation, fingerprint)?
-                .map(|(receipt, revision)| (Arc::clone(engine), receipt, revision)));
-        };
-        let shard = router.route(key).ok_or(crate::engine::EngineError::Conflict)?;
-        let engine = self.participants.get(&shard).ok_or(crate::engine::EngineError::Conflict)?;
-        Ok(engine
-            .resolve_document_request(scope, operation, fingerprint)?
-            .map(|(receipt, revision)| (Arc::clone(engine), receipt, revision)))
+        // Validate the serving destination first: an unavailable committed
+        // target must never turn into source document service. Historical
+        // receipts stay on their original file, with original durability and
+        // sequence; copying documents does not copy operation provenance.
+        self.participant(&[key.to_vec()])?;
+        for engine in self.participants.values() {
+            if let Some((receipt, revision)) = engine.resolve_document_request(scope, operation.clone(), fingerprint)? {
+                return Ok(Some((Arc::clone(engine), receipt, revision)));
+            }
+        }
+        Ok(None)
     }
+    pub(crate) fn resolve_batch_request(
+        &self,
+        scope: &TenantScope,
+        keys: &[Vec<u8>],
+        operation: OperationId,
+        fingerprint: [u8; 32],
+    ) -> Result<Option<(Arc<Engine>, crate::CommitReceipt, usize)>, crate::EngineError> {
+        self.participant(keys)?;
+        for engine in self.participants.values() {
+            if let Some((receipt, count)) = engine.resolve_batch_request(scope, operation.clone(), fingerprint)? {
+                return Ok(Some((Arc::clone(engine), receipt, count)));
+            }
+        }
+        Ok(None)
+    }
+
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

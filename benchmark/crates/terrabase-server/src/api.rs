@@ -2845,6 +2845,10 @@ async fn batch_documents(
         Ok(ids) => ids,
         Err(error) => return error,
     };
+    let engine = match host.engine_host().document_participant(&collection, &ids) {
+        Ok(engine) => engine,
+        Err(_) => return ApiError::control_unavailable().into_response(),
+    };
     let operation = match write_operation(&headers, "api-batch") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
@@ -2854,7 +2858,7 @@ async fn batch_documents(
     } else {
         [0; 32]
     };
-    match replay_batch_request(&state, engine, &scope, &headers, &operation, fingerprint).await {
+    match replay_batch_request(&state, host.engine_host(), &collection, &ids, &scope, &headers, &operation, fingerprint).await {
         Ok(Some(response)) => return response,
         Ok(None) => {}
         Err(error) => return error.into_response(),
@@ -2879,7 +2883,7 @@ async fn batch_documents(
     };
     // The operation reservation excludes a simultaneous publisher. Resolve
     // once more before inspecting mutable patch bases or delete targets.
-    match replay_batch_request(&state, engine, &scope, &headers, &operation, fingerprint).await {
+    match replay_batch_request(&state, host.engine_host(), &collection, &ids, &scope, &headers, &operation, fingerprint).await {
         Ok(Some(response)) => return response,
         Ok(None) => {}
         Err(error) => return error.into_response(),
@@ -2914,7 +2918,7 @@ async fn batch_documents(
     }
     let outcome = transaction.commit(LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
-        match replay_batch_request(&state, engine, &scope, &headers, &operation, fingerprint).await
+        match replay_batch_request(&state, host.engine_host(), &collection, &ids, &scope, &headers, &operation, fingerprint).await
         {
             Ok(Some(response)) => return response,
             Ok(None) => {}
@@ -2984,7 +2988,9 @@ fn batch_request_fingerprint(
 
 async fn replay_batch_request(
     state: &ApiState,
-    _engine: &terrabase::Engine,
+    host: &terrabase_tbep::engine_host::EngineHost,
+    collection: &CollectionName,
+    ids: &[DocumentId],
     scope: &terrabase::types::TenantScope,
     headers: &axum::http::HeaderMap,
     operation: &OperationId,
@@ -2993,15 +2999,15 @@ async fn replay_batch_request(
     if !has_idempotency_key(headers) {
         return Ok(None);
     }
-    let Some((receipt, count)) = engine
-        .resolve_batch_request(scope, operation.clone(), fingerprint)
+    let Some((engine, receipt, count)) = host
+        .resolve_routed_batch_request(scope, collection, ids, operation.clone(), fingerprint)
         .map_err(document_request_error)?
     else {
         return Ok(None);
     };
-    let durability = WriteDurability::prepare_replay(state, engine, scope, headers).await?;
-    durability.confirm(engine, scope, &receipt).await?;
-    let mut session = open_session(engine, scope, headers)?;
+    let durability = WriteDurability::prepare_replay(state, &engine, scope, headers).await?;
+    durability.confirm(&engine, scope, &receipt).await?;
+    let mut session = open_session(&engine, scope, headers)?;
     batch_write_response(&mut session, receipt.sequence().get(), count).map(Some)
 }
 
@@ -3487,8 +3493,8 @@ fn document_request_error(error: terrabase::EngineError) -> ApiError {
 )]
 async fn replay_document_request(
     state: &ApiState,
-    host: &terrabase_tbep::member_host::MemberHost,
-    engine: &terrabase::Engine,
+    host: &terrabase_tbep::engine_host::EngineHost,
+    _engine: &terrabase::Engine,
     scope: &terrabase::types::TenantScope,
     headers: &axum::http::HeaderMap,
     operation: &OperationId,
@@ -3548,7 +3554,7 @@ fn routed_live_revision(
     id: &DocumentId,
 ) -> Result<String, ApiError> {
     let operation = crate::read_operation::next().map_err(|()| ApiError::storage_failure())?;
-    let transaction = host
+    let transaction = host.engine_host()
         .begin_routed_document(scope, collection, id, operation)
         .map_err(|_| ApiError::storage_failure())?;
     transaction
@@ -3583,6 +3589,11 @@ async fn get_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    let engine = match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
+        Ok(engine) => engine,
+        Err(_) => return ApiError::control_unavailable().into_response(),
+    };
+
     if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
         return error.into_response();
     }
@@ -3814,6 +3825,11 @@ async fn put_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    let engine = match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
+        Ok(engine) => engine,
+        Err(_) => return ApiError::control_unavailable().into_response(),
+    };
+
     let value: serde_json::Value = match serde_json::from_str(&body) {
         Ok(value) => value,
         Err(_) => {
@@ -4035,6 +4051,11 @@ async fn patch_document(
     let (collection, id, value) = match patch_request_parts(&collection, &id, &body) {
         Ok(parts) => parts,
         Err(error) => return error.into_response(),
+    };
+
+    let engine = match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
+        Ok(engine) => engine,
+        Err(_) => return ApiError::control_unavailable().into_response(),
     };
     if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
         return ApiError::control_unavailable().into_response();
@@ -4309,6 +4330,11 @@ async fn delete_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    let engine = match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
+        Ok(engine) => engine,
+        Err(_) => return ApiError::control_unavailable().into_response(),
+    };
+
     if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
         return ApiError::control_unavailable().into_response();
     }

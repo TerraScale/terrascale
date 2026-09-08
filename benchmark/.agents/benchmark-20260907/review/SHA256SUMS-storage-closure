@@ -1,1 +1,6 @@
-PLACEHOLDER
+730b11ba738134ad0a5d127d2b5d56e96c547230dcd6c8df84993231b545e784  storage-closure-index.md
+03ce44d6e92c8d16025f1b35a3967ea81c555964d485c8dd9c297bac2c4a98c3  snapshot-source/engine-shard-split.rs
+0f8761e7ec90650d987c10538d9b243c724452ffbcfac5c23130762d845e888e  snapshot-source/server-delegated-identity.rs
+0bacf7878b6a71054f983a82ca2483d0cb120413214c7004502d38c225f50e29  snapshot-source/storage-mod.rs
+bd609e5ef402c3bc00266776d35a0f5a2424d93d20817239e0e9015b9f6f88fa  snapshot-source/storage-sqlite-mod.rs
+3a3d421b4ec7fe407474609a7e931857dfc07294dc70a33cb369c563bb9e641e  snapshot-source/storage-sqlite-tests.rs

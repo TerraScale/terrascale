@@ -396,7 +396,7 @@ async fn three_region_origin_fact_reconciles_local_debit_after_reopen() {
         .unwrap();
     let fact = terrabase::usage::DurableUsageFact::decode(&body).unwrap();
     assert_eq!(local_units, 1, "allowance debit remains local allocation units");
-    assert_eq!(fact.fact().integer_units(), 3, "origin fact is multiplied by three regions");
+    assert_eq!(fact.fact().delta(), 3, "origin fact is multiplied by three regions");
 }
 
 fn public_write(batch: bool, key: &str, name: &str) -> Request<Body> {

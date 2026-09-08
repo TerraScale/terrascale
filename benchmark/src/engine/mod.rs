@@ -2751,15 +2751,15 @@ impl Engine {
     /// Advances one required retention consumer after its durable
     /// acknowledgement. Unknown consumers are rejected so a caller cannot
     /// accidentally create an unaccounted pruning floor.
-    pub(crate) fn advance_retention_frontier(
+    pub fn advance_retention_frontier(
         &self,
         name: &str,
-        sequence: StorageSequence,
+        sequence: u64,
     ) -> Result<(), EngineError> {
         let mut storage = self.storage.lock().map_err(|_| EngineError::StorageFailure)?;
         storage
             .port
-            .advance_consumer_frontier(name, sequence.get())
+            .advance_consumer_frontier(name, sequence)
             .map_err(|()| EngineError::StorageFailure)
     }
 

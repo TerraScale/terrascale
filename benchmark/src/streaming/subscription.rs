@@ -439,7 +439,7 @@ fn advance_retention_floor(
         return Ok(());
     };
     engine
-        .advance_retention_frontier(RETENTION_CONSUMER, floor)
+        .advance_retention_frontier(RETENTION_CONSUMER, floor.get())
         .map_err(|error| sources::map_engine_error(&error))
 }
 
