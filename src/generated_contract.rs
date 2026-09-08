@@ -549,7 +549,7 @@ pub const ROUTES: &[Route] = &[
         operation_id: "rotate_secret",
         method: HttpMethod::Post,
         path: "/api/v1/databases/{name}/webhooks/{id}/rotate-secret",
-        request_model: None,
+        request_model: Some("RotateWebhookSecret"),
         response_model: Some("WebhookSecretResponse"),
     },
     Route {
@@ -577,7 +577,7 @@ pub const ROUTES: &[Route] = &[
         operation_id: "upload_import",
         method: HttpMethod::Put,
         path: "/api/v1/databases/{name}/imports/{id}/input",
-        request_model: None,
+        request_model: Some("String"),
         response_model: Some("ImportJob"),
     },
     Route {
