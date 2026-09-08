@@ -61,6 +61,21 @@ func TestOperationsListPreservesAbsentOptionalFacts(t *testing.T) {
 	}
 }
 
+func TestOperationsListRejectsMissingCoverage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"operations":[]}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL, ProjectID: "project-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var validation *ValidationError
+	if _, err := client.Operations.List(t.Context(), "", 1); !errors.As(err, &validation) || validation.Field != "covered_kinds" {
+		t.Fatalf("missing coverage error = %T: %v", err, err)
+	}
+}
+
 func TestOperationsListValidationAndCancellation(t *testing.T) {
 	client, err := NewClient(Config{APIBaseURL: "http://127.0.0.1:1", ProjectID: "project-1"})
 	if err != nil {

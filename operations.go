@@ -66,5 +66,8 @@ func (o *OperationsClient) List(ctx context.Context, after string, limit int, op
 	if len(out.Operations) > MaxOperationPageSize || (limit > 0 && len(out.Operations) > limit) {
 		return nil, &ValidationError{Field: "operations", Message: "response exceeds the requested page limit"}
 	}
+	if out.CoveredKinds == nil {
+		return nil, &ValidationError{Field: "covered_kinds", Message: "required by the operation discovery contract"}
+	}
 	return &out, nil
 }
