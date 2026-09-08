@@ -151,6 +151,9 @@ pub enum Target {
     /// The embedded raw-SQLite reference: the bundled library at
     /// WAL + `synchronous = FULL`, no TerraBase layer.
     Sqlite,
+    /// The embedded Turso reference: the Rust rewrite of SQLite at
+    /// WAL + `synchronous = FULL`, no TerraBase layer.
+    Turso,
 }
 
 impl Target {
@@ -166,6 +169,7 @@ impl Target {
             "pg-fullstack" | "pgfullstack" | "postgres-fullstack" => Ok(Self::PgFullstack),
             "raven" | "ravendb" => Ok(Self::RavenDb),
             "sqlite" => Ok(Self::Sqlite),
+            "turso" => Ok(Self::Turso),
             other => Err(other.to_owned()),
         }
     }
@@ -178,6 +182,7 @@ impl Target {
             Self::PgFullstack => "pg-fullstack",
             Self::RavenDb => "ravendb",
             Self::Sqlite => "sqlite",
+            Self::Turso => "turso",
         }
     }
 }
@@ -197,6 +202,12 @@ mod tests {
     fn parses_the_sqlite_target_token() {
         assert_eq!(Target::parse("sqlite"), Ok(Target::Sqlite));
         assert_eq!(Target::Sqlite.as_str(), "sqlite");
+    }
+
+    #[test]
+    fn parses_the_turso_target_token() {
+        assert_eq!(Target::parse("turso"), Ok(Target::Turso));
+        assert_eq!(Target::Turso.as_str(), "turso");
     }
 
     #[test]

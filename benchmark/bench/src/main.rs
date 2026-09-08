@@ -45,6 +45,7 @@ mod pg_fullstack;
 mod raven;
 mod sqlite;
 mod sync;
+mod turso;
 mod terrabase_http;
 
 use std::path::PathBuf;
@@ -229,6 +230,7 @@ fn main() {
         }
         Target::RavenDb => execute::<raven::RavenDbBackend>(workload, lane_config, &boundary),
         Target::Sqlite => execute::<sqlite::SqliteBackend>(workload, lane_config, &boundary),
+        Target::Turso => execute::<turso::TursoBackend>(workload, lane_config, &boundary),
     };
     match result {
         Ok((results, summary)) => {
@@ -307,6 +309,7 @@ fn endpoint_for(target: Target) -> String {
         Target::PgFullstack => "TERRABASE_PG_FULLSTACK_ENDPOINT",
         Target::RavenDb => "TERRABASE_RAVEN_REFERENCE_ENDPOINT",
         Target::Sqlite => "TERRABASE_SQLITE_REFERENCE_PATH",
+        Target::Turso => "TERRABASE_TURSO_REFERENCE_PATH",
     };
     std::env::var(variable).unwrap_or_else(|_| format!("{variable} is not set"))
 }
@@ -318,6 +321,7 @@ fn transport_for(target: Target) -> &'static str {
         Target::PgFullstack => "pgrest HTTP/JSON reference client; identity unavailable",
         Target::RavenDb => "RavenDB HTTP reference client; identity unavailable",
         Target::Sqlite => "bundled rusqlite; embedded reference; identity unavailable",
+        Target::Turso => "turso crate; embedded reference; identity unavailable",
     }
 }
 
@@ -363,13 +367,14 @@ fn target_of(name: &str) -> Target {
         "postgresql" => Target::PostgreSql,
         "pg-fullstack" => Target::PgFullstack,
         "sqlite" => Target::Sqlite,
+        "turso" => Target::Turso,
         _ => Target::RavenDb,
     }
 }
 
 fn usage() {
     eprintln!(
-        "usage: terrabase-bench-lane --target <terrabase|pg|pg-fullstack|raven|sqlite> --workload <read|write|query|mixed> \
+        "usage: terrabase-bench-lane --target <terrabase|pg|pg-fullstack|raven|sqlite|turso> --workload <read|write|query|mixed> \
          [--boundary-class diagnostic-qualification|production-candidate] [--out DIR] [--seed N] \
          [--ops N] [--samples N] [--concurrency N] [--warmup N] [--noise-percent N]\n\
          or: --family <indexed-query|ingest|auto-index|sync> [family options]"
