@@ -129,6 +129,58 @@ describe("regional routing consistency", () => {
     }
   });
 
+  test("learns placement without replaying an unkeyed mutation", async () => {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const) {
+      const requests: Request[] = [];
+      const http = new TerraScaleHttp({
+        fetch: async input => {
+          requests.push(input instanceof Request ? input : new Request(input));
+          return Response.json(
+            { error: { code: "misdirected_request", message: "Wrong Region." } },
+            { status: 421, headers: { "x-terrascale-placement": "FRA" } },
+          );
+        },
+      });
+
+      const result = await http.request({
+        method,
+        path: `/api/v1/databases/${databaseId}/documents`,
+        routeName: "documents.insert",
+        ...(method === "DELETE" ? {} : { body: { value: "must-not-replay" } }),
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 421);
+      assert.equal(requests.length, 1, `${method} must not be replayed without an idempotency key`);
+      assert.equal(http.pinnedRegion, "FRA");
+    }
+  });
+
+  test("repairs a safe POST read using the advertised placement", async () => {
+    const requests: Request[] = [];
+    const http = new TerraScaleHttp({
+      fetch: async input => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        return requests.length === 1
+          ? Response.json({ error: "misdirected" }, { status: 421, headers: { "x-terrascale-placement": "FRA" } })
+          : Response.json({ rows: [] });
+      },
+    });
+
+    const result = await http.request({
+      method: "POST",
+      path: `/api/v1/databases/${databaseId}/auth/findPage`,
+      routeName: "databases.findPage",
+      retryableRead: true,
+      body: { model: "user", offset: 0, limit: 1 },
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(requests.map(request => new URL(request.url).hostname), [
+      "api.terrascale.tech", "fra.api.terrascale.tech",
+    ]);
+  });
+
   test("surfaces 421 without leaving a strict region", async () => {
     let requests = 0;
     const http = new TerraScaleHttp({
