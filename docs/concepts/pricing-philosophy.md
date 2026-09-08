@@ -31,7 +31,8 @@ readers, something would be wrong with our architecture, not with your app.
 
 Storage is **logical bytes × regions**: the canonical bytes of your current
 documents plus retained history, TTL-aware, measured in byte-seconds, billed
-at $/GB-month per region. Indexes, WAL, and backups are **not billed** — you
+at $/GB-month per region. Indexes, backups, and service-managed storage
+overhead are **not billed** — you
 should never be taxed for our performance work.
 
 ## Prices require evidence
