@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/zeebo/blake3"
 )
 
 type pinnedCorpus struct {
@@ -81,6 +83,43 @@ func TestGeneratedContractProvenance(t *testing.T) {
 	}
 	if ContractVersion != pinnedContractVersion {
 		t.Fatalf("generated metadata version = %q, want %q", ContractVersion, pinnedContractVersion)
+	}
+}
+
+func TestGeneratedContractDigests(t *testing.T) {
+	var manifest struct {
+		ContractVersion string `json:"contractVersion"`
+		Artifacts       []struct {
+			Path   string `json:"path"`
+			BLAKE3 string `json:"blake3"`
+		} `json:"artifacts"`
+	}
+	readPinnedJSON(t, "manifest.json", &manifest)
+	if manifest.ContractVersion != ContractVersion {
+		t.Fatalf("pinned contract version = %q, generated version = %q", manifest.ContractVersion, ContractVersion)
+	}
+
+	for _, artifact := range manifest.Artifacts {
+		path := filepath.Join(pinnedContractRoot(t), artifact.Path)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read pinned artifact %s: %v", artifact.Path, err)
+		}
+		digest := blake3.Sum256(raw)
+		got := hex.EncodeToString(digest[:])
+		if got != artifact.BLAKE3 {
+			t.Errorf("artifact %s BLAKE3 = %s, manifest = %s", artifact.Path, got, artifact.BLAKE3)
+		}
+		switch artifact.Path {
+		case "openapi.json":
+			if got != ContractOpenAPIBLAKE3 {
+				t.Errorf("generated OpenAPI pin = %s, artifact = %s", ContractOpenAPIBLAKE3, got)
+			}
+		case "msgpack/terrascale.sync.v1.msgpack.json":
+			if got != ContractMessagePackBLAKE3 {
+				t.Errorf("generated MessagePack pin = %s, artifact = %s", ContractMessagePackBLAKE3, got)
+			}
+		}
 	}
 }
 
