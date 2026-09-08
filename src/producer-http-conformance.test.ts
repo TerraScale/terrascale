@@ -29,7 +29,9 @@ test("public HTTP clients consume the pinned producer response and error corpus"
       assert.ok(vector, `Missing producer vector: ${route.routeName}`);
       assert.equal(vector.request.method, route.method);
       const schema = operation.requestBody?.content?.["application/json"]?.schema;
+      const bytesSchema = operation.requestBody?.content?.["application/octet-stream"]?.schema;
       assert.equal(route.sourceContract.body.kind === "json", schema !== undefined, route.routeName);
+      assert.equal(route.sourceContract.body.kind === "bytes", bytesSchema !== undefined, route.routeName);
       if (route.sourceContract.body.kind === "json") assertSchema(route.sourceContract.body.shape, schema, spec, route.routeName);
       const parameters = [...(spec.paths[route.pathTemplate].parameters ?? []), ...(operation.parameters ?? [])];
       for (const query of route.sourceContract.query) {

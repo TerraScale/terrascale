@@ -45,7 +45,10 @@ export type CapturedSdkRoute = {
   readonly pathTemplate: string;
   readonly routeName: TerraScaleRouteName;
   readonly sourceContract: {
-    readonly body: { readonly kind: "void" } | { readonly kind: "json"; readonly shape: unknown };
+    readonly body:
+      | { readonly kind: "void" }
+      | { readonly kind: "json"; readonly shape: unknown }
+      | { readonly kind: "bytes"; readonly length: number };
     readonly headers: readonly { readonly name: string; readonly value: string }[];
     readonly query: readonly { readonly name: string; readonly value: string }[];
   };
@@ -118,6 +121,13 @@ function isRoutingFailure(value: unknown): value is { readonly error: { readonly
 }
 
 async function capturedSourceContract(request: Request): Promise<CapturedSdkRoute["sourceContract"]> {
+  if (request.headers.get("content-type")?.toLowerCase().startsWith("application/octet-stream") === true) {
+    return {
+      body: { kind: "bytes", length: (await request.clone().arrayBuffer()).byteLength },
+      headers: canonicalContractHeaders(request.headers),
+      query: [...new URL(request.url).searchParams].map(([name, value]) => contractPair(name, value)).sort(compareContractPair),
+    };
+  }
   const text = await request.clone().text();
   return {
     body: text.length === 0 ? { kind: "void" } : { kind: "json", shape: JSON.parse(text) },
