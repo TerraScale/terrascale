@@ -52,10 +52,10 @@ pub use management::{
     IndexDescriptor, IndexListResponse, IndexRecommendation, ManagementClient, MeterTotal,
     OperationListOptions, OperationOptions, OperationPage, OperationSummary, Operations,
     PageOptions, PlacementLock, PlanBackupRequest, ProvisioningOperation, ReadAttribution,
-    RecommendationList, RegionSummary, Regions, RestoreAt, RestoreJob, RestorePoint,
-    RestoreRequest, ResumeExport, RevokedApiKey, RotateWebhookSecret, RotatedApiKey, Schemas,
-    StartRestore, TransferFormat, Usage, UsageClient, UsagePoint, UsageRange, UsageSummary,
-    UsageWorkload, WebhookEndpoint, WebhookList, WebhookSecretResponse, Webhooks,
+    RecommendationList, RegionCatalogResponse, RegionDetails, Regions, RestoreAt, RestoreJob,
+    RestorePoint, RestoreRequest, ResumeExport, RevokedApiKey, RotateWebhookSecret, RotatedApiKey,
+    Schemas, StartRestore, TransferFormat, Usage, UsageClient, UsagePoint, UsageRange,
+    UsageSummary, UsageWorkload, WebhookEndpoint, WebhookList, WebhookSecretResponse, Webhooks,
 };
 pub use reactive::{
     ApplyOutcome, AttachedView, CancellationToken, Checkpoint, LiveSubscription, PollOptions,

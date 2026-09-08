@@ -541,10 +541,10 @@ async fn region_pinning_and_421_repair() {
     // Failover without a pin uses global first contact.
     let mock = Mock::new(vec![Response::json(
         200,
-        &json!({"region": "GRU", "healthy": true}),
+        &json!({"regions":[{"code":"GRU","name":"São Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech"}}),
     )]);
     let sdk = client(Arc::clone(&mock));
-    sdk.management().regions().list().await.expect("regions");
+    sdk.management().regions().catalog().await.expect("regions");
     assert!(mock
         .last_request()
         .url
@@ -566,7 +566,12 @@ async fn region_pinning_and_421_repair() {
             .expect("config"),
         Arc::clone(&transport),
     );
-    strict.management().regions().list().await.expect("regions");
+    strict
+        .management()
+        .regions()
+        .status(RegionCode::Gru)
+        .await
+        .expect("regions");
     assert!(strict.pinned_region() == Some(RegionCode::Gru));
 
     // A 421 repairs the pin from X-TerraScale-Placement and surfaces retry.

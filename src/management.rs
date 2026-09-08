@@ -1432,6 +1432,22 @@ impl UsageClient {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RegionDetails {
+    pub code: String,
+    pub name: String,
+    pub country: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RegionCatalogResponse {
+    pub regions: Vec<RegionDetails>,
+    pub hosts: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub region: String,
     pub healthy: bool,
@@ -1444,11 +1460,55 @@ impl Regions {
     pub(crate) fn new(shared: SharedClient) -> Self {
         Self { shared }
     }
-    pub async fn list(&self) -> Result<HealthResponse> {
+    /// Returns the anonymous edge-published region catalog.
+    pub async fn catalog(&self) -> Result<RegionCatalogResponse> {
         let request = Request {
-            route_name: "regions.list".to_owned(),
+            route_name: "regions.catalog".to_owned(),
             method: Method::Get,
             url: format!("{}/regions", self.shared.global_base_url()),
+            headers: Vec::new(),
+            body: None,
+        };
+        let response: RegionCatalogResponse = self.shared.send_typed(request).await?;
+        if response.regions.is_empty() {
+            return Err(Error::invalid_response(
+                "region catalog must contain at least one region",
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for region in &response.regions {
+            if region.code.is_empty()
+                || region.name.is_empty()
+                || region.country.is_empty()
+                || !seen.insert(region.code.as_str())
+                || !response.hosts.contains_key(&region.code)
+            {
+                return Err(Error::invalid_response(
+                    "region catalog contains invalid or incomplete region data",
+                ));
+            }
+        }
+        Ok(response)
+    }
+
+    /// Returns the serving member's status from the selected regional origin.
+    pub async fn status(&self, region: RegionCode) -> Result<HealthResponse> {
+        let request = Request {
+            route_name: "regions.status".to_owned(),
+            method: Method::Get,
+            url: format!("{}/regions", self.shared.pinned_base_url(Some(region))?),
+            headers: Vec::new(),
+            body: None,
+        };
+        self.shared.send_typed(request).await
+    }
+
+    /// Returns member liveness from the selected regional origin.
+    pub async fn health(&self, region: RegionCode) -> Result<HealthResponse> {
+        let request = Request {
+            route_name: "regions.health".to_owned(),
+            method: Method::Get,
+            url: format!("{}/health", self.shared.pinned_base_url(Some(region))?),
             headers: Vec::new(),
             body: None,
         };
@@ -1529,7 +1589,6 @@ struct EmptyBody {}
 pub type DatabaseSchema = CollectionSchema;
 pub type DeletedDatabase = DatabaseRecord;
 pub type Backup = BackupStatusResponse;
-pub type RegionSummary = HealthResponse;
 pub type UsageSummary = Usage;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
