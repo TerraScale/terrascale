@@ -21,6 +21,15 @@ test("capture pins only allowlisted values and canonical single-valued Fetch hea
   ]);
 });
 
+test("route manifest preserves inline array and scalar success schema types", async () => {
+  const manifest = JSON.parse(await readFile(path.join(root, "sdk-route-manifest.json"), "utf8")) as {
+    routes: readonly { operationId: string; responseType: string }[];
+  };
+  const byOperation = new Map(manifest.routes.map((route) => [route.operationId, route.responseType]));
+  assert.equal(byOperation.get("list_imports"), "ImportJob[]");
+  assert.equal(byOperation.get("download_export"), "Uint8Array");
+});
+
 test("descriptor pins operation identity, parameter contract, and complete JSON shapes", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "terrascale-openapi-descriptor-"));
   try {

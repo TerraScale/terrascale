@@ -618,7 +618,7 @@
       "method": "GET",
       "pathTemplate": "/api/v1/databases/{name}/imports",
       "requestType": "void",
-      "responseType": "json"
+      "responseType": "ImportJob[]"
     },
     {
       "base": "api",

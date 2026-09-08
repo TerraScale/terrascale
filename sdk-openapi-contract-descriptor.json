@@ -8509,7 +8509,7 @@
       ],
       "routeName": "databases.listImports",
       "sdkRequestType": "void",
-      "sdkResponseType": "json"
+      "sdkResponseType": "ImportJob[]"
     },
     {
       "base": "api",
@@ -34735,6 +34735,6 @@
   "sources": {
     "openApiSha256": "a0577d2d9575d3205e53f9d8c7c844debcc2c36dfa1d9a9ccf0b4c564d137c07",
     "edgeOpenApiSha256": "ea10c9124b918774a408c05cc5e6c2d51e7f2f8da512d3a46bc39929581137bc",
-    "routeManifestSha256": "329d4036560050ddc4797bd1590fb08420e6d4494f42d95ee1ca1a1274795adf"
+    "routeManifestSha256": "165195073921ac8c718d4f653321c3736a3c1cd8502348aa2fcdf6eaf7dcfbf9"
   }
 }
