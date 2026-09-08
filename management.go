@@ -35,12 +35,27 @@ type ManagedDatabase struct {
 	Name      string `json:"name"`
 }
 
-// Region describes a serving region.
+// Region describes an admitted public region in the edge catalog.
 type Region struct {
 	Code        RegionCode `json:"code"`
+	Name        string     `json:"name,omitempty"`
+	Country     string     `json:"country,omitempty"`
+	Latitude    float64    `json:"latitude,omitempty"`
+	Longitude   float64    `json:"longitude,omitempty"`
 	DisplayName string     `json:"displayName,omitempty"`
 	Available   bool       `json:"available"`
 	Healthy     bool       `json:"healthy,omitempty"`
+}
+
+// RegionCatalogResponse is the edge discovery response. The legacy member
+// health fields remain private to this response so List can bridge the
+// currently served member response until the producer publishes separate
+// catalog and health routes.
+type RegionCatalogResponse struct {
+	Regions []Region          `json:"regions"`
+	Hosts   map[string]string `json:"hosts"`
+	Region  RegionCode        `json:"region"`
+	Healthy bool              `json:"healthy"`
 }
 
 // HealthResponse is the generated response model for GET /api/v1/regions
@@ -698,10 +713,26 @@ func (r *RegionsClient) Health(ctx context.Context, opts ...RequestOption) (*Hea
 	return &out, nil
 }
 
-// List returns serving regions.
+// List returns the admitted public region catalog. Until the producer exposes
+// separate catalog and member-health routes, it also accepts the current
+// member-health response and returns its one serving region.
 func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Region, error) {
-	out, err := r.Status(ctx, opts...)
-	if err != nil {
+	var out RegionCatalogResponse
+	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions.list", opts...); err != nil {
+		return nil, err
+	}
+	if len(out.Regions) > 0 {
+		for i := range out.Regions {
+			code, err := ParseRegionCode(string(out.Regions[i].Code))
+			if err != nil {
+				return nil, err
+			}
+			out.Regions[i].Code = code
+			out.Regions[i].Healthy = out.Regions[i].Available
+		}
+		return out.Regions, nil
+	}
+	if _, err := ParseRegionCode(string(out.Region)); err != nil {
 		return nil, err
 	}
 	return []Region{{Code: out.Region, Available: out.Healthy, Healthy: out.Healthy}}, nil
