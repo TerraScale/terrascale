@@ -347,6 +347,7 @@ fn concrete_path(template: &str) -> String {
     };
     template
         .replace("{name}", "demo")
+        .replace("{tenant}", "sample")
         .replace("{database}", database)
         .replace("{collection}", "orders")
         .replace("{field}", "status")

@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "e419308445ed9d5ce8fcec16a25116c53a401edeac044dd9b52bcf64bf0b7a11";
-pub const OPENAPI_BLAKE3: &str = "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320";
+    "43119a07e76b23dca6dd325fba7d0ab08dbe756945cc45e267228b437e69132f";
+pub const OPENAPI_BLAKE3: &str = "48e6c1b4aa4e5bf4ed04e27e38f7059109928cf3e5bde802fd555cdcf2532fc9";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
 pub const MSGPACK_PROTOCOL: &str = "terrascale.sync.v1.msgpack";
@@ -23,7 +23,7 @@ pub struct ContractArtifact {
 pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/http.json",
-        blake3: "cf70549f56d34107f315fb47b7b9366e2c8d6a5754fdf18fc215b16dc7d03ad8",
+        blake3: "096279b72cea6c8a49ada3d994192f4c617c03e340156b68783423ac0bc07f1f",
     },
     ContractArtifact {
         path: "conformance/msgpack/hostile-vectors.json",
@@ -34,12 +34,8 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
         blake3: "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c",
     },
     ContractArtifact {
-        path: "conformance/origin-proof.json",
-        blake3: "5364b464193257d9a25f1ded3070e23fd9d913a4542e337ada004bb6497cb305",
-    },
-    ContractArtifact {
         path: "conformance/reactive.json",
-        blake3: "6acd4fd3b9c35c4bebb0460d4414eb6132fc551c96335a9dd5f39aab4f5a4dff",
+        blake3: "425e7862bc0c82b18385fb3f74e99c148560cb5b4d21ab4ca09ff29dcc8f2f9a",
     },
     ContractArtifact {
         path: "msgpack/hostile-vectors.json",
@@ -55,7 +51,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "openapi.json",
-        blake3: "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320",
+        blake3: "48e6c1b4aa4e5bf4ed04e27e38f7059109928cf3e5bde802fd555cdcf2532fc9",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/engine.proto",
@@ -96,6 +92,13 @@ pub const ROUTES: &[Route] = &[
         path: "/api/v1/reactive/views",
         request_model: Some("AttachViewRequest"),
         response_model: Some("AttachViewResponse"),
+    },
+    Route {
+        operation_id: "authorization_lease",
+        method: HttpMethod::Get,
+        path: "/api/v1/authorization/leases/{tenant}",
+        request_model: None,
+        response_model: Some("Lease"),
     },
     Route {
         operation_id: "batch_documents",
@@ -180,6 +183,13 @@ pub const ROUTES: &[Route] = &[
         path: "/api/v1/databases/{name}/exports",
         request_model: Some("CreateExport"),
         response_model: Some("ExportAccepted"),
+    },
+    Route {
+        operation_id: "create_import",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/imports",
+        request_model: Some("CreateImport"),
+        response_model: Some("ImportJob"),
     },
     Route {
         operation_id: "create_index",
@@ -322,6 +332,13 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("ExportStatus"),
     },
     Route {
+        operation_id: "get_import",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/imports/{id}",
+        request_model: None,
+        response_model: Some("ImportJob"),
+    },
+    Route {
         operation_id: "get_provisioning_operation",
         method: HttpMethod::Get,
         path: "/api/v1/operations/{operation_id}",
@@ -420,6 +437,13 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("ExportList"),
     },
     Route {
+        operation_id: "list_imports",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/imports",
+        request_model: None,
+        response_model: None,
+    },
+    Route {
         operation_id: "list_indexes",
         method: HttpMethod::Get,
         path: "/api/v1/databases/{name}/collections/{collection}/indexes",
@@ -497,6 +521,20 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("ExportStatus"),
     },
     Route {
+        operation_id: "resume_import",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/imports/{id}/resume",
+        request_model: None,
+        response_model: Some("ImportJob"),
+    },
+    Route {
+        operation_id: "rollback_schema",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/collections/{collection}/schema/migration/rollback",
+        request_model: None,
+        response_model: Some("SchemaDocument"),
+    },
+    Route {
         operation_id: "rollback_transaction",
         method: HttpMethod::Post,
         path: "/api/v1/databases/{database}/auth/transactions/rollback",
@@ -530,6 +568,13 @@ pub const ROUTES: &[Route] = &[
         path: "/api/v1/databases/{database}/auth/updateOne",
         request_model: Some("PredicateUpdate"),
         response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "upload_import",
+        method: HttpMethod::Put,
+        path: "/api/v1/databases/{name}/imports/{id}/input",
+        request_model: None,
+        response_model: Some("ImportJob"),
     },
     Route {
         operation_id: "view_log",
@@ -692,6 +737,12 @@ pub mod models {
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct CreateImport {
+        pub format: TransferFormat,
+        pub idempotency_key: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct CreateIndexRequest {
         pub field: String,
     }
@@ -723,11 +774,98 @@ pub mod models {
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    pub struct DeletionOperation {
+    pub struct DeletionClaimReceipt {
+        pub accepted_at: String,
+        pub authority_epoch: String,
+        pub database_id: String,
+        pub deadline: String,
+        pub environment: String,
+        pub grace_condition: String,
+        pub operation_id: String,
+        pub policy_fingerprint: String,
+        pub policy_revision: String,
+        pub project_id: String,
+        #[serde(rename = "schemaVersion")]
+        pub schema_version: i64,
+        pub tenant_id: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeletionEdgeReceipt {
+        pub access_revoked: bool,
         pub cutoff: String,
-        pub request: std::collections::BTreeMap<String, serde_json::Value>,
+        pub request: DeletionRequest,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeletionOperation {
+        pub automatic_deadline: Option<String>,
+        pub automatic_grace_condition: Option<String>,
+        pub automatic_policy_revision: Option<String>,
+        pub claim: Option<DeletionClaimReceipt>,
+        pub cutoff: String,
+        pub edge_receipt: Option<DeletionEdgeReceipt>,
+        pub request: DeletionRequest,
+        pub requested_at: String,
         pub state: String,
-        pub targets: Vec<std::collections::BTreeMap<String, serde_json::Value>>,
+        pub targets: Vec<DeletionTarget>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeletionPreparation {
+        pub database_id: String,
+        pub environment: String,
+        pub last_accounted_at: String,
+        pub operation_id: String,
+        pub organization_id: String,
+        pub parent_database_id: Option<String>,
+        pub prepared: bool,
+        pub project_id: String,
+        pub region: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeletionReceipt {
+        pub access_revoked: bool,
+        pub cutoff: String,
+        pub database_id: String,
+        pub environment: String,
+        pub operation_id: String,
+        pub organization_id: String,
+        pub parent_database_id: Option<String>,
+        pub project_id: String,
+        pub region: String,
+        pub retain_until: Option<String>,
+        pub usage_stopped: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeletionRequest {
+        pub database_id: String,
+        pub environment: String,
+        pub operation_id: String,
+        pub project_id: String,
+        pub tenant_id: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeletionStop {
+        pub cutoff: String,
+        pub database_id: String,
+        pub environment: String,
+        pub operation_id: String,
+        pub organization_id: String,
+        pub parent_database_id: Option<String>,
+        pub project_id: String,
+        pub region: String,
+        pub retain_until: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeletionTarget {
+        pub preparation: Option<DeletionPreparation>,
+        pub receipt: Option<DeletionReceipt>,
+        pub stop: DeletionStop,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -738,10 +876,14 @@ pub mod models {
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct DeliveryRecord {
         pub attempts: i32,
+        pub claim_token: i64,
+        pub claim_until: i64,
         pub delivered: bool,
         pub event_id: String,
         pub id: String,
         pub next_attempt_at: i64,
+        pub origin_lane: String,
+        pub origin_region: String,
         pub retry_started_at: i64,
         pub revision: i64,
         pub status: Option<i32>,
@@ -865,11 +1007,32 @@ pub mod models {
     pub struct HealthResponse {
         pub healthy: bool,
         pub region: String,
+        pub version: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct HistoryResponse {
         pub history: Vec<std::collections::BTreeMap<String, serde_json::Value>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct ImportJob {
+        pub committed_records: i64,
+        pub cursor: i64,
+        pub database_id: String,
+        pub durability: String,
+        pub error: Option<String>,
+        pub format: String,
+        pub input_committed: bool,
+        pub input_digest: Option<String>,
+        pub input_length: Option<i64>,
+        pub operation_id: String,
+        pub pending_cursor: Option<i64>,
+        pub pending_operation: Option<String>,
+        pub pending_records: Option<i64>,
+        pub project_id: String,
+        pub state: String,
+        pub tenant_id: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -903,6 +1066,25 @@ pub mod models {
     pub type JobStatus = serde_json::Value;
 
     pub type JsonValue = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct Lease {
+        pub audience: String,
+        pub epoch: String,
+        #[serde(rename = "featureEpoch")]
+        pub feature_epoch: String,
+        #[serde(rename = "issuedAt")]
+        pub issued_at: i64,
+        #[serde(rename = "keyId")]
+        pub key_id: String,
+        pub region: String,
+        pub signature: String,
+        #[serde(rename = "tenantId")]
+        pub tenant_id: String,
+        #[serde(rename = "validUntil")]
+        pub valid_until: i64,
+        pub version: i32,
+    }
 
     pub type MergePolicy = serde_json::Value;
 
@@ -1343,6 +1525,6 @@ pub const MESSAGE_VECTOR_SHA256: &str =
 pub const HOSTILE_VECTOR_SHA256: &str =
     "e6d8e6d92a87fe4d37fb00e5b441d0c351eecaf6117e5ac50631ce94d18890f5";
 pub const HTTP_CONFORMANCE_SHA256: &str =
-    "04c5d00e9676dbe4b7f775cdc7beeef70375b5eac741373e6dd9c6c964fe8075";
+    "1f42e45e8d54417da3bb8141c058bef792302035caf5f02e6a0cc0b89c52e9eb";
 pub const REACTIVE_CONFORMANCE_SHA256: &str =
-    "84a5c78dffd51bebc902ff72573b49ca28c902bdc1a1221a61230bcdddf7d779";
+    "87c646d5fed7a0812c8e12b01ae8bf76b4626b842128ec267989df1b52e5bdf0";

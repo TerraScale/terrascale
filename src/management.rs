@@ -1364,6 +1364,146 @@ impl Exports {
         send_with_options(&self.shared, request, &options).await
     }
 }
+
+/// Import admitted data into a database through the resumable upload flow.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateImport {
+    pub format: TransferFormat,
+    pub idempotency_key: String,
+}
+
+/// Durable import progress and resumable input state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportJob {
+    pub committed_records: i64,
+    pub cursor: i64,
+    pub database_id: String,
+    pub durability: String,
+    pub error: Option<String>,
+    pub format: String,
+    pub input_committed: bool,
+    pub input_digest: Option<String>,
+    pub input_length: Option<i64>,
+    pub operation_id: String,
+    pub pending_cursor: Option<i64>,
+    pub pending_operation: Option<String>,
+    pub pending_records: Option<i64>,
+    pub project_id: String,
+    pub state: String,
+    pub tenant_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Imports {
+    shared: SharedClient,
+}
+
+impl Imports {
+    pub(crate) fn new(shared: SharedClient) -> Self {
+        Self { shared }
+    }
+
+    pub async fn create(
+        &self,
+        database_id: &str,
+        input: CreateImport,
+        _project_id: Option<&str>,
+        options: OperationOptions,
+    ) -> Result<ImportJob> {
+        validate_non_empty(&input.idempotency_key, "idempotency_key")?;
+        let request = request_with_options(
+            "imports.create",
+            Method::Post,
+            format!("{}/imports", database_url(&self.shared, database_id)?),
+            &input,
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+
+    pub async fn list(&self, database_id: &str) -> Result<Vec<ImportJob>> {
+        self.shared
+            .send_typed(Request {
+                route_name: "imports.list".into(),
+                method: Method::Get,
+                url: format!("{}/imports", database_url(&self.shared, database_id)?),
+                headers: Vec::new(),
+                body: None,
+            })
+            .await
+    }
+
+    pub async fn get(&self, database_id: &str, import_id: &str) -> Result<ImportJob> {
+        self.shared
+            .send_typed(Request {
+                route_name: "imports.get".into(),
+                method: Method::Get,
+                url: format!(
+                    "{}/imports/{}",
+                    database_url(&self.shared, database_id)?,
+                    encode_segment(import_id, "import_id")?
+                ),
+                headers: Vec::new(),
+                body: None,
+            })
+            .await
+    }
+
+    pub async fn upload(
+        &self,
+        database_id: &str,
+        import_id: &str,
+        bytes: Vec<u8>,
+        options: OperationOptions,
+    ) -> Result<ImportJob> {
+        validate_non_empty(import_id, "import_id")?;
+        if bytes.is_empty() {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_input",
+                "import input cannot be empty.",
+            ));
+        }
+        let request = request_options(
+            Request {
+                route_name: "imports.upload".into(),
+                method: Method::Put,
+                url: format!(
+                    "{}/imports/{}/input",
+                    database_url(&self.shared, database_id)?,
+                    encode_segment(import_id, "import_id")?
+                ),
+                headers: vec![("content-type".into(), "application/octet-stream".into())],
+                body: Some(bytes),
+            },
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+
+    pub async fn resume(
+        &self,
+        database_id: &str,
+        import_id: &str,
+        options: OperationOptions,
+    ) -> Result<ImportJob> {
+        let request = request_options(
+            Request {
+                route_name: "imports.resume".into(),
+                method: Method::Post,
+                url: format!(
+                    "{}/imports/{}/resume",
+                    database_url(&self.shared, database_id)?,
+                    encode_segment(import_id, "import_id")?
+                ),
+                headers: Vec::new(),
+                body: None,
+            },
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
     /// End of the latest finalized storage interval, when available.
@@ -1551,6 +1691,10 @@ impl ManagementClient {
         Exports::new(self.shared.clone())
     }
     #[must_use]
+    pub fn imports(&self) -> Imports {
+        Imports::new(self.shared.clone())
+    }
+    #[must_use]
     pub fn usage(&self) -> UsageClient {
         UsageClient::new(self.shared.clone())
     }
@@ -1647,11 +1791,15 @@ pub struct ApiKeys;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TransferFormat {
+    Native,
     Jsonl,
     Csv,
+    #[serde(rename = "mongo_json")]
     MongoJson,
+    #[serde(rename = "cosmos_json")]
     CosmosJson,
-    DynamoDb,
+    #[serde(rename = "dynamo_json")]
+    DynamoJson,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UsageRange {
