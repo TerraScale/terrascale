@@ -24,9 +24,15 @@
 //     --mode sync --workload read --out bench/results
 
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using ZoneTree;
 using ZoneTree.Options;
+
+// A barrier phase that never completes within the budget means a slot died
+// mid-phase; failing loudly beats deadlocking the sampler.
+var barrierTimeout = TimeSpan.FromMinutes(10);
 
 var mode = "sync";
 var workload = "read";
@@ -38,22 +44,21 @@ var samples = 5;
 var concurrency = 16;
 var warmupOperations = 1_000;
 
-var arguments = args.AsSpan;
-for (var i = 0; i < arguments.Length; i++)
+for (var i = 0; i + 1 < args.Length; i++)
 {
-    string Value() => i + 1 < arguments.Length ? arguments[++i] : throw new ArgumentException($"--{arguments[i]} requires a value");
-    switch (arguments[i])
+    string Value() => args[++i];
+    switch (args[i])
     {
         case "--mode": mode = Value(); break;
         case "--workload": workload = Value(); break;
         case "--out": outDir = Value(); break;
         case "--data-dir": dataDir = Value(); break;
-        case "--seed": seedDocuments = int.Parse(Value()); break;
-        case "--ops": operations = int.Parse(Value()); break;
-        case "--samples": samples = int.Parse(Value()); break;
-        case "--concurrency": concurrency = int.Parse(Value()); break;
-        case "--warmup": warmupOperations = int.Parse(Value()); break;
-        default: throw new ArgumentException($"unknown argument: {arguments[i]}");
+        case "--seed": seedDocuments = int.Parse(Value(), CultureInfo.InvariantCulture); break;
+        case "--ops": operations = int.Parse(Value(), CultureInfo.InvariantCulture); break;
+        case "--samples": samples = int.Parse(Value(), CultureInfo.InvariantCulture); break;
+        case "--concurrency": concurrency = int.Parse(Value(), CultureInfo.InvariantCulture); break;
+        case "--warmup": warmupOperations = int.Parse(Value(), CultureInfo.InvariantCulture); break;
+        default: throw new ArgumentException($"unknown or incomplete argument: {args[i]}");
     }
 }
 
@@ -79,6 +84,11 @@ var zoneTreeVersion = typeof(ZoneTreeFactory<,>).Assembly.GetName().Version?.ToS
 var primary = OpenZone(Path.Combine(dataDir, "primary"));
 var secondary = OpenZone(Path.Combine(dataDir, "secondary"));
 
+Zone.Primary = primary;
+Zone.Secondary = secondary;
+Zone.SeedDocuments = seedDocuments;
+Zone.Payload = new string('x', 256);
+
 IZoneTree<string, string> OpenZone(string directory) =>
     new ZoneTreeFactory<string, string>()
         .SetDataDirectory(directory)
@@ -86,21 +96,22 @@ IZoneTree<string, string> OpenZone(string directory) =>
         .OpenOrCreate();
 
 // Seeding, like the sqlite driver's admin loop: 1,000 documents in both trees.
-var payload = new string('x', 256);
 for (var index = 0; index < seedDocuments; index++)
 {
-    primary.Upsert(PrimaryKey(Document.SeededId(index)), $"{Document.SeededName(index)}|{index % 100}|{payload}");
-    secondary.Upsert(SecondaryKey(Document.SeededName(index)), Document.SeededId(index));
+    primary.Upsert(Zone.PrimaryKey(Zone.SeededId(index)), $"{Zone.SeededName(index)}|{index % 100}|{Zone.Payload}");
+    secondary.Upsert(Zone.SecondaryKey(Zone.SeededName(index)), Zone.SeededId(index));
 }
 
 // The lane executor, mirroring bench/src/lane.rs: one thread per concurrency
 // slot, warm-up excluded, every measured sample between barriers of size
 // concurrency+1, per-operation latencies, wall clock from the coordinator.
+// Every worker reaches the end barrier even after an operation error, so a
+// failure can never strand the sampler — the same discipline the Rust lane
+// enforces; barrier timeouts guard the catastrophic path instead.
 var warmupEnd = new Barrier(concurrency + 1);
 var sampleStart = new Barrier(concurrency + 1);
 var sampleEnd = new Barrier(concurrency + 1);
 var failed = 0;
-var firstError = (string?)null;
 
 var perSlotWarmup = warmupOperations / concurrency;
 var warmupRemainder = warmupOperations % concurrency;
@@ -125,15 +136,16 @@ for (var slot = 0; slot < concurrency; slot++)
             var slotWarmup = perSlotWarmup + (slotIndex < warmupRemainder ? 1 : 0);
             for (var index = 0; index < slotWarmup; index++)
             {
-                if (!OneOp(warmupOffset + index, out var warmupError))
+                if (!Zone.OneOp(workload, warmupOffset + index))
                 {
-                    error = $"warm-up operation {index} failed: {warmupError}";
+                    error = $"warm-up operation {index} failed: {Zone.LastError}";
                     Interlocked.CompareExchange(ref failed, 1, 0);
                     break;
                 }
             }
 
-            warmupEnd.SignalAndWait();
+            if (!warmupEnd.SignalAndWait(barrierTimeout))
+                throw new TimeoutException("warm-up barrier timed out");
             if (Volatile.Read(ref failed) != 0)
                 return;
 
@@ -142,34 +154,32 @@ for (var slot = 0; slot < concurrency; slot++)
             mySamples = new List<double>[samples];
             for (var sample = 0; sample < samples; sample++)
             {
-                sampleStart.SignalAndWait();
+                if (!sampleStart.SignalAndWait(barrierTimeout))
+                    throw new TimeoutException("sample start barrier timed out");
                 var latencies = new List<double>(slotOperations);
-                var aborted = false;
                 for (var index = 0; index < slotOperations; index++)
                 {
                     var windowIndex = sample * operations + operationOffset + index;
                     var before = Stopwatch.GetTimestamp();
-                    if (!OneOp(windowIndex, out var operationError))
+                    if (!Zone.OneOp(workload, windowIndex))
                     {
-                        error = $"measured operation {windowIndex} failed: {operationError}";
+                        error = $"measured operation {windowIndex} failed: {Zone.LastError}";
                         Interlocked.CompareExchange(ref failed, 1, 0);
-                        aborted = true;
                         break;
                     }
                     latencies.Add((Stopwatch.GetTimestamp() - before) * 1_000_000.0 / Stopwatch.Frequency);
                 }
-                sampleEnd.SignalAndWait();
+                if (!sampleEnd.SignalAndWait(barrierTimeout))
+                    throw new TimeoutException("sample end barrier timed out");
                 if (Volatile.Read(ref failed) != 0)
                     return;
                 mySamples[sample] = latencies;
-                _ = aborted;
             }
         }
         catch (Exception exception)
         {
             error = $"slot {slotIndex} failed: {exception}";
             Interlocked.CompareExchange(ref failed, 1, 0);
-            warmupEnd.RemoveParticipant();
         }
         finally
         {
@@ -182,88 +192,42 @@ for (var slot = 0; slot < concurrency; slot++)
     };
 }
 
-bool OneOp(int index, out string? error)
-{
-    try
-    {
-        error = null;
-        switch (workload)
-        {
-            case "read":
-                if (!primary.TryGet(PrimaryKey(Document.SeededId(index % Math.Max(seedDocuments, 1))), out _))
-                    throw new InvalidOperationException("a seeded read must return a document");
-                return true;
-            case "write":
-                var id = Document.MeasuredId((uint)index);
-                primary.Upsert(PrimaryKey(id), $"{Document.MeasuredName}|{Document.MeasuredGroup}|{payload}");
-                secondary.Upsert(SecondaryKey(Document.MeasuredName), id);
-                return true;
-            case "query":
-                if (!secondary.TryGet(SecondaryKey(Document.SeededName(index % Math.Max(seedDocuments, 1))), out _))
-                    throw new InvalidOperationException("an indexed equality query must return a document");
-                return true;
-            default:
-                // V1's mixed ratio: index % 10 < 5 read, < 8 write, else query.
-                var step = index % 10;
-                if (step < 5)
-                {
-                    if (!primary.TryGet(PrimaryKey(Document.SeededId(index % Math.Max(seedDocuments, 1))), out _))
-                        throw new InvalidOperationException("a seeded read must return a document");
-                }
-                else if (step < 8)
-                {
-                    var id = Document.MeasuredId((uint)index);
-                    primary.Upsert(PrimaryKey(id), $"{Document.MeasuredName}|{Document.MeasuredGroup}|{payload}");
-                    secondary.Upsert(SecondaryKey(Document.MeasuredName), id);
-                }
-                else if (!secondary.TryGet(SecondaryKey(Document.SeededName(index % Math.Max(seedDocuments, 1))), out _))
-                {
-                    throw new InvalidOperationException("an indexed equality query must return a document");
-                }
-                return true;
-        }
-    }
-    catch (Exception exception)
-    {
-        error = exception.Message;
-        return false;
-    }
-}
-
-static class Document
-{
-    public const string Tenant = "benchmark-tenant";
-    public const string MeasuredName = "measured";
-    public const int MeasuredGroup = 42;
-
-    public static string SeededName(int index) => $"user-{index}";
-    public static string SeededId(int index) => $"seed-{index}";
-    public static string MeasuredId(uint index) => $"measured-{index}";
-    public static string PrimaryKey(string id) => $"{Tenant}|{id}";
-    public static string SecondaryKey(string name) => $"{Tenant}|{name}";
-}
-
 foreach (var thread in threads)
     thread.Start();
 
-// Coordinator: same barrier discipline as lane.rs. Every worker reaches the
-// end barrier even after an error, so a failure can never strand the sampler.
-warmupEnd.SignalAndWait();
+// Coordinator: times each sample from the start barrier's release to the
+// last slot's arrival at the end barrier, then joins and merges.
 var walls = new double[samples];
-for (var sample = 0; sample < samples; sample++)
+var coordinatorError = (string?)null;
+try
 {
-    sampleStart.SignalAndWait();
-    var before = Stopwatch.GetTimestamp();
-    sampleEnd.SignalAndWait();
-    walls[sample] = (Stopwatch.GetTimestamp() - before) * 1.0 / Stopwatch.Frequency;
-    if (Volatile.Read(ref failed) != 0)
-        break;
+    if (!warmupEnd.SignalAndWait(barrierTimeout))
+        throw new TimeoutException("warm-up barrier timed out");
+    if (Volatile.Read(ref failed) == 0)
+    {
+        for (var sample = 0; sample < samples; sample++)
+        {
+            if (!sampleStart.SignalAndWait(barrierTimeout))
+                throw new TimeoutException("sample start barrier timed out");
+            var before = Stopwatch.GetTimestamp();
+            if (!sampleEnd.SignalAndWait(barrierTimeout))
+                throw new TimeoutException("sample end barrier timed out");
+            walls[sample] = (Stopwatch.GetTimestamp() - before) * 1.0 / Stopwatch.Frequency;
+            if (Volatile.Read(ref failed) != 0)
+                break;
+        }
+    }
+}
+catch (Exception exception)
+{
+    coordinatorError = $"coordinator failed: {exception}";
+    Interlocked.CompareExchange(ref failed, 1, 0);
 }
 
 foreach (var thread in threads)
-    thread.Join();
+    thread.Join(barrierTimeout);
 
-var firstErrorText = threadErrors.FirstOrDefault(error => error is not null);
+var firstError = coordinatorError ?? threadErrors.FirstOrDefault(error => error is not null);
 
 var environment = new
 {
@@ -288,8 +252,7 @@ var limits = new[]
 };
 
 Directory.CreateDirectory(outDir);
-string receiptPath;
-if (firstErrorText is not null)
+if (firstError is not null)
 {
     var failure = new
     {
@@ -297,15 +260,15 @@ if (firstErrorText is not null)
         target = $"zonetree-{mode}",
         workload,
         config = new { seed_documents = seedDocuments, operations, samples, concurrency, warmup_operations = warmupOperations },
-        error = firstErrorText,
+        error = firstError,
         environment,
         samples = Array.Empty<object>(),
         limits,
     };
-    receiptPath = WriteReceipt(JsonSerializer.Serialize(failure, new JsonSerializerOptions { WriteIndented = true }));
-    Console.Error.WriteLine($"the reference run failed: {firstErrorText}");
-    Console.Error.WriteLine($"failed result retained: {receiptPath}");
-    Environment.Exit(1);
+    var failurePath = WriteReceipt(JsonSerializer.Serialize(failure, new JsonSerializerOptions { WriteIndented = true }));
+    Console.Error.WriteLine($"the reference run failed: {firstError}");
+    Console.Error.WriteLine($"failed result retained: {failurePath}");
+    return 1;
 }
 
 var measuredSamples = walls
@@ -342,24 +305,23 @@ var receipt = new
 
 Console.WriteLine($"target: zonetree-{mode} workload: {workload} samples: {measuredSamples.Length}");
 foreach (var (sample, measured) in measuredSamples.Index())
-    Console.WriteLine(
+    Console.WriteLine(FormattableString.Invariant(
         $"  sample {sample}: {measured.operations} ops in {measured.wall_seconds:F3}s = {measured.throughput_ops_per_s:F0} ops/s, " +
-        $"p50 {measured.p50_us:F1}us p95 {measured.p95_us:F1}us p99 {measured.p99_us:F1}us");
-Console.WriteLine($"elapsed: {(Stopwatch.GetTimestamp() - startedAt) * 1.0 / Stopwatch.Frequency:F1}s");
-receiptPath = WriteReceipt(JsonSerializer.Serialize(receipt, new JsonSerializerOptions { WriteIndented = true }));
-Console.WriteLine($"written: {receiptPath}");
-Environment.Exit(0);
+        $"p50 {measured.p50_us:F1}us p95 {measured.p95_us:F1}us p99 {measured.p99_us:F1}us"));
+Console.WriteLine(FormattableString.Invariant($"elapsed: {(Stopwatch.GetTimestamp() - startedAt) * 1.0 / Stopwatch.Frequency:F1}s"));
+Console.WriteLine($"written: {WriteReceipt(JsonSerializer.Serialize(receipt, new JsonSerializerOptions { WriteIndented = true }))}");
+return 0;
 
 string WriteReceipt(string json)
 {
-    var stamp = DateTimeOffset.UtcNow.UtcDateTime.ToUnixTimeMilliseconds() * 1_000_000L;
+    var stamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000L;
     for (var attempt = 0; attempt < 100; attempt++)
     {
         var path = Path.Combine(outDir, $"zonetree-{mode}-{workload}-{stamp}-{Environment.ProcessId}-{attempt}.json");
         try
         {
-            using var stream = new FileStream(path, FileMode.CreateNew);
-            File.WriteAllText(path, json);
+            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write))
+                stream.Write(Encoding.UTF8.GetBytes(json));
             return path;
         }
         catch (IOException) when (File.Exists(path))
@@ -368,4 +330,70 @@ string WriteReceipt(string json)
         }
     }
     throw new IOException("could not allocate a unique benchmark result name");
+}
+
+/// <summary>
+/// The lane's benchmark document and its ZoneTree layout, shared by every
+/// operation so the seeded and written shapes cannot drift from the sqlite
+/// and postgresql drivers.
+/// </summary>
+static class Zone
+{
+    public const string Tenant = "benchmark-tenant";
+    public const string MeasuredName = "measured";
+    public const int MeasuredGroup = 42;
+
+    /// <summary>The error message of the last failed operation on this thread.</summary>
+    [ThreadStatic]
+    public static string? LastError;
+
+    public static IZoneTree<string, string>? Primary { get; set; }
+    public static IZoneTree<string, string>? Secondary { get; set; }
+    public static int SeedDocuments { get; set; }
+    public static string Payload { get; set; } = "";
+
+    public static string SeededName(int index) => $"user-{index}";
+    public static string SeededId(int index) => $"seed-{index}";
+    public static string MeasuredId(int index) => $"measured-{index}";
+    public static string PrimaryKey(string id) => $"{Tenant}|{id}";
+    public static string SecondaryKey(string name) => $"{Tenant}|{name}";
+
+    /// <summary>Executes one workload operation; false plus <see cref="LastError"/> on failure.</summary>
+    public static bool OneOp(string laneWorkload, int index)
+    {
+        try
+        {
+            LastError = null;
+            // V1's mixed ratio: index % 10 < 5 read, < 8 write, else query.
+            var step = laneWorkload == "mixed" ? index % 10 : -1;
+            var operation = step switch
+            {
+                < 5 => "read",
+                < 8 => "write",
+                _ when laneWorkload == "mixed" => "query",
+                _ => laneWorkload,
+            };
+            switch (operation)
+            {
+                case "read":
+                    if (!Primary!.TryGet(PrimaryKey(SeededId(index % Math.Max(SeedDocuments, 1))), out _))
+                        throw new InvalidOperationException("a seeded read must return a document");
+                    return true;
+                case "write":
+                    var id = MeasuredId(index);
+                    Primary!.Upsert(PrimaryKey(id), $"{MeasuredName}|{MeasuredGroup}|{Payload}");
+                    Secondary!.Upsert(SecondaryKey(MeasuredName), id);
+                    return true;
+                default:
+                    if (!Secondary!.TryGet(SecondaryKey(SeededName(index % Math.Max(SeedDocuments, 1))), out _))
+                        throw new InvalidOperationException("an indexed equality query must return a document");
+                    return true;
+            }
+        }
+        catch (Exception exception)
+        {
+            LastError = exception.Message;
+            return false;
+        }
+    }
 }

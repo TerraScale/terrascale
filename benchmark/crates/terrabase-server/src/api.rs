@@ -3680,40 +3680,53 @@ async fn get_document(
     let Ok(operation) = crate::read_operation::next() else {
         return ApiError::storage_failure().into_response();
     };
-    let Ok(transaction) =
-        host.engine_host().begin_routed_document(&scope, &collection, &id, operation)
-    else {
-        return ApiError::storage_failure().into_response();
-    };
-    let Ok(revision) = transaction.revision_in_collection(&collection, &id) else {
-        return ApiError::storage_failure().into_response();
-    };
-    let Some(revision) = revision else {
-        return document_not_found(collection.as_str(), id.as_str()).into_response();
-    };
-    let etag = format!("\"{revision}\"");
-    if headers
+    // Engine reads are synchronous (and may perform SQLite I/O). Keep them
+    // off Tokio worker threads so concurrent HTTP requests can continue to
+    // make progress while a storage read is in flight.
+    let if_none_match = headers
         .get(axum::http::header::IF_NONE_MATCH)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|present| present == etag)
-    {
-        // The 304 path read the revision column only — the body blob was
-        // never touched (S-03's gate). No body bytes leave, so only the
-        // rate guard (checked above) applies here.
-        let mut response = StatusCode::NOT_MODIFIED.into_response();
-        if let Ok(etag) = HeaderValue::from_str(&etag) {
-            response.headers_mut().insert(axum::http::header::ETAG, etag);
-        }
-        if let Some(session) = &session {
-            with_session(&mut response, session.session_token());
-        }
-        return response;
-    }
-    let document = match transaction.read_in_collection(&collection, &id) {
-        Ok(Some(document)) => document,
-        Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
-        Err(_) => return ApiError::storage_failure().into_response(),
-    };
+        .map(str::to_owned);
+    let document =
+        match blocking_on_runtime(|| -> Result<Option<(String, Option<Document>)>, ApiError> {
+            let transaction = host
+                .engine_host()
+                .begin_routed_document(&scope, &collection, &id, operation)
+                .map_err(|_| ApiError::storage_failure())?;
+            let revision = transaction
+                .revision_in_collection(&collection, &id)
+                .map_err(|_| ApiError::storage_failure())?;
+            let Some(revision) = revision else {
+                return Ok(None);
+            };
+            let etag = format!("\"{revision}\"");
+            if if_none_match.as_deref() == Some(etag.as_str()) {
+                return Ok(Some((revision, None)));
+            }
+            let document = transaction
+                .read_in_collection(&collection, &id)
+                .map_err(|_| ApiError::storage_failure())?;
+            Ok(document.map(|document| (revision, Some(document))))
+        }) {
+            Ok(Some((revision, None))) => {
+                let etag = format!("\"{revision}\"");
+                let mut response = StatusCode::NOT_MODIFIED.into_response();
+                if let Ok(etag) = HeaderValue::from_str(&etag) {
+                    response.headers_mut().insert(axum::http::header::ETAG, etag);
+                }
+                if let Some(session) = &session {
+                    with_session(&mut response, session.session_token());
+                }
+                return response;
+            }
+            Ok(Some((revision, Some(document)))) => (revision, document),
+            Ok(None) => {
+                return document_not_found(collection.as_str(), id.as_str()).into_response();
+            }
+            Err(error) => return error.into_response(),
+        };
+    let (revision, document) = document;
+    let etag = format!("\"{revision}\"");
     let mut body = String::with_capacity(256);
     push_value(&mut body, document.value());
     if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
@@ -4751,21 +4764,25 @@ async fn execute_sql(
         }
         return response;
     }
-    let snapshot = match &mut session {
-        Some(session) => session.read_snapshot().map_err(session_error),
-        None => engine.read_snapshot(&scope).map_err(|_| ApiError::storage_failure()),
-    };
-    let snapshot = match snapshot {
-        Ok(snapshot) => snapshot,
+    // Query planning above is in-memory, but snapshot acquisition and query
+    // execution synchronously scan SQLite-backed storage. Keep that work off
+    // Tokio workers under the normal multithread runtime.
+    let execution = match blocking_on_runtime(|| {
+        let snapshot = match &mut session {
+            Some(session) => session.read_snapshot().map_err(session_error),
+            None => engine.read_snapshot(&scope).map_err(|_| ApiError::storage_failure()),
+        }?;
+        let admitted_cut = host
+            .engine_host()
+            .admitted_shard_read_cut()
+            .map_err(|_| ApiError::storage_failure())?;
+        Ok::<_, ApiError>(match admitted_cut.as_ref() {
+            Some(cut) if cut.route_generation.is_some() => store.execute_admitted(&plan, cut),
+            _ => store.execute(&plan, &snapshot),
+        })
+    }) {
+        Ok(execution) => execution,
         Err(error) => return error.into_response(),
-    };
-    let admitted_cut = match host.engine_host().admitted_shard_read_cut() {
-        Ok(cut) => cut,
-        Err(_) => return ApiError::storage_failure().into_response(),
-    };
-    let execution = match admitted_cut.as_ref() {
-        Some(cut) if cut.route_generation.is_some() => store.execute_admitted(&plan, cut),
-        _ => store.execute(&plan, &snapshot),
     };
     match execution {
         Ok(result) => {
@@ -5299,6 +5316,19 @@ pub(crate) fn commit_on_runtime(
     } else {
         transaction.commit(durability)
     }
+}
+
+/// Runs synchronous engine work without occupying an async worker on the
+/// multithread runtime. A direct call is retained for current-thread runtimes
+/// (where `block_in_place` panics) and callers outside Tokio.
+pub(crate) fn blocking_on_runtime<F, T>(work: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    let multi_thread = tokio::runtime::Handle::try_current()
+        .map(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
+        .unwrap_or(false);
+    if multi_thread { tokio::task::block_in_place(work) } else { work() }
 }
 
 #[cfg(test)]
