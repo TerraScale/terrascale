@@ -3085,6 +3085,10 @@ fn batch_write_response(
 }
 
 /// Decodes the bounded operation list before opening a write transaction.
+/// A larger bound lets one durable group commit amortize a FULL WAL flush while
+/// still keeping request memory and transaction time bounded.
+const MAX_DOCUMENT_BATCH_OPERATIONS: usize = 8192;
+
 fn parse_batch_operations(body: &str) -> Result<Vec<serde_json::Value>, ApiError> {
     let mut request: serde_json::Value = serde_json::from_str(body).map_err(|_| ApiError {
         status: StatusCode::BAD_REQUEST,
@@ -3103,12 +3107,14 @@ fn parse_batch_operations(body: &str) -> Result<Vec<serde_json::Value>, ApiError
             placement: None,
         });
     };
-    if operations.is_empty() || operations.len() > 1000 {
+    if operations.is_empty() || operations.len() > MAX_DOCUMENT_BATCH_OPERATIONS {
         return Err(ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "batch_size_out_of_bounds",
-            message: "a batch is 1..=1000 operations".into(),
-            fix: "split the batch into groups of at most 1000 operations".into(),
+            message: format!("a batch is 1..={MAX_DOCUMENT_BATCH_OPERATIONS} operations"),
+            fix: format!(
+                "split the batch into groups of at most {MAX_DOCUMENT_BATCH_OPERATIONS} operations"
+            ),
             placement: None,
         });
     }
