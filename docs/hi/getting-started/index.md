@@ -7,7 +7,7 @@
 
 This is the shortest path from a new Next.js app to a cloud-backed live query.
 With Node, the TerraScale CLI, and an API key already available, the path is
-designed to take less than five minutes. There is nothing to install locally:
+designed to take less than five minutes. There is no local database process to install:
 `terrascale dev` creates or reuses a cloud development branch, and dev and
 production use the same engine in the same regions.
 
@@ -44,11 +44,15 @@ machine. Seed execution, log tailing, and codegen watch are separate CLI
 capabilities; do not add those flags unless the CLI release you installed
 advertises their contracts.
 
-The starter is a Next.js app wired to `@terrascale/sdk`. Sign in to the
-dashboard to obtain a credential limited to the development branch. Enter it
-in each browser tab; the starter keeps it only in memory until disconnect or
-reload. Never embed a privileged key in NEXT_PUBLIC settings. Application
-sign-in integration and the real five-minute journey remain unqualified.
+The starter is a Next.js app wired to `@terrascale/sdk`. Click **Sign in with
+TerraScale** in each browser tab. It uses OAuth authorization-code PKCE and
+exchanges the signed-in credential for short-lived access scoped to the
+selected project/database and the `posts` collection’s read/write operations.
+It renews that access while the sign-in token remains valid. Both credentials
+stay in tab memory until disconnect or reload. Never embed a privileged key
+in `NEXT_PUBLIC` settings. The deployed provider must accept the exact
+registered callback and authorize the selected branch. Application sign-in
+integration and the real five-minute journey remain unqualified.
 A card is required at signup for fraud screening; you can continue on the free
 plan without subscribing, and the onboarding promotion waives only the first paid month’s
 subscription fee. Explicitly authorized excess usage remains chargeable.
@@ -77,7 +81,7 @@ export const schema = defineSchema({
 ```
 
 ```bash
-terrascale push        # applies schema to the selected branch
+terrascale push --database <branch-database> # applies schema to that branch
 terrascale codegen     # generates types from the schema file
 ```
 
@@ -86,15 +90,19 @@ terrascale codegen     # generates types from the schema file
 This creates or reuses a cloud branch of the named database. It prints the
 branch name, source, and selected region; it does not print credentials or a
 database id. Use the dashboard/API response to obtain the branch database id,
-then put that id, the API URL, and a scoped API key in the generated
-`.env.local` (the `.env.example` lists the names). The branch runs in the cloud
+then set the public project ID, branch database ID, API URL, auth URL, and
+exact registered callback URL in `.env.local` (`.env.example` lists the names).
+Export `TERRASCALE_API_KEY` separately for CLI commands; no API key belongs
+in the browser’s public settings. The branch runs in the cloud
 service, not in a local database process or customer-run emulator.
 
 ## 4. Attach a live query
 
 Queries use the SDK's schema-bound, typed SQL builder. It emits parameterized,
 read-only `SELECT` SQL; there is no TQL or collection-query facade. The
-reactive client attaches the builder's descriptor and requires `databaseId`:
+reactive client attaches the builder's descriptor and requires `databaseId`.
+The example below assumes sign-in has supplied `branchAccessToken`; the
+generated app implements the exchange and renewal in `app/page.tsx`:
 
 ```ts
 import { Direction, select, TerraScaleSyncV1Client } from '@terrascale/sdk'
@@ -103,7 +111,7 @@ import { posts, title, publishedAt } from './schema'
 const databaseId = process.env.NEXT_PUBLIC_TERRASCALE_DATABASE_ID!
 const sync = new TerraScaleSyncV1Client({
   apiBaseUrl: process.env.NEXT_PUBLIC_TERRASCALE_API_URL,
-  accessToken: developmentCredential, // entered in the tab, kept only in memory
+  accessToken: branchAccessToken, // short-lived delegated access from sign-in
 })
 
 const postsQuery = select(posts)
@@ -154,8 +162,8 @@ operation for document writes.
 
 ## 5. Verify it is live
 
-Open the app in two tabs and connect each to the same cloud branch using a
-scoped development credential. Add a post in either tab; both live views
+Open the app in two tabs and sign in separately to connect each to the same
+cloud branch. Add a post in either tab; both live views
 should display it. This journey still requires real cloud qualification.
 The CRUD snippet exercises the public write API when its real sandbox is available;
 see [pricing](/hi/pricing/) for billing (writes and logical document/history
@@ -165,7 +173,6 @@ are free).
 ## Where to go next
 
 - [Replication and durability](/hi/concepts/replication) — sessions, acknowledgements, and conflicts
-- [Replication model](/hi/concepts/replication) — leaderless active-active, CRDTs, consistency
 - [Sync model](/hi/concepts/sync) — shared views, the immutable delta log, the CDN
 - [SQL](/hi/concepts/sql) — the live subset, `execute`-only queries, codegen
 - [Pricing philosophy](/hi/concepts/pricing-philosophy) — why only writes and storage are billed

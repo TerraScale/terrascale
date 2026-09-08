@@ -31,7 +31,7 @@ Base URL: https://docs.terrascale.tech
 - Pricing (draft, generated from checked-in pricing data): writes + storage billed, everything else free.: https://docs.terrascale.tech/pricing
 - Pricing & limits: plans, quotas, guards, shared organization allowances.: https://docs.terrascale.tech/pricing/
 - Limits and unbilled abuse guards, generated from the same source as pricing.: https://docs.terrascale.tech/limits
-- Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key; database-scoped branch, backup, and export routes are published, while project-scoped producer fixtures and tenant provisioning remain skipped until their contracts are published.: https://docs.terrascale.tech/snippets
+- Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key; database-scoped branch, backup, and export routes are published, while tenant and project-scoped branch/backup fixtures await contracts and the export fixture awaits qualification.: https://docs.terrascale.tech/snippets
 - Launch post draft: Reads are free — how.: https://docs.terrascale.tech/blog/reads-are-free
 - Benchmark publication policy: no measured results published.: https://docs.terrascale.tech/blog/benchmarks
 - Draft: choosing durability across Regions.: https://docs.terrascale.tech/blog/replication

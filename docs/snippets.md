@@ -22,8 +22,9 @@ credentials only to the configured API origin; reactive snapshot and log
 requests use the short-lived view capability header.
 
 The runnable examples target the published `@terrascale/sdk` 0.3.0 surface.
-Tenant, branch, backup, and export fixtures remain source-only until their
-producer contracts are published and qualified. Downloads return plaintext
+Tenant and project-scoped branch/backup fixtures await producer contracts.
+Database-scoped branch, backup, and export routes are published; the export
+fixture remains source-only pending qualification. Downloads return plaintext
 artifact bytes with the declared length
 and BLAKE3 checksum from the `X-TerraScale-Artifact-Length` and
 `X-TerraScale-Artifact-Checksum` headers. The stub mode is deterministic and
@@ -54,8 +55,8 @@ workflow.
 
 This fixture exercises the project-scoped branch producer, which is not in the
 pinned public contract yet. It is intentionally skipped in both modes.
-Database-scoped branch listing and creation are also awaiting publication and
-qualification.
+Database-scoped branch listing and creation are published; the connected
+cloud workflow still requires qualification.
 
 <<< ./snippets/branches.ts
 
@@ -63,15 +64,15 @@ qualification.
 
 This fixture exercises project-scoped backup policy and confirmation routes,
 which are not in the pinned public contract yet. It is intentionally skipped
-in both modes. Database-scoped backup listing and restoration are also
-awaiting publication and qualification.
+in both modes. Database-scoped backup listing and restoration are published;
+the connected recovery workflow still requires qualification.
 
 <<< ./snippets/backups.ts
 
 ## Logical export
 
-The database-scoped typed export operation remains pending its producer
-contract and qualification. This fixture remains in the source tree and is
+The database-scoped typed export operation is available, but its real-service
+qualification remains pending. This fixture remains in the source tree and is
 intentionally skipped by both runner modes. The intended API returns plaintext
 artifact bytes plus declared length and BLAKE3 checksum metadata from response
 headers.

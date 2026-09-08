@@ -423,7 +423,7 @@ export async function runAll(mode = requestedMode()) {
   for (const file of files) {
     const mod = await import(pathToFileURL(join(snippetsDir, file)).href);
     if (mod.runnable === false) {
-      console.log(`skip - ${file} (the owning public contract is not published)`);
+      console.log(`skip - ${file} (fixture is non-runnable; see its contract and qualification requirements)`);
       continue;
     }
     if (mode === "remote" && Array.isArray(mod.requires) && mod.requires.includes("project") && process.env.TERRASCALE_PROJECT_ID === undefined) {

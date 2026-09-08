@@ -1,5 +1,5 @@
 flowchart TB
-  title["TERRASCALE · 20 REGIONS<br/>Target architecture · v1 · 40 member hosts minimum · 3 global control replicas"]:::title
+  title["TERRASCALE · 20 REGIONS<br/>Future capacity design · not deployed · 40 member hosts minimum · 3 global control replicas"]:::title
   client["Customer app / SDK<br/>TypeScript · Go · Rust · .NET"]:::client
   title ~~~ client
   subgraph edge["CLOUDFLARE · DNS / TLS / WAF"]
@@ -15,22 +15,22 @@ flowchart TB
   client -->|snapshot cut / log offset| snippet
   subgraph selected["OCI · ONE SELECTED DATABASE REGION · repeated in every admitted region"]
     direction LR
-    subgraph hostA["MEMBER HOST A · Ubuntu / systemd"]
+    subgraph hostA["MEMBER HOST A · Native OCI binaries / systemd · no containers"]
       api["2 · TerraBase public API<br/>Auth + access rules + session checks<br/>CRUD · read-only SQL · attach view"]:::engine
       sqlite[("SQLite database file + WAL<br/>Document bytes · indexes · history<br/>Durable publication journal")]:::engine
-      views["Shared incremental views<br/>Journal deltas · 100 ms coalescing<br/>Encode immutable MessagePack once"]:::sync
+      views["Shared incremental views<br/>Journal deltas · bounded coalescing<br/>Encode immutable MessagePack once"]:::sync
       localA["Local ts-orchestrator + ts-node<br/>Private TBEP / lifecycle<br/>Independent systemd services"]:::control
       api -->|write transaction / query| sqlite
       sqlite -->|publication journal| views
       localA -.->|health / drain / membership intent| api
     end
-    subgraph hostB["MEMBER HOST B · Ubuntu / systemd"]
+    subgraph hostB["MEMBER HOST B · Native OCI binaries / systemd · no containers"]
       follower[("TerraBase physical follower<br/>RF=2 per placed database<br/>SQLite WAL · durable acknowledgement")]:::engine
       localB["Local ts-orchestrator + ts-node<br/>Same-host TBEP / systemd"]:::control
       localB -.-> follower
     end
     sqlite ==>|physical WAL frames| follower
-    bucket[("Regional OCI Object Storage<br/>Native TerraBase backup / restore<br/>Encrypted under database DEK")]:::storage
+    bucket[("OCI Object Storage / Tigris<br/>Native TerraBase backup / restore<br/>Encrypted · policy-qualified geography")]:::storage
     sqlite -->|backup stream| bucket
   end
   proxy -->|healthy capacity within database placement| api
@@ -39,7 +39,7 @@ flowchart TB
   cache -->|MISS: canonical immutable GET| views
   views -->|snapshot / delta bytes| cache
   api -->|attach result: authorized view + capability| client
-  peers["OTHER REGIONS IN THIS DATABASE PLACEMENT<br/>Direct member-to-member QUIC<br/>Causal journal replication + CRDT merge + anti-entropy<br/>RegionalDurable is local RF=2; GlobalDurable adds the contract frontier"]:::replication
+  peers["OTHER REGIONS IN THIS DATABASE PLACEMENT<br/>Direct member-to-member QUIC<br/>Causal journal replication + CRDT merge + anti-entropy<br/>RegionalDurable: local RF=2; GlobalDurable: all selected Regions + causal dependencies<br/>GlobalDurable requires at least two active selected Regions"]:::replication
   sqlite <==>|journal waves; residency filter| peers
   subgraph control["CONTROL ONLY · GRU AUTHORITY · CUSTOMER TRAFFIC DOES NOT ENTER HERE"]
     direction LR
@@ -105,7 +105,7 @@ flowchart TB
     end
   end
   quorum -.->|only these three store locations| permanent
-  limits["SCALE RULES · 20 regions ≠ every database in 20 regions<br/>Database placement stays immutable; RF=2 in each selected region<br/>New regions do not join global R3; separate regional R3 needs at least 3 eligible hosts<br/>GRU / NATS outage pauses new control mutations; admitted data plane keeps serving<br/>10- and 20-region estates are design targets, not launch qualification evidence"]:::note
+  limits["SCALE RULES · 20 regions ≠ every database in 20 regions<br/>Immutable placement: replication, backups, restore, exports and branches; RF=2 per Region<br/>New regions do not join global R3; separate regional R3 needs at least 3 eligible hosts<br/>GRU / NATS outage pauses new control mutations; admitted data plane keeps serving<br/>Only writes and logical storage are billed; multiply selected Regions before shared allowances<br/>Reads and reactive delivery are unbilled; guards never create charges<br/>10- and 20-region estates are design targets, not launch qualification evidence"]:::note
   roster ~~~ limits
   classDef title fill:#0c2436,color:#ffffff,stroke:#0c2436,font-size:24px,font-weight:bold
   classDef client fill:#e8edf5,stroke:#40566f,color:#102333

@@ -16,6 +16,8 @@ reads or global uniqueness.
 - **GlobalDurable** requires durability in every selected Region, including
   the write’s causal dependencies. An unavailable required Region prevents
   this acknowledgement; the service must not silently weaken durability.
+  At least two selected Regions must be active; a single-Region database
+  cannot request this acknowledgement.
 
 A timeout may leave a write’s outcome uncertain. Reuse its idempotency identity
 and follow the SDK’s retry guidance; creating a new operation can duplicate it.

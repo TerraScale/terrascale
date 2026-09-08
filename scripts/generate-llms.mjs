@@ -23,7 +23,7 @@ const routes = [
   ["/pricing", "Pricing (draft, generated from checked-in pricing data): writes + storage billed, everything else free."],
   ["/pricing/", "Pricing & limits: plans, quotas, guards, shared organization allowances."],
   ["/limits", "Limits and unbilled abuse guards, generated from the same source as pricing."],
-  ["/snippets", "Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key; database-scoped branch, backup, and export routes are published, while project-scoped producer fixtures and tenant provisioning remain skipped until their contracts are published."],
+  ["/snippets", "Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key; database-scoped branch, backup, and export routes are published, while tenant and project-scoped branch/backup fixtures await contracts and the export fixture awaits qualification."],
   ["/blog/reads-are-free", "Launch post draft: Reads are free — how."],
   ["/blog/benchmarks", "Benchmark publication policy: no measured results published."],
   ["/blog/replication", "Draft: choosing durability across Regions."],

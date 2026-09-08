@@ -28,17 +28,19 @@ published are retained as non-runnable references.
   qualification.
 - **Regions and placement** — select regions per database; placement is the
   residency guarantee (`eu-only`, `br-only`, or an explicit list) and can
-  never be widened. Replicated writes cost one write per region.
+  never be widened. Multiply 4 KiB write units by selected Regions before
+  consuming the organization’s shared allowance.
 - **Tenants** — the intended database-per-customer model, with
-  `ts.tenants.create(key)`, tenant-scoped keys, per-tenant usage and
+  tenant-scoped keys, per-tenant usage and
   branching. Tenant provisioning is awaiting its producer contract.
 - **Webhooks** — change streams with retries and signing; delivery is free.
 
 ## Tooling
 
-- **`terrascale dev`** — a personal cloud dev branch. Seed execution, log tail,
-  codegen watch, and fault injection remain unavailable until their CLI
-  contracts are published.
+- **`terrascale dev`** — a personal cloud dev branch. The CLI supports data-file
+  seeds, bounded branch diagnostic polling, and local schema codegen watch.
+  TypeScript seed functions are not executed. See the installed CLI’s help
+  for its available flags; cloud integration still requires qualification.
 - **`terrascale push` / `diff`** — intended schema evolution with resumable
   backfills and field renames; the full workflow is awaiting qualification.
 - **`terrascale doctor`** — self-service diagnosis.

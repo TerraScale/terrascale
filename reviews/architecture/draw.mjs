@@ -31,7 +31,7 @@ for (const count of [3, 10, 20]) {
   };
   rect(0,0,1600,128,'#112d43','#112d43',0);
   text(44,39,'TERRASCALE / ARCHITECTURE','section','style="fill:#78d7bb"');
-  text(44,86,`${count} regions. One v1 architecture.`,'h','style="fill:#fff;font-size:34px"');
+  text(44,86,`${count} Regions. ${count === 3 ? 'Launch target.' : 'Future capacity design.'}`,'h','style="fill:#fff;font-size:34px"');
   text(1060,52,`${count*2} member hosts minimum`,'h','style="fill:#fff"');
   text(1060,82,`${count*2} local orchestrators · 3 control replicas`,'body','style="fill:#c4dbe9"');
   text(44,158,'TARGET DESIGN  ·  Blue = REST  ·  Green = reactive  ·  Amber = data/replication  ·  Purple = control','small');
@@ -53,8 +53,8 @@ for (const count of [3, 10, 20]) {
   card(56,446,220,116,'Same SDK, live view',['Attach: scoped capability','Then HTTP snapshot/log','Checkpoint stays opaque'],'sync');
   card(326,446,260,116,'Snippet capability gate',['sync.api.terrascale.tech','Verify scope + generation','Remove token before cache'],'sync');
   card(646,446,290,116,'CDN + Tiered Cache',['HIT returns bytes to the SDK','MISS collapses origin fills','No Worker on this path'],'sync');
-  card(996,446,260,116,'Shared result views',['Journal → incremental delta','100 ms shared publication','Encode immutable bytes once'],'sync');
-  card(1316,446,228,116,'OCI Object Storage',['Native TerraBase backup · PITR','Restore to a new DB','Regional · DEK encrypted'],'engine');
+  card(996,446,260,116,'Shared result views',['Journal → incremental delta','Bounded shared publication','Encode immutable bytes once'],'sync');
+  card(1316,446,228,116,'Encrypted backups',['OCI Object Storage / Tigris','Policy-qualified geography','Restore to a new database'],'engine');
   arrow('276,507 326,507','HTTP',279,490);
   arrow('586,507 646,507','gate',594,490);
   arrow('936,507 996,507','',934,490,false,true);
@@ -74,7 +74,7 @@ for (const count of [3, 10, 20]) {
   arrow('306,826 366,826','',307,809,true);
   arrow('676,826 736,826','',682,809,true);
   arrow('1096,826 1156,826','',1103,809,true);
-  text(56,922,'Two hosts per Region to start. Scale from measured demand; admit/catch up before traffic. Fixed control R3: GRU + SFO + FRA.','body');
+  text(56,922,'Native OCI binaries + systemd; no containers. Two hosts per Region initially. Fixed control R3: GRU + SFO + FRA.','body');
   text(56,950,'Orchestrator → DNS / KV / keys / edge promotion. estate.* → TerraBase → dashboard SDK. Grafana agents → Grafana Cloud.','small');
 
   const rosterY=996;
@@ -89,8 +89,8 @@ for (const count of [3, 10, 20]) {
     text(x+14,y+75,i===0?'Global master + 1 store replica':i<3?'1 global store replica':'Regional authority; uses global R3','small');
   }
   const fy=rosterY+rows*108+89;
-  text(44,fy,'Regional services: TerraBase + ts-orchestrator + ts-node + Grafana agent on each host. Regional backups remain on OCI.','body');
-  text(44,fy+27,'Estate growth does not widen database residency. A separate regional R3 needs at least 3 eligible hosts and explicit admission.','body');
+  text(44,fy,'Only writes + logical storage are billed, multiplied by selected Regions before allowances. Reads and reactive delivery are unbilled.','body');
+  text(44,fy+27,'Placement is immutable across replication, backups, restore, exports and branches. Separate regional R3 needs at least 3 eligible hosts.','body');
   text(44,fy+54,'GRU / NATS outage pauses new control mutations; admitted data-plane service continues. Launch qualifies 3 Regions; 10/20 are design targets.','small');
   parts.push('</svg>');
   await writeFile(path.join(here,`architecture-${count}-regions.svg`),parts.join('\n')+'\n');
