@@ -43,7 +43,7 @@
 //!   seams (SE-08/SE-14 with the W5 authorization rules).
 
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     sync::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering as AtomicOrdering},
@@ -53,10 +53,12 @@ use std::{
 use super::conflict::ConflictRecord;
 use crate::{
     engine::{CommitPublicationSink, Engine, SubscriptionGuard},
-    storage::{CommitPublicationEvent, JournalProvenance, PublishedWrite},
+    identity::DatabaseUlid,
+    origin_lane::OriginLaneId,
+    storage::{CommitPublicationEvent, JournalKind, JournalProvenance, PublishedWrite},
     types::{
         Cancellation, CollectionName, DocumentId, DocumentValue, OperationId, StorageSequence,
-        TenantScope,
+        TenantId, TenantScope,
     },
 };
 
@@ -284,6 +286,257 @@ pub struct SyncJournalBatch {
     records: Vec<SyncJournalRecord>,
     next: Option<ChangeCheckpoint>,
     drained: bool,
+}
+
+/// The immutable view identity bound to a multi-lane sync cursor.
+///
+/// A cursor is accepted only for the exact admitted database view that
+/// created it. Route changes therefore cannot silently reinterpret a cursor
+/// against a different set of physical lanes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncJournalBinding {
+    tenant: TenantId,
+    project: String,
+    database: String,
+    database_identity: DatabaseUlid,
+    database_incarnation: u128,
+    route_generation: u64,
+    selector_digest: [u8; 32],
+}
+
+impl SyncJournalBinding {
+    /// Creates the binding supplied by the admitted serving owner.
+    #[must_use]
+    pub fn new(
+        tenant: TenantId,
+        project: String,
+        database: String,
+        database_identity: DatabaseUlid,
+        database_incarnation: u128,
+        route_generation: u64,
+        selector_digest: [u8; 32],
+    ) -> Self {
+        Self {
+            tenant,
+            project,
+            database,
+            database_identity,
+            database_incarnation,
+            route_generation,
+            selector_digest,
+        }
+    }
+
+    /// Returns the bound tenant.
+    #[must_use]
+    pub const fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// Returns the bound Project name.
+    #[must_use]
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    /// Returns the bound database name.
+    #[must_use]
+    pub fn database(&self) -> &str {
+        &self.database
+    }
+
+    /// Returns the immutable database identity.
+    #[must_use]
+    pub const fn database_identity(&self) -> DatabaseUlid {
+        self.database_identity
+    }
+
+    /// Returns the admitted database incarnation.
+    #[must_use]
+    pub const fn database_incarnation(&self) -> u128 {
+        self.database_incarnation
+    }
+
+    /// Returns the route generation used to enumerate lanes.
+    #[must_use]
+    pub const fn route_generation(&self) -> u64 {
+        self.route_generation
+    }
+
+    /// Returns the canonical shared-view selector digest.
+    #[must_use]
+    pub const fn selector_digest(&self) -> [u8; 32] {
+        self.selector_digest
+    }
+}
+
+/// Per-lane durable cursor for a multi-file sync replay.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncJournalCursor {
+    binding: SyncJournalBinding,
+    lanes: BTreeMap<OriginLaneId, ChangeCheckpoint>,
+}
+
+impl SyncJournalCursor {
+    /// Creates a cursor at the beginning of every currently enumerated lane.
+    #[must_use]
+    pub fn beginning(binding: SyncJournalBinding, lanes: impl IntoIterator<Item = OriginLaneId>) -> Self {
+        Self {
+            binding,
+            lanes: lanes
+                .into_iter()
+                .map(|lane| (lane, ChangeCheckpoint::after(0, 0)))
+                .collect(),
+        }
+    }
+
+    /// Creates a cursor from accepted per-lane checkpoints.
+    #[must_use]
+    pub fn from_lanes(
+        binding: SyncJournalBinding,
+        lanes: BTreeMap<OriginLaneId, ChangeCheckpoint>,
+    ) -> Self {
+        Self { binding, lanes }
+    }
+
+    /// Returns the immutable cursor binding.
+    #[must_use]
+    pub const fn binding(&self) -> &SyncJournalBinding {
+        &self.binding
+    }
+
+    /// Returns the accepted checkpoint for each physical lane.
+    #[must_use]
+    pub const fn lanes(&self) -> &BTreeMap<OriginLaneId, ChangeCheckpoint> {
+        &self.lanes
+    }
+
+    /// Validates this cursor against the currently admitted view binding.
+    /// Route changes and any scope/selector mismatch require a fresh snapshot
+    /// rather than silently migrating independent lane positions.
+    pub(crate) fn validate_binding(
+        &self,
+        expected: &SyncJournalBinding,
+    ) -> Result<(), StreamError> {
+        (self.binding == *expected).then_some(()).ok_or(StreamError::InvalidCursor)
+    }
+}
+
+/// One record tagged with the physical lane that supplied it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SyncJournalLaneRecord {
+    lane: OriginLaneId,
+    record: SyncJournalRecord,
+}
+
+impl SyncJournalLaneRecord {
+    /// Creates one lane-tagged record from an admitted lane page.
+    #[must_use]
+    pub fn new(lane: OriginLaneId, record: SyncJournalRecord) -> Self {
+        Self { lane, record }
+    }
+
+    /// Returns the physical lane identity.
+    #[must_use]
+    pub const fn lane(&self) -> &OriginLaneId {
+        &self.lane
+    }
+
+    /// Returns the durable record.
+    #[must_use]
+    pub const fn record(&self) -> &SyncJournalRecord {
+        &self.record
+    }
+}
+
+/// A bounded merge result over the pages currently available from each lane.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SyncJournalLaneBatch {
+    records: Vec<SyncJournalLaneRecord>,
+    cursor: SyncJournalCursor,
+    drained: bool,
+}
+
+impl SyncJournalLaneBatch {
+    /// Returns records in deterministic order within the available pages.
+    #[must_use]
+    pub fn records(&self) -> &[SyncJournalLaneRecord] {
+        &self.records
+    }
+
+    /// Returns the cursor after the records returned by this batch.
+    #[must_use]
+    pub const fn cursor(&self) -> &SyncJournalCursor {
+        &self.cursor
+    }
+
+    /// Reports whether every supplied lane page was exhausted.
+    #[must_use]
+    pub const fn drained(&self) -> bool {
+        self.drained
+    }
+}
+
+/// Merges bounded pages from independent physical lanes.
+///
+/// The ordering is deterministic for the pages available in this call. It is
+/// deliberately not presented as a global chronology across records that may
+/// arrive from later lane reads. Replicated staging rows are excluded; their
+/// original provenance remains eligible on the originating lane exactly once.
+pub(crate) fn merge_sync_journal_pages(
+    cursor: &SyncJournalCursor,
+    pages: BTreeMap<OriginLaneId, Vec<SyncJournalRecord>>,
+    drained: bool,
+    limit: u32,
+) -> Result<SyncJournalLaneBatch, StreamError> {
+    if limit == 0 || limit > super::MAX_STREAM_BATCH_ITEMS {
+        return Err(StreamError::InvalidSource);
+    }
+    let mut candidates: Vec<SyncJournalLaneRecord> = pages
+        .into_iter()
+        .flat_map(|(lane, records)| {
+            let checkpoint = cursor
+                .lanes
+                .get(&lane)
+                .copied()
+                .unwrap_or(ChangeCheckpoint::after(0, 0));
+            records.into_iter().filter_map(move |record| {
+                if record.provenance().kind() != JournalKind::Origin
+                    || subscription::position_covered(
+                        checkpoint.sequence(),
+                        checkpoint.write_index(),
+                        StorageSequence::new(record.storage_sequence()),
+                        record.position().write_index().saturating_sub(1),
+                    )
+                {
+                    return None;
+                }
+                Some(SyncJournalLaneRecord::new(lane.clone(), record))
+            })
+        })
+        .collect();
+    candidates.sort_by(|left, right| {
+        (
+            left.record.provenance().hlc(),
+            left.lane.as_str(),
+            left.record.provenance().origin_sequence(),
+            left.record.storage_sequence(),
+            left.record.position().write_index(),
+        )
+            .cmp(&(
+                right.record.provenance().hlc(),
+                right.lane.as_str(),
+                right.record.provenance().origin_sequence(),
+                right.record.storage_sequence(),
+                right.record.position().write_index(),
+            ))
+    });
+    candidates.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    let mut next = cursor.clone();
+    for candidate in &candidates {
+        next.lanes.insert(candidate.lane.clone(), candidate.record.position());
+    }
+    Ok(SyncJournalLaneBatch { records: candidates, cursor: next, drained })
 }
 
 impl SyncJournalBatch {

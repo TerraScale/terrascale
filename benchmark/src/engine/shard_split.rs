@@ -71,45 +71,23 @@ impl ScopedShardEngine {
 
     /// Opens (or reopens) the target file with the parent database's owner and
     /// encryption lease. Data movement owns the returned handle in its worker.
-    pub(crate) fn open_target(&self, context: &SplitContext) -> Result<Engine, EngineOpenError> {
-        self.open_target_with_mode(context, true)
-    }
-
-    fn open_target_with_mode(
+    pub(crate) fn open_target(
         &self,
         context: &SplitContext,
-        create: bool,
-    ) -> Result<Engine, EngineOpenError> {
-        let path = self.target_path(context);
-        std::fs::create_dir_all(path.parent().expect("target has shard directory"))
-            .map_err(|_| EngineOpenError::StorageUnavailable)?;
-        let mut config = if create {
-            super::EngineConfig::durable(path)
-        } else {
-            super::EngineConfig::existing_durable(path)
-        }
-        .map_err(|_| EngineOpenError::InvalidConfig)?
-        .with_owner(self.engine.database_owner().clone());
-        if let Some(keys) = &self.engine.storage_keys {
-            config = config.with_storage_keys(std::sync::Arc::clone(keys));
-        }
-        let origin =
-            crate::types::RegionId::try_new(self.engine.database_owner().region().as_str())
-                .map_err(|_| EngineOpenError::InvalidConfig)?;
-        config = config.with_replication_origin(origin);
-        Engine::open(config)
+    ) -> Result<std::sync::Arc<Engine>, EngineOpenError> {
+        self.engine
+            .open_shard_participant_mode(context.target_shard(), true)?
+            .ok_or(EngineOpenError::StorageUnavailable)
     }
 
-    /// Reopens a committed target without treating missing storage as a new
-    /// database. Its durable split identity is validated separately.
+    /// Uses the resident target handle; existing encrypted storage must be present.
     pub(crate) fn open_existing_target(
         &self,
         context: &SplitContext,
-    ) -> Result<Engine, EngineOpenError> {
-        if !crate::storage::existing_database_location(&self.target_path(context), self.engine.storage_keys.is_some()) {
-            return Err(EngineOpenError::StorageUnavailable);
-        }
-        self.open_target_with_mode(context, false)
+    ) -> Result<std::sync::Arc<Engine>, EngineOpenError> {
+        self.engine
+            .open_shard_participant(context.target_shard())?
+            .ok_or(EngineOpenError::StorageUnavailable)
     }
 
     /// Records the exact verified target snapshot before route publication.
@@ -284,6 +262,22 @@ impl ScopedShardEngine {
 }
 
 const TARGET_VERIFICATION_KEY: &str = "control:shard-target/v1/verified-boundary";
+const TARGET_VERIFICATION_BINDING_KEY: &str = "control:shard-target/v1/verified-binding";
+
+fn target_verification_binding(
+    identity: &[u8],
+    proof: &[u8],
+    catalog: &[u8],
+    file: &[u8],
+) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"shard-target-verification-v1\0");
+    for bytes in [identity, proof, catalog, file] {
+        hash.update(&(bytes.len() as u64).to_be_bytes());
+        hash.update(bytes);
+    }
+    *hash.finalize().as_bytes()
+}
 
 const fn target_identity_key() -> &'static str {
     "control:shard-target/v1/identity"
@@ -318,8 +312,14 @@ impl SplitEngineAdapter for ScopedShardEngine {
                     return Err(EngineError::Conflict);
                 }
                 target.activate_origin_epoch(epoch)?;
-                if let Some(placement) = self.engine.usage_placement(&self.scope).map_err(|_| EngineError::StorageFailure)? {
-                    target.configure_usage_placement(placement).map_err(|_| EngineError::StorageFailure)?;
+                if let Some(placement) = self
+                    .engine
+                    .usage_placement(&self.scope)
+                    .map_err(|_| EngineError::StorageFailure)?
+                {
+                    target
+                        .configure_usage_placement(placement)
+                        .map_err(|_| EngineError::StorageFailure)?;
                 }
                 self.copy_schema_metadata(&target, &target_scope, *context)?;
                 Self::persist_target_identity(&target, &target_scope, *context, &identity)
@@ -336,6 +336,15 @@ impl SplitEngineAdapter for ScopedShardEngine {
         if self.recover_split_route(context).map_err(|_| EngineError::StorageFailure)?.is_some() {
             return Err(EngineError::Conflict);
         }
+        let mut cache =
+            self.engine.shard_participants.lock().map_err(|_| EngineError::StorageFailure)?;
+        if cache
+            .get(&context.target_shard())
+            .is_some_and(|target| std::sync::Arc::strong_count(target) != 1)
+        {
+            return Err(EngineError::Conflict);
+        }
+        cache.remove(&context.target_shard());
         let path = self.target_path(context);
         if path.exists() {
             std::fs::remove_dir_all(path).map_err(|_| EngineError::StorageFailure)?;
@@ -873,6 +882,54 @@ fn bytes(value: Option<DocumentValue>) -> Result<Option<Vec<u8>>, RouteCatalogEr
 }
 
 impl Engine {
+    /// Captures a bounded local MVCC cut while excluding source/target publication.
+    /// The caller owns the validated participant list and retains the returned
+    /// snapshots after this short exclusive admission barrier is released.
+    pub(crate) fn routed_read_snapshots(
+        &self,
+        tenant: &crate::types::TenantId,
+        expected_generation: Option<u64>,
+        participants: &[std::sync::Arc<Engine>],
+    ) -> Result<Vec<crate::types::ReadSnapshot>, EngineError> {
+        if participants.is_empty() || participants.len() > MAX_ROUTES {
+            return Err(EngineError::InvalidDocument);
+        }
+        let _cut = self.origin_commit_barrier.write().map_err(|_| EngineError::StorageFailure)?;
+        let scope = self.scope_for(tenant);
+        if self.load_shard_router(&scope)?.as_ref().map(|(_, generation)| *generation)
+            != expected_generation
+        {
+            return Err(EngineError::Conflict);
+        }
+        let state = self.lifecycle_state(&scope).map_err(|_| EngineError::StorageFailure)?;
+        if state.paused || state.access_revoked() {
+            return Err(EngineError::Conflict);
+        }
+        let mut identities = std::collections::BTreeSet::new();
+        participants
+            .iter()
+            .map(|participant| {
+                if !identities.insert(participant.identity()) {
+                    return Err(EngineError::Conflict);
+                }
+                if !std::ptr::eq(participant.as_ref(), self) {
+                    let authority = participant
+                        .shard_authority
+                        .lock()
+                        .map_err(|_| EngineError::StorageFailure)?;
+                    if !authority
+                        .as_ref()
+                        .and_then(std::sync::Weak::upgrade)
+                        .is_some_and(|source| std::ptr::eq(source.as_ref(), self))
+                    {
+                        return Err(EngineError::Conflict);
+                    }
+                }
+                participant.read_snapshot(&participant.scope_for(tenant))
+            })
+            .collect()
+    }
+
     /// Opens an existing split participant beneath this database's durable
     /// root. Member admission uses this only after the route catalog names
     /// the shard; callers cannot supply an arbitrary path.
@@ -880,16 +937,37 @@ impl Engine {
         self: &std::sync::Arc<Self>,
         shard_id: u64,
     ) -> Result<Option<std::sync::Arc<Engine>>, EngineOpenError> {
+        self.open_shard_participant_mode(shard_id, false)
+    }
+
+    fn open_shard_participant_mode(
+        self: &std::sync::Arc<Self>,
+        shard_id: u64,
+        create: bool,
+    ) -> Result<Option<std::sync::Arc<Engine>>, EngineOpenError> {
         let path = self.location.join("shards").join(format!("{shard_id:016x}.sqlite3"));
-        if !crate::storage::existing_database_location(&path, self.storage_keys.is_some()) {
+        let exists = crate::storage::existing_database_location(&path, self.storage_keys.is_some());
+        if !create && !exists {
             return Ok(None);
         }
-        let mut cache = self.shard_participants.lock().map_err(|_| EngineOpenError::StorageUnavailable)?;
-        if let Some(target) = cache.get(&shard_id) { return Ok(Some(target.clone())); }
-        if cache.len() >= MAX_ROUTES { return Err(EngineOpenError::StorageUnavailable); }
-        let mut config = super::EngineConfig::existing_durable(path)
-            .map_err(|_| EngineOpenError::InvalidConfig)?
-            .with_owner(self.database_owner().clone());
+        let mut cache =
+            self.shard_participants.lock().map_err(|_| EngineOpenError::StorageUnavailable)?;
+        if let Some(target) = cache.get(&shard_id) {
+            if !exists {
+                return Err(EngineOpenError::StorageUnavailable);
+            }
+            return Ok(Some(target.clone()));
+        }
+        if cache.len() >= MAX_ROUTES {
+            return Err(EngineOpenError::StorageUnavailable);
+        }
+        let mut config = if create {
+            super::EngineConfig::durable(path)
+        } else {
+            super::EngineConfig::existing_durable(path)
+        }
+        .map_err(|_| EngineOpenError::InvalidConfig)?
+        .with_owner(self.database_owner().clone());
         if let Some(keys) = &self.storage_keys {
             config = config.with_storage_keys(std::sync::Arc::clone(keys));
         }
@@ -897,7 +975,8 @@ impl Engine {
             .map_err(|_| EngineOpenError::InvalidConfig)?;
         config = config.with_replication_origin(origin);
         let target = std::sync::Arc::new(Engine::open(config)?);
-        *target.shard_authority.lock().map_err(|_| EngineOpenError::StorageUnavailable)? = Some(std::sync::Arc::downgrade(self));
+        *target.shard_authority.lock().map_err(|_| EngineOpenError::StorageUnavailable)? =
+            Some(std::sync::Arc::downgrade(self));
         cache.insert(shard_id, target.clone());
         Ok(Some(target))
     }
@@ -907,34 +986,63 @@ impl Engine {
         &self,
         scope: &crate::types::TenantScope,
         database_incarnation: u128,
-        shard_id: u64,
+        expected_route: &ShardRoute,
+        source_generation: u64,
     ) -> Result<bool, EngineError> {
         let snapshot = self.read_snapshot(scope)?;
-        let identity = self
-            .lock_storage()?
-            .port
-            .private_metadata_at(scope.tenant(), &target_identity_key(), snapshot.sequence())
-            .map_err(|()| EngineError::StorageFailure)?;
-        let Some(DocumentValue::String(identity)) = identity else {
-            return Ok(false);
+        let storage = self.lock_storage()?;
+        let mut read = |name: &str| -> Result<Vec<u8>, EngineError> {
+            let value = storage
+                .port
+                .private_metadata_at(scope.tenant(), name, snapshot.sequence())
+                .map_err(|()| EngineError::StorageFailure)?;
+            bytes(value).map_err(|_| EngineError::Conflict)?.ok_or(EngineError::Conflict)
         };
-        let identity = hex::decode(identity).map_err(|_| EngineError::Conflict)?;
-        if identity.len() < 55 || &identity[..7] != b"TSPLIT1" {
+        let identity = read(target_identity_key())?;
+        let proof = read(TARGET_VERIFICATION_KEY)?;
+        let binding = read(TARGET_VERIFICATION_BINDING_KEY)?;
+        let catalog_bytes = read(&key(database_incarnation))?;
+        let file_bytes = read(&file_shard_key(database_incarnation))?;
+        if identity.len() < 79 || &identity[..7] != b"TSPLIT1" || proof.len() != 56 {
             return Ok(false);
         }
+        let split_id =
+            u128::from_be_bytes(identity[7..23].try_into().map_err(|_| EngineError::Conflict)?);
         let incarnation =
             u128::from_be_bytes(identity[23..39].try_into().map_err(|_| EngineError::Conflict)?);
+        let source =
+            u64::from_be_bytes(identity[39..47].try_into().map_err(|_| EngineError::Conflict)?);
         let target =
             u64::from_be_bytes(identity[47..55].try_into().map_err(|_| EngineError::Conflict)?);
-        if incarnation != database_incarnation || target != shard_id {
-            return Ok(false);
-        }
-        let verified = self
-            .lock_storage()?
-            .port
-            .private_metadata_at(scope.tenant(), &TARGET_VERIFICATION_KEY, snapshot.sequence())
-            .map_err(|()| EngineError::StorageFailure)?;
-        Ok(matches!(verified, Some(DocumentValue::String(_))))
+        let epoch =
+            u64::from_be_bytes(identity[55..63].try_into().map_err(|_| EngineError::Conflict)?);
+        let mut reader = Reader { bytes: &identity, at: 71 };
+        let lower = reader.bound().map_err(|_| EngineError::Conflict)?;
+        let upper = reader.bound().map_err(|_| EngineError::Conflict)?;
+        let catalog = decode_catalog(&catalog_bytes).map_err(|_| EngineError::Conflict)?;
+        let file = decode_file_identity(&file_bytes)?;
+        let boundary =
+            u64::from_be_bytes(proof[8..16].try_into().map_err(|_| EngineError::Conflict)?);
+        Ok(split_id != 0
+            && epoch != 0
+            && source != 0
+            && source != target
+            && incarnation == database_incarnation
+            && target == expected_route.shard_id()
+            && reader.at == identity.len()
+            && upper.is_some()
+            && lower.as_deref() == expected_route.lower()
+            && upper.as_deref() == expected_route.upper()
+            && catalog.generation > 0
+            && catalog.generation <= source_generation
+            && catalog.table.routes() == std::slice::from_ref(expected_route)
+            && file.database_incarnation == incarnation
+            && file.shard_id == target
+            && file.region == self.database_owner().region()
+            && file.origin_lane_incarnation == split_id
+            && boundary <= snapshot.sequence().get()
+            && binding.as_slice()
+                == target_verification_binding(&identity, &proof, &catalog_bytes, &file_bytes))
     }
 
     /// Installs the target's narrow route catalog before source cutover. The
@@ -971,6 +1079,24 @@ impl Engine {
                 .map_err(|_| EngineError::InvalidDocument)?;
         let mut tx = self.begin(scope, self.read_snapshot(scope)?, operation)?;
         tx.internal_maintenance = true;
+        let proof = bytes(tx.read_private_metadata(TARGET_VERIFICATION_KEY)?)
+            .map_err(|_| EngineError::Conflict)?
+            .ok_or(EngineError::Conflict)?;
+        let split_identity = bytes(tx.read_private_metadata(target_identity_key())?)
+            .map_err(|_| EngineError::Conflict)?
+            .ok_or(EngineError::Conflict)?;
+        if proof.len() != 56
+            || split_identity != ScopedShardEngine::target_identity(context, state)?
+        {
+            return Err(EngineError::Conflict);
+        }
+        let binding = target_verification_binding(
+            &split_identity,
+            &proof,
+            &replacement,
+            &encode_file_identity(identity),
+        );
+        tx.put_private_metadata(TARGET_VERIFICATION_BINDING_KEY, value(&binding))?;
         tx.put_private_metadata(&key(incarnation), value(&replacement))?;
         tx.put_private_metadata(
             &file_shard_key(incarnation),

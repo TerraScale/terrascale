@@ -1,7 +1,7 @@
 //! Durable regional allocation consumption.
 
 use crate::{storage::CommitIntent, types::TenantId, usage::VerifiedAllocation};
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 /// Consumes one regional allocation inside the caller's open commit
 /// transaction. The grant row is installed on first delivery; all immutable
@@ -9,6 +9,7 @@ use rusqlite::{Transaction, params};
 pub(super) fn consume(
     transaction: &Transaction<'_>,
     tenant: &TenantId,
+    operation: &str,
     allocation: &VerifiedAllocation,
     units: i64,
 ) -> Result<(), ()> {
@@ -16,6 +17,24 @@ pub(super) fn consume(
         return Err(());
     }
     let grant = allocation.grant();
+    let existing: Option<(String, Vec<u8>, i64)> = transaction
+        .query_row(
+            "SELECT pool_id,payload_digest,units FROM usage_budget_operations WHERE tenant=?1 AND operation=?2 AND database_id=?3",
+            params![tenant.as_str(), operation, grant.database_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|_| ())?;
+    if let Some((pool_id, digest, prior_units)) = existing {
+        return if pool_id == grant.pool_id
+            && digest == allocation.payload_digest().as_slice()
+            && prior_units == units
+        {
+            Ok(())
+        } else {
+            Err(())
+        };
+    }
     transaction.execute(
         "INSERT OR IGNORE INTO usage_budget_allocations
          (tenant,operation,database_id,branch_id,holder_id,cycle_id,policy_epoch,consent_epoch,writer_epoch,placement,payload_digest,units_total,units_remaining,expires_at)
@@ -48,6 +67,12 @@ pub(super) fn consume(
     if changed != 1 {
         return Err(());
     }
+    transaction
+        .execute(
+            "INSERT INTO usage_budget_operations(tenant,operation,database_id,pool_id,payload_digest,units) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![tenant.as_str(), operation, grant.database_id, grant.pool_id, allocation.payload_digest().as_slice(), units],
+        )
+        .map_err(|_| ())?;
     Ok(())
 }
 

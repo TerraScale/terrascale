@@ -571,7 +571,7 @@ fn staging_copy_preserves_version_and_rejects_changed_same_provenance() {
         super::shard_split::ScopedShardEngine::new(source.clone(), scope.clone()).unwrap();
     adapter.save(&split.durable_state()).unwrap();
     adapter.create_split_target(&context).unwrap();
-    let target = std::sync::Arc::new(adapter.open_existing_target(&context).unwrap());
+    let target = adapter.open_existing_target(&context).unwrap();
     let target_scope = target.scope_for(&tenant);
     let mut copier = super::shard_split::ScopedShardRangeTarget::open(target.clone(), &scope);
     let key = canonical_shard_key(&collection, &id);

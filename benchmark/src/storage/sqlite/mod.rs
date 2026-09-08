@@ -239,7 +239,9 @@ pub fn database_file(location: &Path) -> PathBuf {
 /// is the durable file. Engine::open_existing still validates its contents.
 pub(crate) fn existing_database_location(location: &Path, encrypted: bool) -> bool {
     let path = database_file(location);
-    if !location.is_dir() { return false; }
+    if !location.is_dir() {
+        return false;
+    }
     if encrypted {
         encrypted_file::companion(&path).is_file()
             && !path.metadata().is_ok_and(|metadata| metadata.len() > 0)
@@ -1199,6 +1201,11 @@ CREATE TABLE IF NOT EXISTS usage_budget_allocations (
     placement TEXT NOT NULL, payload_digest BLOB NOT NULL,
     units_total INTEGER NOT NULL, units_remaining INTEGER NOT NULL,
     expires_at TEXT NOT NULL,
+    PRIMARY KEY (tenant, operation)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS usage_budget_operations (
+    tenant TEXT NOT NULL, operation TEXT NOT NULL, database_id TEXT NOT NULL,
+    pool_id TEXT NOT NULL, payload_digest BLOB NOT NULL, units INTEGER NOT NULL,
     PRIMARY KEY (tenant, operation)
 ) WITHOUT ROWID;
 
@@ -2871,8 +2878,29 @@ fn stage_intent(
                 .map_err(|_| ())?;
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
         };
-        let units = allocation.local_units();
-        if budget::consume(transaction, &intent.tenant, allocation, units).is_err() {
+        let regions = i128::try_from(allocation.grant().regions.len()).map_err(|_| ())?;
+        let aggregate_units = admission.integer_units();
+        let Some(units) = aggregate_units
+            .checked_div(regions)
+            .and_then(|value| i64::try_from(value).ok())
+            .filter(|value| *value > 0 && aggregate_units % regions == 0)
+        else {
+            transaction
+                .execute_batch(
+                    "ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission",
+                )
+                .map_err(|_| ())?;
+            return Ok(CommitResult::Rejected(CommitRejection::Validation));
+        };
+        if budget::consume(
+            transaction,
+            &intent.tenant,
+            intent.operation.as_str(),
+            allocation,
+            units,
+        )
+        .is_err()
+        {
             transaction
                 .execute_batch(
                     "ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission",
@@ -2953,9 +2981,8 @@ fn stage_intent(
                     sequence - 1,
                 )?
                 .map_or(1, |prior| prior.saturating_add(1));
-                let version = if intent.shard_copy {
-                    document.metadata().version()
-                } else { version };
+                let version =
+                    if intent.shard_copy { document.metadata().version() } else { version };
                 let mut published = document.clone();
                 published.set_version(version);
                 let body = encode_document_body(&published);

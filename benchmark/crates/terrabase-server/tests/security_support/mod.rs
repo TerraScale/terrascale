@@ -49,6 +49,7 @@ impl Fixture {
             native_restore_target: None,
             admitted_databases: None,
             replication_progress: None,
+            standalone_durability: false,
             development: Arc::default(),
             provisioning: None,
             region: RegionCode::GRU,
@@ -73,6 +74,7 @@ impl Fixture {
             ),
             webhook_keys: None,
             exports: None,
+            imports: None,
             capability_keys: Arc::new(
                 CapabilityKeyRing::new(b"e17-capability-current", Some(b"e17-capability-previous"))
                     .expect("capability keys"),

@@ -13,6 +13,10 @@ impl Engine {
         &self,
         placement: UsagePlacement,
     ) -> Result<(), UsageCommandError> {
+        let _authority = self
+            .origin_commit_barrier
+            .write()
+            .map_err(|_| UsageCommandError::StorageUnavailable)?;
         self.validate_tenant(placement.scope.tenant_id())
             .map_err(|_| UsageCommandError::ScopeMismatch)?;
         if self.owner_scope_enforced

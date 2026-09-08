@@ -36,6 +36,7 @@ mod result;
 mod spec;
 mod sql_execute;
 mod statistics;
+pub(crate) mod routed;
 
 pub mod bulk;
 mod family_sources;

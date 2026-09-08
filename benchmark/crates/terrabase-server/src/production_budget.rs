@@ -98,11 +98,10 @@ impl ProductionBudgetRuntime {
     ) -> Result<(), String> {
         let allocation = self
             .journal
-            .resolve_allocation(operation_id, database_id)?
+            .resolve_current_pool(database_id)?
             .ok_or("write allocation unavailable")?;
         if allocation.grant().database_id != database_id
             || allocation.grant().organization_id != tenant_id
-            || allocation.grant().refill_operation_id != operation_id
             || units == 0
             || units
                 > u64::try_from(allocation.local_units()).map_err(|_| "allocation units invalid")?
@@ -111,8 +110,12 @@ impl ProductionBudgetRuntime {
         }
         let request_id = UsageFactId::try_new(operation_id)
             .map_err(|_| "write operation identity is invalid")?;
-        let accepted_at =
-            self.journal.operation_admitted_at(&allocation, project_id, unix_millis())?;
+        let accepted_at = self.journal.operation_admitted_at(
+            &allocation,
+            project_id,
+            operation_id,
+            unix_millis(),
+        )?;
         let selected_regions = allocation.grant().regions.len();
         let aggregate_units = units
             .checked_mul(u64::try_from(selected_regions).map_err(|_| "allocation regions invalid")?)

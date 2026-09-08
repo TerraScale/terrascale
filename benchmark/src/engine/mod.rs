@@ -68,6 +68,8 @@ mod cross_file_tests;
 mod patch_tests;
 #[cfg(test)]
 mod shard_split_tests;
+#[cfg(test)]
+mod shard_serving_correction_tests;
 
 #[cfg(test)]
 mod tests;
@@ -2028,12 +2030,17 @@ impl Engine {
         }
         let origin_epoch =
             self.lock_storage()?.port.origin_epoch().map_err(|()| EngineError::StorageFailure)?.0;
-        let source_authority = self.shard_authority.lock().map_err(|_| EngineError::StorageFailure)?
-            .as_ref().map(|source| {
+        let source_authority = self
+            .shard_authority
+            .lock()
+            .map_err(|_| EngineError::StorageFailure)?
+            .as_ref()
+            .map(|source| {
                 let source = source.upgrade().ok_or(EngineError::StorageFailure)?;
                 let epoch = source.origin_epoch()?.0;
                 Ok::<_, EngineError>((source, epoch))
-            }).transpose()?;
+            })
+            .transpose()?;
         let reserved = self
             .in_flight
             .lock()
@@ -5228,34 +5235,58 @@ impl Transaction<'_> {
         }
         let started = Instant::now();
         let metrics = Arc::clone(&self.engine.metrics);
+        // Keep source authority locked through target publication and sync.
+        // Pause/revocation/fencing take its exclusive barrier and therefore
+        // cannot race an already staged target commit past their boundary.
+        let replicated = self.replication_publication.is_some()
+            || self.writes.iter().any(|write| {
+                matches!(
+                    write,
+                    storage::StagedWrite::ReplicatedPut { .. }
+                        | storage::StagedWrite::ReplicatedDelete { .. }
+                )
+            });
+        let source_authority = self.source_authority.clone();
+        let needs_gate = !self.internal_maintenance || !self.writes.is_empty() || replicated;
+        let _source_barrier = match source_authority.as_ref().filter(|_| needs_gate) {
+            Some((source, epoch)) => {
+                let Ok(guard) = source.origin_commit_barrier.read() else {
+                    return CommitOutcome::Rejected(CommitError::StorageFailure);
+                };
+                let source_scope = source.scope_for(self.scope.tenant());
+                let active = source
+                    .lifecycle_state(&source_scope)
+                    .is_ok_and(|state| !state.paused && !state.access_revoked());
+                let placement_matches = match (
+                    source.usage_placement(&source_scope),
+                    engine.usage_placement(&self.scope),
+                ) {
+                    (Ok(source), Ok(target)) => source == target,
+                    _ => false,
+                };
+                if (!replicated
+                    && (!active
+                        || source.origin_epoch() != Ok((*epoch, false))
+                        || !placement_matches))
+                    || source.validate_storage_authorization().is_err()
+                {
+                    return CommitOutcome::Rejected(CommitError::Conflict);
+                }
+                Some(guard)
+            }
+            None => None,
+        };
+        let _barrier = if needs_gate {
+            match engine.origin_commit_barrier.read() {
+                Ok(guard) => Some(guard),
+                Err(_) => return CommitOutcome::Rejected(CommitError::StorageFailure),
+            }
+        } else {
+            None
+        };
         let outcome = if self.internal_maintenance {
             self.commit_unobserved(durability)
         } else {
-            // Keep source authority locked through target publication and sync.
-            // Pause/revocation/fencing take its exclusive barrier and therefore
-            // cannot race an already staged target commit past their boundary.
-            let source_authority = self.source_authority.clone();
-            let _source_barrier = match source_authority.as_ref() {
-                Some((source, epoch)) => {
-                    let Ok(guard) = source.origin_commit_barrier.read() else {
-                        return CommitOutcome::Rejected(CommitError::StorageFailure);
-                    };
-                    let source_scope = source.scope_for(self.scope.tenant());
-                    let active = source.lifecycle_state(&source_scope)
-                        .is_ok_and(|state| !state.paused && !state.access_revoked());
-                    if !active || source.origin_epoch() != Ok((*epoch, false))
-                        || source.usage_placement(&source_scope).ok().flatten()
-                            != engine.usage_placement(&self.scope).ok().flatten()
-                        || source.validate_storage_authorization().is_err() {
-                        return CommitOutcome::Rejected(CommitError::Conflict);
-                    }
-                    Some(guard)
-                }
-                None => None,
-            };
-            let Ok(_barrier) = engine.origin_commit_barrier.read() else {
-                return CommitOutcome::Rejected(CommitError::StorageFailure);
-            };
             if let Some(token) = self.shard_admission.as_ref() {
                 if engine.validate_shard_admission(&self.scope, token, &self.writes).is_err() {
                     return CommitOutcome::Rejected(CommitError::Conflict);

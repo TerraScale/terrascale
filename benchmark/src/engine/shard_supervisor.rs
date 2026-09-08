@@ -76,12 +76,10 @@ where
         let context = split.context().ok_or(SplitSupervisorError::MissingRoute)?;
         let mut runtime = SplitRuntime::new(adapter, orchestrator, router);
         runtime.admit(split).map_err(SplitSupervisorError::Runtime)?;
-        let target = Arc::new(
-            ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
-                .map_err(|_| SplitSupervisorError::MissingRoute)?
-                .open_existing_target(&context)
-                .map_err(SplitSupervisorError::TargetOpen)?,
-        );
+        let target = ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
+            .map_err(|_| SplitSupervisorError::MissingRoute)?
+            .open_existing_target(&context)
+            .map_err(SplitSupervisorError::TargetOpen)?;
         let source = ScopedShardRangeSource::new(Arc::clone(&engine), &scope)
             .map_err(|_| SplitSupervisorError::MissingRoute)?;
         let state = runtime.split().expect("admitted split").durable_state();
@@ -115,12 +113,10 @@ where
         }
         let split = runtime.split().expect("resumed split");
         let context = split.context().ok_or(SplitSupervisorError::MissingRoute)?;
-        let target = Arc::new(
-            ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
-                .map_err(|_| SplitSupervisorError::MissingRoute)?
-                .open_existing_target(&context)
-                .map_err(SplitSupervisorError::TargetOpen)?,
-        );
+        let target = ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
+            .map_err(|_| SplitSupervisorError::MissingRoute)?
+            .open_existing_target(&context)
+            .map_err(SplitSupervisorError::TargetOpen)?;
         let source = ScopedShardRangeSource::new(Arc::clone(&engine), &scope)
             .map_err(|_| SplitSupervisorError::MissingRoute)?;
         let (copier, catchup) = match split.phase() {

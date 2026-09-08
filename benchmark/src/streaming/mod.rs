@@ -51,6 +51,7 @@ pub use crate::storage::{JournalKind, JournalProvenance};
 pub use backbone::{
     ChangeCheckpoint, ChangeNotification, ChangeNotificationTap, ChangeReplayBatch,
     ChangeReplayRequest, MAX_CHANGE_NOTIFICATION_CAPACITY, SyncJournalBatch, SyncJournalMutation,
+    SyncJournalBinding, SyncJournalCursor, SyncJournalLaneBatch, SyncJournalLaneRecord,
     SyncJournalRecord,
 };
 pub use conflict::{ConflictOutcome, ConflictRecord};

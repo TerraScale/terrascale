@@ -33,36 +33,42 @@ by `execute_sql` after plan compilation. The seam must:
 1. Revalidate the registry generation before opening reads. A changed route
    returns a conflict/retry result; it never silently serves the old source
    file.
-2. Capture one bounded read snapshot per admitted participant. The snapshot
-   is a per-lane `(route generation, shard id, storage sequence)` cut, bound to
-   the authenticated tenant/database scope. It is a causal consistent cut;
-   SQL does not advertise or imply linearizability.
+2. Capture one shared serving admission cut before releasing the route/read
+   barrier. The cut coordinates all route participants at a closed local
+   frontier and carries a per-lane `(route generation, shard id, storage
+   sequence)` view bound to the authenticated tenant/database scope. Separate
+   `read_snapshot` calls are not by themselves a causal cut; SQL does not
+   advertise or imply linearizability.
 3. Require each participant to cover the caller's session lane frontier before
    reading. A missing or lagging lane returns the existing session coverage
    refusal, with the safe Region/frontier remedy. An absent session uses the
    current local cuts and does not manufacture a global session token.
-4. Execute the same compiled SQL against bounded participant views and merge
-   rows centrally using canonical shard keys. The result ordering, projection,
-   parameters, output-row/byte limits, deadline, cancellation, and SQLite VM
-   progress limits remain the existing `QueryStore::execute` invariants.
-5. Exclude source rows whose canonical key belongs to a target route. The
-   source participant may be read for its own route intervals only; it is not
-   queried as a catch-all. A target participant is likewise restricted to its
-   assigned intervals. This prevents stale moved copies from entering the
-   merged result.
+4. Materialize the authoritative raw relations from all route participants
+   into one bounded SQLite evaluator connection, then run the original
+   compiled SQL once. Never execute the full SQL independently per participant
+   and merge result rows: that breaks joins, GROUP BY, DISTINCT, LIMIT, and
+   global ordering. The result ordering, projection, parameters, output-row/
+   byte limits, deadline, cancellation, and SQLite VM progress limits remain
+   the existing `QueryStore::execute` invariants.
+5. Exclude source rows whose canonical key belongs to a target route while
+   materializing each raw relation. The source participant may be read for its
+   own route intervals only; it is not queried as a catch-all. A target
+   participant is likewise restricted to its assigned intervals. This prevents
+   stale moved copies from entering the one evaluator's bounded union.
 6. Refuse a route gap, missing participant, generation mismatch, or incomplete
    lane frontier. Do not convert any of these into an empty result or a
    source-only query. The caller maps the bounded refusal to the existing
    retry/conflict or session-coverage response.
 
 The coordinator should use existing collection snapshot interfaces where
-possible (`snapshot_documents_in_collection` and its filtered variants), with
-the SQL executor remaining the final evaluator. If the current SQL runtime
-cannot accept multiple bounded source views, introduce one private
-`QueryStore` execution seam that takes the route-participant snapshots; do not
-reparse SQL or create a second parameter/coercion policy. The route registry
-owns participant selection and range filtering; the query layer owns SQL
-semantics and result limits.
+possible (`snapshot_documents_in_collection` and its filtered variants), then
+feed one bounded set of authoritative raw relations to the existing SQLite
+evaluator. If the current SQL runtime cannot accept a bounded source adapter,
+introduce one private `QueryStore` seam that takes the route-participant raw
+relations and shared admission cut; do not reparse SQL or create a second
+parameter/coercion policy. The route registry owns participant selection and
+range filtering; the query layer owns one-pass SQL semantics and result
+limits. The source adapter is not a second SQL evaluator.
 
 ## State and invariants
 

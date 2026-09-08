@@ -41,6 +41,23 @@ merged with this final cohort.
 | `e13-local-20260908T0212Z` | Complete (5 samples) | Failed at op 5,631 | Failed at op 11,306 | Not started | `f1aa1737…` |
 | Earlier attempts | Failed before samples | Failed before samples | Failed before samples | Failed before samples | prior/diagnostic artifacts |
 
+## Optimized cohort in progress
+
+The `e13-local-20260908T0231Z` cohort uses candidate digest
+`a32fa8e6fc38608c08f99a5e050ad35da71aaa50e8d94369a10dc65815050309`, the
+reviewed optimized server artifact, CPUs 2–3, and the 2 OCPU / 12 GiB member
+envelope. Only read has completed so far:
+
+| Lane | Status | Mean ops/s | Mean p50 (µs) | Mean p95 (µs) | Mean p99 (µs) | Receipt |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| Read | Complete, 5 samples | 1,707.545 | 9,035.737 | 14,645.299 | 20,709.746 | [receipt](results/run-20260907-independent-1714381/origin-max-final/terrabase-read-1788834692187373966-2067605-0.json) |
+| Write | Running | — | — | — | — | [output](results/run-20260907-independent-1714381/origin-max-final/) |
+| Query | Pending | — | — | — | — | [output](results/run-20260907-independent-1714381/origin-max-final/) |
+| Mixed | Pending | — | — | — | — | [output](results/run-20260907-independent-1714381/origin-max-final/) |
+
+This cohort remains diagnostic until all applicable TerraBase lanes and family
+runs finish and the receipts are reviewed together.
+
 ### Additional families
 
 | Family | Topology/lane | Status | Required comparison facts |

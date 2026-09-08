@@ -467,6 +467,32 @@ mod tests {
     }
 
     #[test]
+    fn signed_schema2_allocation_rejects_tampered_payload() {
+        let (wire, public, key_id) = signed("holder-1");
+        let mut signed: SignedAllocation = serde_json::from_slice(&wire).unwrap();
+        signed.payload[0] ^= 1;
+        let tampered = serde_json::to_vec(&signed).unwrap();
+        assert_eq!(
+            VerifiedAllocation::verify(
+                &tampered,
+                &key_id,
+                &public,
+                "gru",
+                "placement-1",
+                "org-1",
+                "db-1",
+                "holder-1",
+                4,
+                7,
+                9,
+                1_800_000_000_000,
+            )
+            .unwrap_err(),
+            AllocationError::Signature
+        );
+    }
+
+    #[test]
     fn go_signed_allocation_vector_verifies() {
         let vector: serde_json::Value = serde_json::from_slice(include_bytes!(
             "../../testdata/allocation-canonical-vectors.json"

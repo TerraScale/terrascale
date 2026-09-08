@@ -267,7 +267,11 @@ impl UsageAdmissionJournal {
             .map_err(|_| "usage admission transaction unavailable")?;
         tx.execute(
             "INSERT OR IGNORE INTO allocations(operation,database_id,payload) VALUES(?1,?2,?3)",
-            params![verified.grant().refill_operation_id, verified.grant().database_id, signed_bytes],
+            params![
+                verified.grant().refill_operation_id,
+                verified.grant().database_id,
+                signed_bytes
+            ],
         )
         .map_err(|_| "allocation persistence failed")?;
         let stored: Vec<u8> = tx
@@ -296,11 +300,12 @@ impl UsageAdmissionJournal {
         &self,
         allocation: &terrabase::usage::VerifiedAllocation,
         project: &str,
+        operation: &str,
         now_millis: u64,
     ) -> Result<u64, String> {
         let grant = allocation.grant();
         let now = i64::try_from(now_millis).map_err(|_| "admission time invalid")?;
-        if now <= 0 || project.is_empty() {
+        if now <= 0 || project.is_empty() || operation.is_empty() {
             return Err("admission identity invalid".into());
         }
         let mut connection = self.connection.lock().map_err(|_| "admission storage unavailable")?;
@@ -309,12 +314,12 @@ impl UsageAdmissionJournal {
             .map_err(|_| "admission transaction unavailable")?;
         tx.execute(
             "INSERT OR IGNORE INTO operation_admissions(tenant,project,database_id,operation,payload_digest,accepted_at_millis) VALUES(?1,?2,?3,?4,?5,?6)",
-            params![grant.organization_id, project, grant.database_id, grant.refill_operation_id,
+            params![grant.organization_id, project, grant.database_id, operation,
                 allocation.payload_digest().as_slice(), now],
         ).map_err(|_| "admission persistence failed")?;
         let (digest, accepted): (Vec<u8>, i64) = tx.query_row(
             "SELECT payload_digest,accepted_at_millis FROM operation_admissions WHERE tenant=?1 AND project=?2 AND database_id=?3 AND operation=?4",
-            params![grant.organization_id, project, grant.database_id, grant.refill_operation_id],
+            params![grant.organization_id, project, grant.database_id, operation],
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(|_| "admission persistence failed")?;
         if digest != allocation.payload_digest().as_slice() {
@@ -359,7 +364,8 @@ impl UsageAdmissionJournal {
                 .payload,
         )
         .map_err(|_| "allocation payload invalid")?;
-        if envelope.grant.refill_operation_id != operation_id || envelope.grant.database_id != database_id
+        if envelope.grant.refill_operation_id != operation_id
+            || envelope.grant.database_id != database_id
         {
             return Err("allocation identity conflict".into());
         }
@@ -384,6 +390,69 @@ impl UsageAdmissionJournal {
             return Err("allocation Region selection mismatch".into());
         }
         Ok(Some(verified))
+    }
+
+    /// Resolves the currently accepted pool for a database. Pool refill
+    /// identity is deliberately separate from the customer operation; the
+    /// caller binds the selected pool to that operation in the commit ledger.
+    pub fn resolve_current_pool(
+        &self,
+        database_id: &str,
+    ) -> Result<Option<terrabase::usage::VerifiedAllocation>, String> {
+        if database_id.is_empty() {
+            return Err("allocation database identity is invalid".into());
+        }
+        let config = self
+            .allocation_verifier
+            .lock()
+            .map_err(|_| "budget verifier lock unavailable")?
+            .clone()
+            .ok_or("budget verifier unavailable")?;
+        let connection = self.connection.lock().map_err(|_| "usage admission lock unavailable")?;
+        let mut query = connection
+            .prepare("SELECT operation,payload FROM allocations WHERE database_id=?1")
+            .map_err(|_| "allocation persistence failed")?;
+        let rows = query
+            .query_map([database_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(|_| "allocation persistence failed")?;
+        let mut candidates = Vec::new();
+        for row in rows {
+            let (operation, signed) = row.map_err(|_| "allocation persistence failed")?;
+            let envelope: terrabase::usage::AllocationEnvelope = serde_json::from_slice(
+                &serde_json::from_slice::<terrabase::usage::SignedAllocation>(&signed)
+                    .map_err(|_| "allocation encoding invalid")?
+                    .payload,
+            )
+            .map_err(|_| "allocation payload invalid")?;
+            candidates.push((envelope.grant.expires_at.clone(), operation, signed));
+        }
+        candidates.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        for (_, _, signed) in candidates {
+            let (organization, holder, placement, writer_epoch, selected_regions) =
+                config.resolver.binding(database_id)?;
+            let verified = terrabase::usage::VerifiedAllocation::verify(
+                &signed,
+                &config.key_id,
+                &config.public_key_spki,
+                &self.region,
+                &placement,
+                &organization,
+                database_id,
+                &holder,
+                config.policy_epoch,
+                config.consent_epoch,
+                writer_epoch,
+                unix_millis(),
+            );
+            let Ok(verified) = verified else { continue };
+            if !same_regions(&verified.grant().regions, &selected_regions) {
+                continue;
+            }
+            return Ok(Some(verified));
+        }
+        Ok(None)
     }
 
     fn validate(&self, r: &UsageRegistration) -> Result<(), String> {

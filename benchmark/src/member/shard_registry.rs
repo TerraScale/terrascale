@@ -56,7 +56,7 @@ impl RouteParticipantRegistry {
                 .ok_or(RegistryError::TargetUnavailable)?;
             let target_scope = target.scope_for(scope.tenant());
             if !target
-                .validate_shard_target(&target_scope, incarnation, route.shard_id())
+                .validate_shard_target(&target_scope, incarnation, route, generation)
                 .map_err(|_| RegistryError::TargetUnavailable)?
             {
                 return Err(RegistryError::TargetUnavailable);
@@ -116,7 +116,8 @@ impl RouteParticipantRegistry {
         let shard = router.route(key).ok_or(crate::engine::EngineError::Conflict)?;
         let engine = self.participants.get(&shard).ok_or(crate::engine::EngineError::Conflict)?;
         let scope = engine.scope_for(scope.tenant());
-        let (participant_router, _) = engine.load_shard_router(&scope)?.ok_or(crate::EngineError::Conflict)?;
+        let (participant_router, _) =
+            engine.load_shard_router(&scope)?.ok_or(crate::EngineError::Conflict)?;
         let token = engine.shard_admission_for_key(&scope, &participant_router, key)?;
         let mut transaction = engine.begin(&scope, engine.read_snapshot(&scope)?, operation)?;
         transaction.bind_shard_admission(token)?;
@@ -140,7 +141,8 @@ impl RouteParticipantRegistry {
         };
         let engine = self.participants.get(&shard).ok_or(crate::engine::EngineError::Conflict)?;
         let scope = engine.scope_for(scope.tenant());
-        let (participant_router, _) = engine.load_shard_router(&scope)?.ok_or(crate::EngineError::Conflict)?;
+        let (participant_router, _) =
+            engine.load_shard_router(&scope)?.ok_or(crate::EngineError::Conflict)?;
         let token = engine.shard_admission_for_keys(&scope, &participant_router, keys)?;
         let mut transaction = engine.begin(&scope, engine.read_snapshot(&scope)?, operation)?;
         transaction.bind_shard_admission(token)?;
