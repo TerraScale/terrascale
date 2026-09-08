@@ -226,7 +226,9 @@ fn signed_for_regions(
             branch_id: "main".into(),
             holder_id: "holder".into(),
             region: "gru".into(),
-            regions: regions.into_iter().map(str::to_owned).collect(),
+            // The production refill wire contract uses lowercase DNS-style
+            // region tokens; the resolver binding above remains canonical.
+            regions: regions.into_iter().map(|region| region.to_ascii_lowercase()).collect(),
             placement: "db-placement".into(),
             local_units: 1,
             aggregate_units: region_count,

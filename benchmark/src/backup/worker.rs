@@ -217,6 +217,49 @@ impl NativeBackupFleet {
         Err(FleetError::Configuration)
     }
 
+    /// Resolves a retained point from the first provider whose remote
+    /// inventory and encrypted manifests authenticate successfully. A local
+    /// inventory entry is only a discovery hint; provider bytes are checked
+    /// before the provider is returned so a corrupt first copy cannot fence
+    /// off a healthy fallback copy.
+    pub async fn resolve_recovery_point(
+        &self,
+        database: &str,
+        selection_kind: &str,
+        point_id: &str,
+    ) -> Result<(super::BackupManifest, Provider), FleetError> {
+        let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| FleetError::Capture)?
+            .as_millis() as u64;
+        let mut saw_provider_failure = false;
+        for (provider, destination) in &stream.config.destinations {
+            let points = match remote::remote_points(database, stream, destination).await {
+                Ok(points) => points,
+                Err(FleetError::Capture | FleetError::Upload) => {
+                    saw_provider_failure = true;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let selected = match selection_kind {
+                "latest" if point_id.is_empty() => points
+                    .into_iter()
+                    .filter(|point| point.retain_until_unix_millis() > now)
+                    .max_by_key(|point| (point.captured_unix_millis(), point.boundary_sequence())),
+                "point_id" => points.into_iter().find(|point| {
+                    point.identity() == point_id && point.retain_until_unix_millis() > now
+                }),
+                _ => None,
+            };
+            if let Some(point) = selected {
+                return Ok((point, *provider));
+            }
+        }
+        if saw_provider_failure { Err(FleetError::Upload) } else { Err(FleetError::Capture) }
+    }
+
     /// Captures one self-contained snapshot for every physical participant at
     /// the caller's already admitted read cuts.  Each tuple is a physical
     /// stream identity and its pinned boundary; no stream chooses a fresh
@@ -1838,6 +1881,7 @@ mod tests {
         DatabaseKey, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
     };
     use crate::types::LocalDurability;
+    use object_store::ObjectStore;
 
     struct Keys(Arc<DatabaseKeyLease>);
     impl BackupReader for Keys {
@@ -2921,6 +2965,69 @@ mod tests {
             verify_fleet_policy_and_purge(&mut fleet, &engine, &first, &second).await;
             assert!(!staging.exists());
         });
+    }
+
+    #[tokio::test]
+    async fn remote_point_resolution_falls_back_after_corrupt_provider_manifest() {
+        let (_, engine) = open_engine("fleet-provider-fallback");
+        let engine = Arc::new(engine);
+        let database = engine.database_id().to_string();
+        let staging = location("fleet-provider-fallback-staging");
+        let first_store = Arc::new(object_store::memory::InMemory::new());
+        let second_store = Arc::new(object_store::memory::InMemory::new());
+        let first = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            first_store.clone(),
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let second = Arc::new(ObjectDestination::for_test(
+            Provider::Tigris,
+            second_store,
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let mut fleet = NativeBackupFleet::new(FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
+            inventory_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 4,
+        })
+        .unwrap();
+        fleet
+            .attach(StreamConfig {
+                engine: engine.clone(),
+                keys: keys(&engine),
+                destinations: vec![(Provider::Oci, first), (Provider::Tigris, second)],
+                historical_destinations: Vec::new(),
+                policy_revision: "provider-fallback".into(),
+                retention_days: 1,
+                staging,
+                placement: PlacementLock::br_only(),
+            })
+            .unwrap();
+        committed(put(
+            &engine,
+            engine.database_owner().tenant().to_text().as_str(),
+            "provider-fallback-op",
+            "provider-fallback-doc",
+            "users",
+            text("provider-fallback"),
+            LocalDurability::Synced,
+        ));
+        assert!(fleet.sync_once().await.is_empty());
+        let point = fleet.retained_points(&database).unwrap().pop().unwrap();
+        let key = format!(
+            "{database}/rp-{}/{}",
+            point.identity(),
+            crate::backup::manifest::ENCRYPTED_MANIFEST_FILE
+        );
+        first_store.put(&key.into(), b"corrupt provider manifest".to_vec().into()).await.unwrap();
+
+        let (resolved, provider) =
+            fleet.resolve_recovery_point(&database, "latest", "").await.unwrap();
+        assert_eq!(provider, Provider::Tigris);
+        assert_eq!(resolved.identity(), point.identity());
     }
     #[tokio::test]
     async fn retained_remote_history_restores_selected_chain_and_migrates_after_restart() {

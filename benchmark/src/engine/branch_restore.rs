@@ -6,7 +6,9 @@ use crate::{
     types::{OperationId, StorageSequence, TenantId},
     usage::UsagePlacement,
 };
-use std::{fs, path::Path};
+use std::{fs, path::Path, sync::{LazyLock, Mutex}};
+
+static BRANCH_RESTORE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 impl Engine {
     /// Installs an immutable encrypted snapshot as a fresh branch database.
@@ -22,6 +24,9 @@ impl Engine {
         config: &EngineConfig,
         operation: &OperationId,
     ) -> Result<StorageSequence, EngineOpenError> {
+        let _restore_guard = BRANCH_RESTORE_LOCK
+            .lock()
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         config.validate_storage_keys()?;
         let source_owner = source.database_owner();
         let child = config.owner.as_ref().ok_or(EngineOpenError::InvalidConfig)?;

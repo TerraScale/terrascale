@@ -599,7 +599,12 @@ fn same_allocation_identity(
 fn same_regions(grant: &[String], accepted: &[String]) -> bool {
     let grant = grant
         .iter()
-        .map(|region| region.parse::<RegionCode>().map(|code| code.as_str().to_owned()))
+        .map(|region| {
+            region
+                .to_ascii_uppercase()
+                .parse::<RegionCode>()
+                .map(|code| code.as_str().to_owned())
+        })
         .collect::<Result<BTreeSet<_>, _>>();
     let accepted = accepted
         .iter()
