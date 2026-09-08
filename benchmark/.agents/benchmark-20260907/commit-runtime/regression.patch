@@ -1,7 +1,7 @@
 diff --git a/crates/terrabase-server/src/api.rs b/crates/terrabase-server/src/api.rs
 --- a/crates/terrabase-server/src/api.rs
 +++ b/crates/terrabase-server/src/api.rs
-@@ -5220,6 +5220,12 @@ mod tests {
+@@ -5220,4 +5220,11 @@ mod tests {
      use terrabase::SessionEpoch;
      use terrabase::SessionToken;
 +    use terrabase::types::CollectionName;
@@ -13,7 +13,7 @@ diff --git a/crates/terrabase-server/src/api.rs b/crates/terrabase-server/src/ap
 +    use terrabase::types::OperationId;
      use terrabase::observability::MetricsRegistry;
      use terrabase::regions::RegionCode;
-@@ -5229,6 +5235,48 @@ mod tests {
+@@ -5229,1 +5235,53 @@ mod tests {
      use tower::util::ServiceExt;
 +
 +    fn staged_runtime_transaction() -> terrabase::Transaction<'static> {

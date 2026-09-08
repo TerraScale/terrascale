@@ -1,7 +1,7 @@
 diff --git a/crates/terrabase-server/src/api_schema.rs b/crates/terrabase-server/src/api_schema.rs
 --- a/crates/terrabase-server/src/api_schema.rs
 +++ b/crates/terrabase-server/src/api_schema.rs
-@@ -1,5 +1,5 @@
+@@ -1,4 +1,4 @@
  use super::{
      ApiError, ApiState, Arc, CollectionName, CommitOutcome, IntoResponse, LocalDurability,
 -    OperationId, Path, Response, State, database_record, document_host, document_scope,
