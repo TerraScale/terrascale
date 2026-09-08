@@ -117,8 +117,16 @@ async fn close(
     headers: HeaderMap,
     body: Result<Json<Request>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    let supplied =
-        headers.get("x-terrascale-billing-key").map_or(&[][..], |value| value.as_bytes());
+    let mut supplied_headers = headers.get_all("x-terrascale-billing-key").iter();
+    let Some(supplied_header) = supplied_headers.next() else {
+        return response(StatusCode::UNAUTHORIZED, serde_json::json!({"code":"unauthorized"}));
+    };
+    // A duplicated credential is ambiguous at the HTTP boundary. Do not let
+    // HeaderMap's first-value behavior turn it into an authentication bypass.
+    if supplied_headers.next().is_some() {
+        return response(StatusCode::UNAUTHORIZED, serde_json::json!({"code":"unauthorized"}));
+    }
+    let supplied = supplied_header.as_bytes();
     if aws_lc_rs::constant_time::verify_slices_are_equal(
         blake3::hash(supplied).as_bytes(),
         blake3::hash(&service.key).as_bytes(),
@@ -143,6 +151,12 @@ async fn close(
         || request.end_millis > MAX_WIRE_MILLIS
     {
         return response(StatusCode::BAD_REQUEST, serde_json::json!({"code":"invalid_request"}));
+    }
+    // A receipt is a regional attestation. The admitted record alone is not
+    // sufficient: a stale or misbound registry must never let one member
+    // attest another region's usage.
+    if service.api.region.as_str() != request.region {
+        return response(StatusCode::NOT_FOUND, serde_json::json!({"code":"not_found"}));
     }
     let Some(registry) = &service.api.admitted_databases else {
         return unavailable();
@@ -291,6 +305,53 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(response.headers()[axum::http::header::CACHE_CONTROL], "private, no-store");
         assert!(router(state(), vec![b'x'; 32]).is_err());
+    }
+
+    #[tokio::test]
+    async fn duplicate_billing_keys_and_foreign_regions_are_rejected() {
+        let mut api = state();
+        Arc::get_mut(&mut api).unwrap().region = terrabase::regions::RegionCode::SFO;
+        let app = Router::new()
+            .route("/api/internal/databases/{name}/usage/close", post(close))
+            .with_state(Arc::new(Service {
+                api,
+                key: vec![b'x'; 32],
+                inflight: tokio::sync::Semaphore::new(8),
+            }));
+        let payload = serde_json::json!({
+            "organization_id":"tenant",
+            "cycle_id":"a".repeat(64),
+            "cycle_checksum":"b".repeat(64),
+            "inventory_checksum":"c".repeat(64),
+            "region":"SFO",
+            "partition_id":"partition",
+            "start_millis":1,
+            "end_millis":2
+        });
+        let mut duplicate = HttpRequest::builder()
+            .method("POST")
+            .uri("/api/internal/databases/secret/usage/close")
+            .header("content-type", "application/json")
+            .header("x-terrascale-billing-key", "x".repeat(32))
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+        duplicate.headers_mut().append(
+            "x-terrascale-billing-key",
+            axum::http::HeaderValue::from_static("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"),
+        );
+        assert_eq!(
+            app.clone().oneshot(duplicate).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+
+        let foreign = HttpRequest::builder()
+            .method("POST")
+            .uri("/api/internal/databases/secret/usage/close")
+            .header("content-type", "application/json")
+            .header("x-terrascale-billing-key", "x".repeat(32))
+            .body(Body::from(payload.to_string()))
+            .unwrap();
+        assert_eq!(app.oneshot(foreign).await.unwrap().status(), StatusCode::NOT_FOUND);
     }
 
     #[cfg(target_os = "linux")]

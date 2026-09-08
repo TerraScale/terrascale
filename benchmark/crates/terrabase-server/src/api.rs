@@ -1928,7 +1928,12 @@ async fn regions(State(state): State<Arc<ApiState>>) -> Response {
     let local_serving = state.metrics.snapshot().service_state() == ServiceState::Serving;
     let replication_serving =
         state.replication_progress.as_ref().is_none_or(|progress| !progress.is_fenced());
-    let healthy = local_serving && replication_serving;
+    // This is the same live admission authority used by publication.  Keep
+    // it separate from degraded serving: retained databases may continue
+    // serving reads while new database admission is refused.
+    let admission_ready =
+        state.admitted_databases.as_ref().is_none_or(|registry| registry.admission_ready());
+    let healthy = local_serving && replication_serving && admission_ready;
     let body = format!("{{\"region\":\"{}\",\"healthy\":{healthy}}}", state.region);
     let mut response = body.into_response();
     response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -5332,9 +5337,11 @@ mod tests {
     use axum::response::IntoResponse;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use std::sync::Arc;
+    use terrabase::OriginLaneId;
     use terrabase::SessionEpoch;
     use terrabase::SessionToken;
     use terrabase::observability::MetricsRegistry;
+    use terrabase::observability::ServiceState;
     use terrabase::regions::RegionCode;
     use terrabase::types::CollectionName;
     use terrabase::types::Document;
@@ -5355,12 +5362,9 @@ mod tests {
         .expect("engine");
         let engine: &'static terrabase::Engine = Box::leak(Box::new(engine));
         let owner = engine.database_owner();
-        let scope = terrabase::types::TenantScope::new(
-            owner.tenant().to_text(),
-            owner.project().to_text(),
-            owner.database().to_text(),
-        )
-        .expect("scope");
+        let tenant =
+            terrabase::types::TenantId::try_new(&owner.tenant().to_text()).expect("tenant");
+        let scope = engine.scope_for(&tenant);
         let snapshot = engine.read_snapshot(&scope).expect("snapshot");
         let mut transaction = engine
             .begin(&scope, snapshot, OperationId::try_new("runtime-commit").expect("operation"))
@@ -5607,8 +5611,20 @@ mod tests {
     #[test]
     fn session_header_is_opaque_canonical_and_multi_origin() {
         let mut token = SessionToken::for_epoch(7).expect("epoch");
-        token.advance(RegionId::try_new("GRU").expect("origin"), 11).expect("frontier");
-        token.advance(RegionId::try_new("FRA").expect("origin"), 19).expect("frontier");
+        token
+            .advance(
+                OriginLaneId::try_new(RegionId::try_new("GRU").expect("origin"), 1)
+                    .expect("origin lane"),
+                11,
+            )
+            .expect("frontier");
+        token
+            .advance(
+                OriginLaneId::try_new(RegionId::try_new("FRA").expect("origin"), 1)
+                    .expect("origin lane"),
+                19,
+            )
+            .expect("frontier");
         let encoded = URL_SAFE_NO_PAD.encode(token.encode());
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(SESSION_HEADER.clone(), HeaderValue::from_str(&encoded).expect("header"));
@@ -5685,6 +5701,31 @@ mod tests {
         let response = super::regions(axum::extract::State(state)).await;
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":false}"#);
+    }
+
+    #[tokio::test]
+    async fn regions_reports_live_admission_degradation_without_requiring_reads_to_stop() {
+        let ready = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let gate = Arc::clone(&ready);
+        let registry = Arc::new(crate::admitted_databases::AdmittedDatabaseRegistry::new(
+            Arc::new(move || gate.load(std::sync::atomic::Ordering::Acquire)),
+        ));
+        let mut state = state();
+        state.metrics.transition_service(ServiceState::Serving).expect("serving");
+        Arc::get_mut(&mut state).expect("state is uniquely owned").admitted_databases =
+            Some(registry.clone());
+
+        let response = super::regions(axum::extract::State(Arc::clone(&state))).await;
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":true}"#);
+
+        // The same gate that rejects new publication may degrade discovery;
+        // degraded serving remains available through resolve_degraded_serving.
+        ready.store(false, std::sync::atomic::Ordering::Release);
+        let response = super::regions(axum::extract::State(state)).await;
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":false}"#);
+        assert!(!registry.admission_ready());
     }
 
     #[tokio::test]

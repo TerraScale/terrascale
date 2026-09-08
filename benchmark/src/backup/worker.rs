@@ -608,6 +608,46 @@ impl NativeBackupFleet {
         Ok(points)
     }
 
+    /// Lists locally published multi-participant recovery envelopes for an
+    /// admitted stream. Envelope publication is independent from ordinary
+    /// point discovery; a corrupt published envelope fails closed rather than
+    /// allowing a participant manifest to be mistaken for a logical point.
+    pub fn retained_envelopes(&self, database: &str) -> Result<Vec<BackupEnvelope>, FleetError> {
+        let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        let catalog = stream.config.staging.join("envelopes");
+        let entries = match std::fs::read_dir(&catalog) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(_) => return Err(FleetError::Capture),
+        };
+        let mut envelopes = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|_| FleetError::Capture)?;
+            let file_type = entry.file_type().map_err(|_| FleetError::Capture)?;
+            if !file_type.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(digest) = name.to_str().and_then(|name| name.strip_prefix("env-")) else {
+                continue;
+            };
+            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                continue;
+            }
+            let marker = entry.path().join("envelope.tbv1");
+            let bytes = std::fs::read(marker).map_err(|_| FleetError::Capture)?;
+            let envelope = BackupEnvelope::decode(&bytes).map_err(|_| FleetError::Capture)?;
+            if envelope.digest() != digest {
+                return Err(FleetError::Capture);
+            }
+            envelopes.push(envelope);
+        }
+        envelopes.sort_by_key(|envelope| {
+            (envelope.captured_unix_millis(), envelope.digest().to_owned())
+        });
+        Ok(envelopes)
+    }
+
     /// Returns the latest artifact-bound physical retention deadline. An empty
     /// inventory has no retained horizon; an unavailable inventory is an error.
     /// Historical destination inventories remain the lifecycle catalog's input.
@@ -1835,6 +1875,8 @@ mod tests {
         fleet.streams.get_mut(&database).unwrap().config.destinations = vec![(Provider::Oci, good)];
         assert_eq!(fleet.publish_envelope(&envelope).await.unwrap(), published);
         assert!(published.join("envelope.tbv1").exists());
+        let retained = fleet.retained_envelopes(&database).unwrap();
+        assert_eq!(retained, vec![envelope]);
 
         std::fs::remove_dir_all(staging).unwrap();
         std::fs::remove_file(broken_path).unwrap();

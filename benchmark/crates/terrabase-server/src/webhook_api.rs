@@ -2794,6 +2794,8 @@ mod tests {
             revision: 7,
             write_index: 1,
             event_id: "event-7".into(),
+            origin_region: String::new(),
+            origin_lane: String::new(),
             body: b"body".to_vec(),
         };
         let delivery =
@@ -2870,6 +2872,8 @@ fn create_boundary_records(
                 revision: value,
                 write_index: 1,
                 event_id: format!("event-{value}"),
+                origin_region: String::new(),
+                origin_lane: String::new(),
                 body: b"body".to_vec(),
             };
             let delivery = storage

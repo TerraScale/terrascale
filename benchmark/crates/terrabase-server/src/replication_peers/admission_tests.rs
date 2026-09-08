@@ -62,6 +62,7 @@ fn synthetic() -> Synthetic {
     let join = tokio::spawn(async { Ok(()) });
     Synthetic {
         peers: ReplicationPeers {
+            retention: Arc::new(ReplicationRetentionFrontier::default()),
             cuts: Arc::new(ReplicationCuts::default()),
             progress: progress.clone(),
             admissions,

@@ -325,6 +325,18 @@ impl AdmittedDatabaseRegistry {
         }
     }
 
+    /// Returns the live Member admission predicate used by publication and
+    /// readiness-gated serving lookups.
+    ///
+    /// Degraded serving intentionally does not call this method: retained
+    /// admitted databases may continue serving reads while new database
+    /// publication is fenced.  The public regional health surface uses this
+    /// predicate so discovery and admission report the same authority.
+    #[must_use]
+    pub fn admission_ready(&self) -> bool {
+        !(self.draining.load(Ordering::Acquire)) && (self.ready)()
+    }
+
     /// Fences publication, activation, and serving lookups while retaining
     /// admitted hosts for shutdown observations.
     ///
@@ -373,7 +385,7 @@ impl AdmittedDatabaseRegistry {
         // Keep the owner independent of the lease before moving the lease
         // into the registry entry.
         let scope = lease.database_owner().clone();
-        if !(self.ready)() {
+        if !self.admission_ready() {
             return Err("Member is not ready to admit databases".into());
         }
         self.publish_inner(record, lease, location, instance, scope)
@@ -1091,6 +1103,7 @@ pub(crate) mod tests {
         registry.ready = Arc::new(move || gate.load(std::sync::atomic::Ordering::Acquire));
         assert!(registry.resolve(&records[0].database_id).unwrap().is_some());
         ready.store(false, std::sync::atomic::Ordering::Release);
+        assert!(!registry.admission_ready());
         assert!(registry.resolve(&records[0].database_id).is_err());
         let id = terrabase::member::DatabaseId::try_new(&records[0].database_id).unwrap();
         let lease = member.acquire(&id).unwrap();

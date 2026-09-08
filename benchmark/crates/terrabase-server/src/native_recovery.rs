@@ -305,6 +305,57 @@ pub struct NativeRecoveryRuntime {
 }
 
 impl NativeRecoveryRuntime {
+    /// Resolves a published multi-participant envelope without projecting it
+    /// through one participant manifest. `None` means this database has only
+    /// ordinary single-participant points.
+    pub async fn resolve_recovery_envelope(
+        &self,
+        source: &str,
+        selection_kind: &str,
+        point_id: &str,
+        placement: &[String],
+    ) -> Result<
+        Option<(terrabase::backup::BackupEnvelope, terrabase::backup::object_store::Provider)>,
+        NativeRecoveryError,
+    > {
+        let database = self
+            .registry
+            .resolve(source)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::VerificationFailed)?;
+        if database.record.regions != placement || database.record.database_id != source {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
+        let (envelopes, providers) = {
+            let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            let envelopes = fleet.retained_envelopes(source).map_err(map_fleet_error)?;
+            let providers = fleet.configured_providers(source).map_err(map_fleet_error)?;
+            (envelopes, providers)
+        };
+        if envelopes.is_empty() {
+            return Ok(None);
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .as_millis() as u64;
+        let envelope = match selection_kind {
+            "latest" if point_id.is_empty() => envelopes
+                .into_iter()
+                .filter(|envelope| envelope.retain_until_unix_millis() > now)
+                .max_by_key(|envelope| {
+                    (envelope.captured_unix_millis(), envelope.digest().to_owned())
+                }),
+            "point_id" => envelopes.into_iter().find(|envelope| {
+                envelope.digest() == point_id && envelope.retain_until_unix_millis() > now
+            }),
+            _ => None,
+        }
+        .ok_or(NativeRecoveryError::VerificationFailed)?;
+        let provider = providers.into_iter().next().ok_or(NativeRecoveryError::Unavailable)?;
+        Ok(Some((envelope, provider)))
+    }
+
     /// Resolves an authenticated retained manifest without creating recovery state.
     pub async fn resolve_recovery_point(
         &self,

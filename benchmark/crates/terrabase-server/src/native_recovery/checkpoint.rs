@@ -17,6 +17,52 @@ pub(super) struct Checkpoint {
 }
 
 impl Checkpoint {
+    /// Builds a checkpoint for a logical multi-participant envelope. The
+    /// envelope digest is the recovery identity; no participant is promoted
+    /// to represent the logical point.
+    pub(super) fn from_envelope(
+        envelope: &terrabase::backup::BackupEnvelope,
+        source: &str,
+        placement: &[String],
+    ) -> Self {
+        Self {
+            recovery_point_id: envelope.digest().to_owned(),
+            source_database_id: source.to_owned(),
+            journal_cut: envelope
+                .participants()
+                .iter()
+                .map(|participant| participant.boundary)
+                .max()
+                .unwrap_or_default(),
+            captured_at_millis: envelope.captured_unix_millis(),
+            retained_until_millis: envelope.retain_until_unix_millis(),
+            placement: placement.to_vec(),
+        }
+    }
+
+    /// Verifies that this checkpoint still refers to the same complete
+    /// logical envelope. The scalar journal cut is only a compatibility
+    /// summary; the envelope digest authenticates every participant boundary.
+    pub(super) fn matches_envelope(
+        &self,
+        envelope: &terrabase::backup::BackupEnvelope,
+        source: &str,
+        placement: &[String],
+    ) -> bool {
+        self.recovery_point_id == envelope.digest()
+            && self.source_database_id == source
+            && self.journal_cut
+                == envelope
+                    .participants()
+                    .iter()
+                    .map(|participant| participant.boundary)
+                    .max()
+                    .unwrap_or_default()
+            && self.captured_at_millis == envelope.captured_unix_millis()
+            && self.retained_until_millis == envelope.retain_until_unix_millis()
+            && self.placement == placement
+    }
+
     pub(super) fn from_manifest(
         manifest: &terrabase::backup::BackupManifest,
         source: &str,

@@ -136,6 +136,56 @@ impl BackupEnvelope {
         &self.digest
     }
 
+    /// Returns the latest captured clock across all physical participants.
+    /// An envelope is the logical recovery point, so callers must not derive
+    /// this fact from whichever participant happens to sort first.
+    #[must_use]
+    pub fn captured_unix_millis(&self) -> u64 {
+        self.participants
+            .iter()
+            .map(|participant| participant.manifest.captured_unix_millis())
+            .max()
+            .unwrap_or_default()
+    }
+
+    /// Returns the earliest retention deadline shared by the participants.
+    #[must_use]
+    pub fn retain_until_unix_millis(&self) -> u64 {
+        self.participants
+            .iter()
+            .map(|participant| participant.manifest.retain_until_unix_millis())
+            .min()
+            .unwrap_or_default()
+    }
+
+    /// Returns a deterministic logical checksum for the complete envelope.
+    /// Participant checksums are length framed and canonicalized by the
+    /// envelope's participant order before hashing.
+    #[must_use]
+    pub fn logical_checksum(&self) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"terrabase-backup-envelope-logical-v1\0");
+        for participant in &self.participants {
+            hasher.update(&(participant.participant_id.len() as u64).to_be_bytes());
+            hasher.update(participant.participant_id.as_bytes());
+            let checksum = participant.manifest.logical_checksum();
+            hasher.update(&(checksum.len() as u64).to_be_bytes());
+            hasher.update(checksum.as_bytes());
+        }
+        hasher.finalize().to_hex().to_string()
+    }
+
+    /// Returns the sum of the logical records represented by all participants.
+    #[must_use]
+    pub fn logical_documents(&self) -> u64 {
+        self.participants
+            .iter()
+            .try_fold(0_u64, |total, participant| {
+                total.checked_add(participant.manifest.logical_documents())
+            })
+            .unwrap_or(u64::MAX)
+    }
+
     /// Encodes the envelope with its digest and strict framing.
     pub fn encode(&self) -> Result<Vec<u8>, BackupError> {
         let wire = self.wire()?;
