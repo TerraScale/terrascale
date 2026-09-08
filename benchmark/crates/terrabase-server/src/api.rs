@@ -1543,14 +1543,19 @@ async fn authenticate(
         |(database, _)| format!("/api/v1/databases/{database}/sql"),
     );
     let request_headers = request.headers().clone();
-    let (principal, verified_project) =
-        match admit_bearer(
-            &state, &request_method, &request_path, &request_headers, token,
-            attach_scope.as_ref().map(|(_, collection)| collection.as_str()),
-        ).await {
-            Ok(value) => value,
-            Err(error) => return error.into_response(),
-        };
+    let (principal, verified_project) = match admit_bearer(
+        &state,
+        &request_method,
+        &request_path,
+        &request_headers,
+        token,
+        attach_scope.as_ref().map(|(_, collection)| collection.as_str()),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
+    };
     if let Some(scope) = verified_project {
         request.extensions_mut().insert(scope);
     }
@@ -2118,9 +2123,10 @@ async fn create_database(
                     .filter(|value| *value > 0)
             {
                 let limits = crate::guards::Plan::Free.limits();
-                state
-                    .guards
-                    .set_limits_override(name, crate::guards::AbuseLimits { read_query_rps: rps, ..limits });
+                state.guards.set_limits_override(
+                    name,
+                    crate::guards::AbuseLimits { read_query_rps: rps, ..limits },
+                );
             }
             // The backup stream attaches at creation (S-06): open the
             // engine location so the database file exists, then start one
@@ -2962,10 +2968,8 @@ fn batch_write_response(
     count: usize,
 ) -> Result<Response, ApiError> {
     session.read_snapshot().map_err(session_error)?;
-    let mut response = json_response(
-        StatusCode::OK,
-        format!("{{\"committed\":{sequence},\"count\":{count}}}"),
-    );
+    let mut response =
+        json_response(StatusCode::OK, format!("{{\"committed\":{sequence},\"count\":{count}}}"));
     with_session(&mut response, session.session_token());
     Ok(response)
 }
@@ -3426,14 +3430,18 @@ fn document_request_error(error: terrabase::EngineError) -> ApiError {
             status: StatusCode::CONFLICT,
             code: "commit_rejected",
             message: "the idempotency key already names a different request".into(),
-            fix: "retry the original method, path, body, and preconditions, or use a new key".into(),
+            fix: "retry the original method, path, body, and preconditions, or use a new key"
+                .into(),
             placement: None,
         },
         _ => ApiError::storage_failure(),
     }
 }
 
-#[allow(clippy::too_many_arguments, reason = "replay needs the authorized write request and original identity")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "replay needs the authorized write request and original identity"
+)]
 async fn replay_document_request(
     state: &ApiState,
     engine: &terrabase::Engine,
@@ -3468,7 +3476,8 @@ fn document_write_response(
     let token = refresh_session(session, collection, id)?;
     let mut response = match revision {
         Some(revision) => {
-            let mut response = json_response(StatusCode::OK, format!("{{\"revision\":\"{revision}\"}}"));
+            let mut response =
+                json_response(StatusCode::OK, format!("{{\"revision\":\"{revision}\"}}"));
             if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
                 response.headers_mut().insert(axum::http::header::ETAG, etag);
             }
@@ -3785,9 +3794,20 @@ async fn put_document(
     } else {
         [0; 32]
     };
-    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+    match replay_document_request(
+        &state,
+        engine,
+        &scope,
+        &headers,
+        &operation,
+        fingerprint,
+        &collection,
+        &id,
+    )
+    .await
+    {
         Ok(Some(response)) => return response,
-        Ok(None) => {},
+        Ok(None) => {}
         Err(error) => return error.into_response(),
     }
     let mut session = match open_session(engine, &scope, &headers) {
@@ -3816,9 +3836,20 @@ async fn put_document(
     };
     // The operation reservation now excludes a simultaneous publisher of
     // this identity. Recheck before any live-state precondition or merge.
-    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+    match replay_document_request(
+        &state,
+        engine,
+        &scope,
+        &headers,
+        &operation,
+        fingerprint,
+        &collection,
+        &id,
+    )
+    .await
+    {
         Ok(Some(response)) => return response,
-        Ok(None) => {},
+        Ok(None) => {}
         Err(error) => return error.into_response(),
     }
     let database_id = engine.database_owner().database().to_text();
@@ -3880,9 +3911,20 @@ async fn put_document(
     mark(trace, &mut t, "staging");
     let outcome = transaction.commit(LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
-        match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+        match replay_document_request(
+            &state,
+            engine,
+            &scope,
+            &headers,
+            &operation,
+            fingerprint,
+            &collection,
+            &id,
+        )
+        .await
+        {
             Ok(Some(response)) => return response,
-            Ok(None) => {},
+            Ok(None) => {}
             Err(error) => return error.into_response(),
         }
     }
@@ -3963,9 +4005,20 @@ async fn patch_document(
     } else {
         [0; 32]
     };
-    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+    match replay_document_request(
+        &state,
+        engine,
+        &scope,
+        &headers,
+        &operation,
+        fingerprint,
+        &collection,
+        &id,
+    )
+    .await
+    {
         Ok(Some(response)) => return response,
-        Ok(None) => {},
+        Ok(None) => {}
         Err(error) => return error.into_response(),
     }
     let mut session = match open_session(engine, &scope, &headers) {
@@ -3989,9 +4042,20 @@ async fn patch_document(
     };
     // The operation reservation now excludes a simultaneous publisher of
     // this identity. Recheck before any live-state precondition or merge.
-    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+    match replay_document_request(
+        &state,
+        engine,
+        &scope,
+        &headers,
+        &operation,
+        fingerprint,
+        &collection,
+        &id,
+    )
+    .await
+    {
         Ok(Some(response)) => return response,
-        Ok(None) => {},
+        Ok(None) => {}
         Err(error) => return error.into_response(),
     }
     let database_id = engine.database_owner().database().to_text();
@@ -4044,9 +4108,20 @@ async fn patch_document(
     }
     let outcome = transaction.commit(LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
-        match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+        match replay_document_request(
+            &state,
+            engine,
+            &scope,
+            &headers,
+            &operation,
+            fingerprint,
+            &collection,
+            &id,
+        )
+        .await
+        {
             Ok(Some(response)) => return response,
-            Ok(None) => {},
+            Ok(None) => {}
             Err(error) => return error.into_response(),
         }
     }
@@ -4199,9 +4274,20 @@ async fn delete_document(
     } else {
         [0; 32]
     };
-    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+    match replay_document_request(
+        &state,
+        engine,
+        &scope,
+        &headers,
+        &operation,
+        fingerprint,
+        &collection,
+        &id,
+    )
+    .await
+    {
         Ok(Some(response)) => return response,
-        Ok(None) => {},
+        Ok(None) => {}
         Err(error) => return error.into_response(),
     }
     let mut session = match open_session(engine, &scope, &headers) {
@@ -4228,9 +4314,20 @@ async fn delete_document(
     };
     // The operation reservation now excludes a simultaneous publisher of
     // this identity. Recheck before any live-state precondition or merge.
-    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+    match replay_document_request(
+        &state,
+        engine,
+        &scope,
+        &headers,
+        &operation,
+        fingerprint,
+        &collection,
+        &id,
+    )
+    .await
+    {
         Ok(Some(response)) => return response,
-        Ok(None) => {},
+        Ok(None) => {}
         Err(error) => return error.into_response(),
     }
     if let Err(error) = check_if_match(&headers, &transaction, &collection, &id) {
@@ -4277,9 +4374,20 @@ async fn delete_document(
     }
     let outcome = transaction.commit(LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
-        match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+        match replay_document_request(
+            &state,
+            engine,
+            &scope,
+            &headers,
+            &operation,
+            fingerprint,
+            &collection,
+            &id,
+        )
+        .await
+        {
             Ok(Some(response)) => return response,
-            Ok(None) => {},
+            Ok(None) => {}
             Err(error) => return error.into_response(),
         }
     }
@@ -5030,6 +5138,10 @@ pub(crate) fn json_response(status: StatusCode, body: String) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[path = "api_session_query_tests.rs"]
+    mod api_session_query_tests;
+    #[path = "batch_replay.rs"]
+    mod batch_replay;
     #[path = "../../budget_http_tests.rs"]
     mod budget_http_tests;
     #[path = "../../byo_router_tests.rs"]
@@ -5038,10 +5150,6 @@ mod tests {
     mod conditional_create;
     #[path = "conditional_replay.rs"]
     mod conditional_replay;
-    #[path = "batch_replay.rs"]
-    mod batch_replay;
-    #[path = "api_session_query_tests.rs"]
-    mod api_session_query_tests;
     mod cors;
     pub(super) mod rf2;
     mod shared_journal;

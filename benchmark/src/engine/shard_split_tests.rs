@@ -343,3 +343,130 @@ fn supervisor_finishes_without_chasing_its_own_checkpoint_publications() {
     drop(engine);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn supervisor_restart_after_snapshot_replays_original_history_from_zero() {
+    use super::shard_supervisor::{ShardSplitSupervisor, SplitStep};
+    use crate::{
+        engine::{CommitOutcome, Engine, EngineConfig},
+        shard_split::{ShardRouter, SplitOrchestratorAdapter},
+        types::{
+            CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
+        },
+    };
+    use std::sync::Arc;
+    struct Orchestrator;
+    impl SplitOrchestratorAdapter for Orchestrator {
+        type Error = ();
+        fn validate_split_placement(&mut self, _: u128, _: u64) -> Result<(), ()> {
+            Ok(())
+        }
+        fn publish_split_frontier(&mut self, _: &SplitContext, _: u64) -> Result<(), ()> {
+            Ok(())
+        }
+    }
+
+    let (dir, source, tenant) = super::tests::open_owned_engine("split-snapshot-cursor-restart");
+    let owner = source.database_owner().clone();
+    let keys = source.storage_keys.clone().unwrap();
+    let source = Arc::new(source);
+    let scope = source.scope_for(&tenant);
+    let collection = CollectionName::try_new("docs").unwrap();
+    let id = DocumentId::try_new("a").unwrap();
+    let mut tx = source
+        .begin(
+            &scope,
+            source.read_snapshot(&scope).unwrap(),
+            super::tests::operation("before-snapshot-put"),
+        )
+        .unwrap();
+    tx.put(
+        Document::new(id.clone(), collection.clone(), DocumentValue::Integer(1)),
+        ExpectedVersion::Any,
+    )
+    .unwrap();
+    assert!(matches!(tx.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    let mut tx = source
+        .begin(
+            &scope,
+            source.read_snapshot(&scope).unwrap(),
+            super::tests::operation("before-snapshot-delete"),
+        )
+        .unwrap();
+    tx.delete_in_collection(&collection, id, ExpectedVersion::Any);
+    assert!(matches!(tx.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    let originals = source.replication_publications(&scope, 0, 16).unwrap();
+    assert_eq!(originals.len(), 2);
+    assert!(originals[1].1.records[0].deleted);
+
+    let incarnation = u128::from_be_bytes(source.database_id().as_bytes().to_owned());
+    let context = SplitContext::new(84, incarnation, 1, 2, 1, 0);
+    let split = ShardSplit::plan_with_context(None, b"m".to_vec(), context).unwrap();
+    source
+        .install_shard_route_catalog(
+            &scope,
+            incarnation,
+            None,
+            &encode_catalog(&RouteCatalog { table: RouteTable::single(1), generation: 0 }).unwrap(),
+            &split.durable_state(),
+            super::tests::operation("snapshot-cursor-route"),
+        )
+        .unwrap();
+    let mut supervisor = ShardSplitSupervisor::start(
+        source.clone(),
+        scope.clone(),
+        split,
+        Orchestrator,
+        ShardRouter::single(1),
+    )
+    .unwrap();
+    // The final-state snapshot is empty, but the original put/delete causal
+    // history must still reach the target after this crash boundary.
+    assert_eq!(supervisor.step(256, 1), Ok(SplitStep::Progress));
+    let adapter = super::shard_split::ScopedShardEngine::new(source.clone(), scope).unwrap();
+    let state = adapter.load().unwrap().unwrap();
+    assert_eq!(state.phase(), SplitPhase::CatchingUp);
+    assert_eq!(state.target_applied_through(), 0);
+    drop(adapter);
+    drop(supervisor);
+    drop(source);
+
+    let source = Arc::new(
+        Engine::open(
+            EngineConfig::existing_durable(&dir).unwrap().with_owner(owner).with_storage_keys(keys),
+        )
+        .unwrap(),
+    );
+    let scope = source.scope_for(&tenant);
+    let mut supervisor = ShardSplitSupervisor::resume(
+        source.clone(),
+        scope.clone(),
+        Orchestrator,
+        ShardRouter::single(1),
+    )
+    .unwrap()
+    .unwrap();
+    let mut completed = false;
+    for _ in 0..16 {
+        if supervisor.step(256, 1).unwrap() == (SplitStep::Complete { generation: 1 }) {
+            completed = true;
+            break;
+        }
+    }
+    assert!(completed);
+    let adapter = super::shard_split::ScopedShardEngine::new(source.clone(), scope).unwrap();
+    let target = adapter.open_existing_target(&context).unwrap();
+    let target_scope = target.scope_for(&tenant);
+    let copied = target.replication_publications(&target_scope, 0, 16).unwrap();
+    for (_, original) in originals {
+        assert!(
+            copied.iter().any(|(_, publication)| publication == &original),
+            "the original operation identity and causal tombstone must survive restart"
+        );
+    }
+    drop(target);
+    drop(adapter);
+    drop(supervisor);
+    drop(source);
+    let _ = std::fs::remove_dir_all(dir);
+}

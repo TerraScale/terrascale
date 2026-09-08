@@ -192,7 +192,7 @@ pub(super) fn resolve_encrypted_points_chain(
 }
 
 /// Empty incrementals add no source state and are never needed as parents.
-/// Prefer a full root at a boundary, otherwise one nonempty incremental. This
+/// Prefer the newest captured root at a boundary, otherwise one nonempty incremental. This
 /// makes each parent step strictly decrease sequence, except a no-op head's
 /// first step, and avoids repeated directory scans and no-op cycles.
 fn index_chain_parents(points: &[BackupManifest]) -> BTreeMap<u64, &BackupManifest> {
@@ -202,10 +202,13 @@ fn index_chain_parents(points: &[BackupManifest]) -> BTreeMap<u64, &BackupManife
         if point.base_sequence().is_some_and(|base| base.get() == sequence) {
             continue;
         }
-        let rank = (point.base_sequence().is_some(), point.identity());
-        let replace = parents
-            .get(&sequence)
-            .is_none_or(|prior| rank < (prior.base_sequence().is_some(), prior.identity()));
+        let rank = |candidate: &BackupManifest| {
+            (candidate.base_sequence().is_none(), candidate.captured_unix_millis())
+        };
+        let replace = parents.get(&sequence).is_none_or(|prior| {
+            rank(point) > rank(prior)
+                || rank(point) == rank(prior) && point.identity() < prior.identity()
+        });
         if replace {
             parents.insert(sequence, point);
         }
@@ -365,10 +368,22 @@ fn latest_same_boundary_prefers_capture_clock_and_complete_coverage() {
         assert_eq!(chain.last().unwrap().identity(), noop.identity());
         assert_eq!(chain.last().unwrap().recoverable_through_unix_millis(), 20);
     }
-    let chain = resolve_encrypted_points_chain(
-        &[later_noop.clone(), root, snapshot, noop], &Selection::Latest,
-    ).unwrap();
-    assert_eq!(chain.last().unwrap().identity(), later_noop.identity());
+    for points in [
+        vec![later_noop.clone(), root.clone(), snapshot.clone(), noop.clone()],
+        vec![noop.clone(), snapshot.clone(), root.clone(), later_noop.clone()],
+    ] {
+        let chain = resolve_encrypted_points_chain(&points, &Selection::Latest).unwrap();
+        assert_eq!(chain.last().unwrap().identity(), later_noop.identity());
+        assert_eq!(chain.first().unwrap().identity(), snapshot.identity());
+        let historical = resolve_encrypted_points_chain(
+            &points, &Selection::Point { identity: noop.identity().into() },
+        ).unwrap();
+        assert_eq!(historical.first().unwrap().identity(), snapshot.identity());
+        assert_eq!(historical.last().unwrap().identity(), noop.identity());
+        let timestamp = resolve_timestamp_points_chain(&points, 15).unwrap();
+        assert_eq!(timestamp.first().unwrap().identity(), snapshot.identity());
+        assert_eq!(timestamp.last().unwrap().identity(), later_noop.identity());
+    }
 }
 
 pub(super) fn discover_encrypted_points(

@@ -27,6 +27,31 @@ use crate::types::{
 use super::SqliteStorage;
 
 #[test]
+fn sequence_watermarks_and_billing_fold_do_not_scan_retained_facts() {
+    let connection = Connection::open_in_memory().expect("database");
+    connection.execute_batch(super::SCHEMA).expect("schema");
+    connection.execute_batch(
+        "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<10000)
+         INSERT INTO operation_facts (tenant,client_request_ulid,digest,committed,sequence,writes,bytes)
+         SELECT 'tenant',printf('op-%d',i),0,1,i,1,256 FROM n;
+         INSERT INTO usage_facts
+         SELECT tenant,'project','database','partition','GRU',1,client_request_ulid,sequence,0,1,X'00'
+         FROM operation_facts;"
+    ).expect("retained history");
+    for (sql, expected) in [
+        ("SELECT MAX(sequence) FROM operation_facts", 10000_i64),
+        ("SELECT MAX(seq) FROM usage_facts", 10000),
+        ("SELECT SUM(writes) FROM operation_facts WHERE committed=1 AND sequence>9990", 10),
+    ] {
+        let mut statement = connection.prepare(sql).expect("prepare");
+        let value: i64 = statement.query_row([], |row| row.get(0)).expect("query");
+        assert_eq!(value, expected, "{sql}");
+        assert_eq!(statement.get_status(rusqlite::StatementStatus::FullscanStep), 0, "{sql}");
+        assert!(statement.get_status(rusqlite::StatementStatus::VmStep) < 200, "{sql}");
+    }
+}
+
+#[test]
 fn fts_key_migration_preserves_rows_and_transactional_deletes() {
     let mut connection = Connection::open_in_memory().expect("database");
     connection.execute_batch(super::SCHEMA).expect("legacy schema");

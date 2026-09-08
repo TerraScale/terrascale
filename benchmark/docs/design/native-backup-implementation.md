@@ -62,7 +62,9 @@ Persisted upload journals record transfer work, not current recoverability.
 New objects require readback; existing active-chain receipts are process-local
 and expire after sixty seconds. Restart and explicit capture force verification.
 A failed readback marks that provider unhealthy and schedules authenticated
-re-upload. Retention verifies its surviving root directly against each provider
+re-upload. Due idle ticks seal a no-op incremental after ten seconds so timestamp
+coverage advances without customer writes or new billable usage. Immediate
+repeat captures reuse existing coverage. Retention verifies its surviving root directly against each provider
 before deleting predecessors. Restore downloads only the selected authenticated
 chain, and policy migration stages one retained point at a time. These finite
 work and disk bounds still require workload and provider qualification.

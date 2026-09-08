@@ -7,6 +7,7 @@ use tokio_tungstenite::{
 };
 
 const KEY: &str = "Bearer tskey_test_abcdefghijklmnop";
+const ORIGIN_KEY: &[u8] = b"reactive-collection-proof-key-32-bytes";
 const SQL: &str = "SELECT total FROM orders LIMIT 10";
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -30,6 +31,8 @@ impl Server {
     ) -> Self {
         let mut state = state_with_keys_and_control();
         Arc::get_mut(&mut state).unwrap().delegated_identity = identity;
+        Arc::get_mut(&mut state).unwrap().origin_proof_keys =
+            Arc::new(crate::reactive_api::OriginProofKeyRing::new(ORIGIN_KEY, None).unwrap());
         let app = router(Arc::clone(&state));
         let response = app
             .clone()
@@ -422,8 +425,14 @@ async fn feature_revocation_closes_active_socket_without_delivery_authority_call
 
 async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
     let (identity, reply, authority_task) =
-        crate::delegated_identity::tests::authority_for_collection("terrabase-local", "local", "prod", "read", Some("orders"))
-            .await;
+        crate::delegated_identity::tests::authority_for_collection(
+            "terrabase-local",
+            "local",
+            "prod",
+            "read",
+            Some("orders"),
+        )
+        .await;
     let identity = Arc::new(identity);
     let snapshot = |entries: Vec<serde_json::Value>| {
         let now =
@@ -499,4 +508,104 @@ async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
         .await
         .unwrap();
     assert_eq!(direct.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn collection_bearer_attaches_only_its_parsed_query_and_delivers_immutable_results() {
+    let (identity, reply, authority_task) =
+        crate::delegated_identity::tests::authority_for_collection(
+            "terrabase-local",
+            "local",
+            "prod",
+            "read",
+            Some("orders"),
+        )
+        .await;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    reply.lock().unwrap()["membershipRevocations"] = serde_json::json!({
+        "revision": hex::encode(aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, b"").as_ref()),
+        "validUntil": now + 30, "entries": [],
+    });
+    identity.refresh_membership().await.unwrap();
+    let server = Server::with_identity(Some(Arc::new(identity))).await;
+    server.put("one", 1).await;
+    let attach = |statement: &str| {
+        Request::post("/api/v1/reactive/views")
+            .header("authorization", "Bearer delegated-token")
+            .header("x-terrascale-collection", "orders")
+            .body(Body::from(
+                serde_json::json!({
+                    "databaseId":"prod", "statement":statement, "collection":"orders",
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    };
+    for (statement, status) in [
+        ("SELECT total FROM secrets LIMIT 10", StatusCode::UNAUTHORIZED),
+        (
+            "SELECT orders.total FROM orders JOIN secrets ON orders.id = secrets.id",
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            "SELECT total FROM orders WHERE id IN (SELECT id FROM secrets)",
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ] {
+        let refused = server.app.clone().oneshot(attach(statement)).await.unwrap();
+        assert_eq!(refused.status(), status, "{statement}");
+    }
+    let response =
+        server.app.clone().oneshot(attach("SELECT total FROM \"orders\" LIMIT 10")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let attached: serde_json::Value =
+        serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 65_536).await.unwrap())
+            .unwrap();
+    let capability = attached["capability"].as_str().unwrap();
+    // Immutable delivery uses the authenticated edge proof and view capability,
+    // without consulting the identity authority on the delivery path.
+    authority_task.abort();
+    for (field, expected_delta) in [("snapshot_chunks", false), ("log", true)] {
+        if expected_delta {
+            server.put("two", 2).await;
+        }
+        let target = if expected_delta {
+            attached[field].as_str().unwrap()
+        } else {
+            attached[field][0].as_str().unwrap()
+        };
+        let proof = crate::reactive_api::origin_proof_for(
+            &axum::http::Method::GET,
+            target,
+            now / 600,
+            ORIGIN_KEY,
+            server.state.region,
+        );
+        let result = server
+            .app
+            .clone()
+            .oneshot(
+                Request::get(target)
+                    .header(crate::reactive_api::ORIGIN_PROOF_HEADER, proof)
+                    .header(crate::reactive_api::VIEW_CAPABILITY_HEADER, capability)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(result.into_body(), 8_388_608).await.unwrap();
+        let message = decode_envelope(&bytes).unwrap().message;
+        if expected_delta {
+            assert!(matches!(message, Message::Delta { .. }));
+        } else {
+            assert!(matches!(message, Message::Snapshot { .. }));
+        }
+    }
+    let refused = server.app.clone().oneshot(attach(SQL)).await.unwrap();
+    assert_eq!(
+        refused.status(),
+        StatusCode::UNAUTHORIZED,
+        "authority outage fails new admission closed"
+    );
 }

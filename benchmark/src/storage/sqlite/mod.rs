@@ -1058,6 +1058,10 @@ CREATE TABLE IF NOT EXISTS documents (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS documents_seq ON documents (commit_seq);
+-- Frontier reconstruction reads provenance only. Keep document bodies out of
+-- its tenant scan and cover the local-origin sequence allocation lookup.
+CREATE INDEX IF NOT EXISTS documents_origin_frontier
+    ON documents (tenant, origin, origin_seq, hlc);
 
 CREATE INDEX IF NOT EXISTS documents_collection_cursor
     ON documents (collection, tenant, id, commit_seq);

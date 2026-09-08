@@ -127,3 +127,43 @@ fn signed_inventory_must_match_the_exact_accepted_member_set() {
     }
     journal.accept("first", &acceptance(&valid, 1)).unwrap();
 }
+
+#[test]
+fn independent_go_signed_inventory_chain_verifies_with_only_bootstrap_pins() {
+    let vector: Value =
+        serde_json::from_slice(include_bytes!("../../testdata/placement-inventory-chain.json"))
+            .unwrap();
+    assert_eq!(vector["schema_version"], 1);
+    let keys = |name: &str| {
+        vector[name]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(identity, encoded)| {
+                (
+                    identity.clone(),
+                    base64::engine::general_purpose::STANDARD
+                        .decode(encoded.as_str().unwrap())
+                        .unwrap(),
+                )
+            })
+            .collect()
+    };
+    let pins = TransitionTrust::new(
+        keys("authority_keys"),
+        keys("genesis_keys"),
+        keys("static_member_keys"),
+    )
+    .unwrap();
+    let proofs = vector["proofs"].as_array().unwrap();
+    assert_eq!(proofs.len(), 3);
+    let mut chain = Vec::new();
+    for envelope in proofs {
+        let verified =
+            pins.decode_with_prior(&serde_json::to_vec(envelope).unwrap(), chain.last()).unwrap();
+        verified.follows(chain.last()).unwrap();
+        chain.push(verified);
+    }
+    assert_eq!(chain.last().unwrap().proof.request.generation, 3);
+    assert!(pins.decode_with_prior(&serde_json::to_vec(&proofs[2]).unwrap(), None).is_err());
+}

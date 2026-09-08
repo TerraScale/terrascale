@@ -279,15 +279,9 @@ pub fn run<B: Backend>(
             break;
         }
     }
-    let mut thread_samples = Vec::with_capacity(handles.len());
-    for handle in handles {
-        thread_samples.push(
-            handle
-                .join()
-                .map_err(|_| "a slot thread panicked".to_owned())?
-                .map_err(|error| error.to_owned())?,
-        );
-    }
+    // Join every worker before returning, then prefer the shared originating
+    // failure over a sibling's generic cancellation message.
+    let outcomes: Vec<_> = handles.into_iter().map(std::thread::JoinHandle::join).collect();
     if failed.load(std::sync::atomic::Ordering::Acquire) {
         let message = failure
             .lock()
@@ -296,6 +290,10 @@ pub fn run<B: Backend>(
             .unwrap_or_else(|| "a measured lane operation failed".to_owned());
         return Err(message.into());
     }
+    let thread_samples = outcomes
+        .into_iter()
+        .map(|outcome| outcome.map_err(|_| "a slot thread panicked".to_owned())?)
+        .collect::<Result<Vec<_>, String>>()?;
 
     let samples: Vec<Sample> = walls
         .into_iter()

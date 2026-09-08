@@ -1376,10 +1376,15 @@ fn immutable_response(frozen: &Frozen, etag: &str) -> Response {
 
 /// Derive identity admission from the same bounded SQL plan used to attach.
 /// Execute-only queries cannot use their first relation to widen collection scope.
-pub(crate) fn attach_collection(state: &ApiState, request: &AttachRequest) -> Result<String, ApiError> {
+pub(crate) fn attach_collection(
+    state: &ApiState,
+    request: &AttachRequest,
+) -> Result<String, ApiError> {
     let host = crate::api::document_host(state, &request.database_id)?;
     let (plan, _) = compile_view_plan(&host, request)?;
-    plan.source().collection().map(|collection| collection.as_str().to_owned())
+    plan.source()
+        .collection()
+        .map(|collection| collection.as_str().to_owned())
         .ok_or_else(|| ApiError::forbidden("read on the requested collection"))
 }
 
@@ -1395,7 +1400,8 @@ fn compile_view_plan(
     let deadline = terrabase::Deadline::after(Duration::from_secs(30))
         .map_err(|_| ApiError::query(terrabase::QueryError::Deadline))?;
     let cancellation = terrabase::Cancellation::new();
-    let plan = host.engine()
+    let plan = host
+        .engine()
         .queries()
         .compile(terrabase::QueryInput::sql_bounded_with_parameters(
             statement,

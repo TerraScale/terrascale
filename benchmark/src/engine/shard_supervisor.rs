@@ -190,8 +190,10 @@ where
                 return Ok(SplitStep::Progress);
             }
             let state = self.runtime.split().expect("active split").durable_state();
-            let through = self.source_boundary()?;
-            self.runtime.begin_catch_up(through).map_err(SplitSupervisorError::Runtime)?;
+            // Snapshot application does not replay original publication
+            // identities, tombstones, or controls. Persist the actual journal
+            // cursor so a restart cannot skip that history.
+            self.runtime.begin_catch_up(0).map_err(SplitSupervisorError::Runtime)?;
             self.catchup = Some(
                 ShardJournalCatchUp::new(
                     Arc::clone(&self.engine),
@@ -248,12 +250,5 @@ where
             return Ok(SplitStep::Complete { generation });
         }
         Err(SplitSupervisorError::MissingRoute)
-    }
-
-    fn source_boundary(&self) -> Result<u64, SplitSupervisorError<O::Error>> {
-        self.engine
-            .published_sequence()
-            .map_err(|_| SplitSupervisorError::MissingRoute)
-            .map(|sequence| sequence.get())
     }
 }

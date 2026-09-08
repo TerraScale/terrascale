@@ -1071,8 +1071,11 @@ async fn sync_stream(
     let pending_snapshot =
         chain.last().is_some_and(|point| point.kind() == super::BackupKind::Snapshot);
     let root_due = (root_due || rotation.is_some()) && !pending_snapshot;
+    let heartbeat_due = chain
+        .last()
+        .is_some_and(|point| now.saturating_sub(point.recoverable_through_unix_millis()) >= 10_000);
     let additional = if root_due && base.is_some() { 2 } else { 1 };
-    if (base != Some(high_water) || root_due || pending_snapshot)
+    if (base != Some(high_water) || root_due || pending_snapshot || heartbeat_due)
         && !inventory::has_capacity(stream, limits, additional)?
     {
         // At capacity retention still reads an admissible inventory and can
@@ -1084,7 +1087,7 @@ async fn sync_stream(
     }
     let mut captured_boundary = base.unwrap_or_default();
     let mut capture_refusal = None;
-    if base != Some(high_water) || root_due || pending_snapshot {
+    if base != Some(high_water) || root_due || pending_snapshot || heartbeat_due {
         if points.len() >= limits.points_per_stream
             || bytes.saturating_add(2 * 1024 * 1024) >= limits.staging_bytes_per_stream
         {
@@ -1527,6 +1530,120 @@ mod tests {
             )
             .unwrap(),
         )))
+    }
+
+    #[tokio::test]
+    async fn idle_heartbeat_extends_remote_timestamp_coverage_without_billing() {
+        use crate::usage::{UsagePageRequest, UsagePlacement};
+        let (_, engine) = open_engine("fleet-idle-source");
+        let owner = engine.database_owner().clone();
+        let tenant = crate::types::TenantId::try_new(&owner.tenant().to_text()).unwrap();
+        engine
+            .configure_usage_placement(
+                UsagePlacement::try_new(
+                    tenant.clone(),
+                    &owner.project().to_text(),
+                    &owner.database().to_text(),
+                    "partition",
+                    owner.region(),
+                    vec![owner.region()],
+                    "idle-usage-policy",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        committed(put(
+            &engine,
+            &owner.tenant().to_text(),
+            "idle-write",
+            "idle-doc",
+            "users",
+            text("retained"),
+            LocalDurability::Synced,
+        ));
+        let engine = Arc::new(engine);
+        let key_provider = keys(&engine);
+        let staging = location("fleet-idle-staging");
+        let destination = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            Arc::new(object_store::memory::InMemory::new()),
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let config = || StreamConfig {
+            engine: engine.clone(),
+            keys: key_provider.clone(),
+            destinations: vec![(Provider::Oci, destination.clone())],
+            policy_revision: "idle-policy".into(),
+            retention_days: 1,
+            staging: staging.clone(),
+            placement: PlacementLock::br_only(),
+        };
+        let limits = FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
+            inventory_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 4,
+        };
+        let identity = engine.database_id().to_string();
+        let mut fleet = NativeBackupFleet::new(limits).unwrap();
+        fleet.attach(config()).unwrap();
+        let first = fleet.capture_snapshot(&identity).await.unwrap();
+        let before = engine
+            .usage_page(
+                &engine.scope_for(&tenant),
+                UsagePageRequest::try_new(None, 100, None).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(before.facts().len(), 1);
+        let sequence = engine.journaled_high_water().unwrap();
+        // Immediate repeat verifies the same boundary without publishing an
+        // unnecessary heartbeat. A due scheduled tick seals idle coverage.
+        fleet.capture_snapshot(&identity).await.unwrap();
+        assert_eq!(fleet.retained_points(&identity).unwrap().len(), 1);
+        tokio::time::sleep(Duration::from_millis(10_010)).await;
+        assert!(fleet.sync_once().await.is_empty());
+        let latest = fleet.retained_points(&identity).unwrap().pop().unwrap();
+        assert_eq!(latest.boundary_sequence(), first.boundary_sequence());
+        assert!(latest.recoverable_through_unix_millis() > first.recoverable_through_unix_millis());
+        assert_eq!(engine.journaled_high_water().unwrap(), sequence);
+        let after = engine
+            .usage_page(
+                &engine.scope_for(&tenant),
+                UsagePageRequest::try_new(None, 100, None).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(after.facts(), before.facts());
+        let at = latest.recoverable_through_unix_millis();
+        drop(fleet);
+        // Remove all cached archives to make restore rely on the provider's
+        // independent manifest discovery and selected-chain download.
+        for point in point_paths(&staging, 4).unwrap() {
+            std::fs::remove_dir_all(point).unwrap();
+        }
+        let mut fleet = NativeBackupFleet::new(limits).unwrap();
+        fleet.attach(config()).unwrap();
+        let (target_owner, target) = restore_config("fleet-idle-target", &owner);
+        let receipt = fleet
+            .restore_at_from_provider(
+                &identity,
+                Provider::Oci,
+                at,
+                &target,
+                &crate::backup::restore::RestoreIdentity {
+                    operation_id: "idle-pitr".into(),
+                    source_database_id: identity.clone(),
+                    target_database_id: target_owner.database().to_string(),
+                    provider: "oci".into(),
+                    selection: at.to_string(),
+                    expected_manifest_digest: latest.identity().into(),
+                    expected_journal_boundary: latest.boundary_sequence().get(),
+                    restore_epoch: 1,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt.restored_documents(), 1);
     }
 
     #[tokio::test]
