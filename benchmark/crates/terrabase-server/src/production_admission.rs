@@ -29,6 +29,8 @@ pub enum AcceptedAdmission {
         revision: String,
         /// Accepted regional origin.
         origin: RegionCode,
+        /// Exact residency spelling accepted by the billing authority.
+        residency: String,
         /// Strictly positive accepted writer epoch.
         epoch: u64,
         /// Whether this exact local member is the accepted writer.
@@ -38,6 +40,8 @@ pub enum AcceptedAdmission {
     Maintenance {
         /// Accepted regional origin.
         origin: RegionCode,
+        /// Exact residency spelling accepted by the billing authority.
+        residency: String,
         /// Accepted epoch, which is never activated for origin writes.
         epoch: u64,
         /// Whether this exact local member is the accepted writer.
@@ -159,8 +163,8 @@ fn storage_admission_inner(
             return Ok(());
         };
         match accepted {
-            AcceptedAdmission::Maintenance { epoch, origin, local_is_writer } => {
-                if epoch == 0 || origin != region {
+            AcceptedAdmission::Maintenance { epoch, origin, residency, local_is_writer } => {
+                if epoch == 0 || origin != region || residency != record.residency {
                     return Err("invalid accepted database authority".into());
                 }
                 if !local_is_writer {
@@ -182,8 +186,8 @@ fn storage_admission_inner(
                     instance,
                 )
             }
-            AcceptedAdmission::Active { partition, revision, origin, epoch, local_is_writer } => {
-                if epoch == 0 || origin != region {
+            AcceptedAdmission::Active { partition, revision, origin, residency, epoch, local_is_writer } => {
+                if epoch == 0 || origin != region || residency != record.residency {
                     return Err("invalid accepted database authority".into());
                 }
                 if !local_is_writer {

@@ -1023,7 +1023,8 @@ impl ExportService {
         tokio::spawn(async move {
             let _active = active;
             for attempt in 0..MAX_PROVIDER_RETRIES {
-                let retry = matches!(worker.run(&job).await, Err(ExportError::DependencyUnavailable));
+                let retry =
+                    matches!(worker.run(&job).await, Err(ExportError::DependencyUnavailable));
                 if !retry || attempt + 1 == MAX_PROVIDER_RETRIES {
                     break;
                 }

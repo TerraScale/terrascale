@@ -726,10 +726,7 @@ impl NativeBackupFleet {
         let required_history = read_policy_history(&config.staging.join("policy-active"))?;
         let available_history = historical_destinations
             .iter()
-            .map(|(provider, _)| match provider {
-                Provider::Oci => "oci",
-                Provider::Tigris => "tigris",
-            })
+            .map(|(provider, destination)| destination_history_key(*provider, destination))
             .collect::<BTreeSet<_>>();
         if !required_history.is_subset(&available_history) {
             return Err(FleetError::Configuration);
@@ -918,10 +915,7 @@ impl NativeBackupFleet {
         .map_err(|_| FleetError::Capture)?;
         let names = destinations
             .iter()
-            .map(|(provider, _)| match provider {
-                Provider::Oci => "oci".to_owned(),
-                Provider::Tigris => "tigris".to_owned(),
-            })
+            .map(|(provider, destination)| destination_history_key(*provider, destination))
             .collect();
         persist_upload_journal(&stream.config.staging.join("policy-transition"), revision, &names)?;
         remote::migrate_points(database, stream, self.limits, &destinations).await?;
@@ -934,10 +928,7 @@ impl NativeBackupFleet {
             .retain(|(_, destination)| seen_destinations.insert(destination.identity().to_owned()));
         let historical_names = historical_destinations
             .iter()
-            .map(|(provider, _)| match provider {
-                Provider::Oci => "oci".to_owned(),
-                Provider::Tigris => "tigris".to_owned(),
-            })
+            .map(|(provider, destination)| destination_history_key(*provider, destination))
             .collect::<BTreeSet<_>>();
         persist_upload_journal(
             &stream.config.staging.join("policy-active"),
@@ -1964,7 +1955,15 @@ fn read_upload_journal(
     Ok(points)
 }
 
-fn read_policy_history(path: &Path) -> Result<BTreeSet<&'static str>, FleetError> {
+fn destination_history_key(provider: Provider, destination: &ObjectDestination) -> String {
+    let provider = match provider {
+        Provider::Oci => "oci",
+        Provider::Tigris => "tigris",
+    };
+    format!("{provider}:{}", destination.identity())
+}
+
+fn read_policy_history(path: &Path) -> Result<BTreeSet<String>, FleetError> {
     use std::io::Read;
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
@@ -1982,16 +1981,19 @@ fn read_policy_history(path: &Path) -> Result<BTreeSet<&'static str>, FleetError
     if lines.next().is_none() {
         return Err(FleetError::Capture);
     }
-    let mut providers = BTreeSet::new();
+    let mut destinations = BTreeSet::new();
     for line in lines {
-        let provider = match line {
-            "oci" => "oci",
-            "tigris" => "tigris",
+        let (provider, identity) = line.split_once(':').ok_or(FleetError::Capture)?;
+        match provider {
+            "oci" | "tigris" => {}
             _ => return Err(FleetError::Capture),
-        };
-        providers.insert(provider);
+        }
+        if identity.is_empty() || identity.len() > 128 || identity.chars().any(char::is_control) {
+            return Err(FleetError::Capture);
+        }
+        destinations.insert(line.to_owned());
     }
-    Ok(providers)
+    Ok(destinations)
 }
 
 fn persist_upload_journal(
@@ -2053,6 +2055,21 @@ mod tests {
             )
             .unwrap(),
         )))
+    }
+
+    #[test]
+    fn policy_history_binds_the_persisted_destination_identity() {
+        let path = location("backup-policy-history-identity");
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("policy-active"), "revision\noci:destination-identity\n").unwrap();
+
+        assert_eq!(
+            read_policy_history(&path.join("policy-active")).unwrap(),
+            BTreeSet::from(["oci:destination-identity".to_owned()])
+        );
+        assert!(read_policy_history(&path.join("missing")).unwrap().is_empty());
+        std::fs::write(path.join("policy-active"), "revision\noci\n").unwrap();
+        assert_eq!(read_policy_history(&path.join("policy-active")), Err(FleetError::Capture));
     }
 
     #[tokio::test]
@@ -3393,10 +3410,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(second.list_points(&identity, 4).await.unwrap().len(), 1);
-        let tenant = crate::types::TenantId::try_new(
-            &engine.database_owner().tenant().to_text(),
-        )
-        .unwrap();
+        let tenant =
+            crate::types::TenantId::try_new(&engine.database_owner().tenant().to_text()).unwrap();
         let scope = engine.scope_for(&tenant);
         engine.lifecycle_pause(&scope, "pause-before-detach").unwrap();
         fleet.suspend_for_restore(&identity).unwrap();

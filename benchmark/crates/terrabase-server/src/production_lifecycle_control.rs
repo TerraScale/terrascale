@@ -111,7 +111,7 @@ fn verify_restore_request_digest(
 pub(crate) fn restore_request_digest(
     request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
 ) -> Result<String, String> {
-    use aws_lc_rs::digest::{SHA256, digest};
+    use aws_lc_rs::digest::{digest, SHA256};
     let mut bytes = Vec::new();
     for value in [
         &request.source_owner,
@@ -885,7 +885,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         })
         .await
         .map_err(|_| "native backup deletion worker unavailable")??;
-        Err("provider-owned backup deletion complete; local/key cleanup is pending".into())
+        Ok(())
     }
 }
 
@@ -1164,7 +1164,11 @@ mod restore_stats_tests {
     #[async_trait::async_trait]
     impl NativeLifecycleWorker for Worker {
         async fn signed_completed_receipt(&self, _: &str) -> Result<Vec<u8>, String> {
-            if self.complete { Ok(b"test observation".to_vec()) } else { Err("pending".into()) }
+            if self.complete {
+                Ok(b"test observation".to_vec())
+            } else {
+                Err("pending".into())
+            }
         }
         async fn restore_request_facts(
             &self,
@@ -1287,5 +1291,126 @@ mod restore_stats_tests {
         wrong_authority.context.as_mut().expect("context").operation_grant =
             b"wrong-grant".to_vec();
         assert!(control(true).restore_stats(&wrong_authority).await.is_err());
+    }
+}
+
+#[cfg(test)]
+mod delete_owned_data_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use terrabase_tbep::proto::terrabase::v1::{LifecycleControlContext, LifecycleStatus};
+
+    struct Worker {
+        purges: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl NativeLifecycleWorker for Worker {
+        async fn ensure_snapshot(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            _: &str,
+        ) -> Result<NativeLifecycleReceipt, String> {
+            Err("unused".into())
+        }
+
+        async fn close_database(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            _: &str,
+        ) -> Result<NativeLifecycleReceipt, String> {
+            Err("unused".into())
+        }
+
+        async fn stop_native_backup(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            _: &str,
+        ) -> Result<NativeLifecycleReceipt, String> {
+            Err("unused".into())
+        }
+
+        async fn reactivate(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            _: &str,
+        ) -> Result<NativeLifecycleReceipt, String> {
+            Err("unused".into())
+        }
+
+        async fn delete_owned_data(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            _: &str,
+        ) -> Result<(), String> {
+            self.purges.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    struct Authority;
+
+    impl LifecycleAuthority for Authority {
+        fn verify(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            action: LifecycleGrantAction,
+            operation: &str,
+            _: &[u8],
+            _: &[u8],
+            _: Option<&str>,
+        ) -> Result<(), String> {
+            if action == LifecycleGrantAction::DeleteOwnedData && operation == "delete-op" {
+                Ok(())
+            } else {
+                Err("unexpected lifecycle operation".into())
+            }
+        }
+    }
+
+    fn context() -> LifecycleControlContext {
+        LifecycleControlContext {
+            environment: "production".into(),
+            tenant: "tenant".into(),
+            project: "project".into(),
+            database: "database".into(),
+            region: "GRU".into(),
+            member: "member".into(),
+            placement_revision: 1,
+            authority_epoch: 1,
+            authority_lease: "lease".into(),
+            authority_signature: b"signature".to_vec(),
+            operation_grant: b"grant".to_vec(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_purge_success_is_applied_and_replay_remains_applied() {
+        let worker = Arc::new(Worker { purges: AtomicUsize::new(0) });
+        let control = TbepLifecycleControl::new(Arc::new(ProductionLifecycleControl {
+            worker: Arc::clone(&worker) as Arc<dyn NativeLifecycleWorker>,
+            authority: Arc::new(Authority),
+        }));
+        let context = context();
+
+        let first = terrabase_tbep::lifecycle::LifecycleControl::delete_owned_data(
+            &control,
+            &context,
+            "delete-op",
+        )
+        .await
+        .expect("provider purge is applied");
+        let replay = terrabase_tbep::lifecycle::LifecycleControl::delete_owned_data(
+            &control,
+            &context,
+            "delete-op",
+        )
+        .await
+        .expect("idempotent replay remains applied");
+
+        assert_eq!(first.status, LifecycleStatus::Applied as i32);
+        assert_eq!(replay, first);
+        assert_eq!(worker.purges.load(Ordering::Relaxed), 2);
     }
 }

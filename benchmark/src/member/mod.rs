@@ -1099,7 +1099,19 @@ impl Member {
             return Err(CatalogValidationError::InvalidRoot);
         }
         if let Some(existing) = catalog.databases.get(&id) {
-            return if existing.location == location && existing.scope == scope {
+            if existing.location != location || existing.scope != scope {
+                return Err(CatalogValidationError::DuplicateDatabaseIdentity);
+            }
+            // A retry may reuse the same catalog identity only when it also
+            // names the key version that owns the already admitted files. A
+            // replacement source could make existing ciphertext unreadable,
+            // so fail closed instead of silently rebinding the entry.
+            let existing_version = existing
+                .storage_keys
+                .as_ref()
+                .and_then(|source| source.current_lease().ok())
+                .map(|lease| lease.metadata().version());
+            return if existing_version == Some(lease.metadata().version()) {
                 Ok(())
             } else {
                 Err(CatalogValidationError::DuplicateDatabaseIdentity)
@@ -2426,6 +2438,12 @@ mod tests {
     fn storage_keys(
         scope: &DatabaseScope,
     ) -> BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>> {
+        storage_keys_with_version(scope, "01ARZ3NDEKTSV4RRFFQ69G5FB0")
+    }
+    fn storage_keys_with_version(
+        scope: &DatabaseScope,
+        version: &str,
+    ) -> BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>> {
         let metadata = crate::encryption::KeyVersionMetadata::new(
             crate::encryption::KeyScope::new_with_project(
                 scope.owner().environment().as_str(),
@@ -2435,7 +2453,7 @@ mod tests {
                 crate::encryption::KeyPurpose::Data,
             )
             .unwrap(),
-            crate::encryption::DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
+            crate::encryption::DatabaseKeyVersion::from_text(version).unwrap(),
         );
         BTreeMap::from([(
             scope.database().into(),
@@ -2605,6 +2623,44 @@ mod tests {
         assert_eq!(lease.shared_engine().origin_epoch().unwrap(), (1, false));
         drop(lease);
         reopened.close(Duration::from_secs(1)).expect("close");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_retry_rejects_a_different_key_version_for_same_database() {
+        let root = root("key-version-conflict");
+        let scope = DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .expect("scope");
+        let id = DatabaseId::from(scope.database());
+        let member = Member::open_production(
+            &root,
+            [DatabaseSpec::scoped(scope.clone(), "db")],
+            AdmissionLimits::new(2, 1),
+            storage_keys(&scope),
+        )
+        .expect("production member");
+
+        let replacement = member.add_production_database(
+            DatabaseSpec::scoped(scope.clone(), "db"),
+            1,
+            storage_keys_with_version(&scope, "01ARZ3NDEKTSV4RRFFQ69G5FB1")
+                .remove(&id)
+                .expect("replacement key source"),
+        );
+        assert_eq!(replacement, Err(CatalogValidationError::DuplicateDatabaseIdentity));
+        let retained = member.storage_key_source(&id).expect("retained key source");
+        assert_eq!(
+            retained.current_lease().expect("retained lease").metadata().version(),
+            crate::encryption::DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0")
+                .expect("original version")
+        );
+        member.close(Duration::from_secs(1)).expect("close");
         let _ = fs::remove_dir_all(root);
     }
 

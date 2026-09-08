@@ -106,7 +106,10 @@ impl Engine {
                     )
                 })
                 .map_err(|_| EngineOpenError::StorageUnavailable)?
-                .map_err(|()| { eprintln!("branch copy/import failed"); EngineOpenError::StorageUnavailable })?;
+                .map_err(|()| {
+                    eprintln!("branch copy/import failed");
+                    EngineOpenError::StorageUnavailable
+                })?;
             let cut = transform_snapshot(
                 source_path.as_deref().ok_or(EngineOpenError::StorageUnavailable)?,
                 &staging,

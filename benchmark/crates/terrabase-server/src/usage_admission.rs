@@ -545,6 +545,19 @@ impl UsageAdmissionJournal {
         epoch: u64,
         digest: &str,
     ) -> Result<Option<String>, String> {
+        Ok(self.resolve_with_residency(r, epoch, digest)?.map(|(partition, _)| partition))
+    }
+
+    /// Resolves an exact persisted stream and returns the authority-accepted
+    /// residency spelling alongside its partition. The residency is retained
+    /// as an admission identity so callers cannot substitute another valid
+    /// spelling of the same geographic constraint.
+    pub fn resolve_with_residency(
+        &self,
+        r: &crate::admission::AdmissionRecord,
+        epoch: u64,
+        digest: &str,
+    ) -> Result<Option<(String, String)>, String> {
         if r.environment != self.environment
             || r.member_id != self.member_id
             || r.region != self.region
@@ -576,7 +589,7 @@ impl UsageAdmissionJournal {
         {
             return Err("usage admission tuple mismatch".into());
         }
-        Ok(Some(stored.partition))
+        Ok(Some((stored.partition, stored.residency)))
     }
     pub(crate) fn router(self: Arc<Self>) -> Router {
         Router::new()
@@ -600,10 +613,7 @@ fn same_regions(grant: &[String], accepted: &[String]) -> bool {
     let grant = grant
         .iter()
         .map(|region| {
-            region
-                .to_ascii_uppercase()
-                .parse::<RegionCode>()
-                .map(|code| code.as_str().to_owned())
+            region.to_ascii_uppercase().parse::<RegionCode>().map(|code| code.as_str().to_owned())
         })
         .collect::<Result<BTreeSet<_>, _>>();
     let accepted = accepted
