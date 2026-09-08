@@ -70,6 +70,11 @@ public sealed class TerraScaleManagementClientTests
                 await Assert.That(error!.StatusCode).IsEqualTo((HttpStatusCode)response.GetProperty("status").GetInt32());
                 await Assert.That(error.ErrorCode).IsEqualTo(response.GetProperty("body").GetProperty("error").GetProperty("code").GetString());
                 await Assert.That(handler.Attempts).IsEqualTo(1);
+                if (IsAuthPersistenceOperation(operationId))
+                {
+                    await Assert.That(handler.IdempotencyKey).IsEqualTo(operationId == "find_one" ? null : "auth-key");
+                    await Assert.That(handler.AuthTransaction).IsEqualTo(operationId is "find_one" or "begin_transaction" or "commit_transaction" or "rollback_transaction" ? null : "transaction-key");
+                }
             }
         }
     }
