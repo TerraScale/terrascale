@@ -2,6 +2,12 @@
 
 This is engineering evidence from the current source cohort. It is not a served-boundary qualification and does not replace the retained SE-15 receipts.
 
+The document batch bound is now 8,192 operations so a durable request can
+amortize one FULL WAL flush while remaining bounded. On the rebuilt debug
+member, 8,192-operation batches completed at **2,290–2,679 logical ops/s**;
+larger batches alone do not reach 10k because row/index/accounting work grows
+with the batch. Parallel shard lanes remain required for the target.
+
 ## In-process operation-cost probe
 
 Command: `nice -n 19 cargo test --release --locked --lib benchmarks::lane_run::tests::probe_lane_operation_costs -- --nocapture`

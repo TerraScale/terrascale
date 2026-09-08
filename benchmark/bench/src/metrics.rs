@@ -181,14 +181,21 @@ pub fn comparability(
             "se15-reference-pin-v1; pgbouncer transaction pooling; pgrest HTTP/JSON service"
                 .to_owned(),
         ),
-        "sqlite" => (
-            "embedded-reference".to_owned(),
-            "WAL journal with synchronous=FULL and a five-second busy timeout; autocommit \
-             statement acknowledgement"
-                .to_owned(),
-            "bundled sqlite at shipped defaults plus WAL, synchronous=FULL, busy_timeout=5000ms"
-                .to_owned(),
-        ),
+        "sqlite" => {
+            let synchronous =
+                std::env::var("TERRABASE_SQLITE_SYNCHRONOUS").unwrap_or_else(|_| "FULL".to_owned());
+            (
+                "embedded-reference".to_owned(),
+                format!(
+                    "WAL journal with synchronous={synchronous} and a five-second busy timeout; \
+                     autocommit statement acknowledgement"
+                ),
+                format!(
+                    "bundled sqlite at shipped defaults plus WAL, synchronous={synchronous}, \
+                     busy_timeout=5000ms"
+                ),
+            )
+        }
         "turso" => (
             "embedded-reference".to_owned(),
             "WAL journal with synchronous=FULL and a five-second busy timeout; autocommit \

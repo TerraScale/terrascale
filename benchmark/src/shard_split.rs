@@ -3,6 +3,7 @@
 #![allow(clippy::all, reason = "shard split contracts are integrated by the routing worker")]
 #![allow(clippy::pedantic, reason = "shard split contracts are integrated by the routing worker")]
 mod adapters;
+pub mod compaction;
 mod cutover;
 mod journal;
 mod key;

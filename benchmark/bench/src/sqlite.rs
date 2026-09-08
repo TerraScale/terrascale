@@ -30,6 +30,18 @@ fn reference_path() -> PathBuf {
     std::env::var(PATH_VARIABLE).map_or_else(|_| PathBuf::from(DEFAULT_PATH), PathBuf::from)
 }
 
+/// The durability class this run measures, from the environment:
+/// `FULL` (default; one fsync per commit, power-loss durable) or `NORMAL`
+/// (fsync at WAL checkpoints only; commits are memory-speed, a power loss
+/// can lose the most recent commits).
+fn synchronous_mode() -> String {
+    let mode = std::env::var("TERRABASE_SQLITE_SYNCHRONOUS").unwrap_or_else(|_| "FULL".to_owned());
+    if mode != "FULL" && mode != "NORMAL" {
+        panic!("TERRABASE_SQLITE_SYNCHRONOUS must be FULL or NORMAL, got {mode}");
+    }
+    mode
+}
+
 /// Opens one connection with the pin's pragmas.
 fn open_pinned(path: &std::path::Path) -> Result<Connection, Box<dyn Error + Send + Sync>> {
     let connection = Connection::open(path)?;
@@ -38,7 +50,7 @@ fn open_pinned(path: &std::path::Path) -> Result<Connection, Box<dyn Error + Sen
     if !journal_mode.eq_ignore_ascii_case("wal") {
         return Err(format!("journal_mode refused WAL: {journal_mode}").into());
     }
-    connection.pragma_update(None, "synchronous", "FULL")?;
+    connection.pragma_update(None, "synchronous", synchronous_mode())?;
     connection.busy_timeout(Duration::from_millis(5_000))?;
     Ok(connection)
 }
@@ -74,8 +86,9 @@ impl Backend for SqliteBackend {
         let version: String =
             self.admin.query_row("SELECT sqlite_version()", [], |row| row.get(0))?;
         Ok(format!(
-            "SQLite {version} (bundled); journal_mode=WAL; synchronous=FULL; busy_timeout=5000ms; \
-             one writer connection, per-slot concurrent readers"
+            "SQLite {version} (bundled); journal_mode=WAL; synchronous={}; busy_timeout=5000ms; \
+             one writer connection, per-slot concurrent readers",
+            synchronous_mode()
         ))
     }
 
