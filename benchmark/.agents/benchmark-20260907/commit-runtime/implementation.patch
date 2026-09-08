@@ -1,7 +1,7 @@
 diff --git a/crates/terrabase-server/src/api.rs b/crates/terrabase-server/src/api.rs
 --- a/crates/terrabase-server/src/api.rs
 +++ b/crates/terrabase-server/src/api.rs
-@@ -47,6 +47,7 @@ use terrabase::types::ExpectedVersion;
+@@ -47,3 +47,4 @@ use terrabase::types::ExpectedVersion;
  use terrabase::types::LocalDurability;
  use terrabase::types::OperationId;
 +use terrabase::Transaction;
