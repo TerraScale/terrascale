@@ -38,25 +38,18 @@ type ManagedDatabase struct {
 
 // Region describes an admitted public region in the edge catalog.
 type Region struct {
-	Code        RegionCode `json:"code"`
-	Name        string     `json:"name,omitempty"`
-	Country     string     `json:"country,omitempty"`
-	Latitude    float64    `json:"latitude,omitempty"`
-	Longitude   float64    `json:"longitude,omitempty"`
-	DisplayName string     `json:"displayName,omitempty"`
-	Available   bool       `json:"available"`
-	Healthy     bool       `json:"healthy,omitempty"`
+	Code      RegionCode `json:"code"`
+	Name      string     `json:"name,omitempty"`
+	Country   string     `json:"country,omitempty"`
+	Latitude  float64    `json:"latitude,omitempty"`
+	Longitude float64    `json:"longitude,omitempty"`
+	Available bool       `json:"available"`
 }
 
-// RegionCatalogResponse is the edge discovery response. The legacy member
-// health fields remain private to this response so List can bridge the
-// currently served member response until the producer publishes separate
-// catalog and health routes.
+// RegionCatalogResponse is the edge discovery response.
 type RegionCatalogResponse struct {
 	Regions        []Region          `json:"regions"`
 	Hosts          map[string]string `json:"hosts"`
-	Region         RegionCode        `json:"region"`
-	Healthy        bool              `json:"healthy"`
 	regionsPresent bool
 }
 
@@ -64,14 +57,12 @@ func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
 	type wire struct {
 		Regions json.RawMessage   `json:"regions"`
 		Hosts   map[string]string `json:"hosts"`
-		Region  RegionCode        `json:"region"`
-		Healthy bool              `json:"healthy"`
 	}
 	var v wire
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
-	*r = RegionCatalogResponse{Hosts: v.Hosts, Region: v.Region, Healthy: v.Healthy}
+	*r = RegionCatalogResponse{Hosts: v.Hosts}
 	if len(v.Regions) == 0 || string(v.Regions) == "null" {
 		return nil
 	}
@@ -712,8 +703,7 @@ func (o *OrganizationsClient) ListProjects(ctx context.Context, organizationID s
 // RegionsClient mirrors regions.* routes.
 type RegionsClient struct{ c *Client }
 
-// Status returns the generated HealthResponse without adapting it to the
-// legacy []Region shape returned by List.
+// Status returns the member's serving region and health.
 func (r *RegionsClient) Status(ctx context.Context, opts ...RequestOption) (*HealthResponse, error) {
 	var out HealthResponse
 	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions", opts...); err != nil {
@@ -745,16 +735,27 @@ func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Regi
 	}
 	if out.regionsPresent {
 		for i := range out.Regions {
-			code, err := ParseRegionCode(string(out.Regions[i].Code))
+			code, err := parseCatalogRegionCode(string(out.Regions[i].Code))
 			if err != nil {
 				return nil, err
 			}
 			out.Regions[i].Code = code
-			out.Regions[i].Healthy = out.Regions[i].Available
 		}
 		return out.Regions, nil
 	}
 	return nil, fmt.Errorf("sdk: region catalog response is missing regions")
+}
+
+func parseCatalogRegionCode(value string) (RegionCode, error) {
+	if len(value) != 3 {
+		return "", fmt.Errorf("sdk: catalog region code must be three uppercase letters, got %q", value)
+	}
+	for _, char := range value {
+		if char < 'A' || char > 'Z' {
+			return "", fmt.Errorf("sdk: catalog region code must be three uppercase letters, got %q", value)
+		}
+	}
+	return RegionCode(value), nil
 }
 
 // Get returns one region.
