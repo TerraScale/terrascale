@@ -1925,7 +1925,11 @@ async fn health(State(state): State<Arc<ApiState>>) -> Response {
 /// its request landed.
 #[utoipa::path(get, path = "/api/v1/regions", responses((status = 200, description = "Serving region and health")))]
 async fn regions(State(state): State<Arc<ApiState>>) -> Response {
-    let body = format!("{{\"region\":\"{}\",\"healthy\":true}}", state.region);
+    let local_serving = state.metrics.snapshot().service_state() == ServiceState::Serving;
+    let replication_serving =
+        state.replication_progress.as_ref().is_none_or(|progress| !progress.is_fenced());
+    let healthy = local_serving && replication_serving;
+    let body = format!("{{\"region\":\"{}\",\"healthy\":{healthy}}}", state.region);
     let mut response = body.into_response();
     response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     if let Ok(region) = HeaderValue::from_str(state.region.as_str()) {
@@ -3251,7 +3255,7 @@ pub(crate) fn document_host(
 ) -> Result<Arc<terrabase_tbep::member_host::MemberHost>, ApiError> {
     if let Some(admitted) = &state.admitted_databases {
         let database = admitted
-            .resolve_serving(name)
+            .resolve_degraded_serving(name)
             .map_err(|_| ApiError::storage_failure())?
             .ok_or_else(|| ApiError::database_not_found(name))?;
         let record = database.public_record().map_err(|_| ApiError::storage_failure())?;
@@ -5657,6 +5661,30 @@ mod tests {
             "the envelope codes the denial: {body}"
         );
         assert!(body.contains("\"fix\":"), "every error carries a fix (D-56): {body}");
+    }
+
+    #[tokio::test]
+    async fn regions_reports_local_and_replication_health() {
+        let state = state();
+        state.metrics.transition_service(ServiceState::Serving).expect("serving");
+        let response = super::regions(axum::extract::State(Arc::clone(&state))).await;
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":true}"#);
+
+        state.metrics.transition_service(ServiceState::Draining).expect("draining");
+        let response = super::regions(axum::extract::State(state)).await;
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":false}"#);
+    }
+
+    #[tokio::test]
+    async fn regions_reports_fenced_replication_as_degraded() {
+        let state = state_with_keys_and_control();
+        state.metrics.transition_service(ServiceState::Serving).expect("serving");
+        state.replication_progress.as_ref().expect("rf2 progress").fence();
+        let response = super::regions(axum::extract::State(state)).await;
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":false}"#);
     }
 
     #[tokio::test]

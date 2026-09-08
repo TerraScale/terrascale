@@ -1893,7 +1893,7 @@ impl WebhookService {
         }
         // Claim before secret/DNS/network work. The durable CAS closes the
         // ordinary two-worker pre-send race; expiry permits crash recovery.
-        let row = self
+        let claimed = self
             .storage
             .claim_delivery(scope, endpoint_id, row, now)
             .map_err(WebhookError::storage)?;
@@ -1904,14 +1904,14 @@ impl WebhookService {
         }
         let publication = self
             .journal
-            .page(scope, journal::before_publication(row)?, 1)
+            .page(scope, journal::before_publication(&claimed)?, 1)
             .map_err(WebhookError::storage)?
             .publications
             .into_iter()
             .find(|item| {
-                item.revision == row.revision
-                    && item.write_index == row.write_index
-                    && item.event_id == row.event_id
+                item.revision == claimed.revision
+                    && item.write_index == claimed.write_index
+                    && item.event_id == claimed.event_id
             })
             .ok_or_else(WebhookError::not_found)?;
         let timestamp = now.to_string();
@@ -1934,22 +1934,22 @@ impl WebhookService {
         headers.insert("x-terrascale-webhook-event".into(), publication.event_id.clone());
         headers.insert("x-terrascale-webhook-timestamp".into(), timestamp);
         headers.insert("x-terrascale-webhook-signature".into(), signature);
-        headers.insert("idempotency-key".into(), row.id.clone());
+        headers.insert("idempotency-key".into(), claimed.id.clone());
         let result = self.delivery.send(&endpoint.endpoint, &headers, &publication.body);
-        let attempt = row.attempts.saturating_add(1);
+        let attempt = claimed.attempts.saturating_add(1);
         let (status, delivered, terminal, next) = match result {
             Ok(response) if (200..300).contains(&response.status) => {
                 (Some(response.status), true, true, 0)
             }
-            Ok(response) => retry_state(response.status, attempt, row.retry_started_at, now),
+            Ok(response) => retry_state(response.status, attempt, claimed.retry_started_at, now),
             Err(DeliveryError::TargetRejected | DeliveryError::Permanent) => (None, false, true, 0),
-            Err(DeliveryError::Retryable) => retry_state(0, attempt, row.retry_started_at, now),
+            Err(DeliveryError::Retryable) => retry_state(0, attempt, claimed.retry_started_at, now),
         };
         self.storage
             .record_attempt(
                 scope,
                 endpoint_id,
-                row,
+                &claimed,
                 &DeliveryAttempt {
                     attempts: attempt,
                     next_attempt_at: next,

@@ -460,7 +460,6 @@ fn materialized_connection(
                         SQL_INPUT_PAGE,
                     )
                     .map_err(|_| QueryError::StorageFailure)?;
-                eprintln!("routed shard={} table={} docs={} seq={}", participant.identity.shard_id, table, documents.len(), sequence);
                 if documents.is_empty() {
                     break;
                 }

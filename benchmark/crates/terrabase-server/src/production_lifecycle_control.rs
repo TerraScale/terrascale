@@ -530,6 +530,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
                 &request.point_id,
                 &database.record.regions,
             )
+            .await
             .map_err(|_| "retained recovery point is unavailable or unverified")?;
         let provider = match provider {
             terrabase::backup::object_store::Provider::Oci => {

@@ -564,9 +564,9 @@ pub(crate) fn validate_placement(
         return Err(ControlError::InvalidPlacement("the region list is empty".into()));
     }
     let mut seen = std::collections::BTreeSet::new();
-    if let Some(region) = placement.iter().find(|region| {
-        !catalog.is_registered(region) || !seen.insert(**region)
-    }) {
+    if let Some(region) =
+        placement.iter().find(|region| !catalog.is_registered(region) || !seen.insert(**region))
+    {
         return Err(ControlError::InvalidPlacement(format!("region {region} is not registered")));
     }
     Ok(())

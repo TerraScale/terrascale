@@ -68,6 +68,14 @@ impl Default for ReplicationProgress {
 }
 
 impl ReplicationProgress {
+    /// Returns whether this member's replication evidence has been fenced.
+    /// A fenced member cannot admit new databases, though already admitted
+    /// local leases may continue serving reads while the control plane heals.
+    #[must_use]
+    pub fn is_fenced(&self) -> bool {
+        self.fenced.load(Ordering::Acquire)
+    }
+
     /// Returns the immutable accepted residency set while its assignment is live.
     ///
     /// # Errors

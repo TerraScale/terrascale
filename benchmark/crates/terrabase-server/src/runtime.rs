@@ -334,6 +334,7 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
         };
         let registry =
             Arc::new(crate::admitted_databases::AdmittedDatabaseRegistry::new(readiness));
+        let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
         let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
         let endpoint = member.shared_transport();
         let public = config.public_api.as_ref();
@@ -423,7 +424,16 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
         serve_admitted_production(
             &config,
             production,
-            AdmittedProduction { member, admission, registry, progress, serving, journal, auth },
+            AdmittedProduction {
+                member,
+                admission,
+                registry,
+                metrics,
+                progress,
+                serving,
+                journal,
+                auth,
+            },
             native,
         )
         .await
@@ -461,6 +471,7 @@ struct AdmittedProduction {
     member: Arc<terrabase_cluster::production::ProductionMemberRuntime>,
     admission: Arc<crate::production_data_runtime::ProductionAdmissionRuntime>,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+    metrics: Arc<terrabase::observability::MetricsRegistry>,
     progress: Arc<crate::replication_runtime::ReplicationProgress>,
     serving: Arc<std::sync::atomic::AtomicBool>,
     journal: Option<Arc<terrabase_tbep::placement::PlacementJournal>>,
@@ -475,8 +486,16 @@ async fn serve_admitted_production(
     owners: AdmittedProduction,
     native: Arc<crate::native_backup_runtime::NativeBackupRuntime>,
 ) -> Result<bool, Box<dyn Error + Send + Sync>> {
-    let AdmittedProduction { member, admission, registry, progress, serving, journal, auth } =
-        owners;
+    let AdmittedProduction {
+        member,
+        admission,
+        registry,
+        metrics,
+        progress,
+        serving,
+        journal,
+        auth,
+    } = owners;
     let public = config.public_api.as_ref();
     let auth_for_cleanup = auth.clone();
     let native_shutdown = Arc::clone(&native);
@@ -539,7 +558,6 @@ async fn serve_admitted_production(
             .map_err(|_| DaemonError::ProductionConfigurationMissing)?,
         );
         let region = public_api_region(config.region)?;
-        let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
         let prepared_metrics = crate::production_metrics::PreparedMetrics::bind(
             production.transport.metrics_listen,
             Arc::clone(&metrics),
@@ -807,6 +825,12 @@ async fn serve_admitted_production(
         })
         .await
         .unwrap_or(Err(DaemonError::ShutdownTimeout));
+        if readiness.is_ok() {
+            // The public listener is serving only after all admitted owners
+            // and listeners have been assembled. Publish the same registry
+            // used by the API and metrics listener at that admission point.
+            metrics.transition_service(ServiceState::Serving)?;
+        }
         let listener_outcome = if readiness.is_ok() {
             tokio::select! {
                 result = wait_for_shutdown() => result.map(|()| false).map_err(|_| DaemonError::ShutdownTimeout),
@@ -849,6 +873,7 @@ async fn serve_admitted_production(
             Ok(false)
         };
         serving.store(false, std::sync::atomic::Ordering::Release);
+        metrics.transition_service(ServiceState::Draining)?;
         let _ = public_stop.send(());
         let _ = metrics_stop.send(());
         placement.begin_drain();
@@ -870,6 +895,7 @@ async fn serve_admitted_production(
         grpc_result
             .map_err(|_| DaemonError::ShutdownTimeout)?
             .map_err(|_| DaemonError::ShutdownTimeout)?;
+        metrics.transition_service(ServiceState::Stopped)?;
         let recovery_worker = recovery_worker.take().ok_or(DaemonError::ShutdownTimeout)?;
         let _ = recovery_worker.await_completion().await;
         let _ = native_stop.send(true);
@@ -2119,6 +2145,7 @@ mod tests {
                             8 * 1024 * 1024,
                         )),
                     )],
+                    historical_destinations: Vec::new(),
                     policy_revision: "startup-cleanup".into(),
                     retention_days: 1,
                     staging: root.join("backup-staging"),
@@ -2165,6 +2192,7 @@ mod tests {
             outbox_path: outbox,
         });
         let serving = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
         let config = ServerConfig {
             mode: ServerMode::Production,
             production: Some(production.clone()),
@@ -2198,6 +2226,7 @@ mod tests {
                     member: member.clone(),
                     admission: admission.clone(),
                     registry: registry.clone(),
+                    metrics: metrics.clone(),
                     progress,
                     serving: serving.clone(),
                     journal: Some(journal),
@@ -2214,6 +2243,7 @@ mod tests {
             "{error}"
         );
         assert!(!serving.load(Ordering::Acquire), "failed startup must close admission");
+        assert_eq!(metrics.snapshot().service_state(), ServiceState::Stopped);
         for address in addresses {
             let reopened = std::net::TcpListener::bind(address)
                 .expect("all public, metrics and gRPC listener tasks were joined");

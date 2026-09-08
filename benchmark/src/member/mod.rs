@@ -1307,7 +1307,7 @@ impl Member {
             return Err(MemberError::Draining);
         }
         let global = self.inner.global_admissions.try_acquire(AdmissionScope::Global)?;
-        let (local, location) = {
+        let (local, location, writer_epoch) = {
             let catalog = lock_unpoisoned(&self.inner.catalog);
             let entry = catalog
                 .databases
@@ -1345,7 +1345,11 @@ impl Member {
                 drop(global);
                 return Err(MemberError::Draining);
             }
-            (local, entry.location.clone())
+            let writer_epoch = entry
+                .accepted_role
+                .filter(|accepted| accepted.role == DatabaseRole::Writer)
+                .map(|accepted| accepted.epoch);
+            (local, entry.location.clone(), writer_epoch)
         };
         let engine = match open_database_engine(&self.inner, database, &location, allow_create) {
             Ok(engine) => engine,
@@ -1355,6 +1359,16 @@ impl Member {
                 return Err(error);
             }
         };
+        if let Some(epoch) = writer_epoch {
+            if engine.activate_origin_epoch(epoch).is_err() {
+                drop(local);
+                drop(global);
+                return Err(MemberError::EngineOpen {
+                    database: database.clone(),
+                    error: EngineOpenError::StorageUnavailable,
+                });
+            }
+        }
         let tenant = match TenantId::try_new(&engine.database_owner().tenant().to_text()) {
             Ok(tenant) => tenant,
             Err(_) => {
@@ -2521,6 +2535,7 @@ mod tests {
             )
             .unwrap();
         let lease = member.acquire(&id).unwrap();
+        assert_eq!(lease.shared_engine().origin_epoch().unwrap(), (3, false));
         member
             .accept_database_role(
                 &id,
@@ -2575,6 +2590,7 @@ mod tests {
         accept_writer(&reopened, &id);
         let lease = reopened.acquire(&id).expect("lease");
         assert_eq!(lease.database_owner(), scope.owner());
+        assert_eq!(lease.shared_engine().origin_epoch().unwrap(), (1, false));
         drop(lease);
         reopened.close(Duration::from_secs(1)).expect("close");
         let _ = fs::remove_dir_all(root);

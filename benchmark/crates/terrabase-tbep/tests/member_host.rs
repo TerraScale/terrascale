@@ -144,6 +144,49 @@ fn one_engine_journal_drives_backbone_revisions() {
     assert_eq!(batch.events[1].document, "orders/2");
 }
 
+#[test]
+fn repeated_backbone_sync_does_not_republish_durable_records() {
+    let location = TestLocation::new("journal-repeat");
+    let host = open(location.path());
+    let scope = scope();
+    bind(&host, &scope);
+    let (_, feed) = host
+        .backbone_subscribe(
+            &scope,
+            &BackboneSubscribeRequest {
+                subscription_id: 42,
+                collections: Some(vec!["orders".into()]),
+                from: SubscriptionStart::Live,
+            },
+        )
+        .expect("the backbone subscription opens");
+
+    put(&host, "orders/1", 1);
+    host.backbone_acknowledge(
+        &scope,
+        &terrabase_tbep::registry::BackboneAcknowledgeRequest {
+            subscription_id: 42,
+            through_sequence: 0,
+        },
+    )
+    .expect("the first acknowledgement synchronizes the journal");
+    let first = feed.recv().expect("the durable write is published");
+    assert!(matches!(first, TbepNotification::Batch(_)));
+
+    host.backbone_acknowledge(
+        &scope,
+        &terrabase_tbep::registry::BackboneAcknowledgeRequest {
+            subscription_id: 42,
+            through_sequence: 0,
+        },
+    )
+    .expect("repeating the acknowledgement remains idempotent");
+    assert!(
+        matches!(feed.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)),
+        "the journal cursor prevents republishing the same record"
+    );
+}
+
 /// One reactive subscription: the Seed frame carries the current state,
 /// and a later commit pumps through to a delta (`S-04`).
 #[test]

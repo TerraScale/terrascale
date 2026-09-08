@@ -306,7 +306,7 @@ pub struct NativeRecoveryRuntime {
 
 impl NativeRecoveryRuntime {
     /// Resolves an authenticated retained manifest without creating recovery state.
-    pub fn resolve_recovery_point(
+    pub async fn resolve_recovery_point(
         &self,
         source: &str,
         selection_kind: &str,

@@ -154,6 +154,14 @@ impl AdmissionHost {
         Ok(host)
     }
 
+    /// Returns the immutable admissions loaded during startup for composition-owned workers.
+    pub fn records_snapshot(&self) -> Result<BTreeMap<String, AdmissionRecord>, String> {
+        self.records
+            .lock()
+            .map(|records| records.clone())
+            .map_err(|_| "admission lock poisoned".into())
+    }
+
     fn validate(&self, record: &AdmissionRecord) -> Result<(), String> {
         if record.created_at <= 0 {
             return Err("invalid admission creation time".into());

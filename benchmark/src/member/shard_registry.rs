@@ -408,7 +408,7 @@ mod tests {
         let split_key = |collection: &str| {
             crate::shard_split::canonical_shard_key(
                 &CollectionName::try_new(collection).unwrap(),
-                &DocumentId::try_new("z-record").unwrap(),
+                &DocumentId::try_new("m-record").unwrap(),
             )
         };
         let records_split_key = split_key("records");

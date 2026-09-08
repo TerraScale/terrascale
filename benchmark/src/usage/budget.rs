@@ -163,12 +163,12 @@ impl VerifiedAllocation {
         let grant = &envelope.grant;
         // The producer wire contract uses lowercase DNS-style region tokens.
         // Keep the member's canonical uppercase RegionCode at the API edge,
-        // but reject mixed-case grant tokens before they become budget state.
+        // and reject mixed-case grant tokens before they become budget state.
         let regions = grant
             .regions
             .iter()
             .map(|region| {
-                let canonical = region.to_ascii_lowercase();
+                let canonical = region.to_ascii_uppercase();
                 (region == &canonical).then_some(canonical)
             })
             .collect::<Option<std::collections::BTreeSet<_>>>();

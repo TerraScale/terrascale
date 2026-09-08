@@ -371,6 +371,9 @@ impl AdmittedDatabaseRegistry {
         instance: u64,
     ) -> Result<(), String> {
         let scope = lease.database_owner();
+        if !(self.ready)() {
+            return Err("Member is not ready to admit databases".into());
+        }
         if scope.tenant().to_string() != record.tenant_id
             || scope.project().to_string() != record.project_id
             || scope.database().to_string() != record.database_id
@@ -516,6 +519,38 @@ impl AdmittedDatabaseRegistry {
         }
         let entry = databases.get(database).cloned();
         drop(databases);
+        if let Some(entry) = &entry {
+            let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
+                .map_err(|_| "invalid admitted tenant")?;
+            let state = entry
+                .host
+                .engine()
+                .lifecycle_state(&entry.host.engine().scope_for(&tenant))
+                .map_err(|_| "lifecycle source unavailable")?;
+            if state.paused || state.access_revoked() {
+                return Ok(None);
+            }
+        }
+        Ok(entry)
+    }
+
+    /// Resolves an already activated database while the control-plane
+    /// readiness gate is degraded. This preserves local reads for retained
+    /// leases; publication and new admission still require `ready`.
+    pub fn resolve_degraded_serving(
+        &self,
+        database: &str,
+    ) -> Result<Option<Arc<AdmittedDatabase>>, String> {
+        let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) || !serving.contains(database) {
+            return Ok(None);
+        }
+        let entry = self
+            .databases
+            .read()
+            .map_err(|_| "admitted registry unavailable")?
+            .get(database)
+            .cloned();
         if let Some(entry) = &entry {
             let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
                 .map_err(|_| "invalid admitted tenant")?;
@@ -1005,6 +1040,14 @@ pub(crate) mod tests {
         assert!(registry.resolve(&records[0].database_id).unwrap().is_some());
         ready.store(false, std::sync::atomic::Ordering::Release);
         assert!(registry.resolve(&records[0].database_id).is_err());
+        let id = terrabase::member::DatabaseId::try_new(&records[0].database_id).unwrap();
+        let lease = member.acquire(&id).unwrap();
+        assert!(
+            registry
+                .publish(records[0].clone(), lease, root.join(&records[0].database_id), 2)
+                .is_err(),
+            "degraded readiness refuses new admission"
+        );
         assert!(registry.records().is_err());
         registry.serving.write().unwrap().remove(&records[0].database_id);
         let snapshot = registry.retained_snapshot().unwrap();

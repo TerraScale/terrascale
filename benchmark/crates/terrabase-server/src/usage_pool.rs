@@ -183,7 +183,7 @@ impl UsageAdmissionJournal {
         if holder != self.member_id {
             return Err("pool holder is not local".into());
         }
-        regions = regions.into_iter().map(|r| r.to_ascii_lowercase()).collect();
+        regions = regions.into_iter().map(|r| r.to_ascii_uppercase()).collect();
         regions.sort();
         let pending: Option<Vec<u8>> = self
             .connection
@@ -223,18 +223,19 @@ impl UsageAdmissionJournal {
                 )
                 .ok_or("pool credit overflow")?;
         }
-        let through: u64 = self
+        let through = self
             .connection
             .lock()
             .map_err(|_| "pool journal lock unavailable")?
             .query_row(
                 "SELECT through_sequence FROM pool_reported WHERE database_id=?1",
                 [database],
-                |r| r.get(0),
+                |r| r.get::<_, i64>(0),
             )
             .optional()
             .map_err(|_| "pool journal read failed")?
             .unwrap_or(0);
+        let through = u64::try_from(through).map_err(|_| "pool journal read failed")?;
         let consumptions = engine
             .usage_budget_consumptions(&scope, through, 64)
             .map_err(|_| "pool consumption read failed")?;
@@ -264,9 +265,12 @@ impl UsageAdmissionJournal {
                 pool_id,
                 organization_id: organization,
                 database_id: database.clone(),
-                branch_id: String::new(),
+                branch_id: allocations
+                    .last()
+                    .map(|a| a.grant().branch_id.clone())
+                    .unwrap_or_else(|| "main".into()),
                 holder_id: holder,
-                region: self.region.to_ascii_lowercase(),
+                region: self.region.to_ascii_uppercase(),
                 selected_regions: regions,
                 placement,
                 requested_local_units: requested,
@@ -318,12 +322,13 @@ impl UsageAdmissionJournal {
                 return Err("pool acknowledgment identity mismatch".into());
             }
             if let Some(last) = work.consumptions.last() {
-                tx.execute("INSERT INTO pool_reported VALUES(?1,?2) ON CONFLICT(database_id) DO UPDATE SET through_sequence=MAX(through_sequence,excluded.through_sequence)", params![ack.database_id, last.sequence]).map_err(|_| "pool cursor persistence failed")?;
+                let sequence = i64::try_from(last.sequence).map_err(|_| "pool cursor overflow")?;
+                tx.execute("INSERT INTO pool_reported VALUES(?1,?2) ON CONFLICT(database_id) DO UPDATE SET through_sequence=MAX(through_sequence,excluded.through_sequence)", params![ack.database_id, sequence]).map_err(|_| "pool cursor persistence failed")?;
             }
             tx.execute("DELETE FROM pool_work WHERE database_id=?1", [&ack.database_id])
                 .map_err(|_| "pool work persistence failed")?;
         }
-        tx.commit().map_err(|_| "pool work sync failed")
+        tx.commit().map_err(|_| "pool work sync failed".to_owned())
     }
 }
 

@@ -221,10 +221,10 @@ impl NativeBackupFleet {
             return Err(FleetError::Configuration);
         }
         let limits = self.limits;
-        let mut seen = BTreeSet::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut manifests = Vec::with_capacity(participants.len());
         for (database, boundary) in participants {
-            if !seen.insert(database) || seen.len() > limits.streams {
+            if !seen.insert(database.clone()) || seen.len() > limits.streams {
                 return Err(FleetError::Configuration);
             }
             let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
@@ -306,15 +306,16 @@ impl NativeBackupFleet {
             .open(&marker)
             .map_err(|_| FleetError::Capture)?;
         file.sync_all().map_err(|_| FleetError::Capture)?;
-        std::fs::rename(&temporary, &published).map_err(|_| FleetError::Capture)?;
-        super::sync_directory(&catalog).map_err(|_| FleetError::Capture)?;
         for (_provider, destination) in &stream.config.destinations {
             let prefix = format!("{}/envelopes/{name}", first.database_id);
-            destination
-                .upload_envelope(&published.join("envelope.tbv1"), &prefix)
-                .await
-                .map_err(|_| FleetError::Upload)?;
+            destination.upload_envelope(&marker, &prefix).await.map_err(|_| FleetError::Upload)?;
         }
+        // Keep the local catalog unpublished until every configured provider
+        // has acknowledged the exact staged envelope.  A failed provider
+        // must leave the durable marker retryable rather than exposing an
+        // envelope that is only partially replicated.
+        std::fs::rename(&temporary, &published).map_err(|_| FleetError::Capture)?;
+        super::sync_directory(&catalog).map_err(|_| FleetError::Capture)?;
         Ok(published)
     }
 
@@ -499,14 +500,29 @@ impl NativeBackupFleet {
         {
             return Err(FleetError::Configuration);
         }
-        let mut historical_destinations = config.historical_destinations.clone();
-        historical_destinations.extend(config.destinations.iter().cloned());
         let mut seen_destinations = BTreeSet::new();
-        if historical_destinations.iter().any(|(provider, destination)| {
+        if config.historical_destinations.iter().any(|(provider, destination)| {
             *provider != destination.provider()
                 || destination.admitted_region() != config.engine.engine().database_owner().region()
                 || !seen_destinations.insert(destination.identity().to_owned())
         }) {
+            return Err(FleetError::Configuration);
+        }
+        let mut historical_destinations = config.historical_destinations.clone();
+        for destination in config.destinations.iter().cloned() {
+            if seen_destinations.insert(destination.1.identity().to_owned()) {
+                historical_destinations.push(destination);
+            }
+        }
+        let required_history = read_policy_history(&config.staging.join("policy-active"))?;
+        let available_history = historical_destinations
+            .iter()
+            .map(|(provider, _)| match provider {
+                Provider::Oci => "oci",
+                Provider::Tigris => "tigris",
+            })
+            .collect::<BTreeSet<_>>();
+        if !required_history.is_subset(&available_history) {
             return Err(FleetError::Configuration);
         }
         config.historical_destinations = historical_destinations;
@@ -1655,6 +1671,36 @@ fn read_upload_journal(
     Ok(points)
 }
 
+fn read_policy_history(path: &Path) -> Result<BTreeSet<&'static str>, FleetError> {
+    use std::io::Read;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(BTreeSet::new());
+        }
+        Err(_) => return Err(FleetError::Capture),
+    };
+    let mut body = String::new();
+    file.take(1025).read_to_string(&mut body).map_err(|_| FleetError::Capture)?;
+    if body.len() > 1024 {
+        return Err(FleetError::Capture);
+    }
+    let mut lines = body.lines();
+    if lines.next().is_none() {
+        return Err(FleetError::Capture);
+    }
+    let mut providers = BTreeSet::new();
+    for line in lines {
+        let provider = match line {
+            "oci" => "oci",
+            "tigris" => "tigris",
+            _ => return Err(FleetError::Capture),
+        };
+        providers.insert(provider);
+    }
+    Ok(providers)
+}
+
 fn persist_upload_journal(
     path: &Path,
     revision: &str,
@@ -1712,6 +1758,88 @@ mod tests {
             )
             .unwrap(),
         )))
+    }
+
+    #[tokio::test]
+    async fn envelope_catalog_is_not_published_when_a_provider_fails() {
+        use object_store::ObjectStore;
+
+        let (_, engine) = open_engine("fleet-envelope-atomicity");
+        let engine = Arc::new(engine);
+        let database = engine.database_id().to_string();
+        let staging = location("fleet-envelope-atomicity-staging");
+        let good_store = Arc::new(object_store::memory::InMemory::new());
+        let good = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            good_store,
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let mut fleet = NativeBackupFleet::new(FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
+            inventory_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 4,
+        })
+        .unwrap();
+        fleet
+            .attach(StreamConfig {
+                engine: Arc::clone(&engine) as Arc<dyn BackupEngineHandle>,
+                keys: keys(&engine),
+                destinations: vec![(Provider::Oci, Arc::clone(&good))],
+                historical_destinations: Vec::new(),
+                policy_revision: "envelope-atomicity".into(),
+                retention_days: 1,
+                staging: staging.clone(),
+                placement: PlacementLock::br_only(),
+            })
+            .unwrap();
+
+        let manifest = fleet.capture_snapshot(&database).await.unwrap();
+        let incarnation = u128::from_be_bytes(engine.database_id().as_bytes());
+        let envelope = BackupEnvelope::assemble(
+            database.clone(),
+            incarnation,
+            1,
+            vec![BackupEnvelopeParticipant {
+                participant_id: "shard-0000000000000001".into(),
+                database_id: database.clone(),
+                database_incarnation: incarnation,
+                route_generation: 1,
+                boundary: manifest.boundary_sequence().get(),
+                manifest,
+            }],
+        )
+        .unwrap();
+
+        let broken_path = location("fleet-envelope-atomicity-provider");
+        std::fs::create_dir_all(&broken_path).unwrap();
+        let unavailable =
+            object_store::local::LocalFileSystem::new_with_prefix(&broken_path).unwrap();
+        std::fs::remove_dir(&broken_path).unwrap();
+        std::fs::write(&broken_path, b"provider unavailable").unwrap();
+        fleet.streams.get_mut(&database).unwrap().config.destinations = vec![(
+            Provider::Oci,
+            Arc::new(ObjectDestination::for_test(
+                Provider::Oci,
+                Arc::new(unavailable) as Arc<dyn ObjectStore>,
+                4 * 1024 * 1024,
+                8 * 1024 * 1024,
+            )),
+        )];
+
+        let name = format!("env-{}", envelope.digest());
+        let published = staging.join("envelopes").join(&name);
+        assert_eq!(fleet.publish_envelope(&envelope).await, Err(FleetError::Upload));
+        assert!(!published.exists());
+        assert!(staging.join("envelopes").join(format!(".{name}.staging")).exists());
+
+        fleet.streams.get_mut(&database).unwrap().config.destinations = vec![(Provider::Oci, good)];
+        assert_eq!(fleet.publish_envelope(&envelope).await.unwrap(), published);
+        assert!(published.join("envelope.tbv1").exists());
+
+        std::fs::remove_dir_all(staging).unwrap();
+        std::fs::remove_file(broken_path).unwrap();
     }
 
     #[tokio::test]

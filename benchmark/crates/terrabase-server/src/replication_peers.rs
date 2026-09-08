@@ -1030,9 +1030,9 @@ async fn session(
                     sent.remove(&scope);
                 } else {
                     let causal = lane.causal.clone().ok_or_else(|| "unassigned causal lane".to_owned())?;
-                    let runtime = runtime.clone();
+                    let worker = runtime.clone();
                     let (result, sequence, frontier, source_sequence) = tokio::task::spawn_blocking(move || {
-                        let engine = runtime.acquire_replication(&scope).map_err(failure)?;
+                        let engine = worker.acquire_replication(&scope).map_err(failure)?;
                         let mut causal = causal.lock().map_err(failure)?;
                         let result = causal.receive_frame(&engine, &bytes, 0).map_err(failure)?;
                         let tenant = engine.scope_for(&terrabase::types::TenantId::try_new(&scope.tenant().to_text()).map_err(failure)?);

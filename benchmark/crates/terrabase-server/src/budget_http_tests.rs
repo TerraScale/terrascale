@@ -590,3 +590,51 @@ async fn public_writes_consume_signed_included_and_paid_allocations_once() {
         assert_eq!(facts, 1, "retry must not duplicate billed usage; paid={paid}, batch={batch}");
     }
 }
+
+#[tokio::test]
+async fn schema_two_refills_install_independently_and_replay_after_journal_reopen() {
+    let (first, spki, key) =
+        signed_for_regions("org", "db", "refill-first", false, vec!["GRU", "SFO"]);
+    let verifier = AllocationVerifierConfig {
+        key_id: first["key_id"].as_str().unwrap().into(),
+        public_key_spki: spki,
+        policy_epoch: 1,
+        consent_epoch: 1,
+        resolver: Arc::new(Binding {
+            organization: "org".into(),
+            holder: "holder".into(),
+            placement: "db-placement".into(),
+            writer_epoch: 9,
+            selected_regions: vec!["GRU".into(), "SFO".into()],
+        }),
+    };
+    let fixture = Fixture::with_verifier("holder", Some(verifier.clone()));
+    let key_id = first["key_id"].as_str().unwrap();
+    let mut payload: Value =
+        serde_json::from_slice(&STANDARD.decode(first["payload"].as_str().unwrap()).unwrap())
+            .unwrap();
+    payload["grant"]["refill_operation_id"] = Value::String("refill-second".into());
+    payload["grant"]["pool_sequence"] = Value::from(2u64);
+    let second = sign_allocation(&key, key_id, &serde_json::to_vec(&payload).unwrap());
+    let app = fixture.router();
+    for signed in [first, second] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/internal/v1/databases/usage/allocation")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&signed).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let connection =
+        rusqlite::Connection::open(fixture.root.join("usage-admissions.sqlite")).unwrap();
+    let count: i64 =
+        connection.query_row("SELECT COUNT(*) FROM allocations", [], |row| row.get(0)).unwrap();
+    assert_eq!(count, 2, "each refill has its own durable identity");
+    let reopened = fixture.reopen(verifier);
+    assert!(reopened.resolve_allocation("refill-second", "db").unwrap().is_some());
+}

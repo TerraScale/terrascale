@@ -352,7 +352,7 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
             let _ = persist(engine, &expected, &record);
             return Some(collection);
         }
-        if !persist(engine, &expected, &record) {
+        if !persist(engine, &expected, &record).is_ok_and(|persisted| persisted) {
             return Some(collection);
         }
     }

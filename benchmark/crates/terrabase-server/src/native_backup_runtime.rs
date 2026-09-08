@@ -57,6 +57,9 @@ pub struct NativeBackupInput {
     pub keys: Arc<dyn BackupKeys>,
     /// Every selected provider and its independently authenticated destination.
     pub destinations: Vec<(Provider, Arc<ObjectDestination>)>,
+    /// Every destination retained by the durable policy history, including
+    /// destinations retired from the current policy.
+    pub historical_destinations: Vec<(Provider, Arc<ObjectDestination>)>,
     /// Durable effective account-policy revision.
     pub policy_revision: String,
     /// PITR retention selected by the effective plan.
@@ -184,6 +187,7 @@ impl NativeBackupRuntime {
                     engine: input.engine,
                     keys: input.keys,
                     destinations: input.destinations,
+                    historical_destinations: input.historical_destinations,
                     policy_revision: input.policy_revision,
                     retention_days: input.retention_days,
                     staging: input.staging,
@@ -378,6 +382,7 @@ impl NativeBackupRuntime {
                 engine: input.engine,
                 keys: input.keys,
                 destinations: input.destinations,
+                historical_destinations: input.historical_destinations,
                 policy_revision: input.policy_revision,
                 retention_days: input.retention_days,
                 staging: input.staging,
@@ -660,6 +665,7 @@ mod restore_tests {
                         8 * 1024 * 1024,
                     )),
                 )],
+                historical_destinations: Vec::new(),
                 policy_revision: "supervisor-policy".into(),
                 retention_days: 1,
                 staging: root.join(label),
@@ -766,6 +772,7 @@ mod restore_tests {
                         8 * 1024 * 1024,
                     )),
                 )],
+                historical_destinations: Vec::new(),
                 policy_revision: "native-pitr-fixture".into(),
                 retention_days: 1,
                 staging: root.join(&record.database_id),
@@ -909,6 +916,7 @@ mod restore_tests {
                         8 * 1024 * 1024,
                     )),
                 )],
+                historical_destinations: Vec::new(),
                 policy_revision: "restore-policy".into(),
                 retention_days: 1,
                 staging: root.join("backup-target"),

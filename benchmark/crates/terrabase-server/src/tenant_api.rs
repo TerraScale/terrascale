@@ -200,7 +200,9 @@ impl PlacementLock {
         crate::control::validate_placement(&catalog, &self.placement)
             .map_err(|_| TenantApiError::InvalidInput("placement"))?;
         if let Some(residency) = &self.residency {
-            if residency.is_empty() || residency.len() > MAX_IDENTIFIER_BYTES || !residency.is_ascii()
+            if residency.is_empty()
+                || residency.len() > MAX_IDENTIFIER_BYTES
+                || !residency.is_ascii()
             {
                 return Err(TenantApiError::InvalidInput("residency"));
             }

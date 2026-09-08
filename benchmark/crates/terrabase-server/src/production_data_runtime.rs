@@ -843,6 +843,7 @@ impl ProductionAdmissionRuntime {
             callback,
         )?
         .with_usage_delivery(usage.clone());
+        records.lock().map_err(|_| "admission registry poisoned")?.extend(host.records_snapshot()?);
         Ok(Self {
             runtime,
             member,
@@ -994,6 +995,14 @@ impl ProductionAdmissionRuntime {
         let records = self.admitted_records()?;
         let mut inputs = Vec::new();
         for snapshot in snapshots.into_iter().filter(|snapshot| snapshot.activated) {
+            let read_cut = snapshot
+                .database
+                .host
+                .admitted_shard_read_cut()
+                .map_err(|_| "admitted shard inventory unavailable")?;
+            ensure_native_backup_shard_capture_supported(
+                read_cut.as_ref().and_then(|cut| cut.route_generation),
+            )?;
             let record = records
                 .iter()
                 .find(|record| record.database_id == snapshot.database.record.database_id)
@@ -1042,6 +1051,7 @@ impl ProductionAdmissionRuntime {
                         .map_err(|_| "backup key authorization unavailable")?,
                 ),
                 destinations,
+                historical_destinations: destinations.clone(),
                 policy_revision: policy.policy_revision.clone(),
                 retention_days: policy.retention_days,
                 staging: self
@@ -1153,6 +1163,7 @@ impl ProductionAdmissionRuntime {
                     .map_err(|_| "backup key authorization unavailable")?,
             ),
             destinations,
+            historical_destinations: destinations.clone(),
             policy_revision: policy.policy_revision.clone(),
             retention_days: policy.retention_days,
             staging: configured.backup_root.clone(),
@@ -1858,6 +1869,19 @@ impl ProductionAdmissionRuntime {
     }
 }
 
+/// Native fleet ticks capture one database stream at a time. A durable shard
+/// route needs the common-cut envelope caller, which is not part of startup
+/// composition yet; refusing admission keeps a sharded database from being
+/// advertised as protected while only its source participant is backed up.
+fn ensure_native_backup_shard_capture_supported(
+    route_generation: Option<u64>,
+) -> Result<(), String> {
+    if route_generation.is_some() {
+        return Err("native backup shard envelope capture is unavailable".into());
+    }
+    Ok(())
+}
+
 fn record_scope(record: &crate::admission::AdmissionRecord) -> Result<DatabaseRouteScope, String> {
     DatabaseRouteScope::try_new(&record.tenant_id, &record.project_id, &record.database_id)
         .map_err(failure)
@@ -1963,6 +1987,15 @@ impl terrabase::member::DatabaseRoleAuthority for VerifiedRole {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+
+    #[test]
+    fn native_backup_startup_rejects_installed_shard_routes() {
+        assert_eq!(ensure_native_backup_shard_capture_supported(None), Ok(()));
+        assert_eq!(
+            ensure_native_backup_shard_capture_supported(Some(7)),
+            Err("native backup shard envelope capture is unavailable".into())
+        );
+    }
 
     #[tokio::test]
     async fn readiness_inventory_preserves_outages_but_revokes_invalid_authority() {
