@@ -118,17 +118,17 @@ impl NativeBackupRuntime {
         }
         let common_cut = cut
             .participants
-            .iter()
-            .map(|participant| participant.snapshot.sequence())
-            .min()
-            .ok_or(NativeBackupRuntimeError::Envelope)?;
-        let database_id = cut
-            .participants
             .first()
             .ok_or(NativeBackupRuntimeError::Envelope)?
-            .engine
-            .database_id()
-            .to_string();
+            .snapshot
+            .sequence();
+        if cut
+            .participants
+            .iter()
+            .any(|participant| participant.snapshot.sequence() != common_cut)
+        {
+            return Err(NativeBackupRuntimeError::Envelope);
+        }
         let participants = cut
             .participants
             .iter()
@@ -142,7 +142,7 @@ impl NativeBackupRuntime {
             })
             .collect();
         BackupEnvelope::assemble(
-            database_id,
+            cut.database_id.clone(),
             cut.database_incarnation,
             route_generation,
             common_cut,

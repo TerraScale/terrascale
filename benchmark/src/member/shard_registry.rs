@@ -28,6 +28,8 @@ pub struct AdmittedShardParticipant {
 /// Owned bounded lane inventory and read cut for one admitted database.
 #[derive(Clone)]
 pub struct AdmittedShardReadCut {
+    /// Logical database identity of the admitted source database.
+    pub database_id: String,
     /// Durable logical database incarnation shared by all participants.
     pub database_incarnation: u128,
     /// Exact catalog generation; absent before the first shard catalog is installed.
@@ -136,6 +138,7 @@ impl RouteParticipantRegistry {
             });
         }
         Ok(AdmittedShardReadCut {
+            database_id: self.source.database_id().to_string(),
             database_incarnation: u128::from_be_bytes(self.source.database_id().as_bytes()),
             route_generation: generation,
             participants,
@@ -409,6 +412,7 @@ mod tests {
         let source_scope = source.scope_for(tenant);
         let target_scope = target.scope_for(tenant);
         let cut = AdmittedShardReadCut {
+            database_id: source.database_id().to_string(),
             database_incarnation: 0x1234,
             route_generation: Some(1),
             participants: vec![
