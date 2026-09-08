@@ -210,8 +210,7 @@ impl Engine {
             )?;
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
-            let opened = Self::open(staged).map_err(|e| { eprintln!("staged open error: {e:?}"); e })?;
-            drop(opened);
+            drop(Self::open(staged)?);
             drop(registration);
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())

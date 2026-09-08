@@ -1116,6 +1116,14 @@ pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<(),
     validate_match_values(&parsed, parameters)?;
     validate_paging_bounds(&parsed, parameters)?;
     let subset = classify_live_subset(&parsed);
+    // MATCH is a typed query operator.  Execute-only shapes would otherwise
+    // fall through to the SQLite adapter, where the plain collection views
+    // have no FTS virtual table and the request could bypass the typed FTS
+    // boundary.  Keep execute-only SQL available for ordinary projections,
+    // joins, and reducers, but refuse any statement that carries MATCH.
+    if matches!(subset, LiveSubset::ExecuteOnly { .. }) && contains_match(&parsed) {
+        return Err(SqlError::binding(SqlErrorClass::UnsupportedStatement, "MATCH"));
+    }
     if matches!(subset, LiveSubset::Live) {
         match lower(&parsed, parameters) {
             Ok(_) => return Ok(()),
@@ -1141,6 +1149,28 @@ pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// Reports whether a parsed statement contains a `MATCH` predicate anywhere
+/// in its expression tree.
+fn contains_match(parsed: &ParsedSql) -> bool {
+    struct MatchFinder(bool);
+
+    impl Visitor for MatchFinder {
+        type Break = ();
+
+        fn pre_visit_expr(&mut self, expression: &Expr) -> ControlFlow<Self::Break> {
+            if matches!(expression, Expr::BinaryOp { op: BinaryOperator::Match, .. }) {
+                self.0 = true;
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        }
+    }
+
+    let mut finder = MatchFinder(false);
+    let _ = parsed.statement().visit(&mut finder);
+    finder.0
 }
 
 /// Validates every SQL `MATCH` operand before either the typed or SQLite
@@ -1628,6 +1658,22 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn execute_only_match_shapes_are_rejected_before_sqlite() {
+        let parameters = SqlParameters::try_new(&[(
+            "query",
+            DocumentValue::String("quick".to_owned()),
+        )])
+        .unwrap();
+        let error = validate_parameters(
+            "SELECT users._id FROM users JOIN archive ON users._id = archive._id WHERE users.body MATCH :query",
+            &parameters,
+        )
+        .unwrap_err();
+        assert_eq!(error.class(), SqlErrorClass::UnsupportedStatement);
+        assert_eq!(error.construct(), Some("MATCH"));
     }
 
     #[test]

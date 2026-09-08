@@ -221,6 +221,28 @@ fn plaintext_integration_fixtures_are_available_only_to_in_crate_tests() {
 }
 
 #[test]
+fn capture_artifact_identity_is_stable_per_boundary_and_unique_across_boundaries() {
+    let database = crate::identity::DatabaseUlid::generate();
+    let first = crate::backup::capture_artifact_id(
+        database,
+        BackupKind::Full,
+        StorageSequence::new(7),
+    );
+    let retry = crate::backup::capture_artifact_id(
+        database,
+        BackupKind::Full,
+        StorageSequence::new(7),
+    );
+    let next = crate::backup::capture_artifact_id(
+        database,
+        BackupKind::Full,
+        StorageSequence::new(8),
+    );
+    assert_eq!(first, retry, "an uncertain retry reuses the capture artifact key");
+    assert_ne!(first, next, "a new boundary cannot reuse the capture artifact key");
+}
+
+#[test]
 fn production_backup_capability_rejects_inactive_region_and_non_backup_keys() {
     let owner = DatabaseOwner::local_development();
     let inactive = RegionCode::from_text("JFK").expect("well-formed inactive Region");

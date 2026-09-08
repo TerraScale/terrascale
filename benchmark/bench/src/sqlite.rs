@@ -35,7 +35,7 @@ fn open_pinned(path: &std::path::Path) -> Result<Connection, Box<dyn Error + Sen
     let connection = Connection::open(path)?;
     let journal_mode: String =
         connection.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
-    if journal_mode.to_ascii_lowercase() != "wal" {
+    if !journal_mode.eq_ignore_ascii_case("wal") {
         return Err(format!("journal_mode refused WAL: {journal_mode}").into());
     }
     connection.pragma_update(None, "synchronous", "FULL")?;

@@ -871,14 +871,27 @@ mod restore_tests {
             .await
             .unwrap();
         assert_eq!(receipt.selected_identity(), point.identity());
+        assert_eq!(receipt.expected_documents(), 1);
+        assert_eq!(receipt.decoded_documents(), 1);
+        assert_eq!(receipt.restored_documents(), 1);
+        assert_eq!(receipt.documents_read_back(), 1);
         let restored = terrabase::Engine::open(target_config).unwrap();
         let scope = restored.scope_for(&target_tenant);
         let snapshot = restored.read_snapshot(&scope).unwrap();
+        let direct = restored
+            .snapshot_documents_in_collection(
+                &scope,
+                &snapshot,
+                &terrabase::types::CollectionName::try_new("native-pitr").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(direct.len(), 1);
+        assert_eq!(direct[0].id().as_str(), "native-pitr-doc");
         let plan = restored
             .queries()
             .compile(QueryInput::sql(
                 SqlQueryText::try_new(
-                    "SELECT value FROM \"native-pitr\" WHERE _id = 'native-pitr-doc'",
+                    "SELECT _id FROM \"native-pitr\" WHERE _id = 'native-pitr-doc'",
                 )
                 .unwrap(),
             ))

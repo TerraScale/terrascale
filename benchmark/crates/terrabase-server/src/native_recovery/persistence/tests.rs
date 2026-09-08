@@ -207,3 +207,25 @@ fn oversized_checkpoint_is_rejected_on_load() {
     .unwrap();
     assert_eq!(load_checkpoint(&c, "db", "op"), Err(NativeRecoveryError::VerificationFailed));
 }
+
+#[test]
+fn oversized_checkpoint_is_rejected_on_save_without_mutation() {
+    let database = database();
+    let c = database.open();
+    let state = operation(NativeRecoveryPhase::Measuring);
+    insert(&c, &state);
+    let oversized = Checkpoint { recovery_point_id: "x".repeat(262_144), ..point() };
+    let before: (String, Vec<u8>, Option<Vec<u8>>) = c
+        .query_row("SELECT phase,record,checkpoint FROM native_recovery_operations", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .unwrap();
+
+    assert_eq!(save(&c, &state, Some(&oversized)), Err(NativeRecoveryError::Unavailable));
+    let after: (String, Vec<u8>, Option<Vec<u8>>) = c
+        .query_row("SELECT phase,record,checkpoint FROM native_recovery_operations", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .unwrap();
+    assert_eq!(after, before);
+}

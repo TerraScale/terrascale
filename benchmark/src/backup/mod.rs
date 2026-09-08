@@ -266,6 +266,36 @@ pub enum BackupKind {
     Snapshot,
 }
 
+/// Derives the encryption artifact identity for one logical capture.
+///
+/// The storage boundary is the operation identity: rebuilding a capability
+/// after an uncertain result for the same boundary must reuse the artifact
+/// key, while a different boundary must receive a different key so ordinal
+/// zero is never reused under one artifact key.
+pub(crate) fn capture_artifact_id(
+    database: DatabaseUlid,
+    kind: BackupKind,
+    boundary: StorageSequence,
+) -> crate::identity::Ulid {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"terrabase-backup-artifact-v1\0");
+    hasher.update(database.to_text().as_bytes());
+    hasher.update(&[0]);
+    match kind {
+        BackupKind::Full => hasher.update(b"full"),
+        BackupKind::Snapshot => hasher.update(b"snapshot"),
+        BackupKind::Incremental { base } => {
+            hasher.update(b"incremental");
+            hasher.update(&base.get().to_be_bytes());
+        }
+    }
+    hasher.update(&boundary.get().to_be_bytes());
+    let mut bytes = *hasher.finalize().as_bytes();
+    // ULID's first bit is reserved by its 128-bit textual encoding.
+    bytes[0] &= 0x7f;
+    crate::identity::Ulid::from_bytes(bytes[..16].try_into().expect("fixed digest prefix"))
+}
+
 /// A validated authorization to encrypt backup artifacts for one database.
 ///
 /// Production composition must obtain this capability from an OCI Vault
@@ -321,6 +351,24 @@ impl BackupEncryption {
         region: RegionCode,
         next_ordinal: u128,
     ) -> Result<Self, BackupEncryptionError> {
+        Self::from_database_key_lease_with_artifact_id(
+            lease,
+            region,
+            next_ordinal,
+            crate::identity::generate(),
+        )
+    }
+
+    /// Creates a production backup capability with a caller-supplied artifact
+    /// identity. Capture callers must derive this from the immutable logical
+    /// capture facts when they need an uncertain retry to reproduce the exact
+    /// encrypted bytes (and therefore the same recovery-point identity).
+    pub(crate) fn from_database_key_lease_with_artifact_id(
+        lease: &DatabaseKeyLease,
+        region: RegionCode,
+        next_ordinal: u128,
+        artifact_id: crate::identity::Ulid,
+    ) -> Result<Self, BackupEncryptionError> {
         if !RegionCatalog::production().is_registered(&region) {
             return Err(BackupEncryptionError::InvalidRegion);
         }
@@ -330,7 +378,6 @@ impl BackupEncryption {
         if scope.purpose() != KeyPurpose::Backup {
             return Err(BackupEncryptionError::InvalidKeyPurpose);
         }
-        let artifact_id = crate::identity::generate();
         let context = EncryptionContext::for_artifact(
             &scope,
             ArtifactKind::Backup,

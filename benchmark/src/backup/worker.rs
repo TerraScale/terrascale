@@ -1622,6 +1622,7 @@ async fn sync_stream(
                     bytes,
                     Some(base),
                     true,
+                    base,
                     reader.clone(),
                 )?
                 .with_capture_unix_millis(clock);
@@ -1670,6 +1671,7 @@ async fn sync_stream(
                 staged_bytes(&stream.config.staging)?,
                 base,
                 false,
+                high_water,
                 reader.clone(),
             )?;
             if let Some(clock) = bridge_clock {
@@ -1718,13 +1720,25 @@ fn capture_plan(
     total_bytes: u64,
     base: Option<StorageSequence>,
     rotate: bool,
+    boundary: StorageSequence,
     reader: Arc<dyn BackupReader + Send + Sync>,
 ) -> Result<BackupPlan, FleetError> {
     let lease = stream.config.keys.lease().map_err(|_| FleetError::Capture)?;
-    let encryption = BackupEncryption::from_database_key_lease(
+    let kind = match (base, rotate) {
+        (Some(base), true) => super::BackupKind::Snapshot,
+        (Some(base), false) => super::BackupKind::Incremental { base },
+        (None, _) => super::BackupKind::Full,
+    };
+    let artifact_id = super::capture_artifact_id(
+        stream.config.engine.engine().database_id(),
+        kind,
+        boundary,
+    );
+    let encryption = BackupEncryption::from_database_key_lease_with_artifact_id(
         &lease,
         stream.config.engine.engine().database_owner().region(),
         0,
+        artifact_id,
     )
     .map_err(|_| FleetError::Capture)?;
     let plan = match (base, rotate) {

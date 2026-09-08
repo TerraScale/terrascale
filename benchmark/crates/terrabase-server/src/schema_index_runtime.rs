@@ -89,6 +89,13 @@ pub(super) fn advance(
             )
             .map_err(|_| "field uniqueness installation failed")?;
     }
+    // Keep the previous schema authoritative until every declared index in
+    // the replacement schema has committed. A unique index can return false
+    // while its bounded validation frontier is still advancing; retiring an
+    // old index in that state would expose a partially published schema.
+    if !ready {
+        return Ok(false);
+    }
     remove_retired_indexes(
         engine,
         scope,

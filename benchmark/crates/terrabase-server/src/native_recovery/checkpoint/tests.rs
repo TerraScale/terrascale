@@ -490,3 +490,29 @@ fn failures_reload_last_durable_state_without_recapture() {
     );
     assert_eq!(captures.get(), 1);
 }
+
+#[test]
+fn measurement_failure_keeps_durable_checkpoint_and_measuring_phase() {
+    let mut operation = state(NativeRecoveryPhase::Measuring);
+    let persisted = RefCell::new(vec![(state(NativeRecoveryPhase::Measuring), Some(point()))]);
+    assert_eq!(
+        advance(
+            &mut operation,
+            Some(point()),
+            &["GRU".into()],
+            || panic!("capture after durable checkpoint"),
+            |state, checkpoint| {
+                persisted.borrow_mut().push((state.clone(), checkpoint.cloned()));
+                Ok(())
+            },
+            |_| Err(NativeRecoveryError::Unavailable),
+        ),
+        Err(NativeRecoveryError::Unavailable)
+    );
+    assert_eq!(operation.phase, NativeRecoveryPhase::Measuring);
+    assert!(operation.facts.is_none());
+    assert_eq!(
+        persisted.into_inner(),
+        vec![(state(NativeRecoveryPhase::Measuring), Some(point()))]
+    );
+}
