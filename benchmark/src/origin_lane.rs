@@ -35,7 +35,10 @@ impl OriginLaneId {
         let region = RegionId::try_new(parts.next().ok_or(OriginLaneError::Malformed)?)
             .map_err(|_| OriginLaneError::Malformed)?;
         let hex = parts.next().ok_or(OriginLaneError::Malformed)?;
-        if parts.next().is_some() || hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        if parts.next().is_some()
+            || hex.len() != 32
+            || !hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
             return Err(OriginLaneError::Malformed);
         }
         let incarnation = u128::from_str_radix(hex, 16).map_err(|_| OriginLaneError::Malformed)?;

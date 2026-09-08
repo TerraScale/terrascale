@@ -386,6 +386,11 @@ impl BackupManifest {
         self.render().into_bytes()
     }
 
+    /// Verifies every archive member against this manifest before restore.
+    pub fn verify(&self, destination: &std::path::Path) -> Result<(), BackupError> {
+        super::verify_members(destination, &self.identity, &self.members)
+    }
+
     /// Parses and validates one canonical recovery-point manifest.
     ///
     /// The same strict size, ordering, identity, and path checks used by the

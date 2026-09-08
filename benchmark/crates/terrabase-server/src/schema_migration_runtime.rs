@@ -19,6 +19,8 @@ use terrabase::families::migrations::{
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SavedPlan {
+    /// The public schema generation that admitted this migration.
+    generation: u64,
     manifest: String,
     documents: u64,
     source_digest: String,
@@ -30,7 +32,7 @@ struct SavedPlan {
 }
 
 impl SavedPlan {
-    fn capture(plan: &MigrationPlan) -> Result<Vec<u8>, String> {
+    fn capture(generation: u64, plan: &MigrationPlan) -> Result<Vec<u8>, String> {
         let PlanOutcome::Ready { documents, source_digest, result_digest, transform_counts } =
             plan.outcome()
         else {
@@ -40,6 +42,7 @@ impl SavedPlan {
             );
         };
         serde_json::to_vec(&Self {
+            generation,
             manifest: plan.manifest().to_owned(),
             documents: *documents,
             source_digest: source_digest.clone(),
@@ -52,9 +55,16 @@ impl SavedPlan {
         .map_err(|_| "migration evidence encoding failed".into())
     }
 
-    fn restore(bytes: &[u8], contract: &SchemaMigration) -> Result<MigrationPlan, String> {
+    fn restore(
+        bytes: &[u8],
+        generation: u64,
+        contract: &SchemaMigration,
+    ) -> Result<MigrationPlan, String> {
         let saved: Self = serde_json::from_slice(bytes)
             .map_err(|_| "saved migration evidence is malformed".to_owned())?;
+        if saved.generation != generation {
+            return Err("saved migration evidence belongs to another schema generation".into());
+        }
         MigrationPlan::restore_ready(
             contract,
             &saved.manifest,
@@ -185,7 +195,7 @@ fn advance(engine: &terrabase::Engine, record: &mut DurableSchemaRecord) -> Resu
         let Some(bytes) = record.migration_plan.as_deref() else {
             let plan = migrations::dry_run(engine, &scope, &contract)
                 .map_err(|error| format!("migration dry run stopped: {error:?}"))?;
-            record.migration_plan = Some(SavedPlan::capture(&plan)?);
+            record.migration_plan = Some(SavedPlan::capture(record.document.generation, &plan)?);
             if let Some(migration) = record.document.migration.as_mut() {
                 if let PlanOutcome::Ready { documents, .. } = plan.outcome() {
                     migration.total = *documents;
@@ -195,7 +205,7 @@ fn advance(engine: &terrabase::Engine, record: &mut DurableSchemaRecord) -> Resu
             // The caller commits the plan before any core migration mutation.
             return Ok(false);
         };
-        let plan = SavedPlan::restore(bytes, &contract)?;
+        let plan = SavedPlan::restore(bytes, record.document.generation, &contract)?;
         if matches!(
             migrations::status(engine, &scope, contract.collection()),
             Ok(MigrationStatus::Stopped { .. } | MigrationStatus::RollingBack { .. })
@@ -249,6 +259,48 @@ fn advance(engine: &terrabase::Engine, record: &mut DurableSchemaRecord) -> Resu
     super::schema_index_runtime::advance(engine, &scope, record)
 }
 
+/// Reconcile the public progress projection with the core migration record
+/// before starting another page.  The core page commit is authoritative after
+/// a crash; recording its page count first prevents a replay from advertising
+/// an older cursor while the next batch is admitted.
+fn checkpoint_before_batch(
+    engine: &terrabase::Engine,
+    record: &mut DurableSchemaRecord,
+) -> Result<(), String> {
+    let Some(plan_bytes) = record.migration_plan.as_deref() else {
+        return Ok(());
+    };
+    let Some(migration) = record.document.migration.as_ref() else {
+        return Ok(());
+    };
+    if !migration.steps.iter().any(|step| step.kind == "field_rename") {
+        return Ok(());
+    }
+    let contract = contract(record)?;
+    let _plan = SavedPlan::restore(plan_bytes, record.document.generation, &contract)?;
+    let scope = document_scope(engine).map_err(|()| "database scope is unavailable".to_owned())?;
+    match migrations::status(engine, &scope, contract.collection())
+        .map_err(|error| format!("migration status unavailable: {error:?}"))?
+    {
+        MigrationStatus::InProgress { documents, pages, .. } => {
+            if let Some(migration) = record.document.migration.as_mut() {
+                migration.completed = documents;
+                migration.next_cursor = Some(format!("page:{pages}"));
+                migration.message = "document backfill is running".into();
+            }
+        }
+        MigrationStatus::Complete { receipt } => {
+            if let Some(migration) = record.document.migration.as_mut() {
+                migration.completed = receipt.documents();
+                migration.total = receipt.documents();
+                migration.next_cursor = None;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Option<String> {
     let host = document_host(state, database).ok()?;
     let engine = host.engine();
@@ -288,6 +340,22 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
     {
         return Some(collection);
     }
+    // Commit the saved generation and the latest core cursor before admitting
+    // another page.  If the process died after a core page commit, this first
+    // publication repairs the stale envelope before work is retried.
+    if record.migration_plan.is_some() {
+        if let Err(message) = checkpoint_before_batch(engine, &mut record) {
+            if let Some(migration) = record.document.migration.as_mut() {
+                migration.state = MigrationState::Failed;
+                migration.message = message;
+            }
+            let _ = persist(engine, &expected, &record);
+            return Some(collection);
+        }
+        if !persist(engine, &expected, &record) {
+            return Some(collection);
+        }
+    }
     let result = advance(engine, &mut record);
     if let Some(migration) = record.document.migration.as_mut() {
         match result {
@@ -310,7 +378,8 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
             }
         }
     }
-    let _ = persist(engine, &expected, &record);
+    let final_expected = serde_json::to_vec(&record).unwrap_or_else(|_| expected.to_vec());
+    let _ = persist(engine, &final_expected, &record);
     Some(collection)
 }
 
@@ -443,9 +512,16 @@ mod tests {
             let bytes = engine.schema_metadata_load("demo", "main", "orders").unwrap().unwrap();
             let record: DurableSchemaRecord = serde_json::from_slice(&bytes).unwrap();
             assert!(record.migration_plan.is_some());
+            let saved: SavedPlan =
+                serde_json::from_slice(record.migration_plan.as_ref().unwrap()).unwrap();
+            assert_eq!(saved.generation, record.document.generation);
             let contract = contract(&record).unwrap();
-            let plan =
-                SavedPlan::restore(record.migration_plan.as_ref().unwrap(), &contract).unwrap();
+            let plan = SavedPlan::restore(
+                record.migration_plan.as_ref().unwrap(),
+                record.document.generation,
+                &contract,
+            )
+            .unwrap();
             let scope = document_scope(engine).unwrap();
             migrations::begin(
                 engine,

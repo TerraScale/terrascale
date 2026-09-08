@@ -28,6 +28,7 @@ use crate::types::{OperationId, TenantId, TenantScope};
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
 mod shard_registry;
+mod shard_resources;
 pub use shard_registry::{AdmittedShardParticipant, AdmittedShardReadCut};
 mod split_runtime;
 pub use split_runtime::{
@@ -2210,6 +2211,15 @@ fn open_database_engine(
                 let engine = Engine::open(config).map(Arc::new).map_err(|error| {
                     MemberError::EngineOpen { database: database.clone(), error }
                 })?;
+                engine
+                    .install_shard_resource_factory(shard_resources::factory(
+                        inner,
+                        database.clone(),
+                    ))
+                    .map_err(|_| MemberError::EngineOpen {
+                        database: database.clone(),
+                        error: EngineOpenError::StorageUnavailable,
+                    })?;
                 match *lock_unpoisoned(&inner.clock_offset_seconds) {
                     Some(offset) => engine.set_clock_offset_seconds(offset),
                     None => engine.clear_clock_offset_seconds(),
@@ -2652,6 +2662,80 @@ mod tests {
             Err(MemberOpenError::Validation(CatalogValidationError::UnscopedDatabase))
         ));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn physical_shard_open_reserves_member_budget_once_and_releases_with_cache() {
+        use crate::shard_split::{ShardSplit, SplitContext, SplitEngineAdapter, SplitStateStore};
+        for budget in [1, 2] {
+            let root = root(&format!("shard-resident-budget-{budget}"));
+            let scope = DatabaseScope::new(
+                "production",
+                TenantUlid::generate(),
+                ProjectUlid::generate(),
+                DatabaseUlid::generate(),
+                RegionCode::GRU,
+            )
+            .unwrap();
+            let id = DatabaseId::from(scope.database());
+            let member = Member::open_production(
+                &root,
+                [DatabaseSpec::scoped(scope.clone(), "db")],
+                AdmissionLimits::new(4, 2)
+                    .with_rss_budget_bytes(budget)
+                    .with_database_rss_bytes(1)
+                    .with_max_open_databases(budget)
+                    .with_max_concurrent_opens(1),
+                storage_keys(&scope),
+            )
+            .unwrap();
+            accept_writer(&member, &id);
+            let lease = member.acquire(&id).unwrap();
+            let engine = lease.shared_engine();
+            let tenant = TenantId::try_new(&scope.tenant().to_text()).unwrap();
+            let engine_scope = engine.scope_for(&tenant);
+            let context = SplitContext::new(
+                192,
+                u128::from_be_bytes(engine.database_id().as_bytes()),
+                1,
+                2,
+                1,
+                0,
+            );
+            let split = ShardSplit::plan_with_context(None, b"m".to_vec(), context).unwrap();
+            let mut adapter =
+                crate::engine::shard_split::ScopedShardEngine::new(engine.clone(), engine_scope)
+                    .unwrap();
+            adapter.save(&split.durable_state()).unwrap();
+            if budget == 1 {
+                assert!(adapter.create_split_target(&context).is_err());
+                assert!(
+                    !root.join("db/shards/0000000000000002.sqlite3").exists(),
+                    "budget refusal precedes SQLite creation"
+                );
+                assert_eq!(member.open_database_count(), 1);
+            } else {
+                adapter.create_split_target(&context).unwrap();
+                let target = engine.open_shard_participant(2).unwrap().unwrap();
+                for _ in 0..8 {
+                    assert!(Arc::ptr_eq(
+                        &target,
+                        &engine.open_shard_participant(2).unwrap().unwrap()
+                    ));
+                    assert_eq!(member.open_database_count(), 2);
+                    assert_eq!(member.status().resident_rss_bytes, 2);
+                }
+                drop(target);
+            }
+            assert_eq!(member.status().resident_rss_bytes, budget);
+            drop(adapter);
+            drop(engine);
+            drop(lease);
+            member.close(Duration::from_secs(5)).unwrap();
+            assert_eq!(member.open_database_count(), 0);
+            assert_eq!(member.status().resident_rss_bytes, 0);
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]

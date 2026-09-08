@@ -5,6 +5,33 @@ use crate::shard_split::{
 };
 
 #[test]
+fn primary_file_identity_is_persisted_with_first_source_publication() {
+    let (dir, engine, tenant) = super::tests::open_owned_engine("primary-lane");
+    let scope = engine.scope_for(&tenant);
+    let mut tx = engine
+        .begin(&scope, engine.read_snapshot(&scope).unwrap(), super::tests::operation("first-lane-write"))
+        .unwrap();
+    tx.put(
+        crate::types::Document::new(
+            crate::types::DocumentId::try_new("one").unwrap(),
+            crate::types::CollectionName::try_new("docs").unwrap(),
+            crate::types::DocumentValue::String("value".into()),
+        ),
+        crate::types::ExpectedVersion::Any,
+    )
+    .unwrap();
+    assert!(matches!(
+        tx.commit(crate::types::LocalDurability::Synced),
+        super::CommitOutcome::Committed(_)
+    ));
+    let identity = engine.file_shard_identity(&scope).unwrap().expect("primary identity");
+    assert_eq!(identity.shard_id, 1);
+    assert_eq!(identity.origin_lane_incarnation, engine.replication_lane_origin().incarnation());
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn encrypted_target_creation_is_durable_and_exactly_idempotent() {
     let (dir, source, tenant) = super::tests::open_owned_engine("split-target-lifecycle");
     let scope = source.scope_for(&tenant);

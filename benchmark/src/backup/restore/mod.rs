@@ -2243,7 +2243,7 @@ impl Replay {
             // serving-boundary facts.
             usage_admission: None,
             internal_maintenance: true,
-        shard_copy: false,
+            shard_copy: false,
             expected_origin_epoch: None,
             expected_uniform_context: None,
             merge_conflict: None,

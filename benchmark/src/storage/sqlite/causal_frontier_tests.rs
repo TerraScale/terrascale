@@ -218,12 +218,12 @@ fn failed_real_commit_rolls_back_publication_and_frontier() {
 #[test]
 fn engine_per_record_replication_updates_session_frontier_across_gaps_and_reopen() {
     use crate::engine::{Engine, EngineConfig, ReplicatedRecord};
-    use crate::types::{RegionId, TenantScope};
+    use crate::{origin_lane::OriginLaneId, types::{RegionId, TenantScope}};
     let dir = location("engine");
     let engine = Engine::open(EngineConfig::durable(&dir).unwrap()).unwrap();
     let tenant = TenantId::try_new("t").unwrap();
     let scope = TenantScope::from_parts(tenant.clone(), engine.identity());
-    let origin = RegionId::try_new("remote").unwrap();
+    let origin = OriginLaneId::try_new(RegionId::try_new("remote").unwrap(), 1).unwrap();
     for (sequence, expected) in [(3, 0), (1, 1), (2, 3)] {
         let record = ReplicatedRecord {
             collection: CollectionName::try_new("docs").unwrap(),
@@ -232,7 +232,7 @@ fn engine_per_record_replication_updates_session_frontier_across_gaps_and_reopen
             deleted: false,
             commit_ulid: format!("remote-{sequence}"),
             hlc: sequence,
-            origin: origin.as_str().into(),
+            origin: origin.as_str(),
             origin_sequence: sequence,
             context: vec![1, 0, 0, 0, 0],
         };

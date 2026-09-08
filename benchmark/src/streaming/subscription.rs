@@ -611,8 +611,8 @@ pub(crate) fn subscribe(
     // Registration precedes insertion into the live set. A concurrent
     // retention sweep therefore cannot observe a reader after it has already
     // allowed that reader's starting history to be pruned.
-    if let Err(error) = engine
-        .register_retention_consumer(RETENTION_CONSUMER, retention_floor(&checkpoint))
+    if let Err(error) =
+        engine.register_retention_consumer(RETENTION_CONSUMER, retention_floor(&checkpoint))
     {
         // Registration is part of opening the live set. Do not leave an empty
         // publication sink behind when durable lease admission fails.

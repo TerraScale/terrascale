@@ -54,6 +54,8 @@ pub const MAX_ATTEMPTS: u32 = 8;
 pub const RETRY_HORIZON_SECONDS: u64 = 24 * 60 * 60;
 /// The largest retry delay.
 pub const MAX_RETRY_DELAY_SECONDS: u64 = 60 * 60;
+/// Lease held across one bounded network attempt. Expiry permits crash recovery.
+const CLAIM_LEASE_SECONDS: u64 = 30;
 
 const WEBHOOK_ENDPOINTS_COLLECTION: &str = "__terrascale_webhook_endpoints";
 const WEBHOOK_DELIVERIES_COLLECTION: &str = "__terrascale_webhook_deliveries";
@@ -164,6 +166,10 @@ pub struct DeliveryRecord {
     pub origin_region: String,
     /// Stable physical origin lane identity retained for audit and fencing.
     pub origin_lane: String,
+    /// Monotonic local fencing token for the current pre-send claim.
+    pub claim_token: u64,
+    /// Absolute expiry of the current claim, or zero when unclaimed.
+    pub claim_until: u64,
     /// Start of the current automatic retry window in Unix seconds.
     pub retry_started_at: u64,
     /// Number of attempts made.
@@ -348,6 +354,14 @@ pub trait WebhookStorage: Send + Sync + 'static {
         now: u64,
         limit: usize,
     ) -> Result<Vec<DeliveryRecord>, StorageError>;
+    /// Atomically claims one due delivery before its network effect.
+    fn claim_delivery(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        expected: &DeliveryRecord,
+        now: u64,
+    ) -> Result<DeliveryRecord, StorageError>;
     /// Marks one delivery eligible immediately for a replay.
     ///
     /// # Errors
@@ -666,6 +680,8 @@ fn delivery_value(record: &DeliveryRecord) -> MetadataValue {
         ("write_index".into(), unsigned_value(u64::from(record.write_index))),
         ("origin_region".into(), MetadataValue::String(record.origin_region.clone())),
         ("origin_lane".into(), MetadataValue::String(record.origin_lane.clone())),
+        ("claim_token".into(), unsigned_value(record.claim_token)),
+        ("claim_until".into(), unsigned_value(record.claim_until)),
         ("attempts".into(), MetadataValue::Integer(i64::from(record.attempts))),
         ("next_attempt_at".into(), unsigned_value(record.next_attempt_at)),
         ("retry_started_at".into(), unsigned_value(record.retry_started_at)),
@@ -703,6 +719,8 @@ fn delivery_from_document(document: &MetadataDocument) -> Option<DeliveryRecord>
         write_index: u32::try_from(integer("write_index")?).ok()?,
         origin_region: string("origin_region")?,
         origin_lane: string("origin_lane")?,
+        claim_token: integer("claim_token")?,
+        claim_until: integer("claim_until")?,
         attempts: u32::try_from(integer("attempts")?).ok()?,
         next_attempt_at: integer("next_attempt_at")?,
         retry_started_at: integer("retry_started_at")?,
@@ -852,6 +870,8 @@ impl WebhookStorage for EngineWebhookStorage {
             write_index: publication.write_index,
             origin_region: publication.origin_region.clone(),
             origin_lane: publication.origin_lane.clone(),
+            claim_token: 0,
+            claim_until: 0,
             attempts: 0,
             next_attempt_at: now,
             retry_started_at: now,
@@ -901,7 +921,11 @@ impl WebhookStorage for EngineWebhookStorage {
                 Err(StorageError::Conflict)
             };
         }
-        if record != *expected || record.terminal || attempts != record.attempts.saturating_add(1) {
+        if record != *expected
+            || record.terminal
+            || expected.claim_token == 0
+            || attempts != record.attempts.saturating_add(1)
+        {
             return Err(StorageError::Conflict);
         }
         record.attempts = attempts;
@@ -909,6 +933,7 @@ impl WebhookStorage for EngineWebhookStorage {
         record.status = status;
         record.delivered = delivered;
         record.terminal = terminal;
+        record.claim_until = 0;
         self.write_document(
             scope,
             WEBHOOK_DELIVERIES_COLLECTION,
@@ -934,6 +959,7 @@ impl WebhookStorage for EngineWebhookStorage {
         }
         record.terminal = true;
         record.next_attempt_at = 0;
+        record.claim_until = 0;
         self.write_document(
             scope,
             WEBHOOK_DELIVERIES_COLLECTION,
@@ -993,6 +1019,41 @@ impl WebhookStorage for EngineWebhookStorage {
         Ok(records)
     }
 
+    fn claim_delivery(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        expected: &DeliveryRecord,
+        now: u64,
+    ) -> Result<DeliveryRecord, StorageError> {
+        let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
+        if !expected.id.starts_with(&format!("{endpoint_id}:")) {
+            return Err(StorageError::NotFound);
+        }
+        let document = self
+            .read_document(scope, WEBHOOK_DELIVERIES_COLLECTION, &expected.id)?
+            .ok_or(StorageError::NotFound)?;
+        let mut record = delivery_from_document(&document).ok_or(StorageError::Unavailable)?;
+        if record != *expected
+            || record.delivered
+            || record.terminal
+            || record.next_attempt_at > now
+            || (record.claim_until != 0 && record.claim_until > now)
+        {
+            return Err(StorageError::Conflict);
+        }
+        record.claim_token = record.claim_token.saturating_add(1).max(1);
+        record.claim_until = now.saturating_add(CLAIM_LEASE_SECONDS);
+        self.write_document(
+            scope,
+            WEBHOOK_DELIVERIES_COLLECTION,
+            &record.id,
+            delivery_value(&record),
+            ExpectedVersion::Exact(document.metadata().version()),
+        )?;
+        Ok(record)
+    }
+
     fn replay_delivery(
         &self,
         scope: &TenantScope,
@@ -1012,6 +1073,7 @@ impl WebhookStorage for EngineWebhookStorage {
         record.retry_started_at = now;
         record.delivered = false;
         record.terminal = false;
+        record.claim_until = 0;
         self.write_document(
             scope,
             WEBHOOK_DELIVERIES_COLLECTION,
@@ -1826,11 +1888,15 @@ impl WebhookService {
         // Replicas retain the shared journal for reads, but only the region
         // that originated a publication may dispatch its webhook. Empty
         // provenance is accepted only for the local standalone composition.
-        if !row.origin_region.is_empty()
-            && row.origin_region != self.region.to_ascii_uppercase()
-        {
+        if !row.origin_region.is_empty() && row.origin_region != self.region.to_ascii_uppercase() {
             return Ok(false);
         }
+        // Claim before secret/DNS/network work. The durable CAS closes the
+        // ordinary two-worker pre-send race; expiry permits crash recovery.
+        let row = self
+            .storage
+            .claim_delivery(scope, endpoint_id, row, now)
+            .map_err(WebhookError::storage)?;
         let secret =
             self.secrets.get(scope, endpoint_id, &self.region).map_err(WebhookError::secret)?;
         if secret.is_empty() {

@@ -287,7 +287,21 @@ pub struct ProductionBudgetConfig {
     pub policy_epoch: u64,
     /// Current consent epoch accepted by this member.
     pub consent_epoch: u64,
+    /// Maximum prefunded local units per admitted pool (bounded at 1024).
+    #[serde(default = "default_pool_maximum")]
+    pub pool_max_local_units: i64,
+    /// Refill once the local balance reaches this threshold.
+    #[serde(default = "default_pool_low_water")]
+    pub pool_low_water_local_units: i64,
+    /// Signed refill lifetime, no more than fifteen minutes.
+    #[serde(default = "default_pool_lifetime")]
+    pub pool_lifetime_seconds: u64,
+
 }
+const fn default_pool_maximum() -> i64 { 1024 }
+const fn default_pool_low_water() -> i64 { 128 }
+const fn default_pool_lifetime() -> u64 { 900 }
+
 
 /// Kernel-authenticated local database admission endpoint.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]

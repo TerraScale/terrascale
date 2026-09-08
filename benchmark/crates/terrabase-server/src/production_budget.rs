@@ -98,7 +98,7 @@ impl ProductionBudgetRuntime {
     ) -> Result<(), String> {
         let allocation = self
             .journal
-            .resolve_current_pool(database_id)?
+            .pool_for_operation(database_id, operation_id, units)?
             .ok_or("write allocation unavailable")?;
         if allocation.grant().database_id != database_id
             || allocation.grant().organization_id != tenant_id

@@ -5475,9 +5475,15 @@ impl StoragePort for SqliteStorage {
         Ok(facts)
     }
 
-    fn install_usage_budget(&mut self, tenant: &TenantId, allocation: &crate::usage::VerifiedAllocation) -> Result<(), ()> {
+    fn install_usage_budget(
+        &mut self,
+        tenant: &TenantId,
+        allocation: &crate::usage::VerifiedAllocation,
+    ) -> Result<(), ()> {
         let mut writer = self.writer.lock().map_err(|_| ())?;
-        let tx = writer.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|_| ())?;
+        let tx = writer
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|_| ())?;
         budget::install(&tx, tenant, allocation)?;
         tx.commit().map_err(|_| ())
     }
@@ -5485,7 +5491,12 @@ impl StoragePort for SqliteStorage {
         let writer = self.writer.lock().map_err(|_| ())?;
         budget::remaining(&writer, tenant, refill)
     }
-    fn usage_budget_consumptions(&self, tenant: &TenantId, after: u64, limit: u32) -> Result<Vec<crate::usage::BudgetConsumption>, ()> {
+    fn usage_budget_consumptions(
+        &self,
+        tenant: &TenantId,
+        after: u64,
+        limit: u32,
+    ) -> Result<Vec<crate::usage::BudgetConsumption>, ()> {
         let writer = self.writer.lock().map_err(|_| ())?;
         budget::consumptions(&writer, tenant, after, limit)
     }

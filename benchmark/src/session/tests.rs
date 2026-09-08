@@ -652,7 +652,14 @@ fn session_reads_update_the_token_and_enforce_supplied_frontiers() {
 
     let mut impossible = SessionToken::new(token.epoch());
     impossible
-        .advance(crate::types::RegionId::try_new("unavailable").expect("region"), 1)
+        .advance(
+            crate::origin_lane::OriginLaneId::try_new(
+                crate::types::RegionId::try_new("unavailable").expect("region"),
+                1,
+            )
+            .expect("lane"),
+            1,
+        )
         .expect("frontier entry");
     let mut behind = Session::open(
         &engine,
@@ -674,8 +681,12 @@ fn session_frontier_rejects_an_unbounded_multi_origin_token() {
     let mut rejected = None;
     for index in 0..100 {
         let origin = format!("{}-{index:03}", "region".repeat(35));
-        let region = crate::types::RegionId::try_new(&origin).expect("valid region");
-        if let Err(error) = token.advance(region, 1) {
+        let lane = crate::origin_lane::OriginLaneId::try_new(
+            crate::types::RegionId::try_new(&origin).expect("valid region"),
+            index as u128 + 1,
+        )
+        .expect("lane");
+        if let Err(error) = token.advance(lane, 1) {
             rejected = Some(error);
             break;
         }
@@ -750,8 +761,26 @@ fn stale_multi_origin_reads_return_a_safe_retry_region_without_spinning() {
     let (dir, engine) = open_engine("stale-multi-origin");
     let epoch = engine.session_epoch();
     let mut token = SessionToken::new(epoch);
-    token.advance(RegionId::try_new("region-a").expect("region"), 1).expect("frontier");
-    token.advance(RegionId::try_new("region-b").expect("region"), 1).expect("frontier");
+    token
+        .advance(
+            crate::origin_lane::OriginLaneId::try_new(
+                RegionId::try_new("region-a").expect("region"),
+                1,
+            )
+            .expect("lane"),
+            1,
+        )
+        .expect("frontier");
+    token
+        .advance(
+            crate::origin_lane::OriginLaneId::try_new(
+                RegionId::try_new("region-b").expect("region"),
+                1,
+            )
+            .expect("lane"),
+            1,
+        )
+        .expect("frontier");
     let scope = scope(&engine, "tenant-a");
     let mut session = Session::open(
         &engine,

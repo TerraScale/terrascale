@@ -358,6 +358,86 @@ fn durable_adapters_reject_every_foreign_owner_dimension_without_mutation() {
     std::fs::remove_dir_all(root).expect("cleanup");
 }
 
+#[test]
+fn independent_storage_instances_fence_claims_and_stale_completion() {
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-claim-{}", terrabase::identity::generate()));
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("engine"),
+    );
+    let owner = engine.database_owner();
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
+    // Separate adapter mutexes model separate serving processes. The durable
+    // metadata CAS, rather than either mutex, must decide the winner.
+    let first = EngineWebhookStorage::new(Arc::clone(&engine));
+    let second = EngineWebhookStorage::new(Arc::clone(&engine));
+    let endpoint = first
+        .create_endpoint(&scope, "https://hooks.example/events", 100)
+        .expect("endpoint");
+    let publication = Publication {
+        revision: 7,
+        write_index: 1,
+        event_id: "event-claim".into(),
+        origin_region: String::new(),
+        origin_lane: String::new(),
+        body: b"payload".to_vec(),
+    };
+    let row = first
+        .ensure_delivery(&scope, &endpoint.id, &publication, 100)
+        .expect("delivery");
+    let claimed = first
+        .claim_delivery(&scope, &endpoint.id, &row, 100)
+        .expect("first claim");
+    assert!(second.claim_delivery(&scope, &endpoint.id, &row, 100).is_err());
+
+    // The first worker crashed after sending. A later worker may reclaim the
+    // lease, but the stale worker cannot persist its delayed response.
+    let reclaimed = second
+        .claim_delivery(&scope, &endpoint.id, &claimed, 131)
+        .expect("expired lease reclaim");
+    assert_ne!(reclaimed.claim_token, claimed.claim_token);
+    assert_eq!(
+        first.record_attempt(
+            &scope,
+            &endpoint.id,
+            &claimed,
+            &DeliveryAttempt {
+                attempts: 1,
+                next_attempt_at: 0,
+                status: Some(204),
+                delivered: true,
+                terminal: true,
+            },
+        ),
+        Err(StorageError::Conflict)
+    );
+    second
+        .record_attempt(
+            &scope,
+            &endpoint.id,
+            &reclaimed,
+            &DeliveryAttempt {
+                attempts: 1,
+                next_attempt_at: 0,
+                status: Some(204),
+                delivered: true,
+                terminal: true,
+            },
+        )
+        .expect("replacement completion");
+    drop(first);
+    drop(second);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
 struct TestAuthorizer(TenantScope);
 
 impl WebhookAuthorizer for TestAuthorizer {

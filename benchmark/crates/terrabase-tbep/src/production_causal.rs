@@ -68,6 +68,9 @@ pub enum CausalReceive {
     Receipt {
         /// Exact operation identities covered by the validated receipt.
         operations: Vec<String>,
+        /// Highest contiguous source journal checkpoint acknowledged by this
+        /// lane.  This is distinct from the causal origin frontier.
+        source_sequence: Option<u64>,
     },
 }
 
@@ -163,6 +166,13 @@ impl CausalDriver {
     #[must_use]
     pub fn durable_peer_frontier(&self) -> &BTreeMap<String, u64> {
         &self.durable_peer_frontier
+    }
+
+    /// Returns the highest contiguous source journal checkpoint folded by the
+    /// causal acknowledgement cursor. Repair publications do not advance it.
+    #[must_use]
+    pub const fn acknowledged_source_cursor(&self) -> Option<u64> {
+        (self.cursor != 0).then_some(self.cursor)
     }
 
     /// Authorizes a missing source group proved by a correlated repair leaf.
@@ -381,7 +391,7 @@ impl CausalDriver {
                     {
                         return Err(refused("invalid duplicate causal receipt"));
                     }
-                    return Ok(CausalReceive::Receipt { operations: Vec::new() });
+                    return Ok(CausalReceive::Receipt { operations: Vec::new(), source_sequence: self.acknowledged_source_cursor() });
                 }
                 let pending =
                     self.pending.get_mut(&id).ok_or_else(|| refused("unknown causal receipt"))?;
@@ -413,7 +423,7 @@ impl CausalDriver {
                             .or_insert(complete);
                     }
                 }
-                Ok(CausalReceive::Receipt { operations })
+                Ok(CausalReceive::Receipt { operations, source_sequence: self.acknowledged_source_cursor() })
             }
             _ => Err(refused("unsupported causal frame kind")),
         }
@@ -731,7 +741,7 @@ mod tests {
         ));
         assert!(sender.outbound_frame(&source, RETRY_MS * 2).unwrap().is_none());
         assert!(
-            matches!(sender.receive_frame(&source, &receipt, 0).unwrap(), CausalReceive::Receipt { operations } if operations.is_empty())
+            matches!(sender.receive_frame(&source, &receipt, 0).unwrap(), CausalReceive::Receipt { operations, .. } if operations.is_empty())
         );
         drop(source);
         drop(target);

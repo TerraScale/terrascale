@@ -1,4 +1,7 @@
 //! Durable billing-stream registrations on the authenticated local control socket.
+#[path = "usage_pool.rs"]
+mod pool;
+pub(crate) use pool::{PoolRuntime, PoolLimits};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
@@ -98,6 +101,7 @@ pub struct UsageAdmissionJournal {
     connection: Mutex<Connection>,
     operations: Arc<tokio::sync::Semaphore>,
     allocation_verifier: Mutex<Option<AllocationVerifierConfig>>,
+    pool_runtime: Option<PoolRuntime>,
 }
 fn private(path: &Path, directory: bool) -> Result<(), String> {
     let m = std::fs::symlink_metadata(path).map_err(|_| "usage admission path unavailable")?;
@@ -202,6 +206,7 @@ impl UsageAdmissionJournal {
             connection: Mutex::new(connection),
             operations: Arc::new(tokio::sync::Semaphore::new(16)),
             allocation_verifier: Mutex::new(None),
+            pool_runtime: None,
         })
     }
 
@@ -290,6 +295,8 @@ impl UsageAdmissionJournal {
             return Err("allocation identity conflict".into());
         }
         tx.commit().map_err(|_| "allocation persistence failed")?;
+        drop(connection);
+        self.install_pool_credit(&verified)?;
         Ok(verified)
     }
 
@@ -638,6 +645,8 @@ impl UsageAdmissionJournal {
         Router::new()
             .route("/internal/v1/databases/usage/admit", post(admit))
             .route("/internal/v1/databases/usage/allocation", post(admit_allocation))
+            .route("/internal/v1/databases/usage/pool/work", post(pool::work))
+            .route("/internal/v1/databases/usage/pool/ack", post(pool::ack))
             .layer(DefaultBodyLimit::max(16384))
             .with_state(self)
     }

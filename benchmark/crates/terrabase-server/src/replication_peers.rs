@@ -2,6 +2,7 @@
 use crate::replication_cut::ReplicationCuts;
 use crate::replication_proof::{ReadinessCutFrame, VerifiedReadinessCut};
 use crate::replication_runtime::ReplicationProgress;
+use crate::replication_frontier::ReplicationRetentionFrontier;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -178,6 +179,7 @@ pub type PeerObservations =
     Arc<std::sync::Mutex<BTreeMap<(String, DatabaseRouteScope), PeerFacts>>>;
 /// Owns the shared endpoint, bounded workers, and shutdown signal.
 pub struct ReplicationPeers {
+    retention: Arc<ReplicationRetentionFrontier>,
     cuts: Arc<ReplicationCuts>,
     progress: Arc<ReplicationProgress>,
     admissions: BTreeMap<String, mpsc::Sender<PeerCommand>>,
@@ -258,6 +260,16 @@ impl ReplicationPeers {
             validated.push((id, lanes, receiver));
         }
         let cuts = Arc::new(ReplicationCuts::default());
+        let retention = Arc::new(ReplicationRetentionFrontier::default());
+        let mut required = BTreeMap::<DatabaseRouteScope, std::collections::BTreeSet<String>>::new();
+        for (peer, lanes) in &peers {
+            for lane in lanes {
+                required.entry(lane.scope).or_default().insert(peer.clone());
+            }
+        }
+        for (scope, peers) in required {
+            retention.admit(scope, peers).map_err(failure)?;
+        }
         let live_workers = Arc::new(std::sync::Mutex::new(admissions.keys().cloned().collect()));
         let worker_lifecycle = live_workers.clone();
         let worker_cuts = cuts.clone();
@@ -279,6 +291,7 @@ impl ReplicationPeers {
                 worker_observations,
                 worker_cuts,
                 dispatcher,
+                retention: retention.clone(),
             },
             runtime_handle,
         );
@@ -298,6 +311,7 @@ impl ReplicationPeers {
             admitted: std::sync::Mutex::new(admitted),
             cuts,
             progress: retained_progress,
+            retention,
         })
     }
 
@@ -556,6 +570,7 @@ struct PeerOwnerContext {
     worker_observations: PeerObservations,
     worker_cuts: Arc<ReplicationCuts>,
     dispatcher: Option<Arc<dyn PeerControlDispatcher>>,
+    retention: Arc<ReplicationRetentionFrontier>,
 }
 
 fn spawn_peer_owner(
@@ -563,7 +578,7 @@ fn spawn_peer_owner(
     runtime_handle: tokio::runtime::Handle,
 ) -> tokio::task::JoinHandle<Result<(), String>> {
     runtime_handle.spawn(async move {
-        let PeerOwnerContext { runtime, progress, validated, stopped, worker_stop, worker_lifecycle, worker_observations, worker_cuts, dispatcher } = context;
+        let PeerOwnerContext { runtime, progress, validated, stopped, worker_stop, worker_lifecycle, worker_observations, worker_cuts, dispatcher, retention } = context;
         let mut workers = tokio::task::JoinSet::new();
         let mut incoming = BTreeMap::new();
         for (id, lanes, new_lanes) in validated {
@@ -575,6 +590,7 @@ fn spawn_peer_owner(
                 incoming: receiver, stopped: stopped.clone(), observations: worker_observations.clone(),
                 new_lanes: PeerInbox { receiver: Some(new_lanes), peer: id.as_str().to_owned(), worker_id, live_workers: worker_lifecycle.clone(), progress: progress.clone(), observations: worker_observations.clone(), retirement: None, suspended: Default::default() },
                 cuts: worker_cuts.clone(), worker_id,
+                retention: retention.clone(),
             }));
         }
         let incoming = Arc::new(incoming);
@@ -688,6 +704,7 @@ struct PeerWorkerContext {
     new_lanes: PeerInbox,
     cuts: Arc<ReplicationCuts>,
     worker_id: u64,
+    retention: Arc<ReplicationRetentionFrontier>,
 }
 
 static NEXT_WORKER_ID: AtomicU64 = AtomicU64::new(1);
@@ -709,22 +726,23 @@ async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
         mut new_lanes,
         cuts,
         worker_id,
+        retention,
     } = context;
     let endpoint = runtime.transport();
     let dial = endpoint.config().local_identity().member().as_str() < id.as_str();
     loop {
         let connection = tokio::select! {
-            _ = stopped.changed() => return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id }, restart: false },
+            _ = stopped.changed() => return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id, retention }, restart: false },
             command = new_lanes.recv() => {
                 if let Some(command) = command {
                     if let PeerCommand::Retire { done } = command {
                         let result = capture_retirement(&mut lanes, &mut new_lanes).await;
                         let _ = done.send(result);
                         retirement_park(&mut new_lanes, &mut stopped, &mut lanes).await;
-                        return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id }, restart: false };
+                        return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id, retention }, restart: false };
                     }
                     apply_worker_command(command, &mut lanes, &observations, id.as_str(), &mut new_lanes);
-                } else { return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id }, restart: false }; }
+                } else { return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id, retention }, restart: false }; }
                 continue;
             },
             connection = async {
@@ -745,6 +763,7 @@ async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
                     stopped: &stopped,
                     observations: &observations,
                     cuts: &cuts,
+                    retention: &retention,
                 },
                 &mut new_lanes,
             )
@@ -763,6 +782,7 @@ async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
                         new_lanes,
                         cuts,
                         worker_id,
+                        retention: retention.clone(),
                     },
                     restart: false,
                 };
@@ -786,6 +806,7 @@ async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
                         new_lanes,
                         cuts,
                         worker_id,
+                        retention: retention.clone(),
                     },
                     restart: true,
                 };
@@ -804,12 +825,13 @@ async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
                     new_lanes,
                     cuts,
                     worker_id,
+                    retention: retention.clone(),
                 },
                 restart: false,
             };
         }
         tokio::select! {
-            _ = stopped.changed() => return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id }, restart: false },
+            _ = stopped.changed() => return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id, retention }, restart: false },
             () = tokio::time::sleep(Duration::from_secs(1)) => {}
         }
     }
@@ -856,6 +878,7 @@ struct SessionContext<'a> {
     stopped: &'a watch::Receiver<bool>,
     observations: &'a PeerObservations,
     cuts: &'a Arc<ReplicationCuts>,
+    retention: &'a Arc<ReplicationRetentionFrontier>,
 }
 
 async fn session(
@@ -864,7 +887,7 @@ async fn session(
     context: SessionContext<'_>,
     new_lanes: &mut PeerInbox,
 ) -> Result<(), String> {
-    let SessionContext { runtime, progress, stopped, observations, cuts } = context;
+    let SessionContext { runtime, progress, stopped, observations, cuts, retention } = context;
     let peer = WalAuthenticatedPeer::from_connection(&connection);
     let region = connection.peer_region().as_str();
     if let Ok(mut facts) = observations.lock() {
@@ -1007,13 +1030,13 @@ async fn session(
                 } else {
                     let causal = lane.causal.clone().ok_or_else(|| "unassigned causal lane".to_owned())?;
                     let runtime = runtime.clone();
-                    let (result, sequence, frontier) = tokio::task::spawn_blocking(move || {
+                    let (result, sequence, frontier, source_sequence) = tokio::task::spawn_blocking(move || {
                         let engine = runtime.acquire_replication(&scope).map_err(failure)?;
                         let mut causal = causal.lock().map_err(failure)?;
                         let result = causal.receive_frame(&engine, &bytes, 0).map_err(failure)?;
                         let tenant = engine.scope_for(&terrabase::types::TenantId::try_new(&scope.tenant().to_text()).map_err(failure)?);
                         let sequence = engine.read_snapshot(&tenant).map_err(failure)?.sequence().get();
-                        Ok::<_, String>((result, sequence, causal.durable_peer_frontier().clone()))
+                        Ok::<_, String>((result, sequence, causal.durable_peer_frontier().clone(), causal.acknowledged_source_cursor()))
                     }).await.map_err(failure)??;
                     match result {
                         CausalReceive::Applied { receipt, .. } => {
@@ -1028,6 +1051,10 @@ async fn session(
                         },
                         CausalReceive::Receipt { .. } => {
                             progress.advance_region_from_peer(scope, connection.peer().member().as_str(), region, &frontier).map_err(failure)?;
+                            if let Some(sequence) = source_sequence {
+                                let engine = runtime.acquire_replication(&scope).map_err(failure)?;
+                                retention.acknowledge(&engine, scope, connection.peer().member().as_str(), sequence).map_err(failure)?;
+                            }
                             if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.causal_receipt_observed = true; }
                         },
                     }
@@ -1072,6 +1099,8 @@ async fn session(
                                     Ok::<_, String>((tenant, frontier))
                                 }).await.map_err(failure)??;
                                 if let Some(sequence) = writer.durable_sequence(tenant.clone()).await.map_err(failure)? {
+                                    let retention_engine = runtime.acquire_replication(&scope).map_err(failure)?;
+                                    retention.acknowledge(&retention_engine, scope, connection.peer().member().as_str(), sequence.get()).map_err(failure)?;
                                     let proof = writer.physical_boundary(tenant).await.map_err(failure)?;
                                     if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical = proof; }
                                     if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical_caught_up = facts.physical.is_some(); }

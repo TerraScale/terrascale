@@ -962,6 +962,14 @@ impl Engine {
         if cache.len() >= MAX_ROUTES {
             return Err(EngineOpenError::StorageUnavailable);
         }
+        let factory = self
+            .shard_resource_factory
+            .lock()
+            .map_err(|_| EngineOpenError::StorageUnavailable)?
+            .clone();
+        // Member charges the physical target before SQLite allocates any pool.
+        // Standalone engine tests have no Member resource owner.
+        let mut resources = factory.map(|factory| factory()).transpose()?;
         let mut config = if create {
             super::EngineConfig::durable(path)
         } else {
@@ -980,6 +988,12 @@ impl Engine {
             config = config.with_replication_lane_origin(lane);
         }
         let target = std::sync::Arc::new(Engine::open(config)?);
+        if let Some(reservation) = resources.as_mut() {
+            reservation.opened();
+        }
+        *target.shard_resources.lock().map_err(|_| EngineOpenError::StorageUnavailable)? =
+            resources;
+
         *target.shard_authority.lock().map_err(|_| EngineOpenError::StorageUnavailable)? =
             Some(std::sync::Arc::downgrade(self));
         cache.insert(shard_id, target.clone());

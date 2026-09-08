@@ -4301,6 +4301,7 @@ fn sql_match_predicate_lowers_to_search_and_executes() {
             parameters,
         ))
         .expect("MATCH lowers to the typed search condition");
+    assert!(plan.sql_runtime.is_some(), "lowered MATCH retains routed SQL runtime");
     assert_eq!(row_ids(&store.execute(&plan, &snapshot).expect("MATCH executes")), ["doc-1"]);
     // Literal form serves the same match set.
     let literal = SqlQueryText::try_new("SELECT * FROM articles WHERE body MATCH 'turtle'")

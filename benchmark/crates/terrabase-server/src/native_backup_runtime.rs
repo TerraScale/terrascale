@@ -13,7 +13,10 @@ use terrabase::backup::object_store::Provider;
 use terrabase::backup::worker::{
     BackupEngineHandle, BackupKeys, FleetError, FleetLimits, NativeBackupFleet, StreamConfig,
 };
-use terrabase::backup::{PlacementLock, object_store::ObjectDestination};
+use terrabase::backup::{
+    BackupEnvelope, BackupEnvelopeParticipant, BackupManifest, PlacementLock,
+    object_store::ObjectDestination,
+};
 use terrabase::engine::Engine;
 use terrabase_tbep::member_host::MemberHost;
 
@@ -73,6 +76,8 @@ pub enum NativeBackupRuntimeError {
     Poisoned,
     /// The requested canonical database is not admitted to this owner.
     Unavailable,
+    /// A multi-participant envelope failed identity or manifest validation.
+    Envelope,
 }
 
 impl std::fmt::Display for NativeBackupRuntimeError {
@@ -81,6 +86,7 @@ impl std::fmt::Display for NativeBackupRuntimeError {
             Self::Fleet(error) => write!(formatter, "native backup fleet: {error:?}"),
             Self::Poisoned => formatter.write_str("native backup fleet lock poisoned"),
             Self::Unavailable => formatter.write_str("native backup database unavailable"),
+            Self::Envelope => formatter.write_str("native backup envelope validation failed"),
         }
     }
 }
@@ -95,6 +101,56 @@ pub struct NativeBackupRuntime {
 }
 
 impl NativeBackupRuntime {
+    /// Binds ordered participant manifests to one admitted shard read cut.
+    ///
+    /// The caller must capture every manifest at the same common cut before
+    /// calling this method. This seam performs no publication: the caller
+    /// must invoke [`BackupEnvelope::verify_staged`] for every participant and
+    /// atomically publish the envelope only after all staged files verify.
+    pub fn assemble_shard_envelope(
+        &self,
+        cut: &terrabase::member::AdmittedShardReadCut,
+        manifests: Vec<BackupManifest>,
+    ) -> Result<BackupEnvelope, NativeBackupRuntimeError> {
+        let route_generation = cut.route_generation.ok_or(NativeBackupRuntimeError::Envelope)?;
+        if cut.participants.len() != manifests.len() || cut.participants.is_empty() {
+            return Err(NativeBackupRuntimeError::Envelope);
+        }
+        let common_cut = cut
+            .participants
+            .iter()
+            .map(|participant| participant.snapshot.sequence())
+            .min()
+            .ok_or(NativeBackupRuntimeError::Envelope)?;
+        let database_id = cut
+            .participants
+            .first()
+            .ok_or(NativeBackupRuntimeError::Envelope)?
+            .engine
+            .database_id()
+            .to_string();
+        let participants = cut
+            .participants
+            .iter()
+            .zip(manifests)
+            .map(|(participant, manifest)| BackupEnvelopeParticipant {
+                participant_id: format!("shard-{:016x}", participant.identity.shard_id),
+                database_id: participant.engine.database_id().to_string(),
+                database_incarnation: cut.database_incarnation,
+                route_generation,
+                manifest,
+            })
+            .collect();
+        BackupEnvelope::assemble(
+            database_id,
+            cut.database_incarnation,
+            route_generation,
+            common_cut,
+            participants,
+        )
+        .map_err(|_| NativeBackupRuntimeError::Envelope)
+    }
+
     /// Creates and admits the complete accepted stream set.
     ///
     /// Admission is all-or-nothing from the caller's perspective: if any
@@ -427,11 +483,7 @@ mod restore_tests {
         let snapshot = engine.read_snapshot(&scope).unwrap();
         let operation = format!("native-pitr-{marker}");
         let mut transaction = engine
-            .begin(
-                &scope,
-                snapshot,
-                terrabase::types::OperationId::try_new(&operation).unwrap(),
-            )
+            .begin(&scope, snapshot, terrabase::types::OperationId::try_new(&operation).unwrap())
             .unwrap();
         transaction
             .put(
@@ -719,7 +771,8 @@ mod restore_tests {
         assert!(runtime.attached(&records[0].database_id).unwrap());
         assert!(runtime.attached(&records[1].database_id).unwrap());
         for record in &records {
-            runtime.capture(&record.database_id, &format!("capture-{}", record.database_id))
+            runtime
+                .capture(&record.database_id, &format!("capture-{}", record.database_id))
                 .await
                 .unwrap();
         }
@@ -729,7 +782,8 @@ mod restore_tests {
         registry.pause(&target.database.record.database_id, "native-pitr-target").unwrap();
         runtime.suspend_for_restore(&target.database.record.database_id).unwrap();
         let target_path = root.join("native-pitr-restored-target");
-        let target_tenant = terrabase::types::TenantId::try_new(&target.database.record.tenant_id).unwrap();
+        let target_tenant =
+            terrabase::types::TenantId::try_new(&target.database.record.tenant_id).unwrap();
         let target_owner = target.database.host.engine().database_owner().clone();
         let target_scope = terrabase::member::DatabaseScope::new(
             &target.database.record.environment,
@@ -744,12 +798,16 @@ mod restore_tests {
             .with_owner(target_owner)
             .with_storage_keys(
                 crate::test_keys::storage_keys(&target_scope)
-                    .remove(&terrabase::member::DatabaseId::try_new(
-                        &target.database.record.database_id,
-                    ).unwrap())
+                    .remove(
+                        &terrabase::member::DatabaseId::try_new(
+                            &target.database.record.database_id,
+                        )
+                        .unwrap(),
+                    )
                     .unwrap(),
             );
-        let placement = PlacementLock::explicit([target.database.record.region.parse().unwrap()]).unwrap();
+        let placement =
+            PlacementLock::explicit([target.database.record.region.parse().unwrap()]).unwrap();
         let point = &points[0];
         let identity = terrabase::backup::RestoreIdentity {
             operation_id: "native-pitr-content".into(),
@@ -779,10 +837,12 @@ mod restore_tests {
         let snapshot = restored.read_snapshot(&scope).unwrap();
         let plan = restored
             .queries()
-            .compile(QueryInput::sql(SqlQueryText::try_new(
-                "SELECT value FROM native-pitr WHERE _id = 'native-pitr-doc'",
-            )
-            .unwrap()))
+            .compile(QueryInput::sql(
+                SqlQueryText::try_new(
+                    "SELECT value FROM native-pitr WHERE _id = 'native-pitr-doc'",
+                )
+                .unwrap(),
+            ))
             .unwrap();
         let row = restored.queries().execute(&plan, &snapshot).unwrap();
         assert_eq!(row.rows().len(), 1);

@@ -50,9 +50,9 @@ pub use crate::storage::JournalBeforeImage;
 pub use crate::storage::{JournalKind, JournalProvenance};
 pub use backbone::{
     ChangeCheckpoint, ChangeNotification, ChangeNotificationTap, ChangeReplayBatch,
-    ChangeReplayRequest, MAX_CHANGE_NOTIFICATION_CAPACITY, SyncJournalBatch, SyncJournalMutation,
-    SyncJournalBinding, SyncJournalCursor, SyncJournalLaneBatch, SyncJournalLaneRecord,
-    SyncJournalRecord,
+    ChangeReplayRequest, MAX_CHANGE_NOTIFICATION_CAPACITY, SyncJournalBatch, SyncJournalBinding,
+    SyncJournalCursor, SyncJournalLaneBatch, SyncJournalLanePage, SyncJournalLaneRecord,
+    SyncJournalMutation, SyncJournalRecord, merge_sync_journal_pages,
 };
 pub use conflict::{ConflictOutcome, ConflictRecord};
 pub use payloads::{

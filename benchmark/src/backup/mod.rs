@@ -94,6 +94,7 @@
 //! attempt is a typed error.
 
 mod manifest;
+mod envelope;
 mod records;
 mod restore;
 pub use restore::RestoreIdentity;
@@ -104,6 +105,7 @@ mod tests;
 pub mod worker;
 
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
+pub use envelope::{BackupEnvelope, BackupEnvelopeParticipant};
 pub use restore::{
     RecoveryReceipt, RestoreChainLink, RestoreMarkerFacts, RestoredTenant, read_restore_marker,
     verify_latest_chain_encrypted,

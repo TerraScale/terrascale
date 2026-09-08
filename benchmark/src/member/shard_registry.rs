@@ -281,7 +281,11 @@ mod tests {
     use crate::types::{
         CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, TenantId,
     };
-    use crate::{CommitOutcome, EngineConfig, LocalDurability};
+    use crate::{
+        CommitOutcome, EngineConfig, LocalDurability,
+        operations::{QueryInput, SqlQueryText},
+    };
+    use std::collections::BTreeMap;
 
     #[test]
     fn ordinary_admission_and_historical_receipts_use_their_own_engine_scope() {
@@ -352,6 +356,196 @@ mod tests {
         drop(resolved);
         drop(source);
         drop(target);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn put(
+        engine: &Engine,
+        tenant: &TenantId,
+        operation: &str,
+        id: &str,
+        collection: &str,
+        fields: &[(&str, DocumentValue)],
+    ) {
+        let scope = engine.scope_for(tenant);
+        let mut value = BTreeMap::new();
+        for (name, field) in fields {
+            value.insert((*name).to_owned(), field.clone());
+        }
+        let mut transaction = engine
+            .begin(
+                &scope,
+                engine.read_snapshot(&scope).unwrap(),
+                OperationId::try_new(operation).unwrap(),
+            )
+            .unwrap();
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new(id).unwrap(),
+                    CollectionName::try_new(collection).unwrap(),
+                    DocumentValue::Object(value),
+                ),
+                ExpectedVersion::Any,
+            )
+            .unwrap();
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    }
+
+    fn execute_routed_sql(
+        source: &Arc<Engine>,
+        target: &Arc<Engine>,
+        tenant: &TenantId,
+        sql: &str,
+    ) -> crate::query::QueryResult {
+        let split_key = |collection: &str| {
+            crate::shard_split::canonical_shard_key(
+                &CollectionName::try_new(collection).unwrap(),
+                &DocumentId::try_new("z-record").unwrap(),
+            )
+        };
+        let records_split_key = split_key("records");
+        let archive_split_key = split_key("archive");
+        let source_scope = source.scope_for(tenant);
+        let target_scope = target.scope_for(tenant);
+        let cut = AdmittedShardReadCut {
+            database_incarnation: 0x1234,
+            route_generation: Some(1),
+            participants: vec![
+                AdmittedShardParticipant {
+                    identity: crate::shard_split::FileShardIdentity {
+                        database_incarnation: 0x1234,
+                        shard_id: 1,
+                        region: crate::regions::RegionCode::GRU,
+                        origin_lane_incarnation: 0x101,
+                    },
+                    engine: Arc::clone(source),
+                    scope: source_scope.clone(),
+                    snapshot: source.read_snapshot(&source_scope).unwrap(),
+                    routes: vec![
+                        crate::shard_split::ShardRoute::new(
+                            1,
+                            None,
+                            Some(records_split_key.clone()),
+                        )
+                        .unwrap(),
+                        crate::shard_split::ShardRoute::new(
+                            1,
+                            None,
+                            Some(archive_split_key.clone()),
+                        )
+                        .unwrap(),
+                    ],
+                    admission: None,
+                },
+                AdmittedShardParticipant {
+                    identity: crate::shard_split::FileShardIdentity {
+                        database_incarnation: 0x1234,
+                        shard_id: 2,
+                        region: crate::regions::RegionCode::GRU,
+                        origin_lane_incarnation: 0x102,
+                    },
+                    engine: Arc::clone(target),
+                    scope: target_scope.clone(),
+                    snapshot: target.read_snapshot(&target_scope).unwrap(),
+                    routes: vec![
+                        crate::shard_split::ShardRoute::new(2, Some(records_split_key), None)
+                            .unwrap(),
+                        crate::shard_split::ShardRoute::new(2, Some(archive_split_key), None)
+                            .unwrap(),
+                    ],
+                    admission: None,
+                },
+            ],
+            admission: None,
+        };
+        let plan =
+            source.queries().compile(QueryInput::sql(SqlQueryText::try_new(sql).unwrap())).unwrap();
+        source.queries().execute_admitted(&plan, &cut).unwrap()
+    }
+
+    #[test]
+    fn routed_sql_reads_patched_target_and_never_falls_back_to_stale_source() {
+        let root =
+            std::env::temp_dir().join(format!("routed-sql-patch-{}", crate::identity::generate()));
+        let source =
+            Arc::new(Engine::open(EngineConfig::durable(root.join("source")).unwrap()).unwrap());
+        let target =
+            Arc::new(Engine::open(EngineConfig::durable(root.join("target")).unwrap()).unwrap());
+        let tenant = TenantId::try_new("tenant").unwrap();
+        put(&source, &tenant, "source-old", "z-record", "records", &[("status", "old".into())]);
+        // This is the routed PATCH destination. It deliberately reuses the
+        // same id so a source fallback would return the stale value.
+        put(
+            &target,
+            &tenant,
+            "target-patch",
+            "z-record",
+            "records",
+            &[("status", "patched".into())],
+        );
+        let result =
+            execute_routed_sql(&source, &target, &tenant, "SELECT _id, status FROM records");
+        assert_eq!(result.rows().len(), 1);
+        assert_eq!(result.rows()[0].projected()[1].1, DocumentValue::String("patched".into()));
+        drop(target);
+        drop(source);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn routed_sql_merges_aggregate_join_group_and_fulltext_across_shards() {
+        let root = std::env::temp_dir()
+            .join(format!("routed-sql-families-{}", crate::identity::generate()));
+        let source =
+            Arc::new(Engine::open(EngineConfig::durable(root.join("source")).unwrap()).unwrap());
+        let target =
+            Arc::new(Engine::open(EngineConfig::durable(root.join("target")).unwrap()).unwrap());
+        let tenant = TenantId::try_new("tenant").unwrap();
+        put(
+            &source,
+            &tenant,
+            "source-a",
+            "a-record",
+            "records",
+            &[("state", "open".into()), ("body", "alpha quick".into())],
+        );
+        put(
+            &target,
+            &tenant,
+            "target-z",
+            "z-record",
+            "records",
+            &[("state", "closed".into()), ("body", "zeta quick".into())],
+        );
+        put(&source, &tenant, "archive-a", "a-record", "archive", &[("kind", "invoice".into())]);
+        put(&target, &tenant, "archive-z", "z-record", "archive", &[("kind", "receipt".into())]);
+        let aggregate =
+            execute_routed_sql(&source, &target, &tenant, "SELECT COUNT(*) AS total FROM records");
+        assert_eq!(aggregate.rows()[0].projected()[0].1, DocumentValue::Integer(2));
+        let grouped = execute_routed_sql(
+            &source,
+            &target,
+            &tenant,
+            "SELECT state, COUNT(*) AS total FROM records GROUP BY state ORDER BY state",
+        );
+        assert_eq!(grouped.rows().len(), 2);
+        let joined = execute_routed_sql(
+            &source,
+            &target,
+            &tenant,
+            "SELECT records._id, archive.kind FROM records JOIN archive ON records._id = archive._id ORDER BY records._id",
+        );
+        assert_eq!(joined.rows().len(), 2);
+        let fulltext = execute_routed_sql(
+            &source,
+            &target,
+            &tenant,
+            "SELECT _id FROM records WHERE body MATCH 'quick'",
+        );
+        assert_eq!(fulltext.rows().len(), 2);
+        drop(target);
+        drop(source);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -28,6 +28,7 @@ use std::{
 };
 
 use crate::engine::{CommitOutcome, Engine, EngineError};
+use crate::origin_lane::OriginLaneId;
 use crate::families::{
     FamilyError, FamilyReadContext, FamilyReadRequest, FamilyReadResult, FamilyWriteRequest,
     IdentityCommand, IdentityRead, IdentityWrite,
@@ -58,7 +59,7 @@ const IDENTITY_NAME_PREFIX: &str = "documents/";
 pub const MAX_SESSION_TOKEN_BYTES: usize = 16 * 1024;
 
 /// The current opaque session-token encoding version.
-pub const SESSION_TOKEN_FORMAT_VERSION: u8 = 1;
+pub const SESSION_TOKEN_FORMAT_VERSION: u8 = 2;
 
 /// The bounded default wait for a causal read to catch up.
 pub const DEFAULT_SESSION_WAIT: Duration = Duration::from_secs(2);
@@ -105,7 +106,7 @@ pub enum SessionTokenError {
     ZeroEpoch,
     /// A frontier sequence of zero is reserved for an absent origin.
     ZeroSequence,
-    /// A frontier origin could not be validated as a logical Region id.
+    /// A frontier origin could not be validated as a canonical lane id.
     InvalidOrigin,
     /// The supplied token and frontier belong to different epochs.
     EpochMismatch {
@@ -152,7 +153,7 @@ impl std::error::Error for SessionTokenError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionFrontier {
     epoch: SessionEpoch,
-    origins: BTreeMap<RegionId, u64>,
+    origins: BTreeMap<OriginLaneId, u64>,
     last_write: ReplicationClockStamp,
 }
 
@@ -166,7 +167,7 @@ impl SessionFrontier {
     /// and duplicate origins. The map is canonicalized by `RegionId` order.
     pub fn try_from_entries(
         epoch: SessionEpoch,
-        entries: impl IntoIterator<Item = (RegionId, u64)>,
+        entries: impl IntoIterator<Item = (OriginLaneId, u64)>,
         last_write: ReplicationClockStamp,
     ) -> Result<Self, SessionTokenError> {
         let mut frontier = Self::new(epoch);
@@ -193,17 +194,17 @@ impl SessionFrontier {
 
     /// Returns the sequence observed for `origin`, or zero if absent.
     #[must_use]
-    pub fn sequence(&self, origin: &RegionId) -> u64 {
+    pub fn sequence(&self, origin: &OriginLaneId) -> u64 {
         self.origins.get(origin).copied().unwrap_or(0)
     }
 
     /// Iterates over origins in canonical order.
-    pub fn entries(&self) -> impl Iterator<Item = (&RegionId, u64)> + '_ {
+    pub fn entries(&self) -> impl Iterator<Item = (&OriginLaneId, u64)> + '_ {
         self.origins.iter().map(|(origin, sequence)| (origin, *sequence))
     }
 
     /// Advances one origin without allowing a causal regression.
-    pub fn advance(&mut self, origin: RegionId, sequence: u64) -> Result<bool, SessionTokenError> {
+    pub fn advance(&mut self, origin: OriginLaneId, sequence: u64) -> Result<bool, SessionTokenError> {
         if sequence == 0 {
             return Err(SessionTokenError::ZeroSequence);
         }
@@ -323,7 +324,7 @@ impl SessionToken {
     }
 
     /// Advances one observed origin monotonically.
-    pub fn advance(&mut self, origin: RegionId, sequence: u64) -> Result<bool, SessionTokenError> {
+    pub fn advance(&mut self, origin: OriginLaneId, sequence: u64) -> Result<bool, SessionTokenError> {
         self.frontier.advance(origin, sequence)
     }
 
@@ -353,7 +354,8 @@ impl SessionToken {
         body.extend_from_slice(&self.frontier.last_write().counter().to_be_bytes());
         body.extend_from_slice(&(self.frontier.origins.len() as u16).to_be_bytes());
         for (origin, sequence) in self.frontier.entries() {
-            let bytes = origin.as_str().as_bytes();
+            let token = origin.as_str();
+            let bytes = token.as_bytes();
             body.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
             body.extend_from_slice(bytes);
             body.extend_from_slice(&sequence.to_be_bytes());
@@ -397,7 +399,7 @@ impl SessionToken {
             let length = usize::from(reader.u16()?);
             let origin = std::str::from_utf8(reader.take(length)?)
                 .map_err(|_| SessionTokenError::InvalidOrigin)?;
-            let origin = RegionId::try_new(origin).map_err(|_| SessionTokenError::InvalidOrigin)?;
+            let origin = OriginLaneId::parse(origin).map_err(|_| SessionTokenError::InvalidOrigin)?;
             let sequence = reader.u64()?;
             entries.push((origin, sequence));
         }
@@ -2246,7 +2248,7 @@ impl<'engine> Session<'engine> {
             .frontier()
             .entries()
             .next()
-            .map(|(origin, _)| origin.clone())
+            .map(|(origin, _)| origin.region().clone())
             .unwrap_or_else(|| RegionId::try_new("local").expect("local is a valid Region"));
         policy
             .enforce(&token, safe_region, || {
@@ -2334,7 +2336,7 @@ impl SessionStream<'_> {
             .frontier()
             .entries()
             .next()
-            .map(|(origin, _)| origin.clone())
+            .map(|(origin, _)| origin.region().clone())
             .unwrap_or_else(|| RegionId::try_new("local").expect("local is a valid Region"));
         self.policy
             .enforce(&self.session_token, safe_region, || {

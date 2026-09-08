@@ -30,7 +30,10 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::SyncSender;
 use std::sync::mpsc::sync_channel;
 
-use terrabase::streaming::{ChangeCheckpoint, SyncJournalMutation, SyncJournalRecord};
+use terrabase::streaming::{
+    ChangeCheckpoint, SyncJournalCursor, SyncJournalLaneRecord, SyncJournalMutation,
+    SyncJournalRecord,
+};
 
 use crate::registry::AdminStatusResponse;
 use crate::registry::BackboneAcknowledgeRequest;
@@ -498,6 +501,7 @@ struct SubscriptionState {
 struct HostState {
     scopes: BTreeMap<(DeliveryScope, String), ScopeState>,
     durable_cursors: BTreeMap<DeliveryScope, ChangeCheckpoint>,
+    durable_lane_cursors: BTreeMap<DeliveryScope, SyncJournalCursor>,
     subscriptions: BTreeMap<u64, SubscriptionState>,
     reactive: crate::reactive::ReactiveState,
     frames_served: u64,
@@ -526,6 +530,7 @@ impl SyncDeliveryHost {
             state: Mutex::new(HostState {
                 scopes: BTreeMap::new(),
                 durable_cursors: BTreeMap::new(),
+                durable_lane_cursors: BTreeMap::new(),
                 subscriptions: BTreeMap::new(),
                 reactive: crate::reactive::ReactiveState::default(),
                 frames_served: 0,
@@ -659,6 +664,75 @@ impl SyncDeliveryHost {
         if Self::durable_position_is_after(checkpoint, state.durable_cursors.get(&key).copied()) {
             state.durable_cursors.insert(key, checkpoint);
         }
+    }
+
+    /// Applies a bounded merged page from independent physical lanes. Each
+    /// lane is gated by its own cursor; a target lane's local sequence can
+    /// therefore never be mistaken for an older source-lane record.
+    pub(crate) fn apply_durable_lane_records(
+        &self,
+        bound_scope: &BoundScope,
+        cursor: &SyncJournalCursor,
+        records: &[SyncJournalLaneRecord],
+    ) -> Result<(), HostingError> {
+        let mut state = self.lock();
+        Self::ensure_admission(&state)?;
+        let delivery_scope = DeliveryScope::of(bound_scope);
+        if let Some(current) = state.durable_lane_cursors.get(&delivery_scope)
+            && current.binding() != cursor.binding()
+        {
+            return Err(HostingError::Refused(
+                "the durable sync route binding changed; resnapshot is required".into(),
+            ));
+        }
+        if let Some(current) = state.durable_lane_cursors.get(&delivery_scope)
+            && current.lanes().iter().any(|(lane, previous)| {
+                cursor.lanes().get(lane).is_none_or(|next| {
+                    (next.sequence(), next.write_index()) < (previous.sequence(), previous.write_index())
+                })
+            })
+        {
+            return Err(HostingError::Refused(
+                "the durable sync cursor regressed; resnapshot is required".into(),
+            ));
+        }
+        let mut applied = Vec::new();
+        for entry in records {
+            let current = state
+                .durable_lane_cursors
+                .get(&delivery_scope)
+                .and_then(|value| value.lanes().get(entry.lane()))
+                .copied();
+            if current.is_some_and(|checkpoint| {
+                (entry.record().position().sequence(), entry.record().position().write_index())
+                    <= (checkpoint.sequence(), checkpoint.write_index())
+            }) {
+                continue;
+            }
+            Self::can_add_scope(&state, bound_scope, entry.record().collection().as_str())?;
+            state.reactive.apply_record(entry.record());
+            let record = entry.record();
+            Self::scope(&mut state.scopes, bound_scope, record.collection().as_str()).record(
+                JournalRecord {
+                    sequence: record.storage_sequence(),
+                    write_index: record.position().write_index(),
+                    operation_id: record.operation_id().as_str().to_owned(),
+                    kind: match record.mutation() {
+                        SyncJournalMutation::Put(_) => ChangeKind::Put,
+                        SyncJournalMutation::Delete => ChangeKind::Delete,
+                    },
+                    collection: record.collection().as_str().to_owned(),
+                    document: record.document().as_str().to_owned(),
+                },
+            );
+            applied.push(record.clone());
+        }
+        // Commit the proposed per-lane cursor only after every record applied.
+        state.durable_lane_cursors.insert(delivery_scope.clone(), cursor.clone());
+        if !applied.is_empty() {
+            Self::publish_durable_records(&mut state, bound_scope, &applied);
+        }
+        Ok(())
     }
 
     /// Attaches a reader to a shared view.  `authorization_scope` is the

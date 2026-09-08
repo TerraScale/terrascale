@@ -5,12 +5,16 @@
 //! construct one host whose engine mutations and backbone revisions share
 //! the engine publication journal.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::mpsc::Receiver;
 
 use terrabase::engine::Engine;
+use terrabase::origin_lane::OriginLaneId;
 use terrabase::query::QueryError;
+use terrabase::streaming::{SyncJournalBinding, SyncJournalCursor, SyncJournalLanePage};
+use terrabase::types::{RegionId, TenantId};
 
 use crate::engine_host::EngineHost;
 use crate::host::{HostingError, SyncDeliveryHost, TbepHost, TbepNotification};
@@ -46,6 +50,7 @@ pub struct MemberHost {
     engine: EngineHost,
     delivery: std::sync::Arc<SyncDeliveryHost>,
     journal_sync: std::sync::Arc<Mutex<()>>,
+    sync_cursor: std::sync::Arc<Mutex<Option<SyncJournalCursor>>>,
 }
 
 type SubscriptionSeed = (crate::reactive::ProjectedMembers, Vec<(String, Vec<u8>)>);
@@ -83,6 +88,7 @@ impl MemberHost {
             engine: EngineHost::open(location, instance, tenant, project, database)?,
             delivery: std::sync::Arc::new(SyncDeliveryHost::new(instance)),
             journal_sync: std::sync::Arc::new(Mutex::new(())),
+            sync_cursor: std::sync::Arc::new(Mutex::new(None)),
         })
     }
 
@@ -97,6 +103,7 @@ impl MemberHost {
             engine: EngineHost::from_admitted(lease, location, instance),
             delivery: std::sync::Arc::new(SyncDeliveryHost::new(instance)),
             journal_sync: std::sync::Arc::new(Mutex::new(())),
+            sync_cursor: std::sync::Arc::new(Mutex::new(None)),
         }
     }
 
@@ -125,6 +132,7 @@ impl MemberHost {
             engine,
             delivery: self.delivery.clone(),
             journal_sync: self.journal_sync.clone(),
+            sync_cursor: self.sync_cursor.clone(),
         }))
     }
 
@@ -375,6 +383,98 @@ impl MemberHost {
 
     fn synchronize(&self, scope: &registry::BoundScope) -> Result<(), HostingError> {
         let _serial = self.journal_sync.lock().expect("the journal sync lock is not poisoned");
+        let Some(cut) = self.engine.admitted_shard_read_cut().map_err(|error| {
+            HostingError::EngineFailure(format!("the admitted shard read cut failed: {error:?}"))
+        })? else {
+            return self.synchronize_single_engine(scope);
+        };
+        let tenant = TenantId::try_new(&scope.tenant)
+            .map_err(|_| HostingError::Invalid("the sync tenant is not valid".into()))?;
+        let first = cut
+            .participants
+            .first()
+            .ok_or_else(|| HostingError::EngineFailure("the admitted shard cut is empty".into()))?;
+        let binding = SyncJournalBinding::new(
+            tenant,
+            scope.project.clone(),
+            scope.database.clone(),
+            first.engine.database_id(),
+            cut.database_incarnation,
+            cut.route_generation.unwrap_or(0),
+            [0; 32],
+        );
+        let lanes: Vec<_> = cut
+            .participants
+            .iter()
+            .map(|participant| {
+                let region = RegionId::try_new(participant.identity.region.as_str())
+                    .map_err(|_| HostingError::Invalid("the shard Region is not valid".into()))?;
+                OriginLaneId::try_new(region, participant.identity.origin_lane_incarnation)
+                    .map_err(|_| HostingError::Invalid("the shard origin lane is not valid".into()))
+                    .map(|lane| (lane, participant))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut cursor = self.sync_cursor.lock().expect("the sync cursor is not poisoned");
+        if let Some(existing) = cursor.as_ref() {
+            if existing.binding() != &binding {
+                return Err(HostingError::Refused(
+                    "the admitted route changed; a fresh sync snapshot is required".into(),
+                ));
+            }
+        } else {
+            *cursor = Some(SyncJournalCursor::beginning(
+                binding.clone(),
+                lanes.iter().map(|(lane, _)| lane.clone()),
+            ));
+        }
+        loop {
+            let before = cursor.as_ref().expect("sync cursor initialized").clone();
+            let mut pages = BTreeMap::new();
+            for (lane, participant) in &lanes {
+                let after = before.lanes().get(lane).copied();
+                let page = participant
+                    .engine
+                    .streams()
+                    .replay_sync_journal(
+                        &participant.scope,
+                        after,
+                        terrabase::streaming::MAX_STREAM_BATCH_ITEMS,
+                        &terrabase::types::Cancellation::default(),
+                    )
+                    .map_err(|error| {
+                        HostingError::EngineFailure(format!(
+                            "the shard sync journal could not be replayed: {error:?}"
+                        ))
+                    })?;
+                let through = participant.snapshot.sequence().get();
+                let records = page
+                    .records()
+                    .iter()
+                    .filter(|record| record.storage_sequence() <= through)
+                    .cloned()
+                    .collect();
+                pages.insert(
+                    lane.clone(),
+                    SyncJournalLanePage::new(records, page.next_checkpoint(), page.drained()),
+                );
+            }
+            let merged = terrabase::streaming::merge_sync_journal_pages(&before, pages, terrabase::streaming::MAX_STREAM_BATCH_ITEMS)
+                .map_err(|error| HostingError::EngineFailure(format!("the shard journal merge failed: {error:?}")))?;
+            let records: Vec<_> = merged.records().iter().map(|entry| entry.record().clone()).collect();
+            self.delivery.apply_durable_lane_records(scope, merged.cursor(), &records)?;
+            *cursor = Some(merged.cursor().clone());
+            if merged.drained() {
+                return Ok(());
+            }
+            if *cursor.as_ref().expect("sync cursor remains initialized") == before {
+                return Err(HostingError::EngineFailure(
+                    "the admitted shard journals did not advance".into(),
+                ));
+            }
+        }
+    }
+
+    fn synchronize_single_engine(&self, scope: &registry::BoundScope) -> Result<(), HostingError> {
         loop {
             let before = self.delivery.durable_cursor(scope);
             let batch = self.engine.replay_sync_journal(scope, before)?;

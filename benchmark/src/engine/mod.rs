@@ -39,8 +39,8 @@ mod replication_outbox;
 mod retention;
 pub use repair_summary::ReplicationRepairCut;
 mod storage_usage;
-mod usage_placement;
 mod usage_budget;
+mod usage_placement;
 #[cfg(test)]
 mod usage_placement_tests;
 pub use replicated_publication::{
@@ -52,7 +52,7 @@ mod replication_wire;
 mod schema_indexes;
 mod schema_metadata;
 pub(crate) mod shard_catchup;
-mod shard_split;
+pub(crate) mod shard_split;
 pub(crate) mod shard_supervisor;
 mod webhook_metadata;
 
@@ -68,9 +68,9 @@ mod cross_file_tests;
 #[cfg(test)]
 mod patch_tests;
 #[cfg(test)]
-mod shard_split_tests;
-#[cfg(test)]
 mod shard_serving_correction_tests;
+#[cfg(test)]
+mod shard_split_tests;
 
 #[cfg(test)]
 mod tests;
@@ -1162,6 +1162,12 @@ type AutoIndexShadowSamples = BTreeMap<
     (u64, Vec<crate::auto_index::LogicalCost>, Vec<crate::auto_index::LogicalCost>),
 >;
 
+pub(crate) trait ShardResourceReservation: Send + Sync {
+    fn opened(&mut self);
+}
+pub(crate) type ShardResourceFactory =
+    Arc<dyn Fn() -> Result<Box<dyn ShardResourceReservation>, EngineOpenError> + Send + Sync>;
+
 /// The database-owned Engine.
 ///
 /// ```compile_fail
@@ -1230,6 +1236,8 @@ pub struct Engine {
     shard_participants: Mutex<BTreeMap<u64, Arc<Engine>>>,
     /// Target commits share the source database's live authority, without a cycle.
     shard_authority: Mutex<Option<std::sync::Weak<Engine>>>,
+    shard_resource_factory: Mutex<Option<ShardResourceFactory>>,
+    shard_resources: Mutex<Option<Box<dyn ShardResourceReservation>>>,
     pub(crate) commit_mailbox: Arc<Mutex<CommitMailbox>>,
     /// The arrival signal paired with [`Engine::commit_mailbox`]: every
     /// enqueue notifies it, so a coalescing leader wakes per arrival
@@ -1351,9 +1359,8 @@ impl Engine {
             )
             .ok()
         });
-        let lane_origin_text = configured_lane
-            .as_ref()
-            .map(crate::origin_lane::OriginLaneId::as_str);
+        let lane_origin_text =
+            configured_lane.as_ref().map(crate::origin_lane::OriginLaneId::as_str);
         let replication_origin = lane_origin_text
             .as_deref()
             .or_else(|| config.replication_origin.as_ref().map(RegionId::as_str));
@@ -1376,7 +1383,7 @@ impl Engine {
             .map_err(|_| EngineOpenError::StorageUnavailable)?;
         let replication_lane_origin = configured_lane
             .or_else(|| {
-                crate::origin_lane::OriginLaneId::parse(storage.port.local_replication_origin()).ok()
+                crate::origin_lane::OriginLaneId::parse(storage.local_replication_origin()).ok()
             })
             .or_else(|| {
                 let region = RegionId::try_new(owner.region().as_str()).ok()?;
@@ -1461,9 +1468,20 @@ impl Engine {
             origin_commit_barrier: std::sync::RwLock::new(()),
             shard_participants: Mutex::new(BTreeMap::new()),
             shard_authority: Mutex::new(None),
+            shard_resource_factory: Mutex::new(None),
+            shard_resources: Mutex::new(None),
             commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
             commit_arrivals: std::sync::Condvar::new(),
         })
+    }
+
+    pub(crate) fn install_shard_resource_factory(
+        &self,
+        factory: ShardResourceFactory,
+    ) -> Result<(), EngineError> {
+        *self.shard_resource_factory.lock().map_err(|_| EngineError::StorageFailure)? =
+            Some(factory);
+        Ok(())
     }
 
     /// Returns the durable database identity bound to this location.
@@ -5363,6 +5381,14 @@ impl Transaction<'_> {
         if !self.valid_document_request_binding() || !self.valid_batch_request_binding() {
             return CommitOutcome::Rejected(CommitError::Validation);
         }
+        let replicated = self.replication_publication.is_some()
+            || self.writes.iter().any(|write| {
+                matches!(
+                    write,
+                    storage::StagedWrite::ReplicatedPut { .. }
+                        | storage::StagedWrite::ReplicatedDelete { .. }
+                )
+            });
         let writes = std::mem::take(&mut self.writes);
         let usage_admission = self.usage_admission.take();
         let budget_allocation = self.budget_allocation.take();
@@ -5381,14 +5407,6 @@ impl Transaction<'_> {
         // An origin commit stamps the replication clock (the hybrid
         // logical clock the deterministic merge compares); a replicated
         // intent carries its source stamp on the staged variant.
-        let replicated = self.replication_publication.is_some()
-            || writes.iter().any(|write| {
-                matches!(
-                    write,
-                    storage::StagedWrite::ReplicatedPut { .. }
-                        | storage::StagedWrite::ReplicatedDelete { .. }
-                )
-            });
         if !replicated
             && (!writes.is_empty() || !metadata.is_empty() || !schema_envelopes.is_empty())
             && self.engine.admit_origin_clock().is_err()

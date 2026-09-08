@@ -380,13 +380,13 @@ pub struct SyncJournalCursor {
 impl SyncJournalCursor {
     /// Creates a cursor at the beginning of every currently enumerated lane.
     #[must_use]
-    pub fn beginning(binding: SyncJournalBinding, lanes: impl IntoIterator<Item = OriginLaneId>) -> Self {
+    pub fn beginning(
+        binding: SyncJournalBinding,
+        lanes: impl IntoIterator<Item = OriginLaneId>,
+    ) -> Self {
         Self {
             binding,
-            lanes: lanes
-                .into_iter()
-                .map(|lane| (lane, ChangeCheckpoint::after(0, 0)))
-                .collect(),
+            lanes: lanes.into_iter().map(|lane| (lane, ChangeCheckpoint::after(0, 0))).collect(),
         }
     }
 
@@ -457,6 +457,27 @@ pub struct SyncJournalLaneBatch {
     drained: bool,
 }
 
+/// One bounded page read from a physical lane, including its lane-local
+/// continuation so no-op or provenance-filtered rows still advance safely.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SyncJournalLanePage {
+    records: Vec<SyncJournalRecord>,
+    next: Option<ChangeCheckpoint>,
+    drained: bool,
+}
+
+impl SyncJournalLanePage {
+    /// Creates one lane page from the participant replay seam.
+    #[must_use]
+    pub fn new(
+        records: Vec<SyncJournalRecord>,
+        next: Option<ChangeCheckpoint>,
+        drained: bool,
+    ) -> Self {
+        Self { records, next, drained }
+    }
+}
+
 impl SyncJournalLaneBatch {
     /// Returns records in deterministic order within the available pages.
     #[must_use]
@@ -483,24 +504,20 @@ impl SyncJournalLaneBatch {
 /// deliberately not presented as a global chronology across records that may
 /// arrive from later lane reads. Replicated staging rows are excluded; their
 /// original provenance remains eligible on the originating lane exactly once.
-pub(crate) fn merge_sync_journal_pages(
+pub fn merge_sync_journal_pages(
     cursor: &SyncJournalCursor,
-    pages: BTreeMap<OriginLaneId, Vec<SyncJournalRecord>>,
-    drained: bool,
+    pages: BTreeMap<OriginLaneId, SyncJournalLanePage>,
     limit: u32,
 ) -> Result<SyncJournalLaneBatch, StreamError> {
     if limit == 0 || limit > super::MAX_STREAM_BATCH_ITEMS {
         return Err(StreamError::InvalidSource);
     }
     let mut candidates: Vec<SyncJournalLaneRecord> = pages
-        .into_iter()
-        .flat_map(|(lane, records)| {
-            let checkpoint = cursor
-                .lanes
-                .get(&lane)
-                .copied()
-                .unwrap_or(ChangeCheckpoint::after(0, 0));
-            records.into_iter().filter_map(move |record| {
+        .iter()
+        .flat_map(|(lane, page)| {
+            let checkpoint =
+                cursor.lanes.get(&lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
+            page.records.iter().filter_map(move |record| {
                 if record.provenance().kind() != JournalKind::Origin
                     || subscription::position_covered(
                         checkpoint.sequence(),
@@ -511,7 +528,7 @@ pub(crate) fn merge_sync_journal_pages(
                 {
                     return None;
                 }
-                Some(SyncJournalLaneRecord::new(lane.clone(), record))
+                Some(SyncJournalLaneRecord::new(lane.clone(), record.clone()))
             })
         })
         .collect();
@@ -533,10 +550,105 @@ pub(crate) fn merge_sync_journal_pages(
     });
     candidates.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
     let mut next = cursor.clone();
+    let mut selected_lanes = std::collections::BTreeSet::new();
     for candidate in &candidates {
         next.lanes.insert(candidate.lane.clone(), candidate.record.position());
+        selected_lanes.insert(candidate.lane.clone());
     }
+    for (lane, page) in &pages {
+        if !selected_lanes.contains(lane) && page.next.is_some() {
+            next.lanes.insert(lane.clone(), page.next.expect("checked above"));
+        }
+    }
+    let drained = pages.values().all(|page| page.drained);
     Ok(SyncJournalLaneBatch { records: candidates, cursor: next, drained })
+}
+
+#[cfg(test)]
+mod lane_merge_tests {
+    use super::*;
+    use crate::{
+        identity::DatabaseUlid,
+        types::{CollectionName, DocumentId, OperationId, RegionId, TenantId},
+    };
+
+    fn lane(region: &str, incarnation: u128) -> OriginLaneId {
+        let region = RegionId::try_new(region).expect("valid Region");
+        OriginLaneId::try_new(region, incarnation).expect("valid lane")
+    }
+
+    fn record(sequence: u64, hlc: u64, operation: &str) -> SyncJournalRecord {
+        SyncJournalRecord {
+            before: crate::storage::JournalBeforeImage::Unknown,
+            position: ChangeCheckpoint::after(sequence, 1),
+            operation_id: OperationId::try_new(operation).expect("valid operation"),
+            collection: CollectionName::try_new("users").expect("valid collection"),
+            document: DocumentId::try_new(operation).expect("valid document"),
+            mutation: SyncJournalMutation::Delete,
+            version: 0,
+            provenance: JournalProvenance::new(
+                JournalKind::Origin,
+                format!("lane-{operation}"),
+                sequence,
+                hlc,
+            ),
+        }
+    }
+
+    fn binding() -> SyncJournalBinding {
+        SyncJournalBinding::new(
+            TenantId::try_new("tenant").expect("valid tenant"),
+            "project".into(),
+            "database".into(),
+            DatabaseUlid::generate(),
+            1,
+            0,
+            [0; 32],
+        )
+    }
+
+    #[test]
+    fn equal_local_sequences_from_independent_lanes_are_both_applied() {
+        let first = lane("GRU", 1);
+        let second = lane("SFO", 2);
+        let cursor = SyncJournalCursor::beginning(binding(), [first.clone(), second.clone()]);
+        let pages = BTreeMap::from([
+            (
+                first.clone(),
+                SyncJournalLanePage::new(vec![record(1, 10, "one")], Some(ChangeCheckpoint::after(1, 1)), true),
+            ),
+            (
+                second.clone(),
+                SyncJournalLanePage::new(vec![record(1, 11, "two")], Some(ChangeCheckpoint::after(1, 1)), true),
+            ),
+        ]);
+        let merged = merge_sync_journal_pages(&cursor, pages, 2).expect("merge succeeds");
+        assert_eq!(merged.records().len(), 2);
+        assert_eq!(merged.cursor().lanes()[&first], ChangeCheckpoint::after(1, 1));
+        assert_eq!(merged.cursor().lanes()[&second], ChangeCheckpoint::after(1, 1));
+    }
+
+    #[test]
+    fn bounded_merge_leaves_unselected_lane_at_its_prior_cursor() {
+        let first = lane("GRU", 3);
+        let second = lane("SFO", 4);
+        let cursor = SyncJournalCursor::beginning(binding(), [first.clone(), second.clone()]);
+        let pages = BTreeMap::from([
+            (
+                first.clone(),
+                SyncJournalLanePage::new(vec![record(1, 10, "one")], Some(ChangeCheckpoint::after(1, 1)), true),
+            ),
+            (
+                second.clone(),
+                SyncJournalLanePage::new(vec![record(1, 20, "two")], Some(ChangeCheckpoint::after(1, 1)), true),
+            ),
+        ]);
+        let merged = merge_sync_journal_pages(&cursor, pages, 1).expect("merge succeeds");
+        assert_eq!(merged.records().len(), 1);
+        let advanced = merged.records()[0].lane().clone();
+        let retained = if advanced == first { second } else { first };
+        assert_eq!(merged.cursor().lanes()[&retained], ChangeCheckpoint::after(0, 0));
+    }
 }
 
 impl SyncJournalBatch {

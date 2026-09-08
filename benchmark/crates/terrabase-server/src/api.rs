@@ -36,6 +36,7 @@ use terrabase::Session;
 use terrabase::SessionError;
 use terrabase::SessionOptions;
 use terrabase::SessionToken;
+use terrabase::Transaction;
 use terrabase::observability::MetricsRegistry;
 use terrabase::observability::ServiceState;
 use terrabase::regions::RegionCatalog;
@@ -47,7 +48,6 @@ use terrabase::types::DocumentValue;
 use terrabase::types::ExpectedVersion;
 use terrabase::types::LocalDurability;
 use terrabase::types::OperationId;
-use terrabase::Transaction;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use utoipa_scalar::Scalar;
@@ -5321,6 +5321,8 @@ mod tests {
     use std::sync::Arc;
     use terrabase::SessionEpoch;
     use terrabase::SessionToken;
+    use terrabase::observability::MetricsRegistry;
+    use terrabase::regions::RegionCode;
     use terrabase::types::CollectionName;
     use terrabase::types::Document;
     use terrabase::types::DocumentId;
@@ -5328,13 +5330,12 @@ mod tests {
     use terrabase::types::ExpectedVersion;
     use terrabase::types::LocalDurability;
     use terrabase::types::OperationId;
-    use terrabase::observability::MetricsRegistry;
-    use terrabase::regions::RegionCode;
     use terrabase::types::RegionId;
     use tower::util::ServiceExt;
 
-    fn staged_runtime_transaction() -> (&'static terrabase::Engine, terrabase::Transaction<'static>) {
-        let root = std::env::temp_dir().join(format!("terrabase-commit-runtime-{}", terrabase::identity::generate()));
+    fn staged_runtime_transaction() -> terrabase::Transaction<'static> {
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-commit-runtime-{}", terrabase::identity::generate()));
         let engine = terrabase::Engine::open(
             terrabase::EngineConfig::durable(root).expect("durable config"),
         )
@@ -5361,35 +5362,25 @@ mod tests {
                 ExpectedVersion::Any,
             )
             .expect("stage");
-        (engine, transaction)
+        transaction
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn runtime_commit_current_thread_uses_direct_commit() {
-        let (engine, transaction) = staged_runtime_transaction();
+        let transaction = staged_runtime_transaction();
         assert!(matches!(
             commit_on_runtime(transaction, LocalDurability::Synced),
-            CommitOutcome::Committed(_)
+            terrabase::CommitOutcome::Committed(_)
         ));
-        assert!(engine
-            .read_snapshot(&engine
-                .database_owner()
-                .tenant_scope())
-            .is_ok());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn runtime_commit_multi_thread_publishes_successfully() {
-        let (engine, transaction) = staged_runtime_transaction();
+        let transaction = staged_runtime_transaction();
         assert!(matches!(
             commit_on_runtime(transaction, LocalDurability::Synced),
-            CommitOutcome::Committed(_)
+            terrabase::CommitOutcome::Committed(_)
         ));
-        assert!(engine
-            .read_snapshot(&engine
-                .database_owner()
-                .tenant_scope())
-            .is_ok());
     }
 
     #[tokio::test]

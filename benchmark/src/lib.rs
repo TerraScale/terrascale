@@ -34,8 +34,8 @@ pub mod identity;
 pub mod index;
 pub mod member;
 pub mod observability;
-pub mod origin_lane;
 pub mod operations;
+pub mod origin_lane;
 pub mod query;
 pub mod regions;
 pub mod relationships;
@@ -58,8 +58,8 @@ pub use adapters::protocol::{
 };
 pub use adapters::protocol::{ProtocolAdapter, ProtocolError};
 pub use backup::{
-    BackupArchive, BackupError, BackupKind, BackupManifest, BackupPlan, BackupProgress,
-    BackupResult,
+    BackupArchive, BackupEnvelope, BackupEnvelopeParticipant, BackupError, BackupKind,
+    BackupManifest, BackupPlan, BackupProgress, BackupResult,
 };
 pub use engine::{
     AuthorizedEngine, AuthorizedEngineError, AuthorizedSession, BulkIngestRequest, CommitError,
@@ -85,6 +85,7 @@ pub use operations::{
     MAX_SQL_TEXT_BYTES, PublicOperation, PublicResponse, QueryInput, QueryInputError,
     QueryOperation, RequestValidationError, SqlQueryText,
 };
+pub use origin_lane::{OriginLaneError, OriginLaneId};
 pub use query::{
     BulkAuditEntry, BulkAuditStage, BulkByQueryOptions, BulkByQueryReceipt, BulkDetail,
     BulkDetailOutcome, BulkOperationKind, BulkPageReceipt, BulkRefusal, BulkTermination,
@@ -116,7 +117,6 @@ pub use types::{
     RetryDisposition, StorageSequence, TenantId, TenantScope,
 };
 pub use types::{MemberId, RegionId, ReplicationClockStamp};
-pub use origin_lane::{OriginLaneError, OriginLaneId};
 pub use usage::{
     ChargeScope, CorrectionProcedure, MeasurementCadence, MeasurementWindow, MeterCatalog,
     MeterDefinition, MeterKind, MeterUnit, MintingIdentity, MintingRule, SegmentId,

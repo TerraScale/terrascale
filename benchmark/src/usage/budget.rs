@@ -381,10 +381,7 @@ mod tests {
             issued_at: "2026-01-01T00:00:00Z".into(),
             expires_at: "2099-01-01T00:00:00Z".into(),
         };
-        let envelope = AllocationEnvelope {
-            schema_version: 2,
-            grant,
-        };
+        let envelope = AllocationEnvelope { schema_version: 2, grant };
         let payload = serde_json::to_vec(&envelope).unwrap();
         let mut message = ALLOCATION_SIGNING_DOMAIN.to_vec();
         message.extend_from_slice(&payload);

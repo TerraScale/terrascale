@@ -55,9 +55,49 @@ SQLite retention consumer. The causal driver must additionally expose the
 highest contiguous **source journal checkpoint** whose receipt has been
 folded. The checkpoint is stored internally on each pending publication and
 is moved to `self.cursor` when contiguous pending entries are acknowledged in
-`crates/terrabase-tbep/src/production_causal.rs`, approximately lines
-400–420. The next hook should return a monotonic acknowledged source cursor
-from that fold, or an explicit `Option<StorageSequence>`/`u64` source sequence.
+`crates/terrabase-tbep/src/production_causal.rs:40-53,406-418`. The next hook
+should return a monotonic acknowledged source cursor from that fold, or an
+explicit `Option<u64>` source sequence.
+
+The current worker has a concrete correctness trap: in
+`crates/terrabase-server/src/replication_peers.rs:1008-1032`, after
+`CausalDriver::receive_frame`, it reads `engine.read_snapshot(...).sequence()`
+and uses that value only for `ReplicationProgress`. That is the local engine
+head at receipt time, not the source journal checkpoint acknowledged by the
+remote causal peer. It must not feed retention. The retention hook for the
+remote causal lane belongs on the sender-side `CausalReceive::Receipt` path,
+using a new driver accessor that returns the cursor after the contiguous fold.
+Do not derive it from `durable_peer_frontier`, the local snapshot head, or the
+remote origin sequence: a publication may carry origin sequence 17 while its
+source journal checkpoint is 43.
+
+The physical path has a separate exact source value. At
+`replication_peers.rs:1003-1006`, `TBWACK` is decoded and accepted by
+`writer.acknowledge`; at `:1065-1090`, `writer.durable_sequence(tenant)` is
+the verified local source journal sequence. Pass that `StorageSequence` (or
+its checked `u64`) to the adapter only after the writer acceptance and durable
+sequence query succeed.
+
+## Ready implementation ownership
+
+The smallest cohesive implementation spans these files:
+
+* `crates/terrabase-server/src/replication_frontier.rs`: retain the existing
+  required-peer/minimum state machine; add a caller-safe update API only if
+  needed to defer the durable Engine call without losing a failed candidate.
+* `crates/terrabase-server/src/replication_peers.rs`: call the adapter from
+  the physical `UpToDate` branch with `writer.durable_sequence`; call it from
+  the causal `Receipt` branch with the new CausalDriver cursor accessor.
+* `crates/terrabase-tbep/src/production_causal.rs`: expose the post-fold
+  acknowledged source cursor; keep repair publications (`checkpoint=None`)
+  from moving the sequential retention cursor.
+* `crates/terrabase-server/src/production_data_runtime.rs`: construct/admit
+  one frontier per accepted `(DatabaseRouteScope, placement_generation,
+  replica_epoch)` and register the authenticated physical and causal peer
+  identities before worker receipt processing.
+
+Do not make `ReplicationProgress` or `durable_peer_frontier` the retention
+owner. They represent API/RF2 evidence and causal origin clocks respectively.
 
 Do not derive this value from `durable_peer_frontier`, from the local engine
 head, or from the remote Region's origin sequence. A receipt for a publication
@@ -109,4 +149,3 @@ Required regression schedules:
    it and keep the new frontier at zero.
 5. Duplicate and out-of-order causal receipts do not regress or double-submit
    the durable frontier.
-
