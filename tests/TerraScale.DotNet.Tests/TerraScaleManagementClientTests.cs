@@ -46,6 +46,11 @@ public sealed class TerraScaleManagementClientTests
                     using var body = JsonDocument.Parse(handler.Body!);
                     await Assert.That(body.RootElement.GetProperty("operation_id").GetString()).IsEqualTo("operation-key");
                 }
+                if (IsAuthPersistenceOperation(operationId))
+                {
+                    await Assert.That(handler.IdempotencyKey).IsEqualTo(operationId == "find_one" ? null : "auth-key");
+                    await Assert.That(handler.AuthTransaction).IsEqualTo(operationId is "find_one" or "begin_transaction" or "commit_transaction" or "rollback_transaction" ? null : "transaction-key");
+                }
                 if (operationId == "create_database")
                 {
                     if (response.GetProperty("status").GetInt32() == 202)
@@ -99,6 +104,12 @@ public sealed class TerraScaleManagementClientTests
 
     private static T Request<T>(JsonElement operation, JsonTypeInfo<T> type) =>
         JsonSerializer.Deserialize(operation.GetProperty("request").GetProperty("body").GetProperty("value").GetRawText(), type)!;
+
+    private static bool IsAuthPersistenceOperation(string operationId) => operationId is
+        "insert_unique" or "compare_and_swap" or "consume_one" or "consume_matching" or "count" or
+        "delete_many" or "delete_one" or "increment_one" or "update_many" or "update_one" or
+        "index" or "find_page" or "find_one" or "begin_transaction" or "commit_transaction" or
+        "rollback_transaction";
 
     private static async Task<object?> Invoke(TerraScaleClient client, string operationId, JsonElement operation)
     {
@@ -163,6 +174,7 @@ public sealed class TerraScaleManagementClientTests
         public string? Path { get; private set; }
         public string? Body { get; private set; }
         public string? IdempotencyKey { get; private set; }
+        public string? AuthTransaction { get; private set; }
         public string? IfMatch { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -171,6 +183,7 @@ public sealed class TerraScaleManagementClientTests
             Path = request.RequestUri!.AbsolutePath;
             Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
             IdempotencyKey = request.Headers.TryGetValues("Idempotency-Key", out var keys) ? keys.Single() : null;
+            AuthTransaction = request.Headers.TryGetValues("X-TerraScale-Auth-Transaction", out var transactions) ? transactions.Single() : null;
             IfMatch = request.Headers.IfMatch.FirstOrDefault()?.ToString();
             var response = new HttpResponseMessage((HttpStatusCode)fixture.GetProperty("status").GetInt32());
             if (fixture.TryGetProperty("body", out var body) && body.ValueKind != JsonValueKind.Null)
