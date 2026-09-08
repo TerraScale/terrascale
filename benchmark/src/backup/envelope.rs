@@ -7,7 +7,6 @@
 //! validate every participant before exposing the envelope as recoverable.
 
 use super::{BackupError, BackupManifest};
-use crate::types::StorageSequence;
 use aws_lc_rs::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -27,6 +26,8 @@ pub struct BackupEnvelopeParticipant {
     pub database_incarnation: u128,
     /// Route generation at which the participant was captured.
     pub route_generation: u64,
+    /// Local journal boundary captured for this participant.
+    pub boundary: u64,
     /// Recovery-point manifest bound to the common cut.
     pub manifest: BackupManifest,
 }
@@ -37,7 +38,6 @@ pub struct BackupEnvelope {
     database_id: String,
     database_incarnation: u128,
     route_generation: u64,
-    common_cut: StorageSequence,
     participants: Vec<BackupEnvelopeParticipant>,
     digest: String,
 }
@@ -49,7 +49,6 @@ struct EnvelopeWire {
     database_id: String,
     database_incarnation: String,
     route_generation: u64,
-    common_cut: u64,
     participants: Vec<ParticipantWire>,
     digest: String,
 }
@@ -61,6 +60,7 @@ struct ParticipantWire {
     database_id: String,
     database_incarnation: String,
     route_generation: u64,
+    boundary: u64,
     manifest: String,
 }
 
@@ -70,7 +70,6 @@ impl BackupEnvelope {
         database_id: String,
         database_incarnation: u128,
         route_generation: u64,
-        common_cut: StorageSequence,
         mut participants: Vec<BackupEnvelopeParticipant>,
     ) -> Result<Self, BackupError> {
         if database_id.is_empty()
@@ -91,7 +90,7 @@ impl BackupEnvelope {
                 || participant.database_incarnation != database_incarnation
                 || participant.route_generation != route_generation
                 || participant.manifest.database_id() != participant.database_id
-                || participant.manifest.boundary_sequence() != common_cut
+                || participant.boundary != participant.manifest.boundary_sequence().get()
             {
                 return Err(BackupError::ManifestInvalid);
             }
@@ -100,7 +99,6 @@ impl BackupEnvelope {
             database_id,
             database_incarnation,
             route_generation,
-            common_cut,
             participants,
             digest: String::new(),
         };
@@ -124,12 +122,6 @@ impl BackupEnvelope {
     #[must_use]
     pub const fn route_generation(&self) -> u64 {
         self.route_generation
-    }
-
-    /// Returns the common storage cut captured by all participants.
-    #[must_use]
-    pub const fn common_cut(&self) -> StorageSequence {
-        self.common_cut
     }
 
     /// Returns participants in canonical identity order.
@@ -174,6 +166,7 @@ impl BackupEnvelope {
                 database_id: participant.database_id,
                 database_incarnation,
                 route_generation: participant.route_generation,
+                boundary: participant.boundary,
                 manifest,
             });
         }
@@ -182,7 +175,6 @@ impl BackupEnvelope {
             u128::from_str_radix(&wire.database_incarnation, 16)
                 .map_err(|_| BackupError::ManifestInvalid)?,
             wire.route_generation,
-            StorageSequence::new(wire.common_cut),
             participants,
         )?;
         if envelope.digest != wire.digest {
@@ -202,7 +194,7 @@ impl BackupEnvelope {
         for (expected, (participant_id, manifest)) in self.participants.iter().zip(manifests) {
             if expected.participant_id != *participant_id
                 || expected.manifest != *manifest
-                || manifest.boundary_sequence() != self.common_cut
+                || manifest.boundary_sequence().get() != expected.boundary
             {
                 return Err(BackupError::ChecksumMismatch);
             }
@@ -235,6 +227,7 @@ impl BackupEnvelope {
                     database_id: participant.database_id.clone(),
                     database_incarnation: format!("{:032x}", participant.database_incarnation),
                     route_generation: participant.route_generation,
+                    boundary: participant.boundary,
                     manifest: String::from_utf8(participant.manifest.encode())
                         .map_err(|_| BackupError::ManifestInvalid)?,
                 })
@@ -245,7 +238,6 @@ impl BackupEnvelope {
             database_id: self.database_id.clone(),
             database_incarnation: format!("{:032x}", self.database_incarnation),
             route_generation: self.route_generation,
-            common_cut: self.common_cut.get(),
             participants,
             digest: self.digest.clone(),
         })

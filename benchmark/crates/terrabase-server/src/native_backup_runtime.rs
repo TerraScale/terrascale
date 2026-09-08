@@ -116,19 +116,6 @@ impl NativeBackupRuntime {
         if cut.participants.len() != manifests.len() || cut.participants.is_empty() {
             return Err(NativeBackupRuntimeError::Envelope);
         }
-        let common_cut = cut
-            .participants
-            .first()
-            .ok_or(NativeBackupRuntimeError::Envelope)?
-            .snapshot
-            .sequence();
-        if cut
-            .participants
-            .iter()
-            .any(|participant| participant.snapshot.sequence() != common_cut)
-        {
-            return Err(NativeBackupRuntimeError::Envelope);
-        }
         let participants = cut
             .participants
             .iter()
@@ -138,6 +125,7 @@ impl NativeBackupRuntime {
                 database_id: participant.engine.database_id().to_string(),
                 database_incarnation: cut.database_incarnation,
                 route_generation,
+                boundary: participant.snapshot.sequence().get(),
                 manifest,
             })
             .collect();
@@ -145,7 +133,6 @@ impl NativeBackupRuntime {
             cut.database_id.clone(),
             cut.database_incarnation,
             route_generation,
-            common_cut,
             participants,
         )
         .map_err(|_| NativeBackupRuntimeError::Envelope)

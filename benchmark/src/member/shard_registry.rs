@@ -395,6 +395,10 @@ mod tests {
         assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
     }
 
+    fn text(value: &str) -> DocumentValue {
+        DocumentValue::String(value.to_owned())
+    }
+
     fn execute_routed_sql(
         source: &Arc<Engine>,
         target: &Arc<Engine>,
@@ -477,7 +481,7 @@ mod tests {
         let target =
             Arc::new(Engine::open(EngineConfig::durable(root.join("target")).unwrap()).unwrap());
         let tenant = TenantId::try_new("tenant").unwrap();
-        put(&source, &tenant, "source-old", "z-record", "records", &[("status", "old".into())]);
+        put(&source, &tenant, "source-old", "z-record", "records", &[("status", text("old"))]);
         // This is the routed PATCH destination. It deliberately reuses the
         // same id so a source fallback would return the stale value.
         put(
@@ -486,7 +490,7 @@ mod tests {
             "target-patch",
             "z-record",
             "records",
-            &[("status", "patched".into())],
+            &[("status", text("patched"))],
         );
         let result =
             execute_routed_sql(&source, &target, &tenant, "SELECT _id, status FROM records");
@@ -512,7 +516,7 @@ mod tests {
             "source-a",
             "a-record",
             "records",
-            &[("state", "open".into()), ("body", "alpha quick".into())],
+            &[("state", text("open")), ("body", text("alpha quick"))],
         );
         put(
             &target,
@@ -520,10 +524,10 @@ mod tests {
             "target-z",
             "z-record",
             "records",
-            &[("state", "closed".into()), ("body", "zeta quick".into())],
+            &[("state", text("closed")), ("body", text("zeta quick"))],
         );
-        put(&source, &tenant, "archive-a", "a-record", "archive", &[("kind", "invoice".into())]);
-        put(&target, &tenant, "archive-z", "z-record", "archive", &[("kind", "receipt".into())]);
+        put(&source, &tenant, "archive-a", "a-record", "archive", &[("kind", text("invoice"))]);
+        put(&target, &tenant, "archive-z", "z-record", "archive", &[("kind", text("receipt"))]);
         let aggregate =
             execute_routed_sql(&source, &target, &tenant, "SELECT COUNT(*) AS total FROM records");
         assert_eq!(aggregate.rows()[0].projected()[0].1, DocumentValue::Integer(2));
