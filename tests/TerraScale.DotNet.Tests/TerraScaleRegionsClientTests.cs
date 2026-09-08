@@ -7,23 +7,24 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleRegionsClientTests
 {
     [Test]
-    public async Task ListAsync_UsesHealthEnvelope()
+    public async Task ListAsync_UsesEdgeCatalogEnvelope()
     {
-        using var handler = new RecordingHandler("{\"region\":\"GRU\",\"healthy\":true}");
+        using var handler = new RecordingHandler("{\"regions\":[{\"code\":\"GRU\",\"name\":\"Sao Paulo\",\"country\":\"BR\",\"latitude\":-23.43,\"longitude\":-46.47,\"available\":true}],\"hosts\":{\"GRU\":\"gru.api.terrascale.tech\"}}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var status = await client.Regions.ListAsync();
+        var catalog = await client.Regions.ListAsync();
 
         await Assert.That(handler.Request).IsEqualTo("https://api.example.invalid/api/v1/regions");
-        await Assert.That(status.Region).IsEqualTo("GRU");
-        await Assert.That(status.Healthy).IsTrue();
+        await Assert.That(catalog.Regions[0].Code).IsEqualTo("GRU");
+        await Assert.That(catalog.Regions[0].Name).IsEqualTo("Sao Paulo");
+        await Assert.That(catalog.Hosts["GRU"]).IsEqualTo("gru.api.terrascale.tech");
     }
 
     [Test]
-    public async Task ListAsync_RejectsMissingRequiredFields()
+    public async Task ListAsync_RejectsMissingCatalogFields()
     {
-        using var handler = new RecordingHandler("{\"region\":\"GRU\"}");
+        using var handler = new RecordingHandler("{\"regions\":[{\"code\":\"GRU\",\"name\":\"Sao Paulo\",\"country\":\"BR\",\"latitude\":-23.43,\"longitude\":-46.47,\"available\":true}]}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
@@ -33,20 +34,33 @@ public sealed class TerraScaleRegionsClientTests
     }
 
     [Test]
-    public async Task GetAsync_IsContractGapWithoutSendingARequest()
+    public async Task HealthAsync_UsesSeparateMemberHealthRoute()
     {
-        using var handler = new RecordingHandler("{}");
+        using var handler = new RecordingHandler("{\"region\":\"GRU\",\"healthy\":true}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var exception = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => client.Regions.GetAsync(TerraScaleRegions.Gru));
+        var status = await client.Regions.HealthAsync();
 
-        await Assert.That(exception).IsNotNull();
-        await Assert.That(handler.Request).IsNull();
+        await Assert.That(handler.Request).IsEqualTo("https://api.example.invalid/api/v1/health");
+        await Assert.That(status.Region).IsEqualTo("GRU");
+        await Assert.That(status.Healthy).IsTrue();
     }
 
     [Test]
-    public async Task GetAsync_RejectsInvalidCodeBeforeContractGap()
+    public async Task CatalogAcceptsAdmittedRegionBeyondLaunchSet()
+    {
+        using var handler = new RecordingHandler("{\"regions\":[{\"code\":\"IAD\",\"name\":\"Ashburn\",\"country\":\"US\",\"latitude\":38.9,\"longitude\":-77,\"available\":true}],\"hosts\":{\"IAD\":\"iad.api.terrascale.tech\"}}");
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var catalog = await client.Regions.ListAsync();
+
+        await Assert.That(catalog.Regions[0].Code).IsEqualTo("IAD");
+    }
+
+    [Test]
+    public async Task GetAsync_RemainsExplicitContractGap()
     {
         using var handler = new RecordingHandler("{}");
         using var httpClient = new HttpClient(handler);

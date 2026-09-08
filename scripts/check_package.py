@@ -37,7 +37,8 @@ def main() -> None:
   </ItemGroup>
 </Project>
 """)
-        (consumer / "Program.cs").write_text("""using TerraScale.DotNet;
+        (consumer / "Program.cs").write_text("""using System.Text.Json;
+using TerraScale.DotNet;
 using TerraScale.DotNet.Generated;
 
 using var http = new HttpClient();
@@ -51,6 +52,9 @@ if (parameters["1"].GetInt64() != long.MaxValue || parameters["2"].GetInt64() !=
     throw new InvalidOperationException("Packaged SQL parameters lost 64-bit precision.");
 if (client.Documents is null || client.Reactive is null || client.Management is null)
     throw new InvalidOperationException("Packaged client surfaces are missing.");
+var catalog = JsonSerializer.Deserialize<TerraScaleRegionCatalog>("{\\\"regions\\\":[{\\\"code\\\":\\\"IAD\\\",\\\"name\\\":\\\"Ashburn\\\",\\\"country\\\":\\\"US\\\",\\\"latitude\\\":38.9,\\\"longitude\\\":-77,\\\"available\\\":true}],\\\"hosts\\\":{\\\"IAD\\\":\\\"iad.api.terrascale.tech\\\"}}") ?? throw new InvalidOperationException("Packaged region catalog did not deserialize.");
+if (catalog.Regions.Count != 1 || catalog.Regions[0].Code != "IAD" || catalog.Hosts["IAD"] != "iad.api.terrascale.tech")
+    throw new InvalidOperationException("Packaged region catalog lost the published regions/hosts wire.");
 if (TerraScaleContractRoutes.Find("execute_sql").Method != "POST")
     throw new InvalidOperationException("Packaged generated contract is missing.");
 Console.WriteLine("Standalone NuGet consumer passed.");

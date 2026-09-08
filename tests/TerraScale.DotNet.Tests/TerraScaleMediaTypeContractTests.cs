@@ -48,7 +48,7 @@ public sealed class TerraScaleMediaTypeContractTests
             var responseBody = requestUri.AbsolutePath switch
             {
                 "/api/v1/databases" => "{\"databases\":[]}",
-                "/api/v1/regions" => "{\"region\":\"GRU\",\"healthy\":true}",
+                "/api/v1/regions" => "{\"regions\":[{\"code\":\"GRU\",\"name\":\"Sao Paulo\",\"country\":\"BR\",\"latitude\":-23.43,\"longitude\":-46.47,\"available\":true}],\"hosts\":{\"GRU\":\"gru.api.terrascale.tech\"}}",
                 _ => throw new InvalidOperationException($"Unexpected media-type fixture route '{requestUri.AbsolutePath}'.")
             };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
