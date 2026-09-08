@@ -106,6 +106,30 @@ fn batch(lanes: BTreeMap<String, Vec<PeerDatabase>>) -> PeerDatabaseBatch {
     PeerDatabaseBatch { lanes, selected_regions }
 }
 
+#[test]
+fn peer_lane_validation_borrows_assignments_before_they_are_moved() {
+    use crate::production::tests::{opened_bootstrap, transport_pair};
+
+    let (bootstrap, root, _) = opened_bootstrap("replication-peer-validation");
+    let parts = bootstrap.into_parts();
+    let placement = parts.placement.clone();
+    let (transport, remote) = transport_pair(&placement);
+    let peer = transport.config().peers().next().unwrap().identity().member().clone();
+    let runtime = Arc::new(
+        ProductionMemberRuntime::try_new(placement, parts.routes, parts.member, transport).unwrap(),
+    );
+    let scope = scope(1);
+    let peers = BTreeMap::from([(peer.as_str().to_owned(), vec![lane(scope)])]);
+
+    validate_peer_lanes(&runtime, &peers).unwrap();
+    assert_eq!(peers[peer.as_str()].len(), 1);
+    assert_eq!(peers[peer.as_str()][0].scope, scope);
+
+    drop(runtime);
+    drop(remote);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn incomplete_or_conflicting_metadata_leaves_queues_and_progress_unchanged() {
     for mode in 0..3 {

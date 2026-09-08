@@ -61,6 +61,10 @@ fn bind(host: &MemberHost, scope: &BoundScope) {
 /// Writes one document through the member's engine (the same durable
 /// storage the public API serves) and asserts the commit.
 fn put(host: &MemberHost, id: &str, value: i64) {
+    put_with_durability(host, id, value, LocalDurability::Synced);
+}
+
+fn put_with_durability(host: &MemberHost, id: &str, value: i64, durability: LocalDurability) {
     let engine = host.engine();
     let tenant = TenantId::try_new("tenant-a").expect("the tenant parses");
     let engine_scope = engine.scope_for(&tenant);
@@ -82,7 +86,7 @@ fn put(host: &MemberHost, id: &str, value: i64) {
             EngineVersion::Any,
         )
         .expect("the put stages");
-    match transaction.commit(LocalDurability::Synced) {
+    match transaction.commit(durability) {
         CommitOutcome::Committed(_) => {}
         outcome => panic!("the write committed: {outcome:?}"),
     }
@@ -182,6 +186,10 @@ fn repeated_backbone_sync_does_not_republish_durable_records() {
     )
     .expect("repeating the acknowledgement remains idempotent");
     assert!(
+        matches!(feed.try_recv(), Ok(TbepNotification::Trigger(_))),
+        "the journal trigger is delivered once per durable write"
+    );
+    assert!(
         matches!(feed.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)),
         "the journal cursor prevents republishing the same record"
     );
@@ -261,7 +269,12 @@ fn reactive_local_visibility_stays_under_50ms_p99() {
     let mut samples = Vec::with_capacity(200);
     for round in 0..200_u64 {
         let started = Instant::now();
-        put(&host, &format!("orders/{round}"), i64::try_from(round).unwrap_or(0));
+        put_with_durability(
+            &host,
+            &format!("orders/{round}"),
+            i64::try_from(round).unwrap_or(0),
+            LocalDurability::Buffered,
+        );
         host.reactive_pump(&scope).expect("the pump advances");
         let ReactiveFrame::Delta { .. } = feed.recv().expect("the delta arrives") else {
             panic!("round {round}: the write is visible as a delta");

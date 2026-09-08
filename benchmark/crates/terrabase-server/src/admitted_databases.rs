@@ -370,7 +370,9 @@ impl AdmittedDatabaseRegistry {
         location: PathBuf,
         instance: u64,
     ) -> Result<(), String> {
-        let scope = lease.database_owner();
+        // Keep the owner independent of the lease before moving the lease
+        // into the registry entry.
+        let scope = lease.database_owner().clone();
         if !(self.ready)() {
             return Err("Member is not ready to admit databases".into());
         }
@@ -387,7 +389,7 @@ impl AdmittedDatabaseRegistry {
         location: PathBuf,
         instance: u64,
     ) -> Result<(), String> {
-        let scope = lease.database_owner();
+        let scope = lease.database_owner().clone();
         self.publish_inner(record, lease, location, instance, scope)
     }
 
@@ -397,7 +399,7 @@ impl AdmittedDatabaseRegistry {
         lease: DatabaseLease,
         location: PathBuf,
         instance: u64,
-        scope: terrabase::member::DatabaseScope,
+        scope: terrabase::storage::DatabaseOwner,
     ) -> Result<(), String> {
         if scope.tenant().to_string() != record.tenant_id
             || scope.project().to_string() != record.project_id
@@ -996,6 +998,31 @@ pub(crate) mod tests {
         // Republication retains the durable pause until the lifecycle owner
         // explicitly resumes the restored target.
         registry.resume(database, "restore-resume").unwrap();
+        assert!(registry.resolve_serving(database).unwrap().is_some());
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn publication_compares_record_against_the_lease_owner() {
+        let (registry, member, records, root) = fixture();
+        let database = &records[0].database_id;
+        registry.pause(database, "owner-mismatch-pause").unwrap();
+        let reservation = registry.reserve_restore(database).unwrap();
+
+        let mut mismatched = records[0].clone();
+        mismatched.environment = "staging".into();
+        let lease = reservation.reacquire(&member).unwrap();
+        assert_eq!(
+            registry.publish(mismatched, lease, root.join(database), 2),
+            Err("admitted database owner mismatch".into())
+        );
+
+        let lease = reservation.reacquire(&member).unwrap();
+        reservation.complete(&registry, lease, 2).unwrap();
+        registry.activate(std::slice::from_ref(&records[0].database_id)).unwrap();
+        registry.resume(database, "owner-mismatch-resume").unwrap();
         assert!(registry.resolve_serving(database).unwrap().is_some());
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();

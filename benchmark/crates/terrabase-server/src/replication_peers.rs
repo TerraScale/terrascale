@@ -237,7 +237,18 @@ impl ReplicationPeers {
         dispatcher: Option<Arc<dyn PeerControlDispatcher>>,
     ) -> Result<Self, String> {
         let endpoint = runtime.shared_transport();
-        let validated = validate_peer_lanes(&runtime, peers.clone())?;
+        validate_peer_lanes(&runtime, &peers)?;
+        let mut required =
+            BTreeMap::<DatabaseRouteScope, std::collections::BTreeSet<String>>::new();
+        for (peer, lanes) in &peers {
+            for lane in lanes {
+                required.entry(lane.scope).or_default().insert(peer.clone());
+            }
+        }
+        let validated = peers
+            .into_iter()
+            .map(|(name, lanes)| MemberId::try_new(&name).map(|id| (id, lanes)).map_err(failure))
+            .collect::<Result<Vec<_>, _>>()?;
         let observations: PeerObservations = Arc::default();
         for (id, lanes) in &validated {
             observe(&observations, id.as_str(), lanes, false, 0);
@@ -261,13 +272,6 @@ impl ReplicationPeers {
         }
         let cuts = Arc::new(ReplicationCuts::default());
         let retention = Arc::new(ReplicationRetentionFrontier::default());
-        let mut required =
-            BTreeMap::<DatabaseRouteScope, std::collections::BTreeSet<String>>::new();
-        for (peer, lanes) in &peers {
-            for lane in lanes {
-                required.entry(lane.scope).or_default().insert(peer.clone());
-            }
-        }
         for (scope, peers) in required {
             retention.admit(scope, peers).map_err(failure)?;
         }
@@ -667,8 +671,8 @@ fn spawn_peer_owner(
 
 fn validate_peer_lanes(
     runtime: &Arc<ProductionMemberRuntime>,
-    peers: BTreeMap<String, Vec<PeerDatabase>>,
-) -> Result<Vec<(MemberId, Vec<PeerDatabase>)>, String> {
+    peers: &BTreeMap<String, Vec<PeerDatabase>>,
+) -> Result<(), String> {
     let endpoint = runtime.transport();
     if endpoint.config().limits().max_frame_bytes()
         < terrabase_cluster::wal_wire::MAX_WAL_WIRE_BYTES + 1024
@@ -678,20 +682,17 @@ fn validate_peer_lanes(
     if peers.values().map(Vec::len).sum::<usize>() > terrabase::member::MAX_DATABASES * 20 {
         return Err("replication database lane limit exceeded".into());
     }
-    peers
-        .into_iter()
-        .map(|(name, lanes)| {
-            let id = MemberId::try_new(&name).map_err(failure)?;
-            if endpoint.config().peer(&id).is_none() {
-                return Err("replication peer is not admitted".into());
-            }
-            let mut scopes = std::collections::BTreeSet::new();
-            if lanes.iter().any(|lane| !scopes.insert(lane.scope)) {
-                return Err("duplicate replication database lane".into());
-            }
-            Ok((id, lanes))
-        })
-        .collect()
+    peers.iter().try_for_each(|(name, lanes)| {
+        let id = MemberId::try_new(&name).map_err(failure)?;
+        if endpoint.config().peer(&id).is_none() {
+            return Err("replication peer is not admitted".into());
+        }
+        let mut scopes = std::collections::BTreeSet::new();
+        if lanes.iter().any(|lane| !scopes.insert(lane.scope)) {
+            return Err("duplicate replication database lane".into());
+        }
+        Ok(())
+    })
 }
 
 struct PeerWorkerContext {
