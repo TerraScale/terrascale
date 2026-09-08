@@ -348,6 +348,24 @@ mod tests {
         assert!(registry.admits(&second.scope(), 102));
     }
     #[test]
+    fn feature_floor_advances_across_tenants_without_per_tenant_downgrade() {
+        let registry = registry();
+        let tenant_a = signed_test_lease(TENANT, 1, 7, 100);
+        let tenant_b = signed_test_lease(OTHER, 1, 8, 101);
+        registry.install(tenant_a.clone(), 100, true).unwrap();
+        registry.install(tenant_b.clone(), 101, true).unwrap();
+
+        // The feature floor is shared by this member: a later lease for tenant A
+        // must carry the floor established by tenant B, even though A's own
+        // cached lease still has the lower feature epoch.
+        assert!(registry.install(signed_test_lease(TENANT, 2, 7, 102), 102, false).is_err());
+        assert!(!registry.admits(&tenant_a.scope(), 102));
+        assert!(registry.admits(&tenant_b.scope(), 102));
+        let tenant_a_at_floor = signed_test_lease(TENANT, 2, 8, 102);
+        registry.install(tenant_a_at_floor.clone(), 102, false).unwrap();
+        assert!(registry.admits(&tenant_a_at_floor.scope(), 102));
+    }
+    #[test]
     fn malformed_scope_signature_tenant_audience_region_and_times_fail_closed() {
         for change in 0..8 {
             let registry = registry();

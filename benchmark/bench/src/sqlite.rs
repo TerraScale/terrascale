@@ -46,6 +46,7 @@ fn open_pinned(path: &std::path::Path) -> Result<Connection, Box<dyn Error + Sen
 /// The administration connection: schema, seeding, and identity capture.
 pub struct SqliteBackend {
     admin: Connection,
+    writer: std::sync::Arc<std::sync::Mutex<Connection>>,
     path: PathBuf,
 }
 
@@ -61,7 +62,8 @@ impl Backend for SqliteBackend {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
         let admin = open_pinned(&path)?;
-        Ok(Self { admin, path })
+        let writer = std::sync::Arc::new(std::sync::Mutex::new(open_pinned(&path)?));
+        Ok(Self { admin, writer, path })
     }
 
     fn target_name(&self) -> &'static str {
@@ -72,7 +74,8 @@ impl Backend for SqliteBackend {
         let version: String =
             self.admin.query_row("SELECT sqlite_version()", [], |row| row.get(0))?;
         Ok(format!(
-            "SQLite {version} (bundled); journal_mode=WAL; synchronous=FULL; busy_timeout=5000ms"
+            "SQLite {version} (bundled); journal_mode=WAL; synchronous=FULL; busy_timeout=5000ms; \
+             one writer connection, per-slot concurrent readers"
         ))
     }
 
@@ -81,8 +84,9 @@ impl Backend for SqliteBackend {
     }
 
     fn client_transport(&self) -> &'static str {
-        "bundled rusqlite, one embedded connection per concurrency slot, cached prepared \
-         statements, autocommit per statement"
+        "bundled rusqlite, one embedded reader connection per concurrency slot, writes \
+         serialized through one shared writer connection, cached prepared statements, autocommit \
+         per statement"
     }
 
     fn setup(&mut self, _config: &LaneConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -120,7 +124,10 @@ impl Backend for SqliteBackend {
     }
 
     fn open_slot(&self) -> Result<Box<dyn Slot + Send>, Box<dyn Error + Send + Sync>> {
-        Ok(Box::new(SqliteSlot { connection: open_pinned(&self.path)? }))
+        Ok(Box::new(SqliteSlot {
+            reader: open_pinned(&self.path)?,
+            writer: std::sync::Arc::clone(&self.writer),
+        }))
     }
 
     fn limits(&self) -> Vec<String> {
@@ -128,23 +135,30 @@ impl Backend for SqliteBackend {
             "embedded reference: the measured member is this driver's own process, so the load \
              generator and the database share one resource envelope"
                 .to_owned(),
-            "single writer at a time; concurrent writers serialize on the WAL write lock through \
-             the five-second busy timeout"
+            "SQLite's concurrency model is many readers, one writer: reads and queries run \
+             concurrently on per-slot connections while every write serializes through one shared \
+             writer connection, the canonical deployment shape"
+                .to_owned(),
+            "sixteen contending per-slot writers instead busy-retry the WAL write lock and a \
+             starved slot can exceed the busy timeout; that retries SQLite's lock manager, not \
+             its storage, so this reference does not drive it"
                 .to_owned(),
         ]
     }
 }
 
-/// One concurrency slot: one connection; statements are cached per
+/// One concurrency slot: its own reader connection (WAL readers never block
+/// writers) plus the shared writer connection. Statements are cached per
 /// connection by `prepare_cached`, the embedded analogue of the pin's
 /// prepared statements.
 struct SqliteSlot {
-    connection: Connection,
+    reader: Connection,
+    writer: std::sync::Arc<std::sync::Mutex<Connection>>,
 }
 
 impl Slot for SqliteSlot {
     fn read(&mut self, seeded_index: usize) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.connection
+        self.reader
             .query_row(
                 "SELECT tenant, id, name, \"group\", payload FROM users \
                  WHERE tenant = ?1 AND id = ?2",
@@ -155,7 +169,11 @@ impl Slot for SqliteSlot {
     }
 
     fn write(&mut self, doc_index: u64) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let affected = self.connection.execute(
+        let writer = self
+            .writer
+            .lock()
+            .map_err(|_| "writer connection poisoned by an earlier failure")?;
+        let affected = writer.execute(
             "INSERT INTO users(tenant, id, name, \"group\", payload) \
              VALUES (?1, ?2, ?3, ?4, ?5) \
              ON CONFLICT (tenant, id) DO UPDATE SET \
@@ -175,7 +193,7 @@ impl Slot for SqliteSlot {
     }
 
     fn query(&mut self, seeded_index: usize) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.connection
+        self.reader
             .query_row(
                 "SELECT id, name FROM users WHERE tenant = ?1 AND name = ?2 \
                  ORDER BY name LIMIT 1",
