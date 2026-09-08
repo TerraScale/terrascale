@@ -19,15 +19,15 @@ until O-4/O-5 review is complete.]
 ## security.txt
 
 At launch, we intend to publish a `security.txt` at
-[`/.well-known/security.txt`](https://docs.terrascale.tech/.well-known/security.txt):
+`/.well-known/security.txt` once the owner review is complete:
 
 ```text
 Contact: mailto:security@terrascale.tech
 Expires: [DATE — renew yearly, O-5]
 Encryption: [PGP KEY URL — placeholder]
 Preferred-Languages: en
-Canonical: https://docs.terrascale.tech/.well-known/security.txt
-Policy: https://docs.terrascale.tech/legal/security
+Canonical: [PENDING — publish URL after O-4/O-5 review]
+Policy: [PENDING — publish URL after O-4/O-5 review]
 ```
 
 ## Vulnerability disclosure
@@ -48,12 +48,14 @@ no bounty program is approved for launch.]
 
 ## Encryption and deletion
 
-Customer data, backups, exports, and branches must remain encrypted under
-the database’s residency policy. Authorized deletion revokes access and stops
-further billable usage while retained copies are removed. Physical completion
-timing requires verified retention behavior and owner approval; see the
-[deletion and billing policy](/zh-cn/pricing/). This draft does not promise a fixed
-key-rotation interval or unverified completion deadline.
+The intended service design requires customer data, backups, exports, and
+branches to remain encrypted under the database’s residency policy. This
+requirement is pending production qualification and owner approval. Authorized
+deletion is intended to revoke access and stop further billable usage while
+retained copies are removed. Physical completion timing requires verified
+retention behavior and owner approval; see the [deletion and billing
+policy](/zh-cn/pricing/). This draft does not promise a fixed key-rotation interval
+or unverified completion deadline.
 
-A SOC 2 report and a paid external penetration test are planned
-post-first-customer.
+A SOC 2 report and a paid external penetration test are not available at
+launch; any future work requires separate qualification and owner approval.

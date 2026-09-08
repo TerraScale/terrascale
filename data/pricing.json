@@ -50,6 +50,7 @@
       "price": "$0",
       "writes": "100k writes/month",
       "storage": "100 MB",
+      "regions": "up to 3",
       "databases": 1,
       "pitrDays": 1
     },
@@ -58,6 +59,7 @@
       "price": "$5",
       "writes": "1M writes/month",
       "storage": "5 GB",
+      "regions": "up to 3",
       "databases": 5,
       "pitrDays": 7
     },
@@ -66,6 +68,7 @@
       "price": "$50",
       "writes": "100M writes/month",
       "storage": "25 GB",
+      "regions": "up to 3",
       "databases": 25,
       "pitrDays": 30
     },
@@ -74,6 +77,7 @@
       "price": "$500",
       "writes": "PAYG",
       "storage": "PAYG",
+      "regions": "up to 3",
       "databases": "soft-unlimited",
       "pitrDays": 35,
       "notes": "The $500/month target is a paid support/compliance offering. Available benefits require confirmation before enrollment; priority response, SOC 2, and contractual SLA benefits are not available launch promises."

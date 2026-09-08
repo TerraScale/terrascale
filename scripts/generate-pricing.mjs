@@ -47,6 +47,7 @@ const pricingMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pri
 ${planRow("price")}
 ${planRow("writes")}
 ${planRow("storage")}
+${planRow("regions")}
 ${planRow("databases")}
 ${planRow("pitrDays")}
 
