@@ -7,7 +7,7 @@ mod inventory;
 mod rotation;
 use inventory::{
     evict_retired_local_chains, inventory_path, inventory_point_limit, inventory_points,
-    persist_inventory,
+    inventory_points_for, persist_inventory,
 };
 
 mod remote;
@@ -128,6 +128,7 @@ pub struct FleetLimits {
 }
 
 /// One immutable database stream admitted by the durable member catalog.
+#[derive(Clone)]
 pub struct StreamConfig {
     /// Engine whose durable journal is captured.
     pub engine: Arc<dyn BackupEngineHandle>,
@@ -179,7 +180,7 @@ struct Stream {
 }
 
 #[derive(Clone)]
-struct SuspendedStream {
+struct DetachedStream {
     keys: Arc<dyn BackupKeys>,
     destinations: Vec<(Provider, Arc<ObjectDestination>)>,
     historical_destinations: Vec<(Provider, Arc<ObjectDestination>)>,
@@ -195,14 +196,29 @@ struct SuspendedStream {
 pub struct NativeBackupFleet {
     limits: FleetLimits,
     streams: BTreeMap<String, Stream>,
-    suspended: BTreeMap<String, SuspendedStream>,
+    suspended: BTreeMap<String, DetachedStream>,
     // Detached databases remain addressable until the lifecycle owner has
     // completed physical deletion. Their stream is closed, but its policy
     // history is still required to purge every retained destination.
-    detached: BTreeMap<String, Stream>,
+    detached: BTreeMap<String, DetachedStream>,
 }
 
 impl NativeBackupFleet {
+    /// Copies the key and destination handles needed for asynchronous point
+    /// discovery, without exposing the mutable stream itself.
+    pub fn stream_recovery_point_config(
+        &self,
+        database: &str,
+    ) -> Result<(Arc<dyn BackupKeys>, Vec<(Provider, Arc<ObjectDestination>)>, usize), FleetError>
+    {
+        let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        Ok((
+            stream.config.keys.clone(),
+            stream.config.destinations.clone(),
+            inventory_point_limit(stream),
+        ))
+    }
+
     /// Returns the admitted provider set for a database in its stable policy order.
     pub fn configured_providers(&self, database: &str) -> Result<Vec<Provider>, FleetError> {
         if let Some(stream) = self.streams.get(database) {
@@ -212,7 +228,7 @@ impl NativeBackupFleet {
             return Ok(stream.destinations.iter().map(|(provider, _)| *provider).collect());
         }
         if let Some(stream) = self.detached.get(database) {
-            return Ok(stream.config.destinations.iter().map(|(provider, _)| *provider).collect());
+            return Ok(stream.destinations.iter().map(|(provider, _)| *provider).collect());
         }
         Err(FleetError::Configuration)
     }
@@ -228,14 +244,51 @@ impl NativeBackupFleet {
         selection_kind: &str,
         point_id: &str,
     ) -> Result<(super::BackupManifest, Provider), FleetError> {
-        let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        let (keys, destinations, point_limit) = {
+            let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+            (
+                stream.config.keys.clone(),
+                stream.config.destinations.clone(),
+                inventory_point_limit(stream),
+            )
+        };
+        Self::resolve_recovery_point_with_config(
+            database,
+            selection_kind,
+            point_id,
+            keys,
+            destinations,
+            point_limit,
+        )
+        .await
+    }
+
+    /// Resolves a retained point using an owned provider configuration.
+    ///
+    /// This entry point lets callers release a synchronous fleet lock before
+    /// starting remote provider I/O.
+    pub async fn resolve_recovery_point_with_config(
+        database: &str,
+        selection_kind: &str,
+        point_id: &str,
+        keys: Arc<dyn BackupKeys>,
+        destinations: Vec<(Provider, Arc<ObjectDestination>)>,
+        point_limit: usize,
+    ) -> Result<(super::BackupManifest, Provider), FleetError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| FleetError::Capture)?
             .as_millis() as u64;
         let mut saw_provider_failure = false;
-        for (provider, destination) in &stream.config.destinations {
-            let points = match remote::remote_points(database, stream, destination).await {
+        for (provider, destination) in &destinations {
+            let points = match remote::remote_points_with_keys(
+                database,
+                keys.clone(),
+                point_limit,
+                destination,
+            )
+            .await
+            {
                 Ok(points) => points,
                 Err(FleetError::Capture | FleetError::Upload) => {
                     saw_provider_failure = true;
@@ -429,6 +482,57 @@ impl NativeBackupFleet {
     }
 }
 
+async fn purge_retained_parts(
+    database: &str,
+    retained_destinations: &[Arc<ObjectDestination>],
+    keys: &dyn BackupKeys,
+    staging: &Path,
+    retention_days: u8,
+) -> Result<usize, FleetError> {
+    if retained_destinations.is_empty() || retained_destinations.len() > 64 {
+        return Err(FleetError::Configuration);
+    }
+    std::fs::create_dir_all(staging).map_err(|_| FleetError::Capture)?;
+    let retained = inventory_points_for(staging, keys, retention_days)?;
+    let mut removed = 0;
+    for destination in retained_destinations {
+        let journal = staging.join(format!("deleting-{}", destination.identity()));
+        let mut pending = read_upload_journal(
+            &journal,
+            "delete-v1",
+            (usize::from(retention_days) + 1) * 8_640 * 2 + 8_640,
+        )?;
+        pending.extend(retained.iter().map(|point| format!("rp-{}", point.identity())));
+        let points = destination
+            .list_points(database, (usize::from(retention_days) + 1) * 8_640 * 2 + 8_640)
+            .await
+            .map_err(|_| FleetError::Upload)?;
+        for point in points {
+            let name = point.rsplit('/').next().ok_or(FleetError::Capture)?;
+            pending.insert(name.to_owned());
+        }
+        persist_upload_journal(&journal, "delete-v1", &pending)?;
+        for name in pending.clone() {
+            destination
+                .delete_point(&format!("{database}/{name}"))
+                .await
+                .map_err(|_| FleetError::Upload)?;
+            pending.remove(&name);
+            persist_upload_journal(&journal, "delete-v1", &pending)?;
+            removed += 1;
+        }
+    }
+    match std::fs::remove_dir_all(staging) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(FleetError::Capture),
+    }
+    if let Some(parent) = staging.parent() {
+        super::sync_directory(parent).map_err(|_| FleetError::Capture)?;
+    }
+    Ok(removed)
+}
+
 /// Redacted scheduling/capture refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FleetError {
@@ -514,24 +618,36 @@ impl NativeBackupFleet {
         database: &str,
         operation_id: &str,
     ) -> Result<LifecycleReceipt, FleetError> {
-        // A soft-delete detaches capture while retaining this closed stream's
-        // policy history. Reattach it only for the serialized purge so the
-        // physical deletion path can reach every historical destination.
-        if !self.streams.contains_key(database)
-            && let Some(stream) = self.detached.remove(database)
-        {
-            self.streams.insert(database.to_owned(), stream);
-        }
-        let destinations = self
-            .streams
-            .get(database)
-            .ok_or(FleetError::Configuration)?
-            .config
-            .historical_destinations
-            .iter()
-            .map(|(_, destination)| Arc::clone(destination))
-            .collect::<Vec<_>>();
-        let removed = self.purge_retained(database, &destinations).await?;
+        let removed = if self.streams.contains_key(database) {
+            let destinations = self
+                .streams
+                .get(database)
+                .ok_or(FleetError::Configuration)?
+                .config
+                .historical_destinations
+                .iter()
+                .map(|(_, destination)| Arc::clone(destination))
+                .collect::<Vec<_>>();
+            self.purge_retained(database, &destinations).await?
+        } else if let Some(stream) = self.detached.get(database) {
+            let destinations = stream
+                .historical_destinations
+                .iter()
+                .map(|(_, destination)| Arc::clone(destination))
+                .collect::<Vec<_>>();
+            let removed = purge_retained_parts(
+                database,
+                &destinations,
+                stream.keys.as_ref(),
+                &stream.staging,
+                stream.retention_days,
+            )
+            .await?;
+            self.detached.remove(database);
+            removed
+        } else {
+            return Err(FleetError::Configuration);
+        };
         self.streams.remove(database);
         Ok(LifecycleReceipt {
             operation_id: operation_id.to_owned(),
@@ -698,12 +814,13 @@ impl NativeBackupFleet {
         &self,
         database: &str,
     ) -> Result<Vec<super::BackupManifest>, FleetError> {
-        let stream = self
-            .streams
-            .get(database)
-            .or_else(|| self.detached.get(database))
-            .ok_or(FleetError::Configuration)?;
-        let mut points = inventory_points(stream)?;
+        let mut points = if let Some(stream) = self.streams.get(database) {
+            inventory_points(stream)?
+        } else if let Some(stream) = self.detached.get(database) {
+            inventory_points_for(&stream.staging, stream.keys.as_ref(), stream.retention_days)?
+        } else {
+            return Err(FleetError::Configuration);
+        };
         points.sort_by_key(|point| (point.captured_unix_millis(), point.boundary_sequence()));
         Ok(points)
     }
@@ -918,9 +1035,32 @@ impl NativeBackupFleet {
         if let Some(mut stream) = self.streams.remove(database) {
             stream.closing = true;
             stream.paused = true;
+            let StreamConfig {
+                keys,
+                destinations,
+                historical_destinations,
+                policy_revision,
+                retention_days,
+                staging,
+                placement,
+                ..
+            } = stream.config;
+            self.detached.insert(
+                database.to_owned(),
+                DetachedStream {
+                    keys,
+                    destinations,
+                    historical_destinations,
+                    policy_revision,
+                    retention_days,
+                    staging,
+                    placement,
+                    paused: stream.paused,
+                },
+            );
+        } else if let Some(stream) = self.suspended.remove(database) {
             self.detached.insert(database.to_owned(), stream);
         }
-        self.suspended.remove(database);
     }
 
     /// Releases a paused target's engine while retaining its exact backup policy.
@@ -958,7 +1098,7 @@ impl NativeBackupFleet {
         drop(engine);
         self.suspended.insert(
             database.to_owned(),
-            SuspendedStream {
+            DetachedStream {
                 keys,
                 destinations,
                 historical_destinations,
@@ -3253,6 +3393,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(second.list_points(&identity, 4).await.unwrap().len(), 1);
+        let tenant = crate::types::TenantId::try_new(
+            &engine.database_owner().tenant().to_text(),
+        )
+        .unwrap();
+        let scope = engine.scope_for(&tenant);
+        engine.lifecycle_pause(&scope, "pause-before-detach").unwrap();
+        fleet.suspend_for_restore(&identity).unwrap();
         fleet.detach(&identity);
 
         // Detachment closes capture but retains the catalog needed to delete

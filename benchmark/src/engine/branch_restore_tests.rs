@@ -71,7 +71,10 @@ fn open_branch_source(root: &std::path::Path) -> (Engine, crate::storage::Databa
     )
     .unwrap();
     source.activate_origin_epoch(1).unwrap();
-    let tenant = TenantId::try_new(&source_owner.tenant().to_string()).unwrap();
+    // The storage binding is persisted with the canonical identity text. Keep
+    // the test scope on that same boundary instead of relying on the display
+    // implementation of the typed owner identity.
+    let tenant = TenantId::try_new(&source_owner.tenant().to_text()).unwrap();
     source
         .configure_usage_placement(
             crate::usage::UsagePlacement::try_new(

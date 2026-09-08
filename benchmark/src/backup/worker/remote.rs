@@ -6,18 +6,30 @@ pub(super) async fn remote_points(
     stream: &Stream,
     destination: &ObjectDestination,
 ) -> Result<Vec<super::super::BackupManifest>, FleetError> {
-    let prefixes = destination
-        .list_points(database, inventory_point_limit(stream))
-        .await
-        .map_err(|_| FleetError::Upload)?;
+    remote_points_with_keys(
+        database,
+        stream.config.keys.clone(),
+        inventory_point_limit(stream),
+        destination,
+    )
+    .await
+}
+
+pub(super) async fn remote_points_with_keys(
+    database: &str,
+    keys: Arc<dyn BackupKeys>,
+    point_limit: usize,
+    destination: &ObjectDestination,
+) -> Result<Vec<super::super::BackupManifest>, FleetError> {
+    let prefixes =
+        destination.list_points(database, point_limit).await.map_err(|_| FleetError::Upload)?;
     let mut points = Vec::with_capacity(prefixes.len());
     for prefix in prefixes {
         let envelope = destination
             .get_member(&format!("{prefix}/{}", super::super::manifest::ENCRYPTED_MANIFEST_FILE,))
             .await
             .map_err(|_| FleetError::Upload)?;
-        let bytes =
-            stream.config.keys.open_backup_envelope(&envelope).map_err(|_| FleetError::Capture)?;
+        let bytes = keys.open_backup_envelope(&envelope).map_err(|_| FleetError::Capture)?;
         let manifest =
             super::super::BackupManifest::decode(&bytes).map_err(|_| FleetError::Capture)?;
         if prefix != format!("{database}/rp-{}", manifest.identity())

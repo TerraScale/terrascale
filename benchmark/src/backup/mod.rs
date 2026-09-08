@@ -33,8 +33,8 @@
 //! the caller's pinned fact, not the run's high-water mark.
 //!
 //! Every production plan is constructed with a database-bound OCI Vault key
-//! lease. Plaintext is available only to the in-crate `cfg(test)` fixtures;
-//! there is no production plaintext default.
+//! lease. Plaintext is available only to `cfg(test)` fixtures or the explicit
+//! `test-support` feature; there is no production plaintext default.
 //!
 //! # Fail-closed and disclosure rules
 //!
@@ -406,8 +406,8 @@ pub struct BackupPlan {
 #[derive(Clone, Debug)]
 enum BackupEncryptionMode {
     Encrypted(BackupEncryption),
-    /// Plaintext for in-crate tests only.
-    #[cfg(test)]
+    /// Plaintext for test fixtures only.
+    #[cfg(any(test, feature = "test-support"))]
     Plaintext,
 }
 
@@ -455,10 +455,11 @@ impl BackupPlan {
         }
     }
 
-    /// Creates a plaintext full plan for tests inside this crate.
-    #[cfg(test)]
+    /// Creates a plaintext full plan for the recovery integration fixture.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     #[must_use]
-    pub(crate) fn for_integration_tests_full() -> Self {
+    pub fn for_integration_tests_full() -> Self {
         Self {
             kind: BackupKind::Full,
             pinned_boundary: None,
@@ -507,10 +508,11 @@ impl BackupPlan {
         Self { kind: BackupKind::Incremental { base }, ..Self::full(encryption) }
     }
 
-    /// Creates a plaintext incremental plan for tests inside this crate.
-    #[cfg(test)]
+    /// Creates a plaintext incremental plan for the recovery integration fixture.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     #[must_use]
-    pub(crate) fn for_integration_tests_incremental_since(base: StorageSequence) -> Self {
+    pub fn for_integration_tests_incremental_since(base: StorageSequence) -> Self {
         Self { kind: BackupKind::Incremental { base }, ..Self::for_integration_tests_full() }
     }
 
@@ -1100,7 +1102,7 @@ fn execute(
             encryption.validate_for_engine(engine)?;
             Some(Arc::clone(&encryption.cipher))
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         BackupEncryptionMode::Plaintext => None,
     };
     let mut writer = match &encryption {
@@ -1225,7 +1227,7 @@ fn resolve_boundary(
             // The base must be a sealed recovery-point boundary in this
             // destination, and the range must be provable.
             let points = match &plan.encryption {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-support"))]
                 BackupEncryptionMode::Plaintext => discover_points(destination)?,
                 BackupEncryptionMode::Encrypted(encryption) => {
                     if let Some(reader) = &plan.reader {

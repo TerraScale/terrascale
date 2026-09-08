@@ -46,6 +46,11 @@ path = "tests/encryption/main.rs"
 name = "member"
 path = "tests/member/main.rs"
 
+[[test]]
+name = "recovery"
+path = "tests/recovery/main.rs"
+required-features = ["test-support"]
+
 [dependencies]
 # Standard codecs and error derives replace repository-owned implementations.
 hex = "0.4"

@@ -423,11 +423,21 @@ impl NativeRecoveryRuntime {
         if providers.is_empty() {
             return Err(NativeRecoveryError::Unavailable);
         }
-        let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-        fleet
-            .resolve_recovery_point(source, selection_kind, point_id)
-            .await
-            .map_err(map_fleet_error)
+        let (keys, destinations, point_limit) = {
+            let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            let stream = fleet.stream_recovery_point_config(source).map_err(map_fleet_error)?;
+            stream
+        };
+        terrabase::backup::worker::NativeBackupFleet::resolve_recovery_point_with_config(
+            source,
+            selection_kind,
+            point_id,
+            keys,
+            destinations,
+            point_limit,
+        )
+        .await
+        .map_err(map_fleet_error)
     }
 
     fn restore_residency_matches(

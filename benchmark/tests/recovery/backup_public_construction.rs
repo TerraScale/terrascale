@@ -9,9 +9,8 @@
 //! empty-source lifecycle, crafted-corruption rejection, and admission —
 //! end to end on real destinations. Plans use the `#[doc(hidden)]`
 //! TEST-ONLY `BackupPlan::for_integration_tests_*` constructors, which are
-//! the integration-target counterpart of the in-crate `local_test_*`
-//! fixtures: integration targets compile without `cfg(test)`, so the
-//! fixtures are unreachable here.
+//! enabled by the explicit `test-support` feature and are the
+//! integration-target counterpart of the in-crate `local_test_*` fixtures.
 //!
 //! No claim here extends beyond observable behavior: formal Recovery
 //! Receipts come exclusively from the exclusive recovery lane.

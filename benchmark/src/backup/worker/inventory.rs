@@ -19,20 +19,29 @@ fn scheduled_point_limit(retention_days: u8) -> usize {
 pub(super) fn inventory_points(
     stream: &Stream,
 ) -> Result<Vec<super::super::BackupManifest>, FleetError> {
+    inventory_points_for(
+        &stream.config.staging,
+        stream.config.keys.as_ref(),
+        stream.config.retention_days,
+    )
+}
+
+pub(super) fn inventory_points_for(
+    staging: &Path,
+    keys: &dyn BackupReader,
+    retention_days: u8,
+) -> Result<Vec<super::super::BackupManifest>, FleetError> {
     let mut points = BTreeMap::new();
-    for directory in [inventory_path(stream), stream.config.staging.clone()] {
+    for directory in [staging.join(".inventory"), staging.to_path_buf()] {
         if !directory.exists() {
             continue;
         }
-        point_paths(&directory, inventory_point_limit(stream))?;
-        for point in super::super::restore::discover_encrypted_points(
-            &directory,
-            stream.config.keys.as_ref(),
-        )
-        .map_err(|_| FleetError::Capture)?
+        point_paths(&directory, scheduled_point_limit(retention_days))?;
+        for point in super::super::restore::discover_encrypted_points(&directory, keys)
+            .map_err(|_| FleetError::Capture)?
         {
             points.insert(point.identity().to_owned(), point);
-            if points.len() > inventory_point_limit(stream) {
+            if points.len() > scheduled_point_limit(retention_days) {
                 return Err(FleetError::StagingFull);
             }
         }
