@@ -7,10 +7,13 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 // Organization is an owning org.
@@ -49,6 +52,61 @@ type Region struct {
 type RegionCatalogResponse struct {
 	Regions []Region          `json:"regions"`
 	Hosts   map[string]string `json:"hosts"`
+}
+
+// UnmarshalJSON validates the edge catalog at its wire boundary. The edge
+// contract requires every catalog field, including hosts, and does not allow
+// unknown fields.
+func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
+	type regionWire struct {
+		Code      *string  `json:"code"`
+		Name      *string  `json:"name"`
+		Country   *string  `json:"country"`
+		Latitude  *float64 `json:"latitude"`
+		Longitude *float64 `json:"longitude"`
+		Available *bool    `json:"available"`
+	}
+	var wire struct {
+		Regions []regionWire       `json:"regions"`
+		Hosts   *map[string]string `json:"hosts"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("sdk: region catalog response contains trailing data")
+		}
+		return err
+	}
+	if wire.Hosts == nil || len(wire.Regions) == 0 {
+		return fmt.Errorf("sdk: region catalog response must contain regions and hosts")
+	}
+	regions := make([]Region, len(wire.Regions))
+	for i, item := range wire.Regions {
+		if item.Code == nil || item.Name == nil || item.Country == nil || item.Latitude == nil || item.Longitude == nil || item.Available == nil {
+			return fmt.Errorf("sdk: region catalog entry %d is missing a required field", i)
+		}
+		code, err := parseCatalogRegionCode(*item.Code)
+		if err != nil {
+			return err
+		}
+		if utf8.RuneCountInString(*item.Name) < 1 || utf8.RuneCountInString(*item.Name) > 128 {
+			return fmt.Errorf("sdk: catalog region name must contain 1 to 128 characters, got %q", *item.Name)
+		}
+		if len(*item.Country) != 2 || (*item.Country)[0] < 'A' || (*item.Country)[0] > 'Z' || (*item.Country)[1] < 'A' || (*item.Country)[1] > 'Z' {
+			return fmt.Errorf("sdk: catalog region country must be two uppercase letters, got %q", *item.Country)
+		}
+		if *item.Latitude < -90 || *item.Latitude > 90 || *item.Longitude < -180 || *item.Longitude > 180 {
+			return fmt.Errorf("sdk: catalog region coordinates are out of range for %q", *item.Code)
+		}
+		regions[i] = Region{Code: code, Name: *item.Name, Country: *item.Country, Latitude: *item.Latitude, Longitude: *item.Longitude, Available: *item.Available}
+	}
+	*r = RegionCatalogResponse{Regions: regions, Hosts: *wire.Hosts}
+	return nil
 }
 
 // HealthResponse is the generated response model for GET /api/v1/regions
@@ -706,31 +764,21 @@ func (r *RegionsClient) Health(ctx context.Context, opts ...RequestOption) (*Hea
 }
 
 // List returns the admitted public region catalog.
-func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Region, error) {
+func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) (*RegionCatalogResponse, error) {
 	var out RegionCatalogResponse
 	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions.list", opts...); err != nil {
 		return nil, err
 	}
-	if len(out.Regions) > 0 {
-		for i := range out.Regions {
-			code, err := parseCatalogRegionCode(string(out.Regions[i].Code))
-			if err != nil {
-				return nil, err
-			}
-			out.Regions[i].Code = code
-		}
-		return out.Regions, nil
-	}
-	return nil, fmt.Errorf("sdk: region catalog response must contain at least one region")
+	return &out, nil
 }
 
 func parseCatalogRegionCode(value string) (RegionCode, error) {
-	if len(value) != 3 {
-		return "", fmt.Errorf("sdk: catalog region code must be three uppercase letters, got %q", value)
+	if len(value) < 1 || len(value) > 16 {
+		return "", fmt.Errorf("sdk: catalog region code must contain 1 to 16 uppercase letters, digits, or hyphens, got %q", value)
 	}
 	for _, char := range value {
-		if char < 'A' || char > 'Z' {
-			return "", fmt.Errorf("sdk: catalog region code must be three uppercase letters, got %q", value)
+		if (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' {
+			return "", fmt.Errorf("sdk: catalog region code must contain 1 to 16 uppercase letters, digits, or hyphens, got %q", value)
 		}
 	}
 	return RegionCode(value), nil

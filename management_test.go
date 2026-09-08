@@ -150,8 +150,11 @@ func TestRegionsListDecodesEdgeCatalogAndRejectsMemberHealth(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(regions) != 2 || regions[0].Code != RegionGRU || regions[0].Name != "Sao Paulo" || regions[0].Country != "BR" || !regions[0].Available || regions[1].Code != "IAD" || regions[1].Available {
+		if len(regions.Regions) != 2 || regions.Regions[0].Code != RegionGRU || regions.Regions[0].Name != "Sao Paulo" || regions.Regions[0].Country != "BR" || !regions.Regions[0].Available || regions.Regions[1].Code != "IAD" || regions.Regions[1].Available {
 			t.Fatalf("regions = %+v", regions)
+		}
+		if regions.Hosts["GRU"] != "gru.api.terrascale.tech" || regions.Hosts["IAD"] != "iad.api.terrascale.tech" {
+			t.Fatalf("hosts = %+v", regions.Hosts)
 		}
 	})
 
@@ -198,7 +201,7 @@ func TestRegionsListDecodesEdgeCatalogAndRejectsMemberHealth(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || len(regions) != test.want {
+			if err != nil || len(regions.Regions) != test.want {
 				t.Fatalf("regions=%+v err=%v", regions, err)
 			}
 		})
