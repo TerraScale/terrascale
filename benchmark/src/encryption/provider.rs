@@ -629,7 +629,6 @@ impl DatabaseKeyLease {
     ///
     /// Returns an error when the provider is not OCI Vault or the duration is
     /// outside the bounded lease interval.
-    #[cfg(test)]
     pub(in crate::encryption) fn from_adapter(
         metadata: KeyVersionMetadata,
         key: DatabaseKey,
@@ -662,8 +661,9 @@ impl DatabaseKeyLease {
         Ok(Self { metadata, key, provider: KeyProviderIdentity::OciVault, expires_at })
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_oci_vault(
+    /// Constructs an OCI Vault lease for injected test fixtures.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_oci_vault(
         metadata: KeyVersionMetadata,
         key: DatabaseKey,
         duration: Duration,

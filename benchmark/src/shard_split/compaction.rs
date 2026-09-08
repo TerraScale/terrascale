@@ -39,6 +39,32 @@ pub struct CompactionManifest {
     pub rows_inserted: u64,
 }
 
+impl CompactionManifest {
+    /// Writes this manifest with a temporary-file rename and directory sync.
+    ///
+    /// Callers can persist the returned `Installed` manifest beside their
+    /// route catalog and use it as the restart/rollback record for the
+    /// consolidation operation.
+    pub fn write_atomic(&self, path: &Path) -> Result<(), std::io::Error> {
+        let temporary = path.with_extension("tmp");
+        let bytes =
+            serde_json::to_vec(self).map_err(|error| std::io::Error::other(error.to_string()))?;
+        fs::write(&temporary, bytes)?;
+        sync_file(&temporary).map_err(|error| match error {
+            CompactionError::Io(error) => error,
+            CompactionError::Sqlite(error) => std::io::Error::other(error.to_string()),
+            CompactionError::InvalidInput => std::io::Error::other("invalid manifest path"),
+        })?;
+        fs::rename(&temporary, path)?;
+        sync_directory(path.parent().unwrap_or_else(|| Path::new("."))).map_err(|error| match error
+        {
+            CompactionError::Io(error) => error,
+            CompactionError::Sqlite(error) => std::io::Error::other(error.to_string()),
+            CompactionError::InvalidInput => std::io::Error::other("invalid manifest path"),
+        })
+    }
+}
+
 /// Errors returned by SQLite consolidation.
 #[derive(Debug)]
 pub enum CompactionError {
@@ -69,7 +95,13 @@ fn identifier(value: &str) -> String {
 }
 
 fn temporary_path(destination: &Path) -> PathBuf {
-    let suffix = std::process::id();
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos())
+    );
     destination.with_extension(format!("compact-{suffix}.tmp"))
 }
 
@@ -97,8 +129,10 @@ pub fn compact_sqlite_shards(
         output.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")?;
         let tx = output.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut rows_inserted = 0u64;
+        let mut aliases = Vec::with_capacity(sources.len());
         for (index, source) in sources.iter().enumerate() {
             let alias = format!("source_{index}");
+            aliases.push(alias.clone());
             tx.execute_batch(&format!(
                 "ATTACH DATABASE {} AS {}",
                 quote_path(source),
@@ -143,9 +177,11 @@ pub fn compact_sqlite_shards(
                 );
                 rows_inserted = rows_inserted.saturating_add(tx.execute(&sql, [])? as u64);
             }
-            tx.execute_batch(&format!("DETACH DATABASE {}", identifier(&alias)))?;
         }
         tx.commit()?;
+        for alias in aliases {
+            output.execute_batch(&format!("DETACH DATABASE {}", identifier(&alias)))?;
+        }
         output.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA synchronous=FULL;")?;
         output.close().map_err(|(_, error)| error)?;
         sync_file(&temp)?;
@@ -163,6 +199,18 @@ pub fn compact_sqlite_shards(
         let _ = fs::remove_file(&temp);
     }
     result
+}
+
+/// Runs [`compact_sqlite_shards`] on Tokio's blocking pool so compaction never
+/// occupies an async scheduler worker. The same atomic installation and
+/// failure cleanup guarantees apply to this wrapper.
+pub async fn compact_sqlite_shards_async(
+    sources: Vec<PathBuf>,
+    destination: PathBuf,
+) -> Result<CompactionManifest, CompactionError> {
+    tokio::task::spawn_blocking(move || compact_sqlite_shards(&sources, &destination))
+        .await
+        .map_err(|_| CompactionError::InvalidInput)?
 }
 
 fn quote_path(path: &Path) -> String {

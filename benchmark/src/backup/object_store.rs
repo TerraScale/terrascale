@@ -300,6 +300,35 @@ impl ObjectDestination {
         })
     }
 
+    /// Constructs an S3 destination against a local HTTP emulator (for
+    /// example MinIO or LocalStack). This entry point is available only to
+    /// tests and the explicit `test-support` feature; production admission
+    /// continues to require HTTPS.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_for_test(config: DestinationConfig) -> Result<Self, TransferError> {
+        validate_config_for_test(&config)?;
+        let store = AmazonS3Builder::new()
+            .with_bucket_name(&config.bucket)
+            .with_region(&config.signing_region)
+            .with_endpoint(&config.endpoint)
+            .with_access_key_id(&config.credentials.access_key)
+            .with_secret_access_key(&config.credentials.secret_key)
+            .with_virtual_hosted_style_request(false)
+            .with_allow_http(true)
+            .build()
+            .map_err(|_| TransferError::Configuration)?;
+        let identity = blake3::hash(config.endpoint.as_bytes()).to_hex().to_string();
+        drop(config.credentials);
+        Ok(Self {
+            identity,
+            admitted_region: config.admitted_region,
+            provider: config.provider,
+            store: Arc::new(store),
+            max_artifact_bytes: config.max_artifact_bytes,
+            max_point_bytes: config.max_point_bytes,
+        })
+    }
+
     /// Constructs an injected object-store fixture for cross-crate regression tests.
     ///
     /// This bypasses provider admission and must never qualify a cloud provider
@@ -860,6 +889,17 @@ fn validate_config(config: &DestinationConfig) -> Result<(), TransferError> {
         return Err(TransferError::Configuration);
     }
     Ok(())
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn validate_config_for_test(config: &DestinationConfig) -> Result<(), TransferError> {
+    if config.endpoint.starts_with("http://") {
+        if config.endpoint.contains('@') || config.endpoint.chars().any(char::is_control) {
+            return Err(TransferError::Configuration);
+        }
+        return Ok(());
+    }
+    validate_config(config)
 }
 fn validate_name(name: &str) -> Result<(), TransferError> {
     if name.is_empty()

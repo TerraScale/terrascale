@@ -55,6 +55,7 @@ impl DatabaseRoleAuthority for Writer {
     }
 }
 
+#[derive(Debug)]
 struct StaticKey(KeyVersionMetadata);
 impl DatabaseKeySource for StaticKey {
     fn current_lease(
@@ -205,7 +206,7 @@ pub fn admitted_fixture() -> AdmittedFixture {
             )
             .unwrap();
             (
-                database.to_string().into(),
+                terrabase::member::DatabaseId::try_new(database).unwrap(),
                 Arc::new(StaticKey(KeyVersionMetadata::new(scope, version)))
                     as Arc<dyn DatabaseKeySource>,
             )
@@ -215,7 +216,10 @@ pub fn admitted_fixture() -> AdmittedFixture {
         .expect("production member opens");
     for (_, _, database) in &owners {
         member
-            .accept_database_role(&database.to_string().into(), &Writer)
+            .accept_database_role(
+                &terrabase::member::DatabaseId::try_new(database).unwrap(),
+                &Writer,
+            )
             .expect("database role accepted");
     }
     let records: Vec<_> = owners

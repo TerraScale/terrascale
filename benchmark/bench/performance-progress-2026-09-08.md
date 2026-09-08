@@ -8,6 +8,18 @@ member, 8,192-operation batches completed at **2,290–2,679 logical ops/s**;
 larger batches alone do not reach 10k because row/index/accounting work grows
 with the batch. Parallel shard lanes remain required for the target.
 
+The durability attribution probe confirms the tradeoff: on the current debug
+host, `Buffered` measured **156 ops/s**, `Written` (WAL with
+`synchronous=NORMAL`) **163 ops/s**, and `Synced` (`synchronous=FULL`)
+**108 ops/s**. `NORMAL` is enabled for the explicitly weaker `Written` tier;
+synced acknowledgements continue to use `FULL` so a power loss cannot be
+reported as durable before the WAL flush.
+
+Shard consolidation now has a bounded implementation in
+`src/shard_split/compaction.rs`: it attaches each shard, recreates schema,
+copies rows idempotently, checkpoints and fsyncs a temporary output, then
+atomically renames it into place. The focused overlapping-shard test passes.
+
 ## In-process operation-cost probe
 
 Command: `nice -n 19 cargo test --release --locked --lib benchmarks::lane_run::tests::probe_lane_operation_costs -- --nocapture`
