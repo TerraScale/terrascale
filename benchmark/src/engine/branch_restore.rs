@@ -6,7 +6,16 @@ use crate::{
     types::{OperationId, StorageSequence, TenantId},
     usage::UsagePlacement,
 };
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+    sync::{LazyLock, Mutex},
+};
+
+// A restore owns the source quiescence window while it builds and publishes
+// its staging directory. Serializing that ownership also makes the target's
+// empty-directory reservation atomic with respect to another restore.
+static BRANCH_RESTORE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 impl Engine {
     /// Installs an immutable encrypted snapshot as a fresh branch database.
@@ -22,6 +31,9 @@ impl Engine {
         config: &EngineConfig,
         operation: &OperationId,
     ) -> Result<StorageSequence, EngineOpenError> {
+        let _restore_guard = BRANCH_RESTORE_LOCK
+            .lock()
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         config.validate_storage_keys()?;
         let source_owner = source.database_owner();
         let child = config.owner.as_ref().ok_or(EngineOpenError::InvalidConfig)?;
@@ -87,7 +99,6 @@ impl Engine {
         }
         builder.create(&staging).map_err(|_| EngineOpenError::StorageUnavailable)?;
         let result = (|| {
-            eprintln!("stage {} load", staging.display());
             crate::storage::load_or_create(
                 &staging,
                 Some(child),
@@ -96,7 +107,6 @@ impl Engine {
             .map_err(|_| EngineOpenError::FormatMismatch)?;
             let source_owner = source.database_owner();
             let mut source_path = None;
-            eprintln!("stage {} quiesce", staging.display());
             let registration = source
                 .with_quiescent_wal(|source_location| {
                     source_path = Some(source_location.to_owned());
@@ -108,11 +118,7 @@ impl Engine {
                     )
                 })
                 .map_err(|_| EngineOpenError::StorageUnavailable)?
-                .map_err(|()| {
-                    eprintln!("branch copy/import failed");
-                    EngineOpenError::StorageUnavailable
-                })?;
-            eprintln!("stage {} transform", staging.display());
+                .map_err(|()| EngineOpenError::StorageUnavailable)?;
             let cut = transform_snapshot(
                 source_path.as_deref().ok_or(EngineOpenError::StorageUnavailable)?,
                 &staging,
@@ -125,12 +131,10 @@ impl Engine {
             drop(registration);
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
-            eprintln!("stage {} open", staging.display());
             drop(Self::open(staged)?);
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            eprintln!("stage {} rename", staging.display());
             if fs::rename(&staging, target).is_err() {
                 // Another restore may have won the target rename while this
                 // source was quiesced. Re-read the durable marker to make an
