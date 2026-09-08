@@ -131,6 +131,32 @@ func TestCoreTransportRepairsOneValidPlacementAndKeepsIdempotency(t *testing.T) 
 	}
 }
 
+func TestCoreTransportDoesNotReplayUnkeyedMutationAfterPlacement421(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("X-TerraScale-Placement", "SFO")
+		w.WriteHeader(http.StatusMisdirectedRequest)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(Config{APIBaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.do(t.Context(), http.MethodPost, "/api/v1/write", nil, map[string]string{"ok": "yes"}, nil, "write")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusMisdirectedRequest {
+		t.Fatalf("expected unkeyed mutation to return 421, got %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("unkeyed mutation was replayed %d times", got)
+	}
+	if got := c.PinnedRegion(); got != RegionSFO {
+		t.Fatalf("placement pin = %q, want %q", got, RegionSFO)
+	}
+}
+
 func TestCoreTransportLearnsServingRegionAndPinsFollowingReadsAndWrites(t *testing.T) {
 	var calls atomic.Int32
 	transport := pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {

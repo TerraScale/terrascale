@@ -669,11 +669,16 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		if status == http.StatusMisdirectedRequest && !followed421 && c.cfg.Affinity != AffinityStrict {
 			if code, ok := placementRegionExcluding(headers, c.PinnedRegion()); ok {
 				c.setPinned(code)
-				// The placement in a 421 is authoritative for this retry,
-				// including when the original request supplied a hint.
-				rc.regionHint = code
-				followed421 = true
-				continue
+				if canRepairPlacement(method, idem) {
+					// The placement in a 421 is authoritative for this retry,
+					// including when the original request supplied a hint.
+					rc.regionHint = code
+					followed421 = true
+					continue
+				}
+				// A 421 may arrive after an unkeyed mutation reached the
+				// server. Learn the advertised placement, but never replay
+				// an operation whose effect cannot be deduplicated.
 			}
 		}
 		if status >= 200 && status < 300 {
@@ -711,6 +716,10 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 func canRecoverRead(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead
+}
+
+func canRepairPlacement(method, idempotencyKey string) bool {
+	return method == http.MethodGet || (isMutation(method) && idempotencyKey != "")
 }
 
 // clearFailedPin returns to first contact only for the failed canonical
