@@ -1183,7 +1183,8 @@ public sealed class TerraScaleClient
             request.Headers.TryAddWithoutValidation("X-TerraScale-Allow-Stale", "true");
         }
 
-        if (documentId is null || options.SessionConsistency != TerraScaleSessionConsistency.Automatic)
+        if (documentId is null || options.SessionConsistency != TerraScaleSessionConsistency.Automatic ||
+            !string.IsNullOrWhiteSpace(readOptions?.Session))
         {
             return;
         }
@@ -1195,44 +1196,8 @@ public sealed class TerraScaleClient
         }
     }
 
-    internal void ApplyDocumentMutationHeaders(
-        HttpRequestMessage request,
-        TerraScaleDocumentMutationOptions? mutationOptions)
-    {
-        var token = mutationOptions?.ExpectedChangeToken?.Trim();
-        if (token is null)
-        {
-            return;
-        }
-
-        if (token.Length is 0 or > 4096)
-        {
-            throw new ArgumentException(
-                "ExpectedChangeToken must be nonblank and no longer than 4096 characters.",
-                nameof(mutationOptions));
-        }
-
-        request.Headers.TryAddWithoutValidation("If-Match", token);
-    }
-
     internal TerraScaleDocument ObserveDocumentWrite(
         TerraScaleDocument document,
-        HttpResponseMessage response,
-        string requestDatabase)
-    {
-        RememberSessionConsistencyToken(
-            document.SessionConsistencyToken,
-            document.DatabaseId,
-            document.Id);
-        RememberSessionConsistencyToken(
-            document.SessionConsistencyToken,
-            requestDatabase,
-            document.Id);
-        return document with { Routing = TerraScaleRoutingObservation.From(response) };
-    }
-
-    internal TerraScaleDeletedDocument ObserveDocumentDelete(
-        TerraScaleDeletedDocument document,
         HttpResponseMessage response,
         string requestDatabase)
     {

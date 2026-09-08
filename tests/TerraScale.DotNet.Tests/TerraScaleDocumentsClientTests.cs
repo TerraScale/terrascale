@@ -96,6 +96,25 @@ public sealed class TerraScaleDocumentsClientTests
     }
 
     [Test]
+    public async Task ExplicitSessionOverridesRememberedAutomaticSession()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"revision\":\"r1\"}", "\"r1\"", "7");
+        using var http = new HttpClient(handler);
+        var client = new TerraScaleClient(http, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"),
+            ApiKey = "test-key",
+            SessionConsistency = TerraScaleSessionConsistency.Automatic
+        });
+        await client.Documents.PutAsync("orders", "items", "one", new { value = 1 });
+        await client.Documents.GetAsync("orders", "items", "one");
+        await Assert.That(handler.Request!.Session).IsEqualTo("7");
+
+        await client.Documents.GetAsync("orders", "items", "one", new TerraScaleDocumentReadOptions(Session: "9"));
+        await Assert.That(handler.Request!.Session).IsEqualTo("9");
+    }
+
+    [Test]
     public async Task BatchAsync_UsesPublishedOperationShapeAndRejectsMoreThan1000()
     {
         using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"committed\":1,\"count\":1}");
