@@ -183,6 +183,14 @@ func TestRegionsListDecodesEdgeCatalogAndRejectsMemberHealth(t *testing.T) {
 		{name: "explicit empty catalog", body: `{"regions":[],"hosts":{}}`, fail: true},
 		{name: "missing regions", body: `{"hosts":{}}`, fail: true},
 		{name: "null regions", body: `{"regions":null,"hosts":{}}`, fail: true},
+		{name: "invalid code shape", body: `{"regions":[{"code":"gru","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true}],"hosts":{}}`, fail: true},
+		{name: "invalid leading hyphen", body: `{"regions":[{"code":"-GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true}],"hosts":{}}`, fail: true},
+		{name: "duplicate region code", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true},{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true}],"hosts":{}}`, fail: true},
+		{name: "invalid country shape", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BRA","latitude":0,"longitude":0,"available":true}],"hosts":{}}`, fail: true},
+		{name: "invalid coordinates", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":91,"longitude":0,"available":true}],"hosts":{}}`, fail: true},
+		{name: "missing required region field", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0}],"hosts":{}}`, fail: true},
+		{name: "missing hosts", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true}]}`, fail: true},
+		{name: "null host value", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true}],"hosts":{"GRU":null}}`, fail: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -205,6 +213,16 @@ func TestRegionsListDecodesEdgeCatalogAndRejectsMemberHealth(t *testing.T) {
 				t.Fatalf("regions=%+v err=%v", regions, err)
 			}
 		})
+	}
+}
+
+func TestRegionJSONIncludesSchemaRequiredFields(t *testing.T) {
+	data, err := json.Marshal(Region{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), `{"code":"","name":"","country":"","latitude":0,"longitude":0,"available":false}`; got != want {
+		t.Fatalf("encoded region = %s, want %s", got, want)
 	}
 }
 

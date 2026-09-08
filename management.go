@@ -41,10 +41,10 @@ type ManagedDatabase struct {
 // Region describes an admitted public region in the edge catalog.
 type Region struct {
 	Code      RegionCode `json:"code"`
-	Name      string     `json:"name,omitempty"`
-	Country   string     `json:"country,omitempty"`
-	Latitude  float64    `json:"latitude,omitempty"`
-	Longitude float64    `json:"longitude,omitempty"`
+	Name      string     `json:"name"`
+	Country   string     `json:"country"`
+	Latitude  float64    `json:"latitude"`
+	Longitude float64    `json:"longitude"`
 	Available bool       `json:"available"`
 }
 
@@ -67,8 +67,8 @@ func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
 		Available *bool    `json:"available"`
 	}
 	var wire struct {
-		Regions []regionWire       `json:"regions"`
-		Hosts   *map[string]string `json:"hosts"`
+		Regions []regionWire        `json:"regions"`
+		Hosts   *map[string]*string `json:"hosts"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
@@ -86,6 +86,7 @@ func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("sdk: region catalog response must contain regions and hosts")
 	}
 	regions := make([]Region, len(wire.Regions))
+	seen := make(map[RegionCode]struct{}, len(wire.Regions))
 	for i, item := range wire.Regions {
 		if item.Code == nil || item.Name == nil || item.Country == nil || item.Latitude == nil || item.Longitude == nil || item.Available == nil {
 			return fmt.Errorf("sdk: region catalog entry %d is missing a required field", i)
@@ -94,6 +95,10 @@ func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return err
 		}
+		if _, ok := seen[code]; ok {
+			return fmt.Errorf("sdk: region catalog contains duplicate region code %q", code)
+		}
+		seen[code] = struct{}{}
 		if utf8.RuneCountInString(*item.Name) < 1 || utf8.RuneCountInString(*item.Name) > 128 {
 			return fmt.Errorf("sdk: catalog region name must contain 1 to 128 characters, got %q", *item.Name)
 		}
@@ -105,7 +110,14 @@ func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
 		}
 		regions[i] = Region{Code: code, Name: *item.Name, Country: *item.Country, Latitude: *item.Latitude, Longitude: *item.Longitude, Available: *item.Available}
 	}
-	*r = RegionCatalogResponse{Regions: regions, Hosts: *wire.Hosts}
+	hosts := make(map[string]string, len(*wire.Hosts))
+	for code, host := range *wire.Hosts {
+		if host == nil {
+			return fmt.Errorf("sdk: region catalog host %q must be a string", code)
+		}
+		hosts[code] = *host
+	}
+	*r = RegionCatalogResponse{Regions: regions, Hosts: hosts}
 	return nil
 }
 
@@ -776,7 +788,10 @@ func parseCatalogRegionCode(value string) (RegionCode, error) {
 	if len(value) < 1 || len(value) > 16 {
 		return "", fmt.Errorf("sdk: catalog region code must contain 1 to 16 uppercase letters, digits, or hyphens, got %q", value)
 	}
-	for _, char := range value {
+	for i, char := range value {
+		if i == 0 && (char < 'A' || char > 'Z') && (char < '0' || char > '9') {
+			return "", fmt.Errorf("sdk: catalog region code must contain 1 to 16 uppercase letters, digits, or hyphens, got %q", value)
+		}
 		if (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' {
 			return "", fmt.Errorf("sdk: catalog region code must contain 1 to 16 uppercase letters, digits, or hyphens, got %q", value)
 		}
