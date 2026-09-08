@@ -186,7 +186,14 @@ fn storage_admission_inner(
                     instance,
                 )
             }
-            AcceptedAdmission::Active { partition, revision, origin, residency, epoch, local_is_writer } => {
+            AcceptedAdmission::Active {
+                partition,
+                revision,
+                origin,
+                residency,
+                epoch,
+                local_is_writer,
+            } => {
                 if epoch == 0 || origin != region || residency != record.residency {
                     return Err("invalid accepted database authority".into());
                 }
@@ -373,6 +380,7 @@ mod tests {
             if maintenance_mode.load(Ordering::Acquire) && record.database_id == fenced_text {
                 return Ok(Some(AcceptedAdmission::Maintenance {
                     origin: RegionCode::GRU,
+                    residency: record.residency.clone(),
                     epoch: 2,
                     local_is_writer: true,
                 }));
@@ -381,6 +389,7 @@ mod tests {
                 partition: format!("partition-{}", record.database_id),
                 revision: "revision".into(),
                 origin: RegionCode::GRU,
+                residency: record.residency.clone(),
                 epoch: 1,
                 local_is_writer: true,
             }))

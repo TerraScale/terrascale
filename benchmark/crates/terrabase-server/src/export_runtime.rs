@@ -135,7 +135,11 @@ impl ExportRuntime {
                     // One recovery worker processes interrupted jobs in bounded
                     // indexed pages without delaying admitted data service.
                     let _active = active;
-                    let _ = service.clone_for_worker().run(job).await;
+                    // Restart recovery must use the same bounded provider
+                    // retry policy as newly admitted work. Without this, a
+                    // transient outage during startup leaves the job accepted
+                    // with no worker or requeue path.
+                    let _ = service.clone_for_worker().run_with_retries(job).await;
                 }
             }
             after = jobs.last().cloned();

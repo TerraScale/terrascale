@@ -1906,7 +1906,8 @@ fn build_admission_authority(
             return Err("local member absent from accepted database assignment".into());
         };
         let origin = record.region.parse().map_err(|_| "invalid admitted Region")?;
-        let registration = usage.resolve_with_residency(record, assignment.epoch, &accepted.proof_digest)?;
+        let registration =
+            usage.resolve_with_residency(record, assignment.epoch, &accepted.proof_digest)?;
         if registration.is_none() && assignment.writer.member().as_str() != local {
             return Ok(None);
         }
@@ -1923,7 +1924,7 @@ fn build_admission_authority(
             )
             .map_err(failure)?;
         if assignment.writer.member().as_str() == local {
-            let lease = if partition.is_none() {
+            let lease = if registration.is_none() {
                 let location = member.root().join(&record.database_id);
                 match std::fs::symlink_metadata(&location) {
                     Ok(metadata) if metadata.file_type().is_dir() => {}

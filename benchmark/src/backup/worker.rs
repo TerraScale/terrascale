@@ -390,6 +390,13 @@ impl NativeBackupFleet {
     /// ordinary point discovery until the complete marker is renamed.
     pub async fn publish_envelope(&self, envelope: &BackupEnvelope) -> Result<PathBuf, FleetError> {
         let first = envelope.participants().first().ok_or(FleetError::Configuration)?;
+        // The local catalog and remote prefix are owned by the first physical
+        // participant.  Keep the logical envelope identity bound to that same
+        // owner; otherwise a caller could publish a validly checksummed
+        // envelope under one database and later report it for another.
+        if envelope.database_id() != first.database_id {
+            return Err(FleetError::Configuration);
+        }
         for participant in envelope.participants() {
             let stream =
                 self.streams.get(&participant.database_id).ok_or(FleetError::Configuration)?;
@@ -851,7 +858,7 @@ impl NativeBackupFleet {
             let marker = entry.path().join("envelope.tbv1");
             let bytes = std::fs::read(marker).map_err(|_| FleetError::Capture)?;
             let envelope = BackupEnvelope::decode(&bytes).map_err(|_| FleetError::Capture)?;
-            if envelope.digest() != digest {
+            if envelope.digest() != digest || envelope.database_id() != database {
                 return Err(FleetError::Capture);
             }
             envelopes.push(envelope);
@@ -2128,10 +2135,26 @@ mod tests {
                 database_incarnation: incarnation,
                 route_generation: 1,
                 boundary: manifest.boundary_sequence().get(),
-                manifest,
+                manifest: manifest.clone(),
             }],
         )
         .unwrap();
+
+        let mismatched = BackupEnvelope::assemble(
+            "another-database".into(),
+            incarnation,
+            1,
+            vec![BackupEnvelopeParticipant {
+                participant_id: "shard-0000000000000001".into(),
+                database_id: database.clone(),
+                database_incarnation: incarnation,
+                route_generation: 1,
+                boundary: manifest.boundary_sequence().get(),
+                manifest: manifest.clone(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(fleet.publish_envelope(&mismatched).await, Err(FleetError::Configuration));
 
         let broken_path = location("fleet-envelope-atomicity-provider");
         std::fs::create_dir_all(&broken_path).unwrap();

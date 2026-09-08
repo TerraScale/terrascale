@@ -1022,15 +1022,7 @@ impl ExportService {
         let job = job_id.to_owned();
         tokio::spawn(async move {
             let _active = active;
-            for attempt in 0..MAX_PROVIDER_RETRIES {
-                let retry =
-                    matches!(worker.run(&job).await, Err(ExportError::DependencyUnavailable));
-                if !retry || attempt + 1 == MAX_PROVIDER_RETRIES {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10 * (attempt as u64 + 1)))
-                    .await;
-            }
+            let _ = worker.run_with_retries(&job).await;
         });
         Ok(())
     }
@@ -1116,6 +1108,23 @@ impl Drop for ActiveJob {
 }
 
 impl Worker {
+    /// Runs one job with the bounded provider retry policy used by both live
+    /// admission and restart recovery.  A dependency failure leaves the
+    /// durable job accepted for a later explicit retry when this bound is
+    /// exhausted.
+    async fn run_with_retries(&self, job_id: &str) -> Result<(), ExportError> {
+        for attempt in 0..MAX_PROVIDER_RETRIES {
+            let result = self.run(job_id).await;
+            if !matches!(result, Err(ExportError::DependencyUnavailable))
+                || attempt + 1 == MAX_PROVIDER_RETRIES
+            {
+                return result;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10 * (attempt as u64 + 1))).await;
+        }
+        unreachable!("provider retry loop has a non-zero bound")
+    }
+
     async fn run(&self, job_id: &str) -> Result<(), ExportError> {
         if self.stop_requested.load(Ordering::Acquire) {
             return Ok(());
