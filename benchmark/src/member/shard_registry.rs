@@ -61,7 +61,7 @@ impl RouteParticipantRegistry {
             {
                 return Err(RegistryError::TargetUnavailable);
             }
-            participants.insert(route.shard_id(), Arc::new(target));
+            participants.insert(route.shard_id(), target);
         }
         Ok(Arc::new(Self {
             source: engine,
@@ -116,7 +116,8 @@ impl RouteParticipantRegistry {
         let shard = router.route(key).ok_or(crate::engine::EngineError::Conflict)?;
         let engine = self.participants.get(&shard).ok_or(crate::engine::EngineError::Conflict)?;
         let scope = engine.scope_for(scope.tenant());
-        let token = engine.shard_admission_for_key(&scope, router, key)?;
+        let (participant_router, _) = engine.load_shard_router(&scope)?.ok_or(crate::EngineError::Conflict)?;
+        let token = engine.shard_admission_for_key(&scope, &participant_router, key)?;
         let mut transaction = engine.begin(&scope, engine.read_snapshot(&scope)?, operation)?;
         transaction.bind_shard_admission(token)?;
         Ok(transaction)
@@ -139,7 +140,8 @@ impl RouteParticipantRegistry {
         };
         let engine = self.participants.get(&shard).ok_or(crate::engine::EngineError::Conflict)?;
         let scope = engine.scope_for(scope.tenant());
-        let token = engine.shard_admission_for_keys(&scope, router, keys)?;
+        let (participant_router, _) = engine.load_shard_router(&scope)?.ok_or(crate::EngineError::Conflict)?;
+        let token = engine.shard_admission_for_keys(&scope, &participant_router, keys)?;
         let mut transaction = engine.begin(&scope, engine.read_snapshot(&scope)?, operation)?;
         transaction.bind_shard_admission(token)?;
         Ok(transaction)

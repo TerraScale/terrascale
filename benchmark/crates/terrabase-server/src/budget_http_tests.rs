@@ -367,7 +367,7 @@ async fn three_region_origin_fact_reconciles_local_debit_after_reopen() {
             .unwrap()
     };
     let admitted = fixture.reopen(verifier.clone());
-    let response = admitted.router().oneshot(deliver()).await.unwrap();
+    let response = admitted.clone().router().oneshot(deliver()).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     Arc::get_mut(&mut state).unwrap().budget =
         Some(Arc::new(crate::production_budget::ProductionBudgetRuntime::new(admitted)));

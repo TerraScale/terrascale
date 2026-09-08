@@ -43,6 +43,7 @@ pub(crate) use sqlite::branch_import::{
 };
 pub(crate) use sqlite::branch_provenance::transform_provenance;
 pub use sqlite::database_file;
+pub(crate) use sqlite::existing_database_location;
 pub(crate) use sqlite::import_backup_file;
 pub(crate) use sqlite::{SqliteStorage, decode_document_body, encode_document_body};
 

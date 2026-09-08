@@ -35,7 +35,7 @@ fn source_file_rejects_moved_and_cross_collection_tokens_after_cutover() {
         .begin(&scope, engine.read_snapshot(&scope).unwrap(), operation("wrong-collection"))
         .unwrap();
     tx.bind_shard_admission(token.clone()).unwrap();
-    tx.put(Document::new(id.clone(), other, DocumentValue::Integer(1)), ExpectedVersion::Absent)
+    tx.put(Document::new(id.clone(), other, DocumentValue::Integer(1)), ExpectedVersion::New)
         .unwrap();
     assert!(matches!(
         tx.commit(LocalDurability::Synced),
@@ -48,7 +48,7 @@ fn source_file_rejects_moved_and_cross_collection_tokens_after_cutover() {
     tx.bind_document_shard_admission(&collection, &id).unwrap();
     tx.put(
         Document::new(id.clone(), collection.clone(), DocumentValue::Integer(1)),
-        ExpectedVersion::Absent,
+        ExpectedVersion::New,
     )
     .unwrap();
     assert!(matches!(tx.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
@@ -119,7 +119,7 @@ fn source_file_rejects_moved_and_cross_collection_tokens_after_cutover() {
         .begin(&scope, engine.read_snapshot(&scope).unwrap(), operation("retained-source"))
         .unwrap();
     tx.bind_document_shard_admission(&collection, &retained).unwrap();
-    tx.put(Document::new(retained, collection, DocumentValue::Integer(3)), ExpectedVersion::Absent)
+    tx.put(Document::new(retained, collection, DocumentValue::Integer(3)), ExpectedVersion::New)
         .unwrap();
     assert!(matches!(tx.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
     drop(engine);

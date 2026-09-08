@@ -267,13 +267,13 @@ impl UsageAdmissionJournal {
             .map_err(|_| "usage admission transaction unavailable")?;
         tx.execute(
             "INSERT OR IGNORE INTO allocations(operation,database_id,payload) VALUES(?1,?2,?3)",
-            params![verified.grant().operation_id, verified.grant().database_id, signed_bytes],
+            params![verified.grant().refill_operation_id, verified.grant().database_id, signed_bytes],
         )
         .map_err(|_| "allocation persistence failed")?;
         let stored: Vec<u8> = tx
             .query_row(
                 "SELECT payload FROM allocations WHERE operation=?1",
-                [&verified.grant().operation_id],
+                [&verified.grant().refill_operation_id],
                 |row| row.get(0),
             )
             .map_err(|_| "allocation persistence failed")?;

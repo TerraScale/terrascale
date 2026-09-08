@@ -234,6 +234,20 @@ pub fn database_file(location: &Path) -> PathBuf {
     location.join(DATABASE_FILE)
 }
 
+/// Checks storage-owned existing-location rules without creating a database.
+/// Encrypted SQLite may have no plaintext pathname; its authenticated companion
+/// is the durable file. Engine::open_existing still validates its contents.
+pub(crate) fn existing_database_location(location: &Path, encrypted: bool) -> bool {
+    let path = database_file(location);
+    if !location.is_dir() { return false; }
+    if encrypted {
+        encrypted_file::companion(&path).is_file()
+            && !path.metadata().is_ok_and(|metadata| metadata.len() > 0)
+    } else {
+        path.is_file() && !encrypted_file::companion(&path).exists()
+    }
+}
+
 /// The read-pool width. Reads take `&self`, so the pool is what lets a
 /// future engine-side read-concurrency split use this backend unchanged.
 const READ_POOL_WIDTH: usize = 4;

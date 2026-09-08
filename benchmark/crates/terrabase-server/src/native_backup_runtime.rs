@@ -744,7 +744,9 @@ mod restore_tests {
             .with_owner(target_owner)
             .with_storage_keys(
                 crate::test_keys::storage_keys(&target_scope)
-                    .remove(&target.database.record.database_id.parse().unwrap())
+                    .remove(&terrabase::member::DatabaseId::try_new(
+                        &target.database.record.database_id,
+                    ).unwrap())
                     .unwrap(),
             );
         let placement = PlacementLock::explicit([target.database.record.region.parse().unwrap()]).unwrap();

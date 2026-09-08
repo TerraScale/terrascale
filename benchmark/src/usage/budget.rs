@@ -493,7 +493,7 @@ mod tests {
                 key_id,
                 &public,
                 "gru",
-                &envelope.placement,
+                &grant.placement,
                 &grant.organization_id,
                 &grant.database_id,
                 &grant.holder_id,
@@ -503,7 +503,7 @@ mod tests {
                 0,
             )
             .unwrap();
-            assert_eq!(verified.grant().units, entry["units"].as_i64().unwrap());
+            assert_eq!(verified.grant().local_units, entry["localUnits"].as_i64().unwrap());
         }
     }
 }

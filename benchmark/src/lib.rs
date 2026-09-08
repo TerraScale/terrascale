@@ -34,6 +34,7 @@ pub mod identity;
 pub mod index;
 pub mod member;
 pub mod observability;
+pub mod origin_lane;
 pub mod operations;
 pub mod query;
 pub mod regions;
@@ -115,6 +116,7 @@ pub use types::{
     RetryDisposition, StorageSequence, TenantId, TenantScope,
 };
 pub use types::{MemberId, RegionId, ReplicationClockStamp};
+pub use origin_lane::{OriginLaneError, OriginLaneId};
 pub use usage::{
     ChargeScope, CorrectionProcedure, MeasurementCadence, MeasurementWindow, MeterCatalog,
     MeterDefinition, MeterKind, MeterUnit, MintingIdentity, MintingRule, SegmentId,

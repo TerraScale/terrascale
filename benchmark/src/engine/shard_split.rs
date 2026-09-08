@@ -106,7 +106,7 @@ impl ScopedShardEngine {
         &self,
         context: &SplitContext,
     ) -> Result<Engine, EngineOpenError> {
-        if !crate::storage::database_file(&self.target_path(context)).is_file() {
+        if !crate::storage::existing_database_location(&self.target_path(context), self.engine.storage_keys.is_some()) {
             return Err(EngineOpenError::StorageUnavailable);
         }
         self.open_target_with_mode(context, false)
@@ -318,6 +318,9 @@ impl SplitEngineAdapter for ScopedShardEngine {
                     return Err(EngineError::Conflict);
                 }
                 target.activate_origin_epoch(epoch)?;
+                if let Some(placement) = self.engine.usage_placement(&self.scope).map_err(|_| EngineError::StorageFailure)? {
+                    target.configure_usage_placement(placement).map_err(|_| EngineError::StorageFailure)?;
+                }
                 self.copy_schema_metadata(&target, &target_scope, *context)?;
                 Self::persist_target_identity(&target, &target_scope, *context, &identity)
             }
@@ -874,13 +877,16 @@ impl Engine {
     /// root. Member admission uses this only after the route catalog names
     /// the shard; callers cannot supply an arbitrary path.
     pub(crate) fn open_shard_participant(
-        &self,
+        self: &std::sync::Arc<Self>,
         shard_id: u64,
-    ) -> Result<Option<Engine>, EngineOpenError> {
+    ) -> Result<Option<std::sync::Arc<Engine>>, EngineOpenError> {
         let path = self.location.join("shards").join(format!("{shard_id:016x}.sqlite3"));
-        if !crate::storage::database_file(&path).is_file() {
+        if !crate::storage::existing_database_location(&path, self.storage_keys.is_some()) {
             return Ok(None);
         }
+        let mut cache = self.shard_participants.lock().map_err(|_| EngineOpenError::StorageUnavailable)?;
+        if let Some(target) = cache.get(&shard_id) { return Ok(Some(target.clone())); }
+        if cache.len() >= MAX_ROUTES { return Err(EngineOpenError::StorageUnavailable); }
         let mut config = super::EngineConfig::existing_durable(path)
             .map_err(|_| EngineOpenError::InvalidConfig)?
             .with_owner(self.database_owner().clone());
@@ -890,7 +896,10 @@ impl Engine {
         let origin = crate::types::RegionId::try_new(self.database_owner().region().as_str())
             .map_err(|_| EngineOpenError::InvalidConfig)?;
         config = config.with_replication_origin(origin);
-        Engine::open(config).map(Some)
+        let target = std::sync::Arc::new(Engine::open(config)?);
+        *target.shard_authority.lock().map_err(|_| EngineOpenError::StorageUnavailable)? = Some(std::sync::Arc::downgrade(self));
+        cache.insert(shard_id, target.clone());
+        Ok(Some(target))
     }
 
     /// Validates a target's immutable split identity and verification receipt.

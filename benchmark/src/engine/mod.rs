@@ -1206,6 +1206,10 @@ pub struct Engine {
     /// The group-commit mailbox: waiting intents and the leader flag.
     /// Shared through the [`Arc`] so cloned engines form one group.
     origin_commit_barrier: std::sync::RwLock<()>,
+    /// One resident handle per admitted shard, bounded by the route catalog limit.
+    shard_participants: Mutex<BTreeMap<u64, Arc<Engine>>>,
+    /// Target commits share the source database's live authority, without a cycle.
+    shard_authority: Mutex<Option<std::sync::Weak<Engine>>>,
     pub(crate) commit_mailbox: Arc<Mutex<CommitMailbox>>,
     /// The arrival signal paired with [`Engine::commit_mailbox`]: every
     /// enqueue notifies it, so a coalescing leader wakes per arrival
@@ -1406,6 +1410,8 @@ impl Engine {
             auto_index_observations: Mutex::new(crate::auto_index::WorkloadSketch::default()),
             auto_index_shadow_samples: Mutex::new(BTreeMap::new()),
             origin_commit_barrier: std::sync::RwLock::new(()),
+            shard_participants: Mutex::new(BTreeMap::new()),
+            shard_authority: Mutex::new(None),
             commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
             commit_arrivals: std::sync::Condvar::new(),
         })
@@ -2022,6 +2028,12 @@ impl Engine {
         }
         let origin_epoch =
             self.lock_storage()?.port.origin_epoch().map_err(|()| EngineError::StorageFailure)?.0;
+        let source_authority = self.shard_authority.lock().map_err(|_| EngineError::StorageFailure)?
+            .as_ref().map(|source| {
+                let source = source.upgrade().ok_or(EngineError::StorageFailure)?;
+                let epoch = source.origin_epoch()?.0;
+                Ok::<_, EngineError>((source, epoch))
+            }).transpose()?;
         let reserved = self
             .in_flight
             .lock()
@@ -2042,6 +2054,7 @@ impl Engine {
             internal_maintenance: false,
             shard_copy: false,
             expected_origin_epoch: origin_epoch,
+            source_authority,
             expected_uniform_context: None,
             merge_conflict: None,
             replication_fingerprint: None,
@@ -4833,6 +4846,7 @@ pub struct Transaction<'engine> {
     budget_allocation: Option<crate::usage::VerifiedAllocation>,
     internal_maintenance: bool,
     shard_copy: bool,
+    source_authority: Option<(Arc<Engine>, u64)>,
     expected_origin_epoch: u64,
     expected_uniform_context: Option<Vec<u8>>,
     merge_conflict: Option<(CollectionName, DocumentId, storage::MergeConflictEntry)>,
@@ -5217,6 +5231,28 @@ impl Transaction<'_> {
         let outcome = if self.internal_maintenance {
             self.commit_unobserved(durability)
         } else {
+            // Keep source authority locked through target publication and sync.
+            // Pause/revocation/fencing take its exclusive barrier and therefore
+            // cannot race an already staged target commit past their boundary.
+            let source_authority = self.source_authority.clone();
+            let _source_barrier = match source_authority.as_ref() {
+                Some((source, epoch)) => {
+                    let Ok(guard) = source.origin_commit_barrier.read() else {
+                        return CommitOutcome::Rejected(CommitError::StorageFailure);
+                    };
+                    let source_scope = source.scope_for(self.scope.tenant());
+                    let active = source.lifecycle_state(&source_scope)
+                        .is_ok_and(|state| !state.paused && !state.access_revoked());
+                    if !active || source.origin_epoch() != Ok((*epoch, false))
+                        || source.usage_placement(&source_scope).ok().flatten()
+                            != engine.usage_placement(&self.scope).ok().flatten()
+                        || source.validate_storage_authorization().is_err() {
+                        return CommitOutcome::Rejected(CommitError::Conflict);
+                    }
+                    Some(guard)
+                }
+                None => None,
+            };
             let Ok(_barrier) = engine.origin_commit_barrier.read() else {
                 return CommitOutcome::Rejected(CommitError::StorageFailure);
             };
