@@ -1135,16 +1135,6 @@ func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database stri
 // BackupsClient mirrors backups.* routes.
 type BackupsClient struct{ c *Client }
 
-func backupBase(projectID, databaseID string) (string, error) {
-	if err := requireID("project id", projectID); err != nil {
-		return "", err
-	}
-	if err := requireID("database id", databaseID); err != nil {
-		return "", err
-	}
-	return "/api/v1/projects/" + url.PathEscape(projectID) + "/databases/" + url.PathEscape(databaseID), nil
-}
-
 // ListBackups pages backup jobs.
 func (b *BackupsClient) ListBackups(ctx context.Context, projectID, databaseID string, skip, take int, opts ...RequestOption) ([]BackupJob, error) {
 	_, _, _ = projectID, databaseID, skip
@@ -1209,11 +1199,21 @@ func (b *BackupsClient) RestoreBackup(ctx context.Context, database string, requ
 	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
-	var out ProvisioningOperation
-	if err := b.c.do(ctx, "POST", path+"/backups/restore", nil, request, &out, "restore_backup", opts...); err != nil {
+	request.OperationID = strings.TrimSpace(request.OperationID)
+	if request.OperationID == "" {
+		request.OperationID = strings.TrimSpace(resolveRequestOptions(opts).idempotencyKey)
+	}
+	var response acceptedProvisioningOperation
+	if request.OperationID == "" {
+		return nil, &ValidationError{Field: "operation_id", Message: "must be nonblank or supplied by the idempotency key"}
+	}
+	if err := b.c.do(ctx, "POST", path+"/backups/restore", nil, request, &response, "restore_backup", opts...); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	if response.OperationID != request.OperationID {
+		return nil, fmt.Errorf("sdk: restore operation response identity does not match the request")
+	}
+	return &response.ProvisioningOperation, nil
 }
 
 // AccessClient mirrors access.* team-member routes.

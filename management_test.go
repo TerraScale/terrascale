@@ -50,7 +50,12 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 		case "/api/v1/databases/prod/backups":
 			_ = json.NewEncoder(w).Encode(BackupReadiness{Ready: true, Streaming: true})
 		case "/api/v1/databases/prod/backups/restore":
-			_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "restore"})
+			var request RestoreBackupRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.OperationID != "management-test" {
+				t.Errorf("restore request identity = %+v, error = %v", request, err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"management-test","database_id":"db-restore","parent_database_id":"prod","key_version":"key-1","name":"restore","regions":["GRU"],"residency":"","state":"pending"}`))
 		case "/api/v1/databases/prod/usage":
 			_ = json.NewEncoder(w).Encode(DatabaseUsage{DatabaseID: "prod", Meters: []MeterTotal{{Meter: MeterDocumentWriteUnits, Units: "3"}, {Meter: MeterStorageByteSeconds, Units: "42"}}})
 		case "/api/v1/projects/p1/auth/api-keys":

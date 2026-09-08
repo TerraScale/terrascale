@@ -374,6 +374,11 @@ func TestSubscribeRetriesAreBoundedAndCancellationStopsLongPoll(t *testing.T) {
 	case <-deadline.C:
 		t.Fatal("bounded retry did not terminate")
 	}
+	select {
+	case <-sub.done:
+	case <-time.After(time.Second):
+		t.Fatal("terminal reset did not release the subscription without explicit Close")
+	}
 	sub.Close()
 	if logCalls > pollRetryLimit+1 {
 		t.Fatalf("log calls = %d, want at most %d", logCalls, pollRetryLimit+1)

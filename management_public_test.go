@@ -461,3 +461,45 @@ func TestProvisionedBranchAndDeletePreserveAcceptedOperation(t *testing.T) {
 		t.Fatalf("delete result = %+v, err = %v", deleted, err)
 	}
 }
+
+func TestRestoreBackupRequiresMatchingAcceptedOperation(t *testing.T) {
+	for _, scenario := range []string{"accepted", "wrong_status", "wrong_identity", "missing_identity"} {
+		t.Run(scenario, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request RestoreBackupRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+				}
+				if request.OperationID != "restore-1" {
+					t.Errorf("restore operation identity = %q", request.OperationID)
+				}
+				status := http.StatusAccepted
+				if scenario == "wrong_status" {
+					status = http.StatusOK
+				}
+				w.WriteHeader(status)
+				operation := ProvisioningOperation{Environment: "production", TenantID: "tenant-1", ProjectID: "project-1", OperationID: "restore-1", DatabaseID: "db-1", KeyVersion: "key-1", Name: "restored", Regions: []RegionCode{RegionGRU}, State: "pending"}
+				if scenario == "wrong_identity" {
+					operation.OperationID = "another-operation"
+				}
+				if scenario == "missing_identity" {
+					operation = ProvisioningOperation{Name: "restored"}
+				}
+				_ = json.NewEncoder(w).Encode(operation)
+			}))
+			defer server.Close()
+			client, err := NewClient(Config{APIBaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := client.Backups.RestoreBackup(t.Context(), "source", RestoreBackupRequest{Name: "restored", OperationID: "restore-1"})
+			if scenario != "accepted" {
+				if err == nil || result != nil {
+					t.Fatalf("invalid restore acknowledgement accepted: %+v, %v", result, err)
+				}
+			} else if err != nil || result.State != "pending" {
+				t.Fatalf("restore acknowledgement = %+v, %v", result, err)
+			}
+		})
+	}
+}

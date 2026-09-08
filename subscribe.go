@@ -494,7 +494,7 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 			return nil, err
 		}
 	}
-	pollCtx, cancel := context.WithCancel(context.Background())
+	pollCtx, cancel := context.WithCancel(ctx)
 	s := &Subscription{
 		c:                c,
 		viewID:           attach.ViewID,
@@ -511,6 +511,12 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 		done:             make(chan struct{}),
 		cancel:           cancel,
 	}
+	started := false
+	defer func() {
+		if !started {
+			s.Close()
+		}
+	}()
 	if sub.Transport == TransportWebSocket {
 		parameterMap, err := canonicalSQLParameters(params)
 		if err != nil {
@@ -537,8 +543,8 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 		}
 	}
 	// Start polling only after the initial snapshot is queued, so a fast
-	// origin cannot deliver a delta ahead of the snapshot. Detach the poll
-	// loop from the caller's ctx lifetime via Close and the parent ctx.
+	// origin cannot deliver a delta ahead of the snapshot. Cancellation and
+	// terminal resets both release the subscription resources.
 	s.wg.Add(1)
 	if sub.Transport == TransportWebSocket {
 		go s.websocketLoop(pollCtx)
@@ -547,11 +553,12 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 	}
 	go func() {
 		select {
-		case <-ctx.Done():
+		case <-pollCtx.Done():
 			s.Close()
 		case <-s.done:
 		}
 	}()
+	started = true
 	return s, nil
 }
 
