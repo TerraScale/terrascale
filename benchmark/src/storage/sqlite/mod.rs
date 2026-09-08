@@ -2974,6 +2974,34 @@ fn stage_intent(
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
         }
     }
+    if provenance.kind() == JournalKind::Origin {
+        let key = (intent.tenant.as_str().to_owned(), provenance.origin().to_owned());
+        let current = if let Some(current) = origin_sequences.get_mut(&key) {
+            current
+        } else {
+            let current = transaction
+                .query_row(
+                    "SELECT COALESCE(MAX(seq), 0) FROM (
+                        SELECT MAX(origin_seq) AS seq FROM documents WHERE origin = ?1 AND tenant = ?2
+                        UNION ALL SELECT MAX(seq) FROM origin_prefixes WHERE origin = ?1 AND tenant = ?2
+                        UNION ALL SELECT MAX(origin_seq) FROM replication_publications WHERE origin = ?1 AND tenant = ?2)",
+                    rusqlite::params![provenance.origin(), intent.tenant.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|_| ())?;
+            let current = u64::try_from(current).map_err(|_| ())?;
+            origin_sequences.entry(key).or_insert(current)
+        };
+        let next = current.checked_add(1).ok_or(())?;
+        *current = next;
+        origin_sequence = next;
+        provenance = JournalProvenance::new(
+            provenance.kind(),
+            provenance.origin().to_owned(),
+            next,
+            provenance.hlc(),
+        );
+    }
     // Step 5: documents rows ride one transaction, and every row of the
     // commit carries the commit's own identity — the journal is the table.
     // A replicated commit carries the source region's identity and its
@@ -3163,6 +3191,12 @@ fn stage_intent(
             .execute_batch("ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission")
             .map_err(|_| ())?;
         *watermark = sequence - 1;
+        if provenance.kind() == JournalKind::Origin {
+            let key = (intent.tenant.as_str().to_owned(), provenance.origin().to_owned());
+            if let Some(current) = origin_sequences.get_mut(&key) {
+                *current = current.saturating_sub(1);
+            }
+        }
         insert_rejection_row(
             transaction,
             &intent.tenant,
@@ -3171,34 +3205,6 @@ fn stage_intent(
             CommitRejection::Conflict,
         )?;
         return Ok(CommitResult::Rejected(CommitRejection::Conflict));
-    }
-    if provenance.kind() == JournalKind::Origin {
-        let key = (intent.tenant.as_str().to_owned(), provenance.origin().to_owned());
-        let current = if let Some(current) = origin_sequences.get_mut(&key) {
-            current
-        } else {
-            let current = transaction
-                .query_row(
-                    "SELECT COALESCE(MAX(seq), 0) FROM (
-                        SELECT MAX(origin_seq) AS seq FROM documents WHERE origin = ?1 AND tenant = ?2
-                        UNION ALL SELECT MAX(seq) FROM origin_prefixes WHERE origin = ?1 AND tenant = ?2
-                        UNION ALL SELECT MAX(origin_seq) FROM replication_publications WHERE origin = ?1 AND tenant = ?2)",
-                    rusqlite::params![provenance.origin(), intent.tenant.as_str()],
-                    |row| row.get::<_, i64>(0),
-                )
-                .map_err(|_| ())?;
-            let current = u64::try_from(current).map_err(|_| ())?;
-            origin_sequences.entry(key).or_insert(current)
-        };
-        let next = current.checked_add(1).ok_or(())?;
-        *current = next;
-        origin_sequence = next;
-        provenance = JournalProvenance::new(
-            provenance.kind(),
-            provenance.origin().to_owned(),
-            next,
-            provenance.hlc(),
-        );
     }
     transaction.execute_batch("RELEASE schema_unique_admission").map_err(|_| ())?;
     if let Some(fingerprint) = intent.replication_fingerprint {
@@ -3238,6 +3244,7 @@ fn stage_intent(
     }
     write_usage::mint(transaction, intent, sequence, billed_writes, &provenance)?;
     let replicated_origin = provenance.kind() == JournalKind::Replicated;
+    let replicated_origin_name = provenance.origin().to_owned();
     let published = PublishedCommit::new(
         intent.tenant.clone(),
         intent.operation.clone(),
@@ -3263,7 +3270,7 @@ fn stage_intent(
     update_root_head(transaction, root.as_str())?;
     root.clone_into(root_head);
     if replicated_origin {
-        let key = (intent.tenant.as_str().to_owned(), provenance.origin().to_owned());
+        let key = (intent.tenant.as_str().to_owned(), replicated_origin_name);
         let entry = origin_sequences.entry(key).or_insert(0);
         *entry = (*entry).max(origin_sequence);
         for write in &intent.writes {
