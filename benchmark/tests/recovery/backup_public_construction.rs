@@ -212,13 +212,18 @@ fn unsealed_orphan_directories_do_not_break_discovery_or_retry() {
 
     // A crash-orphan of the run's own identity — the exact state a crash
     // before the publish rename leaves — must be replaced by the identical
-    // retry, not reject it. Identity is content-derived, so a fresh
-    // destination's identical run seals the same recovery point.
+    // retry, not reject it. The capture clock is part of the manifest
+    // identity, so an uncertain retry carries the original capture time.
     let crashed = location("orphan-crashed-dest");
     std::fs::remove_dir_all(&crashed).ok();
     create_unsealed_orphan(&crashed, &identity);
-    let retry = run_backup(&engine, BackupPlan::for_integration_tests_full(), &crashed)
-        .expect("retry over orphan");
+    let retry = run_backup(
+        &engine,
+        BackupPlan::for_integration_tests_full()
+            .with_capture_unix_millis(sealed.manifest().captured_unix_millis()),
+        &crashed,
+    )
+    .expect("retry over orphan");
     assert_eq!(retry.manifest().identity(), identity, "the retry is idempotent");
     assert!(retry.archive().verify(&crashed).is_ok());
     assert!(

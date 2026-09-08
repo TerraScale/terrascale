@@ -2258,7 +2258,7 @@ mod tests {
             HeaderValue::from_str(&origin_proof_for(
                 &Method::GET,
                 target,
-                bucket.saturating_sub(CAPABILITY_BUCKET),
+                bucket.saturating_sub(1),
                 previous,
                 terrabase::regions::RegionCode::GRU,
             ))

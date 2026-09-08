@@ -237,7 +237,7 @@ fn origin_proofs_accept_current_previous_and_reject_expired_or_wrong_scope() {
         origin_proof_for(
             &Method::GET,
             target,
-            bucket.saturating_sub(600),
+            bucket.saturating_sub(1),
             previous,
             terrabase::regions::RegionCode::GRU
         ),
@@ -247,7 +247,7 @@ fn origin_proofs_accept_current_previous_and_reject_expired_or_wrong_scope() {
         origin_proof_for(
             &Method::GET,
             target,
-            bucket.saturating_sub(1200),
+            bucket.saturating_sub(2),
             current,
             terrabase::regions::RegionCode::GRU
         ),
