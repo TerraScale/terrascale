@@ -76,17 +76,69 @@ export type Database = {
   readonly residency: string;
   readonly parent: string | null;
 };
-export type DeletionOperation = {
-  readonly request: {
-    readonly environment: string;
-    readonly tenant_id: string;
-    readonly project_id: string;
-    readonly database_id: string;
-    readonly operation_id: string;
-  };
-  readonly state: "preparing" | "stopping" | "cleanup_pending";
+export type DeletionRequest = {
+  readonly environment: string;
+  readonly tenant_id: string;
+  readonly project_id: string;
+  readonly database_id: string;
+  readonly operation_id: string;
+};
+
+export type DeletionStop = {
+  readonly environment: string;
+  readonly organization_id: string;
+  readonly project_id: string;
+  readonly database_id: string;
+  readonly parent_database_id?: string;
+  readonly operation_id: string;
+  readonly region: string;
   readonly cutoff: string;
-  readonly targets: readonly { readonly stop: Record<string, unknown> }[];
+  readonly retain_until?: string;
+};
+
+export type DeletionPreparation = Omit<DeletionStop, "cutoff" | "retain_until"> & {
+  readonly prepared: boolean;
+  readonly last_accounted_at: string;
+};
+
+export type DeletionReceipt = DeletionStop & {
+  readonly access_revoked: boolean;
+  readonly usage_stopped: boolean;
+};
+
+export type DeletionEdgeReceipt = {
+  readonly request: DeletionRequest;
+  readonly cutoff: string;
+  readonly access_revoked: boolean;
+};
+
+export type DeletionClaimReceipt = DeletionRequest & {
+  readonly schemaVersion: number;
+  readonly policy_revision: string;
+  readonly policy_fingerprint: string;
+  readonly grace_condition: string;
+  readonly deadline: string;
+  readonly accepted_at: string;
+  readonly authority_epoch: string;
+};
+
+export type DeletionTarget = {
+  readonly stop: DeletionStop;
+  readonly preparation?: DeletionPreparation;
+  readonly receipt?: DeletionReceipt;
+};
+
+export type DeletionOperation = {
+  readonly request: DeletionRequest;
+  readonly requested_at: string;
+  readonly state: "preparing" | "stopping" | "edge_pending" | "cleanup_pending";
+  readonly cutoff: string;
+  readonly targets: readonly DeletionTarget[];
+  readonly edge_receipt?: DeletionEdgeReceipt;
+  readonly claim?: DeletionClaimReceipt;
+  readonly automatic_policy_revision?: string;
+  readonly automatic_grace_condition?: string;
+  readonly automatic_deadline?: string;
 };
 export type ProvisioningOperation = {
   readonly environment: string;

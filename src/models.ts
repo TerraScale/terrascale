@@ -322,7 +322,7 @@ export type DeletedProjectDatabaseResponse = {
 /** Accepted deletion work; acceptance does not confirm removal of retained copies. */
 export type DatabaseDeletionReceipt = {
   readonly operationId: string;
-  readonly state: "preparing" | "stopping" | "cleanup_pending" | "complete";
+  readonly state: "preparing" | "stopping" | "edge_pending" | "cleanup_pending" | "complete";
 };
 
 export type ConfigureBackupPolicyRequest = {
