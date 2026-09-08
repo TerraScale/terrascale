@@ -6,7 +6,7 @@
 <style>text{font-family:Arial,sans-serif;fill:#18334a}.body{font-size:15px}.small{font-size:15px}.h{font-size:18px;font-weight:700}.section{font-size:18px;font-weight:700;letter-spacing:.6px}</style>
 <rect x="0" y="0" width="1600" height="128" rx="0" fill="#112d43" stroke="#112d43"/>
 <text x="44" y="39" class="section" style="fill:#78d7bb">TERRASCALE / ARCHITECTURE</text>
-<text x="44" y="86" class="h" style="fill:#fff;font-size:34px">3 regions. One v1 architecture.</text>
+<text x="44" y="86" class="h" style="fill:#fff;font-size:34px">3 Regions. Launch target.</text>
 <text x="1060" y="52" class="h" style="fill:#fff">6 member hosts minimum</text>
 <text x="1060" y="82" class="body" style="fill:#c4dbe9">6 local orchestrators · 3 control replicas</text>
 <text x="44" y="158" class="small" >TARGET DESIGN  ·  Blue = REST  ·  Green = reactive  ·  Amber = data/replication  ·  Purple = control</text>
@@ -67,13 +67,13 @@
 <rect x="996" y="446" width="260" height="116" rx="12" fill="#e4f6f1" stroke="#17816a"/>
 <text x="1013" y="475" class="h" >Shared result views</text>
 <text x="1013" y="504" class="body" >Journal → incremental delta</text>
-<text x="1013" y="527" class="body" >100 ms shared publication</text>
+<text x="1013" y="527" class="body" >Bounded shared publication</text>
 <text x="1013" y="550" class="body" >Encode immutable bytes once</text>
 <rect x="1316" y="446" width="228" height="116" rx="12" fill="#fff3df" stroke="#b47d2b"/>
-<text x="1333" y="475" class="h" >OCI Object Storage</text>
-<text x="1333" y="504" class="body" >Native TerraBase backup · PITR</text>
-<text x="1333" y="527" class="body" >Restore to a new DB</text>
-<text x="1333" y="550" class="body" >Regional · DEK encrypted</text>
+<text x="1333" y="475" class="h" >Encrypted backups</text>
+<text x="1333" y="504" class="body" >OCI Object Storage / Tigris</text>
+<text x="1333" y="527" class="body" >Policy-qualified geography</text>
+<text x="1333" y="550" class="body" >Restore to a new database</text>
 <polyline points="276,507 326,507" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
 <rect x="274" y="473" width="41.2" height="23" rx="3" fill="#f7f9fc" stroke="#f7f9fc"/>
 <text x="279" y="490" class="small" >HTTP</text>
@@ -116,7 +116,7 @@
 <polyline points="306,826 366,826" fill="none" stroke="#536c83" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)" />
 <polyline points="676,826 736,826" fill="none" stroke="#536c83" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)" />
 <polyline points="1096,826 1156,826" fill="none" stroke="#536c83" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)" />
-<text x="56" y="922" class="body" >Two hosts per Region to start. Scale from measured demand; admit/catch up before traffic. Fixed control R3: GRU + SFO + FRA.</text>
+<text x="56" y="922" class="body" >Native OCI binaries + systemd; no containers. Two hosts per Region initially. Fixed control R3: GRU + SFO + FRA.</text>
 <text x="56" y="950" class="small" >Orchestrator → DNS / KV / keys / edge promotion. estate.* → TerraBase → dashboard SDK. Grafana agents → Grafana Cloud.</text>
 <rect x="32" y="996" width="1536" height="170" rx="12" fill="#fff" stroke="#d2dee8"/>
 <text x="52" y="1028" class="section" >03  REGIONAL FOOTPRINT / 3 REGIONS</text>
@@ -132,7 +132,7 @@
 <text x="668" y="1075" class="h" >FRA</text>
 <text x="668" y="1100" class="small" >2 members + 2 local controllers</text>
 <text x="668" y="1124" class="small" >1 global store replica</text>
-<text x="44" y="1193" class="body" >Regional services: TerraBase + ts-orchestrator + ts-node + Grafana agent on each host. Regional backups remain on OCI.</text>
-<text x="44" y="1220" class="body" >Estate growth does not widen database residency. A separate regional R3 needs at least 3 eligible hosts and explicit admission.</text>
-<text x="44" y="1247" class="small" >GRU / NATS outage pauses new control mutations; admitted data-plane service continues. Launch qualifies 3 Regions; 10/20 are design targets.</text>
+<text x="44" y="1193" class="body" >Only writes + logical storage are billed, multiplied by selected Regions before allowances. Reads and reactive delivery are unbilled.</text>
+<text x="44" y="1220" class="body" >Placement is immutable across replication, backups, restore, exports and branches. Separate regional R3 needs at least 3 eligible hosts.</text>
+<text x="44" y="1247" class="small" >Control outage pauses new mutations; admitted data service still enforces requested guarantees. Launch target: 3 Regions; 10/20: future design.</text>
 </svg>

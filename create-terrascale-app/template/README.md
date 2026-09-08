@@ -23,7 +23,7 @@ name, source, and selected region, but not credentials or a database id. Use
 the dashboard/API response to obtain the branch database id, then put that id
 and the API settings in `.env.local`. Set the redirect URI to the exact URL
 registered for `terrascale-starter-web`; sign-in uses authorization-code PKCE
-(S256) and requests only `openid database:read database:write`. The resulting
+(S256) and requests only `openid offline_access database:read database:write`. The resulting
 credential stays in tab memory and is passed directly to `@terrascale/sdk`; it
 is never rendered or persisted. Export a key as `TERRASCALE_API_KEY` (or pass
 `--api-key`) for the CLI; `.env.local` is read by Next.js, not by the shell.
@@ -39,6 +39,7 @@ starter can add posts through the typed Database API contract. The Add post form
 
 - `app/page.tsx` — schema-backed SQL builder and first live query via
   `TerraScaleSyncV1Client.subscribe({ databaseId, ... })` over CDN-backed HTTP.
+- `auth.ts` — in-memory OAuth refresh rotation and scoped database delegation.
 - `schema.ts` — the typed `defineSchema` source for the JSON contract.
 - `terrascale.schema.json` — the contract `terrascale push` applies.
 - `seed.ts` — optional cloud seed function for an application script runner.
@@ -56,6 +57,7 @@ setup target.
 
 After OAuth sign-in, the starter exchanges its bearer for short-lived access
 limited to the selected project/database and the `posts` collection, with read
-and write actions. It renews this delegation while the OAuth session token
-remains valid. If authorization expires or is revoked, disconnect and sign in
-again. Both credentials remain in tab memory.
+and write actions. It renews OAuth access with a rotating refresh token and renews the scoped
+delegation as needed. If authorization expires, is revoked, or a refresh
+response is lost, disconnect and sign in again. All credentials remain in tab
+memory; disconnect cancels exchanges and clears them.

@@ -12,9 +12,14 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "qualify:browser": "node qualification/browser-journey.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1",
+    "typescript": "5.9.3"
   }
 }

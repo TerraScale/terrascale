@@ -57,6 +57,7 @@ it writes posts through the published typed `client.documents.put` API. There is
 - Next.js app with `app/page.tsx`: a schema-backed SQL builder and live
   `TerraScaleSyncV1Client.subscribe` query over CDN-backed HTTP by default
   (WebSocket opt-in), scoped by `databaseId`.
+- `auth.ts` — in-memory OAuth refresh rotation and scoped database delegation.
 - `schema.ts`: the typed `defineSchema` source used by the SQL builder.
 - `terrascale.schema.json`: the contract `terrascale push` applies and
   codegen reads (typed `defineSchema` builder in your code emits it).
@@ -85,6 +86,7 @@ behavior or the five-minute setup target.
 
 After OAuth sign-in, the starter exchanges its bearer for short-lived access
 limited to the selected project/database and the `posts` collection, with read
-and write actions. It renews this delegation while the OAuth session token
-remains valid. If authorization expires or is revoked, disconnect and sign in
-again. Both credentials remain in tab memory.
+and write actions. It renews OAuth access with a rotating refresh token and renews the scoped
+delegation as needed. If authorization expires, is revoked, or a refresh
+response is lost, disconnect and sign in again. All credentials remain in tab
+memory; disconnect cancels exchanges and clears them.

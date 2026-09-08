@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createTerraScaleClient, Direction, select, type TerraScaleSyncV1Client } from "@terrascale/sdk";
 import { authorId, posts, publishedAt, title } from "../schema";
+import { createStarterCredential, oauthClientId, readOAuthTokens, type Credential, type OAuthTokens } from "../auth";
 
 type Post = { id: string; title: string };
 const databaseId = process.env.NEXT_PUBLIC_TERRASCALE_DATABASE_ID?.trim() ?? "";
@@ -10,8 +11,7 @@ const apiBaseUrl = process.env.NEXT_PUBLIC_TERRASCALE_API_URL ?? "https://api.te
 const projectId = process.env.NEXT_PUBLIC_TERRASCALE_PROJECT_ID?.trim() ?? "";
 const authBaseUrl = process.env.NEXT_PUBLIC_TERRASCALE_AUTH_URL ?? "https://app.terrascale.tech";
 const redirectUri = process.env.NEXT_PUBLIC_TERRASCALE_REDIRECT_URI;
-const oauthClientId = "terrascale-starter-web";
-const oauthScopes = ["openid", "database:read", "database:write"] as const;
+const oauthScopes = ["openid", "offline_access", "database:read", "database:write"] as const;
 const postsQuery = select(posts)
   .columns([title, authorId, publishedAt])
   .orderByField(publishedAt, Direction.Desc)
@@ -26,7 +26,7 @@ function projectPost(item: { identity: string; value: Readonly<Record<string, Ui
 }
 
 export default function Page() {
-  const [credential, setCredential] = useState("");
+  const [credential, setCredential] = useState<Credential>();
   const [authenticating, setAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string>();
   const callbackHandled = useRef(false);
@@ -59,7 +59,7 @@ export default function Page() {
     }
     setAuthenticating(true);
     void exchangeAuthorizationCode(code, verifier).then((token) => {
-      setCredential(token);
+      setCredential(createStarterCredential(token, { authBaseUrl, apiBaseUrl, projectId, databaseId }));
     }).catch((cause: unknown) => {
       setAuthError(cause instanceof Error ? cause.message : "Sign-in failed.");
     }).finally(() => setAuthenticating(false));
@@ -99,8 +99,8 @@ export default function Page() {
       <p>Connect two browser tabs to the same cloud branch, then add a post in either tab.</p>
       {!databaseId || !projectId ? <p role="alert">Set NEXT_PUBLIC_TERRASCALE_DATABASE_ID and NEXT_PUBLIC_TERRASCALE_PROJECT_ID in .env.local and restart the development server.</p> : credential ? (
         <>
-          <button onClick={() => setCredential("")}>Disconnect and clear credential</button>
-          <LivePosts key={credential} credential={credential} />
+          <button onClick={() => { credential.disconnect(); setCredential(undefined); }}>Disconnect and clear credential</button>
+          <LivePosts credential={credential} />
         </>
       ) : (
         <>
@@ -130,7 +130,7 @@ function base64url(value: Uint8Array): string {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
-async function exchangeAuthorizationCode(code: string, verifier: string): Promise<string> {
+async function exchangeAuthorizationCode(code: string, verifier: string): Promise<OAuthTokens> {
   const callback = redirectUri ?? `${window.location.origin}${window.location.pathname}`;
   const response = await fetch(new URL("/api/auth/oauth2/token", authBaseUrl), {
     method: "POST",
@@ -144,45 +144,15 @@ async function exchangeAuthorizationCode(code: string, verifier: string): Promis
       resource: apiBaseUrl,
     }),
   });
-  const body = await response.json() as { access_token?: unknown; error_description?: unknown };
-  if (!response.ok || typeof body.access_token !== "string") {
-    throw new Error(typeof body.error_description === "string" ? body.error_description : "The authorization code could not be exchanged.");
-  }
-  return body.access_token;
+  return readOAuthTokens(response);
 }
 
-// Renew the short-lived, branch-scoped credential without storing either token.
-// Concurrent reads and writes share one exchange; a failed exchange is retryable.
-function starterAccessToken(credential: string): () => Promise<string> {
-  let cached: { token: string; renewAt: number } | undefined;
-  let pending: Promise<string> | undefined;
-  return async () => {
-    if (cached && Date.now() < cached.renewAt) return cached.token;
-    if (pending) return pending;
-    pending = (async () => {
-      const response = await fetch(new URL("/api/auth/web-starter/delegation", authBaseUrl), {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
-        body: JSON.stringify({ projectId, databaseId, collection: "posts", actions: ["read", "write"] }),
-      });
-      const body = await response.json() as { accessToken?: unknown; expiresIn?: unknown; message?: unknown };
-      if (!response.ok || typeof body.accessToken !== "string" || !body.accessToken ||
-          typeof body.expiresIn !== "number" || !Number.isFinite(body.expiresIn) || body.expiresIn <= 0) {
-        throw new Error(typeof body.message === "string" ? body.message : "Database authorization failed. Verify access to this project and branch, or sign in again.");
-      }
-      cached = { token: body.accessToken, renewAt: Date.now() + Math.max(0, body.expiresIn - 10) * 1000 };
-      return cached.token;
-    })();
-    try { return await pending; }
-    finally { pending = undefined; }
-  };
-}
 
-function LivePosts({ credential }: { credential: string }) {
+function LivePosts({ credential }: { credential: Credential }) {
   const client = useMemo(() => createTerraScaleClient({
     apiBaseUrl,
     projectId,
-    accessToken: starterAccessToken(credential),
+    accessToken: credential.accessToken,
   }), [credential]);
   const [rows, setRows] = useState<Post[]>([]);
   const [attached, setAttached] = useState(false);
@@ -208,11 +178,11 @@ function LivePosts({ credential }: { credential: string }) {
       if (controller.signal.aborted) { next.close(); return; }
       live = next;
       const render = () => {
+        setAttached(next.view.isOnline());
         try { setRows(next.view.getVisibleItems().map(projectPost)); }
         catch { setError("The live result contains an invalid post. Check the collection schema."); }
       };
       stop = next.view.subscribe(render);
-      setAttached(true);
       render();
     }).catch((cause: unknown) => {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause));
@@ -264,7 +234,7 @@ function LivePosts({ credential }: { credential: string }) {
 
   return (
     <>
-      <p aria-live="polite">{attached ? "Live query attached over CDN-backed HTTP" : "Connecting to the cloud branch…"}</p>
+      <p aria-live="polite">{attached ? "Live query attached over CDN-backed HTTP" : "Connecting or reconnecting to the cloud branch. If access has expired, disconnect and sign in again."}</p>
       <form onSubmit={addPost}>
         <label htmlFor="post-title">Post title</label>{" "}
         <input id="post-title" name="title" maxLength={200} required disabled={writing} />{" "}

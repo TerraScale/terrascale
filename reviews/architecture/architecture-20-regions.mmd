@@ -105,7 +105,7 @@ flowchart TB
     end
   end
   quorum -.->|only these three store locations| permanent
-  limits["SCALE RULES · 20 regions ≠ every database in 20 regions<br/>Immutable placement: replication, backups, restore, exports and branches; RF=2 per Region<br/>New regions do not join global R3; separate regional R3 needs at least 3 eligible hosts<br/>GRU / NATS outage pauses new control mutations; admitted data plane keeps serving<br/>Only writes and logical storage are billed; multiply selected Regions before shared allowances<br/>Reads and reactive delivery are unbilled; guards never create charges<br/>10- and 20-region estates are design targets, not launch qualification evidence"]:::note
+  limits["SCALE RULES · 20 regions ≠ every database in 20 regions<br/>Immutable placement: replication, backups, restore, exports and branches; RF=2 per Region<br/>New regions do not join global R3; separate regional R3 needs at least 3 eligible hosts<br/>Control outage pauses new mutations; admitted data service still enforces requested guarantees<br/>Only writes and logical storage are billed; multiply selected Regions before shared allowances<br/>Reads and reactive delivery are unbilled; guards never create charges<br/>10- and 20-region estates are design targets, not launch qualification evidence"]:::note
   roster ~~~ limits
   classDef title fill:#0c2436,color:#ffffff,stroke:#0c2436,font-size:24px,font-weight:bold
   classDef client fill:#e8edf5,stroke:#40566f,color:#102333

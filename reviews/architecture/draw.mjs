@@ -91,7 +91,7 @@ for (const count of [3, 10, 20]) {
   const fy=rosterY+rows*108+89;
   text(44,fy,'Only writes + logical storage are billed, multiplied by selected Regions before allowances. Reads and reactive delivery are unbilled.','body');
   text(44,fy+27,'Placement is immutable across replication, backups, restore, exports and branches. Separate regional R3 needs at least 3 eligible hosts.','body');
-  text(44,fy+54,'GRU / NATS outage pauses new control mutations; admitted data-plane service continues. Launch qualifies 3 Regions; 10/20 are design targets.','small');
+  text(44,fy+54,'Control outage pauses new mutations; admitted data service still enforces requested guarantees. Launch target: 3 Regions; 10/20: future design.','small');
   parts.push('</svg>');
   await writeFile(path.join(here,`architecture-${count}-regions.svg`),parts.join('\n')+'\n');
 }

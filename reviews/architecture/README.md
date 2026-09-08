@@ -1,6 +1,6 @@
 # TerraScale architecture atlas
 
-Target v1 request flow and infrastructure, reviewed 2026-09-04. Start with two
+Target request flow and infrastructure, reconciled with source on 2026-09-07. Start with two
 member servers per Region, then add capacity from observed demand.
 
 | Regions | Starting servers | Overview | Mermaid detail |
@@ -24,24 +24,61 @@ causal journals travel directly over QUIC between placed Regions. The dashboard
 runs on Cloudflare Workers and owns Better Auth/Stripe product flows; its public
 SDK reads the control-plane database like a customer application.
 
+OCI hosts run native binaries under systemd, without a container runtime.
 Every member host also runs a local orchestrator, ts-node, and Grafana agent.
 GRU holds fenced global mutation authority. The embedded global control store
 stays at three replicas in GRU/SFO/FRA for every estate size. Additional Regions
 are location placeholders and do not automatically expand database residency.
 A separate regional R3 needs at least three eligible hosts and explicit admission.
 
-These are design pictures, not deployment evidence. Member-aware capacity routing,
-production membership, auth composition, and incremental view publication still
-have implementation gaps described in the [review](../workspace-2026-09-04.md).
-The launch qualification targets three Regions; ten and twenty are scale designs.
+Only writes and logical storage are billed. Both count selected Regions before
+consuming shared organization allowances; logical storage includes retained
+history and is measured over time. Reads, reactive delivery, egress and backup
+storage are unbilled. A safety guard never creates an additional charge.
+Placement is immutable across replication, backups, restore, exports and branches.
+Backup policy may select OCI Object Storage, Tigris or both; admission must prove
+each destination satisfies the database's permitted geography. Encryption alone
+does not establish residency.
+
+These are design pictures, not deployment or performance evidence. Three Regions
+are the launch target; ten and twenty are future capacity designs. A1 Flex
+2 OCPU / 12 GB is the initial host target, with qualified ARM/x86 fallback and
+scaling from measured demand. Two hosts are the initial footprint, not a capacity
+claim. Loss of a follower prevents new RF=2 acknowledgements until durability is
+restored. Admitted data service during control outages still depends on meeting
+authorization, placement, session and requested durability requirements.
+
+## Source reconciliation
+
+- [Orchestrator architecture](../../../ts-orchestrator/docs/guides/architecture-boundaries.md):
+  local orchestration on every host, ts-node host mutation, fenced GRU authority,
+  permanent GRU/SFO/FRA global R3 and native systemd lifecycle.
+- [Replication decision](../../../terrabase/docs/adr/0044-sync-and-replication-engines.md)
+  and [GlobalDurable admission](../../../terrabase/docs/adr/0035-one-region-global-durable-semantics.md):
+  local physical RF=2 plus cross-Region causal dependencies; GlobalDurable needs
+  at least two active selected Regions and durability in every selected Region.
+- [Backup decision](../../../terrabase/docs/adr/0046-native-rust-backup-subsystem.md):
+  native backup target, approved destinations and independent restore/residency
+  qualification. Replacement and qualification gates remain authoritative.
+- [Proxy entrypoint](../../../ts-proxy/src/index.ts) and
+  [reactive Snippet](../../../ts-proxy/snippet/snippet.ts): REST first contact is
+  separate from capability-gated Worker-free reactive delivery.
+- [Pricing source](../../data/pricing.json): draft rates, organization allowances,
+  Region multiplication, consent and continuing storage charges.
+
+The historical [storage draft](storage-design-draft.md) and
+[benchmark publication draft](benchmark-publication-draft.md) remain preserved
+for their design questions and qualification context; they are not current
+contracts. Repository-owned ADRs and runbooks control their implementation.
+This atlas remains outside public product navigation and VitePress build inputs.
 
 ## Editable sources and rendering
 
 `draw.mjs` generates the overview SVGs with a deliberate layout. `render.mjs`
 uses Playwright/Chromium to capture those SVGs as PNGs. The `.mmd` files are
 separate, expanded Mermaid detail views; they do not generate the overview SVGs.
-All three overview images were visually inspected. Mermaid CLI 11.12.0 was used
-to render and validate the detail views.
+Render both forms after changing labels; SVG/PNG overviews and Mermaid detail
+views are independently editable, so verify their policies remain consistent.
 
 From this directory, with Node and Playwright available:
 
