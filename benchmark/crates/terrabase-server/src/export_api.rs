@@ -48,6 +48,7 @@ pub const MAX_PAGE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum opaque source cursor retained in durable job state.
 pub const MAX_SOURCE_CURSOR_BYTES: usize = 64 * 1024;
+const MAX_PROVIDER_RETRIES: usize = 3;
 
 static NEXT_JOB: AtomicU64 = AtomicU64::new(1);
 
@@ -1021,7 +1022,14 @@ impl ExportService {
         let job = job_id.to_owned();
         tokio::spawn(async move {
             let _active = active;
-            worker.run(&job).await
+            for attempt in 0..MAX_PROVIDER_RETRIES {
+                let retry = matches!(worker.run(&job).await, Err(ExportError::DependencyUnavailable));
+                if !retry || attempt + 1 == MAX_PROVIDER_RETRIES {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10 * (attempt as u64 + 1)))
+                    .await;
+            }
         });
         Ok(())
     }
@@ -1168,7 +1176,8 @@ impl Worker {
             Err(ExportError::DependencyUnavailable) => {
                 state.status = JobStatus::Accepted;
                 state.error = None;
-                self.store.save(&state)
+                self.store.save(&state)?;
+                Err(ExportError::DependencyUnavailable)
             }
             Err(error) => {
                 state.status = JobStatus::Failed;
@@ -2438,7 +2447,7 @@ mod tests {
             .expect("admitted");
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             loop {
-                if provider.opens.load(Ordering::Relaxed) != 0
+                if provider.opens.load(Ordering::Relaxed) >= MAX_PROVIDER_RETRIES
                     && store.load(&accepted.job_id).expect("load").expect("job").status
                         == JobStatus::Accepted
                 {
