@@ -23,7 +23,7 @@ public sealed class TerraScaleReactiveHttpClient
     internal const int MaxCheckpointBytes = 4096;
     internal const int MaxArrayItems = 10_000;
     internal const int MaxFields = 1024;
-    internal const string CapabilityHeaderName = "X-TerraScale-View-Capability";
+    internal const string CapabilityHeaderName = "X-TerraScale-Capability";
     internal const string WebSocketSyncProtocol = "terrascale.sync.v1";
     private const int MaxErrorBytes = 64 * 1024;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);

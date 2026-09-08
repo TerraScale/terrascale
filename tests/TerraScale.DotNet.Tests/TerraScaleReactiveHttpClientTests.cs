@@ -63,6 +63,16 @@ public sealed class TerraScaleReactiveHttpClientTests
     }
 
     [Test]
+    public async Task AttachRejectsRetiredViewCapabilityHeader()
+    {
+        using var httpClient = new HttpClient(new ReactiveHandler(capabilityHeader: "X-TerraScale-View-Capability"));
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() =>
+            client.SubscribeAsync("db", "sub", "SELECT * FROM docs"));
+    }
+
+    [Test]
     public async Task CanonicalAttachUsesDatabaseStatementParametersAndSafeUrls()
     {
         using var handler = new ReactiveHandler(subscription: "orders");
@@ -90,9 +100,9 @@ public sealed class TerraScaleReactiveHttpClientTests
         await Assert.That(handler.Requests[0].Headers["Authorization"]).IsEqualTo("Bearer token");
         await Assert.That(handler.Requests[0].Headers["X-TerraScale-Region-Hint"]).IsEqualTo("gru");
         await Assert.That(handler.Requests[1].Uri.AbsoluteUri).IsEqualTo("https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/3/snapshot/0?cut=0");
-        await Assert.That(handler.Requests[1].Headers["X-TerraScale-View-Capability"]).IsEqualTo("capability");
+        await Assert.That(handler.Requests[1].Headers["X-TerraScale-Capability"]).IsEqualTo("capability");
         await Assert.That(handler.Requests[2].Uri.Query).IsEqualTo("?offset=0");
-        await Assert.That(handler.Requests[2].Headers["X-TerraScale-View-Capability"]).IsEqualTo("capability");
+        await Assert.That(handler.Requests[2].Headers["X-TerraScale-Capability"]).IsEqualTo("capability");
         await Assert.That(result).IsNotNull();
         await Assert.That(result!.Frame).IsTypeOf<TerraScaleReactiveDelta>();
         await Assert.That(subscription.Offset).IsEqualTo(1ul);
@@ -451,7 +461,7 @@ public sealed class TerraScaleReactiveHttpClientTests
         await Assert.That(regionSubscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Live);
     }
 
-    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false, bool staleReattachAuthorization = false, string? websocketLog = null, Func<HttpRequestMessage, HttpResponseMessage>? pollResponseFactory = null) : HttpMessageHandler
+    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false, bool staleReattachAuthorization = false, string? websocketLog = null, Func<HttpRequestMessage, HttpResponseMessage>? pollResponseFactory = null, string capabilityHeader = "X-TerraScale-Capability") : HttpMessageHandler
     {
         public List<RequestObservation> Requests { get; } = [];
         public TaskCompletionSource PollStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -466,7 +476,7 @@ public sealed class TerraScaleReactiveHttpClientTests
             {
                 attachCount++;
                 AttachBody = await request.Content!.ReadAsStringAsync(cancellationToken);
-                return Json($"{{\"view\":\"view-1\",\"generation\":3,\"snapshot_chunks\":[\"/api/v1/reactive/views/view-1/3/snapshot/0?cut=0\"],\"log\":\"{websocketLog ?? "/api/v1/reactive/views/view-1/3/log?offset=0"}\",\"checkpoint\":\"Y3AtMA==\",\"capability\":\"capability\",\"capability_header\":\"X-TerraScale-View-Capability\",\"offset\":0}}", HttpStatusCode.Created);
+                return Json($"{{\"view\":\"view-1\",\"generation\":3,\"snapshot_chunks\":[\"/api/v1/reactive/views/view-1/3/snapshot/0?cut=0\"],\"log\":\"{websocketLog ?? "/api/v1/reactive/views/view-1/3/log?offset=0"}\",\"checkpoint\":\"Y3AtMA==\",\"capability\":\"capability\",\"capability_header\":\"{capabilityHeader}\",\"offset\":0}}", HttpStatusCode.Created);
             }
             if (request.RequestUri!.AbsolutePath.EndsWith("/snapshot/0", StringComparison.Ordinal))
             {
