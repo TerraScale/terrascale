@@ -45,7 +45,7 @@ public sealed class TerraScaleManagementImportsClient(TerraScaleClient client)
         string importId,
         ReadOnlyMemory<byte> content,
         CancellationToken cancellationToken = default) =>
-        client.UploadImportAsync(Job(database, importId), content, cancellationToken);
+        client.UploadImportAsync(Job(database, importId) + "/input", content, cancellationToken);
 
     /// <summary>Uploads an import input stream. The stream is read before the request is sent.</summary>
     public async Task<ImportJob> UploadAsync(
