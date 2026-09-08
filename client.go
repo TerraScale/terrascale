@@ -619,6 +619,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		switch raw := body.(type) {
 		case importPayload:
 			payload = bytes.Clone(raw)
+			if payload == nil {
+				payload = []byte{}
+			}
 			if rc.requestMediaType == "" {
 				rc.requestMediaType = "application/octet-stream"
 			}
