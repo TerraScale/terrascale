@@ -423,7 +423,11 @@ async fn origin_proof_admits_only_the_real_reactive_delivery_route() {
         HeaderValue::from_str(&head_proof).expect("HEAD proof header"),
     );
     let head_delivery = send(fixture.router(), head).await;
-    assert_eq!(head_delivery.status(), StatusCode::OK, "edge HEAD proof did not admit snapshot delivery");
+    assert_eq!(
+        head_delivery.status(),
+        StatusCode::OK,
+        "edge HEAD proof did not admit snapshot delivery"
+    );
 
     let mut wrong = security_support::request(
         Method::GET,
