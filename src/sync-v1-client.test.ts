@@ -388,7 +388,55 @@ describe("current reactive client", () => {
       if (request.method === "GET") {
         assert.equal(request.headers.get("x-terrascale-tenant-id"), null);
         assert.equal(request.headers.get("x-terrascale-project-id"), null);
+        assert.equal(request.headers.get("x-terrascale-capability"), "cap-equivalent");
+        assert.equal(request.headers.get("x-terrascale-view-capability"), null);
+        assert.equal([...request.headers.keys()].filter(header => header === "x-terrascale-capability").length, 1);
       }
+    }
+  });
+
+  test("accepts only the canonical capability header in attach responses", async () => {
+    for (const capabilityHeader of ["x-terrascale-capability", "X-TerraScale-Capability", undefined]) {
+      const client = new TerraScaleSyncV1Client({
+        fetch: async () => Response.json({
+          viewId: "canonical-header",
+          generation: 1,
+          capability: "cap",
+          ...(capabilityHeader === undefined ? {} : { capability_header: capabilityHeader }),
+          checkpoint: "AAE=",
+          snapshotUrls: [],
+        }),
+      });
+      await assert.doesNotReject(() => client.subscribe({
+        subscription: "canonical-header",
+        databaseId: "db",
+        query: "select * from docs",
+        parameters: new Uint8Array(),
+        autoStart: false,
+      }));
+    }
+
+    for (const capabilityHeader of ["x-terrascale-view-capability", "x-terrascale-unsupported"]) {
+      const client = new TerraScaleSyncV1Client({
+        fetch: async () => Response.json({
+          viewId: "legacy-header",
+          generation: 1,
+          capability: "cap",
+          capability_header: capabilityHeader,
+          checkpoint: "AAE=",
+          snapshotUrls: [],
+        }),
+      });
+      await assert.rejects(
+        () => client.subscribe({
+          subscription: "legacy-header",
+          databaseId: "db",
+          query: "select * from docs",
+          parameters: new Uint8Array(),
+          autoStart: false,
+        }),
+        (error: unknown) => error instanceof TerraScaleSyncV1ClientError && error.code === "protocol_error",
+      );
     }
   });
 

@@ -286,7 +286,6 @@ export class TerraScaleSyncV1Client {
       viewId: attached.viewId,
       generation: attached.generation,
       capability: attached.capability,
-      capabilityHeader: attached.capabilityHeader,
       logUrl: attached.logUrl,
       snapshotUrls: attached.snapshotUrls,
       closed: false,
@@ -560,7 +559,7 @@ export class TerraScaleSyncV1Client {
         url,
         {
           method: "GET",
-          headers: await this.#headers("application/msgpack", state.capability, state.capabilityHeader),
+          headers: await this.#headers("application/msgpack", state.capability),
           signal: linked.signal,
         },
         "reactive snapshot/log",
@@ -596,7 +595,7 @@ export class TerraScaleSyncV1Client {
           url,
           {
             method: "GET",
-            headers: await this.#headers("application/msgpack", state.capability, state.capabilityHeader),
+            headers: await this.#headers("application/msgpack", state.capability),
             signal: timeout.signal,
           },
           "reactive log poll",
@@ -712,7 +711,6 @@ export class TerraScaleSyncV1Client {
     state.viewId = attached.viewId;
     state.generation = attached.generation;
     state.capability = attached.capability;
-    state.capabilityHeader = attached.capabilityHeader;
     state.logUrl = attached.logUrl;
     state.snapshotUrls = attached.snapshotUrls;
     state.websocketUrl = attached.websocketUrl;
@@ -864,15 +862,9 @@ export class TerraScaleSyncV1Client {
     };
   }
 
-  async #headers(accept: string, capability: string | undefined, capabilityHeader = "x-terrascale-view-capability"): Promise<Headers> {
+  async #headers(accept: string, capability: string | undefined): Promise<Headers> {
     const headers = new Headers({ accept });
-    if (capability !== undefined) {
-      headers.set(capabilityHeader, capability);
-      // The active edge delivery contract accepts this capability header.
-      if (capabilityHeader !== "x-terrascale-capability") {
-        headers.set("x-terrascale-capability", capability);
-      }
-    }
+    if (capability !== undefined) headers.set("x-terrascale-capability", capability);
     const token = await resolveToken(this.#accessToken);
     if (token !== undefined && token.length > 0) headers.set("Authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
     return headers;
@@ -933,7 +925,6 @@ type AttachedView = {
   readonly generation: bigint;
   readonly checkpoint: Uint8Array | undefined;
   readonly capability: string;
-  readonly capabilityHeader: string;
   readonly snapshotUrls: readonly string[];
   readonly logUrl: string;
   readonly snapshot: TerrascaleSyncV1MsgpackSnapshot | undefined;
@@ -946,7 +937,6 @@ type LiveSubscriptionState = {
   viewId: string;
   generation: bigint;
   capability: string;
-  capabilityHeader: string;
   snapshotUrls: readonly string[];
   logUrl: string;
   closed: boolean;
@@ -1204,12 +1194,9 @@ function decodeAttachedView(value: unknown, syncOrigin: string, subscription: st
   }
   const capabilityHeader = value.capability_header ?? value.capabilityHeader;
   if (capabilityHeader !== undefined && (typeof capabilityHeader !== "string" ||
-    !new Set(["x-terrascale-view-capability", "x-terrascale-capability"]).has(capabilityHeader.toLowerCase()))) {
+    capabilityHeader.toLowerCase() !== "x-terrascale-capability")) {
     throw new TerraScaleSyncV1ClientError("protocol_error", "reactive attach response has an unsupported capability header");
   }
-  const normalizedCapabilityHeader = typeof capabilityHeader === "string"
-    ? capabilityHeader.toLowerCase()
-    : "x-terrascale-view-capability";
   const websocketValue = value.websocketUrl ?? value.websocket_url ?? value.wsUrl ?? value.ws_url;
   const attachedWebsocketUrl = websocketValue === undefined
     ? websocketUrl(memberOrigin, view, generation)
@@ -1248,7 +1235,6 @@ function decodeAttachedView(value: unknown, syncOrigin: string, subscription: st
       generation,
       checkpoint,
       capability: capabilityValue,
-      capabilityHeader: normalizedCapabilityHeader,
       snapshotUrls,
       logUrl,
       snapshot: {
@@ -1262,7 +1248,7 @@ function decodeAttachedView(value: unknown, syncOrigin: string, subscription: st
       websocketUrl: attachedWebsocketUrl,
     };
   }
-  return { viewId: view, generation, checkpoint, capability: capabilityValue, capabilityHeader: normalizedCapabilityHeader, snapshotUrls, logUrl, snapshot, websocketUrl: attachedWebsocketUrl };
+  return { viewId: view, generation, checkpoint, capability: capabilityValue, snapshotUrls, logUrl, snapshot, websocketUrl: attachedWebsocketUrl };
 }
 
 function canonicalWebSocketUrl(raw: unknown, apiOrigin: string, view: string, generation: bigint): string {
