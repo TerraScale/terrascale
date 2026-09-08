@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::json;
 use terrascale::management::{
-    CancellationToken, CreateDatabaseRequest, CreateIndexRequest, OperationListOptions,
-    OperationOptions, PageOptions, PlacementLock, RestoreRequest,
+    CancellationToken, CreateDatabaseRequest, CreateImport, CreateIndexRequest,
+    OperationListOptions, OperationOptions, PageOptions, PlacementLock, RestoreRequest,
+    TransferFormat,
 };
 use terrascale::{
     ClientConfig, HttpTransport, Method, RegionCode, Request, Response, Result, TerraScaleClient,
@@ -405,6 +406,102 @@ async fn exports_send_identity_and_resume_cursor_and_preserve_progress() {
         serde_json::from_slice::<serde_json::Value>(&mock.last().body.unwrap()).unwrap(),
         json!({"resume_cursor":"cursor"})
     );
+}
+
+#[tokio::test]
+async fn imports_use_direct_routes_and_resumable_upload_flow() {
+    let status = json!({
+        "committed_records": 3,
+        "cursor": 3,
+        "database_id": "db 1",
+        "durability": "durable",
+        "error": null,
+        "format": "jsonl",
+        "input_committed": true,
+        "input_digest": "abc",
+        "input_length": 12,
+        "operation_id": "op",
+        "pending_cursor": null,
+        "pending_operation": null,
+        "pending_records": null,
+        "project_id": "project",
+        "state": "complete",
+        "tenant_id": "tenant"
+    });
+    let mock = Mock::new(vec![
+        Response::json(202, &status),
+        Response::json(200, &json!([status.clone()])),
+        Response::json(200, &status),
+        Response::json(200, &status),
+        Response::json(200, &status),
+    ]);
+    let api = client(Arc::clone(&mock)).management().imports();
+
+    let created = api
+        .create(
+            "db 1",
+            CreateImport {
+                format: TransferFormat::Jsonl,
+                idempotency_key: "import-once".into(),
+            },
+            None,
+            OperationOptions::default(),
+        )
+        .await
+        .expect("create");
+    assert_eq!(created.operation_id, "op");
+    let request = mock.last();
+    assert_eq!(request.method, Method::Post);
+    assert_eq!(
+        request.url,
+        "https://api.terrascale.tech/api/v1/databases/db%201/imports"
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&request.body.expect("body")).expect("json"),
+        json!({"format":"jsonl","idempotency_key":"import-once"})
+    );
+
+    assert_eq!(api.list("db 1").await.expect("list").len(), 1);
+    assert_eq!(
+        mock.last().url,
+        "https://api.terrascale.tech/api/v1/databases/db%201/imports"
+    );
+
+    api.get("db 1", "job/1").await.expect("get");
+    assert_eq!(
+        mock.last().url,
+        "https://api.terrascale.tech/api/v1/databases/db%201/imports/job%2F1"
+    );
+
+    api.upload(
+        "db 1",
+        "job/1",
+        b"{\"id\":1}\n".to_vec(),
+        OperationOptions::default(),
+    )
+    .await
+    .expect("upload");
+    let request = mock.last();
+    assert_eq!(request.method, Method::Put);
+    assert_eq!(
+        request.url,
+        "https://api.terrascale.tech/api/v1/databases/db%201/imports/job%2F1/input"
+    );
+    assert_eq!(request.body.expect("body"), b"{\"id\":1}\n");
+    assert!(request
+        .headers
+        .iter()
+        .any(|(name, value)| name == "content-type" && value == "application/octet-stream"));
+
+    api.resume("db 1", "job/1", OperationOptions::default())
+        .await
+        .expect("resume");
+    assert_eq!(mock.last().method, Method::Post);
+    assert_eq!(
+        mock.last().url,
+        "https://api.terrascale.tech/api/v1/databases/db%201/imports/job%2F1/resume"
+    );
+    assert!(mock.last().body.is_none());
 }
 
 #[tokio::test]
