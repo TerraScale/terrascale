@@ -540,6 +540,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             checksum,
             row_count,
             provider,
+            envelope_facts,
         ) = if let Some((envelope, provider)) = envelope {
             let journal_cut = envelope
                 .participants()
@@ -555,6 +556,30 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
                 envelope.logical_checksum(),
                 envelope.logical_documents(),
                 provider,
+                Some(terrabase_tbep::proto::terrabase::v1::RecoveryEnvelopeFacts {
+                    envelope_digest: envelope.digest().to_owned(),
+                    database_id: envelope.database_id().to_owned(),
+                    database_incarnation: format!("{:032x}", envelope.database_incarnation()),
+                    route_generation: envelope.route_generation(),
+                    participants: envelope
+                        .participants()
+                        .iter()
+                        .map(|participant| {
+                            terrabase_tbep::proto::terrabase::v1::RecoveryParticipant {
+                                participant_id: participant.participant_id.clone(),
+                                database_id: participant.database_id.clone(),
+                                journal_cut: participant.boundary,
+                                manifest_digest: participant.manifest.identity().to_owned(),
+                                checksum: participant.manifest.logical_checksum().to_owned(),
+                                row_count: participant.manifest.logical_documents(),
+                                captured_at_millis: participant.manifest.captured_unix_millis(),
+                                retained_until_millis: participant
+                                    .manifest
+                                    .retain_until_unix_millis(),
+                            }
+                        })
+                        .collect(),
+                }),
             )
         } else {
             let (manifest, provider) = recovery
@@ -574,6 +599,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
                 manifest.logical_checksum().to_owned(),
                 manifest.logical_documents(),
                 provider,
+                None,
             )
         };
         let provider = match provider {
@@ -595,7 +621,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             checksum,
             row_count,
             placement: database.record.regions.clone(),
-            envelope: None,
+            envelope: envelope_facts,
         })
     }
 

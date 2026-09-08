@@ -1667,7 +1667,7 @@ impl ProductionAdmissionRuntime {
                 return Ok(None);
             }
         }
-        self.runtime.register_route(scope, id).map_err(failure)?;
+        self.runtime.register_route(scope, id.clone()).map_err(failure)?;
         let source =
             self.member.storage_key_source(&id).ok_or("production key delivery missing")?;
         let snapshots = self.member.root().join("replication-snapshots");

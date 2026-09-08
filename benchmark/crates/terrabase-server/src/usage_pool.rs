@@ -183,7 +183,10 @@ impl UsageAdmissionJournal {
         if holder != self.member_id {
             return Err("pool holder is not local".into());
         }
-        regions = regions.into_iter().map(|r| r.to_ascii_uppercase()).collect();
+        // The control-plane refill contract carries DNS-style lowercase
+        // region tokens. Keep resolver identities canonical internally, but
+        // emit the exact wire spelling consumed by the Go grant producer.
+        regions = regions.into_iter().map(|r| r.to_ascii_lowercase()).collect();
         regions.sort();
         let pending: Option<Vec<u8>> = self
             .connection
@@ -270,7 +273,7 @@ impl UsageAdmissionJournal {
                     .map(|a| a.grant().branch_id.clone())
                     .unwrap_or_else(|| "main".into()),
                 holder_id: holder,
-                region: self.region.to_ascii_uppercase(),
+                region: self.region.to_ascii_lowercase(),
                 selected_regions: regions,
                 placement,
                 requested_local_units: requested,

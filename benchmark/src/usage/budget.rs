@@ -168,7 +168,7 @@ impl VerifiedAllocation {
             .regions
             .iter()
             .map(|region| {
-                let canonical = region.to_ascii_uppercase();
+                let canonical = region.to_ascii_lowercase();
                 (region == &canonical).then_some(canonical)
             })
             .collect::<Option<std::collections::BTreeSet<_>>>();
