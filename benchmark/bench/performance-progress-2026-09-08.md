@@ -25,3 +25,32 @@ The previous commissioning evidence recorded 3,469 / 3,414 / 3,201 point reads/s
 - Origin sequence allocation caches the durable three-source maximum per `(tenant, origin)` within a commit wave and increments subsequent intents in memory. Conflict rollback restores the cached value.
 
 All changes retain WAL, atomic transactions, and `synchronous=FULL` for `LocalDurability::Synced`.
+
+## Served-boundary probe from the rebuilt member
+
+The member was restarted from release artifact SHA-256
+`6e6e233e8b6cf17f35b26de4f6fdc20c9909b337a2c83160dde1bcbdd9b5ebc5` under
+the `2ocpu/12GiB` envelope (cpuset `0-1`). The probe used the local HTTP API,
+one member, and the `local` database.
+
+| Workload | Concurrency | Throughput (ops/s) | p50 latency |
+|---|---:|---:|---:|
+| Point read | 1 | 1,093–1,123 | 0.75–0.76 ms |
+| Indexed query | 1 | 795–915 | 1.00–1.05 ms |
+| Synced PUT | 1 | 93–107 | 8.59–9.44 ms |
+| Point read | 16 | 1,601–1,738 | 9.01–9.62 ms |
+| Indexed query | 16 | 1,259–1,354 | 11.61–12.16 ms |
+| Synced PUT | 16 | 72–74 | 205–211 ms |
+
+The served boundary is therefore below the in-process numbers because each
+request also pays authentication, admission, lifecycle, session, and HTTP
+encoding work. A 1,000-document atomic batch completed in 0.21–0.27 s
+(3,665–4,744 logical operations/s); this confirms batching is useful, but the
+current 1,000-operation API cap and durable commit still leave headroom before
+10k/s.
+
+The concurrent individual-write run confirms that adding clients does not
+raise durable throughput: requests serialize during lifecycle admission and
+the single SQLite writer still performs FULL-synchronous commits. Widening the
+coalescing timer without moving that admission work would add tail latency
+without proving a gain, so it was deliberately left unchanged.

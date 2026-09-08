@@ -30,6 +30,11 @@ fn reference_path() -> PathBuf {
     std::env::var(PATH_VARIABLE).map_or_else(|_| PathBuf::from(DEFAULT_PATH), PathBuf::from)
 }
 
+/// How long one write may keep retrying turso's MVCC conflicts before the
+/// lane classifies the run as failed; the pin's five-second busy timeout
+/// bounds each individual lock wait inside that budget.
+const WRITE_RETRY_DEADLINE: Duration = Duration::from_secs(30);
+
 /// Opens one connection with the pin's pragmas and busy timeout.
 async fn pin(connection: &turso::Connection) -> Result<(), turso::Error> {
     connection.pragma_update("journal_mode", "wal").await?;
@@ -170,7 +175,7 @@ impl Backend for TursoBackend {
                 .await?;
             Ok::<_, turso::Error>((read, write, query))
         })?;
-        Ok(Box::new(TursoSlot { runtime, read, write, query }))
+        Ok(Box::new(TursoSlot { runtime, connection, read, write, query }))
     }
 
     fn limits(&self) -> Vec<String> {
@@ -182,18 +187,22 @@ impl Backend for TursoBackend {
              own current-thread runtime with block_on per operation, so per-operation latencies \
              include that boundary"
                 .to_owned(),
-            "sixteen per-slot writers contend on the WAL write lock through the five-second busy \
-             timeout; turso serializes writers internally the way SQLite does"
+            "sixteen per-slot writers contend through turso's MVCC: stale-snapshot and busy \
+             conflicts are retried per turso's documented pattern, bounded by a 30-second \
+             per-operation deadline, and every retry's wait is part of the measured latency"
                 .to_owned(),
         ]
     }
 }
 
 /// One concurrency slot: statements prepared once on its own connection and
-/// the current-thread runtime that drives them. The statements own their
-/// connection handles; the slot keeps nothing else.
+/// the current-thread runtime that drives them. The connection stays in the
+/// slot because a stale-snapshot failure leaves a dangling transaction that
+/// only a connection-level `ROLLBACK` clears — retrying the statement alone
+/// would reuse the stale snapshot forever.
 struct TursoSlot {
     runtime: tokio::runtime::Runtime,
+    connection: turso::Connection,
     read: turso::Statement,
     write: turso::Statement,
     query: turso::Statement,
@@ -211,6 +220,15 @@ impl TursoSlot {
             .block_on(future)
             .map_err(|error| format!("{context}: {error}").into())
     }
+}
+
+/// Turso's documented concurrent-write pattern: lock and MVCC conflicts are
+/// surfaced to the caller as retryable errors ("give up and let caller
+/// retry from scratch" is the engine's own wording for the stale-snapshot
+/// path), so a writer retries the whole statement.
+fn is_retryable(error: &turso::Error) -> bool {
+    matches!(error, turso::Error::Busy(_) | turso::Error::BusySnapshot(_))
+        || matches!(error, turso::Error::Error(message) if message.contains("conflict") || message.contains("stale"))
 }
 
 impl Slot for TursoSlot {
@@ -239,13 +257,45 @@ impl Slot for TursoSlot {
         let payload = document::payload();
         let statement = &mut self.write;
         let runtime = &self.runtime;
-        let affected = Self::drive(
-            runtime,
-            async { statement.execute(turso::params![tenant, id, name, document::MEASURED_GROUP, payload]).await },
-            "measured write",
-        )?;
-        assert_eq!(affected, 1, "a measured write must affect exactly one row");
-        Ok(())
+        let connection = &self.connection;
+        let deadline = std::time::Instant::now() + WRITE_RETRY_DEADLINE;
+        let mut attempts = 0_u64;
+        loop {
+            attempts += 1;
+            let result = runtime.block_on(async {
+                statement
+                    .execute(turso::params![
+                        tenant.clone(),
+                        id.clone(),
+                        name.clone(),
+                        document::MEASURED_GROUP,
+                        payload.clone()
+                    ])
+                    .await
+            });
+            match result {
+                Ok(affected) => {
+                    assert_eq!(affected, 1, "a measured write must affect exactly one row");
+                    return Ok(());
+                }
+                Err(error)
+                    if is_retryable(&error) && std::time::Instant::now() < deadline =>
+                {
+                    // A stale-snapshot failure leaves a dangling transaction;
+                    // clearing it is what lets the retry observe a fresh
+                    // snapshot — turso's own concurrent-writes pattern.
+                    runtime
+                        .block_on(async {
+                            connection.execute("ROLLBACK", ()).await
+                        })
+                        .map_err(|error| format!("rollback before write retry: {error}"))?;
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => {
+                    return Err(format!("measured write (attempt {attempts}): {error}").into());
+                }
+            }
+        }
     }
 
     fn query(&mut self, seeded_index: usize) -> Result<(), Box<dyn Error + Send + Sync>> {

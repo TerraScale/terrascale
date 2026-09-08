@@ -181,7 +181,7 @@ pub fn comparability(
             "se15-reference-pin-v1; pgbouncer transaction pooling; pgrest HTTP/JSON service"
                 .to_owned(),
         ),
-        "sqlite" | "turso" => (
+        "sqlite" => (
             "embedded-reference".to_owned(),
             "WAL journal with synchronous=FULL and a five-second busy timeout; autocommit \
              statement acknowledgement"
