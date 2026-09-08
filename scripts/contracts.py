@@ -42,6 +42,7 @@ REQUIRED_ARTIFACTS = (
 # local corpus.
 CORPUS_FILES = (
     "conformance/http.json",
+    "conformance/origin-proof.json",
     "conformance/reactive.json",
     "conformance/msgpack/message-vectors.json",
     "conformance/msgpack/hostile-vectors.json",
@@ -251,6 +252,12 @@ def validate_corpus(root: Path, version: str | None = None) -> dict[str, str]:
         if relative.endswith("http.json"):
             if value.get("schemaVersion") != 1 or not isinstance(value.get("operations"), list) or not value["operations"]:
                 fail("HTTP conformance fixture is incomplete")
+        elif relative.endswith("origin-proof.json"):
+            required = ("contractVersion", "method", "target", "bucket", "now", "region", "secret", "proof")
+            if any(key not in value for key in required):
+                fail("origin proof fixture is incomplete")
+            if value.get("contractVersion") != version:
+                fail("origin proof fixture pins a different contract version")
         elif relative.endswith("reactive.json"):
             if value.get("schemaVersion") != 1 or not isinstance(value.get("attach"), dict):
                 fail("reactive conformance fixture is incomplete")

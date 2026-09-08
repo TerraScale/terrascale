@@ -28,6 +28,56 @@ public sealed class ProducerHttpConformanceTests
     }
 
     [Test]
+    public async Task GeneratedRouteMetadataMatchesPublishedOperations()
+    {
+        using var owner = await ReadFixtureAsync("openapi.json");
+        var operations = owner.RootElement.GetProperty("paths").EnumerateObject()
+            .SelectMany(path => path.Value.EnumerateObject()
+                .Where(method => method.Value.ValueKind == JsonValueKind.Object && method.Value.TryGetProperty("operationId", out _))
+                .Select(method => (Id: method.Value.GetProperty("operationId").GetString()!, Path: path.Value, Operation: method.Value)))
+            .ToArray();
+
+        foreach (var operation in operations)
+        {
+            var route = TerraScaleContractRoutes.Find(operation.Id);
+            var responses = operation.Operation.GetProperty("responses");
+            var success = responses.EnumerateObject()
+                .Where(response => IsSuccessStatus(response.Name))
+                .Select(response => response.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            var errors = responses.EnumerateObject()
+                .Where(response => !IsSuccessStatus(response.Name))
+                .Select(response => response.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            var requestMediaTypes = operation.Operation.TryGetProperty("requestBody", out var requestBody)
+                ? requestBody.GetProperty("content").EnumerateObject().Select(content => content.Name).Order(StringComparer.Ordinal).ToArray()
+                : [];
+            var responseMediaTypes = responses.EnumerateObject()
+                .SelectMany(response => response.Value.TryGetProperty("content", out var content)
+                    ? content.EnumerateObject().Select(media => media.Name)
+                    : [])
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            var parameters = EnumerateParameters(operation.Path)
+                .Concat(EnumerateParameters(operation.Operation))
+                .ToArray();
+
+            await Assert.That(route.SuccessStatuses.SequenceEqual(success)).IsTrue();
+            await Assert.That(route.ErrorStatuses.SequenceEqual(errors)).IsTrue();
+            await Assert.That(route.RequestMediaTypes.SequenceEqual(requestMediaTypes)).IsTrue();
+            await Assert.That(route.ResponseMediaTypes.SequenceEqual(responseMediaTypes)).IsTrue();
+            var expectedParameters = parameters.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            if (!route.Parameters.SequenceEqual(expectedParameters))
+            {
+                throw new InvalidOperationException($"{operation.Id}: generated parameters [{string.Join(",", route.Parameters)}], source [{string.Join(",", expectedParameters)}]");
+            }
+        }
+    }
+
+    [Test]
     public async Task PublishedHttpCorpusPreservesTypedErrorsForEveryOperation()
     {
         using var corpus = await ReadFixtureAsync("http.json");
@@ -59,4 +109,12 @@ public sealed class ProducerHttpConformanceTests
         await using var stream = File.OpenRead(Path.Combine(AppContext.BaseDirectory, "conformance", name));
         return await JsonDocument.ParseAsync(stream);
     }
+
+    private static bool IsSuccessStatus(string status) =>
+        status.Length == 3 && status[0] is '2' or '3' && int.TryParse(status, out _);
+
+    private static IEnumerable<string> EnumerateParameters(JsonElement operation) =>
+        operation.TryGetProperty("parameters", out var parameters)
+            ? parameters.EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!)
+            : [];
 }
