@@ -17,7 +17,12 @@ test("public HTTP clients consume the pinned producer response and error corpus"
     const spec = JSON.parse(specBytes.toString());
     const corpus = JSON.parse(await readFile(path.join(bundle.root, "conformance/http.json"), "utf8"));
     assert.equal(corpus.openapiSha256, createHash("sha256").update(specBytes).digest("hex"));
-    const captured = await capturePublicClientRoutes();
+    // The edge owns `regions.list` at the same public path where TerraBase
+    // owns member status (`regions.regions`). The edge bundle currently
+    // publishes OpenAPI without the TerraBase HTTP corpus, so its exact
+    // catalog body is covered by regions-client tests rather than being
+    // paired with the engine HealthResponse vector here.
+    const captured = (await capturePublicClientRoutes()).filter(route => route.routeName !== "regions.list");
     const vectors = captured.map(route => {
       const operation = spec.paths[route.pathTemplate][route.method.toLowerCase()];
       const vector = corpus.operations.find((value: Vector) => value.operationId === operation.operationId) as Vector | undefined;

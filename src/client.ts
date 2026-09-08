@@ -491,7 +491,7 @@ export class RegionsClient {
     });
     return decodeRegionResult(result, (value) => {
       const response = requireRecord(value, "response");
-      const region = parseRegionCode(requireString(response.region, "response.region"), "response.region");
+      const region = requireString(response.region, "response.region");
       if (typeof response.healthy !== "boolean") throw new TypeError("response.healthy must be a boolean.");
       return { region, healthy: response.healthy };
     });

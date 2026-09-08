@@ -7848,7 +7848,7 @@
       "client": "regions",
       "method": "GET",
       "operation": "list",
-      "operationId": "regions",
+      "operationId": "regions.list",
       "parameters": [],
       "pathTemplate": "/api/v1/regions",
       "request": {
@@ -7860,50 +7860,183 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HealthResponse",
+                  "$ref": "#/components/schemas/RegionCatalogResponse",
                   "siblings": {
                     "resolved": {
+                      "additionalProperties": false,
                       "properties": {
-                        "healthy": {
-                          "type": "boolean"
+                        "hosts": {
+                          "additionalProperties": {
+                            "format": "uri",
+                            "type": "string"
+                          },
+                          "type": "object"
                         },
-                        "region": {
-                          "type": "string"
+                        "regions": {
+                          "items": {
+                            "$ref": "#/components/schemas/Region",
+                            "siblings": {
+                              "resolved": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "available": {
+                                    "type": "boolean"
+                                  },
+                                  "code": {
+                                    "pattern": "^[A-Z0-9][A-Z0-9-]{0,15}$",
+                                    "type": "string"
+                                  },
+                                  "country": {
+                                    "pattern": "^[A-Z]{2}$",
+                                    "type": "string"
+                                  },
+                                  "latitude": {
+                                    "maximum": 90,
+                                    "minimum": -90,
+                                    "type": "number"
+                                  },
+                                  "longitude": {
+                                    "maximum": 180,
+                                    "minimum": -180,
+                                    "type": "number"
+                                  },
+                                  "name": {
+                                    "maxLength": 128,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "code",
+                                  "name",
+                                  "country",
+                                  "latitude",
+                                  "longitude",
+                                  "available"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "resolved": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "available": {
+                                  "type": "boolean"
+                                },
+                                "code": {
+                                  "pattern": "^[A-Z0-9][A-Z0-9-]{0,15}$",
+                                  "type": "string"
+                                },
+                                "country": {
+                                  "pattern": "^[A-Z]{2}$",
+                                  "type": "string"
+                                },
+                                "latitude": {
+                                  "maximum": 90,
+                                  "minimum": -90,
+                                  "type": "number"
+                                },
+                                "longitude": {
+                                  "maximum": 180,
+                                  "minimum": -180,
+                                  "type": "number"
+                                },
+                                "name": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "name",
+                                "country",
+                                "latitude",
+                                "longitude",
+                                "available"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "minItems": 1,
+                          "type": "array"
                         }
                       },
                       "required": [
-                        "region",
-                        "healthy"
+                        "regions",
+                        "hosts"
                       ],
                       "type": "object"
                     }
                   },
                   "resolved": {
+                    "additionalProperties": false,
                     "properties": {
-                      "healthy": {
-                        "type": "boolean"
+                      "hosts": {
+                        "additionalProperties": {
+                          "format": "uri",
+                          "type": "string"
+                        },
+                        "type": "object"
                       },
-                      "region": {
-                        "type": "string"
+                      "regions": {
+                        "items": {
+                          "$ref": "#/components/schemas/Region",
+                          "resolved": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "available": {
+                                "type": "boolean"
+                              },
+                              "code": {
+                                "pattern": "^[A-Z0-9][A-Z0-9-]{0,15}$",
+                                "type": "string"
+                              },
+                              "country": {
+                                "pattern": "^[A-Z]{2}$",
+                                "type": "string"
+                              },
+                              "latitude": {
+                                "maximum": 90,
+                                "minimum": -90,
+                                "type": "number"
+                              },
+                              "longitude": {
+                                "maximum": 180,
+                                "minimum": -180,
+                                "type": "number"
+                              },
+                              "name": {
+                                "maxLength": 128,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "name",
+                              "country",
+                              "latitude",
+                              "longitude",
+                              "available"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "minItems": 1,
+                        "type": "array"
                       }
                     },
                     "required": [
-                      "region",
-                      "healthy"
+                      "regions",
+                      "hosts"
                     ],
                     "type": "object"
                   }
                 }
               }
             },
-            "description": "Serving region and health",
-            "headers": {
-              "X-TerraScale-Region": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
+            "description": "Authoritative orchestrator region catalog and current health"
           },
           "status": "200"
         }
@@ -27471,6 +27604,7 @@
   ],
   "sources": {
     "openApiSha256": "353dcf000d8450ee06cd8fc094b4fa8eb05b3d29f8aae2218886a7edf55d4026",
+    "edgeOpenApiSha256": "ea10c9124b918774a408c05cc5e6c2d51e7f2f8da512d3a46bc39929581137bc",
     "routeManifestSha256": "2a98fc2280e6dc29b35f4c97903487767329da46c61f7cc8f914393a81787b1e"
   }
 }

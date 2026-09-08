@@ -21,7 +21,7 @@ if (check) {
   if (await readFile(outputPath, "utf8") !== json) throw new Error("sdk-openapi-contract-descriptor.json is out of date. Run npm run generate:openapi-contract-descriptor.");
   console.log(`OpenAPI contract descriptor is current (${descriptor.routeCount} routes).`);
 } else {
-  await writeOpenApiContractDescriptor({ manifestPath, outputPath, specPath });
+  await writeOpenApiContractDescriptor({ manifestPath, outputPath, specPath, specPaths: { edge: edgeSpecPath, terrabase: specPath } });
   console.log(`Wrote sdk-openapi-contract-descriptor.json with ${descriptor.routeCount} routes.`);
 }
 await bundle?.cleanup();

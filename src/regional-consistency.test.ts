@@ -344,6 +344,7 @@ describe("regional routing consistency", () => {
       assert.deepEqual(result.routing, {
         routeMode: "preferred-failover",
         degraded: true,
+        failoverFromRegion: "SJC",
       });
     }
   });
