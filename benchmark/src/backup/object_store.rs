@@ -1040,13 +1040,14 @@ mod tests {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let store = Arc::new(InMemory::new());
             let destination = destination(store.clone());
-            let orphan = object_key("db/rp-1", "member.tbv3e").unwrap();
-            let sibling = object_key("db/rp-10", "member.tbv3e").unwrap();
+            let orphan = object_key(&format!("db/rp-{}", "1a".repeat(32)), "member.tbv3e").unwrap();
+            let sibling =
+                object_key(&format!("db/rp-{}", "2b".repeat(32)), "member.tbv3e").unwrap();
             store.put(&orphan, b"orphan".to_vec().into()).await.unwrap();
             store.put(&sibling, b"sibling".to_vec().into()).await.unwrap();
             assert_eq!(
                 destination.list_point_prefixes("db", 10).await.unwrap(),
-                vec!["db/rp-1", "db/rp-10"]
+                vec![format!("db/rp-{}", "1a".repeat(32)), format!("db/rp-{}", "2b".repeat(32))]
             );
 
             let nested = ObjectPath::parse("db/rp-2/nested/member.tbv3e").unwrap();

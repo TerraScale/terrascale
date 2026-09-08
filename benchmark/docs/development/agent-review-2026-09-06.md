@@ -671,7 +671,7 @@ functional cases passed. Two durability fixtures still lacked a Region-pinned
 origin; admission timestamp and public metadata tests also passed. The durability
 fixtures' corrected setup uses the real durable Engine configuration; all four
 durability tests passed (`39530`). Marker tests also passed after final review
-(`48716`). The 100,000-document restore exceeded its unchanged ten-second limit
+(`48716`). The 100,000-document restore exceeded its unchanged one-second limit
 both in the suite and in isolation. A temporary-index candidate did not help
 and was removed. Exact timings are recorded in
 [`bench/physical-restore-provenance.md`](../../bench/physical-restore-provenance.md).
@@ -689,7 +689,7 @@ publication. The compiled local importer sets `temp_store=MEMORY` before its
 transaction. Independent review found no material identity or rollback issue.
 Four branch-related helper tests passed (`69393`), and the physical restore
 regression passed again after the rewrite. The large timing case improved to
-11.698746991 seconds (`61219`) but still failed the unchanged ten-second limit.
+11.698746991 seconds (`61219`) but still failed the unchanged one-second limit.
 The local importer now uses the same bounded SQLite connection settings as the
 normal Engine, after source binding validation. Its physical restore regression
 passed (`84368`), and independent review found no material issue. The large case
@@ -783,7 +783,7 @@ Server all-target compilation passed (`64730`), retaining two warnings for the
 native recovery signer whose production integration remains unfinished. The
 complete server library run (`26026`) finished with 338 passed, three ignored,
 and one failure: the 100,000-document branch restore took 11.562381852 seconds
-against the unchanged ten-second limit. No functional failure was reported in
+against the unchanged one-second limit. No functional failure was reported in
 that run. Current server all-target Clippy (`62204`) still fails with 81
 test-build diagnostics; the earlier 189 count is superseded. Logs are
 `/tmp/terrascale-server-refactor-tests.log` and

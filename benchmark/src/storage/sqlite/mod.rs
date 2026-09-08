@@ -771,14 +771,17 @@ fn replication_fingerprint_on(
 fn validate_operation_facts(connection: &Connection) -> Result<(), ()> {
     let mut statement = connection
         .prepare(
-            "SELECT digest, committed, rejection, sequence, requested, root, writes, bytes,
-                    EXISTS(SELECT 1 FROM branch_snapshot_receipts AS imported
-                           WHERE imported.tenant = operation_facts.tenant
-                             AND imported.operation = operation_facts.client_request_ulid),
-                    EXISTS(SELECT 1 FROM operation_kind_markers AS marker
-                           WHERE marker.tenant = operation_facts.tenant
-                             AND marker.operation = operation_facts.client_request_ulid)
-             FROM operation_facts",
+            "SELECT facts.digest, facts.committed, facts.rejection, facts.sequence,
+                    facts.requested, facts.root, facts.writes, facts.bytes,
+                    imported.tenant IS NOT NULL,
+                    marker.tenant IS NOT NULL
+             FROM operation_facts AS facts
+             LEFT JOIN branch_snapshot_receipts AS imported
+               ON imported.tenant = facts.tenant
+              AND imported.operation = facts.client_request_ulid
+             LEFT JOIN operation_kind_markers AS marker
+               ON marker.tenant = facts.tenant
+              AND marker.operation = facts.client_request_ulid",
         )
         .map_err(|_| ())?;
     let rows = statement
@@ -1904,10 +1907,7 @@ impl SqliteStorage {
         let encryption = keys
             .map(|keys| encrypted_vfs::EncryptedVfs::register(&database_path, keys))
             .transpose()
-            .map_err(|error| {
-                eprintln!("register encrypted {:?}: {error:?}", database_path);
-                StorageOpenError::Unavailable
-            })?;
+            .map_err(|_| StorageOpenError::Unavailable)?;
         let expected_binding = database_binding(dir)
             .map_err(|_| StorageOpenError::Unavailable)?
             .unwrap_or_else(|| format!("path-{}", local_origin_for(&database_path)));
@@ -1918,11 +1918,7 @@ impl SqliteStorage {
         if allow_create {
             flags |= OpenFlags::SQLITE_OPEN_CREATE;
         }
-        let mut writer =
-            raw_connection(&database_path, flags, encryption.as_deref()).map_err(|error| {
-                eprintln!("raw connection {:?}: {error:?}", database_path);
-                error
-            })?;
+        let mut writer = raw_connection(&database_path, flags, encryption.as_deref())?;
         if database_exists || !allow_create {
             let legacy = validate_database_binding(&writer, &expected_binding)?;
             if !legacy {

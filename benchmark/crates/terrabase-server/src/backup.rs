@@ -1467,9 +1467,9 @@ mod tests {
     }
 
     /// The done-when timing gate: a 100k-document database branches —
-    /// restore to a new location — in under ten seconds locally.
+    /// restore to a new location — in under one second locally.
     #[test]
-    fn branching_100k_documents_restores_under_ten_seconds() {
+    fn branching_100k_documents_restores_under_one_second() {
         let Some((replica_location, fleet, replica_root)) = streams("branch") else {
             eprintln!("skipping: litestream is not on PATH");
             return;

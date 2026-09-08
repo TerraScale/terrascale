@@ -27,7 +27,7 @@ The isolated command is:
 
 ```sh
 nice -n 19 cargo test --locked -p terrabase-server --lib \
-  backup::tests::branching_100k_documents_restores_under_ten_seconds -- --exact
+  backup::tests::branching_100k_documents_restores_under_one_second -- --exact
 ```
 
 The baseline includes workspace revision `546affae`. The candidate's

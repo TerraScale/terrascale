@@ -454,4 +454,34 @@ mod tests {
         assert!(host.admit(&changed_time).is_err());
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn admission_listener_stops_when_runtime_signals_shutdown() {
+        let root =
+            std::env::temp_dir().join(format!("admission-shutdown-{}", DatabaseUlid::generate()));
+        fs::create_dir(&root).unwrap();
+        let member = MemberUlid::generate();
+        let host = Arc::new(
+            AdmissionHost::open(
+                &root,
+                "production".into(),
+                RegionCode::GRU,
+                member,
+                Arc::new(|_| Ok(())),
+            )
+            .unwrap(),
+        );
+        let socket = root.join("admission.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let (stop, signal) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(host.serve_until(listener, std::process::id(), async {
+            let _ = signal.await;
+        }));
+        stop.send(()).unwrap();
+        assert!(task.await.unwrap().is_ok());
+        assert!(socket.exists(), "the runtime owns unlinking the socket pathname");
+        fs::remove_file(socket).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 }

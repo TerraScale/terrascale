@@ -1399,10 +1399,9 @@ impl Engine {
         // sync lease before serving. The required replication, metering, and
         // backup frontiers were installed by SQLite admission first and keep
         // the retained journal floor safe for reconnect/reset.
-        storage.retire_consumer_frontier("sync").map_err(|error| {
-            eprintln!("engine retire sync {location:?}: {error:?}");
-            EngineOpenError::StorageUnavailable
-        })?;
+        storage
+            .retire_consumer_frontier("sync")
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         if config.owner.is_some()
             && storage.origin_epoch().map_err(|()| EngineOpenError::StorageUnavailable)?.0 == 0
         {

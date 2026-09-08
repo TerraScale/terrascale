@@ -527,11 +527,7 @@ fn start_admission_listener(
     config: Option<&crate::config::ProductionMemberAdmission>,
 ) -> Result<AdmissionListener, DaemonError> {
     let Some(config) = config else {
-        return Ok(AdmissionListener {
-            path: PathBuf::new(),
-            stop: None,
-            task: None,
-        });
+        return Ok(AdmissionListener { path: PathBuf::new(), stop: None, task: None });
     };
     validate_uds_parent(&config.socket)?;
     if let Ok(metadata) = std::fs::symlink_metadata(&config.socket) {
@@ -545,8 +541,8 @@ fn start_admission_listener(
         }
         std::fs::remove_file(&config.socket).map_err(|_| DaemonError::UnsafeUdsPath)?;
     }
-    let listener = tokio::net::UnixListener::bind(&config.socket)
-        .map_err(|_| DaemonError::UnsafeUdsPath)?;
+    let listener =
+        tokio::net::UnixListener::bind(&config.socket).map_err(|_| DaemonError::UnsafeUdsPath)?;
     set_socket_mode(&config.socket, 0o660)?;
     rustix::fs::chown(
         &config.socket,
@@ -560,22 +556,32 @@ fn start_admission_listener(
     let task = tokio::spawn(host.serve_until(listener, allowed_uid, async {
         let _ = signal.await;
     }));
-    Ok(AdmissionListener {
-        path: config.socket.clone(),
-        stop: Some(stop),
-        task: Some(task),
-    })
+    Ok(AdmissionListener { path: config.socket.clone(), stop: Some(stop), task: Some(task) })
+}
+
+#[cfg(not(unix))]
+struct AdmissionListener;
+
+#[cfg(not(unix))]
+impl AdmissionListener {
+    fn is_finished(&self) -> bool {
+        false
+    }
+
+    async fn shutdown(&mut self, _grace: std::time::Duration) -> Result<(), ()> {
+        Ok(())
+    }
 }
 
 #[cfg(not(unix))]
 fn start_admission_listener(
     _admission: &Arc<crate::production_data_runtime::ProductionAdmissionRuntime>,
     config: Option<&crate::config::ProductionMemberAdmission>,
-) -> Result<(), DaemonError> {
+) -> Result<AdmissionListener, DaemonError> {
     if config.is_some() {
         return Err(DaemonError::UnsafeUdsPath);
     }
-    Ok(())
+    Ok(AdmissionListener)
 }
 
 // This boundary owns every task created after native recovery composition.
