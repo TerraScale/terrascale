@@ -101,6 +101,12 @@ export type RequestOrganizationDeletionRequest = {
   readonly organizationName: string;
 };
 
+/** Stable identity required to replay an accepted organization/project mutation. */
+export type OrganizationMutationOptions = {
+  readonly idempotencyKey: string;
+  readonly signal?: AbortSignal | undefined;
+};
+
 export type UpdateOrganizationMemberRoleRequest = {
   readonly role: OrganizationMemberRole;
 };

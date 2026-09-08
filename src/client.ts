@@ -569,20 +569,30 @@ export class OrganizationsClient {
   requestDeletion(
     organizationId: string,
     request: Models.RequestOrganizationDeletionRequest,
+    options: Models.OrganizationMutationOptions,
   ): Promise<TerraScaleResult<Models.Organization>> {
+    const mutation = organizationMutationOptions(options);
     return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${idPathSegment(organizationId)}:request-deletion`,
       routeName: "organizations.deletion.request",
       body: request,
+      idempotencyKey: mutation.idempotencyKey,
+      signal: mutation.signal,
     });
   }
 
-  leave(organizationId: string): Promise<TerraScaleResult<void>> {
+  leave(
+    organizationId: string,
+    options: Models.OrganizationMutationOptions,
+  ): Promise<TerraScaleResult<void>> {
+    const mutation = organizationMutationOptions(options);
     return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations/${idPathSegment(organizationId)}:leave`,
       routeName: "organizations.leave",
+      idempotencyKey: mutation.idempotencyKey,
+      signal: mutation.signal,
     });
   }
 
@@ -692,12 +702,16 @@ export class OrganizationsClient {
   deleteProject(
     projectId: string,
     request: Models.DeleteProjectRequest,
+    options: Models.OrganizationMutationOptions,
   ): Promise<TerraScaleResult<Models.DeletedProject>> {
+    const mutation = organizationMutationOptions(options);
     return this.#http.request({
       method: "DELETE",
       path: projectRoot(this.#http, projectId),
       routeName: "organizations.projects.delete",
       body: request,
+      idempotencyKey: mutation.idempotencyKey,
+      signal: mutation.signal,
     });
   }
 
