@@ -840,6 +840,22 @@ mod restore_tests {
             expected_journal_boundary: point.boundary_sequence().get(),
             restore_epoch: 17,
         };
+        let wrong_placement =
+            PlacementLock::explicit([terrabase::regions::RegionCode::FRA]).unwrap();
+        assert_eq!(
+            runtime
+                .restore_from_provider(
+                    &records[0].database_id,
+                    terrabase::backup::object_store::Provider::Oci,
+                    Some(point.identity()),
+                    &target_config,
+                    "native-pitr-wrong-placement",
+                    &wrong_placement,
+                    &identity,
+                )
+                .await,
+            Err(NativeBackupRuntimeError::Unavailable)
+        );
         let receipt = runtime
             .restore_from_provider(
                 &records[0].database_id,

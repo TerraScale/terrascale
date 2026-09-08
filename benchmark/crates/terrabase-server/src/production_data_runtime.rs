@@ -1040,7 +1040,12 @@ impl ProductionAdmissionRuntime {
                 record.region.parse().map_err(|_| "invalid admitted Region")?,
             )
             .map_err(|_| "native backup destination unavailable")?;
-            let historical_destinations = destinations.clone();
+            let mut historical_destinations = crate::production_backup::destinations_from_config(
+                &policy.historical_destinations,
+                record.region.parse().map_err(|_| "invalid admitted Region")?,
+            )
+            .map_err(|_| "native backup historical destination unavailable")?;
+            historical_destinations.extend(destinations.iter().cloned());
             let placement = PlacementLock::explicit(
                 record
                     .regions
@@ -1153,7 +1158,12 @@ impl ProductionAdmissionRuntime {
         let destinations =
             crate::production_backup::destinations_from_config(&policy.destinations, region)
                 .map_err(|_| "native backup destination unavailable")?;
-        let historical_destinations = destinations.clone();
+        let mut historical_destinations = crate::production_backup::destinations_from_config(
+            &policy.historical_destinations,
+            region,
+        )
+        .map_err(|_| "native backup historical destination unavailable")?;
+        historical_destinations.extend(destinations.iter().cloned());
         let placement = terrabase::backup::PlacementLock::explicit(
             record
                 .regions

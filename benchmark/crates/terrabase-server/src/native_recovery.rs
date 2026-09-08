@@ -362,10 +362,18 @@ impl NativeRecoveryRuntime {
         // still has it.
         let digest = envelope.digest().to_owned();
         for provider in providers {
-            let remote = {
+            let destination = {
                 let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-                fleet.download_envelope(source, &digest, provider).await
+                fleet
+                    .envelope_destination(source, provider)
+                    .map_err(map_fleet_error)?
             };
+            let remote = terrabase::backup::worker::NativeBackupFleet::download_envelope_from_destination(
+                source,
+                &digest,
+                destination,
+            )
+            .await;
             match remote {
                 Ok(remote) => return Ok(Some((remote, provider))),
                 Err(terrabase::backup::worker::FleetError::Configuration) => {

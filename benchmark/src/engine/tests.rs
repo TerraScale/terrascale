@@ -1028,6 +1028,22 @@ fn usage_pages_bind_snapshot_filter_page_size_and_tenant() {
 }
 
 #[test]
+fn usage_facts_bind_current_origin_epoch() {
+    let (_dir, engine) = open_engine("usage-epoch");
+    engine.activate_origin_epoch(7).expect("activate origin epoch");
+    let scope = tenant_scope(&engine, "tenant-a");
+
+    let receipt = engine
+        .record_usage(&scope, usage_record_request("epoch-fact", 1_000))
+        .expect("record usage");
+    assert_eq!(receipt.replica_epoch(), 7);
+    let page = engine
+        .usage_page(&scope, UsagePageRequest::try_new(None, 1, None).unwrap())
+        .expect("usage page");
+    assert_eq!(page.facts()[0].replica_epoch(), 7);
+}
+
+#[test]
 fn tenant_scope_cannot_change_during_a_transaction() {
     let (dir, engine) = open_engine("frozen-scope");
     let scope = tenant_scope(&engine, "tenant-a");

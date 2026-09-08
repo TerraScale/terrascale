@@ -128,6 +128,8 @@ pub struct ProductionBackupConfig {
     pub retention_days: u8,
     /// Independently verified object destinations.
     pub destinations: Vec<ProductionBackupDestination>,
+    /// Destinations retained by prior policy revisions for lifecycle purge.
+    pub historical_destinations: Vec<ProductionBackupDestination>,
 }
 
 /// An exact authenticated peer endpoint in one placement generation.
@@ -741,6 +743,8 @@ struct FileProductionBackup {
     policy_revision: String,
     retention_days: u8,
     destinations: Vec<FileProductionBackupDestination>,
+    #[serde(default)]
+    historical_destinations: Vec<FileProductionBackupDestination>,
 }
 
 #[derive(Deserialize)]
@@ -1100,18 +1104,29 @@ impl ServerConfig {
                         || !matches!(backup.retention_days, 1 | 7 | 30 | 35)
                         || backup.destinations.is_empty()
                         || backup.destinations.len() > 2
+                        || backup.historical_destinations.len() > 64
                     {
                         return Err(ConfigError::InvalidProductionBoundary);
                     }
                     let mut destinations = Vec::with_capacity(backup.destinations.len());
                     let mut providers = BTreeSet::new();
-                    for destination in backup.destinations {
+                    let mut historical_destinations =
+                        Vec::with_capacity(backup.historical_destinations.len());
+                    let mut historical_identities = BTreeSet::new();
+                    let current_count = backup.destinations.len();
+                    for (index, destination) in backup
+                        .destinations
+                        .into_iter()
+                        .chain(backup.historical_destinations.into_iter())
+                        .enumerate()
+                    {
                         let provider = match destination.provider.as_str() {
                             "oci" => Provider::Oci,
                             "tigris" => Provider::Tigris,
                             _ => return Err(ConfigError::InvalidProductionBoundary),
                         };
-                        if !providers.insert(provider)
+                        let current = index < current_count;
+                        if current && !providers.insert(provider)
                             || !destination.endpoint.starts_with("https://")
                             || destination.signing_region.is_empty()
                             || destination.bucket.is_empty()
@@ -1138,7 +1153,7 @@ impl ServerConfig {
                         let access_key_file = production_path(&destination.access_key_file)?;
                         let secret_key_file = production_path(&destination.secret_key_file)?;
                         paths.extend([access_key_file.clone(), secret_key_file.clone()]);
-                        destinations.push(ProductionBackupDestination {
+                        let parsed = ProductionBackupDestination {
                             provider,
                             endpoint: destination.endpoint,
                             signing_region: destination.signing_region,
@@ -1150,12 +1165,28 @@ impl ServerConfig {
                             secret_key_file,
                             max_artifact_bytes: destination.max_artifact_bytes,
                             max_point_bytes: destination.max_point_bytes,
-                        });
+                        };
+                        let identity = (
+                            parsed.provider,
+                            parsed.endpoint.clone(),
+                            parsed.signing_region.clone(),
+                            parsed.bucket.clone(),
+                            parsed.placement_revision.clone(),
+                        );
+                        if !historical_identities.insert(identity) {
+                            continue;
+                        }
+                        if current {
+                            destinations.push(parsed);
+                        } else {
+                            historical_destinations.push(parsed);
+                        }
                     }
                     Ok(ProductionBackupConfig {
                         policy_revision: backup.policy_revision,
                         retention_days: backup.retention_days,
                         destinations,
+                        historical_destinations,
                     })
                 })
                 .transpose()?;
@@ -2087,6 +2118,21 @@ capabilities = ["production", "tbep", "quic", "metrics", "oci-vault"]
         assert_eq!(production.transport.peers.len(), 3);
         assert_eq!(production.release.capabilities.len(), 5);
         assert_eq!(production.databases[0].encryption_provider, KeyProviderIdentity::OciVault);
+    }
+
+    #[test]
+    fn production_backup_keeps_historical_destinations_in_typed_policy() {
+        let source = production_valid();
+        let config = source.replace(
+            "destinations = [{ provider = \"oci\", endpoint = \"https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com\", signing_region = \"sa-saopaulo-1\", bucket = \"backup-a\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }]",
+            "destinations = [{ provider = \"oci\", endpoint = \"https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com\", signing_region = \"sa-saopaulo-1\", bucket = \"backup-a\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }]
+historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.storage.tigris.dev\", signing_region = \"auto\", bucket = \"backup-old\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-3\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }]",
+        );
+        let production = ServerConfig::parse(&config).unwrap().production.unwrap();
+        let backup = production.databases[0].backup.as_ref().unwrap();
+        assert_eq!(backup.destinations.len(), 1);
+        assert_eq!(backup.historical_destinations.len(), 1);
+        assert_eq!(backup.historical_destinations[0].provider, Provider::Tigris);
     }
 
     #[test]

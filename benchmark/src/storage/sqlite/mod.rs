@@ -1919,7 +1919,10 @@ impl SqliteStorage {
         if allow_create {
             flags |= OpenFlags::SQLITE_OPEN_CREATE;
         }
-        let mut writer = raw_connection(&database_path, flags, encryption.as_deref())?;
+        let mut writer = raw_connection(&database_path, flags, encryption.as_deref()).map_err(|error| {
+            eprintln!("encrypted reopen raw connection failed dir={} err={error:?}", dir.display());
+            error
+        })?;
         if database_exists || !allow_create {
             let legacy = validate_database_binding(&writer, &expected_binding)?;
             if !legacy {
@@ -2591,7 +2594,11 @@ fn stage_intent(
         {
             // A committed replay must find the exact durable fact this
             // identity minted, including its original commit sequence.
-            let Some(expected) = DurableUsageFact::try_new(fact.clone(), entry.sequence, 1).ok()
+            let Ok(replica_epoch) = current_usage_epoch(transaction) else {
+                return Ok(CommitResult::Rejected(CommitRejection::Storage));
+            };
+            let Some(expected) =
+                DurableUsageFact::try_new(fact.clone(), entry.sequence, replica_epoch).ok()
             else {
                 return Ok(CommitResult::Rejected(CommitRejection::Storage));
             };
@@ -2861,7 +2868,12 @@ fn stage_intent(
             return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
         }
         usage_seal::ensure_unsealed(transaction, fact)?;
-        let Some(durable) = DurableUsageFact::try_new(fact.clone(), sequence, 1).ok() else {
+        let Ok(replica_epoch) = current_usage_epoch(transaction) else {
+            transaction.execute_batch("RELEASE schema_unique_admission").map_err(|_| ())?;
+            *watermark = sequence - 1;
+            return Ok(CommitResult::Rejected(CommitRejection::Storage));
+        };
+        let Some(durable) = DurableUsageFact::try_new(fact.clone(), sequence, replica_epoch).ok() else {
             transaction.execute_batch("RELEASE schema_unique_admission").map_err(|_| ())?;
             *watermark = sequence - 1;
             return Ok(CommitResult::Rejected(CommitRejection::Storage));
@@ -5285,7 +5297,9 @@ impl StoragePort for SqliteStorage {
         };
         usage_seal::ensure_unsealed(&transaction, &fact)
             .map_err(|()| UsageStorageError::Unavailable)?;
-        let durable = DurableUsageFact::try_new(fact.clone(), sequence, 1)
+        let replica_epoch = current_usage_epoch(&transaction)
+            .map_err(|_| UsageStorageError::Unavailable)?;
+        let durable = DurableUsageFact::try_new(fact.clone(), sequence, replica_epoch)
             .map_err(|_| UsageStorageError::Corrupt)?;
         let scope = durable.fact().scope();
         let identity = durable.fact().identity();
@@ -8007,4 +8021,15 @@ fn origin_epoch_on(connection: &Connection) -> Result<(u64, bool), ()> {
         _ => return Err(()),
     };
     Ok((epoch, closed))
+}
+
+/// Returns the active replica-set epoch for a usage envelope.
+///
+/// Usage facts are fenced identities. Production engines always expose their
+/// admitted origin epoch here. Local-development engines have no membership
+/// lease, so epoch one is their stable genesis epoch; a closed epoch can
+/// never mint a new billing fact.
+fn current_usage_epoch(connection: &Connection) -> Result<u64, ()> {
+    let (epoch, closed) = origin_epoch_on(connection)?;
+    if closed { Err(()) } else { Ok(epoch.max(1)) }
 }

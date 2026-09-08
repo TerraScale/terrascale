@@ -605,6 +605,22 @@ async fn auth_http_errors_keep_status_envelope_and_headers() {
     let _ = std::fs::remove_dir_all(fixture.root);
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn auth_domain_routing_rejects_ambiguous_database_matches() {
+    let fixture = admitted_fixture::create().await;
+    let domain = fixture.runtime.domains.read().unwrap().values().next().unwrap().clone();
+
+    assert!(unique_domain(std::iter::once(&domain), &fixture.database).is_some());
+    assert!(unique_domain([&domain, &domain].into_iter(), &fixture.database).is_none());
+
+    fixture.runtime.shutdown().await;
+    fixture.local_receive.abort();
+    fixture.remote_receive.abort();
+    fixture.remote.shutdown().await.unwrap();
+    let _ = std::fs::remove_dir_all(&fixture.root);
+}
+
 #[test]
 fn placement_response_marks_private_result_uncacheable() {
     let grant =

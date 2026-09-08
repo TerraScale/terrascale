@@ -198,4 +198,19 @@ mod tests {
         assert!(matches!(fresh.await, Err(error) if error.is_cancelled()));
         assert!(store.log_polls.lock().unwrap().values().all(|poll| poll.upgrade().is_none()));
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn rejected_cursors_do_not_create_a_waiter() {
+        let (store, view) = fixture();
+
+        // These are the failures the HTTP caller must surface immediately:
+        // an unknown generation, an offset beyond the current head, and an
+        // unknown view. None is allowed to allocate or join a long-poll.
+        assert_eq!(store.poll_log(&view, 2, 0).await.unwrap_err().code, "unknown_view");
+        assert_eq!(store.poll_log(&view, 1, u64::MAX).await.unwrap_err().code, "offset_gap");
+        assert_eq!(store.poll_log("missing", 1, 0).await.unwrap_err().code, "unknown_view");
+
+        assert_eq!(store.poll_starts.load(Ordering::Relaxed), 0);
+        assert!(store.log_polls.lock().unwrap().is_empty());
+    }
 }

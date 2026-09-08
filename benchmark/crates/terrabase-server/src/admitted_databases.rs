@@ -914,11 +914,12 @@ pub(crate) mod tests {
     pub(crate) fn fixture() -> (AdmittedDatabaseRegistry, Member, Vec<AdmissionRecord>, PathBuf) {
         let root = std::env::temp_dir().join(format!("admitted-api-{}", DatabaseUlid::generate()));
         std::fs::create_dir_all(&root).unwrap();
+        let tenant_id = TenantUlid::generate().to_string();
         let records: Vec<_> = (0..2)
             .map(|_| AdmissionRecord {
                 created_at: 1,
                 environment: "production".into(),
-                tenant_id: TenantUlid::generate().to_string(),
+                tenant_id: tenant_id.clone(),
                 project_id: ProjectUlid::generate().to_string(),
                 database_id: DatabaseUlid::generate().to_string(),
                 parent_database_id: None,

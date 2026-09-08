@@ -6,8 +6,9 @@ use super::{
 };
 use crate::export_api::{self as export, ExportService, ExportSource, ExportSourceError};
 use crate::export_formats::{ExportScope, TransferFormat, content_type};
+use crate::api_keys::{Principal, Verbs};
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
-use axum::response::IntoResponse;
+use axum::{Extension, response::IntoResponse};
 use serde::Deserialize;
 use terrabase_tbep::member_host::MemberHost;
 
@@ -201,7 +202,14 @@ fn service(
 async fn resolve(
     state: Arc<ApiState>,
     name: String,
+    principal: &Principal,
+    write: bool,
 ) -> Result<(Arc<ExportService>, export::ExportDestination, export::PlacementLock), ApiError> {
+    if !principal.scope().admits_database(Verbs::ADMIN, &name)
+        || (write && !principal.scope().admits_database(Verbs::WRITE, &name))
+    {
+        return Err(ApiError::forbidden("database export permission"));
+    }
     tokio::task::spawn_blocking(move || service(&state, &name))
         .await
         .map_err(|_| ApiError::storage_failure())?
@@ -212,6 +220,7 @@ async fn resolve(
 pub(super) async fn create_export(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
+    Extension(principal): Extension<Principal>,
     body: String,
 ) -> Response {
     let request: CreateExport = match serde_json::from_str(&body) {
@@ -225,7 +234,7 @@ pub(super) async fn create_export(
         return export_error(&export::ExportError::InvalidRequest("empty identity"))
             .into_response();
     }
-    let (service, destination, placement) = match resolve(state, name.clone()).await {
+    let (service, destination, placement) = match resolve(state, name.clone(), &principal, true).await {
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
@@ -250,8 +259,9 @@ pub(super) async fn create_export(
 pub(super) async fn get_export(
     State(state): State<Arc<ApiState>>,
     Path((name, job)): Path<(String, String)>,
+    Extension(principal): Extension<Principal>,
 ) -> Response {
-    let (service, _, _) = match resolve(state, name).await {
+    let (service, _, _) = match resolve(state, name, &principal, false).await {
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
@@ -274,6 +284,7 @@ pub(super) async fn get_export(
 pub(super) async fn resume_export(
     State(state): State<Arc<ApiState>>,
     Path((name, job)): Path<(String, String)>,
+    Extension(principal): Extension<Principal>,
     body: String,
 ) -> Response {
     let request: ResumeExport = match serde_json::from_str(&body) {
@@ -283,7 +294,7 @@ pub(super) async fn resume_export(
                 .into_response();
         }
     };
-    let (service, _, _) = match resolve(state, name).await {
+    let (service, _, _) = match resolve(state, name, &principal, true).await {
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
@@ -384,8 +395,9 @@ pub(crate) async fn recover_exports(state: &ApiState) -> Result<(), ApiError> {
 pub(super) async fn download_export(
     State(state): State<Arc<ApiState>>,
     Path((name, job, member)): Path<(String, String, String)>,
+    Extension(principal): Extension<Principal>,
 ) -> Response {
-    let (service, _, _) = match resolve(state, name).await {
+    let (service, _, _) = match resolve(state, name, &principal, false).await {
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
@@ -439,6 +451,7 @@ pub(super) struct ExportList {
 pub(super) async fn list_exports(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
+    Extension(principal): Extension<Principal>,
     axum::extract::Query(query): axum::extract::Query<ExportListQuery>,
 ) -> Response {
     let limit = query.limit.unwrap_or(50);
@@ -446,7 +459,7 @@ pub(super) async fn list_exports(
         return export_error(&export::ExportError::InvalidRequest("invalid page size"))
             .into_response();
     }
-    let (service, _, _) = match resolve(state, name).await {
+    let (service, _, _) = match resolve(state, name, &principal, false).await {
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
@@ -467,8 +480,9 @@ pub(super) async fn list_exports(
 pub(super) async fn cancel_export(
     State(state): State<Arc<ApiState>>,
     Path((name, job)): Path<(String, String)>,
+    Extension(principal): Extension<Principal>,
 ) -> Response {
-    let (service, _, _) = match resolve(state, name).await {
+    let (service, _, _) = match resolve(state, name, &principal, true).await {
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };

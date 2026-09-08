@@ -430,20 +430,24 @@ impl AuthRuntime {
         if !principal.scope().admits_database(verb, database) {
             return Err(AuthHttpError { status: StatusCode::FORBIDDEN, code: "forbidden" });
         }
-        self.domains
-            .read()
-            .map_err(|_| AuthHttpError {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                code: "auth_authority_unavailable",
-            })?
-            .values()
-            .find(|domain| domain.grant.database == database)
-            .cloned()
-            .ok_or(AuthHttpError {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                code: "auth_authority_unavailable",
-            })
+        let domains = self.domains.read().map_err(|_| AuthHttpError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "auth_authority_unavailable",
+        })?;
+        unique_domain(domains.values(), database).ok_or(AuthHttpError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "auth_authority_unavailable",
+        })
     }
+}
+
+fn unique_domain<'a>(
+    domains: impl Iterator<Item = &'a Arc<Domain>>,
+    database: &str,
+) -> Option<Arc<Domain>> {
+    let mut matches = domains.filter(|domain| domain.grant.database == database);
+    let domain = matches.next()?.clone();
+    matches.next().is_none().then_some(domain)
 }
 
 impl crate::replication_peers::PeerControlDispatcher for AuthRuntime {

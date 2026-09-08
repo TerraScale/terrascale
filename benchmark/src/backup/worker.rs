@@ -314,6 +314,12 @@ impl NativeBackupFleet {
             .open(&marker)
             .map_err(|_| FleetError::Capture)?;
         file.sync_all().map_err(|_| FleetError::Capture)?;
+        // The provider must never observe an envelope whose local staged
+        // directory entry can still be lost on crash.  Participant archives
+        // are already sealed independently; make this envelope attempt
+        // durable before beginning remote publication, then expose it locally
+        // only after every configured provider has acknowledged it.
+        super::sync_directory(&temporary).map_err(|_| FleetError::Capture)?;
         for (_provider, destination) in &stream.config.destinations {
             let prefix = format!("{}/envelopes/{name}", first.database_id);
             destination.upload_envelope(&marker, &prefix).await.map_err(|_| FleetError::Upload)?;
@@ -336,17 +342,40 @@ impl NativeBackupFleet {
         digest: &str,
         provider: Provider,
     ) -> Result<BackupEnvelope, FleetError> {
-        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(FleetError::Configuration);
-        }
+        let destination = self.envelope_destination(database, provider)?;
+        Self::download_envelope_from_destination(database, digest, destination).await
+    }
+
+    /// Returns the admitted destination for an envelope download.
+    ///
+    /// The returned destination is independently reference counted so callers
+    /// can release the fleet lock before awaiting provider I/O.
+    pub fn envelope_destination(
+        &self,
+        database: &str,
+        provider: Provider,
+    ) -> Result<Arc<ObjectDestination>, FleetError> {
         let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
-        let destination = stream
+        stream
             .config
             .destinations
             .iter()
             .find(|(kind, _)| *kind == provider)
-            .map(|(_, destination)| destination)
-            .ok_or(FleetError::Configuration)?;
+            .map(|(_, destination)| Arc::clone(destination))
+            .ok_or(FleetError::Configuration)
+    }
+
+    /// Downloads and authenticates an envelope using an already admitted
+    /// destination. The destination is owned by the future, so no fleet lock
+    /// needs to remain held while provider I/O is in flight.
+    pub async fn download_envelope_from_destination(
+        database: &str,
+        digest: &str,
+        destination: Arc<ObjectDestination>,
+    ) -> Result<BackupEnvelope, FleetError> {
+        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(FleetError::Configuration);
+        }
         let prefix = format!("{database}/envelopes/env-{digest}");
         let bytes = destination.download_envelope(&prefix).await.map_err(|_| FleetError::Upload)?;
         let envelope = BackupEnvelope::decode(&bytes).map_err(|_| FleetError::Capture)?;
@@ -1014,7 +1043,9 @@ impl NativeBackupFleet {
                 BackupMode::Continuous,
                 result.as_ref().map_or(TaskOutcome::Error, |_| TaskOutcome::Success),
             );
-            if let Some(verified_at) = stream.verified_at {
+            if result.is_ok() {
+                metrics.set_backup_last_success_age(BackupMode::Continuous, Duration::ZERO);
+            } else if let Some(verified_at) = stream.verified_at {
                 metrics.set_backup_last_success_age(BackupMode::Continuous, verified_at.elapsed());
             }
             match result {
@@ -1853,6 +1884,12 @@ mod tests {
             4 * 1024 * 1024,
             8 * 1024 * 1024,
         ));
+        let good_tigris = Arc::new(ObjectDestination::for_test(
+            Provider::Tigris,
+            Arc::new(object_store::memory::InMemory::new()),
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
         let mut fleet = NativeBackupFleet::new(FleetLimits {
             streams: 1,
             staging_bytes_per_stream: 16 * 1024 * 1024,
@@ -1864,7 +1901,10 @@ mod tests {
             .attach(StreamConfig {
                 engine: Arc::clone(&engine) as Arc<dyn BackupEngineHandle>,
                 keys: keys(&engine),
-                destinations: vec![(Provider::Oci, Arc::clone(&good))],
+                destinations: vec![
+                    (Provider::Oci, Arc::clone(&good)),
+                    (Provider::Tigris, Arc::clone(&good_tigris)),
+                ],
                 historical_destinations: Vec::new(),
                 policy_revision: "envelope-atomicity".into(),
                 retention_days: 1,
@@ -1896,15 +1936,18 @@ mod tests {
             object_store::local::LocalFileSystem::new_with_prefix(&broken_path).unwrap();
         std::fs::remove_dir(&broken_path).unwrap();
         std::fs::write(&broken_path, b"provider unavailable").unwrap();
-        fleet.streams.get_mut(&database).unwrap().config.destinations = vec![(
-            Provider::Oci,
-            Arc::new(ObjectDestination::for_test(
-                Provider::Oci,
-                Arc::new(unavailable) as Arc<dyn ObjectStore>,
-                4 * 1024 * 1024,
-                8 * 1024 * 1024,
-            )),
-        )];
+        fleet.streams.get_mut(&database).unwrap().config.destinations = vec![
+            (Provider::Oci, Arc::clone(&good)),
+            (
+                Provider::Tigris,
+                Arc::new(ObjectDestination::for_test(
+                    Provider::Tigris,
+                    Arc::new(unavailable) as Arc<dyn ObjectStore>,
+                    4 * 1024 * 1024,
+                    8 * 1024 * 1024,
+                )),
+            ),
+        ];
 
         let name = format!("env-{}", envelope.digest());
         let published = staging.join("envelopes").join(&name);
@@ -1912,7 +1955,8 @@ mod tests {
         assert!(!published.exists());
         assert!(staging.join("envelopes").join(format!(".{name}.staging")).exists());
 
-        fleet.streams.get_mut(&database).unwrap().config.destinations = vec![(Provider::Oci, good)];
+        fleet.streams.get_mut(&database).unwrap().config.destinations =
+            vec![(Provider::Oci, good), (Provider::Tigris, good_tigris)];
         assert_eq!(fleet.publish_envelope(&envelope).await.unwrap(), published);
         assert!(published.join("envelope.tbv1").exists());
         let retained = fleet.retained_envelopes(&database).unwrap();
