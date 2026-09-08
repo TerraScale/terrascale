@@ -2381,6 +2381,7 @@ impl CommitContext {
         let accounting_now = accounting::begin_change(&transaction, unix_millis().max(0) as u64)?;
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
         let mut watermark = durable_watermark(&transaction)?;
+        let mut origin_sequences = std::collections::HashMap::new();
         // The wave's journal floor: every sequence above it was allocated by
         // this wave, so the per-database metering flush below scans exactly
         // this wave's rows.
@@ -2404,17 +2405,52 @@ impl CommitContext {
                 fts.descriptors.clone(),
             )
         };
+        // Schema declarations are writer-owned and cannot change while this
+        // transaction is open. Snapshot them once for the whole wave: puts
+        // used to issue one TTL and merge-schema query per row, including
+        // schema-free collections where both queries were guaranteed misses.
+        let mut ttl_fields = std::collections::BTreeMap::new();
+        {
+            let mut statement = transaction
+                .prepare_cached("SELECT collection, field FROM schema_ttl")
+                .map_err(|_| ())?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })
+                .map_err(|_| ())?;
+            for row in rows {
+                let (collection, field) = row.map_err(|_| ())?;
+                ttl_fields.insert(collection, field);
+            }
+        }
+        let mut merge_schemas = std::collections::BTreeMap::new();
+        {
+            let mut statement = transaction
+                .prepare_cached("SELECT collection, schema FROM merge_schemas")
+                .map_err(|_| ())?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .map_err(|_| ())?;
+            for row in rows {
+                let (collection, schema) = row.map_err(|_| ())?;
+                merge_schemas.insert(collection, schema);
+            }
+        }
         for (index, intent) in intents.iter().enumerate() {
             results[index] = Some(stage_intent(
                 &transaction,
                 &mut watermark,
                 &mut root_head,
+                &mut origin_sequences,
                 intent,
                 &self.local_origin,
                 &fields,
                 &put_sql,
                 &descriptors,
                 &fts_descriptors,
+                &ttl_fields,
+                &merge_schemas,
             )?);
         }
         // The wave's usage counter flush: one write per wave, never per
@@ -2475,12 +2511,15 @@ fn stage_intent(
     transaction: &rusqlite::Transaction<'_>,
     watermark: &mut u64,
     root_head: &mut String,
+    origin_sequences: &mut std::collections::HashMap<(String, String), u64>,
     intent: &CommitIntent,
     local_origin: &str,
     extracted_fields: &[String],
     put_insert_sql: &str,
     descriptors: &std::collections::BTreeMap<(String, String), bool>,
     fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
+    ttl_fields: &std::collections::BTreeMap<String, Option<String>>,
+    merge_schemas: &std::collections::BTreeMap<String, String>,
 ) -> Result<CommitResult, ()> {
     if let Some(expected) = intent.expected_origin_epoch {
         let (epoch, closed) = origin_epoch_on(transaction)?;
@@ -2522,32 +2561,11 @@ fn stage_intent(
     // Each replicated record binds its own operation identity separately
     // so records sharing a source transaction all publish.
     let (row_identity, mut provenance) = commit_identity_of(intent, local_origin)?;
-    let origin_sequence = if provenance.kind() == JournalKind::Origin {
-        let next = transaction
-            .query_row(
-                "SELECT COALESCE(MAX(seq), 0) + 1 FROM (
-                    SELECT MAX(origin_seq) AS seq FROM documents WHERE origin = ?1 AND tenant = ?2
-                    UNION ALL SELECT MAX(seq) FROM origin_prefixes WHERE origin = ?1 AND tenant = ?2
-                    UNION ALL SELECT MAX(origin_seq) FROM replication_publications WHERE origin = ?1 AND tenant = ?2)",
-                rusqlite::params![provenance.origin(), intent.tenant.as_str()],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(|_| ())?;
-        u64::try_from(next).map_err(|_| ())?
-    } else {
-        let sequence = provenance.origin_sequence();
-        if sequence == 0 || sequence > i64::MAX as u64 {
-            return Ok(CommitResult::Rejected(CommitRejection::Validation));
-        }
-        sequence
-    };
-    if provenance.kind() == JournalKind::Origin {
-        provenance = JournalProvenance::new(
-            provenance.kind(),
-            provenance.origin().to_owned(),
-            origin_sequence,
-            provenance.hlc(),
-        );
+    let mut origin_sequence = provenance.origin_sequence();
+    if provenance.kind() == JournalKind::Replicated
+        && (origin_sequence == 0 || origin_sequence > i64::MAX as u64)
+    {
+        return Ok(CommitResult::Rejected(CommitRejection::Validation));
     }
     let binding_identity = if provenance.kind() == JournalKind::Replicated {
         &intent.operation
@@ -3045,6 +3063,8 @@ fn stage_intent(
                     put_insert_sql,
                     descriptors,
                     fts_descriptors,
+                    ttl_fields,
+                    merge_schemas,
                 )?;
                 let body_len = body.len() as u64;
                 billed_writes = billed_writes.saturating_add(billed_writes_for_bytes(body_len));
@@ -3152,6 +3172,34 @@ fn stage_intent(
         )?;
         return Ok(CommitResult::Rejected(CommitRejection::Conflict));
     }
+    if provenance.kind() == JournalKind::Origin {
+        let key = (intent.tenant.as_str().to_owned(), provenance.origin().to_owned());
+        let current = if let Some(current) = origin_sequences.get_mut(&key) {
+            current
+        } else {
+            let current = transaction
+                .query_row(
+                    "SELECT COALESCE(MAX(seq), 0) FROM (
+                        SELECT MAX(origin_seq) AS seq FROM documents WHERE origin = ?1 AND tenant = ?2
+                        UNION ALL SELECT MAX(seq) FROM origin_prefixes WHERE origin = ?1 AND tenant = ?2
+                        UNION ALL SELECT MAX(origin_seq) FROM replication_publications WHERE origin = ?1 AND tenant = ?2)",
+                    rusqlite::params![provenance.origin(), intent.tenant.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|_| ())?;
+            let current = u64::try_from(current).map_err(|_| ())?;
+            origin_sequences.entry(key).or_insert(current)
+        };
+        let next = current.checked_add(1).ok_or(())?;
+        *current = next;
+        origin_sequence = next;
+        provenance = JournalProvenance::new(
+            provenance.kind(),
+            provenance.origin().to_owned(),
+            next,
+            provenance.hlc(),
+        );
+    }
     transaction.execute_batch("RELEASE schema_unique_admission").map_err(|_| ())?;
     if let Some(fingerprint) = intent.replication_fingerprint {
         transaction.execute(
@@ -3189,6 +3237,7 @@ fn stage_intent(
             .map_err(|_| ())?;
     }
     write_usage::mint(transaction, intent, sequence, billed_writes, &provenance)?;
+    let replicated_origin = provenance.kind() == JournalKind::Replicated;
     let published = PublishedCommit::new(
         intent.tenant.clone(),
         intent.operation.clone(),
@@ -3213,6 +3262,20 @@ fn stage_intent(
     )?;
     update_root_head(transaction, root.as_str())?;
     root.clone_into(root_head);
+    if replicated_origin {
+        let key = (intent.tenant.as_str().to_owned(), provenance.origin().to_owned());
+        let entry = origin_sequences.entry(key).or_insert(0);
+        *entry = (*entry).max(origin_sequence);
+        for write in &intent.writes {
+            if let StagedWrite::ReplicatedPut { origin, origin_sequence, .. }
+            | StagedWrite::ReplicatedDelete { origin, origin_sequence, .. } = write
+            {
+                let key = (intent.tenant.as_str().to_owned(), origin.clone());
+                let entry = origin_sequences.entry(key).or_insert(0);
+                *entry = (*entry).max(*origin_sequence);
+            }
+        }
+    }
     Ok(CommitResult::Committed(StorageReceipt {
         sequence: StorageSequence::new(sequence),
         root: StorageRootId::from_recorded(root),
@@ -3478,6 +3541,8 @@ fn insert_put_row(
     put_insert_sql: &str,
     descriptors: &std::collections::BTreeMap<(String, String), bool>,
     fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
+    ttl_fields: &std::collections::BTreeMap<String, Option<String>>,
+    merge_schemas: &std::collections::BTreeMap<String, String>,
 ) -> Result<(), ()> {
     let committed_at = unix_millis();
     let mut parameters: Vec<Value> = Vec::with_capacity(18 + 2 * extracted_fields.len());
@@ -3498,15 +3563,10 @@ fn insert_put_row(
     parameters.push(Value::Integer(commit.origin_sequence as i64));
     parameters.push(Value::Integer(commit.hlc as i64));
     parameters.push(Value::Blob(commit.context.clone()));
-    let ttl_field: Option<Option<String>> = transaction
-        .query_row(
-            "SELECT field FROM schema_ttl WHERE collection = ?1",
-            [document.collection().as_str()],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|_| ())?;
-    let ttl_field = ttl_field.unwrap_or_else(|| Some("expires_at".to_owned()));
+    let ttl_field = ttl_fields
+        .get(document.collection().as_str())
+        .cloned()
+        .unwrap_or_else(|| Some("expires_at".to_owned()));
     parameters.push(match extract_expires_at(document, ttl_field.as_deref()) {
         Some(millis) => Value::Integer(millis),
         None => Value::Null,
@@ -3536,7 +3596,7 @@ fn insert_put_row(
         .and_then(|mut statement| statement.execute(rusqlite::params_from_iter(parameters.iter())))
         .map(|_| ())
         .map_err(|_| ())?;
-    refresh_merge_kernels(transaction, tenant, document, commit)?;
+    refresh_merge_kernels(transaction, tenant, document, commit, merge_schemas)?;
     maintain_fts_rows(transaction, tenant, document, fts_descriptors)
 }
 
@@ -3587,15 +3647,9 @@ fn refresh_merge_kernels(
     tenant: &TenantId,
     document: &Document,
     commit: &FoldedCommit<'_>,
+    merge_schemas: &std::collections::BTreeMap<String, String>,
 ) -> Result<(), ()> {
-    let encoded: Option<String> = transaction
-        .prepare_cached("SELECT schema FROM merge_schemas WHERE collection = ?1")
-        .and_then(|mut statement| {
-            statement.query_row([document.collection().as_str()], |row| row.get(0))
-        })
-        .optional()
-        .map_err(|_| ())?;
-    let Some(encoded) = encoded else { return Ok(()) };
+    let Some(encoded) = merge_schemas.get(document.collection().as_str()) else { return Ok(()) };
     let schema = MergeSchema::parse_canonical(&encoded).map_err(|_| ())?;
     clear_merge_kernels(transaction, tenant, document.collection(), document.id())?;
     let DocumentValue::Object(fields) = document.value() else { return Ok(()) };

@@ -223,21 +223,12 @@ fn plaintext_integration_fixtures_are_available_only_to_in_crate_tests() {
 #[test]
 fn capture_artifact_identity_is_stable_per_boundary_and_unique_across_boundaries() {
     let database = crate::identity::DatabaseUlid::generate();
-    let first = crate::backup::capture_artifact_id(
-        database,
-        BackupKind::Full,
-        StorageSequence::new(7),
-    );
-    let retry = crate::backup::capture_artifact_id(
-        database,
-        BackupKind::Full,
-        StorageSequence::new(7),
-    );
-    let next = crate::backup::capture_artifact_id(
-        database,
-        BackupKind::Full,
-        StorageSequence::new(8),
-    );
+    let first =
+        crate::backup::capture_artifact_id(database, BackupKind::Full, StorageSequence::new(7));
+    let retry =
+        crate::backup::capture_artifact_id(database, BackupKind::Full, StorageSequence::new(7));
+    let next =
+        crate::backup::capture_artifact_id(database, BackupKind::Full, StorageSequence::new(8));
     assert_eq!(first, retry, "an uncertain retry reuses the capture artifact key");
     assert_ne!(first, next, "a new boundary cannot reuse the capture artifact key");
 }

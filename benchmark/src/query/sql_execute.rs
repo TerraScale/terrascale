@@ -170,7 +170,7 @@ pub(crate) fn execute(
     )?;
     control.check()?;
     let mut statement = transaction
-        .prepare(&runtime.text)
+        .prepare_cached(&runtime.text)
         .map_err(|_| control.interrupted(QueryError::InvalidSpec))?;
     let bound = bound_values(&statement, runtime)?;
     let column_count = statement.column_count();
@@ -283,7 +283,7 @@ pub(crate) fn execute_routed(
     create_collection_views(&transaction, tenant.as_str(), sequence, &runtime.tables, &control)?;
     control.check()?;
     let mut statement = transaction
-        .prepare(&runtime.text)
+        .prepare_cached(&runtime.text)
         .map_err(|_| control.interrupted(QueryError::InvalidSpec))?;
     let bound = bound_values(&statement, runtime)?;
     let column_count = statement.column_count();
@@ -561,22 +561,25 @@ fn check_relation_input_bounds(
     let sequence = i64::try_from(sequence).map_err(|_| QueryError::CandidateBoundExceeded)?;
     let mut documents = 0usize;
     let mut bytes = 0usize;
+    let mut statement = transaction
+        .prepare_cached(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(body) + LENGTH(id) + LENGTH(collection)), 0)
+             FROM (
+                 SELECT id, collection, body, deleted, expires_at,
+                        ROW_NUMBER() OVER (PARTITION BY id ORDER BY commit_seq DESC) AS row_number
+                 FROM documents
+                 WHERE tenant = ?1 AND collection = ?2 AND commit_seq <= ?3
+             )
+             WHERE row_number = 1 AND deleted = 0
+               AND (expires_at IS NULL OR expires_at > ?4)",
+        )
+        .map_err(|_| QueryError::StorageFailure)?;
     for collection in tables {
         control.check()?;
-        let (relation_documents, relation_bytes) = transaction
-            .query_row(
-                "SELECT COUNT(*), COALESCE(SUM(LENGTH(body) + LENGTH(id) + LENGTH(collection)), 0)
-                 FROM (
-                     SELECT id, collection, body, deleted, expires_at,
-                            ROW_NUMBER() OVER (PARTITION BY id ORDER BY commit_seq DESC) AS row_number
-                     FROM documents
-                     WHERE tenant = ?1 AND collection = ?2 AND commit_seq <= ?3
-                 )
-                 WHERE row_number = 1 AND deleted = 0
-                   AND (expires_at IS NULL OR expires_at > ?4)",
-                rusqlite::params![tenant, collection, sequence, unix_millis()],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-            )
+        let (relation_documents, relation_bytes) = statement
+            .query_row(rusqlite::params![tenant, collection, sequence, unix_millis()], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
             .map_err(|_| control.interrupted(QueryError::StorageFailure))?;
         if relation_documents < 0 || relation_bytes < 0 {
             return Err(QueryError::StorageFailure);
@@ -655,7 +658,7 @@ fn storage_columns(
     transaction: &rusqlite::Transaction<'_>,
 ) -> Result<BTreeSet<String>, QueryError> {
     let mut statement = transaction
-        .prepare("SELECT name FROM pragma_table_xinfo('documents')")
+        .prepare_cached("SELECT name FROM pragma_table_xinfo('documents')")
         .map_err(|_| QueryError::StorageFailure)?;
     statement
         .query_map([], |row| row.get::<_, String>(0))
@@ -672,7 +675,7 @@ fn collection_fields(
 ) -> Result<BTreeSet<String>, QueryError> {
     let sequence = i64::try_from(sequence).map_err(|_| QueryError::CandidateBoundExceeded)?;
     let mut statement = transaction
-        .prepare(
+        .prepare_cached(
             "SELECT DISTINCT json_each.key
              FROM documents, json_each(
                  CASE WHEN json_type(CAST(documents.body AS TEXT), '$.\"$value\"') = 'object'

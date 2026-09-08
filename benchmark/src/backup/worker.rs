@@ -1729,11 +1729,8 @@ fn capture_plan(
         (Some(base), false) => super::BackupKind::Incremental { base },
         (None, _) => super::BackupKind::Full,
     };
-    let artifact_id = super::capture_artifact_id(
-        stream.config.engine.engine().database_id(),
-        kind,
-        boundary,
-    );
+    let artifact_id =
+        super::capture_artifact_id(stream.config.engine.engine().database_id(), kind, boundary);
     let encryption = BackupEncryption::from_database_key_lease_with_artifact_id(
         &lease,
         stream.config.engine.engine().database_owner().region(),

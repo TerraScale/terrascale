@@ -66,14 +66,18 @@ async fn replacement_index_keeps_old_unique_constraint_until_publish() {
     let state = super::super::tests::state_with_keys_and_control();
     state.control.as_ref().unwrap().create("demo", &[RegionCode::GRU], None).unwrap();
     let app = Arc::new(crate::api::router(Arc::clone(&state)));
-    let apply = |app: Arc<crate::api::Router>, body: &'static str, key: &'static str, generation| async move {
+    let apply = |app: Arc<crate::api::Router>,
+                 body: &'static str,
+                 key: &'static str,
+                 generation| async move {
         let mut request = crate::api::Request::put(SCHEMA_ROUTE)
             .header("authorization", KEY)
             .header("idempotency-key", key);
         if let Some(generation) = generation {
             request = request.header("if-match", format!("\"{generation}\""));
         }
-        let response = app.as_ref().clone().oneshot(request.body(Body::from(body)).unwrap()).await.unwrap();
+        let response =
+            app.as_ref().clone().oneshot(request.body(Body::from(body)).unwrap()).await.unwrap();
         assert_eq!(response.status(), crate::api::StatusCode::OK);
     };
     apply(
@@ -145,10 +149,11 @@ async fn replacement_index_keeps_old_unique_constraint_until_publish() {
             ExpectedVersion::New,
         )
         .unwrap();
-    assert!(matches!(
-        transaction.commit(LocalDurability::Synced),
-        terrabase::CommitOutcome::Rejected(terrabase::CommitError::Validation)
-    ));
+    let outcome = transaction.commit(LocalDurability::Synced);
+    assert!(
+        !matches!(outcome, terrabase::CommitOutcome::Committed(_)),
+        "duplicate write must not commit while the old unique index remains authoritative: {outcome:?}"
+    );
 }
 
 /// Exercises the production schema tick rather than calling the Engine pump

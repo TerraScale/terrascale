@@ -221,12 +221,12 @@ impl Engine {
             staged.location.clone_from(&staging);
             drop(Self::open(staged)?);
             drop(registration);
-            fs::File::open(&staging)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|error| {
+            fs::File::open(&staging).and_then(|directory| directory.sync_all()).map_err(
+                |error| {
                     eprintln!("branch restore staging sync failed: {error:?}");
                     EngineOpenError::StorageUnavailable
-                })?;
+                },
+            )?;
             if fs::rename(&staging, target).is_err() {
                 // Another restore may have won the target rename while this
                 // source was quiesced. Re-read the durable marker to make an
