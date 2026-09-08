@@ -2251,6 +2251,7 @@ pub struct AuthTransactionIdentity {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthResult {
+    pub count: Option<i64>,
     pub record: Option<AuthRecord>,
     pub matched: bool,
     pub records: Option<Vec<AuthRecord>>,
@@ -2303,6 +2304,25 @@ pub struct AuthPageQuery {
     pub predicates: Vec<AuthPredicate>,
     pub offset: u32,
     pub limit: u32,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthPredicateOnly {
+    pub model: String,
+    pub predicates: Vec<AuthPredicate>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthPredicateUpdate {
+    pub model: String,
+    pub predicates: Vec<AuthPredicate>,
+    pub update: AuthRecord,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthIncrement {
+    pub model: String,
+    pub predicates: Vec<AuthPredicate>,
+    pub increment: AuthRecord,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub set: Option<AuthRecord>,
 }
 /// Every auth mutation requires caller-owned durable identity.
 #[derive(Debug, Clone)]
@@ -2396,6 +2416,64 @@ impl AuthPersistence {
         options: AuthOperationOptions,
     ) -> Result<AuthResult> {
         self.post(database_id, "findPage", &input, options).await
+    }
+    pub async fn update_one(
+        &self,
+        database_id: &str,
+        input: AuthPredicateUpdate,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "updateOne", &input, options).await
+    }
+    pub async fn update_many(
+        &self,
+        database_id: &str,
+        input: AuthPredicateUpdate,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "updateMany", &input, options).await
+    }
+    pub async fn delete_one(
+        &self,
+        database_id: &str,
+        input: AuthPredicateOnly,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "deleteOne", &input, options).await
+    }
+    pub async fn delete_many(
+        &self,
+        database_id: &str,
+        input: AuthPredicateOnly,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "deleteMany", &input, options).await
+    }
+    pub async fn increment_one(
+        &self,
+        database_id: &str,
+        input: AuthIncrement,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "incrementOne", &input, options)
+            .await
+    }
+    pub async fn consume_matching(
+        &self,
+        database_id: &str,
+        input: AuthPredicateOnly,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "consumeMatching", &input, options)
+            .await
+    }
+    pub async fn count(
+        &self,
+        database_id: &str,
+        input: AuthPredicateOnly,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "count", &input, options).await
     }
     pub async fn find_one(&self, database_id: &str, model: &str, id: &str) -> Result<AuthResult> {
         self.shared

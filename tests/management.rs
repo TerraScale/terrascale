@@ -1245,3 +1245,57 @@ async fn auth_persistence_uses_public_named_operations_and_stable_identity() {
         .is_err());
     assert_eq!(mock.requests.lock().unwrap().len(), 9);
 }
+
+#[tokio::test]
+async fn auth_persistence_exposes_predicate_operations() {
+    use terrascale::*;
+    let response = json!({"record":null,"matched":true,"records":[],"count":2});
+    let mock = Mock::new((0..7).map(|_| Response::json(200, &response)).collect());
+    let api = client(Arc::clone(&mock)).management().auth_persistence();
+    let options = AuthOperationOptions {
+        idempotency_key: "stable".into(),
+        transaction_id: None,
+    };
+    let request = AuthPredicateOnly {
+        model: "user".into(),
+        predicates: vec![],
+    };
+    let update = AuthPredicateUpdate {
+        model: "user".into(),
+        predicates: vec![],
+        update: AuthRecord::new(),
+    };
+    let increment = AuthIncrement {
+        model: "user".into(),
+        predicates: vec![],
+        increment: [("loginCount".into(), json!(1))].into_iter().collect(),
+        set: None,
+    };
+    api.update_one("db", update.clone(), options.clone())
+        .await
+        .unwrap();
+    assert!(mock.last().url.ends_with("/auth/updateOne"));
+    api.update_many("db", update, options.clone())
+        .await
+        .unwrap();
+    assert!(mock.last().url.ends_with("/auth/updateMany"));
+    api.delete_one("db", request.clone(), options.clone())
+        .await
+        .unwrap();
+    assert!(mock.last().url.ends_with("/auth/deleteOne"));
+    api.delete_many("db", request.clone(), options.clone())
+        .await
+        .unwrap();
+    assert!(mock.last().url.ends_with("/auth/deleteMany"));
+    api.increment_one("db", increment, options.clone())
+        .await
+        .unwrap();
+    assert!(mock.last().url.ends_with("/auth/incrementOne"));
+    api.consume_matching("db", request.clone(), options.clone())
+        .await
+        .unwrap();
+    assert!(mock.last().url.ends_with("/auth/consumeMatching"));
+    let result = api.count("db", request, options).await.unwrap();
+    assert_eq!(result.count, Some(2));
+    assert!(mock.last().url.ends_with("/auth/count"));
+}
