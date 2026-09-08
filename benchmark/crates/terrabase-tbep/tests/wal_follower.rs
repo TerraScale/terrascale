@@ -1005,7 +1005,7 @@ fn wal_replica_bindings(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn physical_wal_and_receipt_cross_authenticated_quic() {
+async fn physical_wal_snapshot_install_ack_and_reconnect_cross_authenticated_quic() {
     use std::sync::{Arc, Mutex};
     use terrabase_cluster::wal_quic::{receive_batch, send_batch};
     use terrabase_cluster::wal_wire::ScopedWalBatch;
@@ -1028,6 +1028,13 @@ async fn physical_wal_and_receipt_cross_authenticated_quic() {
     let follower_location = TestLocation::new("quic-follower");
     let (follower, _) = WalFollower::bootstrap(location.path(), follower_location.path()).unwrap();
     let mut follower = follower;
+    // The production adapter starts from the installed file snapshot.  Keep
+    // this assertion next to the socket qualification so a passing WAL/ACK
+    // exchange cannot mask a missing snapshot prefix.
+    assert!(
+        follower.committed_through().is_some(),
+        "snapshot install must expose the writer's committed WAL prefix"
+    );
     follower.fold_generation().unwrap();
     put(&writer, "network-document", 77);
     let follower = Arc::new(Mutex::new(follower));

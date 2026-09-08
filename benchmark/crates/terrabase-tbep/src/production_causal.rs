@@ -744,7 +744,7 @@ mod tests {
             let id = format!("remote-{index}");
             commit_test_document(&remote, &remote_scope, &operation, &id, index);
             let publication =
-                remote.replication_publications(&remote_scope, index, 1).unwrap().remove(0).1;
+                remote.replication_publications(&remote_scope, index as u64, 1).unwrap().remove(0).1;
             source.apply_replicated_publication(&source_scope, &publication).unwrap();
         }
         commit_test_document(&source, &source_scope, "local-second", "local-second", 2);

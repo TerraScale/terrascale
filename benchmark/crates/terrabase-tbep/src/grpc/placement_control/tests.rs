@@ -326,5 +326,5 @@ async fn admitted_listener_retains_authenticated_placement_control() {
     );
     drop(client);
     tokio::task::spawn_blocking(move || listener.shutdown_and_wait()).await.unwrap().unwrap();
-    placement.drain().await.unwrap();
+    PlacementControlServer::drain(&placement).await.unwrap();
 }

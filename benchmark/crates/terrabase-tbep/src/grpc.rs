@@ -253,6 +253,20 @@ pub struct TbepGrpcHandle {
     draining: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// Cloneable evidence that the TBEP serving loop is actively running.
+#[derive(Clone)]
+pub struct TbepServingStatus {
+    serving: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl TbepServingStatus {
+    /// Returns true only while the owned TBEP serving loop is running.
+    #[must_use]
+    pub fn is_serving(&self) -> bool {
+        self.serving.load(Ordering::Acquire)
+    }
+}
+
 impl TbepGrpcHandle {
     /// The bound TCP address, when serving TLS.
     #[must_use]
@@ -392,6 +406,7 @@ pub struct TbepGrpcServer {
     inflight: Arc<AtomicUsize>,
     background: Arc<AtomicUsize>,
     draining: Arc<std::sync::atomic::AtomicBool>,
+    serving: Arc<std::sync::atomic::AtomicBool>,
     lifecycle: Option<Arc<dyn crate::lifecycle::LifecycleControl>>,
     placement: Option<Arc<placement_control::PlacementControlServer>>,
 }
@@ -534,9 +549,16 @@ impl TbepGrpcServer {
             inflight: Arc::new(AtomicUsize::new(0)),
             background: Arc::new(AtomicUsize::new(0)),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            serving: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             lifecycle: None,
             placement: None,
         }
+    }
+
+    /// Returns an observer for the lifetime of the TBEP serving loop.
+    #[must_use]
+    pub fn serving_status(&self) -> TbepServingStatus {
+        TbepServingStatus { serving: Arc::clone(&self.serving) }
     }
 
     /// Retains authenticated placement control on the admitted member listener.
@@ -713,12 +735,15 @@ impl TbepGrpcServer {
                 let result = runtime.block_on(async move {
                     let routes =
                         serve_routes(Arc::clone(&server), None).map_err(std::io::Error::other)?;
-                    routes
+                    server.serving.store(true, Ordering::Release);
+                    let result = routes
                         .serve_with_incoming_shutdown(incoming, async {
                             let _ = signal.await;
                         })
                         .await
-                        .map_err(std::io::Error::other)
+                        .map_err(std::io::Error::other);
+                    server.serving.store(false, Ordering::Release);
+                    result
                 });
                 let _ = done.send(result.map_err(std::io::Error::other));
             })
@@ -832,12 +857,15 @@ impl TbepGrpcServer {
                         startup_timeout,
                         server.config.max_inflight(),
                     );
-                    routes
+                    server.serving.store(true, Ordering::Release);
+                    let result = routes
                         .serve_with_incoming_shutdown(incoming, async {
                             let _ = signal.await;
                         })
                         .await
-                        .map_err(std::io::Error::other)
+                        .map_err(std::io::Error::other);
+                    server.serving.store(false, Ordering::Release);
+                    result
                 });
                 let _ = done.send(result);
             })

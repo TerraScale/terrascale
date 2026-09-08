@@ -686,13 +686,6 @@ async fn serve_admitted_production(
         })?;
         let public_status = prepared.status();
         let metrics_status = prepared_metrics.observation();
-        member
-            .attach_data_plane(Arc::new(crate::production_runtime::ProductionRuntime::new(
-                admission.lifecycle(),
-                metrics_status,
-                public_status.clone(),
-            )))
-            .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
         // The production TBEP endpoint uses the same retained-host registry as
         // the HTTP surface.  It is created only after native composition, so no
         // second engine or location based adapter can be opened.
@@ -787,6 +780,14 @@ async fn serve_admitted_production(
             .with_lifecycle_control(lifecycle)
             .with_placement_control(Arc::clone(&placement)),
         );
+        member
+            .attach_data_plane(Arc::new(crate::production_runtime::ProductionRuntime::new(
+                admission.lifecycle(),
+                metrics_status,
+                public_status.clone(),
+                grpc.serving_status(),
+            )))
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
         let certificate = read_pem(&production.transport.server_certificate, false)?;
         let private_key = read_pem(&production.transport.server_private_key, true)?;
         let client_ca = read_pem(&production.transport.client_ca, false)?;

@@ -519,6 +519,7 @@ pub struct ProductionAdmissionRuntime {
     usage: Arc<crate::usage_admission::UsageAdmissionJournal>,
     snapshot_max_bytes: u64,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+    replaying: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -809,13 +810,15 @@ impl ProductionAdmissionRuntime {
             runtime.clone(),
             local.clone(),
         );
-        let storage = crate::production_admission::storage_admission(
+        let replaying = Arc::new(AtomicBool::new(true));
+        let storage = crate::production_admission::storage_admission_with_replay(
             member.clone(),
             registry.clone(),
             provider,
             authority,
             per_database,
             instance,
+            Arc::clone(&replaying),
         );
         let callback: crate::admission::StorageAdmission = Arc::new(move |record| {
             storage(record)?;
@@ -858,6 +861,7 @@ impl ProductionAdmissionRuntime {
             usage,
             snapshot_max_bytes,
             registry,
+            replaying,
         })
     }
 
@@ -998,6 +1002,7 @@ impl ProductionAdmissionRuntime {
             let read_cut = snapshot
                 .database
                 .host
+                .engine_host()
                 .admitted_shard_read_cut()
                 .map_err(|_| "admitted shard inventory unavailable")?;
             ensure_native_backup_shard_capture_supported(
@@ -1035,6 +1040,7 @@ impl ProductionAdmissionRuntime {
                 record.region.parse().map_err(|_| "invalid admitted Region")?,
             )
             .map_err(|_| "native backup destination unavailable")?;
+            let historical_destinations = destinations.clone();
             let placement = PlacementLock::explicit(
                 record
                     .regions
@@ -1051,7 +1057,7 @@ impl ProductionAdmissionRuntime {
                         .map_err(|_| "backup key authorization unavailable")?,
                 ),
                 destinations,
-                historical_destinations: destinations.clone(),
+                historical_destinations,
                 policy_revision: policy.policy_revision.clone(),
                 retention_days: policy.retention_days,
                 staging: self
@@ -1147,6 +1153,7 @@ impl ProductionAdmissionRuntime {
         let destinations =
             crate::production_backup::destinations_from_config(&policy.destinations, region)
                 .map_err(|_| "native backup destination unavailable")?;
+        let historical_destinations = destinations.clone();
         let placement = terrabase::backup::PlacementLock::explicit(
             record
                 .regions
@@ -1163,7 +1170,7 @@ impl ProductionAdmissionRuntime {
                     .map_err(|_| "backup key authorization unavailable")?,
             ),
             destinations,
-            historical_destinations: destinations.clone(),
+            historical_destinations,
             policy_revision: policy.policy_revision.clone(),
             retention_days: policy.retention_days,
             staging: configured.backup_root.clone(),
@@ -1593,7 +1600,11 @@ impl ProductionAdmissionRuntime {
             activation.active.insert(database.clone());
             activation.pending_publication.insert(scope, writer.then_some(database));
         }
-        self.publish_pending(&mut activation)
+        let result = self.publish_pending(&mut activation);
+        if result.is_ok() {
+            self.replaying.store(false, Ordering::Release);
+        }
+        result
     }
 
     fn prepare_active_database(

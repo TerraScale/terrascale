@@ -374,6 +374,31 @@ impl AdmittedDatabaseRegistry {
         if !(self.ready)() {
             return Err("Member is not ready to admit databases".into());
         }
+        self.publish_inner(record, lease, location, instance, scope)
+    }
+
+    /// Publishes a retained admission while startup is replaying durable
+    /// manifests. The readiness gate still protects all public lookups; this
+    /// path only restores the retained host needed for final readiness.
+    pub(crate) fn publish_retained(
+        &self,
+        record: AdmissionRecord,
+        lease: DatabaseLease,
+        location: PathBuf,
+        instance: u64,
+    ) -> Result<(), String> {
+        let scope = lease.database_owner();
+        self.publish_inner(record, lease, location, instance, scope)
+    }
+
+    fn publish_inner(
+        &self,
+        record: AdmissionRecord,
+        lease: DatabaseLease,
+        location: PathBuf,
+        instance: u64,
+        scope: terrabase::member::DatabaseScope,
+    ) -> Result<(), String> {
         if scope.tenant().to_string() != record.tenant_id
             || scope.project().to_string() != record.project_id
             || scope.database().to_string() != record.database_id

@@ -140,7 +140,7 @@ fn fresh_join_commits_only_local_successor_and_replays_after_restart() {
             .connection
             .lock()
             .unwrap()
-            .query_row("SELECT count(*) FROM accepted", [], |row| row.get::<_, u64>(0))
+            .query_row("SELECT count(*) FROM accepted", [], |row| row.get::<_, i64>(0))
             .unwrap(),
         1
     );
@@ -254,7 +254,7 @@ fn join_authority_floor_fences_later_accept_and_drain_after_reopen() {
             .connection
             .lock()
             .unwrap()
-            .query_row("SELECT count(*) FROM transition_drains", [], |row| row.get::<_, u64>(0))
+            .query_row("SELECT count(*) FROM transition_drains", [], |row| row.get::<_, i64>(0))
             .unwrap(),
         0
     );
@@ -358,7 +358,7 @@ fn independent_go_checkpoint_joins_reopens_after_expiry_and_accepts_new_member_d
             .connection
             .lock()
             .unwrap()
-            .query_row("SELECT count(*) FROM accepted", [], |row| row.get::<_, u64>(0))
+            .query_row("SELECT count(*) FROM accepted", [], |row| row.get::<_, i64>(0))
             .unwrap(),
         2
     );

@@ -340,10 +340,7 @@ impl NativeBackupFleet {
             .map(|(_, destination)| destination)
             .ok_or(FleetError::Configuration)?;
         let prefix = format!("{database}/envelopes/env-{digest}");
-        let bytes = destination
-            .download_envelope(&prefix)
-            .await
-            .map_err(|_| FleetError::Upload)?;
+        let bytes = destination.download_envelope(&prefix).await.map_err(|_| FleetError::Upload)?;
         let envelope = BackupEnvelope::decode(&bytes).map_err(|_| FleetError::Capture)?;
         if envelope.digest() != digest || envelope.database_id() != database {
             return Err(FleetError::Capture);
@@ -1722,6 +1719,7 @@ fn persist_upload_journal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::BackupEnvelopeParticipant;
     use crate::backup::tests::{committed, location, open_engine, put, text};
     use crate::encryption::{
         DatabaseKey, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
@@ -2575,7 +2573,8 @@ mod tests {
             fleet.health(&identity).unwrap().protected,
             "observation leaves historical receipt unchanged"
         );
-        let receipt = fleet.lifecycle_delete(&identity, "delete-after-policy-switch").await.unwrap();
+        let receipt =
+            fleet.lifecycle_delete(&identity, "delete-after-policy-switch").await.unwrap();
         assert_eq!(receipt.action, "delete_owned_data");
         assert!(receipt.point_digest.parse::<usize>().unwrap() > 0);
         assert!(first.list_points(&identity, 8).await.unwrap().is_empty());

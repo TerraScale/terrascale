@@ -3,7 +3,10 @@ use crate::{
     admission::{AdmissionRecord, StorageAdmission},
     admitted_databases::AdmittedDatabaseRegistry,
 };
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use terrabase::{
     encryption::{
         DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys,
@@ -113,6 +116,41 @@ pub fn storage_admission(
     per_database: usize,
     instance: u64,
 ) -> StorageAdmission {
+    storage_admission_inner(member, registry, provider, authority, per_database, instance, None)
+}
+
+/// Constructs storage admission with a startup-only retained-manifest replay
+/// window. The caller closes `replaying` after the first reconciliation commits
+/// its lanes, before live admission can use the callback.
+pub fn storage_admission_with_replay(
+    member: Member,
+    registry: Arc<AdmittedDatabaseRegistry>,
+    provider: OciVaultKeyDelivery,
+    authority: AdmissionAuthority,
+    per_database: usize,
+    instance: u64,
+    replaying: Arc<AtomicBool>,
+) -> StorageAdmission {
+    storage_admission_inner(
+        member,
+        registry,
+        provider,
+        authority,
+        per_database,
+        instance,
+        Some(replaying),
+    )
+}
+
+fn storage_admission_inner(
+    member: Member,
+    registry: Arc<AdmittedDatabaseRegistry>,
+    provider: OciVaultKeyDelivery,
+    authority: AdmissionAuthority,
+    per_database: usize,
+    instance: u64,
+    replaying: Option<Arc<AtomicBool>>,
+) -> StorageAdmission {
     Arc::new(move |record| {
         let (region, tenant_id) = register_storage(&member, &provider, record, per_database)?;
         // Registration precedes placement proposal. A pending scope is durable but
@@ -135,7 +173,9 @@ pub fn storage_admission(
                 if lifecycle_allows_origin_activation(&lease, &tenant_id)? {
                     return Err("maintenance admission is not access-revoked".into());
                 }
-                registry.publish(
+                publish(
+                    &registry,
+                    replaying.as_ref(),
                     record.clone(),
                     lease,
                     member.root().join(&record.database_id),
@@ -155,7 +195,9 @@ pub fn storage_admission(
                 // Preparation and acceptance are durable origin fences. Replay
                 // retains revoked encrypted entries for authorized maintenance.
                 if !lifecycle_allows_origin_activation(&lease, &tenant_id)? {
-                    registry.publish(
+                    publish(
+                        &registry,
+                        replaying.as_ref(),
                         record.clone(),
                         lease,
                         member.root().join(&record.database_id),
@@ -182,7 +224,9 @@ pub fn storage_admission(
                     .configure_usage_placement(placement)
                     .map_err(|_| "usage placement refused")?;
                 lease.activate_origin_epoch(epoch).map_err(|_| "writer epoch refused")?;
-                registry.publish(
+                publish(
+                    &registry,
+                    replaying.as_ref(),
                     record.clone(),
                     lease,
                     member.root().join(&record.database_id),
@@ -191,6 +235,21 @@ pub fn storage_admission(
             }
         }
     })
+}
+
+fn publish(
+    registry: &AdmittedDatabaseRegistry,
+    replaying: Option<&Arc<AtomicBool>>,
+    record: AdmissionRecord,
+    lease: terrabase::member::DatabaseLease,
+    location: std::path::PathBuf,
+    instance: u64,
+) -> Result<(), String> {
+    if replaying.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        registry.publish_retained(record, lease, location, instance)
+    } else {
+        registry.publish(record, lease, location, instance)
+    }
 }
 
 /// Reads the durable deletion fence before replay can activate a writer epoch.
@@ -401,24 +460,44 @@ mod tests {
         let unrelated_id = DatabaseId::from(unrelated.database());
         reopened.accept_database_role(&fenced_id, &Writer(if accepted { 2 } else { 1 })).unwrap();
         reopened.accept_database_role(&unrelated_id, &Writer(1)).unwrap();
-        let registry = Arc::new(AdmittedDatabaseRegistry::new(Arc::new(|| true)));
-        let callback = storage_admission(
+        let ready = Arc::new(AtomicBool::new(false));
+        let registry_ready = Arc::clone(&ready);
+        let registry = Arc::new(AdmittedDatabaseRegistry::new(Arc::new(move || {
+            registry_ready.load(Ordering::Acquire)
+        })));
+        let replaying = Arc::new(AtomicBool::new(true));
+        let callback = super::storage_admission_with_replay(
             reopened.clone(),
             registry.clone(),
             fixture.provider.clone(),
             authority,
             4,
             2,
+            Arc::clone(&replaying),
         );
         let host =
             AdmissionHost::open(root, "production".into(), RegionCode::GRU, member_id, callback)
                 .unwrap();
-        let fenced_host = registry.resolve(&fenced.database().to_text()).unwrap().unwrap();
+        replaying.store(false, Ordering::Release);
+        assert!(registry.resolve_serving(&fenced.database().to_text()).is_err());
+        let fenced_host = registry
+            .retained_snapshot()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == fenced.database().to_text())
+            .unwrap()
+            .database;
         let scope = fenced_host.host.engine().scope_for(&fenced_tenant);
         let state = fenced_host.host.engine().lifecycle_state(&scope).unwrap();
         assert!(state.access_revoked());
         assert_eq!(fenced_host.host.engine().origin_epoch().unwrap(), (1, true));
-        let unrelated_host = registry.resolve(&unrelated.database().to_text()).unwrap().unwrap();
+        let unrelated_host = registry
+            .retained_snapshot()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == unrelated.database().to_text())
+            .unwrap()
+            .database;
         assert_eq!(unrelated_host.host.engine().origin_epoch().unwrap(), (1, false));
         assert!(unrelated_host.host.engine().activate_origin_epoch(1).is_ok());
         let unrelated_scope = unrelated_host

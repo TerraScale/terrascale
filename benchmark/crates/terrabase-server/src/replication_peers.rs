@@ -236,8 +236,8 @@ impl ReplicationPeers {
         selected_regions: BTreeMap<DatabaseRouteScope, std::collections::BTreeSet<String>>,
         dispatcher: Option<Arc<dyn PeerControlDispatcher>>,
     ) -> Result<Self, String> {
-        let endpoint = runtime.transport();
-        let validated = validate_peer_lanes(&runtime, peers)?;
+        let endpoint = runtime.shared_transport();
+        let validated = validate_peer_lanes(&runtime, peers.clone())?;
         let observations: PeerObservations = Arc::default();
         for (id, lanes) in &validated {
             observe(&observations, id.as_str(), lanes, false, 0);
@@ -596,7 +596,7 @@ fn spawn_peer_owner(
         }
         let incoming = Arc::new(incoming);
         let mut classifiers = tokio::task::JoinSet::new();
-        let endpoint = runtime.transport();
+        let endpoint = runtime.shared_transport();
         let mut stopped = stopped;
         let mut worker_error = None;
         loop {
@@ -729,7 +729,7 @@ async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
         worker_id,
         retention,
     } = context;
-    let endpoint = runtime.transport();
+    let endpoint = runtime.shared_transport();
     let dial = endpoint.config().local_identity().member().as_str() < id.as_str();
     loop {
         let connection = tokio::select! {
