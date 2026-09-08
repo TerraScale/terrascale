@@ -1,6 +1,7 @@
 use std::fs;
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use terrascale::generated_contract;
 
 #[derive(Deserialize)]
@@ -21,10 +22,8 @@ struct Artifact {
 #[test]
 fn generated_contract_is_pinned_to_the_committed_bundle() {
     let root = format!("{}/contracts/v1", env!("CARGO_MANIFEST_DIR"));
-    let manifest: Manifest = serde_json::from_str(
-        &fs::read_to_string(format!("{root}/manifest.json")).expect("manifest"),
-    )
-    .expect("valid manifest");
+    let manifest_bytes = fs::read(format!("{root}/manifest.json")).expect("manifest");
+    let manifest: Manifest = serde_json::from_slice(&manifest_bytes).expect("valid manifest");
     assert_eq!(manifest.schema_version, 1);
     assert_eq!(
         manifest.contract_version,
@@ -43,6 +42,50 @@ fn generated_contract_is_pinned_to_the_committed_bundle() {
         artifacts["msgpack/terrascale.sync.v1.msgpack.json"],
         generated_contract::MSGPACK_MANIFEST_BLAKE3
     );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&manifest_bytes)),
+        generated_contract::MANIFEST_SHA256
+    );
+    assert_eq!(artifacts.len(), generated_contract::ARTIFACTS.len());
+    for artifact in generated_contract::ARTIFACTS {
+        assert_eq!(
+            artifacts.get(artifact.path).map(String::as_str),
+            Some(artifact.blake3),
+            "generated digest metadata for {}",
+            artifact.path
+        );
+        assert!(
+            fs::metadata(format!("{root}/{}", artifact.path)).is_ok(),
+            "missing pinned artifact {}",
+            artifact.path
+        );
+    }
+}
+
+#[test]
+fn generated_conformance_digests_match_the_frozen_bundle() {
+    let root = format!("{}/contracts/v1", env!("CARGO_MANIFEST_DIR"));
+    for (path, expected) in [
+        (
+            "conformance/msgpack/message-vectors.json",
+            generated_contract::MESSAGE_VECTOR_SHA256,
+        ),
+        (
+            "conformance/msgpack/hostile-vectors.json",
+            generated_contract::HOSTILE_VECTOR_SHA256,
+        ),
+        (
+            "conformance/http.json",
+            generated_contract::HTTP_CONFORMANCE_SHA256,
+        ),
+        (
+            "conformance/reactive.json",
+            generated_contract::REACTIVE_CONFORMANCE_SHA256,
+        ),
+    ] {
+        let bytes = fs::read(format!("{root}/{path}")).expect("conformance artifact");
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected, "{path}");
+    }
 }
 
 #[test]
