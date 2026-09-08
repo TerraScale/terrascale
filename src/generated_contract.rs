@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "880ee3d1a9e09a4caccaae7f567f7eb21708044bcc70db1193654f79cff36052";
+    "942965f730e63d3b9efefb19d4357fc35e8022a8de335f2ca8b2b559e71af397";
 pub const OPENAPI_BLAKE3: &str = "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
@@ -59,7 +59,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "proto/terrabase/v1/engine.proto",
-        blake3: "eddd647a5824625e069bbc43f64aff2f685f50ca79613e13bc3e643428925fe2",
+        blake3: "71c3cbd525669fb51c74355bad72da555431d303da14f1a1c50b09e70c2964af",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/family.proto",
