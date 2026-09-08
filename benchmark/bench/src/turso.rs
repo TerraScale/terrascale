@@ -78,7 +78,7 @@ impl Backend for TursoBackend {
             let row = rows
                 .next()
                 .await?
-                .ok_or("sqlite_version() returned no row")?;
+                .ok_or(turso::Error::QueryReturnedNoRows)?;
             Ok::<_, turso::Error>(row.get::<String>(0)?)
         })?;
         Ok(format!(
@@ -116,7 +116,7 @@ impl Backend for TursoBackend {
     fn seed(&mut self, config: &LaneConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
         let payload = document::payload();
         self.runtime.block_on(async {
-            let insert = self
+            let mut insert = self
                 .admin
                 .prepare(
                     "INSERT INTO users(tenant, id, name, \"group\", payload) \
@@ -200,9 +200,14 @@ struct TursoSlot {
 }
 
 impl TursoSlot {
-    /// Drives one future on this slot's runtime.
-    fn drive<T>(&mut self, future: impl std::future::Future<Output = Result<T, turso::Error>>, context: &str) -> Result<T, Box<dyn Error + Send + Sync>> {
-        self.runtime
+    /// Drives one future on a slot's runtime. An associated function so the
+    /// statement borrow and the runtime borrow stay disjoint.
+    fn drive<T>(
+        runtime: &tokio::runtime::Runtime,
+        future: impl std::future::Future<Output = Result<T, turso::Error>>,
+        context: &str,
+    ) -> Result<T, Box<dyn Error + Send + Sync>> {
+        runtime
             .block_on(future)
             .map_err(|error| format!("{context}: {error}").into())
     }
@@ -213,7 +218,9 @@ impl Slot for TursoSlot {
         let tenant = document::TENANT.to_owned();
         let id = document::seeded_id(seeded_index);
         let statement = &mut self.read;
-        self.drive(
+        let runtime = &self.runtime;
+        Self::drive(
+            runtime,
             async {
                 let mut rows = statement.query(turso::params![tenant, id]).await?;
                 match rows.next().await? {
@@ -231,7 +238,9 @@ impl Slot for TursoSlot {
         let name = document::MEASURED_NAME.to_owned();
         let payload = document::payload();
         let statement = &mut self.write;
-        let affected = self.drive(
+        let runtime = &self.runtime;
+        let affected = Self::drive(
+            runtime,
             async { statement.execute(turso::params![tenant, id, name, document::MEASURED_GROUP, payload]).await },
             "measured write",
         )?;
@@ -243,7 +252,9 @@ impl Slot for TursoSlot {
         let tenant = document::TENANT.to_owned();
         let name = document::seeded_name(seeded_index);
         let statement = &mut self.query;
-        self.drive(
+        let runtime = &self.runtime;
+        Self::drive(
+            runtime,
             async {
                 let mut rows = statement.query(turso::params![tenant, name]).await?;
                 match rows.next().await? {

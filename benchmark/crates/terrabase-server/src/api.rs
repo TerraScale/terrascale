@@ -1452,13 +1452,29 @@ async fn placement_headers(
     let Some(database) = database else {
         return response;
     };
-    let Ok(record) = database_record(&state, &database) else {
-        return response;
+    // Admitted production records are immutable.  The authentication layer
+    // already resolved this database before dispatch, so reuse that record
+    // instead of reopening lifecycle state after every handler response.
+    let headers = state
+        .admitted_databases
+        .as_ref()
+        .and_then(|registry| registry.resolve_metadata(&database).ok().flatten())
+        .map(|database| {
+            (
+                database.record.regions.join(","),
+                database.record.residency.clone(),
+            )
+        });
+    let headers = match headers {
+        Some(headers) => headers,
+        None => match database_record(&state, &database) {
+            Ok(record) => (record.placement_header(), record.residency_header().to_owned()),
+            Err(_) => return response,
+        },
     };
-    if let (Ok(placement), Ok(residency)) = (
-        HeaderValue::from_str(&record.placement_header()),
-        HeaderValue::from_str(record.residency_header()),
-    ) {
+    if let (Ok(placement), Ok(residency)) =
+        (HeaderValue::from_str(&headers.0), HeaderValue::from_str(&headers.1))
+    {
         let headers = response.headers_mut();
         headers.entry(PLACEMENT_HEADER).or_insert(placement);
         headers.entry(RESIDENCY_HEADER).or_insert(residency);
@@ -3263,9 +3279,14 @@ pub(crate) fn document_host(
             .resolve_degraded_serving(name)
             .map_err(|_| ApiError::storage_failure())?
             .ok_or_else(|| ApiError::database_not_found(name))?;
-        let record = database.public_record().map_err(|_| ApiError::storage_failure())?;
-        if !record.placement.contains(&state.region) {
-            return Err(ApiError::misdirected(&record.placement, record.residency_header()));
+        let placement = database
+            .record
+            .regions
+            .iter()
+            .filter_map(|region| region.parse().ok())
+            .collect::<Vec<_>>();
+        if !placement.contains(&state.region) {
+            return Err(ApiError::misdirected(&placement, &database.record.residency));
         }
         let scope =
             document_scope(database.host.engine()).map_err(|()| ApiError::storage_failure())?;
