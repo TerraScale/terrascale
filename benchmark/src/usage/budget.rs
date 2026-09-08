@@ -533,3 +533,16 @@ mod tests {
         }
     }
 }
+
+/// One same-transaction local debit, reported only after document commit.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BudgetConsumption {
+    pub sequence: u64,
+    pub operation_id: String,
+    pub pool_id: String,
+    pub refill_operation_id: String,
+    pub database_id: String,
+    pub body_digest: String,
+    pub local_units: i64,
+}

@@ -15,7 +15,7 @@ mod placement;
 
 pub use budget::{
     ALLOCATION_SIGNING_DOMAIN, AllocationEnvelope, AllocationError, AllocationGrant,
-    MAX_ALLOCATION_BYTES, SignedAllocation, VerifiedAllocation,
+    MAX_ALLOCATION_BYTES, SignedAllocation, VerifiedAllocation, BudgetConsumption,
 };
 pub use placement::UsagePlacement;
 

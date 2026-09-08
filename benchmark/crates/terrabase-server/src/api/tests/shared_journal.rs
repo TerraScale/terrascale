@@ -36,7 +36,7 @@ async fn pending_http_views_share_dispatch_and_cancel_the_last_worker() {
         let app = app.clone();
         let request = Request::get(view["log"].as_str().unwrap())
             .header("authorization", key)
-            .header("x-terrascale-view-capability", view["capability"].as_str().unwrap())
+            .header("x-terrascale-capability", view["capability"].as_str().unwrap())
             .body(Body::empty())
             .unwrap();
         polls.push(tokio::spawn(async move { app.oneshot(request).await.unwrap() }));
@@ -124,7 +124,7 @@ async fn distinct_sql_views_share_one_journal_pass() {
         let app = app.clone();
         let request = Request::get(view["log"].as_str().unwrap())
             .header("authorization", key)
-            .header("x-terrascale-view-capability", view["capability"].as_str().unwrap())
+            .header("x-terrascale-capability", view["capability"].as_str().unwrap())
             .body(Body::empty())
             .unwrap();
         tasks.push(tokio::spawn(async move {
@@ -179,7 +179,7 @@ async fn assert_leaving_row(app: axum::Router, attached: &[serde_json::Value], c
             .oneshot(
                 Request::get(url)
                     .header("authorization", key)
-                    .header("x-terrascale-view-capability", view["capability"].as_str().unwrap())
+                    .header("x-terrascale-capability", view["capability"].as_str().unwrap())
                     .body(Body::empty())
                     .unwrap(),
             )

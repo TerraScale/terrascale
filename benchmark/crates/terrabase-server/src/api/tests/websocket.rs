@@ -89,7 +89,7 @@ impl Server {
             .oneshot(
                 Request::get(url)
                     .header("authorization", KEY)
-                    .header("x-terrascale-view-capability", capability)
+                    .header("x-terrascale-capability", capability)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -491,7 +491,7 @@ async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
         .oneshot(
             Request::get(attached["snapshot_chunks"][0].as_str().unwrap())
                 .header("authorization", KEY)
-                .header("x-terrascale-view-capability", capability)
+                .header("x-terrascale-capability", capability)
                 .body(Body::empty())
                 .unwrap(),
         )

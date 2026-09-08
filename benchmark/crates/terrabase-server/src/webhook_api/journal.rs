@@ -69,10 +69,16 @@ fn publication(record: &SyncJournalRecord) -> Result<Publication, StorageError> 
         return Err(StorageError::Unavailable);
     }
     let body = encode_publication(record)?;
+    let origin_lane = record.provenance().origin().to_owned();
+    let origin_region = terrabase::OriginLaneId::parse(&origin_lane)
+        .map(|lane| lane.region().as_str().to_ascii_uppercase())
+        .unwrap_or_else(|_| origin_lane.to_ascii_uppercase());
     Ok(Publication {
         revision: position.sequence(),
         write_index: position.write_index(),
         event_id: blake3::hash(&body).to_hex().to_string(),
+        origin_region,
+        origin_lane,
         body,
     })
 }

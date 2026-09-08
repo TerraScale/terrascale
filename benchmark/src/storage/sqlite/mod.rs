@@ -1200,14 +1200,16 @@ CREATE TABLE IF NOT EXISTS usage_budget_allocations (
     policy_epoch INTEGER NOT NULL, consent_epoch INTEGER NOT NULL, writer_epoch INTEGER NOT NULL,
     placement TEXT NOT NULL, payload_digest BLOB NOT NULL,
     units_total INTEGER NOT NULL, units_remaining INTEGER NOT NULL,
-    expires_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL, pool_id TEXT NOT NULL, pool_sequence INTEGER NOT NULL,
     PRIMARY KEY (tenant, operation)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS usage_budget_operations (
+    report_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant TEXT NOT NULL, operation TEXT NOT NULL, database_id TEXT NOT NULL,
     pool_id TEXT NOT NULL, payload_digest BLOB NOT NULL, units INTEGER NOT NULL,
-    PRIMARY KEY (tenant, operation)
-) WITHOUT ROWID;
+    refill_operation_id TEXT NOT NULL, body_digest TEXT NOT NULL,
+    UNIQUE (tenant, operation)
+);
 
 CREATE TABLE IF NOT EXISTS usage_stream_seals (
     tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL,
@@ -2324,17 +2326,47 @@ impl CommitContext {
         intents: &[CommitIntent],
     ) -> Result<Vec<CommitResult>, ()> {
         // Direct metadata mutations require local sync too, so FULL is the
-        // baseline. Only a wave containing no Synced request can lower it.
-        // Restore FULL after success or rollback before another operation
-        // obtains this writer connection.
+        // baseline. Explicitly restore it before every Synced wave in case a
+        // prior Written wave failed while restoring its connection setting.
         let written_only =
             !intents.iter().any(|intent| intent.durability == LocalDurability::Synced);
         if written_only {
             writer.execute_batch("PRAGMA synchronous = NORMAL").map_err(|_| ())?;
+        } else {
+            writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())?;
         }
         let result = self.commit_transaction_inner(writer, intents);
-        if written_only {
-            writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())?;
+        let restored = if written_only {
+            #[cfg(test)]
+            if self
+                .faults
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .fire(super::FaultPoint::PostCommitSync)
+                .is_err()
+            {
+                Err(())
+            } else {
+                writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())
+            }
+            #[cfg(not(test))]
+            writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())
+        } else {
+            Ok(())
+        };
+        if restored.is_err() {
+            return match result {
+                Ok(results) => Ok(results
+                    .into_iter()
+                    .map(|result| match result {
+                        CommitResult::Committed(_) => {
+                            CommitResult::Unknown(super::intent::UnknownCause::PostCommitSync)
+                        }
+                        other => other,
+                    })
+                    .collect()),
+                Err(()) => Err(()),
+            };
         }
         result
     }
@@ -2898,6 +2930,7 @@ fn stage_intent(
             intent.operation.as_str(),
             allocation,
             units,
+            intent.digest,
         )
         .is_err()
         {
@@ -5440,6 +5473,21 @@ impl StoragePort for SqliteStorage {
             facts.push(DurableUsageFact::decode(&body).map_err(|_| UsageStorageError::Corrupt)?);
         }
         Ok(facts)
+    }
+
+    fn install_usage_budget(&mut self, tenant: &TenantId, allocation: &crate::usage::VerifiedAllocation) -> Result<(), ()> {
+        let mut writer = self.writer.lock().map_err(|_| ())?;
+        let tx = writer.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|_| ())?;
+        budget::install(&tx, tenant, allocation)?;
+        tx.commit().map_err(|_| ())
+    }
+    fn usage_budget_remaining(&self, tenant: &TenantId, refill: &str) -> Result<Option<i64>, ()> {
+        let writer = self.writer.lock().map_err(|_| ())?;
+        budget::remaining(&writer, tenant, refill)
+    }
+    fn usage_budget_consumptions(&self, tenant: &TenantId, after: u64, limit: u32) -> Result<Vec<crate::usage::BudgetConsumption>, ()> {
+        let writer = self.writer.lock().map_err(|_| ())?;
+        budget::consumptions(&writer, tenant, after, limit)
     }
 
     fn configure_usage_placement(

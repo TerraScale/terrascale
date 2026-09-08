@@ -64,9 +64,10 @@ impl RoutedReadCut {
         if database_incarnation == 0 || route_generation == 0 || participants.is_empty() {
             return Err("invalid routed read cut");
         }
-        if participants.iter().any(|participant| {
-            participant.identity.database_incarnation != database_incarnation
-        }) {
+        if participants
+            .iter()
+            .any(|participant| participant.identity.database_incarnation != database_incarnation)
+        {
             return Err("routed read cut identity mismatch");
         }
         let mut seen = std::collections::BTreeSet::new();

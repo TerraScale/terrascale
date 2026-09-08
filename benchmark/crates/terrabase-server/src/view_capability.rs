@@ -25,7 +25,7 @@ use base64::Engine as _;
 use terrabase::regions::RegionCode;
 
 /// The fixed header used by reactive view log and snapshot requests.
-pub const VIEW_CAPABILITY_HEADER: &str = "x-terrascale-view-capability";
+pub const VIEW_CAPABILITY_HEADER: &str = "x-terrascale-capability";
 
 /// Alias retained for transport code that calls the value simply a capability.
 pub const CAPABILITY_HEADER: &str = VIEW_CAPABILITY_HEADER;

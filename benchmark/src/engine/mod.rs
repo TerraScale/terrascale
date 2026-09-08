@@ -40,6 +40,7 @@ mod retention;
 pub use repair_summary::ReplicationRepairCut;
 mod storage_usage;
 mod usage_placement;
+mod usage_budget;
 #[cfg(test)]
 mod usage_placement_tests;
 pub use replicated_publication::{
@@ -550,6 +551,7 @@ pub struct EngineConfig {
     lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds,
     owner: Option<crate::storage::DatabaseOwner>,
     replication_origin: Option<RegionId>,
+    replication_lane_origin: Option<crate::origin_lane::OriginLaneId>,
     replication_clock: Arc<dyn ReplicationClock>,
     storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     allow_create: bool,
@@ -582,6 +584,7 @@ impl EngineConfig {
             lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds::DEFAULT,
             owner: None,
             replication_origin: None,
+            replication_lane_origin: None,
             replication_clock: Arc::new(SystemReplicationClock),
             storage_keys: None,
             allow_create: true,
@@ -608,6 +611,7 @@ impl EngineConfig {
             lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds::DEFAULT,
             owner: None,
             replication_origin: None,
+            replication_lane_origin: None,
             replication_clock: Arc::new(SystemReplicationClock),
             storage_keys: None,
             allow_create: false,
@@ -642,6 +646,16 @@ impl EngineConfig {
     #[must_use]
     pub fn with_replication_origin(mut self, origin: RegionId) -> Self {
         self.replication_origin = Some(origin);
+        self
+    }
+
+    /// Pins the unique causal origin of one physical shard lane.
+    #[must_use]
+    pub fn with_replication_lane_origin(
+        mut self,
+        origin: crate::origin_lane::OriginLaneId,
+    ) -> Self {
+        self.replication_lane_origin = Some(origin);
         self
     }
 
@@ -1080,6 +1094,8 @@ pub enum UnknownReason {
     Cancellation,
     /// The response was interrupted after submission.
     ResponseInterrupted,
+    /// SQLite committed but could not restore its post-commit synchronous mode.
+    PostCommitSync,
     /// The post-publication pointer sync failed.
     PostPublicationPointerSync,
     /// The post-publication containing-directory sync failed.
@@ -1163,6 +1179,8 @@ pub struct Engine {
     /// Local-development opens retain the existing multi-tenant compatibility
     /// path; production locations are strictly database-per-tenant (D-51).
     owner_scope_enforced: bool,
+    /// Canonical causal origin for this physical file, retained across reopen.
+    replication_lane_origin: crate::origin_lane::OriginLaneId,
     /// The engine's replication clock (D-36): one hybrid stamp per
     /// database. Origin commits tick it; replicated applies witness it.
     /// The deterministic merge compares `(hlc, origin)` totals.
@@ -1324,23 +1342,51 @@ impl Engine {
         let location = config.location().clone();
         let owner = config.open_owner()?;
         let metrics = Arc::new(MetricsRegistry::new());
+        let configured_lane = config.replication_lane_origin.clone().or_else(|| {
+            let owner = config.owner.as_ref()?;
+            let region = RegionId::try_new(owner.region().as_str()).ok()?;
+            crate::origin_lane::OriginLaneId::try_new(
+                region,
+                u128::from_be_bytes(owner.database().as_bytes()),
+            )
+            .ok()
+        });
+        let lane_origin_text = configured_lane
+            .as_ref()
+            .map(crate::origin_lane::OriginLaneId::as_str);
+        let replication_origin = lane_origin_text
+            .as_deref()
+            .or_else(|| config.replication_origin.as_ref().map(RegionId::as_str));
         // Production owners use the authenticated VFS for every connection.
         let open_storage = if config.allow_create {
             storage::SqliteStorage::open_with_keys(
                 &location,
-                config.replication_origin.as_ref().map(RegionId::as_str),
+                replication_origin,
                 config.storage_keys.clone(),
             )
         } else {
             storage::SqliteStorage::open_existing_with_keys(
                 &location,
-                config.replication_origin.as_ref().map(RegionId::as_str),
+                replication_origin,
                 config.storage_keys.clone(),
             )
         };
         let mut storage: Box<dyn storage::StoragePort> = open_storage
             .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
             .map_err(|_| EngineOpenError::StorageUnavailable)?;
+        let replication_lane_origin = configured_lane
+            .or_else(|| {
+                crate::origin_lane::OriginLaneId::parse(storage.port.local_replication_origin()).ok()
+            })
+            .or_else(|| {
+                let region = RegionId::try_new(owner.region().as_str()).ok()?;
+                crate::origin_lane::OriginLaneId::try_new(
+                    region,
+                    u128::from_be_bytes(owner.database().as_bytes()),
+                )
+                .ok()
+            })
+            .ok_or(EngineOpenError::FormatMismatch)?;
         // Sync subscriptions are process-owned. Their in-memory checkpoint
         // handles cannot survive this Engine admission, so retire an old
         // sync lease before serving. The required replication, metering, and
@@ -1394,6 +1440,7 @@ impl Engine {
             identity: EngineIdentity::next().0,
             durable_owner: owner,
             owner_scope_enforced: config.owner.is_some(),
+            replication_lane_origin,
             replication_clock: Mutex::new(initial_clock),
             physical_replication_clock: Arc::clone(&config.replication_clock),
             // Keep existing local/development callers usable until the host
@@ -1423,6 +1470,12 @@ impl Engine {
     #[must_use]
     pub fn database_id(&self) -> crate::identity::DatabaseUlid {
         self.durable_owner.database()
+    }
+
+    /// Returns the canonical causal origin for this physical file.
+    #[must_use]
+    pub(crate) fn replication_lane_origin(&self) -> &crate::origin_lane::OriginLaneId {
+        &self.replication_lane_origin
     }
 
     /// Whether logical tenant scopes are restricted to this durable production owner.
@@ -1786,8 +1839,8 @@ impl Engine {
             .live_origin_prefixes(scope.tenant())
             .map_err(|()| EngineError::StorageFailure)?
         {
-            let origin =
-                RegionId::try_new(&entry.origin).map_err(|_| EngineError::InvalidDocument)?;
+            let origin = crate::origin_lane::OriginLaneId::parse(&entry.origin)
+                .map_err(|_| EngineError::InvalidDocument)?;
             if entry.origin_sequence == 0 {
                 continue;
             }
@@ -5315,6 +5368,11 @@ impl Transaction<'_> {
         let budget_allocation = self.budget_allocation.take();
         if usage_admission.is_some() && durability != LocalDurability::Synced {
             return CommitOutcome::Rejected(CommitError::UsageRequiresSynced);
+        }
+        if !replicated && !writes.is_empty() {
+            if self.ensure_primary_file_shard_identity().is_err() {
+                return CommitOutcome::Rejected(CommitError::StorageFailure);
+            }
         }
         let metadata = std::mem::take(&mut self.metadata);
         let schema_envelopes = std::mem::take(&mut self.schema_envelopes);

@@ -21,7 +21,7 @@ use terrabase::types::{
 };
 
 /// Process owner for durable import metadata and encrypted uploads.
-pub(crate) struct ImportRuntime {
+pub struct ImportRuntime {
     pub(crate) store: Arc<ImportStore>,
     pub(crate) root: std::path::PathBuf,
     tasks: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,

@@ -8,6 +8,36 @@ use crate::{
     types::{OperationId, TenantScope},
 };
 
+/// One immutable admitted participant at a captured local MVCC cut.
+#[derive(Clone)]
+pub struct AdmittedShardParticipant {
+    /// Durable physical identity initialized by admission before origin service.
+    pub identity: crate::shard_split::FileShardIdentity,
+    /// Resident engine retained by the database admission owner.
+    pub engine: Arc<Engine>,
+    /// Scope minted by this exact engine instance for the admitted tenant.
+    pub scope: TenantScope,
+    /// Owned read snapshot captured with every participant under one publication gate.
+    pub snapshot: crate::types::ReadSnapshot,
+    /// Canonical ranges assigned to this participant in the captured catalog.
+    pub routes: Vec<crate::shard_split::ShardRoute>,
+    // Preserve admission even when a participant is moved out of its cut.
+    pub(super) admission: Option<(Arc<super::AdmissionPermit>, Arc<super::AdmissionPermit>)>,
+}
+
+/// Owned bounded lane inventory and read cut for one admitted database.
+#[derive(Clone)]
+pub struct AdmittedShardReadCut {
+    /// Durable logical database incarnation shared by all participants.
+    pub database_incarnation: u128,
+    /// Exact catalog generation; absent before the first shard catalog is installed.
+    pub route_generation: Option<u64>,
+    /// Validated resident participants, each listed once.
+    pub participants: Vec<AdmittedShardParticipant>,
+    // Owned snapshots must keep counted admission alive, not merely Arc engines.
+    pub(super) admission: Option<(Arc<super::AdmissionPermit>, Arc<super::AdmissionPermit>)>,
+}
+
 /// Immutable serving snapshot held by one admitted lease.
 pub(crate) struct RouteParticipantRegistry {
     source: Arc<Engine>,
@@ -69,6 +99,48 @@ impl RouteParticipantRegistry {
             participants,
             router: Some(router),
         }))
+    }
+
+    pub(crate) fn read_cut(&self) -> Result<AdmittedShardReadCut, crate::EngineError> {
+        let engines = self.participants.values().cloned().collect::<Vec<_>>();
+        let generation = self.router.as_ref().map(|router| router.table().generation());
+        let snapshots = self.source.routed_read_snapshots(&self.tenant, generation, &engines)?;
+        let mut participants = Vec::with_capacity(engines.len());
+        for ((shard, engine), snapshot) in self.participants.iter().zip(snapshots) {
+            let scope = engine.scope_for(&self.tenant);
+            let identity =
+                engine.file_shard_identity(&scope)?.ok_or(crate::EngineError::Conflict)?;
+            if self.router.is_some() && identity.shard_id != *shard {
+                return Err(crate::EngineError::Conflict);
+            }
+            let routes = self
+                .router
+                .as_ref()
+                .map(|router| {
+                    router
+                        .table()
+                        .routes()
+                        .iter()
+                        .filter(|route| route.shard_id() == *shard)
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            participants.push(AdmittedShardParticipant {
+                identity,
+                engine: engine.clone(),
+                scope,
+                snapshot,
+                routes,
+                admission: None,
+            });
+        }
+        Ok(AdmittedShardReadCut {
+            database_incarnation: u128::from_be_bytes(self.source.database_id().as_bytes()),
+            route_generation: generation,
+            participants,
+            admission: None,
+        })
     }
 
     pub(crate) fn tenant_id(&self) -> &crate::types::TenantId {

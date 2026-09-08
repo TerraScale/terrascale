@@ -10,6 +10,8 @@
 pub(crate) enum FaultPoint {
     /// Fail the next write transaction inside the `SQLite` commit.
     WalAppend,
+    /// Fail restoring the writer connection's synchronous mode after commit.
+    PostCommitSync,
 }
 
 /// The armed plan. `None` means no fault fires, which is the only state

@@ -76,7 +76,7 @@ impl ScopedShardEngine {
         context: &SplitContext,
     ) -> Result<std::sync::Arc<Engine>, EngineOpenError> {
         self.engine
-            .open_shard_participant_mode(context.target_shard(), true)?
+            .open_shard_participant_mode(context.target_shard(), true, Some(context.split_id()))?
             .ok_or(EngineOpenError::StorageUnavailable)
     }
 
@@ -86,7 +86,7 @@ impl ScopedShardEngine {
         context: &SplitContext,
     ) -> Result<std::sync::Arc<Engine>, EngineOpenError> {
         self.engine
-            .open_shard_participant(context.target_shard())?
+            .open_shard_participant_mode(context.target_shard(), false, Some(context.split_id()))?
             .ok_or(EngineOpenError::StorageUnavailable)
     }
 
@@ -736,11 +736,11 @@ fn key(incarnation: u128) -> String {
 fn split_key(incarnation: u128) -> String {
     format!("control:shard-split/v1/{incarnation:032x}")
 }
-fn file_shard_key(incarnation: u128) -> String {
+pub(crate) fn file_shard_key(incarnation: u128) -> String {
     format!("control:shard-file/v1/{incarnation:032x}")
 }
 
-fn encode_file_identity(identity: crate::shard_split::FileShardIdentity) -> Vec<u8> {
+pub(crate) fn encode_file_identity(identity: crate::shard_split::FileShardIdentity) -> Vec<u8> {
     let mut bytes = vec![1];
     bytes.extend_from_slice(&identity.database_incarnation.to_be_bytes());
     bytes.extend_from_slice(&identity.shard_id.to_be_bytes());
@@ -937,13 +937,14 @@ impl Engine {
         self: &std::sync::Arc<Self>,
         shard_id: u64,
     ) -> Result<Option<std::sync::Arc<Engine>>, EngineOpenError> {
-        self.open_shard_participant_mode(shard_id, false)
+        self.open_shard_participant_mode(shard_id, false, None)
     }
 
     fn open_shard_participant_mode(
         self: &std::sync::Arc<Self>,
         shard_id: u64,
         create: bool,
+        lane_incarnation: Option<u128>,
     ) -> Result<Option<std::sync::Arc<Engine>>, EngineOpenError> {
         let path = self.location.join("shards").join(format!("{shard_id:016x}.sqlite3"));
         let exists = crate::storage::existing_database_location(&path, self.storage_keys.is_some());
@@ -973,7 +974,11 @@ impl Engine {
         }
         let origin = crate::types::RegionId::try_new(self.database_owner().region().as_str())
             .map_err(|_| EngineOpenError::InvalidConfig)?;
-        config = config.with_replication_origin(origin);
+        if let Some(lane_incarnation) = lane_incarnation {
+            let lane = crate::origin_lane::OriginLaneId::try_new(origin, lane_incarnation)
+                .map_err(|_| EngineOpenError::InvalidConfig)?;
+            config = config.with_replication_lane_origin(lane);
+        }
         let target = std::sync::Arc::new(Engine::open(config)?);
         *target.shard_authority.lock().map_err(|_| EngineOpenError::StorageUnavailable)? =
             Some(std::sync::Arc::downgrade(self));
@@ -991,7 +996,7 @@ impl Engine {
     ) -> Result<bool, EngineError> {
         let snapshot = self.read_snapshot(scope)?;
         let storage = self.lock_storage()?;
-        let mut read = |name: &str| -> Result<Vec<u8>, EngineError> {
+        let read = |name: &str| -> Result<Vec<u8>, EngineError> {
             let value = storage
                 .port
                 .private_metadata_at(scope.tenant(), name, snapshot.sequence())
@@ -1096,6 +1101,23 @@ impl Engine {
             &replacement,
             &encode_file_identity(identity),
         );
+        let existing_catalog = bytes(tx.read_private_metadata(&key(incarnation))?)
+            .map_err(|_| EngineError::Conflict)?;
+        if let Some(existing_catalog) = existing_catalog {
+            let existing_file = bytes(tx.read_private_metadata(&file_shard_key(incarnation))?)
+                .map_err(|_| EngineError::Conflict)?;
+            let existing_binding =
+                bytes(tx.read_private_metadata(TARGET_VERIFICATION_BINDING_KEY)?)
+                    .map_err(|_| EngineError::Conflict)?;
+            return if existing_catalog == replacement
+                && existing_file.as_deref() == Some(encode_file_identity(identity).as_slice())
+                && existing_binding.as_deref() == Some(binding.as_slice())
+            {
+                Ok(())
+            } else {
+                Err(EngineError::Conflict)
+            };
+        }
         tx.put_private_metadata(TARGET_VERIFICATION_BINDING_KEY, value(&binding))?;
         tx.put_private_metadata(&key(incarnation), value(&replacement))?;
         tx.put_private_metadata(
@@ -1103,8 +1125,10 @@ impl Engine {
             value(&encode_file_identity(identity)),
         )?;
         match tx.commit(LocalDurability::Synced) {
-            CommitOutcome::Committed(_)
-            | CommitOutcome::Rejected(CommitError::OperationIdReuse { .. }) => Ok(()),
+            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Rejected(CommitError::OperationIdReuse { .. }) => {
+                Err(EngineError::Conflict)
+            }
             CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict),
             CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
                 Err(EngineError::StorageFailure)

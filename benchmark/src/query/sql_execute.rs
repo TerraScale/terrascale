@@ -248,6 +248,119 @@ pub(crate) fn execute(
     ))
 }
 
+pub(crate) fn execute_routed(
+    cut: &crate::query::routed::RoutedReadCut,
+    plan: &QueryPlan,
+    runtime: &SqlRuntime,
+) -> Result<QueryResult, QueryError> {
+    let snapshot = cut
+        .participants
+        .first()
+        .map(|participant| &participant.snapshot)
+        .ok_or(QueryError::StorageFailure)?;
+    let tenant = snapshot.tenant().clone();
+    let sequence = cut
+        .participants
+        .iter()
+        .map(|participant| participant.snapshot.sequence().get())
+        .max()
+        .unwrap_or_default();
+    if cut.participants.iter().any(|participant| participant.snapshot.tenant() != &tenant) {
+        return Err(QueryError::SnapshotTenantMismatch);
+    }
+    let control = SqlControl::new(runtime);
+    control.check()?;
+    let started = Instant::now();
+    let connection = materialized_connection(cut, &tenant, &runtime.tables, &control)?;
+    let progress_control = control.clone();
+    connection
+        .progress_handler(SQL_PROGRESS_INTERVAL, Some(move || progress_control.progress()))
+        .map_err(|_| QueryError::StorageFailure)?;
+    let transaction = connection.unchecked_transaction().map_err(|_| QueryError::StorageFailure)?;
+    check_input_bounds(&transaction, tenant.as_str(), sequence, &control)?;
+    create_collection_views(&transaction, tenant.as_str(), sequence, &runtime.tables, &control)?;
+    control.check()?;
+    let mut statement = transaction
+        .prepare(&runtime.text)
+        .map_err(|_| control.interrupted(QueryError::InvalidSpec))?;
+    let bound = bound_values(&statement, runtime)?;
+    let column_count = statement.column_count();
+    let mut names = Vec::with_capacity(column_count);
+    let mut seen = BTreeSet::new();
+    for index in 0..column_count {
+        let name = statement.column_name(index).unwrap_or("column").to_owned();
+        if !seen.insert(name.clone()) {
+            return Err(QueryError::InvalidSpec);
+        }
+        names.push(name);
+    }
+    let mut rows = statement
+        .query(rusqlite::params_from_iter(bound.iter()))
+        .map_err(|_| control.interrupted(QueryError::InvalidSpec))?;
+    let mut result_rows = Vec::new();
+    let mut output_bytes = 0usize;
+    let mut used_ids = BTreeSet::new();
+    while let Some(row) = rows.next().map_err(|_| control.interrupted(QueryError::InvalidSpec))? {
+        control.check()?;
+        if result_rows.len() == MAX_SQL_OUTPUT_ROWS {
+            return Err(QueryError::CandidateBoundExceeded);
+        }
+        let mut value = BTreeMap::new();
+        let mut projected = Vec::with_capacity(column_count);
+        let mut id = format!("sql-row-{}", result_rows.len());
+        for (index, name) in names.iter().enumerate() {
+            let item = value_ref(row.get_ref(index).map_err(|_| QueryError::InvalidSpec)?);
+            if name == "_id"
+                && let DocumentValue::String(candidate) = &item
+            {
+                id.clone_from(candidate);
+            }
+            output_bytes = output_bytes
+                .checked_add(name.len())
+                .and_then(|bytes| bytes.checked_add(value_size(&item).ok()?))
+                .ok_or(QueryError::CandidateBoundExceeded)?;
+            if output_bytes > MAX_SQL_OUTPUT_BYTES {
+                return Err(QueryError::CandidateBoundExceeded);
+            }
+            projected.push((name.clone(), item.clone()));
+            value.insert(name.clone(), item);
+        }
+        if id.starts_with("sql-row-") {
+            id = resolve_source_id(&projected, &used_ids).unwrap_or(id);
+        }
+        used_ids.insert(id.clone());
+        let document = Document::new(
+            crate::types::DocumentId::try_new(&id).map_err(|_| QueryError::InvalidSpec)?,
+            crate::types::CollectionName::try_new("__sql_result__").expect("static collection"),
+            DocumentValue::Object(value),
+        );
+        result_rows.push(QueryRow::new(document, projected));
+    }
+    control.check()?;
+    drop(rows);
+    drop(statement);
+    transaction.rollback().map_err(|_| QueryError::StorageFailure)?;
+    let matched = u64::try_from(result_rows.len()).unwrap_or(u64::MAX);
+    let staleness = StalenessReport::default();
+    let stats = super::statistics::QueryStatistics::new(
+        matched,
+        plan.model().paging(),
+        matched,
+        0,
+        ResultEtag::of(crate::types::StorageSequence::new(sequence), &staleness),
+        DiagnosticDuration::new(started.elapsed()),
+    );
+    Ok(QueryResult::new(
+        result_rows,
+        matched,
+        plan.ordering().clone(),
+        staleness,
+        None,
+        super::includes::IncludeSet::default(),
+        stats,
+    ))
+}
+
 fn resolve_source_id(
     projected: &[(String, DocumentValue)],
     used_ids: &BTreeSet<String>,
@@ -292,6 +405,91 @@ fn bound_values(
 ///
 fn open_storage_connection(engine: &Engine) -> Result<Connection, QueryError> {
     engine.open_sqlite_read_connection().map_err(|_| QueryError::StorageFailure)
+}
+
+/// Builds the one bounded evaluator relation for an admitted routed cut.
+/// Each physical participant contributes only keys covered by its route; the
+/// SQL statement is evaluated once over the resulting union.
+fn materialized_connection(
+    cut: &crate::query::routed::RoutedReadCut,
+    tenant: &crate::types::TenantId,
+    tables: &[String],
+    control: &SqlControl,
+) -> Result<Connection, QueryError> {
+    let connection = Connection::open_in_memory().map_err(|_| QueryError::StorageFailure)?;
+    connection
+        .execute_batch(
+            "CREATE TABLE documents (
+                tenant TEXT NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
+                body BLOB NOT NULL, revision INTEGER NOT NULL DEFAULT 0,
+                hlc INTEGER NOT NULL DEFAULT 0, committed_at INTEGER NOT NULL DEFAULT 0,
+                commit_seq INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,
+                expires_at INTEGER
+            )",
+        )
+        .map_err(|_| QueryError::StorageFailure)?;
+    let transaction = connection.unchecked_transaction().map_err(|_| QueryError::StorageFailure)?;
+    let mut seen = BTreeSet::new();
+    let mut input_documents = 0usize;
+    let mut input_bytes = 0usize;
+    let sequence = cut
+        .participants
+        .iter()
+        .map(|participant| participant.snapshot.sequence().get())
+        .max()
+        .unwrap_or_default();
+    for participant in &cut.participants {
+        control.check()?;
+        let scope =
+            crate::types::TenantScope::from_parts(tenant.clone(), participant.engine.identity());
+        for table in tables {
+            let collection = crate::types::CollectionName::try_new(table)
+                .map_err(|_| QueryError::InvalidSpec)?;
+            let documents = participant
+                .engine
+                .snapshot_documents_in_collection(&scope, &participant.snapshot, &collection)
+                .map_err(|_| QueryError::StorageFailure)?;
+            for document in documents {
+                let key =
+                    crate::shard_split::canonical_shard_key(document.collection(), document.id());
+                if !participant.routes.iter().any(|route| {
+                    route.lower().is_none_or(|lower| key.as_slice() >= lower)
+                        && route.upper().is_none_or(|upper| key.as_slice() < upper)
+                }) || !seen.insert(key)
+                {
+                    continue;
+                }
+                let body = format!("{{\"$value\":{}}}", json_value(document.value())?);
+                input_documents =
+                    input_documents.checked_add(1).ok_or(QueryError::CandidateBoundExceeded)?;
+                input_bytes = input_bytes
+                    .checked_add(body.len())
+                    .and_then(|bytes| bytes.checked_add(document.id().as_str().len()))
+                    .and_then(|bytes| bytes.checked_add(document.collection().as_str().len()))
+                    .ok_or(QueryError::CandidateBoundExceeded)?;
+                if input_documents > MAX_SQL_INPUT_DOCUMENTS || input_bytes > MAX_SQL_INPUT_BYTES {
+                    return Err(QueryError::CandidateBoundExceeded);
+                }
+                transaction
+                    .execute(
+                    "INSERT INTO documents
+                     (tenant, collection, id, body, revision, hlc, committed_at, commit_seq, deleted)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, 0)",
+                    rusqlite::params![
+                        tenant.as_str(),
+                        document.collection().as_str(),
+                        document.id().as_str(),
+                        body,
+                        i64::try_from(document.metadata().version()).unwrap_or(i64::MAX),
+                        i64::try_from(sequence).map_err(|_| QueryError::CandidateBoundExceeded)?,
+                    ],
+                    )
+                    .map_err(|_| QueryError::StorageFailure)?;
+            }
+        }
+    }
+    drop(transaction);
+    Ok(connection)
 }
 
 fn check_input_bounds(

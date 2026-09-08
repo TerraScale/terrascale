@@ -203,6 +203,8 @@ impl CommitRejection {
 pub(crate) enum UnknownCause {
     /// A prepared operation is not published yet, so its outcome is unknown.
     ResponseInterrupted,
+    /// SQLite committed, but post-commit connection-state restoration failed.
+    PostCommitSync,
 }
 
 impl UnknownCause {
@@ -210,6 +212,7 @@ impl UnknownCause {
     pub(crate) fn to_unknown_reason(self) -> crate::engine::UnknownReason {
         match self {
             Self::ResponseInterrupted => crate::engine::UnknownReason::ResponseInterrupted,
+            Self::PostCommitSync => crate::engine::UnknownReason::PostCommitSync,
         }
     }
 }

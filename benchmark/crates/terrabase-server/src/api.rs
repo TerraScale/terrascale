@@ -47,6 +47,7 @@ use terrabase::types::DocumentValue;
 use terrabase::types::ExpectedVersion;
 use terrabase::types::LocalDurability;
 use terrabase::types::OperationId;
+use terrabase::Transaction;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use utoipa_scalar::Scalar;
@@ -60,6 +61,7 @@ mod development;
 mod exports;
 #[path = "api_imports.rs"]
 pub(crate) mod imports;
+pub use imports::ImportRuntime;
 #[path = "api_lifecycle.rs"]
 mod lifecycle;
 #[path = "api_operations.rs"]
@@ -628,7 +630,7 @@ pub struct ApiState {
     /// Configured durable export jobs and authorized encrypted artifact destination.
     pub exports: Option<Arc<crate::export_api::ExportRuntime>>,
     /// Durable import owner; absent composition fails closed.
-    pub imports: Option<Arc<imports::ImportRuntime>>,
+    pub imports: Option<Arc<ImportRuntime>>,
 }
 
 impl ApiState {
@@ -1029,7 +1031,7 @@ fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Valu
         }
         "view_log" => {
             add_parameter(operation, "offset", "query", true, "integer");
-            add_parameter(operation, "x-terrascale-view-capability", "header", true, "string");
+            add_parameter(operation, "x-terrascale-capability", "header", true, "string");
             set_parameter_format(operation, "offset", "query", "int64");
         }
         "snapshot" => {
@@ -1398,7 +1400,6 @@ fn browser_cors() -> tower_http::cors::CorsLayer {
                 "if-none-match",
                 "idempotency-key",
                 "x-terrascale-capability",
-                "x-terrascale-view-capability",
                 "x-terrascale-session",
                 "x-terrascale-region",
                 "x-terrascale-project-id",
@@ -2854,7 +2855,18 @@ async fn batch_documents(
     } else {
         [0; 32]
     };
-    match replay_batch_request(&state, host.engine_host(), &collection, &ids, &scope, &headers, &operation, fingerprint).await {
+    match replay_batch_request(
+        &state,
+        host.engine_host(),
+        &collection,
+        &ids,
+        &scope,
+        &headers,
+        &operation,
+        fingerprint,
+    )
+    .await
+    {
         Ok(Some(response)) => return response,
         Ok(None) => {}
         Err(error) => return error.into_response(),
@@ -2872,19 +2884,28 @@ async fn batch_documents(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    let mut transaction = match host
-        .engine_host()
-        .begin_routed_batch(&scope, &collection, &ids, operation.clone())
-    {
-        Ok(transaction) => transaction,
-        Err(terrabase::EngineError::OperationIdReuse { .. }) => {
-            return durability_unknown().into_response();
-        }
-        Err(_) => return ApiError::storage_failure().into_response(),
-    };
+    let mut transaction =
+        match host.engine_host().begin_routed_batch(&scope, &collection, &ids, operation.clone()) {
+            Ok(transaction) => transaction,
+            Err(terrabase::EngineError::OperationIdReuse { .. }) => {
+                return durability_unknown().into_response();
+            }
+            Err(_) => return ApiError::storage_failure().into_response(),
+        };
     // The operation reservation excludes a simultaneous publisher. Resolve
     // once more before inspecting mutable patch bases or delete targets.
-    match replay_batch_request(&state, host.engine_host(), &collection, &ids, &scope, &headers, &operation, fingerprint).await {
+    match replay_batch_request(
+        &state,
+        host.engine_host(),
+        &collection,
+        &ids,
+        &scope,
+        &headers,
+        &operation,
+        fingerprint,
+    )
+    .await
+    {
         Ok(Some(response)) => return response,
         Ok(None) => {}
         Err(error) => return error.into_response(),
@@ -2917,9 +2938,19 @@ async fn batch_documents(
     if let Err(error) = durability.guard(&mut transaction) {
         return error.into_response();
     }
-    let outcome = transaction.commit(LocalDurability::Synced);
+    let outcome = commit_on_runtime(transaction, LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
-        match replay_batch_request(&state, host.engine_host(), &collection, &ids, &scope, &headers, &operation, fingerprint).await
+        match replay_batch_request(
+            &state,
+            host.engine_host(),
+            &collection,
+            &ids,
+            &scope,
+            &headers,
+            &operation,
+            fingerprint,
+        )
+        .await
         {
             Ok(Some(response)) => return response,
             Ok(None) => {}
@@ -2955,9 +2986,7 @@ async fn batch_documents(
     }
 }
 
-fn batch_route_ids(
-    operations: &[serde_json::Value],
-) -> Result<Vec<DocumentId>, Response> {
+fn batch_route_ids(operations: &[serde_json::Value]) -> Result<Vec<DocumentId>, Response> {
     let mut ids = Vec::with_capacity(operations.len());
     for (index, item) in operations.iter().enumerate() {
         let Some(id) = item.get("id").and_then(serde_json::Value::as_str) else {
@@ -3516,7 +3545,8 @@ async fn replay_document_request(
     };
     let resolved_scope = resolved_engine.scope_for(scope.tenant());
     let scope = &resolved_scope;
-    let durability = WriteDurability::prepare_replay(state, &resolved_engine, scope, headers).await?;
+    let durability =
+        WriteDurability::prepare_replay(state, &resolved_engine, scope, headers).await?;
     durability.confirm(&resolved_engine, scope, &receipt).await?;
     let mut session = open_session(&resolved_engine, scope, headers)?;
     let response = document_write_response(&mut session, collection, id, revision)?;
@@ -3559,7 +3589,8 @@ fn routed_live_revision(
     id: &DocumentId,
 ) -> Result<String, ApiError> {
     let operation = crate::read_operation::next().map_err(|()| ApiError::storage_failure())?;
-    let transaction = host.engine_host()
+    let transaction = host
+        .engine_host()
         .begin_routed_document(scope, collection, id, operation)
         .map_err(|_| ApiError::storage_failure())?;
     transaction
@@ -3594,10 +3625,11 @@ async fn get_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
-    let engine = match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
-        Ok(engine) => engine,
-        Err(_) => return ApiError::control_unavailable().into_response(),
-    };
+    let engine =
+        match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
+            Ok(engine) => engine,
+            Err(_) => return ApiError::control_unavailable().into_response(),
+        };
     let scope = engine.scope_for(scope.tenant());
 
     if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
@@ -3831,10 +3863,11 @@ async fn put_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
-    let engine = match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
-        Ok(engine) => engine,
-        Err(_) => return ApiError::control_unavailable().into_response(),
-    };
+    let engine =
+        match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
+            Ok(engine) => engine,
+            Err(_) => return ApiError::control_unavailable().into_response(),
+        };
     let scope = engine.scope_for(scope.tenant());
 
     let value: serde_json::Value = match serde_json::from_str(&body) {
@@ -3974,12 +4007,12 @@ async fn put_document(
         return error.into_response();
     }
     mark(trace, &mut t, "staging");
-    let outcome = transaction.commit(LocalDurability::Synced);
+    let outcome = commit_on_runtime(transaction, LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
         match replay_document_request(
-        &state,
-        host.engine_host(),
-        engine,
+            &state,
+            host.engine_host(),
+            engine,
             &scope,
             &headers,
             &operation,
@@ -4063,10 +4096,11 @@ async fn patch_document(
         Err(error) => return error.into_response(),
     };
 
-    let engine = match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
-        Ok(engine) => engine,
-        Err(_) => return ApiError::control_unavailable().into_response(),
-    };
+    let engine =
+        match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
+            Ok(engine) => engine,
+            Err(_) => return ApiError::control_unavailable().into_response(),
+        };
     let scope = engine.scope_for(scope.tenant());
     if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
         return ApiError::control_unavailable().into_response();
@@ -4181,12 +4215,12 @@ async fn patch_document(
     if let Err(error) = durability.guard(&mut transaction) {
         return error.into_response();
     }
-    let outcome = transaction.commit(LocalDurability::Synced);
+    let outcome = commit_on_runtime(transaction, LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
         match replay_document_request(
-        &state,
-        host.engine_host(),
-        engine,
+            &state,
+            host.engine_host(),
+            engine,
             &scope,
             &headers,
             &operation,
@@ -4341,10 +4375,11 @@ async fn delete_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
-    let engine = match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
-        Ok(engine) => engine,
-        Err(_) => return ApiError::control_unavailable().into_response(),
-    };
+    let engine =
+        match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
+            Ok(engine) => engine,
+            Err(_) => return ApiError::control_unavailable().into_response(),
+        };
     let scope = engine.scope_for(scope.tenant());
 
     if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
@@ -4458,7 +4493,7 @@ async fn delete_document(
     if let Err(error) = durability.guard(&mut transaction) {
         return error.into_response();
     }
-    let outcome = transaction.commit(LocalDurability::Synced);
+    let outcome = commit_on_runtime(transaction, LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
         match replay_document_request(
             &state,
@@ -4706,7 +4741,15 @@ async fn execute_sql(
         Ok(snapshot) => snapshot,
         Err(error) => return error.into_response(),
     };
-    match store.execute(&plan, &snapshot) {
+    let admitted_cut = match host.engine_host().admitted_shard_read_cut() {
+        Ok(cut) => cut,
+        Err(_) => return ApiError::storage_failure().into_response(),
+    };
+    let execution = match admitted_cut.as_ref() {
+        Some(cut) if cut.route_generation.is_some() => store.execute_admitted(&plan, cut),
+        _ => store.execute(&plan, &snapshot),
+    };
+    match execution {
         Ok(result) => {
             let mut rendered = String::from("{\"matched\":");
             rendered.push_str(&result.matched().to_string());
@@ -5223,6 +5266,23 @@ pub(crate) fn json_response(status: StatusCode, body: String) -> Response {
     response
 }
 
+/// Commits a staged transaction without occupying a Tokio worker while
+/// SQLite performs synchronous durable I/O. The direct path is required for
+/// current-thread runtimes and callers outside Tokio.
+pub(crate) fn commit_on_runtime(
+    transaction: Transaction<'_>,
+    durability: LocalDurability,
+) -> CommitOutcome {
+    let multi_thread = tokio::runtime::Handle::try_current()
+        .map(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
+        .unwrap_or(false);
+    if multi_thread {
+        tokio::task::block_in_place(|| transaction.commit(durability))
+    } else {
+        transaction.commit(durability)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[path = "api_session_query_tests.rs"]
@@ -5247,6 +5307,7 @@ mod tests {
     use super::ApiError;
     use super::ApiState;
     use super::SESSION_HEADER;
+    use super::commit_on_runtime;
     use super::decode_session_header;
     use super::openapi_json;
     use super::router;
@@ -5260,10 +5321,76 @@ mod tests {
     use std::sync::Arc;
     use terrabase::SessionEpoch;
     use terrabase::SessionToken;
+    use terrabase::types::CollectionName;
+    use terrabase::types::Document;
+    use terrabase::types::DocumentId;
+    use terrabase::types::DocumentValue;
+    use terrabase::types::ExpectedVersion;
+    use terrabase::types::LocalDurability;
+    use terrabase::types::OperationId;
     use terrabase::observability::MetricsRegistry;
     use terrabase::regions::RegionCode;
     use terrabase::types::RegionId;
     use tower::util::ServiceExt;
+
+    fn staged_runtime_transaction() -> (&'static terrabase::Engine, terrabase::Transaction<'static>) {
+        let root = std::env::temp_dir().join(format!("terrabase-commit-runtime-{}", terrabase::identity::generate()));
+        let engine = terrabase::Engine::open(
+            terrabase::EngineConfig::durable(root).expect("durable config"),
+        )
+        .expect("engine");
+        let engine: &'static terrabase::Engine = Box::leak(Box::new(engine));
+        let owner = engine.database_owner();
+        let scope = terrabase::types::TenantScope::new(
+            owner.tenant().to_text(),
+            owner.project().to_text(),
+            owner.database().to_text(),
+        )
+        .expect("scope");
+        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+        let mut transaction = engine
+            .begin(&scope, snapshot, OperationId::try_new("runtime-commit").expect("operation"))
+            .expect("transaction");
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new("runtime-doc").expect("document id"),
+                    CollectionName::try_new("runtime").expect("collection"),
+                    DocumentValue::Null,
+                ),
+                ExpectedVersion::Any,
+            )
+            .expect("stage");
+        (engine, transaction)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn runtime_commit_current_thread_uses_direct_commit() {
+        let (engine, transaction) = staged_runtime_transaction();
+        assert!(matches!(
+            commit_on_runtime(transaction, LocalDurability::Synced),
+            CommitOutcome::Committed(_)
+        ));
+        assert!(engine
+            .read_snapshot(&engine
+                .database_owner()
+                .tenant_scope())
+            .is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn runtime_commit_multi_thread_publishes_successfully() {
+        let (engine, transaction) = staged_runtime_transaction();
+        assert!(matches!(
+            commit_on_runtime(transaction, LocalDurability::Synced),
+            CommitOutcome::Committed(_)
+        ));
+        assert!(engine
+            .read_snapshot(&engine
+                .database_owner()
+                .tenant_scope())
+            .is_ok());
+    }
 
     #[tokio::test]
     async fn delegated_identity_admitted_databases_bind_owners_and_ignore_selectors() {
@@ -6934,7 +7061,7 @@ mod tests {
         let read = |url: &str| {
             Request::get(url)
                 .header("authorization", key)
-                .header("x-terrascale-view-capability", capability)
+                .header("x-terrascale-capability", capability)
                 .body(Body::empty())
                 .expect("request")
         };

@@ -28,6 +28,7 @@ use crate::types::{OperationId, TenantId, TenantScope};
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
 mod shard_registry;
+pub use shard_registry::{AdmittedShardParticipant, AdmittedShardReadCut};
 mod split_runtime;
 pub use split_runtime::{
     MemberSplitError, MemberSplitRuntime, MemberSplitStep, SplitAdmission, SplitAdmissionAuthority,
@@ -1689,6 +1690,17 @@ impl DatabaseLease {
             _local: self._local.clone(),
             restore_paths: self.restore_paths.clone(),
         }))
+    }
+
+    /// Captures owned admitted lanes and MVCC snapshots under the database publication gate.
+    /// Returned snapshots retain this lease's counted admission until all clones drop.
+    pub fn admitted_shard_read_cut(&self) -> Result<AdmittedShardReadCut, crate::EngineError> {
+        let mut cut = self.route_registry.read_cut()?;
+        cut.admission = Some((self._global.clone(), self._local.clone()));
+        for participant in &mut cut.participants {
+            participant.admission = Some((self._global.clone(), self._local.clone()));
+        }
+        Ok(cut)
     }
 
     /// Selects the physical participant shared by all supplied document IDs.

@@ -1,0 +1,254 @@
+[New LWP 2114404]
+[New LWP 2114403]
+[New LWP 2114402]
+[New LWP 2114401]
+[New LWP 2114400]
+[New LWP 2114399]
+[New LWP 2114398]
+[New LWP 2114393]
+[New LWP 2114392]
+[New LWP 2114391]
+[New LWP 2114390]
+[New LWP 2114389]
+[New LWP 2114388]
+[New LWP 2114387]
+[New LWP 2114386]
+[New LWP 2114385]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libthread_db.so.1".
+0x00007578a1b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+
+Thread 17 (Thread 0x7578a19ff6c0 (LWP 2114385) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 16 (Thread 0x7578a17fe6c0 (LWP 2114386) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 15 (Thread 0x7578a15fd6c0 (LWP 2114387) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 14 (Thread 0x7578a13fc6c0 (LWP 2114388) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 13 (Thread 0x7578a11fb6c0 (LWP 2114389) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 12 (Thread 0x7578a0ffa6c0 (LWP 2114390) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 11 (Thread 0x7578a0df96c0 (LWP 2114391) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 10 (Thread 0x7578a0bf86c0 (LWP 2114392) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 9 (Thread 0x7578a09f76c0 (LWP 2114393) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 8 (Thread 0x7578a07ed6c0 (LWP 2114398) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 7 (Thread 0x7578a05ec6c0 (LWP 2114399) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 6 (Thread 0x7578a03eb6c0 (LWP 2114400) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 5 (Thread 0x75787bfff6c0 (LWP 2114401) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 4 (Thread 0x75787bdfe6c0 (LWP 2114402) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 3 (Thread 0x75787bbfd6c0 (LWP 2114403) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 2 (Thread 0x75787b9fc6c0 (LWP 2114404) "terrabase-bench"):
+#0  0x00007578a1aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00007578a1a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x00007578a1a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x00007578a1b2773f in recv () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x00005e5f330d2a35 in <std::net::tcp::TcpStream as std::io::Read>::read_buf ()
+#5  0x00005e5f331ed442 in <ureq::stream::DeadlineStream as std::io::BufRead>::fill_buf ()
+#6  0x00005e5f331d0a20 in ureq::response::read_next_line::<ureq::stream::DeadlineStream> ()
+#7  0x00005e5f331dc36d in <ureq::response::Response>::do_from_stream ()
+#8  0x00005e5f331e171e in ureq::unit::connect_inner ()
+#9  0x00005e5f331d3632 in <ureq::request::Request>::do_call::{closure#0} ()
+#10 0x00005e5f331db570 in <ureq::request::Request>::do_call ()
+#11 0x00005e5f331da491 in <ureq::request::Request>::send_string ()
+
+Thread 1 (Thread 0x7578a1c24880 (LWP 2114111) "terrabase-bench"):
+#0  0x00007578a1b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x00005e5f330b16d5 in <std::sync::barrier::Barrier>::wait ()
+#2  0x00005e5f330ea8a7 in terrabase_bench_lane::lane::run::<terrabase_bench_lane::terrabase_http::TerraBaseHttpBackend> ()
+#3  0x00005e5f33147299 in terrabase_bench_lane::main ()
+#4  0x00005e5f33117c13 in std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()> ()
+#5  0x00005e5f33131439 in std::rt::lang_start::<()>::{closure#0} ()
+#6  0x00005e5f330c5c07 in std::rt::lang_start_internal ()
+#7  0x00005e5f3318da75 in main ()
+[Inferior 1 (process 2114111) detached]

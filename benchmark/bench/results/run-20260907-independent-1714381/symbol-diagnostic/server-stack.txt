@@ -1,0 +1,182 @@
+[New LWP 2113794]
+[New LWP 2113793]
+[New LWP 2113710]
+[New LWP 2113709]
+[New LWP 2113708]
+[New LWP 2113707]
+[New LWP 2113670]
+[New LWP 2113669]
+[New LWP 2113638]
+[New LWP 2113637]
+[New LWP 2113633]
+[New LWP 2113632]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libthread_db.so.1".
+0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /tmp/terrabase-qual-20260907.7lF9/target4/release/terrabase-server.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+
+Thread 13 (Thread 0x75c9689ff6c0 (LWP 2113632) "tokio-rt-worker"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc29a2f186 in std::sys::pal::unix::futex::futex_wait () at library/std/src/sys/pal/unix/futex.rs:73
+#2  std::sys::sync::thread_parking::futex::Parker::park_timeout () at library/std/src/sys/sync/thread_parking/futex.rs:75
+#3  std::thread::thread::Thread::park_timeout () at library/std/src/thread/thread.rs:132
+#4  0x000061cc29dd7064 in <std::sync::mpmc::array::Channel<alloc::vec::Vec<terrabase::storage::intent::CommitResult>>>::recv::{closure#1} ()
+#5  0x000061cc29e89466 in <std::sync::mpmc::array::Channel<terrabase::storage::intent::CommitResult>>::recv ()
+#6  0x000061cc29eb3e49 in <terrabase::engine::Transaction>::commit_unobserved ()
+#7  0x000061cc29eb617e in <terrabase::engine::Transaction>::commit ()
+#8  0x000061cc2a473f05 in <terrabase_server::api::put_document as axum::handler::Handler<(axum_core::extract::private::ViaRequest, axum::extract::state::State<alloc::sync::Arc<terrabase_server::api::ApiState>>, axum::extract::path::Path<(alloc::string::String, alloc::string::String, alloc::string::String)>, http::header::map::HeaderMap, alloc::string::String), alloc::sync::Arc<terrabase_server::api::ApiState>>>::call::{closure#0} ()
+#9  0x000061cc2a6c1506 in <axum::util::MapIntoResponseFuture<axum::handler::future::IntoServiceFuture<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = http::response::Response<axum_core::body::Body>> + core::marker::Send>>>> as core::future::future::Future>::poll ()
+#10 0x000061cc2a6d1297 in <axum::routing::route::RouteFuture<core::convert::Infallible> as core::future::future::Future>::poll ()
+#11 0x000061cc2a6c2968 in <axum::util::MapIntoResponseFuture<tower::util::map_err::MapErrFuture<axum::routing::route::RouteFuture<core::convert::Infallible>, <core::convert::Infallible as core::convert::Into<core::convert::Infallible>>::into>> as core::future::future::Future>::poll ()
+
+Thread 12 (Thread 0x75c9687fe6c0 (LWP 2113633) "tokio-rt-worker"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc29dd7177 in <std::sync::mpmc::array::Channel<alloc::vec::Vec<terrabase::storage::intent::CommitResult>>>::recv::{closure#1} ()
+#2  0x000061cc29fcf397 in <terrabase::storage::sqlite::SqliteStorage as terrabase::storage::StoragePort>::commit_batch ()
+#3  0x000061cc29e99a09 in <terrabase::engine::Engine>::drive_as_leader ()
+#4  0x000061cc29eb4095 in <terrabase::engine::Transaction>::commit_unobserved ()
+#5  0x000061cc29eb617e in <terrabase::engine::Transaction>::commit ()
+#6  0x000061cc2a473f05 in <terrabase_server::api::put_document as axum::handler::Handler<(axum_core::extract::private::ViaRequest, axum::extract::state::State<alloc::sync::Arc<terrabase_server::api::ApiState>>, axum::extract::path::Path<(alloc::string::String, alloc::string::String, alloc::string::String)>, http::header::map::HeaderMap, alloc::string::String), alloc::sync::Arc<terrabase_server::api::ApiState>>>::call::{closure#0} ()
+#7  0x000061cc2a6c1506 in <axum::util::MapIntoResponseFuture<axum::handler::future::IntoServiceFuture<core::pin::Pin<alloc::boxed::Box<dyn core::future::future::Future<Output = http::response::Response<axum_core::body::Body>> + core::marker::Send>>>> as core::future::future::Future>::poll ()
+#8  0x000061cc2a6d1297 in <axum::routing::route::RouteFuture<core::convert::Infallible> as core::future::future::Future>::poll ()
+#9  0x000061cc2a6c2968 in <axum::util::MapIntoResponseFuture<tower::util::map_err::MapErrFuture<axum::routing::route::RouteFuture<core::convert::Infallible>, <core::convert::Infallible as core::convert::Into<core::convert::Infallible>>::into>> as core::future::future::Future>::poll ()
+#10 0x000061cc2a6d1297 in <axum::routing::route::RouteFuture<core::convert::Infallible> as core::future::future::Future>::poll ()
+#11 0x000061cc2a6c1673 in <axum::util::MapIntoResponseFuture<axum::routing::route::RouteFuture<core::convert::Infallible>> as core::future::future::Future>::poll ()
+
+Thread 11 (Thread 0x75c9685fd6c0 (LWP 2113637) "terrabase-sqlit"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc29a2f186 in std::sys::pal::unix::futex::futex_wait () at library/std/src/sys/pal/unix/futex.rs:73
+#2  std::sys::sync::thread_parking::futex::Parker::park_timeout () at library/std/src/sys/sync/thread_parking/futex.rs:75
+#3  std::thread::thread::Thread::park_timeout () at library/std/src/thread/thread.rs:132
+#4  0x000061cc29dd7064 in <std::sync::mpmc::array::Channel<alloc::vec::Vec<terrabase::storage::intent::CommitResult>>>::recv::{closure#1} ()
+#5  0x000061cc29e8985a in <std::sync::mpmc::array::Channel<()>>::recv ()
+#6  0x000061cc29aa79c5 in std::sys::backtrace::__rust_begin_short_backtrace::<terrabase::storage::sqlite::spawn_checkpointer::{closure#0}, ()> ()
+#7  0x000061cc29e19882 in <std::thread::lifecycle::spawn_unchecked<terrabase::storage::sqlite::spawn_checkpointer::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0} ()
+#8  0x000061cc29a43fc4 in alloc::boxed::{impl#31}::call_once<(), (dyn core::ops::function::FnOnce<(), Output=()> + core::marker::Send), alloc::alloc::Global> () at library/alloc/src/boxed.rs:2319
+#9  std::sys::thread::unix::{impl#2}::new::thread_start () at library/std/src/sys/thread/unix.rs:123
+#10 0x000075c968a9dd93 in start_thread () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#11 0x000075c968b258bc in __clone3 () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+
+Thread 10 (Thread 0x75c9683fc6c0 (LWP 2113638) "terrabase-sqlit"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc29dd7177 in <std::sync::mpmc::array::Channel<alloc::vec::Vec<terrabase::storage::intent::CommitResult>>>::recv::{closure#1} ()
+#2  0x000061cc29aa4bdd in std::sys::backtrace::__rust_begin_short_backtrace::<terrabase::storage::sqlite::spawn_committer::{closure#0}, ()> ()
+#3  0x000061cc29e197a3 in <std::thread::lifecycle::spawn_unchecked<terrabase::storage::sqlite::spawn_committer::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0} ()
+#4  0x000061cc29a43fc4 in alloc::boxed::{impl#31}::call_once<(), (dyn core::ops::function::FnOnce<(), Output=()> + core::marker::Send), alloc::alloc::Global> () at library/alloc/src/boxed.rs:2319
+#5  std::sys::thread::unix::{impl#2}::new::thread_start () at library/std/src/sys/thread/unix.rs:123
+#6  0x000075c968a9dd93 in start_thread () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#7  0x000075c968b258bc in __clone3 () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+
+Thread 9 (Thread 0x75c95bfff6c0 (LWP 2113669) "terrabase-sqlit"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc29a2f186 in std::sys::pal::unix::futex::futex_wait () at library/std/src/sys/pal/unix/futex.rs:73
+#2  std::sys::sync::thread_parking::futex::Parker::park_timeout () at library/std/src/sys/sync/thread_parking/futex.rs:75
+#3  std::thread::thread::Thread::park_timeout () at library/std/src/thread/thread.rs:132
+#4  0x000061cc29dd7064 in <std::sync::mpmc::array::Channel<alloc::vec::Vec<terrabase::storage::intent::CommitResult>>>::recv::{closure#1} ()
+#5  0x000061cc29e8985a in <std::sync::mpmc::array::Channel<()>>::recv ()
+#6  0x000061cc29aa79c5 in std::sys::backtrace::__rust_begin_short_backtrace::<terrabase::storage::sqlite::spawn_checkpointer::{closure#0}, ()> ()
+#7  0x000061cc29e19882 in <std::thread::lifecycle::spawn_unchecked<terrabase::storage::sqlite::spawn_checkpointer::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0} ()
+#8  0x000061cc29a43fc4 in alloc::boxed::{impl#31}::call_once<(), (dyn core::ops::function::FnOnce<(), Output=()> + core::marker::Send), alloc::alloc::Global> () at library/alloc/src/boxed.rs:2319
+#9  std::sys::thread::unix::{impl#2}::new::thread_start () at library/std/src/sys/thread/unix.rs:123
+#10 0x000075c968a9dd93 in start_thread () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#11 0x000075c968b258bc in __clone3 () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+
+Thread 8 (Thread 0x75c95bdfe6c0 (LWP 2113670) "terrabase-sqlit"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc29dd7177 in <std::sync::mpmc::array::Channel<alloc::vec::Vec<terrabase::storage::intent::CommitResult>>>::recv::{closure#1} ()
+#2  0x000061cc29aa4bdd in std::sys::backtrace::__rust_begin_short_backtrace::<terrabase::storage::sqlite::spawn_committer::{closure#0}, ()> ()
+#3  0x000061cc29e197a3 in <std::thread::lifecycle::spawn_unchecked<terrabase::storage::sqlite::spawn_committer::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0} ()
+#4  0x000061cc29a43fc4 in alloc::boxed::{impl#31}::call_once<(), (dyn core::ops::function::FnOnce<(), Output=()> + core::marker::Send), alloc::alloc::Global> () at library/alloc/src/boxed.rs:2319
+#5  std::sys::thread::unix::{impl#2}::new::thread_start () at library/std/src/sys/thread/unix.rs:123
+#6  0x000075c968a9dd93 in start_thread () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#7  0x000075c968b258bc in __clone3 () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+
+Thread 7 (Thread 0x75c95bbfd6c0 (LWP 2113707) "tokio-rt-worker"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc29a22fab in std::sys::pal::unix::futex::futex_wait () at library/std/src/sys/pal/unix/futex.rs:73
+#2  std::sys::sync::condvar::futex::Condvar::wait_optional_timeout () at library/std/src/sys/sync/condvar/futex.rs:49
+#3  0x000061cc2ac32c66 in std::sys::backtrace::__rust_begin_short_backtrace::<<tokio::runtime::blocking::pool::Spawner>::spawn_thread::{closure#0}, ()> ()
+#4  0x000061cc2ac34b25 in <std::thread::lifecycle::spawn_unchecked<<tokio::runtime::blocking::pool::Spawner>::spawn_thread::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0} ()
+#5  0x000061cc29a43fc4 in alloc::boxed::{impl#31}::call_once<(), (dyn core::ops::function::FnOnce<(), Output=()> + core::marker::Send), alloc::alloc::Global> () at library/alloc/src/boxed.rs:2319
+#6  std::sys::thread::unix::{impl#2}::new::thread_start () at library/std/src/sys/thread/unix.rs:123
+#7  0x000075c968a9dd93 in start_thread () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#8  0x000075c968b258bc in __clone3 () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+
+Thread 6 (Thread 0x75c95b9fc6c0 (LWP 2113708) "tbep-grpc-tls"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc2ac3f806 in <tokio::runtime::park::Inner>::park ()
+#2  0x000061cc2aa69a0f in std::sys::backtrace::__rust_begin_short_backtrace::<<terrabase_tbep::grpc::TbepGrpcServer>::serve_tls_reloadable::{closure#0}, ()> ()
+#3  0x000061cc2ab1fe7d in <std::thread::lifecycle::spawn_unchecked<<terrabase_tbep::grpc::TbepGrpcServer>::serve_tls_reloadable::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0} ()
+#4  0x000061cc29a43fc4 in alloc::boxed::{impl#31}::call_once<(), (dyn core::ops::function::FnOnce<(), Output=()> + core::marker::Send), alloc::alloc::Global> () at library/alloc/src/boxed.rs:2319
+#5  std::sys::thread::unix::{impl#2}::new::thread_start () at library/std/src/sys/thread/unix.rs:123
+#6  0x000075c968a9dd93 in start_thread () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#7  0x000075c968b258bc in __clone3 () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+
+Thread 5 (Thread 0x75c95b7fb6c0 (LWP 2113709) "tokio-rt-worker"):
+#0  0x000075c968aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000075c968a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x000075c968a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x000075c968b25bb5 in epoll_wait () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x000061cc2ac3a8ff in <tokio::runtime::io::driver::Driver>::turn ()
+#5  0x000061cc2ac3650f in <tokio::runtime::time::Driver>::park_internal ()
+#6  0x000061cc2ac40a8a in <tokio::runtime::scheduler::multi_thread::worker::Context>::park_internal ()
+#7  0x000061cc2ac4518d in tokio::runtime::scheduler::multi_thread::worker::run ()
+#8  0x000061cc2ac33989 in tokio::runtime::task::raw::poll::<tokio::runtime::blocking::task::BlockingTask<<tokio::runtime::scheduler::multi_thread::worker::Launch>::launch::{closure#0}>, tokio::runtime::blocking::schedule::BlockingSchedule> ()
+#9  0x000061cc2ac32d30 in std::sys::backtrace::__rust_begin_short_backtrace::<<tokio::runtime::blocking::pool::Spawner>::spawn_thread::{closure#0}, ()> ()
+#10 0x000061cc2ac34b25 in <std::thread::lifecycle::spawn_unchecked<<tokio::runtime::blocking::pool::Spawner>::spawn_thread::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0} ()
+#11 0x000061cc29a43fc4 in alloc::boxed::{impl#31}::call_once<(), (dyn core::ops::function::FnOnce<(), Output=()> + core::marker::Send), alloc::alloc::Global> () at library/alloc/src/boxed.rs:2319
+
+Thread 4 (Thread 0x75c95b5fa6c0 (LWP 2113710) "tokio-rt-worker"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc2ac40ba6 in <tokio::runtime::scheduler::multi_thread::worker::Context>::park_internal ()
+#2  0x000061cc2ac4518d in tokio::runtime::scheduler::multi_thread::worker::run ()
+#3  0x000061cc2ac33989 in tokio::runtime::task::raw::poll::<tokio::runtime::blocking::task::BlockingTask<<tokio::runtime::scheduler::multi_thread::worker::Launch>::launch::{closure#0}>, tokio::runtime::blocking::schedule::BlockingSchedule> ()
+#4  0x000061cc2ac32d30 in std::sys::backtrace::__rust_begin_short_backtrace::<<tokio::runtime::blocking::pool::Spawner>::spawn_thread::{closure#0}, ()> ()
+#5  0x000061cc2ac34b25 in <std::thread::lifecycle::spawn_unchecked<<tokio::runtime::blocking::pool::Spawner>::spawn_thread::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0} ()
+#6  0x000061cc29a43fc4 in alloc::boxed::{impl#31}::call_once<(), (dyn core::ops::function::FnOnce<(), Output=()> + core::marker::Send), alloc::alloc::Global> () at library/alloc/src/boxed.rs:2319
+#7  std::sys::thread::unix::{impl#2}::new::thread_start () at library/std/src/sys/thread/unix.rs:123
+#8  0x000075c968a9dd93 in start_thread () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#9  0x000075c968b258bc in __clone3 () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+
+Thread 3 (Thread 0x75c95b3f96c0 (LWP 2113793) "terrabase-sqlit"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc29a2f186 in std::sys::pal::unix::futex::futex_wait () at library/std/src/sys/pal/unix/futex.rs:73
+#2  std::sys::sync::thread_parking::futex::Parker::park_timeout () at library/std/src/sys/sync/thread_parking/futex.rs:75
+#3  std::thread::thread::Thread::park_timeout () at library/std/src/thread/thread.rs:132
+#4  0x000061cc29dd7064 in <std::sync::mpmc::array::Channel<alloc::vec::Vec<terrabase::storage::intent::CommitResult>>>::recv::{closure#1} ()
+#5  0x000061cc29e8985a in <std::sync::mpmc::array::Channel<()>>::recv ()
+#6  0x000061cc29aa79c5 in std::sys::backtrace::__rust_begin_short_backtrace::<terrabase::storage::sqlite::spawn_checkpointer::{closure#0}, ()> ()
+#7  0x000061cc29e19882 in <std::thread::lifecycle::spawn_unchecked<terrabase::storage::sqlite::spawn_checkpointer::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0} ()
+#8  0x000061cc29a43fc4 in alloc::boxed::{impl#31}::call_once<(), (dyn core::ops::function::FnOnce<(), Output=()> + core::marker::Send), alloc::alloc::Global> () at library/alloc/src/boxed.rs:2319
+#9  std::sys::thread::unix::{impl#2}::new::thread_start () at library/std/src/sys/thread/unix.rs:123
+#10 0x000075c968a9dd93 in start_thread () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#11 0x000075c968b258bc in __clone3 () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+
+Thread 2 (Thread 0x75c95b1f86c0 (LWP 2113794) "terrabase-sqlit"):
+#0  0x000075c968aa6962 in __syscall_cancel_arch () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000075c968a9a04c in __internal_syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#2  0x000075c968a9a0c4 in __syscall_cancel () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#3  0x000075c968b1b642 in fsync () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#4  0x000061cc2ad9af88 in unixSync ()
+#5  0x000061cc2ada89e2 in pagerWalFrames ()
+#6  0x000061cc2ad821b6 in sqlite3PagerCommitPhaseOne ()
+#7  0x000061cc2ad8255c in sqlite3BtreeCommitPhaseOne ()
+#8  0x000061cc2adae846 in vdbeCommit ()
+#9  0x000061cc2adadb47 in sqlite3VdbeHalt ()
+#10 0x000061cc2adbefee in sqlite3VdbeExec ()
+#11 0x000061cc2ad7dc33 in sqlite3_step ()
+
+Thread 1 (Thread 0x75c968d9be80 (LWP 2113631) "terrabase-serve"):
+#0  0x000075c968b2348d in syscall () from /nix/store/rkiwrqh8g6gs5rws4bf1s3mrdcs15gm9-glibc-2.42-84/lib/libc.so.6
+#1  0x000061cc2ac3f806 in <tokio::runtime::park::Inner>::park ()
+#2  0x000061cc2a91ecc5 in tokio::runtime::park::CachedParkThread::block_on<terrabase_server::main::{async_block_env#0}> () at /home/mariogk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/park.rs:288
+#3  tokio::runtime::context::blocking::BlockingRegionGuard::block_on<terrabase_server::main::{async_block_env#0}> () at /home/mariogk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/context/blocking.rs:66
+#4  tokio::runtime::scheduler::multi_thread::{impl#0}::block_on::{closure#0}<terrabase_server::main::{async_block_env#0}> () at /home/mariogk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/multi_thread/mod.rs:92
+#5  tokio::runtime::context::runtime::enter_runtime<tokio::runtime::scheduler::multi_thread::{impl#0}::block_on::{closure_env#0}<terrabase_server::main::{async_block_env#0}>, core::result::Result<(), alloc::boxed::Box<(dyn core::error::Error + core::marker::Send + core::marker::Sync), alloc::alloc::Global>>> () at /home/mariogk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/context/runtime.rs:65
+#6  tokio::runtime::scheduler::multi_thread::MultiThread::block_on<terrabase_server::main::{async_block_env#0}> () at /home/mariogk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/multi_thread/mod.rs:91
+#7  tokio::runtime::runtime::Runtime::block_on_inner<terrabase_server::main::{async_block_env#0}> () at /home/mariogk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/runtime.rs:376
+#8  tokio::runtime::runtime::Runtime::block_on<terrabase_server::main::{async_block_env#0}> () at /home/mariogk/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/runtime.rs:343
+#9  terrabase_server::main () at crates/terrabase-server/src/main.rs:11
+[Inferior 1 (process 2113631) detached]

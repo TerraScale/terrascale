@@ -606,6 +606,46 @@ fn faulted_batch_leaves_zero_divergence() {
 }
 
 #[test]
+fn post_commit_sync_failure_is_unknown_and_replays_committed_receipt() {
+    let (dir, engine) = open_sqlite_engine("post-commit-sync-failure");
+    let scope = tenant_scope(&engine, "tenant-a");
+    engine.arm_storage_fault(FaultPoint::PostCommitSync);
+    let outcome = commit_put(
+        &engine,
+        "tenant-a",
+        "op-post-sync",
+        "doc-1",
+        "users",
+        "committed",
+        ExpectedVersion::New,
+        LocalDurability::Written,
+    );
+    assert!(matches!(
+        outcome,
+        CommitOutcome::Unknown(ref unknown)
+            if unknown.reason() == crate::UnknownReason::PostCommitSync
+    ));
+    let resolved = engine.resolve_commit(&scope, operation("op-post-sync")).expect("resolves");
+    let sequence = match resolved {
+        DurableResolution::Committed(receipt) => receipt.sequence().get(),
+        other => panic!("expected committed resolution, got {other:?}"),
+    };
+    let retry = commit_put(
+        &engine,
+        "tenant-a",
+        "op-post-sync",
+        "doc-1",
+        "users",
+        "committed",
+        ExpectedVersion::New,
+        LocalDurability::Written,
+    );
+    assert_eq!(committed_sequence(retry), sequence, "retry replays exactly once");
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn idempotent_replay_and_digest_conflict() {
     let (dir, engine) = open_sqlite_engine("idempotency");
     let first = commit_put(

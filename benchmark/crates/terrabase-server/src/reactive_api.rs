@@ -30,7 +30,7 @@ mod socket;
 mod source;
 
 /// Fixed capability header; it never appears in a URL or cache key.
-pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
+pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-Capability";
 /// `MessagePack` media type for snapshots, logs, resets, and protocol errors.
 pub const MSGPACK_MEDIA_TYPE: &str = "application/msgpack";
 /// Maximum SQL statement bytes accepted by view attach.

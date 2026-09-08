@@ -2,7 +2,8 @@
 
 use super::{
     ApiError, ApiState, Arc, CollectionName, CommitOutcome, IntoResponse, LocalDurability,
-    OperationId, Path, Response, State, database_record, document_host, document_scope,
+    OperationId, Path, Response, State, commit_on_runtime, database_record, document_host,
+    document_scope,
 };
 use crate::schema_api::{
     DatabaseIdentity, DurableCommit, DurablePortError, DurableSchemaRecord, SchemaDurablePort,
@@ -98,7 +99,7 @@ impl SchemaDurablePort for EngineSchemaStore {
                 &record_bytes,
             )
             .map_err(|_| storage_error())?;
-        match transaction.commit(LocalDurability::Synced) {
+        match commit_on_runtime(transaction, LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(DurableCommit::Committed),
             CommitOutcome::Rejected(terrabase::CommitError::Conflict) => {
                 Ok(DurableCommit::GenerationConflict)

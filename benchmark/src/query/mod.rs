@@ -33,10 +33,10 @@ mod live;
 mod model;
 pub mod optimizer;
 mod result;
+pub(crate) mod routed;
 mod spec;
 mod sql_execute;
 mod statistics;
-pub(crate) mod routed;
 
 pub mod bulk;
 mod family_sources;
@@ -673,6 +673,34 @@ impl<'engine> QueryStore<'engine> {
             snapshot,
         );
         Ok(result)
+    }
+
+    /// Executes an execute-only SQL plan against an admitted multi-shard cut.
+    /// The cut is converted at this boundary so serving retains ownership of
+    /// admission permits while SQL owns the single-evaluator semantics.
+    pub fn execute_admitted(
+        &self,
+        plan: &QueryPlan,
+        cut: &crate::member::AdmittedShardReadCut,
+    ) -> Result<QueryResult, QueryError> {
+        let runtime = plan.sql_runtime.as_deref().ok_or(QueryError::InvalidSpec)?;
+        let generation = cut.route_generation.ok_or(QueryError::StorageFailure)?;
+        let participants = cut
+            .participants
+            .iter()
+            .map(|participant| {
+                routed::RoutedReadParticipant::new(
+                    participant.identity.clone(),
+                    participant.engine.clone(),
+                    participant.snapshot.clone(),
+                    participant.routes.clone(),
+                )
+                .map_err(|_| QueryError::StorageFailure)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let routed = routed::RoutedReadCut::new(cut.database_incarnation, generation, participants)
+            .map_err(|_| QueryError::StorageFailure)?;
+        sql_execute::execute_routed(&routed, plan, runtime)
     }
 
     /// Explains the plan the optimizer would use for the same query: the

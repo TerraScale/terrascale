@@ -689,6 +689,10 @@ pub(crate) trait StoragePort: Send {
         Ok(None)
     }
 
+    fn install_usage_budget(&mut self, tenant: &TenantId, allocation: &crate::usage::VerifiedAllocation) -> Result<(), ()>;
+    fn usage_budget_remaining(&self, tenant: &TenantId, refill: &str) -> Result<Option<i64>, ()>;
+    fn usage_budget_consumptions(&self, tenant: &TenantId, after: u64, limit: u32) -> Result<Vec<crate::usage::BudgetConsumption>, ()>;
+
     fn local_replication_origin(&self) -> &str;
 
     fn replication_repair_cut(

@@ -141,6 +141,10 @@ pub struct Publication {
     pub write_index: u32,
     /// Stable operation identity from the publication journal.
     pub event_id: String,
+    /// Region that durably originated this publication. Replicas must not dispatch it.
+    pub origin_region: String,
+    /// Stable physical origin lane identity; distinct from its placement Region.
+    pub origin_lane: String,
     /// Deterministic `MessagePack` event bytes reconstructed from the retained commit.
     pub body: Vec<u8>,
 }
@@ -156,6 +160,10 @@ pub struct DeliveryRecord {
     pub revision: u64,
     /// Exclusive write position within the commit.
     pub write_index: u32,
+    /// Immutable publication origin used for dispatch ownership.
+    pub origin_region: String,
+    /// Stable physical origin lane identity retained for audit and fencing.
+    pub origin_lane: String,
     /// Start of the current automatic retry window in Unix seconds.
     pub retry_started_at: u64,
     /// Number of attempts made.
@@ -656,6 +664,8 @@ fn delivery_value(record: &DeliveryRecord) -> MetadataValue {
         ("event_id".into(), MetadataValue::String(record.event_id.clone())),
         ("revision".into(), unsigned_value(record.revision)),
         ("write_index".into(), unsigned_value(u64::from(record.write_index))),
+        ("origin_region".into(), MetadataValue::String(record.origin_region.clone())),
+        ("origin_lane".into(), MetadataValue::String(record.origin_lane.clone())),
         ("attempts".into(), MetadataValue::Integer(i64::from(record.attempts))),
         ("next_attempt_at".into(), unsigned_value(record.next_attempt_at)),
         ("retry_started_at".into(), unsigned_value(record.retry_started_at)),
@@ -691,6 +701,8 @@ fn delivery_from_document(document: &MetadataDocument) -> Option<DeliveryRecord>
         event_id: string("event_id")?,
         revision: integer("revision")?,
         write_index: u32::try_from(integer("write_index")?).ok()?,
+        origin_region: string("origin_region")?,
+        origin_lane: string("origin_lane")?,
         attempts: u32::try_from(integer("attempts")?).ok()?,
         next_attempt_at: integer("next_attempt_at")?,
         retry_started_at: integer("retry_started_at")?,
@@ -838,6 +850,8 @@ impl WebhookStorage for EngineWebhookStorage {
             event_id: publication.event_id.clone(),
             revision: publication.revision,
             write_index: publication.write_index,
+            origin_region: publication.origin_region.clone(),
+            origin_lane: publication.origin_lane.clone(),
             attempts: 0,
             next_attempt_at: now,
             retry_started_at: now,
@@ -1807,6 +1821,14 @@ impl WebhookService {
             .map_err(WebhookError::storage)?
             .ok_or_else(WebhookError::not_found)?;
         if endpoint.deleted {
+            return Ok(false);
+        }
+        // Replicas retain the shared journal for reads, but only the region
+        // that originated a publication may dispatch its webhook. Empty
+        // provenance is accepted only for the local standalone composition.
+        if !row.origin_region.is_empty()
+            && row.origin_region != self.region.to_ascii_uppercase()
+        {
             return Ok(false);
         }
         let secret =

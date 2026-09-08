@@ -42,6 +42,8 @@ impl WebhookJournal for BudgetPorts {
                 revision: 7,
                 write_index,
                 event_id: format!("event-{write_index}"),
+                origin_region: String::new(),
+                origin_lane: String::new(),
                 body: b"payload".to_vec(),
             })
             .collect::<Vec<_>>();
@@ -93,6 +95,8 @@ impl WebhookJournal for TestPorts {
                 revision: 7,
                 write_index: 1,
                 event_id: "event-7".into(),
+                origin_region: String::new(),
+                origin_lane: String::new(),
                 body: b"payload".to_vec(),
             }]
         } else {
@@ -284,6 +288,8 @@ fn durable_adapters_reject_every_foreign_owner_dimension_without_mutation() {
         revision: 7,
         write_index: 1,
         event_id: "event-7".into(),
+        origin_region: String::new(),
+        origin_lane: String::new(),
         body: b"payload".to_vec(),
     };
     let delivery =

@@ -365,6 +365,16 @@ impl EngineHost {
             .map(|lease| Self::from_admitted(lease, self.location.clone(), self.instance)))
     }
 
+    /// Captures admitted physical lanes; local standalone hosts have no Member inventory.
+    pub fn admitted_shard_read_cut(
+        &self,
+    ) -> Result<Option<terrabase::member::AdmittedShardReadCut>, terrabase::EngineError> {
+        match &self.engine {
+            HostEngine::Admitted(lease) => lease.admitted_shard_read_cut().map(Some),
+            HostEngine::Local(_) => Ok(None),
+        }
+    }
+
     /// Selects the engine used for document reads, replay, sessions and durability.
     pub fn document_participant(
         &self,

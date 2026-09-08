@@ -17,6 +17,8 @@ impl WebhookJournal for LargeJournal {
                 revision: 1,
                 write_index,
                 event_id: format!("event-{write_index}"),
+                origin_region: String::new(),
+                origin_lane: String::new(),
                 body: b"payload".to_vec(),
             })
             .collect::<Vec<_>>();
