@@ -54,7 +54,7 @@ async fn operation(
     operation_id: &str,
 ) -> (StatusCode, serde_json::Value) {
     let app = Router::new()
-        .route("/api/v1/operations/:operation_id", axum::routing::get(get_provisioning_operation))
+        .route("/api/v1/operations/{operation_id}", axum::routing::get(get_provisioning_operation))
         .layer(Extension(crate::delegated_identity::VerifiedProjectScope {
             tenant_id: tenant.into(),
             project_id: project.into(),

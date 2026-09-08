@@ -102,6 +102,7 @@ mod sha256;
 mod tests;
 /// Bounded native backup scheduling shared by hosted databases.
 pub mod worker;
+pub use worker::FleetError;
 
 pub use envelope::{BackupEnvelope, BackupEnvelopeParticipant};
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};

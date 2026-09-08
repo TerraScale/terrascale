@@ -59,7 +59,7 @@ pub use adapters::protocol::{
 pub use adapters::protocol::{ProtocolAdapter, ProtocolError};
 pub use backup::{
     BackupArchive, BackupEnvelope, BackupEnvelopeParticipant, BackupError, BackupKind,
-    BackupManifest, BackupPlan, BackupProgress, BackupResult,
+    BackupManifest, BackupPlan, BackupProgress, BackupResult, FleetError,
 };
 pub use engine::{
     AuthorizedEngine, AuthorizedEngineError, AuthorizedSession, BulkIngestRequest, CommitError,

@@ -352,8 +352,33 @@ impl NativeRecoveryRuntime {
             _ => None,
         }
         .ok_or(NativeRecoveryError::VerificationFailed)?;
-        let provider = providers.into_iter().next().ok_or(NativeRecoveryError::Unavailable)?;
-        Ok(Some((envelope, provider)))
+
+        // The local envelope catalog is only the discovery index.  The
+        // provider artifact is the restore authority, so probe each admitted
+        // destination in policy order and return the first authenticated copy
+        // that is available.  In particular, never report the first provider
+        // merely because it is configured: a provider can have lost the
+        // envelope after a policy transition while another retained provider
+        // still has it.
+        let digest = envelope.digest().to_owned();
+        for provider in providers {
+            let remote = {
+                let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+                fleet.download_envelope(source, &digest, provider).await
+            };
+            match remote {
+                Ok(remote) => return Ok(Some((remote, provider))),
+                Err(terrabase::backup::worker::FleetError::Configuration) => {
+                    return Err(NativeRecoveryError::VerificationFailed);
+                }
+                Err(
+                    terrabase::backup::worker::FleetError::Capture
+                    | terrabase::backup::worker::FleetError::Upload
+                    | terrabase::backup::worker::FleetError::StagingFull,
+                ) => continue,
+            }
+        }
+        Err(NativeRecoveryError::Unavailable)
     }
 
     /// Resolves an authenticated retained manifest without creating recovery state.
