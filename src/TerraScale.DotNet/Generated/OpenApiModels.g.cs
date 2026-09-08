@@ -116,6 +116,11 @@ public sealed record CreateExport(
     [property: JsonPropertyName("scope"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Scope
 );
 
+public sealed record CreateImport(
+    [property: JsonPropertyName("format"), JsonRequired] string Format,
+    [property: JsonPropertyName("idempotency_key"), JsonRequired] string IdempotencyKey
+);
+
 public sealed record CreateIndexRequest(
     [property: JsonPropertyName("field"), JsonRequired] string Field
 );
@@ -142,11 +147,90 @@ public sealed record DatabaseRecord(
     [property: JsonPropertyName("residency"), JsonRequired] string Residency
 );
 
-public sealed record DeletionOperation(
+public sealed record DeletionClaimReceipt(
+    [property: JsonPropertyName("accepted_at"), JsonRequired] string AcceptedAt,
+    [property: JsonPropertyName("authority_epoch"), JsonRequired] string AuthorityEpoch,
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("deadline"), JsonRequired] string Deadline,
+    [property: JsonPropertyName("environment"), JsonRequired] string Environment,
+    [property: JsonPropertyName("grace_condition"), JsonRequired] string GraceCondition,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("policy_fingerprint"), JsonRequired] string PolicyFingerprint,
+    [property: JsonPropertyName("policy_revision"), JsonRequired] string PolicyRevision,
+    [property: JsonPropertyName("project_id"), JsonRequired] string ProjectId,
+    [property: JsonPropertyName("schemaVersion"), JsonRequired] int SchemaVersion,
+    [property: JsonPropertyName("tenant_id"), JsonRequired] string TenantId
+);
+
+public sealed record DeletionEdgeReceipt(
+    [property: JsonPropertyName("access_revoked"), JsonRequired] bool AccessRevoked,
     [property: JsonPropertyName("cutoff"), JsonRequired] string Cutoff,
-    [property: JsonPropertyName("request"), JsonRequired] DeletionOperationRequest Request,
+    [property: JsonPropertyName("request"), JsonRequired] DeletionRequest Request
+);
+
+public sealed record DeletionOperation(
+    [property: JsonPropertyName("automatic_deadline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AutomaticDeadline,
+    [property: JsonPropertyName("automatic_grace_condition"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AutomaticGraceCondition,
+    [property: JsonPropertyName("automatic_policy_revision"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AutomaticPolicyRevision,
+    [property: JsonPropertyName("claim"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DeletionClaimReceipt? Claim,
+    [property: JsonPropertyName("cutoff"), JsonRequired] string Cutoff,
+    [property: JsonPropertyName("edge_receipt"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DeletionEdgeReceipt? EdgeReceipt,
+    [property: JsonPropertyName("request"), JsonRequired] DeletionRequest Request,
+    [property: JsonPropertyName("requested_at"), JsonRequired] string RequestedAt,
     [property: JsonPropertyName("state"), JsonRequired] string State,
-    [property: JsonPropertyName("targets"), JsonRequired] IReadOnlyList<DeletionOperationTargets> Targets
+    [property: JsonPropertyName("targets"), JsonRequired] IReadOnlyList<DeletionTarget> Targets
+);
+
+public sealed record DeletionPreparation(
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("environment"), JsonRequired] string Environment,
+    [property: JsonPropertyName("last_accounted_at"), JsonRequired] string LastAccountedAt,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("organization_id"), JsonRequired] string OrganizationId,
+    [property: JsonPropertyName("parent_database_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ParentDatabaseId,
+    [property: JsonPropertyName("prepared"), JsonRequired] bool Prepared,
+    [property: JsonPropertyName("project_id"), JsonRequired] string ProjectId,
+    [property: JsonPropertyName("region"), JsonRequired] string Region
+);
+
+public sealed record DeletionReceipt(
+    [property: JsonPropertyName("access_revoked"), JsonRequired] bool AccessRevoked,
+    [property: JsonPropertyName("cutoff"), JsonRequired] string Cutoff,
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("environment"), JsonRequired] string Environment,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("organization_id"), JsonRequired] string OrganizationId,
+    [property: JsonPropertyName("parent_database_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ParentDatabaseId,
+    [property: JsonPropertyName("project_id"), JsonRequired] string ProjectId,
+    [property: JsonPropertyName("region"), JsonRequired] string Region,
+    [property: JsonPropertyName("retain_until"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RetainUntil,
+    [property: JsonPropertyName("usage_stopped"), JsonRequired] bool UsageStopped
+);
+
+public sealed record DeletionRequest(
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("environment"), JsonRequired] string Environment,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("project_id"), JsonRequired] string ProjectId,
+    [property: JsonPropertyName("tenant_id"), JsonRequired] string TenantId
+);
+
+public sealed record DeletionStop(
+    [property: JsonPropertyName("cutoff"), JsonRequired] string Cutoff,
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("environment"), JsonRequired] string Environment,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("organization_id"), JsonRequired] string OrganizationId,
+    [property: JsonPropertyName("parent_database_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ParentDatabaseId,
+    [property: JsonPropertyName("project_id"), JsonRequired] string ProjectId,
+    [property: JsonPropertyName("region"), JsonRequired] string Region,
+    [property: JsonPropertyName("retain_until"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RetainUntil
+);
+
+public sealed record DeletionTarget(
+    [property: JsonPropertyName("preparation"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DeletionPreparation? Preparation,
+    [property: JsonPropertyName("receipt"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DeletionReceipt? Receipt,
+    [property: JsonPropertyName("stop"), JsonRequired] DeletionStop Stop
 );
 
 public sealed record DeliveryLog(
@@ -155,10 +239,14 @@ public sealed record DeliveryLog(
 
 public sealed record DeliveryRecord(
     [property: JsonPropertyName("attempts"), JsonRequired] int Attempts,
+    [property: JsonPropertyName("claim_token"), JsonRequired] long ClaimToken,
+    [property: JsonPropertyName("claim_until"), JsonRequired] long ClaimUntil,
     [property: JsonPropertyName("delivered"), JsonRequired] bool Delivered,
     [property: JsonPropertyName("event_id"), JsonRequired] string EventId,
     [property: JsonPropertyName("id"), JsonRequired] string Id,
     [property: JsonPropertyName("next_attempt_at"), JsonRequired] long NextAttemptAt,
+    [property: JsonPropertyName("origin_lane"), JsonRequired] string OriginLane,
+    [property: JsonPropertyName("origin_region"), JsonRequired] string OriginRegion,
     [property: JsonPropertyName("retry_started_at"), JsonRequired] long RetryStartedAt,
     [property: JsonPropertyName("revision"), JsonRequired] long Revision,
     [property: JsonPropertyName("status"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Status,
@@ -249,11 +337,31 @@ public sealed record FtsDescriptor(
 
 public sealed record HealthResponse(
     [property: JsonPropertyName("healthy"), JsonRequired] bool Healthy,
-    [property: JsonPropertyName("region"), JsonRequired] string Region
+    [property: JsonPropertyName("region"), JsonRequired] string Region,
+    [property: JsonPropertyName("version"), JsonRequired] string Version
 );
 
 public sealed record HistoryResponse(
     [property: JsonPropertyName("history"), JsonRequired] IReadOnlyList<HistoryResponseHistory> History
+);
+
+public sealed record ImportJob(
+    [property: JsonPropertyName("committed_records"), JsonRequired] long CommittedRecords,
+    [property: JsonPropertyName("cursor"), JsonRequired] long Cursor,
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("durability"), JsonRequired] string Durability,
+    [property: JsonPropertyName("error"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error,
+    [property: JsonPropertyName("format"), JsonRequired] string Format,
+    [property: JsonPropertyName("input_committed"), JsonRequired] bool InputCommitted,
+    [property: JsonPropertyName("input_digest"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? InputDigest,
+    [property: JsonPropertyName("input_length"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? InputLength,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("pending_cursor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? PendingCursor,
+    [property: JsonPropertyName("pending_operation"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PendingOperation,
+    [property: JsonPropertyName("pending_records"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? PendingRecords,
+    [property: JsonPropertyName("project_id"), JsonRequired] string ProjectId,
+    [property: JsonPropertyName("state"), JsonRequired] string State,
+    [property: JsonPropertyName("tenant_id"), JsonRequired] string TenantId
 );
 
 public sealed record Increment(
@@ -276,6 +384,19 @@ public sealed record IndexDescriptor(
 
 public sealed record IndexListResponse(
     [property: JsonPropertyName("indexes"), JsonRequired] IReadOnlyList<IndexDescriptor> Indexes
+);
+
+public sealed record Lease(
+    [property: JsonPropertyName("audience"), JsonRequired] string Audience,
+    [property: JsonPropertyName("epoch"), JsonRequired] string Epoch,
+    [property: JsonPropertyName("featureEpoch"), JsonRequired] string FeatureEpoch,
+    [property: JsonPropertyName("issuedAt"), JsonRequired] long IssuedAt,
+    [property: JsonPropertyName("keyId"), JsonRequired] string KeyId,
+    [property: JsonPropertyName("region"), JsonRequired] string Region,
+    [property: JsonPropertyName("signature"), JsonRequired] string Signature,
+    [property: JsonPropertyName("tenantId"), JsonRequired] string TenantId,
+    [property: JsonPropertyName("validUntil"), JsonRequired] long ValidUntil,
+    [property: JsonPropertyName("version"), JsonRequired] int Version
 );
 
 public sealed record MeterTotal(
@@ -499,20 +620,6 @@ public sealed record ConditionalUpdateExpected;
 public sealed record ConditionalUpdateUpdate;
 
 public sealed record ConsumeExpected;
-
-public sealed record DeletionOperationRequest(
-    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
-    [property: JsonPropertyName("environment"), JsonRequired] string Environment,
-    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
-    [property: JsonPropertyName("project_id"), JsonRequired] string ProjectId,
-    [property: JsonPropertyName("tenant_id"), JsonRequired] string TenantId
-);
-
-public sealed record DeletionOperationTargets(
-    [property: JsonPropertyName("stop"), JsonRequired] IReadOnlyDictionary<string, JsonElement> Stop
-);
-
-public sealed record DeletionOperationTargetsStop;
 
 public sealed record DocumentsResponseDocuments(
     [property: JsonPropertyName("id"), JsonRequired] string Id,

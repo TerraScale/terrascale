@@ -55,11 +55,6 @@ public sealed class TerraScaleReactiveHttpClient
     public Task<TerraScaleReactiveSubscription> SubscribeAsync(string databaseId, string subscription, string statement, ReadOnlyMemory<byte> parameters, TerraScaleViewCheckpoint? checkpoint, string transport, CancellationToken cancellationToken = default) =>
         SubscribeAsync(databaseId, subscription, statement, parameters, checkpoint, ParseTransport(transport), cancellationToken);
 
-    /// <summary>Compatibility convenience; the request still uses the canonical attach shape.</summary>
-    [Obsolete("Use SubscribeAsync(databaseId, subscription, statement, parameters, checkpoint, transport, cancellationToken).")]
-    public Task<TerraScaleReactiveSubscription> SubscribeAsync(string statement, string databaseId, CancellationToken cancellationToken = default) =>
-        AttachCoreAsync(databaseId, databaseId, statement, ReadOnlyMemory<byte>.Empty, null, TerraScaleReactiveTransport.Http, cancellationToken);
-
     /// <summary>Alias for <see cref="SubscribeAsync(string,string,string,ReadOnlyMemory{byte},TerraScaleViewCheckpoint?,TerraScaleReactiveTransport,CancellationToken)"/>.</summary>
     public Task<TerraScaleReactiveSubscription> AttachAsync(string databaseId, string subscription, string statement, ReadOnlyMemory<byte> parameters = default, TerraScaleViewCheckpoint? checkpoint = null, TerraScaleReactiveTransport transport = TerraScaleReactiveTransport.Http, CancellationToken cancellationToken = default) =>
         AttachCoreAsync(databaseId, subscription, statement, parameters, checkpoint, transport, cancellationToken);
@@ -137,9 +132,13 @@ public sealed class TerraScaleReactiveHttpClient
     private async Task<TerraScaleReactivePollResult?> PollWebSocketAsync(TerraScaleReactiveSubscription subscription, CancellationToken cancellationToken)
     {
         var socket = await subscription.EnsureWebSocketAsync(CreateWebSocketUri(subscription.Attachment.Log, subscription.Attachment.View, subscription.Attachment.Generation), subscription.Attachment.Capability, cancellationToken).ConfigureAwait(false);
-        var checkpoint = DecodeCheckpoint(subscription.CurrentSnapshot.Checkpoint.Token);
-        var subscribe = EncodeSubscribe(subscription.Attachment.Subscription, subscription.Attachment.Statement, subscription.Attachment.Parameters.Span, checkpoint);
-        await socket.SendAsync(subscribe, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken).ConfigureAwait(false);
+        if (!subscription.WebSocketSubscribed)
+        {
+            var checkpoint = DecodeCheckpoint(subscription.CurrentSnapshot.Checkpoint.Token);
+            var subscribe = EncodeSubscribe(subscription.Attachment.Subscription, subscription.Attachment.Statement, subscription.Attachment.Parameters.Span, checkpoint);
+            await socket.SendAsync(subscribe, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken).ConfigureAwait(false);
+            subscription.MarkWebSocketSubscribed();
+        }
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(options.PollWindow);
         byte[]? bytes;
@@ -685,6 +684,7 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
     private readonly CancellationTokenSource lifetime = new();
     private Task? disposal;
     private ClientWebSocket? webSocket;
+    private bool webSocketSubscribed;
     private volatile bool disposed;
     internal TerraScaleReactiveSubscription(TerraScaleReactiveHttpClient client, TerraScaleReactiveAttachment attachment, TerraScaleReactiveSnapshot snapshot) { this.client = client; Attachment = attachment; CurrentSnapshot = snapshot; if (snapshot.Revision != attachment.Offset) throw new TerraScaleReactiveProtocolException("The attach offset does not match the immutable snapshot revision."); Offset = attachment.Offset; SessionState = TerraScaleViewSessionState.Live; }
     public TerraScaleReactiveAttachment Attachment { get; private set; }
@@ -711,8 +711,12 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
         }
 
         webSocket = connected;
+        webSocketSubscribed = false;
         return connected;
     }
+
+    internal bool WebSocketSubscribed => webSocketSubscribed;
+    internal void MarkWebSocketSubscribed() => webSocketSubscribed = true;
     internal void MarkNeedsResume()
     {
         NeedsResume = true;
@@ -722,6 +726,7 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
     private void DropWebSocket()
     {
         var socket = Interlocked.Exchange(ref webSocket, null);
+        webSocketSubscribed = false;
         socket?.Dispose();
     }
     public async Task<TerraScaleReactivePollResult?> ReadNextAsync(CancellationToken cancellationToken = default)
@@ -907,7 +912,10 @@ internal sealed record ReactiveAttachRequest(
     [property: JsonPropertyName("parameters")] string Parameters,
     [property: JsonPropertyName("checkpoint")] string? Checkpoint,
     [property: JsonPropertyName("subscription")] string? Subscription,
-    [property: JsonPropertyName("entitlement_epoch")] ulong EntitlementEpoch);
+    // OpenAPI publishes this as a signed int64. Keep the internal request
+    // shape aligned with that contract even though the current client sends
+    // the initial epoch (zero) only.
+    [property: JsonPropertyName("entitlement_epoch")] long EntitlementEpoch);
 internal sealed record ReactiveAttachResponse(
     [property: JsonPropertyName("view")] string? View,
     [property: JsonPropertyName("generation")] ulong Generation,
