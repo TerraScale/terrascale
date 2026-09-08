@@ -72,7 +72,7 @@ impl SavedPlan {
     }
 }
 
-fn contract(record: &DurableSchemaRecord) -> Result<SchemaMigration, String> {
+pub(super) fn contract(record: &DurableSchemaRecord) -> Result<SchemaMigration, String> {
     let previous = record
         .previous_schema
         .as_ref()
@@ -115,6 +115,15 @@ fn persist(
     expected: &[u8],
     record: &DurableSchemaRecord,
 ) -> Result<bool, String> {
+    persist_with_rollback(engine, expected, record, false)
+}
+
+pub(super) fn persist_with_rollback(
+    engine: &terrabase::Engine,
+    expected: &[u8],
+    record: &DurableSchemaRecord,
+    begin_rollback: bool,
+) -> Result<bool, String> {
     let target = &record.document.target;
     let bytes =
         serde_json::to_vec(record).map_err(|_| "schema status encoding failed".to_owned())?;
@@ -127,6 +136,10 @@ fn persist(
     let mut transaction = engine
         .begin(&scope, snapshot, operation.clone())
         .map_err(|_| "schema status transaction failed".to_owned())?;
+    if begin_rollback {
+        migrations::stage_rollback(&mut transaction, &contract(record)?)
+            .map_err(|error| format!("rollback admission refused: {error:?}"))?;
+    }
     transaction
         .stage_schema_bundle(
             &target.collection,
@@ -158,6 +171,9 @@ fn persist(
 /// Advances at most one document transformation page. Dry-run and final
 /// evidence verification use the core coordinator's snapshot scans.
 fn advance(engine: &terrabase::Engine, record: &mut DurableSchemaRecord) -> Result<bool, String> {
+    if record.rollback.is_some() && record.previous_schema.is_some() {
+        return super::schema_migration_recovery::advance(engine, record);
+    }
     let has_renames =
         record.document.migration.as_ref().is_some_and(|migration| {
             migration.steps.iter().any(|step| step.kind == "field_rename")
@@ -245,6 +261,12 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
         eprintln!("index backfill maintenance failed for database {database}: {error:?}");
     }
     engine.maintain_indexes();
+    // Share the existing round-robin database budget. Each pass limits expiry
+    // keys and retired publications; cancellation stops scheduling new passes
+    // while an already started SQLite transaction finishes atomically.
+    if let Err(error) = engine.maintain_retention(16) {
+        eprintln!("retention maintenance failed for database {database}: {error:?}");
+    }
     let rows = engine.schema_metadata_list(database, "main", after, 1).ok()?;
     let (collection, expected) = rows.into_iter().next()?;
     let Ok(mut record) = serde_json::from_slice::<DurableSchemaRecord>(&expected) else {
@@ -257,7 +279,7 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
         || !record.document.migration.as_ref().is_none_or(|migration| {
             matches!(
                 migration.state,
-                MigrationState::Pending | MigrationState::Running | MigrationState::Failed
+                MigrationState::Pending | MigrationState::Running | MigrationState::Failed | MigrationState::RollingBack
             )
         })
     {
@@ -273,9 +295,10 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
                 record.previous_schema = None;
                 record.migration_plan = None;
             }
+            Ok(false) if record.rollback.is_some() => migration.state = MigrationState::RollingBack,
             Ok(false) => migration.state = MigrationState::Running,
             Err(message) => {
-                migration.state = MigrationState::Failed;
+                migration.state = if record.rollback.is_some() { MigrationState::RollingBack } else { MigrationState::Failed };
                 migration.message = message;
             }
         }

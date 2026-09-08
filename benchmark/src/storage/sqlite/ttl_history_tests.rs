@@ -55,9 +55,11 @@ fn usage(engine: &Engine, scope: &TenantScope) -> i128 {
 
 #[test]
 fn real_ttl_sweep_is_unbilled_and_customer_delete_is_billed_after_restart() {
-    let (path, engine) = open("ttl-usage-restart");
-    let tenants = [TenantId::try_new("expired").unwrap(), TenantId::try_new("live").unwrap()];
-    for tenant in &tenants {
+    for (tenant_name, expires_at, expected_sweep) in [("expired", 1, 1), ("live", i64::MAX, 0)] {
+        // Placement belongs to one physical database. Separate files exercise
+        // equal document IDs without attempting to rebind a database owner.
+        let (path, engine) = open("ttl-usage-restart");
+        let tenant = TenantId::try_new(tenant_name).unwrap();
         engine
             .configure_usage_placement(
                 UsagePlacement::try_new(
@@ -72,66 +74,48 @@ fn real_ttl_sweep_is_unbilled_and_customer_delete_is_billed_after_restart() {
                 .unwrap(),
             )
             .unwrap();
-    }
-    let expired = engine.scope_for(&tenants[0]);
-    let live = engine.scope_for(&tenants[1]);
-    put(&engine, &expired, "sessions", "seed", 1);
-    put(&engine, &live, "sessions", "seed", i64::MAX);
-    assert_eq!(engine.sweep_expired_ttl(16).unwrap(), 1);
-    assert_eq!(usage(&engine, &expired), 2);
-    assert_eq!(usage(&engine, &live), 2);
-    let collection = CollectionName::try_new("sessions").unwrap();
-    let id = DocumentId::try_new("same-id").unwrap();
-    let history = engine.document_history_in_collection(&expired, &collection, &id, 16).unwrap();
-    assert_eq!(history.len(), 2);
-    assert_eq!(history.iter().filter(|entry| entry.deleted).count(), 1);
-    assert_eq!(
-        engine
-            .snapshot_documents_in_collection(
-                &live,
-                &engine.read_snapshot(&live).unwrap(),
-                &collection
-            )
-            .unwrap()
-            .len(),
-        1
-    );
-    engine.shutdown().unwrap();
-
-    let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
-    let expired = engine.scope_for(&tenants[0]);
-    let live = engine.scope_for(&tenants[1]);
-    assert_eq!(engine.sweep_expired_ttl(16).unwrap(), 0);
-    assert_eq!(usage(&engine, &expired), 2);
-    let mut transaction = engine
-        .begin(
-            &live,
-            engine.read_snapshot(&live).unwrap(),
-            OperationId::try_new("customer-delete").unwrap(),
-        )
-        .unwrap();
-    transaction.delete_in_collection(&collection, id, ExpectedVersion::Any);
-    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
-    assert_eq!(usage(&engine, &live), 4);
-    assert_eq!(usage(&engine, &expired), 2);
-    engine.shutdown().unwrap();
-    let storage = SqliteStorage::open(&path).unwrap();
-    let writer = storage.raw_writer_connection();
-    for tenant in &tenants {
-        let (stored, billed): (i64, i64) = writer
-            .query_row(
-                "SELECT (SELECT SUM(LENGTH(body)) FROM documents WHERE tenant = ?1 AND deleted = 0),
-                        bytes FROM storage_accounting_gauges WHERE tenant = ?1",
-                [tenant.as_str()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
+        let scope = engine.scope_for(&tenant);
+        put(&engine, &scope, "sessions", "seed", expires_at);
+        assert_eq!(engine.sweep_expired_ttl(16).unwrap(), expected_sweep);
+        assert_eq!(usage(&engine, &scope), 2);
+        let collection = CollectionName::try_new("sessions").unwrap();
+        let id = DocumentId::try_new("same-id").unwrap();
+        let history = engine.document_history_in_collection(&scope, &collection, &id, 16).unwrap();
+        assert_eq!(history.iter().filter(|entry| entry.deleted).count(), expected_sweep as usize);
+        engine.shutdown().unwrap();
+        let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
+        let scope = engine.scope_for(&tenant);
+        assert_eq!(engine.sweep_expired_ttl(16).unwrap(), 0);
+        assert_eq!(usage(&engine, &scope), 2);
+        if tenant_name == "live" {
+            let mut transaction = engine
+                .begin(
+                    &scope,
+                    engine.read_snapshot(&scope).unwrap(),
+                    OperationId::try_new("customer-delete").unwrap(),
+                )
+                .unwrap();
+            transaction.delete_in_collection(&collection, id, ExpectedVersion::Any);
+            assert!(matches!(
+                transaction.commit(LocalDurability::Synced),
+                CommitOutcome::Committed(_)
+            ));
+            assert_eq!(usage(&engine, &scope), 4);
+        }
+        engine.shutdown().unwrap();
+        let storage = SqliteStorage::open(&path).unwrap();
+        let writer = storage.raw_writer_connection();
+        let (stored, billed): (i64, i64) = writer.query_row(
+            "SELECT (SELECT SUM(LENGTH(body)) FROM documents WHERE tenant = ?1 AND deleted = 0),
+                    bytes FROM storage_accounting_gauges WHERE tenant = ?1",
+            [tenant.as_str()], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
         assert!(stored > 0);
         assert_eq!(stored, billed, "expiry and deletion retain billable history");
+        drop(writer);
+        drop(storage);
+        std::fs::remove_dir_all(path).unwrap();
     }
-    drop(writer);
-    drop(storage);
-    std::fs::remove_dir_all(path).unwrap();
 }
 
 #[test]
@@ -196,6 +180,55 @@ fn undeclared_history_expires_after_seven_days_and_declared_history_survives_res
     );
     assert!(billed_bytes > 0);
     drop(writer);
+    drop(storage);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn periodic_retention_limits_complete_publications_and_resumes_after_reopen() {
+    let (path, engine) = open("bounded-retention");
+    let tenant = TenantId::try_new("history").unwrap();
+    let scope = engine.scope_for(&tenant);
+    for generation in 0..3 {
+        let mut transaction = engine
+            .begin(
+                &scope,
+                engine.read_snapshot(&scope).unwrap(),
+                OperationId::try_new(&format!("generation-{generation}")).unwrap(),
+            )
+            .unwrap();
+        for id in ["first", "second"] {
+            transaction
+                .put(
+                    Document::new(
+                        DocumentId::try_new(id).unwrap(),
+                        CollectionName::try_new("docs").unwrap(),
+                        DocumentValue::Integer(generation),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .unwrap();
+        }
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    }
+    engine.shutdown().unwrap();
+    let mut storage = SqliteStorage::open(&path).unwrap();
+    storage.advance_consumer_frontier("consumer", 4).unwrap();
+    storage.raw_writer_connection().execute("UPDATE documents SET committed_at = 0", []).unwrap();
+    StoragePort::maintain_retention(&mut storage, 1).unwrap();
+    let commits =
+        storage.tenant_commits(&tenant, crate::types::StorageSequence::new(1), 16).unwrap();
+    assert_eq!(commits.len(), 2);
+    assert!(commits.iter().all(|commit| commit.writes().len() == 2));
+    drop(storage);
+    let mut storage = SqliteStorage::open(&path).unwrap();
+    StoragePort::maintain_retention(&mut storage, 1).unwrap();
+    let commits =
+        storage.tenant_commits(&tenant, crate::types::StorageSequence::new(2), 16).unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].writes().len(), 2);
+    StoragePort::maintain_retention(&mut storage, 1).unwrap();
+    assert_eq!(storage.documents_at(storage.published_state().0, &tenant).len(), 2);
     drop(storage);
     std::fs::remove_dir_all(path).unwrap();
 }

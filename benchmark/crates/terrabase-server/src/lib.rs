@@ -5,6 +5,9 @@
 //! and publishes private Prometheus and lifecycle probes. It contains no
 //! database or protocol implementation of its own.
 
+// The static OpenAPI schema registry expands through serde_json's recursive macro.
+#![recursion_limit = "256"]
+
 pub mod admission;
 pub mod admitted_databases;
 pub mod api;

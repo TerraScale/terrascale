@@ -502,7 +502,7 @@ async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
 
 #[tokio::test]
 async fn collection_bearer_attaches_only_its_parsed_query_and_delivers_immutable_results() {
-    let (identity, _reply, authority_task) =
+    let (identity, reply, authority_task) =
         crate::delegated_identity::tests::authority_for_collection(
             crate::delegated_identity::tests::TEST_TENANT,
             "local",
@@ -550,6 +550,33 @@ async fn collection_bearer_attaches_only_its_parsed_query_and_delivers_immutable
     // Immutable delivery uses the authenticated edge proof and view capability,
     // without consulting the identity authority on the delivery path.
     authority_task.abort();
+    let expected_lease = reply.lock().unwrap()["authorityLease"].clone();
+    for _ in 0..3 {
+        let lease_response = server
+            .app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/authorization/leases/{}",
+                    crate::delegated_identity::tests::TEST_TENANT
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(lease_response.status(), StatusCode::OK);
+        assert!(lease_response.headers()["cache-control"].to_str().unwrap().contains("max-age="));
+        let lease: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(lease_response.into_body(), 1024).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            lease, expected_lease,
+            "native delivery preserves producer signature and absolute expiry"
+        );
+    }
+
     for (field, expected_delta) in [("snapshot_chunks", false), ("log", true)] {
         if expected_delta {
             server.put("two", 2).await;
@@ -593,4 +620,45 @@ async fn collection_bearer_attaches_only_its_parsed_query_and_delivers_immutable
         StatusCode::UNAUTHORIZED,
         "authority outage fails new admission closed"
     );
+}
+
+#[tokio::test]
+async fn public_tenant_lease_route_never_refreshes_expired_or_unknown_authority() {
+    let (identity, _, authority_task) = crate::delegated_identity::tests::authority_for_collection(
+        crate::delegated_identity::tests::TEST_TENANT,
+        "local",
+        "prod",
+        "read",
+        Some("orders"),
+    )
+    .await;
+    identity
+        .authorization
+        .install(
+            crate::authorization_leases::signed_test_lease(
+                crate::delegated_identity::tests::TEST_TENANT,
+                0,
+                0,
+                100,
+            ),
+            100,
+            true,
+        )
+        .unwrap();
+    let server = Server::with_identity(Some(Arc::new(identity))).await;
+    authority_task.abort();
+    for tenant in [crate::delegated_identity::tests::TEST_TENANT, "01J00000000000000000000003"] {
+        let response = server
+            .app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/authorization/leases/{tenant}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(response.headers()["cache-control"].to_str().unwrap().contains("no-store"));
+    }
 }

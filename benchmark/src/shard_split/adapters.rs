@@ -63,6 +63,19 @@ impl ShardAdmissionToken {
     }
 }
 
+/// Immutable identity persisted with one admitted physical shard file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FileShardIdentity {
+    /// Logical database incarnation owning the file.
+    pub database_incarnation: u128,
+    /// Nonzero shard identifier within that database.
+    pub shard_id: u64,
+    /// Immutable Region owning this origin lane.
+    pub region: crate::regions::RegionCode,
+    /// Durable unique origin lane incarnation, preserved across reopen/failover.
+    pub origin_lane_incarnation: u128,
+}
+
 /// Durable route receipt returned while recovering an already committed split.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommittedSplitRoute {

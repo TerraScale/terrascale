@@ -2095,6 +2095,23 @@ pub(crate) fn validate_durable_record(
     record: &DurableSchemaRecord,
 ) -> Result<(), SchemaError> {
     validate_stored_document(target, &record.document)?;
+    if let Some(rollback) = &record.rollback {
+        validate_idempotency_key(&rollback.idempotency_key)?;
+        let active = record.previous_schema.is_some();
+        if rollback.generation == 0
+            || if active {
+                record.document.generation != rollback.generation
+                    || !record.document.migration.as_ref().is_some_and(|migration| {
+                        migration.state == MigrationState::RollingBack
+                    })
+            } else {
+                rollback.generation.checked_add(1) != Some(record.document.generation)
+                    || record.document.migration.is_some()
+            }
+        {
+            return Err(SchemaError::invalid("stored rollback identity is invalid"));
+        }
+    }
     if record.idempotency.len() > MAX_IDEMPOTENCY_KEYS {
         return Err(SchemaError::invalid("stored schema has too many replay entries"));
     }
@@ -2111,7 +2128,8 @@ pub(crate) fn validate_durable_record(
         validate_stored_document(target, &replay.response)?;
         if replay.response.identity != record.document.identity
             || replay.response.generation > record.document.generation
-            || replay.response.schema_version > record.document.schema_version
+            || (record.rollback.is_none()
+                && replay.response.schema_version > record.document.schema_version)
         {
             return Err(SchemaError::invalid(
                 "stored replay does not belong to this schema history",
@@ -2216,7 +2234,7 @@ fn next_schema_version(
     }
 }
 
-fn validate_target(target: &SchemaTarget) -> Result<(), SchemaError> {
+pub(crate) fn validate_target(target: &SchemaTarget) -> Result<(), SchemaError> {
     validate_identifier(&target.database, "database")?;
     validate_identifier(&target.branch, "branch")?;
     validate_identifier(&target.collection, "collection")

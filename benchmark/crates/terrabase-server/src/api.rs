@@ -82,6 +82,8 @@ mod schema;
 mod schema_index_runtime;
 #[path = "schema_migration_runtime.rs"]
 mod schema_migration_runtime;
+#[path = "schema_migration_recovery.rs"]
+mod schema_migration_recovery;
 
 /// Starts the member's schema migration driver once. The serving runtime
 /// aborts and joins the returned task during shutdown.
@@ -715,6 +717,7 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(restore_database))
         .routes(routes!(list_collections))
         .routes(routes!(schema::get_schema, schema::put_schema))
+        .routes(routes!(schema_migration_recovery::rollback_schema))
         .routes(routes!(usage_indexes::database_usage))
         .routes(routes!(usage_indexes::delete_index))
         .routes(routes!(usage_indexes::index_recommendations))
@@ -3473,6 +3476,8 @@ async fn replay_document_request(
     if !has_idempotency_key(headers) {
         return Ok(None);
     }
+    engine.validate_document_shard_route(scope, collection, id)
+        .map_err(|_| ApiError::control_unavailable())?;
     let Some((receipt, revision)) = engine
         .resolve_document_request(scope, operation.clone(), fingerprint)
         .map_err(document_request_error)?
@@ -3482,7 +3487,10 @@ async fn replay_document_request(
     let durability = WriteDurability::prepare_replay(state, engine, scope, headers).await?;
     durability.confirm(engine, scope, &receipt).await?;
     let mut session = open_session(engine, scope, headers)?;
-    document_write_response(&mut session, collection, id, revision).map(Some)
+    let response = document_write_response(&mut session, collection, id, revision)?;
+    engine.validate_document_shard_route(scope, collection, id)
+        .map_err(|_| ApiError::control_unavailable())?;
+    Ok(Some(response))
 }
 
 fn document_write_response(
@@ -3817,6 +3825,9 @@ async fn put_document(
         }
     };
     let document = Document::new(id.clone(), collection.clone(), json_value(&value));
+    if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
+        return ApiError::control_unavailable().into_response();
+    }
     let operation = match write_operation(&headers, "api-put") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
@@ -3865,6 +3876,9 @@ async fn put_document(
         }
         Err(_) => return ApiError::storage_failure().into_response(),
     };
+    if transaction.bind_document_shard_admission(&collection, &id).is_err() {
+        return ApiError::control_unavailable().into_response();
+    }
     // The operation reservation now excludes a simultaneous publisher of
     // this identity. Recheck before any live-state precondition or merge.
     match replay_document_request(
@@ -4030,6 +4044,9 @@ async fn patch_document(
         Ok(parts) => parts,
         Err(error) => return error.into_response(),
     };
+    if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
+        return ApiError::control_unavailable().into_response();
+    }
     let operation = match write_operation(&headers, "api-patch") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
@@ -4074,6 +4091,9 @@ async fn patch_document(
         }
         Err(_) => return ApiError::storage_failure().into_response(),
     };
+    if transaction.bind_document_shard_admission(&collection, &id).is_err() {
+        return ApiError::control_unavailable().into_response();
+    }
     // The operation reservation now excludes a simultaneous publisher of
     // this identity. Recheck before any live-state precondition or merge.
     match replay_document_request(
@@ -4299,6 +4319,9 @@ async fn delete_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
+        return ApiError::control_unavailable().into_response();
+    }
     let operation = match write_operation(&headers, "api-delete") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
@@ -4346,6 +4369,9 @@ async fn delete_document(
         }
         Err(_) => return ApiError::storage_failure().into_response(),
     };
+    if transaction.bind_document_shard_admission(&collection, &id).is_err() {
+        return ApiError::control_unavailable().into_response();
+    }
     // The operation reservation now excludes a simultaneous publisher of
     // this identity. Recheck before any live-state precondition or merge.
     match replay_document_request(

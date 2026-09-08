@@ -23,6 +23,9 @@ use tokio::sync::oneshot;
 use crate::config::{ServerConfig, ServerMode};
 use crate::production::ProductionStartupError;
 
+#[path = "runtime_placement.rs"]
+mod placement_reconciliation;
+
 const MAX_PEM_BYTES: u64 = 1024 * 1024;
 const MAX_PEM_BYTES_USIZE: usize = 1024 * 1024;
 
@@ -179,6 +182,11 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
 /// Opens retained membership and the production catalog before assembling the
 /// admitted Member, public API, and authenticated control listeners.
 async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+    while run_production_once(&config).await? {}
+    Ok(())
+}
+
+async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Error + Send + Sync>> {
     let production =
         config.production.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
 
@@ -206,7 +214,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
                     if accepted {
                         continue;
                     }
-                    return Ok(());
+                    return Ok(false);
                 }
                 Err(_) => {
                     return Err(Box::new(DaemonError::ProductionStartup(
@@ -223,6 +231,17 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             None
         };
     };
+
+    let effective = placement_reconciliation::accepted_config(
+        production,
+        journal.as_deref().ok_or(DaemonError::ProductionConfigurationMissing)?,
+    )
+    .map_err(|_| {
+        DaemonError::ProductionStartup(pending_control_error(
+            "accepted placement has no valid provisioned transport composition",
+        ))
+    })?;
+    let production = &effective;
 
     // This is the production storage boundary. It opens every enabled
     // database below one root and verifies the route and placement catalogs;
@@ -291,7 +310,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         auth: None,
         native: None,
     };
-    let result: Result<(), Box<dyn Error + Send + Sync>> = async {
+    let result: Result<bool, Box<dyn Error + Send + Sync>> = async {
         // The registry is the sole public admission gate.  Keep it closed until
         // admission, replication, native backup, and recovery have all been
         // assembled against this exact Member.
@@ -442,7 +461,7 @@ async fn serve_admitted_production(
     production: &crate::config::ProductionConfig,
     owners: AdmittedProduction,
     native: Arc<crate::native_backup_runtime::NativeBackupRuntime>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<bool, Box<dyn Error + Send + Sync>> {
     let AdmittedProduction { member, admission, registry, progress, serving, journal, auth } =
         owners;
     let public = config.public_api.as_ref();
@@ -479,7 +498,7 @@ async fn serve_admitted_production(
     let native_for_startup_cleanup = Arc::clone(&native);
     let admission_for_startup_cleanup = Arc::clone(&admission);
     let member_for_startup_cleanup = Arc::clone(&member);
-    let startup_result: Result<(), Box<dyn Error + Send + Sync>> = async {
+    let startup_result: Result<bool, Box<dyn Error + Send + Sync>> = async {
         let lifecycle_fleet = native.fleet();
         let Some(public) = public else {
             return Err(Box::new(DaemonError::ProductionConfigurationMissing)
@@ -777,7 +796,7 @@ async fn serve_admitted_production(
         .unwrap_or(Err(DaemonError::ShutdownTimeout));
         let listener_outcome = if readiness.is_ok() {
             tokio::select! {
-                result = wait_for_shutdown() => result.map_err(|_| DaemonError::ShutdownTimeout),
+                result = wait_for_shutdown() => result.map(|()| false).map_err(|_| DaemonError::ShutdownTimeout),
                 result = async {
                     loop {
                         if public_task.is_finished()
@@ -790,12 +809,31 @@ async fn serve_admitted_production(
                                 "admitted runtime listener or maintenance worker stopped unexpectedly",
                             )));
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        let retained = admission.journal();
+                        let provisioned = config.production.clone().ok_or(DaemonError::ProductionConfigurationMissing)?;
+                        let next = tokio::task::spawn_blocking(move || {
+                            placement_reconciliation::accepted_config(&provisioned, &retained)
+                        }).await.map_err(|_| DaemonError::ShutdownTimeout)?;
+                        match next {
+                            Ok(next) if next.placement != production.placement => break Ok(true),
+                            Ok(_) => {
+                                // Keep the Arc-owned activation transaction alive across polls;
+                                // a shutdown cannot cancel partially installed replication lanes.
+                                let owner = Arc::clone(&admission);
+                                let _ = tokio::spawn(async move { owner.reconcile().await })
+                                    .await.map_err(|_| DaemonError::ShutdownTimeout)?;
+                            }
+                            Err(terrabase_tbep::placement::PlacementError::Storage) => {},
+                            Err(_) => break Err(DaemonError::ProductionStartup(pending_control_error(
+                                "accepted placement is invalid or lacks provisioned peer transport",
+                            ))),
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     }
                 } => result,
             }
         } else {
-            Ok(())
+            Ok(false)
         };
         serving.store(false, std::sync::atomic::Ordering::Release);
         let _ = public_stop.send(());
@@ -813,7 +851,7 @@ async fn serve_admitted_production(
         );
         placement_result?;
         readiness?;
-        listener_outcome?;
+        let restart = listener_outcome?;
         public_result.map_err(|_| DaemonError::ShutdownTimeout)?;
         metrics_result.map_err(|_| DaemonError::ShutdownTimeout)?;
         grpc_result
@@ -842,10 +880,10 @@ async fn serve_admitted_production(
                 },
             ))) as Box<dyn Error + Send + Sync>
         })?;
-        Ok(())
+        Ok(restart)
     }
     .await;
-    if let Err(error) = startup_result {
+    if startup_result.is_err() {
         serving.store(false, std::sync::atomic::Ordering::Release);
         cleanup_failed_production_startup(
             recovery_worker.take(),
@@ -857,9 +895,8 @@ async fn serve_admitted_production(
             &member_for_startup_cleanup,
         )
         .await;
-        return Err(error);
     }
-    Ok(())
+    startup_result
 }
 
 async fn cleanup_failed_production_startup(

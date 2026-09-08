@@ -247,11 +247,7 @@ impl ImportWriteTarget for EngineImportWriteTarget {
                 }
                 Ok(ImportCommit::Committed { records: records.len() as u64 })
             }
-            terrabase::CommitOutcome::Rejected(reason) => {
-                #[cfg(test)]
-                eprintln!("import engine rejection: {reason:?}");
-                Ok(ImportCommit::Rejected)
-            }
+            terrabase::CommitOutcome::Rejected(_) => Ok(ImportCommit::Rejected),
             terrabase::CommitOutcome::Unknown(_) => Ok(ImportCommit::Unknown),
         }
     }
@@ -489,8 +485,6 @@ fn commit_batch<T: ImportWriteTarget>(
             .begin_batch(&job.operation_id, &operation, cursor, count)
             .map_err(|e| ImportExecutionError::Store(e.to_string()))?;
         target.commit_import_batch(&operation, database_id, batch).map_err(|error| {
-            #[cfg(test)]
-            eprintln!("import preparation error: {error}");
             let _ = store.clear_rejected(&job.operation_id);
             ImportExecutionError::Rejected(error)
         })?
@@ -922,6 +916,16 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn http_import_encrypts_writes_and_survives_runtime_restart() {
         let (registry, _member, records, root) = crate::admitted_databases::tests::fixture();
+        // The fixture accepts Writer epoch 1; mirror production admission's
+        // explicit durable activation before importing through that writer.
+        registry
+            .resolve(&records[0].database_id)
+            .unwrap()
+            .unwrap()
+            .host
+            .engine()
+            .activate_origin_epoch(1)
+            .unwrap();
         let mut state = super::super::tests::state_with_keys_and_control();
         let record = &records[0];
         let runtime = Arc::new(ImportRuntime::open(root.join("imports")).unwrap());
@@ -1131,6 +1135,7 @@ mod tests {
         tokio::task::spawn_blocking(|| {
             let (registry, _member, records, root) = crate::admitted_databases::tests::fixture();
             let host = &registry.resolve(&records[0].database_id).unwrap().unwrap().host;
+            host.engine().activate_origin_epoch(1).unwrap();
             let lease = host
                 .engine()
                 .artifact_key_source(&document_scope(host.engine()).unwrap())

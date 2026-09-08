@@ -513,13 +513,18 @@ pub struct ProductionAdmissionRuntime {
     records: Arc<Mutex<BTreeMap<String, crate::admission::AdmissionRecord>>>,
     host: Arc<crate::admission::AdmissionHost>,
     config: crate::config::ProductionConfig,
-    active: BTreeSet<String>,
-    pending_publication: BTreeMap<DatabaseRouteScope, Option<String>>,
+    activation: tokio::sync::Mutex<AdmissionActivation>,
     lifecycle: Arc<ProductionDataLifecycle>,
     dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     usage: Arc<crate::usage_admission::UsageAdmissionJournal>,
     snapshot_max_bytes: u64,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+}
+
+#[derive(Default)]
+struct AdmissionActivation {
+    active: BTreeSet<String>,
+    pending_publication: BTreeMap<DatabaseRouteScope, Option<String>>,
 }
 
 /// Bridges the durable recovery worker to the production data owner. The
@@ -817,8 +822,7 @@ impl ProductionAdmissionRuntime {
             records,
             host: Arc::new(host),
             config,
-            active: BTreeSet::new(),
-            pending_publication: BTreeMap::new(),
+            activation: tokio::sync::Mutex::new(AdmissionActivation::default()),
             lifecycle: Arc::new(ProductionDataLifecycle::new(progress, registry.clone())),
             dispatcher,
             usage,
@@ -1496,7 +1500,8 @@ impl ProductionAdmissionRuntime {
     ///
     /// # Errors
     /// Refuses changed authority, missing admitted records, or failed worker startup.
-    pub async fn reconcile(&mut self) -> Result<(), String> {
+    pub async fn reconcile(&self) -> Result<(), String> {
+        let mut activation = self.activation.lock().await;
         if self.lifecycle.is_draining() {
             return Err("production admission runtime is draining".into());
         }
@@ -1519,15 +1524,19 @@ impl ProductionAdmissionRuntime {
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        self.retire_stopped_writers(&records).await?;
-        self.publish_pending()?;
+        self.retire_stopped_writers(&records, &mut activation).await?;
+        self.publish_pending(&mut activation)?;
         let local_member = self.config.environment.member.to_text();
         let mut databases = Vec::new();
         let mut newly_active = Vec::new();
         for record in records {
-            if let Some((database, active)) =
-                self.prepare_active_database(&record, &proposal, &proof_digest, &local_member)?
-            {
+            if let Some((database, active)) = self.prepare_active_database(
+                &record,
+                &proposal,
+                &proof_digest,
+                &local_member,
+                &activation,
+            )? {
                 databases.push(database);
                 newly_active.push(active);
             }
@@ -1541,10 +1550,10 @@ impl ProductionAdmissionRuntime {
         // The queue commit cannot be canceled halfway. Record its phase before
         // attempting fallible public publication, so retries never reinstall lanes.
         for (scope, database, writer) in newly_active {
-            self.active.insert(database.clone());
-            self.pending_publication.insert(scope, writer.then_some(database));
+            activation.active.insert(database.clone());
+            activation.pending_publication.insert(scope, writer.then_some(database));
         }
-        self.publish_pending()
+        self.publish_pending(&mut activation)
     }
 
     fn prepare_active_database(
@@ -1553,9 +1562,10 @@ impl ProductionAdmissionRuntime {
         proposal: &terrabase_tbep::proto::terrabase::v1::PlacementProposal,
         proof_digest: &str,
         local_member: &str,
+        activation: &AdmissionActivation,
     ) -> Result<Option<(ProductionDatabaseAssignment, (DatabaseRouteScope, String, bool))>, String>
     {
-        if self.active.contains(&record.database_id) {
+        if activation.active.contains(&record.database_id) {
             return Ok(None);
         }
         self.build_database_assignment(record, proposal, proof_digest, local_member)
@@ -1663,12 +1673,13 @@ impl ProductionAdmissionRuntime {
     }
 
     async fn retire_stopped_writers(
-        &mut self,
+        &self,
         records: &[crate::admission::AdmissionRecord],
+        activation: &mut AdmissionActivation,
     ) -> Result<(), String> {
         let local_member = self.config.environment.member.to_text();
         for record in records {
-            if !self.active.contains(&record.database_id) {
+            if !activation.active.contains(&record.database_id) {
                 continue;
             }
             let scope = record_scope(record)?;
@@ -1700,8 +1711,8 @@ impl ProductionAdmissionRuntime {
                 data.peers.remove_database(scope).await?;
             }
             self.runtime.retire_route(scope).map_err(failure)?;
-            self.active.remove(&record.database_id);
-            self.pending_publication.remove(&scope);
+            activation.active.remove(&record.database_id);
+            activation.pending_publication.remove(&scope);
         }
         Ok(())
     }
@@ -1750,16 +1761,16 @@ impl ProductionAdmissionRuntime {
         }
     }
 
-    fn publish_pending(&mut self) -> Result<(), String> {
-        if self.pending_publication.is_empty() {
+    fn publish_pending(&self, activation: &mut AdmissionActivation) -> Result<(), String> {
+        if activation.pending_publication.is_empty() {
             return Ok(());
         }
-        let scopes = self.pending_publication.keys().copied().collect::<Vec<_>>();
+        let scopes = activation.pending_publication.keys().copied().collect::<Vec<_>>();
         let writers =
-            self.pending_publication.values().filter_map(Clone::clone).collect::<Vec<_>>();
+            activation.pending_publication.values().filter_map(Clone::clone).collect::<Vec<_>>();
         self.runtime.activate_routes(&scopes).map_err(failure)?;
         self.registry.activate(&writers)?;
-        self.pending_publication.clear();
+        activation.pending_publication.clear();
         Ok(())
     }
 
@@ -1811,6 +1822,9 @@ impl ProductionAdmissionRuntime {
     /// # Errors
     /// Reports a failed bounded peer drain.
     pub async fn drain(&self) -> Result<(), String> {
+        // Fence first, then join any retained activation before releasing data owners.
+        self.lifecycle.begin_drain()?;
+        let _activation = self.activation.lock().await;
         self.lifecycle.drain().await
     }
 }

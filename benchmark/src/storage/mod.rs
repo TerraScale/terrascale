@@ -1453,6 +1453,10 @@ pub(crate) trait StoragePort: Send {
     /// consumer frontier, then checkpoint the WAL.
     fn run_retention_sweep(&mut self) -> Result<(), ()>;
 
+    /// Prunes at most `batch` complete eligible publications without a
+    /// blocking truncation checkpoint. The caller validates 1..=1024.
+    fn maintain_retention(&mut self, batch: u32) -> Result<(), ()>;
+
     /// Flushes appended durable bytes on shutdown.
     fn flush(&mut self) -> Result<(), ()>;
 

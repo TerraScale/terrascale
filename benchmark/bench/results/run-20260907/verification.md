@@ -76,3 +76,9 @@ Each selector was first listed and required nonzero tests, then run against the 
 Failures: stopped-operation replay expected `Committed` in `engine::usage_placement_tests` (5 passed, 1 failed); both new PUT and both batch replay tests received HTTP 401 rather than 201 while creating the test database. Owners are investigating. These failures block final qualification and optimized benchmark handoff. The compile also emitted warnings, so this is not clippy qualification.
 
 Independent bench owner reports `nice -n 19 cargo test --manifest-path bench/Cargo.toml --bin terrabase-sync --bin terrabase-bench-lane` exit 0: sync 7 tests and main 42 tests (including four lane failure/healthy regressions); `/tmp/astra-sync-test.log`.
+
+## Correction cohort
+
+The corrected engine artifact SHA-256 `f815349233477d88fa365565bd29a74f6f6451b88ef70de152890b83412f15e5` passed all **35** selected tests (usage placement 6, lifecycle read 3, placement read 2, borrowed batch ordering 2, ingest 13, atomic group 1, billing retry 1, frontier 7). The earlier stopped-operation failure was a fixture that created an inconsistent standalone stop fence; the corrected test uses the authoritative deletion operation and retains operation-identity rejection coverage.
+
+The combined correction build exited 101 because concurrent server OpenAPI changes exceeded the default macro recursion limit. The engine test artifact was produced successfully. Server retry after the documented recursion-limit correction exited 101 because concurrent engine shard split changes attempted to dereference `[u8; 16]` at `src/engine/shard_split.rs:824` and `:942`. Compilation and source manifests are recorded as `corrected-*` and `server-final-*` files in the evidence directory. These are build failures, not test passes. Final server tests and release artifact remain pending correction.

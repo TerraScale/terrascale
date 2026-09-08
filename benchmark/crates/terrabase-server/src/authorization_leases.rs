@@ -388,6 +388,34 @@ mod tests {
         assert!(registry.install(signed_test_lease(OTHER, 1, 1, 120), 120, false).is_err());
     }
     #[test]
+    fn private_keyring_rotation_never_falls_back_to_removed_material() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = std::env::temp_dir()
+            .join(format!("authorization-keys-{}", terrabase::identity::DatabaseUlid::generate()));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = directory.join("keys.json");
+        let write = |key: &str| {
+            std::fs::write(&path, serde_json::to_vec(&serde_json::json!({"keys":[{"keyId":"lease-vector","key":key,"notBefore":0,"notAfter":1000}]})).unwrap()).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        };
+        write(&"11".repeat(32));
+        let registry = AuthorizationLeases::from_file(
+            "https://api.example".into(),
+            RegionCode::GRU,
+            path.clone(),
+        )
+        .unwrap();
+        let lease = signed_test_lease(TENANT, 1, 1, 100);
+        registry.install(lease.clone(), 100, true).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write(&"22".repeat(32));
+        assert!(registry.install(signed_test_lease(TENANT, 1, 1, 101), 101, false).is_err());
+        assert_eq!(registry.lease(TENANT, 101).unwrap().valid_until, 130);
+        assert!(!registry.admits(&lease.scope(), 130));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
     fn producer_vector_has_identical_canonical_bytes() {
         let value: serde_json::Value =
             serde_json::from_str(include_str!("tenant-authority-capability-vector.json")).unwrap();

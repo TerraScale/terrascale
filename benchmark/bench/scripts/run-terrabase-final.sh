@@ -7,9 +7,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUT="${TERRABASE_BENCH_FINAL_OUTPUT:-$ROOT/bench/results/run-$(date -u +%Y%m%d)}"
+OUT="${TERRABASE_BENCH_FINAL_OUTPUT:-$ROOT/bench/results/run-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 DRIVER="${TERRABASE_BENCH_FINAL_DRIVER:-$ROOT/bench/target/release/terrabase-bench-lane}"
-TIMEOUT_SECS="${TERRABASE_BENCH_FINAL_TIMEOUT_SECONDS:-21600}"
+TIMEOUT_SECS="${TERRABASE_BENCH_FINAL_TIMEOUT_SECONDS:-1800}"
 
 [[ "${TERRABASE_BENCH_RELEASE_READY:-}" == 1 ]] || {
   echo "final bench: TERRABASE_BENCH_RELEASE_READY=1 is required after verification handoff" >&2
@@ -25,6 +25,9 @@ TIMEOUT_SECS="${TERRABASE_BENCH_FINAL_TIMEOUT_SECONDS:-21600}"
   exit 2
 }
 mkdir -p "$OUT"
+MANIFEST="$OUT/manifest.tsv"
+printf 'lane\tstatus\tlog\n' >"$MANIFEST"
+overall=0
 
 new_database() {
   local lane="$1"
@@ -48,7 +51,9 @@ run_point() {
     --out "$OUT" >"$log" 2>&1
   local status=$?
   set -e
+  printf '%s\t%s\t%s\n' "$workload" "$status" "$log" >>"$MANIFEST"
   echo "final bench: $workload status=$status log=$log" >&2
+  (( status == 0 )) || overall=1
   return 0
 }
 
@@ -70,15 +75,24 @@ export TERRABASE_BENCH_INGEST_MEMBER_PID="${TERRABASE_BENCH_MEMBER_PID:?}"
 export TERRABASE_BENCH_INGEST_MEMBER_OCPU=2
 export TERRABASE_BENCH_INGEST_MEMBER_MEMORY=12G
 set +e
-timeout --signal=TERM --kill-after=30 "$TIMEOUT_SECS" nice -n 19 "$ROOT/bench/scripts/ingest.sh" >"$OUT/ingest.log" 2>&1
+timeout --signal=TERM --kill-after=30 "$TIMEOUT_SECS" nice -n 19 "$DRIVER" \
+  --ingest-target terrabase --ingest-topology single-node \
+  --documents-per-sample 100000 --batch-size 1000 --ingest-samples 5 --warmup-batches 1 \
+  --out "$OUT" >"$OUT/ingest.log" 2>&1
+ingest_status=$?
 set -e
+printf 'ingest\t%s\t%s\n' "$ingest_status" "$OUT/ingest.log" >>"$MANIFEST"
+(( ingest_status == 0 )) || overall=1
 
 new_database auto-index
 set +e
 timeout --signal=TERM --kill-after=30 "$TIMEOUT_SECS" nice -n 19 "$DRIVER" \
   --family auto-index --target terrabase --documents 1000000 --samples 100 --writes 1000 --out "$OUT" \
   >"$OUT/auto-index.log" 2>&1
+auto_index_status=$?
 set -e
+printf 'auto-index\t%s\t%s\n' "$auto_index_status" "$OUT/auto-index.log" >>"$MANIFEST"
+(( auto_index_status == 0 )) || overall=1
 
 new_database sync
 export TERRABASE_SYNC_DATABASE="$TERRABASE_BENCH_TERRABASE_DATABASE"
@@ -93,7 +107,12 @@ export TERRABASE_SYNC_SQL='SELECT _id FROM orders ORDER BY _id LIMIT 25'
 export TERRABASE_SYNC_OUTPUT="$OUT/sync.json"
 set +e
 timeout --signal=TERM --kill-after=30 "$TIMEOUT_SECS" nice -n 19 "$ROOT/bench/scripts/sync.sh" >"$OUT/sync.log" 2>&1
+sync_status=$?
 set -e
+printf 'sync\t%s\t%s\n' "$sync_status" "$OUT/sync.log" >>"$MANIFEST"
+(( sync_status == 0 )) || overall=1
 
 cp "$TERRABASE_BENCH_MEMBER_RESOURCE_EVIDENCE" "$OUT/member-after.txt"
 echo "final bench: receipts retained under $OUT" >&2
+echo "final bench: manifest=$MANIFEST overall=$overall" >&2
+exit "$overall"

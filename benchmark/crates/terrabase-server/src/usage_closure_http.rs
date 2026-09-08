@@ -1,4 +1,16 @@
 //! Authenticated native regional usage closure for the billing authority.
+//!
+//! `storage_intervals` contains 1..=65_536 contiguous half-open levels covering
+//! exactly the frozen receipt window, including zero levels. `logical_bytes`
+//! is a canonical unsigned decimal u128 string, measured in this Region once;
+//! timestamps are safe JSON integers. The receipt checksum binds these levels
+//! to the frozen native ledger seal. Consumers pool each admitted inventory
+//! scope once without multiplying storage by `selected_regions` again.
+//!
+//! Authentication and regional durability prove this scoped historical receipt.
+//! Echoed cycle/inventory checksums do not attest organization-wide completeness,
+//! current allowance coverage, or pricing policy; the billing authority owns
+//! those checks against its authoritative inventory and current policy.
 
 use crate::api::ApiState;
 use axum::{
@@ -10,6 +22,10 @@ use axum::{
 };
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
+
+// Timestamps are JSON numbers consumed by JavaScript billing authorities.
+const MAX_WIRE_MILLIS: u64 = 9_007_199_254_740_991;
+const MAX_STORAGE_INTERVALS: usize = 65_536;
 
 struct Service {
     api: Arc<ApiState>,
@@ -68,6 +84,33 @@ fn digest(value: &str) -> bool {
         && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+/// A successful receipt contains the entire frozen native window. Never emit
+/// a partial timeline that a consumer could mistake for zero storage coverage.
+fn storage_intervals_value(
+    start: u64,
+    end: u64,
+    intervals: impl IntoIterator<Item = (u64, u64, u128)>,
+) -> Result<Vec<serde_json::Value>, ()> {
+    if start >= end || end > MAX_WIRE_MILLIS {
+        return Err(());
+    }
+    let mut cursor = start;
+    let mut output = Vec::new();
+    for (from, to, bytes) in intervals {
+        if output.len() >= MAX_STORAGE_INTERVALS || from != cursor || from >= to || to > end {
+            return Err(());
+        }
+        output.push(serde_json::json!({
+            "start_millis":from,"end_millis":to,"logical_bytes":bytes.to_string()
+        }));
+        cursor = to;
+    }
+    if output.is_empty() || cursor != end {
+        return Err(());
+    }
+    Ok(output)
+}
+
 async fn close(
     State(service): State<Arc<Service>>,
     Path(name): Path<String>,
@@ -97,6 +140,7 @@ async fn close(
         || !digest(&request.cycle_checksum)
         || !digest(&request.inventory_checksum)
         || request.start_millis >= request.end_millis
+        || request.end_millis > MAX_WIRE_MILLIS
     {
         return response(StatusCode::BAD_REQUEST, serde_json::json!({"code":"invalid_request"}));
     }
@@ -158,6 +202,15 @@ async fn close(
     if progress.wait_regional(route, receipt.sequence(), Duration::from_secs(5)).await.is_err() {
         return unavailable();
     }
+    let Ok(storage_intervals) = storage_intervals_value(
+        receipt.window().start_millis(),
+        receipt.window().end_millis(),
+        receipt.storage_intervals().iter().map(|interval| {
+            (interval.start_millis(), interval.end_millis(), interval.logical_bytes())
+        }),
+    ) else {
+        return unavailable();
+    };
     response(
         StatusCode::OK,
         serde_json::json!({
@@ -166,7 +219,7 @@ async fn close(
             "scope":{"tenant_id":receipt.scope().tenant_id().as_str(),"project_id":receipt.scope().project_id().as_str(),"database_id":receipt.scope().database_id().as_str(),"partition_id":receipt.scope().partition_id().as_str(),"region_id":receipt.scope().region_id().as_str()},
             "start_millis":receipt.window().start_millis(),"end_millis":receipt.window().end_millis(),
             "sequence":receipt.sequence().to_string(),"selected_regions":receipt.selected_regions(),
-            "storage_byte_seconds":receipt.byte_seconds().to_string(),"write_units":receipt.write_units().to_string(),
+            "storage_byte_seconds":receipt.byte_seconds().to_string(),"storage_intervals":storage_intervals,"write_units":receipt.write_units().to_string(),
             "fact_count":receipt.fact_count().to_string(),"checksum":blake3::Hash::from(*receipt.checksum()).to_hex().to_string(),"durability":"regional"
         }),
     )
@@ -238,6 +291,203 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(response.headers()[axum::http::header::CACHE_CONTROL], "private, no-store");
         assert!(router(state(), vec![b'x'; 32]).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn authenticated_closure_exposes_exact_frozen_timeline_after_later_writes() {
+        use terrabase::types::{
+            CollectionName, Document, DocumentId, DocumentValue, LocalDurability, OperationId,
+        };
+        let (registry, _member, records, root) = crate::admitted_databases::tests::fixture();
+        let record = &records[0];
+        let admitted = registry.resolve(&record.database_id).unwrap().unwrap();
+        let engine = admitted.host.engine();
+        let tenant = terrabase::types::TenantId::try_new(&record.tenant_id).unwrap();
+        let scope = engine.scope_for(&tenant);
+        engine
+            .configure_usage_placement(
+                terrabase::usage::UsagePlacement::try_new(
+                    tenant,
+                    &record.project_id,
+                    &record.database_id,
+                    "partition",
+                    engine.database_owner().region(),
+                    vec![engine.database_owner().region()],
+                    "accepted-placement",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let now = || {
+            u64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis(),
+            )
+            .unwrap()
+        };
+        let start = now();
+        while now() <= start {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        let write = |id: &str| {
+            let mut transaction = engine
+                .begin(
+                    &scope,
+                    engine.read_snapshot(&scope).unwrap(),
+                    OperationId::try_new(&format!("closure-{id}")).unwrap(),
+                )
+                .unwrap();
+            transaction
+                .put(
+                    Document::new(
+                        DocumentId::try_new(id).unwrap(),
+                        CollectionName::try_new("items").unwrap(),
+                        DocumentValue::String("retained logical bytes".into()),
+                    ),
+                    terrabase::types::ExpectedVersion::New,
+                )
+                .unwrap();
+            assert!(matches!(
+                transaction.commit(LocalDurability::Synced),
+                terrabase::CommitOutcome::Committed(_)
+            ));
+        };
+        write("before-close");
+        let written = now();
+        while now() <= written {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        let end = now();
+        let receipt = engine
+            .close_storage_usage(
+                &scope,
+                terrabase::usage::MeasurementWindow::interval(start, end).unwrap(),
+            )
+            .unwrap();
+
+        // Establish the frozen sequence on an actual physical follower before
+        // allowing the authenticated regional receipt endpoint to report it.
+        let follower_path = root.join("closure-follower");
+        let (_follower, _) =
+            terrabase_cluster::wal_follower::WalFollower::bootstrap_engine(engine, &follower_path)
+                .unwrap();
+        let follower = terrabase::storage::open_physical_sqlite(
+            &follower_path.join("terrabase.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let copied: i64 = follower
+            .query_row("SELECT MAX(seq) FROM storage_usage_closures", [], |row| row.get(0))
+            .unwrap();
+        assert!(u64::try_from(copied).unwrap() >= receipt.sequence());
+        let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
+        let owner = engine.database_owner();
+        let route = terrabase_cluster::production::DatabaseRouteScope::new(
+            owner.tenant(),
+            owner.project(),
+            owner.database(),
+        );
+        progress.admit(route, [record.region.clone()].into_iter().collect()).unwrap();
+        progress.advance_regional(route, receipt.sequence());
+        let mut api = state();
+        let mutable = Arc::get_mut(&mut api).unwrap();
+        mutable.admitted_databases = Some(Arc::new(registry));
+        mutable.replication_progress = Some(progress);
+        let app = router(api, vec![b'x'; 32]).unwrap();
+        let payload = serde_json::json!({
+            "organization_id":record.tenant_id,"cycle_id":"a".repeat(64),"cycle_checksum":"b".repeat(64),
+            "inventory_checksum":"c".repeat(64),"region":record.region,"partition_id":"partition",
+            "start_millis":start,"end_millis":end
+        });
+        let request = |payload: &serde_json::Value| {
+            HttpRequest::builder()
+                .method("POST")
+                .uri(format!("/api/internal/databases/{}/usage/close", record.database_id))
+                .header("content-type", "application/json")
+                .header("x-terrascale-billing-key", "x".repeat(32))
+                .body(Body::from(payload.to_string()))
+                .unwrap()
+        };
+        let first = app.clone().oneshot(request(&payload)).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let first: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(first.into_body(), 16 * 1024 * 1024).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            first["storage_intervals"],
+            serde_json::Value::Array(
+                storage_intervals_value(
+                    start,
+                    end,
+                    receipt.storage_intervals().iter().map(|v| (
+                        v.start_millis(),
+                        v.end_millis(),
+                        v.logical_bytes()
+                    ))
+                )
+                .unwrap()
+            )
+        );
+        assert!(receipt.storage_intervals().iter().any(|v| v.logical_bytes() == 0));
+        assert!(receipt.storage_intervals().iter().any(|v| v.logical_bytes() > 0));
+        write("after-close");
+        let replay = app.clone().oneshot(request(&payload)).await.unwrap();
+        assert_eq!(replay.status(), StatusCode::OK);
+        let replay: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(replay.into_body(), 16 * 1024 * 1024).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(replay, first, "later writes cannot rewrite the frozen interval or checksum");
+        let mut mismatch = payload.clone();
+        mismatch["partition_id"] = "other".into();
+        assert_eq!(
+            app.clone().oneshot(request(&mismatch)).await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+        let mut overlap = payload;
+        overlap["start_millis"] = (start + 1).into();
+        assert_eq!(
+            app.oneshot(request(&overlap)).await.unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        drop(follower);
+        drop(_follower);
+        drop(admitted);
+        _member.close(Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn timelines_require_complete_nonoverlapping_coverage_and_preserve_large_quantities() {
+        for intervals in [
+            vec![],
+            vec![(11, 20, 1)],
+            vec![(10, 19, 1)],
+            vec![(10, 14, 1), (15, 20, 2)],
+            vec![(10, 16, 1), (15, 20, 2)],
+            vec![(10, 10, 0), (10, 20, 1)],
+            vec![(10, 21, 1)],
+        ] {
+            assert!(storage_intervals_value(10, 20, intervals).is_err());
+        }
+        let valid = storage_intervals_value(10, 20, [(10, 15, 0), (15, 20, u128::MAX)]).unwrap();
+        assert_eq!(valid[0]["logical_bytes"], "0");
+        assert_eq!(valid[1]["logical_bytes"], u128::MAX.to_string());
+        assert!(
+            storage_intervals_value(0, MAX_WIRE_MILLIS + 1, [(0, MAX_WIRE_MILLIS + 1, 0)]).is_err()
+        );
+        assert!(
+            storage_intervals_value(
+                0,
+                MAX_STORAGE_INTERVALS as u64 + 1,
+                (0..=MAX_STORAGE_INTERVALS as u64).map(|at| (at, at + 1, 0))
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -2127,6 +2127,10 @@ impl SqliteStorage {
     ///
     /// Returns `Err(())` when durable storage failed.
     pub(crate) fn prune_below_consumer_frontiers(&self) -> Result<u64, ()> {
+        self.prune_below_consumer_frontiers_batch(u32::MAX)
+    }
+
+    fn prune_below_consumer_frontiers_batch(&self, batch: u32) -> Result<u64, ()> {
         let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let transaction =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
@@ -2189,9 +2193,10 @@ impl SqliteStorage {
         ).map_err(|_| ())?;
         let pruned = transaction
             .execute(
-                "DELETE FROM documents
-                 WHERE commit_seq < ?1
-                   AND commit_seq NOT IN (
+                "DELETE FROM documents WHERE commit_seq IN (
+                 SELECT DISTINCT candidate.commit_seq FROM documents candidate
+                 WHERE candidate.commit_seq < ?1
+                   AND candidate.commit_seq NOT IN (
                    SELECT pin.commit_seq FROM documents pin
                    WHERE pin.committed_at >= ?2 -
                      COALESCE((SELECT days FROM collection_history
@@ -2203,8 +2208,8 @@ impl SqliteStorage {
                        AND newer.id = pin.id
                        AND newer.commit_seq > pin.commit_seq
                    )
-                 )",
-                rusqlite::params![floor as i64, now, 24_i64 * 60 * 60 * 1000],
+                 ) ORDER BY candidate.commit_seq LIMIT ?4)",
+                rusqlite::params![floor as i64, now, 24_i64 * 60 * 60 * 1000, i64::from(batch)],
             )
             .map_err(|_| ())?;
         transaction.execute_batch("DROP TRIGGER temp.pruning_watermark").map_err(|_| ())?;
@@ -6671,6 +6676,13 @@ impl StoragePort for SqliteStorage {
         self.prune_below_consumer_frontiers()?;
         let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         writer.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).map_err(|_| ())
+    }
+
+    fn maintain_retention(&mut self, batch: u32) -> Result<(), ()> {
+        if !(1..=1024).contains(&batch) {
+            return Err(());
+        }
+        self.prune_below_consumer_frontiers_batch(batch).map(|_| ())
     }
 
     fn flush_pending_flips(&mut self) {

@@ -9,6 +9,8 @@
 /// Cluster-owned RF2 qualification for DB-local cross-file receipts.
 pub mod cross_file;
 pub mod production;
+/// Immutable database-incarnation and shard identity for data-plane lanes.
+pub mod shard_lane;
 /// Persistent production physical replication sessions and restart handshake.
 pub mod wal_driver;
 /// Physical SQLite WAL-frame replication for an in-Region RF=2 follower.

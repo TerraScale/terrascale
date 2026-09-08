@@ -33,6 +33,7 @@ mod private_metadata;
 mod batch_request;
 mod document_request;
 mod recovery_statistics;
+mod retention;
 mod repair_summary;
 mod replicated_publication;
 mod replication_outbox;
