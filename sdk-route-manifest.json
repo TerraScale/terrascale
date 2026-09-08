@@ -6,7 +6,7 @@
     "bundle": "contracts/v1",
     "openapi": "openapi.json"
   },
-  "routeCount": 67,
+  "routeCount": 66,
   "routes": [
     {
       "base": "api",
@@ -799,18 +799,6 @@
       "pathTemplate": "/api/v1/regions",
       "requestType": "void",
       "responseType": "RegionCatalogResponse"
-    },
-    {
-      "base": "api",
-      "producer": "terrabase",
-      "client": "regions",
-      "operation": "regions",
-      "operationId": "regions",
-      "routeName": "regions.regions",
-      "method": "GET",
-      "pathTemplate": "/api/v1/regions",
-      "requestType": "void",
-      "responseType": "HealthResponse"
     }
   ]
 }

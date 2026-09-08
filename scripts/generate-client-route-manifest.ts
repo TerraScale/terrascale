@@ -16,7 +16,7 @@ try {
   const edgeSpecPath = await contractOpenApiPath(edgeBundle);
   const spec = JSON.parse(await readFile(specPath, "utf8")) as OpenApiDocument;
   const edgeSpec = JSON.parse(await readFile(edgeSpecPath, "utf8")) as OpenApiDocument;
-  const routes = [...Object.entries(spec.paths ?? {}).flatMap(([pathTemplate, pathItem]) =>
+  const terrabaseRoutes = Object.entries(spec.paths ?? {}).flatMap(([pathTemplate, pathItem]) =>
     Object.entries(pathItem).filter(([method]) => HTTP_METHODS.has(method)).map(([method, operation]) => {
       const operationValue = operation as OpenApiOperation;
       const operationId = operationValue.operationId;
@@ -34,7 +34,8 @@ try {
         responseType: responseType(operationValue.responses),
       };
     }),
-  ), ...Object.entries(edgeSpec.paths ?? {}).flatMap(([pathTemplate, pathItem]) =>
+  );
+  const edgeRoutes = Object.entries(edgeSpec.paths ?? {}).flatMap(([pathTemplate, pathItem]) =>
     Object.entries(pathItem).filter(([method]) => HTTP_METHODS.has(method)).map(([method, operation]) => {
       const operationValue = operation as OpenApiOperation;
       const operationId = operationValue.operationId;
@@ -52,7 +53,13 @@ try {
         responseType: responseType(operationValue.responses),
       };
     }),
-  )].sort((left, right) => `${left.pathTemplate} ${left.method} ${left.producer}`.localeCompare(`${right.pathTemplate} ${right.method} ${right.producer}`));
+  );
+  // Edge owns public routes that overlap a TerraBase member route. Keep one
+  // canonical SDK entry for each method/path so consumers cannot resolve the
+  // same request to two different response contracts.
+  const edgeRouteKeys = new Set(edgeRoutes.map((route) => `${route.method} ${route.pathTemplate}`));
+  const routes = [...terrabaseRoutes.filter((route) => !edgeRouteKeys.has(`${route.method} ${route.pathTemplate}`)), ...edgeRoutes]
+    .sort((left, right) => `${left.pathTemplate} ${left.method} ${left.producer}`.localeCompare(`${right.pathTemplate} ${right.method} ${right.producer}`));
   const manifest = {
     manifestVersion: 2,
     contractVersion: pinnedContractVersion,
