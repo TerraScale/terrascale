@@ -10,6 +10,48 @@ const projectId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const databaseId = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
 
 describe("TerraScaleHttp request policy", () => {
+  test("native transport replays identical mutation bytes under one idempotency key", async () => {
+    const document = { counter: 1, nested: { label: "original" } };
+    const bodies: string[] = [];
+    const keys: (string | string[] | undefined)[] = [];
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      bodies.push(Buffer.concat(chunks).toString("utf8"));
+      keys.push(request.headers["idempotency-key"]);
+      if (bodies.length === 1) {
+        document.counter = 2;
+        document.nested.label = "changed while pending";
+        response.writeHead(503, { "content-type": "application/json", "retry-after": "0" });
+        response.end('{"code":"temporarily_unavailable"}');
+      } else {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end('{"revision":"stored"}');
+      }
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    try {
+      const client = createTerraScaleClient({
+        apiBaseUrl: `http://127.0.0.1:${address.port}`, maxRetryAttempts: 1, retryDelayMs: 0,
+      });
+      const result = await client.documents.put("demo", "records", "counter", document, {
+        idempotencyKey: "stable-counter-update",
+      });
+      assert.ok(result.ok);
+      assert.deepEqual(bodies, [
+        '{"counter":1,"nested":{"label":"original"}}',
+        '{"counter":1,"nested":{"label":"original"}}',
+      ]);
+      assert.deepEqual(keys, ["stable-counter-update", "stable-counter-update"]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
   test("cancels while the credential provider is pending without dispatching a request", async () => {
     const controller = new AbortController();
     let resolveToken!: (token: string) => void;

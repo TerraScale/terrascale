@@ -135,6 +135,9 @@ export class TerraScaleHttp {
     try {
       options.signal?.throwIfAborted();
       idempotencyKey = this.resolveIdempotencyKey(options);
+      // One logical operation must retain the same bytes across retries,
+      // even when the caller mutates its object while a request is pending.
+      const requestBody = options.body === undefined ? undefined : JSON.stringify(options.body);
       let attempt = 0;
       let repaired421 = false;
       let requestRegionHint = options.regionHint;
@@ -157,9 +160,9 @@ export class TerraScaleHttp {
             redirect: "manual",
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           };
-          if (options.body !== undefined) {
+          if (requestBody !== undefined) {
             headers.set("content-type", headers.get("content-type") ?? "application/json");
-            requestInit.body = JSON.stringify(options.body);
+            requestInit.body = requestBody;
           }
 
           const request = new Request(url, requestInit);
