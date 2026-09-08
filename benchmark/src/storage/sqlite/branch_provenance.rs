@@ -64,9 +64,9 @@ pub(crate) fn transform_provenance(
         let mut statement = transaction
             .prepare(
                 "SELECT tenant,client_request_ulid FROM operation_facts WHERE committed=1
-             UNION ALL SELECT tenant,commit_ulid FROM documents
-             UNION ALL SELECT tenant,loser_commit_ulid FROM merge_conflicts
-             UNION ALL SELECT tenant,winner_commit_ulid FROM merge_conflicts",
+             UNION SELECT tenant,commit_ulid FROM documents
+             UNION SELECT tenant,loser_commit_ulid FROM merge_conflicts
+             UNION SELECT tenant,winner_commit_ulid FROM merge_conflicts",
             )
             .map_err(|_| ())?;
         statement
