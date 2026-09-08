@@ -262,15 +262,29 @@ impl Slot for TursoSlot {
         let mut attempts = 0_u64;
         loop {
             attempts += 1;
+            // Turso's concurrent-write shape from its own integration tests:
+            // a fresh statement per operation through `connection::execute`
+            // (a reused prepared statement pins its prepare-time snapshot,
+            // which any sibling writer instantly invalidates), autocommit,
+            // retry on conflict.
+            let _ = &mut *statement;
             let result = runtime.block_on(async {
-                statement
-                    .execute(turso::params![
-                        tenant.clone(),
-                        id.clone(),
-                        name.clone(),
-                        document::MEASURED_GROUP,
-                        payload.clone()
-                    ])
+                connection
+                    .execute(
+                        "INSERT INTO users(tenant, id, name, \"group\", payload) \
+                         VALUES (?1, ?2, ?3, ?4, ?5) \
+                         ON CONFLICT (tenant, id) DO UPDATE SET \
+                             name = excluded.name, \
+                             \"group\" = excluded.\"group\", \
+                             payload = excluded.payload",
+                        turso::params![
+                            tenant.clone(),
+                            id.clone(),
+                            name.clone(),
+                            document::MEASURED_GROUP,
+                            payload.clone()
+                        ],
+                    )
                     .await
             });
             match result {
@@ -281,14 +295,12 @@ impl Slot for TursoSlot {
                 Err(error)
                     if is_retryable(&error) && std::time::Instant::now() < deadline =>
                 {
-                    // A stale-snapshot failure leaves a dangling transaction;
-                    // clearing it is what lets the retry observe a fresh
-                    // snapshot — turso's own concurrent-writes pattern.
-                    runtime
-                        .block_on(async {
-                            connection.execute("ROLLBACK", ()).await
-                        })
-                        .map_err(|error| format!("rollback before write retry: {error}"))?;
+                    // The failed transaction must be rolled back before the
+                    // retry can observe a fresh snapshot — turso's own
+                    // concurrent-writes pattern, whose rollback outcome is
+                    // discarded the same way.
+                    let _ = runtime
+                        .block_on(async { connection.execute("ROLLBACK", ()).await });
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 Err(error) => {
