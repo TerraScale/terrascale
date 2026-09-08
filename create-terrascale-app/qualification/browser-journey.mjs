@@ -16,7 +16,10 @@ assert.equal(config.accounts?.length, 2, "Provide two accounts (the same user ma
 assert.ok(config.revocationBoundMs > 0 && config.revocationBoundMs <= 300_000,
   "Declare the deployed revocation bound in milliseconds (at most five minutes)");
 assert.ok(config.sources && config.artifacts, "Identify source revisions and qualified artifact SHA-256 digests");
-for (const digest of Object.values(config.artifacts)) assert.match(digest, /^[a-f0-9]{64}$/u);
+for (const component of ["starter", "sdk", "database", "auth"]) {
+  assert.ok(typeof config.sources[component] === "string" && config.sources[component].length > 0, `Identify ${component} source`);
+  assert.match(config.artifacts[component], /^[a-f0-9]{64}$/u, `Identify ${component} artifact SHA-256`);
+}
 const browser = await chromium.launch({ headless: true });
 const results = [];
 const pendingEvidence = [];
@@ -39,13 +42,32 @@ async function login(context, account) {
 async function connect(page) {
   await page.goto(config.appUrl);
   await page.getByRole("button", { name: "Sign in with TerraScale", exact: true }).click();
-  // Existing consent can return immediately; first consent must use the actual UI.
-  const needsConsent = await Promise.race([
-    page.getByRole("button", { name: "Approve access", exact: true }).waitFor().then(() => true),
-    page.getByRole("button", { name: "Add post", exact: true }).waitFor().then(() => false),
-  ]);
-  if (needsConsent) {
-    await page.getByRole("button", { name: "Approve access", exact: true }).click();
+  // Installed authority fixtures expose the real consent API without a UI.
+  // Keep that qualification mode explicit; the default exercises dashboard UI.
+  if (config.consentMode === "public-api") {
+    const needsConsent = await Promise.race([
+      page.waitForURL((url) => url.origin === authOrigin && url.pathname === "/oauth/consent").then(() => true),
+      page.getByRole("button", { name: "Add post", exact: true }).waitFor().then(() => false),
+    ]);
+    if (needsConsent) {
+      const response = await page.context().request.post(new URL("/api/auth/oauth2/consent", config.authUrl).href, {
+        headers: { origin: authOrigin },
+        data: { accept: true, oauth_query: new URL(page.url()).search.slice(1), scope: "openid offline_access database:read database:write" },
+      });
+      assert.equal(response.status(), 200, "Actual OAuth consent endpoint must approve access");
+      const body = await response.json();
+      const callback = new URL(body.redirect_uri ?? body.url);
+      const expected = new URL(config.appUrl);
+      assert.equal(callback.origin, expected.origin, "Consent callback must return to the starter");
+      assert.equal(callback.pathname, expected.pathname, "Consent callback path must match the registered starter");
+      await page.goto(callback.href);
+    }
+  } else {
+    const needsConsent = await Promise.race([
+      page.getByRole("button", { name: "Approve access", exact: true }).waitFor().then(() => true),
+      page.getByRole("button", { name: "Add post", exact: true }).waitFor().then(() => false),
+    ]);
+    if (needsConsent) await page.getByRole("button", { name: "Approve access", exact: true }).click();
   }
   await page.getByRole("button", { name: "Add post", exact: true }).waitFor({ timeout: 30_000 });
   await page.waitForFunction(() => [...document.querySelectorAll("button")]
@@ -151,7 +173,7 @@ try {
   await browser.close();
   if (config.resultPath) await writeFile(config.resultPath, JSON.stringify({
     startedAt, finishedAt: new Date().toISOString(), sources: config.sources, artifacts: config.artifacts,
-    appOrigin, authOrigin, revocationBoundMs: config.revocationBoundMs, results,
+    appOrigin, authOrigin, consentMode: config.consentMode ?? "dashboard-ui", revocationBoundMs: config.revocationBoundMs, results,
     complete: !failed && results.length === 5,
     ...(failed ? { failedStage: stage } : {}),
   }, null, 2) + "\n");

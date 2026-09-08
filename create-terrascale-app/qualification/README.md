@@ -29,10 +29,14 @@ The private JSON fixture requires:
   in through the actual public email sign-in endpoint and approves the actual
   consent UI. Account creation and cloud provisioning are prerequisite
   qualification steps, not replaced by this harness.
+- `consentMode`: omit to exercise the dashboard consent UI. Use `public-api`
+  only for an installed authority fixture without dashboard UI; it approves
+  through the real OAuth consent endpoint and validates the callback. The
+  result records this narrower mode; it does not qualify dashboard UI.
 - `revocationBoundMs`: the deployed service's declared maximum propagation bound,
   greater than zero and at most 300000 milliseconds.
-- `sources`: a map of component names to source revisions.
-- `artifacts`: a map of component names to SHA-256 digests from their build owners.
+- `sources`: source revisions for `starter`, `sdk`, `database`, and `auth`.
+- `artifacts`: SHA-256 digests for the same four components from their build owners.
 - `resultPath`: optional destination for a credential-free JSON result.
 
 Keep the fixture outside the checkout. Do not include passwords, session
