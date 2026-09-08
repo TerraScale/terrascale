@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
-  "openapiBlake3": "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320",
-  "openapiSha256": "353dcf000d8450ee06cd8fc094b4fa8eb05b3d29f8aae2218886a7edf55d4026",
+  "openapiBlake3": "48e6c1b4aa4e5bf4ed04e27e38f7059109928cf3e5bde802fd555cdcf2532fc9",
+  "openapiSha256": "a0577d2d9575d3205e53f9d8c7c844debcc2c36dfa1d9a9ccf0b4c564d137c07",
   "operations": [
     {
       "errors": [
@@ -175,6 +175,175 @@
           },
           "mediaType": "application/json",
           "status": 201
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "authorization_lease",
+      "request": {
+        "body": null,
+        "headers": {
+          "authorization": "Bearer conformance-key"
+        },
+        "method": "GET",
+        "path": "/api/v1/authorization/leases/sample",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "audience": "sample",
+          "epoch": "sample",
+          "featureEpoch": "sample",
+          "issuedAt": 0,
+          "keyId": "sample",
+          "region": "sample",
+          "signature": "sample",
+          "tenantId": "sample",
+          "validUntil": 0,
+          "version": 0
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "audience": "sample",
+            "epoch": "sample",
+            "featureEpoch": "sample",
+            "issuedAt": 0,
+            "keyId": "sample",
+            "region": "sample",
+            "signature": "sample",
+            "tenantId": "sample",
+            "validUntil": 0,
+            "version": 0
+          },
+          "mediaType": "application/json",
+          "status": 200
         }
       ]
     },
@@ -2341,6 +2510,193 @@
           "status": 504
         }
       ],
+      "operationId": "create_import",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "format": "native",
+            "idempotency_key": "sample"
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/demo/imports",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "committed_records": 0,
+          "cursor": 0,
+          "database_id": "sample",
+          "durability": "sample",
+          "error": null,
+          "format": "sample",
+          "input_committed": false,
+          "input_digest": null,
+          "input_length": null,
+          "operation_id": "sample",
+          "pending_cursor": null,
+          "pending_operation": null,
+          "pending_records": null,
+          "project_id": "sample",
+          "state": "sample",
+          "tenant_id": "sample"
+        },
+        "mediaType": "application/json",
+        "status": 202
+      },
+      "responses": [
+        {
+          "body": {
+            "committed_records": 0,
+            "cursor": 0,
+            "database_id": "sample",
+            "durability": "sample",
+            "error": null,
+            "format": "sample",
+            "input_committed": false,
+            "input_digest": null,
+            "input_length": null,
+            "operation_id": "sample",
+            "pending_cursor": null,
+            "pending_operation": null,
+            "pending_records": null,
+            "project_id": "sample",
+            "state": "sample",
+            "tenant_id": "sample"
+          },
+          "mediaType": "application/json",
+          "status": 202
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "create_index",
       "request": {
         "body": {
@@ -2842,23 +3198,26 @@
       },
       "response": {
         "body": {
-          "cutoff": "sample",
-          "request": {
+          "automatic_deadline": "sample",
+          "automatic_grace_condition": "sample",
+          "automatic_policy_revision": "sample",
+          "claim": {
+            "accepted_at": "sample",
+            "authority_epoch": "sample",
             "database_id": "sample",
+            "deadline": "sample",
             "environment": "sample",
+            "grace_condition": "sample",
             "operation_id": "sample",
+            "policy_fingerprint": "sample",
+            "policy_revision": "sample",
             "project_id": "sample",
+            "schemaVersion": 0,
             "tenant_id": "sample"
           },
-          "state": "preparing",
-          "targets": []
-        },
-        "mediaType": "application/json",
-        "status": 202
-      },
-      "responses": [
-        {
-          "body": {
+          "cutoff": "sample",
+          "edge_receipt": {
+            "access_revoked": false,
             "cutoff": "sample",
             "request": {
               "database_id": "sample",
@@ -2866,9 +3225,140 @@
               "operation_id": "sample",
               "project_id": "sample",
               "tenant_id": "sample"
+            }
+          },
+          "request": {
+            "database_id": "sample",
+            "environment": "sample",
+            "operation_id": "sample",
+            "project_id": "sample",
+            "tenant_id": "sample"
+          },
+          "requested_at": "sample",
+          "state": "preparing",
+          "targets": [
+            {
+              "preparation": {
+                "database_id": "sample",
+                "environment": "sample",
+                "last_accounted_at": "sample",
+                "operation_id": "sample",
+                "organization_id": "sample",
+                "parent_database_id": "sample",
+                "prepared": false,
+                "project_id": "sample",
+                "region": "sample"
+              },
+              "receipt": {
+                "access_revoked": false,
+                "cutoff": "sample",
+                "database_id": "sample",
+                "environment": "sample",
+                "operation_id": "sample",
+                "organization_id": "sample",
+                "parent_database_id": "sample",
+                "project_id": "sample",
+                "region": "sample",
+                "retain_until": "sample",
+                "usage_stopped": false
+              },
+              "stop": {
+                "cutoff": "sample",
+                "database_id": "sample",
+                "environment": "sample",
+                "operation_id": "sample",
+                "organization_id": "sample",
+                "parent_database_id": "sample",
+                "project_id": "sample",
+                "region": "sample",
+                "retain_until": "sample"
+              }
+            }
+          ]
+        },
+        "mediaType": "application/json",
+        "status": 202
+      },
+      "responses": [
+        {
+          "body": {
+            "automatic_deadline": "sample",
+            "automatic_grace_condition": "sample",
+            "automatic_policy_revision": "sample",
+            "claim": {
+              "accepted_at": "sample",
+              "authority_epoch": "sample",
+              "database_id": "sample",
+              "deadline": "sample",
+              "environment": "sample",
+              "grace_condition": "sample",
+              "operation_id": "sample",
+              "policy_fingerprint": "sample",
+              "policy_revision": "sample",
+              "project_id": "sample",
+              "schemaVersion": 0,
+              "tenant_id": "sample"
             },
+            "cutoff": "sample",
+            "edge_receipt": {
+              "access_revoked": false,
+              "cutoff": "sample",
+              "request": {
+                "database_id": "sample",
+                "environment": "sample",
+                "operation_id": "sample",
+                "project_id": "sample",
+                "tenant_id": "sample"
+              }
+            },
+            "request": {
+              "database_id": "sample",
+              "environment": "sample",
+              "operation_id": "sample",
+              "project_id": "sample",
+              "tenant_id": "sample"
+            },
+            "requested_at": "sample",
             "state": "preparing",
-            "targets": []
+            "targets": [
+              {
+                "preparation": {
+                  "database_id": "sample",
+                  "environment": "sample",
+                  "last_accounted_at": "sample",
+                  "operation_id": "sample",
+                  "organization_id": "sample",
+                  "parent_database_id": "sample",
+                  "prepared": false,
+                  "project_id": "sample",
+                  "region": "sample"
+                },
+                "receipt": {
+                  "access_revoked": false,
+                  "cutoff": "sample",
+                  "database_id": "sample",
+                  "environment": "sample",
+                  "operation_id": "sample",
+                  "organization_id": "sample",
+                  "parent_database_id": "sample",
+                  "project_id": "sample",
+                  "region": "sample",
+                  "retain_until": "sample",
+                  "usage_stopped": false
+                },
+                "stop": {
+                  "cutoff": "sample",
+                  "database_id": "sample",
+                  "environment": "sample",
+                  "operation_id": "sample",
+                  "organization_id": "sample",
+                  "parent_database_id": "sample",
+                  "project_id": "sample",
+                  "region": "sample",
+                  "retain_until": "sample"
+                }
+              }
+            ]
           },
           "mediaType": "application/json",
           "status": 202
@@ -3804,23 +4294,26 @@
       },
       "response": {
         "body": {
-          "cutoff": "sample",
-          "request": {
+          "automatic_deadline": "sample",
+          "automatic_grace_condition": "sample",
+          "automatic_policy_revision": "sample",
+          "claim": {
+            "accepted_at": "sample",
+            "authority_epoch": "sample",
             "database_id": "sample",
+            "deadline": "sample",
             "environment": "sample",
+            "grace_condition": "sample",
             "operation_id": "sample",
+            "policy_fingerprint": "sample",
+            "policy_revision": "sample",
             "project_id": "sample",
+            "schemaVersion": 0,
             "tenant_id": "sample"
           },
-          "state": "preparing",
-          "targets": []
-        },
-        "mediaType": "application/json",
-        "status": 200
-      },
-      "responses": [
-        {
-          "body": {
+          "cutoff": "sample",
+          "edge_receipt": {
+            "access_revoked": false,
             "cutoff": "sample",
             "request": {
               "database_id": "sample",
@@ -3828,9 +4321,140 @@
               "operation_id": "sample",
               "project_id": "sample",
               "tenant_id": "sample"
+            }
+          },
+          "request": {
+            "database_id": "sample",
+            "environment": "sample",
+            "operation_id": "sample",
+            "project_id": "sample",
+            "tenant_id": "sample"
+          },
+          "requested_at": "sample",
+          "state": "preparing",
+          "targets": [
+            {
+              "preparation": {
+                "database_id": "sample",
+                "environment": "sample",
+                "last_accounted_at": "sample",
+                "operation_id": "sample",
+                "organization_id": "sample",
+                "parent_database_id": "sample",
+                "prepared": false,
+                "project_id": "sample",
+                "region": "sample"
+              },
+              "receipt": {
+                "access_revoked": false,
+                "cutoff": "sample",
+                "database_id": "sample",
+                "environment": "sample",
+                "operation_id": "sample",
+                "organization_id": "sample",
+                "parent_database_id": "sample",
+                "project_id": "sample",
+                "region": "sample",
+                "retain_until": "sample",
+                "usage_stopped": false
+              },
+              "stop": {
+                "cutoff": "sample",
+                "database_id": "sample",
+                "environment": "sample",
+                "operation_id": "sample",
+                "organization_id": "sample",
+                "parent_database_id": "sample",
+                "project_id": "sample",
+                "region": "sample",
+                "retain_until": "sample"
+              }
+            }
+          ]
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "automatic_deadline": "sample",
+            "automatic_grace_condition": "sample",
+            "automatic_policy_revision": "sample",
+            "claim": {
+              "accepted_at": "sample",
+              "authority_epoch": "sample",
+              "database_id": "sample",
+              "deadline": "sample",
+              "environment": "sample",
+              "grace_condition": "sample",
+              "operation_id": "sample",
+              "policy_fingerprint": "sample",
+              "policy_revision": "sample",
+              "project_id": "sample",
+              "schemaVersion": 0,
+              "tenant_id": "sample"
             },
+            "cutoff": "sample",
+            "edge_receipt": {
+              "access_revoked": false,
+              "cutoff": "sample",
+              "request": {
+                "database_id": "sample",
+                "environment": "sample",
+                "operation_id": "sample",
+                "project_id": "sample",
+                "tenant_id": "sample"
+              }
+            },
+            "request": {
+              "database_id": "sample",
+              "environment": "sample",
+              "operation_id": "sample",
+              "project_id": "sample",
+              "tenant_id": "sample"
+            },
+            "requested_at": "sample",
             "state": "preparing",
-            "targets": []
+            "targets": [
+              {
+                "preparation": {
+                  "database_id": "sample",
+                  "environment": "sample",
+                  "last_accounted_at": "sample",
+                  "operation_id": "sample",
+                  "organization_id": "sample",
+                  "parent_database_id": "sample",
+                  "prepared": false,
+                  "project_id": "sample",
+                  "region": "sample"
+                },
+                "receipt": {
+                  "access_revoked": false,
+                  "cutoff": "sample",
+                  "database_id": "sample",
+                  "environment": "sample",
+                  "operation_id": "sample",
+                  "organization_id": "sample",
+                  "parent_database_id": "sample",
+                  "project_id": "sample",
+                  "region": "sample",
+                  "retain_until": "sample",
+                  "usage_stopped": false
+                },
+                "stop": {
+                  "cutoff": "sample",
+                  "database_id": "sample",
+                  "environment": "sample",
+                  "operation_id": "sample",
+                  "organization_id": "sample",
+                  "parent_database_id": "sample",
+                  "project_id": "sample",
+                  "region": "sample",
+                  "retain_until": "sample"
+                }
+              }
+            ]
           },
           "mediaType": "application/json",
           "status": 200
@@ -5579,6 +6203,187 @@
           "status": 504
         }
       ],
+      "operationId": "get_import",
+      "request": {
+        "body": null,
+        "headers": {
+          "authorization": "Bearer conformance-key"
+        },
+        "method": "GET",
+        "path": "/api/v1/databases/demo/imports/order-1",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "committed_records": 0,
+          "cursor": 0,
+          "database_id": "sample",
+          "durability": "sample",
+          "error": null,
+          "format": "sample",
+          "input_committed": false,
+          "input_digest": null,
+          "input_length": null,
+          "operation_id": "sample",
+          "pending_cursor": null,
+          "pending_operation": null,
+          "pending_records": null,
+          "project_id": "sample",
+          "state": "sample",
+          "tenant_id": "sample"
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "committed_records": 0,
+            "cursor": 0,
+            "database_id": "sample",
+            "durability": "sample",
+            "error": null,
+            "format": "sample",
+            "input_committed": false,
+            "input_digest": null,
+            "input_length": null,
+            "operation_id": "sample",
+            "pending_cursor": null,
+            "pending_operation": null,
+            "pending_records": null,
+            "project_id": "sample",
+            "state": "sample",
+            "tenant_id": "sample"
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "get_provisioning_operation",
       "request": {
         "body": null,
@@ -5956,7 +6761,8 @@
       "response": {
         "body": {
           "healthy": false,
-          "region": "sample"
+          "region": "sample",
+          "version": "sample"
         },
         "mediaType": "application/json",
         "status": 200
@@ -5965,7 +6771,8 @@
         {
           "body": {
             "healthy": false,
-            "region": "sample"
+            "region": "sample",
+            "version": "sample"
           },
           "mediaType": "application/json",
           "status": 200
@@ -7835,6 +8642,153 @@
           "status": 504
         }
       ],
+      "operationId": "list_imports",
+      "request": {
+        "body": null,
+        "headers": {
+          "authorization": "Bearer conformance-key"
+        },
+        "method": "GET",
+        "path": "/api/v1/databases/demo/imports",
+        "query": {}
+      },
+      "response": {
+        "body": [],
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": [],
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "list_indexes",
       "request": {
         "body": null,
@@ -8869,7 +9823,8 @@
       "response": {
         "body": {
           "healthy": false,
-          "region": "sample"
+          "region": "sample",
+          "version": "sample"
         },
         "mediaType": "application/json",
         "status": 200
@@ -8878,7 +9833,8 @@
         {
           "body": {
             "healthy": false,
-            "region": "sample"
+            "region": "sample",
+            "version": "sample"
           },
           "mediaType": "application/json",
           "status": 200
@@ -9022,10 +9978,14 @@
       "response": {
         "body": {
           "attempts": 0,
+          "claim_token": 0,
+          "claim_until": 0,
           "delivered": false,
           "event_id": "sample",
           "id": "sample",
           "next_attempt_at": 0,
+          "origin_lane": "sample",
+          "origin_region": "sample",
           "retry_started_at": 0,
           "revision": 0,
           "status": null,
@@ -9039,10 +9999,14 @@
         {
           "body": {
             "attempts": 0,
+            "claim_token": 0,
+            "claim_until": 0,
             "delivered": false,
             "event_id": "sample",
             "id": "sample",
             "next_attempt_at": 0,
+            "origin_lane": "sample",
+            "origin_region": "sample",
             "retry_started_at": 0,
             "revision": 0,
             "status": null,
@@ -9568,6 +10532,424 @@
           },
           "mediaType": "application/json",
           "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "resume_import",
+      "request": {
+        "body": null,
+        "headers": {
+          "authorization": "Bearer conformance-key"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/demo/imports/order-1/resume",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "committed_records": 0,
+          "cursor": 0,
+          "database_id": "sample",
+          "durability": "sample",
+          "error": null,
+          "format": "sample",
+          "input_committed": false,
+          "input_digest": null,
+          "input_length": null,
+          "operation_id": "sample",
+          "pending_cursor": null,
+          "pending_operation": null,
+          "pending_records": null,
+          "project_id": "sample",
+          "state": "sample",
+          "tenant_id": "sample"
+        },
+        "mediaType": "application/json",
+        "status": 202
+      },
+      "responses": [
+        {
+          "body": {
+            "committed_records": 0,
+            "cursor": 0,
+            "database_id": "sample",
+            "durability": "sample",
+            "error": null,
+            "format": "sample",
+            "input_committed": false,
+            "input_digest": null,
+            "input_length": null,
+            "operation_id": "sample",
+            "pending_cursor": null,
+            "pending_operation": null,
+            "pending_records": null,
+            "project_id": "sample",
+            "state": "sample",
+            "tenant_id": "sample"
+          },
+          "mediaType": "application/json",
+          "status": 202
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 412 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 412
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "rollback_schema",
+      "request": {
+        "body": null,
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "if-match": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/demo/collections/orders/schema/migration/rollback",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "generation": 0,
+          "identity": {
+            "database_id": "sample",
+            "placement": []
+          },
+          "migration": null,
+          "schema": {
+            "fields": [],
+            "fts": null,
+            "historyRetentionDays": 0,
+            "indexes": [],
+            "mergePolicy": "remove-wins",
+            "name": "sample",
+            "renames": [],
+            "ttl": null,
+            "version": null
+          },
+          "schema_version": 1,
+          "target": {
+            "branch": "sample",
+            "collection": "sample",
+            "database": "sample"
+          }
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "generation": 0,
+            "identity": {
+              "database_id": "sample",
+              "placement": []
+            },
+            "migration": null,
+            "schema": {
+              "fields": [],
+              "fts": null,
+              "historyRetentionDays": 0,
+              "indexes": [],
+              "mergePolicy": "remove-wins",
+              "name": "sample",
+              "renames": [],
+              "ttl": null,
+              "version": null
+            },
+            "schema_version": 1,
+            "target": {
+              "branch": "sample",
+              "collection": "sample",
+              "database": "sample"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 200
+        },
+        {
+          "body": {
+            "generation": 0,
+            "identity": {
+              "database_id": "sample",
+              "placement": []
+            },
+            "migration": null,
+            "schema": {
+              "fields": [],
+              "fts": null,
+              "historyRetentionDays": 0,
+              "indexes": [],
+              "mergePolicy": "remove-wins",
+              "name": "sample",
+              "renames": [],
+              "ttl": null,
+              "version": null
+            },
+            "schema_version": 1,
+            "target": {
+              "branch": "sample",
+              "collection": "sample",
+              "database": "sample"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 202
         }
       ]
     },
@@ -10527,12 +11909,196 @@
           "status": 504
         }
       ],
+      "operationId": "upload_import",
+      "request": {
+        "body": {
+          "mediaType": "application/octet-stream",
+          "value": "sample"
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key"
+        },
+        "method": "PUT",
+        "path": "/api/v1/databases/demo/imports/order-1/input",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "committed_records": 0,
+          "cursor": 0,
+          "database_id": "sample",
+          "durability": "sample",
+          "error": null,
+          "format": "sample",
+          "input_committed": false,
+          "input_digest": null,
+          "input_length": null,
+          "operation_id": "sample",
+          "pending_cursor": null,
+          "pending_operation": null,
+          "pending_records": null,
+          "project_id": "sample",
+          "state": "sample",
+          "tenant_id": "sample"
+        },
+        "mediaType": "application/json",
+        "status": 202
+      },
+      "responses": [
+        {
+          "body": {
+            "committed_records": 0,
+            "cursor": 0,
+            "database_id": "sample",
+            "durability": "sample",
+            "error": null,
+            "format": "sample",
+            "input_committed": false,
+            "input_digest": null,
+            "input_length": null,
+            "operation_id": "sample",
+            "pending_cursor": null,
+            "pending_operation": null,
+            "pending_records": null,
+            "project_id": "sample",
+            "state": "sample",
+            "tenant_id": "sample"
+          },
+          "mediaType": "application/json",
+          "status": 202
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "view_log",
       "request": {
         "body": null,
         "headers": {
           "authorization": "Bearer conformance-key",
-          "x-terrascale-view-capability": "sample"
+          "x-terrascale-capability": "sample"
         },
         "method": "GET",
         "path": "/api/v1/reactive/views/sample/sample/log",

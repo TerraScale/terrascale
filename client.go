@@ -456,6 +456,7 @@ type requestConfig struct {
 	documentIfMatch    string
 	hasDocumentIfMatch bool
 	responseMediaType  string
+	requestMediaType   string
 	responseHeaders    *http.Header
 	createOnly         bool
 	authTransaction    string
@@ -615,9 +616,17 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	var payload []byte
 	if body != nil {
 		var err error
-		payload, err = json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("sdk: marshal %s request body: %w", route, err)
+		switch raw := body.(type) {
+		case importPayload:
+			payload = bytes.Clone(raw)
+			if rc.requestMediaType == "" {
+				rc.requestMediaType = "application/octet-stream"
+			}
+		default:
+			payload, err = json.Marshal(body)
+			if err != nil {
+				return fmt.Errorf("sdk: marshal %s request body: %w", route, err)
+			}
 		}
 		if int64(len(payload)) > MaxRequestBodyBytes {
 			return fmt.Errorf("sdk: %s request body exceeds %d bytes", route, MaxRequestBodyBytes)
@@ -761,7 +770,11 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 		h.Set("Accept", rc.responseMediaType)
 	}
 	if payload != nil {
-		h.Set("Content-Type", "application/json")
+		contentType := rc.requestMediaType
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		h.Set("Content-Type", contentType)
 	}
 	c.decorateScopeHeaders(h)
 	hint := rc.regionHint
