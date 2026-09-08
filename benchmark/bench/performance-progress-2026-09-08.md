@@ -54,3 +54,14 @@ raise durable throughput: requests serialize during lifecycle admission and
 the single SQLite writer still performs FULL-synchronous commits. Widening the
 coalescing timer without moving that admission work would add tail latency
 without proving a gain, so it was deliberately left unchanged.
+
+## Admission-cache follow-up
+
+The engine now caches confirmed lifecycle pause state and primary-file shard
+identity per tenant. The cache is refreshed only from authoritative lifecycle
+operations or reads, and pause checks occur after the origin barrier is held.
+This removes repeated pre-queue storage-mutex reads while retaining pause
+fencing. The in-process 16-thread synced-write probe improved to **185–195
+ops/s** (about 5.1–5.4 ms amortized per operation), versus the earlier
+~126-op/s serial probe. This is a useful improvement but still far below the
+tens-of-thousands target because one SQLite writer and one FULL flush remain.
