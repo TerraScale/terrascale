@@ -820,7 +820,7 @@ func normalizeCapabilityHeader(value string) (string, error) {
 	if strings.EqualFold(value, defaultCapabilityHeader) {
 		return defaultCapabilityHeader, nil
 	}
-	return "", fmt.Errorf("sdk: attach response has unsupported capability header %q", value)
+	return "", fmt.Errorf("sdk: attach response must advertise %q, got %q", defaultCapabilityHeader, value)
 }
 
 func validateCapability(value string) error {
@@ -1060,7 +1060,7 @@ const (
 	maxSnapshotChunks       = 10000
 	maxSnapshotItems        = 10000
 	maxSnapshotBytes        = 8 << 20
-	defaultCapabilityHeader = "X-TerraScale-View-Capability"
+	defaultCapabilityHeader = "X-TerraScale-Capability"
 )
 
 func pollRetryDelay(attempt int) time.Duration {

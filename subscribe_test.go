@@ -187,7 +187,7 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"view": "view-1", "generation": 7, "checkpoint": "opaque-0",
 				"log":    "http://" + r.Host + "/attacker-path?offset=0&ignored=must-drop",
-				"offset": 0, "capability": "cap-1", "capability_header": "X-TerraScale-View-Capability",
+				"offset": 0, "capability": "cap-1", "capability_header": "X-TerraScale-Capability",
 				"snapshot": []map[string]any{{"id": "doc-1", "body": json.RawMessage(`{"a":1}`)}},
 			})
 		case strings.HasSuffix(r.URL.Path, "/api/v1/reactive/views/view-1/7/log"):
@@ -246,11 +246,20 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 	mu.Lock()
 	got := append([]string(nil), requests...)
 	mu.Unlock()
-	if len(got) == 0 || got[0] != "/api/v1/reactive/views/view-1/7/log?offset=0  cap-1" {
+	if len(got) == 0 || got[0] != "/api/v1/reactive/views/view-1/7/log?offset=0 cap-1 " {
 		t.Fatalf("first log request = %q", got)
 	}
-	if len(got) < 2 || got[1] != "/api/v1/reactive/views/view-1/7/log?offset=4  cap-1" {
+	if len(got) < 2 || got[1] != "/api/v1/reactive/views/view-1/7/log?offset=4 cap-1 " {
 		t.Fatalf("second log request = %q", got)
+	}
+}
+
+func TestCapabilityHeaderRejectsLegacyViewAlias(t *testing.T) {
+	if got, err := normalizeCapabilityHeader("X-TerraScale-Capability"); err != nil || got != "X-TerraScale-Capability" {
+		t.Fatalf("canonical header = %q, err=%v", got, err)
+	}
+	if _, err := normalizeCapabilityHeader("X-TerraScale-View-Capability"); err == nil {
+		t.Fatal("legacy view capability header was accepted")
 	}
 }
 
