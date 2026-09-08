@@ -174,3 +174,28 @@ func TestDeletionStatusAcceptsOnlyCompleteDescendantTargetGraphs(t *testing.T) {
 		})
 	}
 }
+
+func TestDeletionOperationIdentityMatchesProducerGrammar(t *testing.T) {
+	client, err := NewClient(Config{APIBaseURL: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{"", "delete:db", "delete/path", "delete.key", " delete", "delete ", "deleté", "delete\n"} {
+		if _, err := client.Databases.GetDeletionStatus(t.Context(), "db-1", invalid); err == nil {
+			t.Errorf("GET accepted %q", invalid)
+		} else {
+			var validation *ValidationError
+			if !errors.As(err, &validation) {
+				t.Errorf("GET sent invalid %q: %v", invalid, err)
+			}
+		}
+		if _, err := client.Databases.DeleteDatabase(t.Context(), "db-1", WithIdempotencyKey(invalid), WithDeleteConfirmation("db-1")); err == nil {
+			t.Errorf("DELETE accepted %q", invalid)
+		}
+	}
+	for _, valid := range []string{"delete-1", "delete_1", "A0z"} {
+		if err := validateDeletionOperationID(valid); err != nil {
+			t.Errorf("valid identity %q: %v", valid, err)
+		}
+	}
+}

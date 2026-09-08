@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
@@ -104,7 +103,7 @@ func (o *DeletionOperation) validate() error {
 		return fmt.Errorf("sdk: deletion response has inconsistent durable identity or receipts")
 	}
 	r := o.Request
-	if r.Environment == "" || r.TenantID == "" || r.ProjectID == "" || r.DatabaseID == "" || r.OperationID == "" || o.RequestedAt.IsZero() || len(o.Targets) == 0 || len(o.Targets) > 3000 {
+	if validateDeletionOperationID(r.OperationID) != nil || r.Environment == "" || r.TenantID == "" || r.ProjectID == "" || r.DatabaseID == "" || r.OperationID == "" || o.RequestedAt.IsZero() || len(o.Targets) == 0 || len(o.Targets) > 3000 {
 		return invalid()
 	}
 	switch o.State {
@@ -195,8 +194,8 @@ func (d *DatabasesClient) GetDeletionStatus(ctx context.Context, database, opera
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(operationID) == "" || len(operationID) > 128 {
-		return nil, &ValidationError{Field: "operation_id", Message: "must be nonblank and at most 128 bytes"}
+	if err := validateDeletionOperationID(operationID); err != nil {
+		return nil, err
 	}
 	out := deletionResponse{status: http.StatusOK}
 	if err := d.c.do(ctx, http.MethodGet, path+"/deletions/"+url.PathEscape(operationID), nil, nil, &out, "deletion_status", opts...); err != nil {
@@ -206,4 +205,19 @@ func (d *DatabasesClient) GetDeletionStatus(ctx context.Context, database, opera
 		return nil, err
 	}
 	return &out.DeletionOperation, nil
+}
+
+func validateDeletionOperationID(operationID string) error {
+	valid := len(operationID) > 0 && len(operationID) <= 128
+	for i := range len(operationID) {
+		b := operationID[i]
+		if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '-' || b == '_') {
+			valid = false
+			break
+		}
+	}
+	if !valid {
+		return &ValidationError{Field: "operation_id", Message: "must contain 1-128 ASCII letters, digits, hyphens, or underscores"}
+	}
+	return nil
 }
