@@ -1,6 +1,7 @@
 .PHONY: check contracts edge-contracts
 
 CONTRACT_VERSION ?= $(shell sed -e 's/[[:space:]]//g' CONTRACT_VERSION)
+EDGE_CONTRACT_SOURCE ?= contracts/edge/v1
 # CONTRACT_URL is an immutable terrabase package URL and is required by
 # default/CI. CONTRACT_SOURCE is an explicit pre-publication escape hatch.
 

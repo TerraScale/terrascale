@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 
@@ -72,7 +73,10 @@ def main() -> None:
             f'\t{{OperationID: "{route["operationId"]}", Method: "{route["method"]}", Path: "{route["path"]}"}},'
         )
     lines.extend(["}", ""])
-    (repo / "edge_contract.go").write_text("\n".join(lines), encoding="utf-8")
+    generated = subprocess.run(
+        ["gofmt"], input="\n".join(lines), text=True, capture_output=True, check=True
+    ).stdout
+    (repo / "edge_contract.go").write_text(generated, encoding="utf-8")
 
 
 if __name__ == "__main__":
