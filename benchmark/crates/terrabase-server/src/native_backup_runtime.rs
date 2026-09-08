@@ -772,7 +772,12 @@ mod restore_tests {
                 historical_destinations: Vec::new(),
                 policy_revision: "native-pitr-fixture".into(),
                 retention_days: 1,
-                staging: root.join(&record.database_id),
+                // Keep native backup staging outside the admitted engine's
+                // SQLite directory. The fixture publishes that engine at
+                // `root/<database-id>`; sharing the path lets inventory and
+                // capacity accounting inspect live database files as backup
+                // artifacts and reports the redacted `Fleet(Capture)` error.
+                staging: root.join("backup-staging").join(&record.database_id),
                 placement: PlacementLock::explicit([record.region.parse().unwrap()]).unwrap(),
             });
         }

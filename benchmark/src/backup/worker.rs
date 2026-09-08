@@ -212,11 +212,16 @@ impl NativeBackupFleet {
     ) -> Result<(Arc<dyn BackupKeys>, Vec<(Provider, Arc<ObjectDestination>)>, usize), FleetError>
     {
         let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
-        Ok((
-            stream.config.keys.clone(),
-            stream.config.destinations.clone(),
-            inventory_point_limit(stream),
-        ))
+        let mut destinations = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (provider, destination) in
+            stream.config.destinations.iter().chain(stream.config.historical_destinations.iter())
+        {
+            if seen.insert(destination.identity().to_owned()) {
+                destinations.push((*provider, Arc::clone(destination)));
+            }
+        }
+        Ok((stream.config.keys.clone(), destinations, inventory_point_limit(stream)))
     }
 
     /// Returns the admitted provider set for a database in its stable policy order.
@@ -244,14 +249,7 @@ impl NativeBackupFleet {
         selection_kind: &str,
         point_id: &str,
     ) -> Result<(super::BackupManifest, Provider), FleetError> {
-        let (keys, destinations, point_limit) = {
-            let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
-            (
-                stream.config.keys.clone(),
-                stream.config.destinations.clone(),
-                inventory_point_limit(stream),
-            )
-        };
+        let (keys, destinations, point_limit) = self.stream_recovery_point_config(database)?;
         Self::resolve_recovery_point_with_config(
             database,
             selection_kind,
@@ -532,11 +530,14 @@ async fn purge_retained_parts(
         )?;
         pending.extend(retained.iter().map(|point| format!("rp-{}", point.identity())));
         let points = destination
-            .list_points(database, (usize::from(retention_days) + 1) * 8_640 * 2 + 8_640)
+            .list_point_prefixes(database, (usize::from(retention_days) + 1) * 8_640 * 2 + 8_640)
             .await
             .map_err(|_| FleetError::Upload)?;
         for point in points {
-            let name = point.rsplit('/').next().ok_or(FleetError::Capture)?;
+            let name = point
+                .strip_prefix(&format!("{database}/"))
+                .filter(|name| !name.contains('/'))
+                .ok_or(FleetError::Capture)?;
             pending.insert(name.to_owned());
         }
         persist_upload_journal(&journal, "delete-v1", &pending)?;
@@ -1017,11 +1018,14 @@ impl NativeBackupFleet {
             // an index, and preserve these exact prefixes across delete retries.
             pending.extend(retained.iter().map(|point| format!("rp-{}", point.identity())));
             let points = destination
-                .list_points(database, inventory_point_limit(stream))
+                .list_point_prefixes(database, inventory_point_limit(stream))
                 .await
                 .map_err(|_| FleetError::Upload)?;
             for point in points {
-                let name = point.rsplit('/').next().ok_or(FleetError::Capture)?;
+                let name = point
+                    .strip_prefix(&format!("{database}/"))
+                    .filter(|name| !name.contains('/'))
+                    .ok_or(FleetError::Capture)?;
                 pending.insert(name.to_owned());
             }
             persist_upload_journal(&journal, "delete-v1", &pending)?;
@@ -3208,7 +3212,7 @@ mod tests {
             .attach(StreamConfig {
                 engine: engine.clone(),
                 keys: keys(&engine),
-                destinations: vec![(Provider::Oci, first), (Provider::Tigris, second)],
+                destinations: vec![(Provider::Oci, first.clone()), (Provider::Tigris, second)],
                 historical_destinations: Vec::new(),
                 policy_revision: "provider-fallback".into(),
                 retention_days: 1,
@@ -3233,6 +3237,18 @@ mod tests {
             crate::backup::manifest::ENCRYPTED_MANIFEST_FILE
         );
         first_store.put(&key.into(), b"corrupt provider manifest".to_vec().into()).await.unwrap();
+
+        // Simulate a policy transition where the corrupt OCI copy remains
+        // current while Tigris is retained only as historical policy state.
+        // Point recovery must still probe that retained destination after the
+        // current set, without probing the duplicate OCI identity twice.
+        fleet.streams.get_mut(&database).unwrap().config.destinations =
+            vec![(Provider::Oci, first)];
+        let (_, destinations, _) = fleet.stream_recovery_point_config(&database).unwrap();
+        assert_eq!(
+            destinations.iter().map(|(provider, _)| *provider).collect::<Vec<_>>(),
+            vec![Provider::Oci, Provider::Tigris]
+        );
 
         let (resolved, provider) =
             fleet.resolve_recovery_point(&database, "latest", "").await.unwrap();

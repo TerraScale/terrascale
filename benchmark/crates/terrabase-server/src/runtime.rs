@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fs::{File, OpenOptions};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -478,6 +478,106 @@ struct AdmittedProduction {
     auth: Option<Arc<crate::auth_runtime::AuthRuntime>>,
 }
 
+#[cfg(unix)]
+struct AdmissionListener {
+    path: PathBuf,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    task: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+}
+
+#[cfg(unix)]
+impl AdmissionListener {
+    fn is_finished(&self) -> bool {
+        self.task.as_ref().is_some_and(tokio::task::JoinHandle::is_finished)
+    }
+
+    async fn shutdown(&mut self, grace: std::time::Duration) -> Result<(), ()> {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        let Some(mut task) = self.task.take() else {
+            return Ok(());
+        };
+        let result = match tokio::time::timeout(grace, &mut task).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(_) | Err(_) => {
+                task.abort();
+                let _ = task.await;
+                Err(())
+            }
+        };
+        let _ = std::fs::remove_file(&self.path);
+        result
+    }
+}
+
+#[cfg(unix)]
+impl Drop for AdmissionListener {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(unix)]
+fn start_admission_listener(
+    admission: &Arc<crate::production_data_runtime::ProductionAdmissionRuntime>,
+    config: Option<&crate::config::ProductionMemberAdmission>,
+) -> Result<AdmissionListener, DaemonError> {
+    let Some(config) = config else {
+        return Ok(AdmissionListener {
+            path: PathBuf::new(),
+            stop: None,
+            task: None,
+        });
+    };
+    validate_uds_parent(&config.socket)?;
+    if let Ok(metadata) = std::fs::symlink_metadata(&config.socket) {
+        if !metadata.file_type().is_socket() {
+            return Err(DaemonError::UnsafeUdsPath);
+        }
+        // A live listener owns the pathname and must prevent a second member
+        // from silently splitting admission across two socket inodes.
+        if std::os::unix::net::UnixStream::connect(&config.socket).is_ok() {
+            return Err(DaemonError::UnsafeUdsPath);
+        }
+        std::fs::remove_file(&config.socket).map_err(|_| DaemonError::UnsafeUdsPath)?;
+    }
+    let listener = tokio::net::UnixListener::bind(&config.socket)
+        .map_err(|_| DaemonError::UnsafeUdsPath)?;
+    set_socket_mode(&config.socket, 0o660)?;
+    rustix::fs::chown(
+        &config.socket,
+        None,
+        Some(rustix::process::Gid::from_raw(config.socket_gid)),
+    )
+    .map_err(|_| DaemonError::UnsafeUdsPath)?;
+    let (stop, signal) = tokio::sync::oneshot::channel();
+    let host = admission.admission_host();
+    let allowed_uid = config.allowed_uid;
+    let task = tokio::spawn(host.serve_until(listener, allowed_uid, async {
+        let _ = signal.await;
+    }));
+    Ok(AdmissionListener {
+        path: config.socket.clone(),
+        stop: Some(stop),
+        task: Some(task),
+    })
+}
+
+#[cfg(not(unix))]
+fn start_admission_listener(
+    _admission: &Arc<crate::production_data_runtime::ProductionAdmissionRuntime>,
+    config: Option<&crate::config::ProductionMemberAdmission>,
+) -> Result<(), DaemonError> {
+    if config.is_some() {
+        return Err(DaemonError::UnsafeUdsPath);
+    }
+    Ok(())
+}
+
 // This boundary owns every task created after native recovery composition.
 // Startup errors must join these owners before the ledger can be reopened.
 async fn serve_admitted_production(
@@ -798,6 +898,8 @@ async fn serve_admitted_production(
         )?;
         let mut grpc_handle =
             grpc.serve_tls_reloadable(production.transport.tbep_listen, grpc_tls)?;
+        let mut admission_listener =
+            start_admission_listener(&admission, production.member_admission.as_ref())?;
         let (metrics_stop, metrics_signal) = tokio::sync::oneshot::channel();
         let mut metrics_task = tokio::spawn(prepared_metrics.serve(async {
             let _ = metrics_signal.await;
@@ -840,6 +942,7 @@ async fn serve_admitted_production(
                         if public_task.is_finished()
                             || metrics_task.is_finished()
                             || native_task.as_ref().is_some_and(tokio::task::JoinHandle::is_finished)
+                            || admission_listener.is_finished()
                             || !status.is_serving()
                             || !matches!(grpc_handle.try_wait(), Ok(false))
                         {
@@ -877,6 +980,7 @@ async fn serve_admitted_production(
         metrics.transition_service(ServiceState::Draining)?;
         let _ = public_stop.send(());
         let _ = metrics_stop.send(());
+        let admission_result = admission_listener.shutdown(config.shutdown_grace).await;
         placement.begin_drain();
         grpc_handle.begin_drain();
         let grpc_drain = tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait());
@@ -893,6 +997,7 @@ async fn serve_admitted_production(
         let restart = listener_outcome?;
         public_result.map_err(|_| DaemonError::ShutdownTimeout)?;
         metrics_result.map_err(|_| DaemonError::ShutdownTimeout)?;
+        admission_result.map_err(|_| DaemonError::ShutdownTimeout)?;
         grpc_result
             .map_err(|_| DaemonError::ShutdownTimeout)?
             .map_err(|_| DaemonError::ShutdownTimeout)?;

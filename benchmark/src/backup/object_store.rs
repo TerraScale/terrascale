@@ -380,6 +380,54 @@ impl ObjectDestination {
         Ok(points)
     }
 
+    /// Discovers all direct recovery-point prefixes, including points whose
+    /// publication index is missing after an interrupted upload or deletion.
+    ///
+    /// The returned prefixes are direct children of `prefix`; nested keys are
+    /// rejected so callers cannot accidentally truncate a point prefix and
+    /// delete a sibling or an unrelated descendant.
+    pub async fn list_point_prefixes(
+        &self,
+        prefix: &str,
+        max: usize,
+    ) -> Result<Vec<String>, TransferError> {
+        validate_prefix(prefix)?;
+        if max == 0 || max > 1_000_000 {
+            return Err(TransferError::Configuration);
+        }
+        let path =
+            ObjectPath::parse(format!("{prefix}/")).map_err(|_| TransferError::InvalidPoint)?;
+        let exact_prefix = format!("{prefix}/");
+        let mut stream = self.store.list(Some(&path));
+        let mut points = std::collections::BTreeSet::new();
+        let mut scanned = 0_usize;
+        while let Some(result) = stream.next().await {
+            let object = result.map_err(|_| TransferError::Unavailable)?;
+            scanned += 1;
+            if scanned > max.saturating_mul(MAX_FILES + 1) {
+                return Err(TransferError::InvalidPoint);
+            }
+            let Some(name) = object.location.as_ref().strip_prefix(&exact_prefix) else {
+                return Err(TransferError::InvalidPoint);
+            };
+            let Some((point, member)) = name.split_once('/') else {
+                return Err(TransferError::InvalidPoint);
+            };
+            if member.is_empty() || member.contains('/') {
+                return Err(TransferError::InvalidPoint);
+            }
+            validate_name(point)?;
+            let identity = point.strip_prefix("rp-").ok_or(TransferError::InvalidPoint)?;
+            super::manifest::validate_identity(identity)
+                .map_err(|_| TransferError::InvalidPoint)?;
+            points.insert(format!("{prefix}/{point}"));
+            if points.len() > max {
+                return Err(TransferError::InvalidPoint);
+            }
+        }
+        Ok(points.into_iter().collect())
+    }
+
     /// Uploads every encrypted point artifact and publishes its index last.
     ///
     /// Prefixes must be immutable, unique per recovery-point identity. Retries
@@ -984,6 +1032,30 @@ mod tests {
             store.put(&malformed, b"bad index".to_vec().into()).await.unwrap();
             assert_eq!(destination.delete_point("db/rp-3").await, Err(TransferError::InvalidPoint));
             assert!(store.get(&malformed).await.is_ok());
+        });
+    }
+
+    #[test]
+    fn point_prefix_discovery_includes_orphans_and_rejects_nested_keys() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let store = Arc::new(InMemory::new());
+            let destination = destination(store.clone());
+            let orphan = object_key("db/rp-1", "member.tbv3e").unwrap();
+            let sibling = object_key("db/rp-10", "member.tbv3e").unwrap();
+            store.put(&orphan, b"orphan".to_vec().into()).await.unwrap();
+            store.put(&sibling, b"sibling".to_vec().into()).await.unwrap();
+            assert_eq!(
+                destination.list_point_prefixes("db", 10).await.unwrap(),
+                vec!["db/rp-1", "db/rp-10"]
+            );
+
+            let nested = ObjectPath::parse("db/rp-2/nested/member.tbv3e").unwrap();
+            store.put(&nested, b"nested".to_vec().into()).await.unwrap();
+            assert_eq!(
+                destination.list_point_prefixes("db", 10).await,
+                Err(TransferError::InvalidPoint)
+            );
+            assert!(store.get(&nested).await.is_ok());
         });
     }
 

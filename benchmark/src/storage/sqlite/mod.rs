@@ -1904,7 +1904,10 @@ impl SqliteStorage {
         let encryption = keys
             .map(|keys| encrypted_vfs::EncryptedVfs::register(&database_path, keys))
             .transpose()
-            .map_err(|_| StorageOpenError::Unavailable)?;
+            .map_err(|error| {
+                eprintln!("register encrypted {:?}: {error:?}", database_path);
+                StorageOpenError::Unavailable
+            })?;
         let expected_binding = database_binding(dir)
             .map_err(|_| StorageOpenError::Unavailable)?
             .unwrap_or_else(|| format!("path-{}", local_origin_for(&database_path)));
@@ -1915,10 +1918,11 @@ impl SqliteStorage {
         if allow_create {
             flags |= OpenFlags::SQLITE_OPEN_CREATE;
         }
-        let mut writer = raw_connection(&database_path, flags, encryption.as_deref()).map_err(|error| {
-            eprintln!("raw connection {:?}: {error:?}", database_path);
-            error
-        })?;
+        let mut writer =
+            raw_connection(&database_path, flags, encryption.as_deref()).map_err(|error| {
+                eprintln!("raw connection {:?}: {error:?}", database_path);
+                error
+            })?;
         if database_exists || !allow_create {
             let legacy = validate_database_binding(&writer, &expected_binding)?;
             if !legacy {

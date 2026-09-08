@@ -257,6 +257,22 @@ impl AdmissionHost {
         listener: tokio::net::UnixListener,
         orchestrator_uid: u32,
     ) -> std::io::Result<()> {
+        self.serve_until(listener, orchestrator_uid, std::future::pending()).await
+    }
+
+    /// Serves the private admission endpoint until the shutdown future resolves.
+    ///
+    /// The listener is closed before this method returns, allowing the runtime
+    /// owner to join the task before releasing the admitted storage owners.
+    pub async fn serve_until<F>(
+        self: Arc<Self>,
+        listener: tokio::net::UnixListener,
+        orchestrator_uid: u32,
+        shutdown: F,
+    ) -> std::io::Result<()>
+    where
+        F: std::future::Future<Output = ()> + Send,
+    {
         use axum::{
             Router,
             body::Body,
@@ -332,8 +348,13 @@ impl AdmissionHost {
         let router =
             if let Some(identity) = identity_router { router.merge(identity) } else { router };
         let router = if let Some(usage) = usage_router { router.merge(usage) } else { router };
+        tokio::pin!(shutdown);
         loop {
-            let (stream, _) = listener.accept().await?;
+            let accepted = tokio::select! {
+                result = listener.accept() => result?,
+                () = &mut shutdown => return Ok(()),
+            };
+            let (stream, _) = accepted;
             if stream.peer_cred()?.uid() != orchestrator_uid {
                 continue;
             }

@@ -51,6 +51,11 @@ pub(crate) fn copy_encrypted_snapshot(
         return Err(());
     }
     let registration = EncryptedStorage::register(target, keys).map_err(|_| ())?;
+    // The database stub is only SQLite's lock inode.  The authenticated bytes
+    // live in its `.tbe` companion, so copy every logical file through the
+    // admitted source and target VFSes.  Copying the stub (or the companion as
+    // a raw file) would either lose the source data or bind it to the wrong
+    // database key/owner.
     for name in [DATABASE_FILE.to_owned(), format!("{DATABASE_FILE}-wal")] {
         let mut source_file = match open_physical_file(&source.join(&name)) {
             Ok(file) => file,
@@ -71,6 +76,14 @@ pub(crate) fn copy_encrypted_snapshot(
             destination.write_all(&buffer[..length]).map_err(|_| ())?;
         }
         destination.sync_all().map_err(|_| ())?;
+    }
+    // A successful logical copy must publish the target companion before the
+    // registration is released.  This also keeps ownership validation on a
+    // restart tied to authenticated target bytes rather than an empty stub.
+    let target_backing = super::encrypted_file::companion(&target.join(DATABASE_FILE));
+    let target_metadata = std::fs::symlink_metadata(&target_backing).map_err(|_| ())?;
+    if target_metadata.file_type().is_symlink() || !target_metadata.is_file() {
+        return Err(());
     }
     drop(connection);
     Ok(registration)
@@ -233,7 +246,7 @@ mod tests {
 
         let target_keys = crate::engine::test_storage_keys(&target_owner, 203);
         let target_registration =
-            copy_encrypted_snapshot(&source, &target, &source_owner, target_keys).unwrap();
+            copy_encrypted_snapshot(&source, &target, &source_owner, target_keys.clone()).unwrap();
         let target_connection = open_physical_sqlite(
             &target.join(DATABASE_FILE),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -255,6 +268,25 @@ mod tests {
         );
         drop(target_connection);
         drop(target_registration);
+        // The source companion is non-empty; reopening with the target key
+        // source proves the authenticated target companion, rather than the
+        // zero-length SQLite stub, was installed.
+        let target_backing = super::super::encrypted_file::companion(&target.join(DATABASE_FILE));
+        assert!(std::fs::metadata(target_backing).unwrap().len() > 0);
+        let reopened_registration = EncryptedStorage::register(&target, target_keys).unwrap();
+        let reopened = open_physical_sqlite(
+            &target.join(DATABASE_FILE),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        assert_eq!(
+            reopened
+                .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+        drop(reopened);
+        drop(reopened_registration);
         drop(source_registration);
         std::fs::remove_dir_all(root).unwrap();
     }

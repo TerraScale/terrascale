@@ -215,14 +215,11 @@ impl Engine {
                 &child_placement,
             )?;
             drop(registration);
-            let mut companion = crate::storage::database_file(&staging).into_os_string(); companion.push(".tbe");
-            eprintln!("stage files db={:?} companion={:?}", fs::symlink_metadata(crate::storage::database_file(&staging)).map(|m| (m.len(), m.is_file())), fs::symlink_metadata(companion).map(|m| (m.len(), m.is_file())));
+            let mut companion = crate::storage::database_file(&staging).into_os_string();
+            companion.push(".tbe");
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
-            drop(Self::open(staged).map_err(|error| {
-                eprintln!("staged branch open failed: {error:?}");
-                error
-            })?);
+            drop(Self::open(staged)?);
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
@@ -310,15 +307,25 @@ fn transform_snapshot(
     marker: &str,
     placement: &UsagePlacement,
 ) -> Result<i64, EngineOpenError> {
+    eprintln!("transform start {:?}", staging);
     let mut connection = crate::storage::open_physical_sqlite(
         &crate::storage::database_file(staging),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
     )
-    .map_err(|_| EngineOpenError::StorageUnavailable)?;
-    connection
-        .execute_batch("PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY;")
-        .map_err(|_| EngineOpenError::StorageUnavailable)?;
-    let transaction = connection.transaction().map_err(|_| EngineOpenError::StorageUnavailable)?;
+    .map_err(|error| {
+        eprintln!("transform open {error:?}");
+        EngineOpenError::StorageUnavailable
+    })?;
+    connection.execute_batch("PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY;").map_err(
+        |error| {
+            eprintln!("transform pragma {error:?}");
+            EngineOpenError::StorageUnavailable
+        },
+    )?;
+    let transaction = connection.transaction().map_err(|error| {
+        eprintln!("transform tx {error:?}");
+        EngineOpenError::StorageUnavailable
+    })?;
     let cut = crate::storage::transform_provenance(&transaction, child)
         .map_err(|()| EngineOpenError::FormatMismatch)?;
     crate::storage::transform_branch_schema(&transaction, source_owner, child)
@@ -360,9 +367,13 @@ fn transform_snapshot(
     transaction
         .execute("INSERT INTO meta(key,value) VALUES('branch_restore_cut',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [cut])
         .map_err(|_| EngineOpenError::StorageUnavailable)?;
-    transaction.commit().map_err(|_| EngineOpenError::StorageUnavailable)?;
-    connection
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+    transaction.commit().map_err(|error| {
+        eprintln!("transform commit {error:?}");
+        EngineOpenError::StorageUnavailable
+    })?;
+    connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").map_err(|error| {
+        eprintln!("transform checkpoint {error:?}");
+        EngineOpenError::StorageUnavailable
+    })?;
     Ok(cut)
 }

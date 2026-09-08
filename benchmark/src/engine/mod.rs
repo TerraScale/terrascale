@@ -1380,10 +1380,7 @@ impl Engine {
         };
         let mut storage: Box<dyn storage::StoragePort> = open_storage
             .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
-            .map_err(|error| {
-                eprintln!("engine storage open {location:?}: {error:?}");
-                EngineOpenError::StorageUnavailable
-            })?;
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         let replication_lane_origin = configured_lane
             .or_else(|| {
                 crate::origin_lane::OriginLaneId::parse(storage.local_replication_origin()).ok()
@@ -1402,12 +1399,10 @@ impl Engine {
         // sync lease before serving. The required replication, metering, and
         // backup frontiers were installed by SQLite admission first and keep
         // the retained journal floor safe for reconnect/reset.
-        storage
-            .retire_consumer_frontier("sync")
-            .map_err(|error| {
-                eprintln!("engine retire sync {location:?}: {error:?}");
-                EngineOpenError::StorageUnavailable
-            })?;
+        storage.retire_consumer_frontier("sync").map_err(|error| {
+            eprintln!("engine retire sync {location:?}: {error:?}");
+            EngineOpenError::StorageUnavailable
+        })?;
         if config.owner.is_some()
             && storage.origin_epoch().map_err(|()| EngineOpenError::StorageUnavailable)?.0 == 0
         {
