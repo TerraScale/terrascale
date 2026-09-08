@@ -2,6 +2,8 @@
 """Build and run a standalone NuGet consumer without SDK project references."""
 
 from pathlib import Path
+import hashlib
+import json
 import subprocess
 import tempfile
 import uuid
@@ -15,6 +17,14 @@ def run(*arguments: str, cwd: Path = ROOT) -> None:
 
 
 def main() -> None:
+    manifest_path = ROOT / "contracts" / "v1" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    openapi_pin = next(
+        artifact["blake3"]
+        for artifact in manifest["artifacts"]
+        if artifact["path"] == "openapi.json"
+    )
     with tempfile.TemporaryDirectory(prefix="terrascale-dotnet-consumer-") as directory:
         workspace = Path(directory)
         feed = workspace / "feed"
@@ -55,10 +65,12 @@ if (client.Documents is null || client.Reactive is null || client.Management is 
 var catalog = JsonSerializer.Deserialize<TerraScaleRegionCatalog>("{\\\"regions\\\":[{\\\"code\\\":\\\"IAD\\\",\\\"name\\\":\\\"Ashburn\\\",\\\"country\\\":\\\"US\\\",\\\"latitude\\\":38.9,\\\"longitude\\\":-77,\\\"available\\\":true}],\\\"hosts\\\":{\\\"IAD\\\":\\\"iad.api.terrascale.tech\\\"}}") ?? throw new InvalidOperationException("Packaged region catalog did not deserialize.");
 if (catalog.Regions.Count != 1 || catalog.Regions[0].Code != "IAD" || catalog.Hosts["IAD"] != "iad.api.terrascale.tech")
     throw new InvalidOperationException("Packaged region catalog lost the published regions/hosts wire.");
+if (!string.Equals(TerraScaleContractPin.ManifestSha256, "{manifest_sha256}", StringComparison.Ordinal) || !string.Equals(TerraScaleContractPin.Blake3_OpenapiJson, "{openapi_pin}", StringComparison.Ordinal))
+    throw new InvalidOperationException("Packaged ContractPin does not match the installed manifest.");
 if (TerraScaleContractRoutes.Find("execute_sql").Method != "POST")
     throw new InvalidOperationException("Packaged generated contract is missing.");
 Console.WriteLine("Standalone NuGet consumer passed.");
-""")
+""".replace("{manifest_sha256}", manifest_sha256).replace("{openapi_pin}", openapi_pin))
         run("dotnet", "restore", "--source", str(feed), "--source", "https://api.nuget.org/v3/index.json",
             "--packages", str(workspace / "packages"), cwd=consumer)
         run("dotnet", "run", "--configuration", "Release", "--no-restore", cwd=consumer)
