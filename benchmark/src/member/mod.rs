@@ -1210,6 +1210,18 @@ impl Member {
             .into_iter()
     }
 
+    /// Return the admitted key source so runtime assignments reopen with the
+    /// same provider identity and lease cache as member acquisition.
+    pub fn storage_key_source(
+        &self,
+        database: &DatabaseId,
+    ) -> Option<Arc<dyn crate::encryption::DatabaseKeySource>> {
+        lock_unpoisoned(&self.inner.catalog)
+            .databases
+            .get(database)
+            .and_then(|entry| entry.storage_keys.clone())
+    }
+
     /// Returns storage-only status.  Production readiness remains false.
     #[must_use]
     pub fn status(&self) -> MemberStatus {

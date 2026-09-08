@@ -1265,28 +1265,16 @@ impl ProductionAdmissionRuntime {
             region,
         )
         .map_err(failure)?;
-        let keys = self.config.keys.as_ref().ok_or("production key delivery missing")?;
-        let provider =
-            OciVaultKeyDelivery::new(keys.socket.clone(), keys.orchestrator_uid, keys.socket_gid)
-                .map_err(failure)?;
-        let scope = KeyScope::new_with_project(
-            &record.environment,
-            configured.tenant,
-            configured.project,
-            configured.database,
-            KeyPurpose::Data,
-        )
-        .map_err(failure)?;
-        let source = OciVaultDatabaseKeys::new(
-            provider,
-            KeyVersionMetadata::new(scope, configured.encryption_key),
-            region,
-        )
-        .map_err(failure)?;
+        // Reuse the source admitted into Member. Constructing a second
+        // OciVault source here gives encrypted VFS a different provider
+        // identity and breaks lazy reopen after eviction/restart.
+        let id = terrabase::member::DatabaseId::try_new(database).map_err(failure)?;
+        let admitted_keys =
+            self.member.storage_key_source(&id).ok_or("production key delivery missing")?;
         let target = terrabase::engine::EngineConfig::durable(configured.location.clone())
             .map_err(failure)?
             .with_owner(owner)
-            .with_storage_keys(Arc::new(source));
+            .with_storage_keys(admitted_keys);
         let placement = terrabase::backup::PlacementLock::explicit(
             record
                 .regions
@@ -1680,27 +1668,8 @@ impl ProductionAdmissionRuntime {
             }
         }
         self.runtime.register_route(scope, id).map_err(failure)?;
-        let keys = self.config.keys.as_ref().ok_or("production key delivery missing")?;
-        let provider =
-            OciVaultKeyDelivery::new(keys.socket.clone(), keys.orchestrator_uid, keys.socket_gid)
-                .map_err(failure)?;
-        let key_scope = KeyScope::new_with_project(
-            &record.environment,
-            scope.tenant(),
-            scope.project(),
-            scope.database(),
-            KeyPurpose::Data,
-        )
-        .map_err(failure)?;
-        let source = OciVaultDatabaseKeys::new(
-            provider,
-            KeyVersionMetadata::new(
-                key_scope,
-                DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?,
-            ),
-            record.region.parse().map_err(|_| "invalid admitted Region")?,
-        )
-        .map_err(failure)?;
+        let source =
+            self.member.storage_key_source(&id).ok_or("production key delivery missing")?;
         let snapshots = self.member.root().join("replication-snapshots");
         std::fs::create_dir_all(&snapshots).map_err(failure)?;
         let staging = snapshots.join(format!(
@@ -1721,7 +1690,7 @@ impl ProductionAdmissionRuntime {
                 location: self.member.root().join(&record.database_id),
                 snapshot_staging: staging,
                 snapshot_max_bytes: self.snapshot_max_bytes,
-                keys: Arc::new(source),
+                keys: source,
                 selected_regions: selected,
                 remote_writers: assignments
                     .iter()

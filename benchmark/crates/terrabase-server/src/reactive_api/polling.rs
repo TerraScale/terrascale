@@ -206,9 +206,9 @@ mod tests {
         // These are the failures the HTTP caller must surface immediately:
         // an unknown generation, an offset beyond the current head, and an
         // unknown view. None is allowed to allocate or join a long-poll.
-        assert_eq!(store.poll_log(&view, 2, 0).await.unwrap_err().code, "unknown_view");
-        assert_eq!(store.poll_log(&view, 1, u64::MAX).await.unwrap_err().code, "offset_gap");
-        assert_eq!(store.poll_log("missing", 1, 0).await.unwrap_err().code, "unknown_view");
+        assert_eq!(store.poll_log(&view, 2, 0).await.err().unwrap().code, "unknown_view");
+        assert_eq!(store.poll_log(&view, 1, u64::MAX).await.err().unwrap().code, "offset_gap");
+        assert_eq!(store.poll_log("missing", 1, 0).await.err().unwrap().code, "unknown_view");
 
         assert_eq!(store.poll_starts.load(Ordering::Relaxed), 0);
         assert!(store.log_polls.lock().unwrap().is_empty());

@@ -39,6 +39,15 @@ async fn production_tick_completes_initial_declared_index_reconciliation() {
     )
     .unwrap();
     assert_eq!(record.document.migration.unwrap().state, MigrationState::Complete);
+    // A completed envelope must remain the CAS base for the next worker tick;
+    // this also catches the no-plan path replaying a mutated record as its
+    // expected value and leaving the declaration pending forever.
+    assert_eq!(super::drive_database(&state, "demo", None).as_deref(), Some("orders"));
+    let record: DurableSchemaRecord = serde_json::from_slice(
+        &engine.schema_metadata_load("demo", "main", "orders").unwrap().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record.document.migration.unwrap().state, MigrationState::Complete);
     let descriptor = engine
         .index_descriptors()
         .unwrap()

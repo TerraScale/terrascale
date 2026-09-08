@@ -125,7 +125,9 @@ fn persist(
     expected: &[u8],
     record: &DurableSchemaRecord,
 ) -> Result<bool, String> {
-    persist_with_rollback(engine, expected, record, false)
+    let bytes =
+        serde_json::to_vec(record).map_err(|_| "schema status encoding failed".to_owned())?;
+    persist_encoded(engine, expected, record, &bytes, false)
 }
 
 pub(super) fn persist_with_rollback(
@@ -134,9 +136,19 @@ pub(super) fn persist_with_rollback(
     record: &DurableSchemaRecord,
     begin_rollback: bool,
 ) -> Result<bool, String> {
-    let target = &record.document.target;
     let bytes =
         serde_json::to_vec(record).map_err(|_| "schema status encoding failed".to_owned())?;
+    persist_encoded(engine, expected, record, &bytes, begin_rollback)
+}
+
+fn persist_encoded(
+    engine: &terrabase::Engine,
+    expected: &[u8],
+    record: &DurableSchemaRecord,
+    bytes: &[u8],
+    begin_rollback: bool,
+) -> Result<bool, String> {
+    let target = &record.document.target;
     let scope = document_scope(engine).map_err(|()| "database scope is unavailable".to_owned())?;
     let snapshot =
         engine.read_snapshot(&scope).map_err(|_| "schema status snapshot failed".to_owned())?;
@@ -343,6 +355,7 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
     // Commit the saved generation and the latest core cursor before admitting
     // another page.  If the process died after a core page commit, this first
     // publication repairs the stale envelope before work is retried.
+    let mut persisted_expected = expected.to_vec();
     if record.migration_plan.is_some() {
         if let Err(message) = checkpoint_before_batch(engine, &mut record) {
             if let Some(migration) = record.document.migration.as_mut() {
@@ -352,9 +365,16 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
             let _ = persist(engine, &expected, &record);
             return Some(collection);
         }
-        if !persist(engine, &expected, &record).is_ok_and(|persisted| persisted) {
+        let checkpoint_bytes = match serde_json::to_vec(&record) {
+            Ok(bytes) => bytes,
+            Err(_) => return Some(collection),
+        };
+        if !persist_encoded(engine, &persisted_expected, &record, &checkpoint_bytes, false)
+            .is_ok_and(|persisted| persisted)
+        {
             return Some(collection);
         }
+        persisted_expected = checkpoint_bytes;
     }
     let result = advance(engine, &mut record);
     if let Some(migration) = record.document.migration.as_mut() {
@@ -378,8 +398,12 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
             }
         }
     }
-    let final_expected = serde_json::to_vec(&record).unwrap_or_else(|_| expected.to_vec());
-    let _ = persist(engine, &final_expected, &record);
+    // CAS against the envelope bytes that were actually committed by the
+    // preceding checkpoint.  In particular, the no-plan path still has the
+    // original envelope as its expected value while `advance` mutates the
+    // in-memory projection.
+    let final_bytes = serde_json::to_vec(&record).unwrap_or_else(|_| expected.to_vec());
+    let _ = persist_encoded(engine, &persisted_expected, &record, &final_bytes, false);
     Some(collection)
 }
 
