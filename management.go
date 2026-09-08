@@ -7,6 +7,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -52,10 +53,33 @@ type Region struct {
 // currently served member response until the producer publishes separate
 // catalog and health routes.
 type RegionCatalogResponse struct {
-	Regions []Region          `json:"regions"`
-	Hosts   map[string]string `json:"hosts"`
-	Region  RegionCode        `json:"region"`
-	Healthy bool              `json:"healthy"`
+	Regions        []Region          `json:"regions"`
+	Hosts          map[string]string `json:"hosts"`
+	Region         RegionCode        `json:"region"`
+	Healthy        bool              `json:"healthy"`
+	regionsPresent bool
+}
+
+func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		Regions json.RawMessage   `json:"regions"`
+		Hosts   map[string]string `json:"hosts"`
+		Region  RegionCode        `json:"region"`
+		Healthy bool              `json:"healthy"`
+	}
+	var v wire
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*r = RegionCatalogResponse{Hosts: v.Hosts, Region: v.Region, Healthy: v.Healthy}
+	if len(v.Regions) == 0 || string(v.Regions) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(v.Regions, &r.Regions); err != nil {
+		return err
+	}
+	r.regionsPresent = true
+	return nil
 }
 
 // HealthResponse is the generated response model for GET /api/v1/regions
@@ -719,7 +743,7 @@ func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Regi
 	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions.list", opts...); err != nil {
 		return nil, err
 	}
-	if len(out.Regions) > 0 {
+	if out.regionsPresent {
 		for i := range out.Regions {
 			code, err := ParseRegionCode(string(out.Regions[i].Code))
 			if err != nil {
@@ -730,7 +754,7 @@ func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Regi
 		}
 		return out.Regions, nil
 	}
-	return nil, fmt.Errorf("sdk: region catalog response contains no regions")
+	return nil, fmt.Errorf("sdk: region catalog response is missing regions")
 }
 
 // Get returns one region.

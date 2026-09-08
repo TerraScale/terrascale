@@ -170,6 +170,39 @@ func TestRegionsListDecodesEdgeCatalogAndLegacyMemberHealth(t *testing.T) {
 			t.Fatalf("member health accepted as catalog: regions=%+v err=%v", regions, err)
 		}
 	})
+
+	for _, test := range []struct {
+		name string
+		body string
+		want int
+		fail bool
+	}{
+		{name: "explicit empty catalog", body: `{"regions":[],"hosts":{}}`, want: 0},
+		{name: "missing regions", body: `{"hosts":{}}`, fail: true},
+		{name: "null regions", body: `{"regions":null,"hosts":{}}`, fail: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			client, err := NewClient(Config{APIBaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			regions, err := client.Regions.List(t.Context())
+			if test.fail {
+				if err == nil || regions != nil {
+					t.Fatalf("malformed catalog accepted: regions=%+v err=%v", regions, err)
+				}
+				return
+			}
+			if err != nil || len(regions) != test.want {
+				t.Fatalf("regions=%+v err=%v", regions, err)
+			}
+		})
+	}
 }
 
 func TestTerraBaseManagementValidationCancellationAndIdempotency(t *testing.T) {
