@@ -181,6 +181,14 @@ pub fn comparability(
             "se15-reference-pin-v1; pgbouncer transaction pooling; pgrest HTTP/JSON service"
                 .to_owned(),
         ),
+        "sqlite" => (
+            "embedded-reference".to_owned(),
+            "WAL journal with synchronous=FULL and a five-second busy timeout; autocommit \
+             statement acknowledgement"
+                .to_owned(),
+            "bundled sqlite at shipped defaults plus WAL, synchronous=FULL, busy_timeout=5000ms"
+                .to_owned(),
+        ),
         _ => (
             "network-reference".to_owned(),
             "server-acknowledged PUT with shipped durability defaults".to_owned(),

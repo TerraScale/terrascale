@@ -148,6 +148,9 @@ pub enum Target {
     PgFullstack,
     /// The pinned RavenDB stable reference.
     RavenDb,
+    /// The embedded raw-SQLite reference: the bundled library at
+    /// WAL + `synchronous = FULL`, no TerraBase layer.
+    Sqlite,
 }
 
 impl Target {
@@ -162,6 +165,7 @@ impl Target {
             "pg" | "postgres" | "postgresql" => Ok(Self::PostgreSql),
             "pg-fullstack" | "pgfullstack" | "postgres-fullstack" => Ok(Self::PgFullstack),
             "raven" | "ravendb" => Ok(Self::RavenDb),
+            "sqlite" => Ok(Self::Sqlite),
             other => Err(other.to_owned()),
         }
     }
@@ -173,6 +177,7 @@ impl Target {
             Self::PostgreSql => "postgresql",
             Self::PgFullstack => "pg-fullstack",
             Self::RavenDb => "ravendb",
+            Self::Sqlite => "sqlite",
         }
     }
 }
@@ -186,6 +191,12 @@ mod tests {
         assert_eq!(Target::parse("terrabase"), Ok(Target::TerraBase));
         assert_eq!(Target::parse("tb"), Ok(Target::TerraBase));
         assert_eq!(Target::TerraBase.as_str(), "terrabase");
+    }
+
+    #[test]
+    fn parses_the_sqlite_target_token() {
+        assert_eq!(Target::parse("sqlite"), Ok(Target::Sqlite));
+        assert_eq!(Target::Sqlite.as_str(), "sqlite");
     }
 
     #[test]

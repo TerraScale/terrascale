@@ -878,7 +878,7 @@ mod restore_tests {
             .queries()
             .compile(QueryInput::sql(
                 SqlQueryText::try_new(
-                    "SELECT value FROM native-pitr WHERE _id = 'native-pitr-doc'",
+                    "SELECT value FROM \"native-pitr\" WHERE _id = 'native-pitr-doc'",
                 )
                 .unwrap(),
             ))
