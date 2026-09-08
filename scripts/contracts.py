@@ -454,7 +454,7 @@ def render_generated(root: Path, manifest: dict, digests: dict[str, str], corpus
         content = operation.get("requestBody", {}).get("content", {})
         if content:
             schema = next(iter(content.values())).get("schema", {})
-            request = schema.get("$ref", "").split("/")[-1] or None
+            request = schema_type(schema, True, models)
         response = None
         responses = operation.get("responses", {})
         for status in sorted(responses, key=lambda value: int(value) if str(value).isdigit() else 999):
@@ -462,7 +462,7 @@ def render_generated(root: Path, manifest: dict, digests: dict[str, str], corpus
                 content = responses[status].get("content", {})
                 if content:
                     schema = next(iter(content.values())).get("schema", {})
-                    response = schema.get("$ref", "").split("/")[-1] or None
+                    response = schema_type(schema, True, models)
                 break
         method_name = method.capitalize()
         request_expr = f"Some({rust_string(request)})" if request else "None"

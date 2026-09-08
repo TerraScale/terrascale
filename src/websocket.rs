@@ -69,7 +69,7 @@ impl Session {
                 }
                 Message::Pong(_) => {}
                 Message::Close(frame) => {
-                    let _ = self.socket.close(frame);
+                    let _ = self.socket.close(frame).await;
                     return Err(Error::transport("WebSocket closed"));
                 }
                 Message::Text(_) => {

@@ -141,3 +141,18 @@ fn generated_contract_publishes_import_lifecycle_routes() {
         );
     }
 }
+
+#[test]
+fn generated_contract_resolves_inline_success_schema_types() {
+    let list_imports = generated_contract::ROUTES
+        .iter()
+        .find(|route| route.operation_id == "list_imports")
+        .expect("list_imports route");
+    assert_eq!(list_imports.response_model, Some("Vec<ImportJob>"));
+
+    let download_export = generated_contract::ROUTES
+        .iter()
+        .find(|route| route.operation_id == "download_export")
+        .expect("download_export route");
+    assert_eq!(download_export.response_model, Some("String"));
+}
