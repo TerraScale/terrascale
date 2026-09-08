@@ -32,10 +32,11 @@ fn reference_path() -> PathBuf {
     std::env::var(PATH_VARIABLE).map_or_else(|_| PathBuf::from(DEFAULT_PATH), PathBuf::from)
 }
 
-/// How long one write may keep retrying turso's MVCC conflicts before the
-/// lane classifies the run as failed; the pin's five-second busy timeout
-/// bounds each individual lock wait inside that budget.
-const WRITE_RETRY_DEADLINE: Duration = Duration::from_secs(30);
+/// How long one write may keep retrying turso's MVCC and lock conflicts
+/// before the lane classifies the run as failed. The pin's five-second busy
+/// timeout bounds each individual lock wait, so this budget is what a
+/// heavily contended write may spend across attempts.
+const WRITE_RETRY_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Opens one connection with the pin's pragmas and busy timeout.
 async fn pin(connection: &turso::Connection) -> Result<(), turso::Error> {
@@ -277,9 +278,14 @@ impl Slot for TursoSlot {
                     assert_eq!(affected, 1, "a measured write must affect exactly one row");
                     return Ok(());
                 }
-                Err(error)
-                    if is_retryable(&error) && std::time::Instant::now() < deadline =>
-                {
+                Err(error) if is_retryable(&error) => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err(format!(
+                            "measured write retry deadline exceeded after {attempts} attempts: \
+                             {error}"
+                        )
+                        .into());
+                    }
                     // The failed transaction must be rolled back before the
                     // retry can observe a fresh snapshot — turso's own
                     // concurrent-writes pattern, whose rollback outcome is
