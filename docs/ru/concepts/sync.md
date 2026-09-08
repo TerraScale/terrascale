@@ -16,8 +16,11 @@ replica ships at launch.
 HTTP delivery is the default; WebSocket is optional. Subscribers with the
 same authorized query can share immutable responses. A subscription returns
 its view identifier, snapshot and log URLs, an opaque checkpoint, and a
-short-lived view capability. The SDK sends the capability in a request header;
-never place credentials in URLs or publish them.
+short-lived view capability. The SDK sends it in the canonical
+`X-TerraScale-Capability` request header; never place credentials in URLs or
+publish them. The capability is issued in ten-minute buckets and is accepted
+for at most 1,200 seconds from issuance while its view, generation, Region,
+and authorization scope remain valid. Attach a fresh view after it expires.
 
 Use the SDK’s result view to apply ordered changes. Do not infer write success
 from an optimistic local update: wait for the document API acknowledgement.
@@ -33,7 +36,11 @@ stale rows. Two different views do not promise a mutually consistent cut.
 
 Close subscriptions when their component or request ends. Reconnect and
 error handling must respect permission revocation and the current scope.
-A disconnected client does not gain permission to keep reading new changes.
+Revoking an API key stops new authenticated API operations and future view
+attachments; an already issued reactive capability can remain usable until
+its expiry (at most 1,200 seconds), subject to the service's authorization
+checks. A disconnected client does not gain permission to keep reading new
+changes.
 
 ## Billing and limits
 

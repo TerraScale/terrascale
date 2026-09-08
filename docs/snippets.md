@@ -19,7 +19,9 @@ npm run test:stub
 Do not put a production credential in a snippet fixture. Use a disposable
 cloud dev branch and rotate its key after qualification. The runner sends API
 credentials only to the configured API origin; reactive snapshot and log
-requests use the short-lived view capability header.
+requests use the short-lived `X-TerraScale-Capability` header returned by view
+attach. The capability is valid for at most 1,200 seconds; after expiry,
+attach the view again. Do not send an API key on reactive cache requests.
 
 The runnable examples target the published `@terrascale/sdk` 0.3.0 surface.
 Tenant and project-scoped branch/backup fixtures await producer contracts.
