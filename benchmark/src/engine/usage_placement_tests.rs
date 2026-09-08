@@ -166,9 +166,41 @@ fn accepted_deletion_refuses_new_customer_usage_but_replays_existing_receipt() {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
     )
     .unwrap();
-    engine.stop_storage_usage(&scope, now).unwrap();
+    // Accepted deletion publishes lifecycle authority and its accounting fence
+    // together; a standalone accounting stop intentionally fails closed.
+    engine
+        .lifecycle_accept_deletion(
+            &scope,
+            lifecycle_state::DeletionIntent {
+                operation_id: "delete-database".into(),
+                usage_stopped_at: now,
+                retain_until: None,
+            },
+        )
+        .unwrap();
     assert!(matches!(write(&engine, &scope, "after-stop"), CommitOutcome::Rejected(_)));
     assert!(matches!(write(&engine, &scope, "before-stop"), CommitOutcome::Committed(_)));
+    let mut changed = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            OperationId::try_new("before-stop").unwrap(),
+        )
+        .unwrap();
+    changed
+        .put(
+            Document::new(
+                DocumentId::try_new("one").unwrap(),
+                CollectionName::try_new("users").unwrap(),
+                DocumentValue::String("different payload".into()),
+            ),
+            ExpectedVersion::Any,
+        )
+        .unwrap();
+    assert!(matches!(
+        changed.commit(LocalDurability::Synced),
+        CommitOutcome::Rejected(CommitError::OperationIdReuse)
+    ));
     let page = engine
         .usage_page(&scope, UsagePageRequest::try_new(None, MAX_USAGE_PAGE_SIZE, None).unwrap())
         .unwrap();

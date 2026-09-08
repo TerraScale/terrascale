@@ -209,8 +209,9 @@ pub fn run<B: Backend>(
             // warm-up cannot strand healthy slots before the coordinator can
             // classify the run as invalid.
             warmup_end.wait();
-            if let Some(error) = warmup_error {
-                return Err(error);
+            if failed.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(warmup_error
+                    .unwrap_or_else(|| "another lane worker failed during warm-up".to_owned()));
             }
             let slot_operations =
                 per_slot_operations + usize::from(slot_index < operation_remainder);
@@ -326,7 +327,9 @@ fn one_op<S: Slot + ?Sized>(
     index: usize,
     seeded: usize,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    match workload {
+    // Backend failures, including unwinding panics, must flow through the
+    // worker's shared failure path so every participant reaches its barrier.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match workload {
         Workload::Read => slot.read(index % seeded.max(1)),
         Workload::Write => slot.write(index as u64),
         Workload::Query => slot.query(index % seeded.max(1)),
@@ -335,5 +338,185 @@ fn one_op<S: Slot + ?Sized>(
         // executor's own invariant broke; failing loudly beats measuring
         // an operation the mapping does not name.
         Workload::Mixed => Err("mixed workload was not resolved by select_mixed".into()),
+    }))
+    .unwrap_or_else(|panic| {
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("non-string panic payload");
+        Err(format!("backend operation panicked: {message}").into())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone, Copy)]
+    struct Fault {
+        slot: usize,
+        call: usize,
+        panic: bool,
+    }
+
+    #[derive(Default)]
+    struct Observed {
+        opened: AtomicUsize,
+        dropped: AtomicUsize,
+        writes: Mutex<Vec<(usize, u64)>>,
+    }
+
+    struct TestBackend {
+        observed: Arc<Observed>,
+        fault: Option<Fault>,
+    }
+
+    struct TestSlot {
+        observed: Arc<Observed>,
+        fault: Option<Fault>,
+        index: usize,
+        calls: usize,
+    }
+
+    impl Drop for TestSlot {
+        fn drop(&mut self) {
+            self.observed.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl Slot for TestSlot {
+        fn read(&mut self, index: usize) -> Result<(), Box<dyn Error + Send + Sync>> {
+            self.write(index as u64)
+        }
+
+        fn query(&mut self, index: usize) -> Result<(), Box<dyn Error + Send + Sync>> {
+            self.write(index as u64)
+        }
+
+        fn write(&mut self, index: u64) -> Result<(), Box<dyn Error + Send + Sync>> {
+            self.calls += 1;
+            if let Some(fault) = self.fault
+                && self.index == fault.slot
+                && self.calls == fault.call
+            {
+                if fault.panic {
+                    panic!("original backend panic");
+                }
+                return Err("original backend error".into());
+            }
+            self.observed.writes.lock().unwrap().push((self.index, index));
+            Ok(())
+        }
+    }
+
+    impl Backend for TestBackend {
+        fn connect() -> Result<Self, Box<dyn Error + Send + Sync>> {
+            Ok(Self { observed: Arc::default(), fault: None })
+        }
+        fn target_name(&self) -> &'static str {
+            "test"
+        }
+        fn observed_identity(&mut self) -> Result<String, Box<dyn Error + Send + Sync>> {
+            Ok("test".to_owned())
+        }
+        fn endpoint(&self) -> String {
+            "in-process test".to_owned()
+        }
+        fn client_transport(&self) -> &'static str {
+            "test"
+        }
+        fn setup(&mut self, _: &LaneConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+            Ok(())
+        }
+        fn seed(&mut self, _: &LaneConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+            Ok(())
+        }
+        fn open_slot(&self) -> Result<Box<dyn Slot + Send>, Box<dyn Error + Send + Sync>> {
+            Ok(Box::new(TestSlot {
+                observed: self.observed.clone(),
+                fault: self.fault,
+                index: self.observed.opened.fetch_add(1, Ordering::SeqCst),
+                calls: 0,
+            }))
+        }
+        fn limits(&self) -> Vec<String> {
+            Vec::new()
+        }
+    }
+
+    fn bounded_run(fault: Option<Fault>) -> (Result<RunResults, String>, Arc<Observed>) {
+        let observed = Arc::new(Observed::default());
+        let mut backend = TestBackend { observed: observed.clone(), fault };
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let driver = std::thread::spawn(move || {
+            let result = run(
+                &mut backend,
+                Workload::Write,
+                LaneConfig {
+                    seed_documents: 1,
+                    operations: 5,
+                    samples: 2,
+                    concurrency: 2,
+                    warmup_operations: 3,
+                    noise_percent: 5.0,
+                },
+            )
+            .map_err(|error| error.to_string());
+            sender.send(result).unwrap();
+        });
+        let result = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("lane must finish without stranding a barrier");
+        driver.join().unwrap();
+        assert_eq!(observed.dropped.load(Ordering::SeqCst), 2, "all slots joined before return");
+        (result, observed)
+    }
+
+    #[test]
+    fn warmup_error_releases_healthy_worker_and_preserves_error() {
+        let (result, observed) = bounded_run(Some(Fault { slot: 0, call: 1, panic: false }));
+        assert!(result.unwrap_err().contains("warm-up operation 0 failed: original backend error"));
+        assert_eq!(*observed.writes.lock().unwrap(), vec![(1, 2)], "no measured work starts");
+    }
+
+    #[test]
+    fn warmup_panic_releases_all_workers_and_preserves_payload() {
+        let (result, observed) = bounded_run(Some(Fault { slot: 0, call: 1, panic: true }));
+        assert!(result.unwrap_err().contains(
+            "warm-up operation 0 failed: backend operation panicked: original backend panic"
+        ));
+        assert_eq!(*observed.writes.lock().unwrap(), vec![(1, 2)]);
+    }
+
+    #[test]
+    fn measured_panic_releases_all_workers_and_rejects_partial_samples() {
+        let (result, observed) = bounded_run(Some(Fault { slot: 1, call: 2, panic: true }));
+        assert!(result.unwrap_err().contains(
+            "measured operation 3 failed: backend operation panicked: original backend panic"
+        ));
+        assert!(
+            observed.writes.lock().unwrap().iter().all(|(_, index)| *index < 5),
+            "no second sample starts"
+        );
+    }
+
+    #[test]
+    fn healthy_run_counts_remainders_and_excludes_warmup_from_samples() {
+        let (result, observed) = bounded_run(None);
+        let result = result.unwrap();
+        assert_eq!(result.status, "complete");
+        assert_eq!(result.samples.len(), 2);
+        assert!(result.samples.iter().all(|sample| sample.operations == 5));
+        let writes = observed.writes.lock().unwrap();
+        let slot_zero: Vec<_> =
+            writes.iter().filter(|(slot, _)| *slot == 0).map(|(_, index)| *index).collect();
+        let slot_one: Vec<_> =
+            writes.iter().filter(|(slot, _)| *slot == 1).map(|(_, index)| *index).collect();
+        assert_eq!(slot_zero, vec![0, 1, 0, 1, 2, 5, 6, 7]);
+        assert_eq!(slot_one, vec![2, 3, 4, 8, 9]);
+        assert_eq!(writes.len(), 3 + 2 * 5);
     }
 }

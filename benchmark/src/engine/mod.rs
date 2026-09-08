@@ -1515,28 +1515,11 @@ impl Engine {
     /// Drains the group-commit mailbox until empty: one storage batch per
     /// drained group, one answer per waiter.
     ///
-    /// The pipelined shape (PG-shaped: appends overlap syncs): a wave is
-    /// prepared, appended, and published under the storage lock —
-    /// lock-held CPU work plus one `write()`, tens of microseconds — and
-    /// the leader then releases the lock and performs the batch's single
-    /// `fdatasync` itself, through the Engine's WAL sync handle, before it
-    /// answers the wave's waiters. The expensive sync therefore never
-    /// holds the storage mutex: the answered writers take it for their
-    /// snapshots and staged reads the moment the answers land, instead of
-    /// queueing behind a six-millisecond lock hold, so the next wave
-    /// re-forms while the leader is still between syncs. `fdatasync` on
-    /// the same inode covers every byte appended before it began, which
-    /// is the whole ordering argument: a waiter is answered only after a
-    /// sync that started after its batch's append returned, so its
-    /// receipt still implies its frame is durable.
-    ///
-    /// A group smaller than the wave width coalesces until the wave is
-    /// wide or arrivals go quiet: the mailbox condvar wakes the leader per
-    /// arrival, so a dense wave gathers to full width at once while sparse
-    /// traffic commits after one quiet gap instead of idling. A serial
-    /// caller — a batch of one on a quiescent engine — never asks for the
-    /// pipelined shape and keeps the byte-identical synchronous order:
-    /// append, sync, flip append, flip sync, then the answer.
+    /// Each storage batch completes its requested durability before its
+    /// waiters receive their results. A group smaller than the wave width
+    /// coalesces until the wave is wide or arrivals go quiet: the mailbox
+    /// condvar wakes the leader per arrival, so a dense wave gathers to full
+    /// width while sparse traffic commits after one quiet gap.
     ///
     /// Called only by the current leader (see [`Transaction::commit`]);
     /// the `LeaderGuard` the caller holds clears the flag when this
@@ -1557,40 +1540,15 @@ impl Engine {
         /// cutting the window inside that spread splits the wave — two syncs
         /// where one would have answered everyone.
         const GROUP_HARVEST_WINDOW_MAX: std::time::Duration = std::time::Duration::from_millis(3);
-        /// How long an idle leader lingers for the next wave before it
-        /// flushes any deferred flip bytes and steps down. One full writer
-        /// turnaround: a saturated run sees its next arrival inside it (the
-        /// arrivals carry the deferred flips in the next batch's append),
-        /// while a quiet engine pays at most one flush.
-        const GROUP_LINGER_WINDOW: std::time::Duration = std::time::Duration::from_millis(2);
         // The wave width to gather toward. It starts at the harvest width
         // and grows with every committed wave, so a saturated run's next
         // wave coalesces to full width instead of splitting at the floor —
         // the quiet gap still ends coalescing early whenever the traffic
         // is genuinely narrower.
         let mut wave_width = GROUP_HARVEST_WIDTH;
-        // Whether the last batch may have left deferred flip bytes in
-        // storage. Only a pipelined batch does; a leader with nothing to
-        // carry has no reason to linger before stepping down.
-        let mut carry_pending = false;
         loop {
             let mut batch = self.take_queued_intents();
             if batch.is_empty() {
-                if carry_pending && self.wait_for_arrival(GROUP_LINGER_WINDOW) {
-                    if std::env::var_os("TERRABASE_TRACE_BATCHES").is_some() {
-                        eprintln!("terrabase leader handoff");
-                    }
-                    // The next wave's first arrival landed. Hand off now,
-                    // while it is queued: the next arrival — or the
-                    // waiter-side leadership check — takes the whole forming
-                    // wave, and this leader returns to commit its own next
-                    // intent inside that wave like every other writer
-                    // instead of draining it alone at the tail.
-                    if let Ok(mut mailbox) = self.commit_mailbox.lock() {
-                        mailbox.leader_active = false;
-                    }
-                    return;
-                }
                 batch = self.take_queued_intents();
                 if batch.is_empty() {
                     // Flush while still holding leadership — arrivals
@@ -1619,14 +1577,6 @@ impl Engine {
             let batch_len = batch.len();
             let (intents, senders): (Vec<storage::CommitIntent>, Vec<_>) =
                 batch.into_iter().unzip();
-            // Two or more concurrent committers is the pipelined signal:
-            // the batch appends and publishes under the lock, and the
-            // leader witnesses it outside the lock before answering. A
-            // solo batch qualifies only while a group was served recently
-            // — a between-waves leader, not a serial caller. A serial
-            // caller on a quiescent engine keeps the synchronous order,
-            // byte-identical to a direct storage commit.
-            carry_pending = false;
             wave_width = wave_width.max(batch_len.saturating_add(1));
             let results = match self.lock_storage() {
                 Ok(mut storage) => storage.port.commit_batch(intents, false),
@@ -1655,9 +1605,8 @@ impl Engine {
     /// Waits for this commit's answer, taking leadership if the mailbox is
     /// leaderless with queued work.
     ///
-    /// The wait is bounded: a handed-off wave's first arrival sits briefly
-    /// leaderless by design (the retiring leader stepped down while it was
-    /// queued), and this check — or the next arrival — picks the wave up.
+    /// The bounded wait lets a queued writer elect a replacement if the
+    /// previous leader stopped before answering it.
     /// The election is one atomic mailbox transition, so two waiters cannot
     /// both lead, and a leader mid-drive holds the flag, making the check a
     /// no-op for every waiter it is about to answer.
@@ -1701,25 +1650,6 @@ impl Engine {
         match self.commit_mailbox.lock() {
             Ok(mut mailbox) => std::mem::take(&mut mailbox.queue),
             Err(_) => Vec::new(),
-        }
-    }
-
-    /// Waits until an intent arrives or `window` passes.
-    ///
-    /// Returns whether an arrival landed. A poisoned mailbox lock returns
-    /// immediately: the caller treats it as a quiet window and steps down,
-    /// which is the honest outcome for a commit path that can no longer
-    /// coordinate.
-    fn wait_for_arrival(&self, window: std::time::Duration) -> bool {
-        let Ok(mailbox) = self.commit_mailbox.lock() else {
-            return false;
-        };
-        if !mailbox.queue.is_empty() {
-            return true;
-        }
-        match self.commit_arrivals.wait_timeout(mailbox, window) {
-            Ok((guard, _)) => !guard.queue.is_empty(),
-            Err(_) => false,
         }
     }
 

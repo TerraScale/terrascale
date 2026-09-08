@@ -744,6 +744,7 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(list_backups))
         .routes(routes!(restore_backup))
         .routes(routes!(list_branches, create_branch))
+        .routes(routes!(crate::authorization_leases::authorization_lease))
         .routes(routes!(crate::reactive_api::attach_view))
         .routes(routes!(crate::reactive_api::snapshot))
         .routes(routes!(crate::reactive_api::view_log))
@@ -801,7 +802,9 @@ fn enrich_openapi(raw: String) -> String {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
-            let security = if operation_id == "view_websocket" {
+            let security = if operation_id == "authorization_lease" {
+                serde_json::json!([])
+            } else if operation_id == "view_websocket" {
                 serde_json::json!([{ "viewWebSocketCapability": [] }])
             } else {
                 serde_json::json!([{ "bearerAuth": [] }])
@@ -1223,6 +1226,7 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "execute_sql" => Some("SqlResultResponse"),
         "list_backups" => Some("BackupStatusResponse"),
         "attach_view" => Some("AttachViewResponse"),
+        "authorization_lease" => Some("Lease"),
         _ => None,
     }
 }
@@ -1266,13 +1270,20 @@ fn openapi_schemas() -> serde_json::Value {
         "BatchRequest": { "type": "object", "required": ["operations"], "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 1000, "items": { "type": "object", "required": ["op", "id"], "properties": { "op": { "type": "string", "enum": ["put", "patch", "delete"] }, "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
         "RestoreRequest": { "type": "object", "required": ["name", "operation_id"], "properties": { "name": { "type": "string" }, "at": { "type": "integer", "format": "int64" }, "operation_id": { "type": "string" } } },
         "CreateBranchRequest": { "type": "object", "required": ["name", "operation_id"], "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.", "properties": { "name": { "type": "string" }, "operation_id": { "type": "string" } } },
-        "DeletionOperation": { "type": "object", "required": ["request", "state", "cutoff", "targets"], "description": "Durable asynchronous database deletion progress.", "properties": { "request": { "type": "object", "required": ["environment", "tenant_id", "project_id", "database_id", "operation_id"], "properties": { "environment": { "type": "string" }, "tenant_id": { "type": "string" }, "project_id": { "type": "string" }, "database_id": { "type": "string" }, "operation_id": { "type": "string" } } }, "state": { "type": "string", "enum": ["preparing", "stopping", "cleanup_pending"] }, "cutoff": { "type": "string", "format": "date-time" }, "targets": { "type": "array", "items": { "type": "object", "required": ["stop"], "properties": { "stop": { "type": "object", "additionalProperties": true } } } } } },
         "AttachViewRequest": { "type": "object", "required": ["databaseId", "statement"], "properties": { "databaseId": { "type": "string" }, "statement": { "type": "string" }, "parameters": { "type": "string", "description": "Base64 encoded SQL parameter bytes" }, "checkpoint": { "type": ["string", "null"], "description": "Base64 encoded opaque resume checkpoint" }, "subscription": { "type": ["string", "null"] }, "entitlement_epoch": { "type": "integer", "format": "int64" } } },
         "AttachViewResponse": { "type": "object", "required": ["view", "generation", "snapshot_chunks", "log", "checkpoint", "capability", "capability_header", "offset"], "properties": { "view": { "type": "string" }, "generation": { "type": "integer", "format": "int64" }, "snapshot_chunks": { "type": "array", "items": { "type": "string" } }, "log": { "type": "string" }, "checkpoint": { "type": "string" }, "capability": { "type": "string" }, "capability_header": { "type": "string" }, "offset": { "type": "integer", "format": "int64" } } },
     });
     let Some(schemas) = schemas.as_object_mut() else {
         return serde_json::json!({});
     };
+    schemas.insert("DeletionRequest".to_owned(), serde_json::json!({"type": "object", "required": ["environment", "tenant_id", "project_id", "database_id", "operation_id"], "properties": {"environment": {"type": "string"}, "tenant_id": {"type": "string"}, "project_id": {"type": "string"}, "database_id": {"type": "string"}, "operation_id": {"type": "string"}}}));
+    schemas.insert("DeletionStop".to_owned(), serde_json::json!({"type": "object", "required": ["environment", "organization_id", "project_id", "database_id", "operation_id", "region", "cutoff"], "properties": {"environment": {"type": "string"}, "organization_id": {"type": "string"}, "project_id": {"type": "string"}, "database_id": {"type": "string"}, "parent_database_id": {"type": "string"}, "operation_id": {"type": "string"}, "region": {"type": "string"}, "cutoff": {"type": "string", "format": "date-time"}, "retain_until": {"type": "string", "format": "date-time"}}}));
+    schemas.insert("DeletionPreparation".to_owned(), serde_json::json!({"type": "object", "required": ["environment", "organization_id", "project_id", "database_id", "operation_id", "region", "prepared", "last_accounted_at"], "properties": {"environment": {"type": "string"}, "organization_id": {"type": "string"}, "project_id": {"type": "string"}, "database_id": {"type": "string"}, "parent_database_id": {"type": "string"}, "operation_id": {"type": "string"}, "region": {"type": "string"}, "prepared": {"type": "boolean"}, "last_accounted_at": {"type": "string", "format": "date-time"}}}));
+    schemas.insert("DeletionReceipt".to_owned(), serde_json::json!({"type": "object", "required": ["environment", "organization_id", "project_id", "database_id", "operation_id", "region", "cutoff", "access_revoked", "usage_stopped"], "properties": {"environment": {"type": "string"}, "organization_id": {"type": "string"}, "project_id": {"type": "string"}, "database_id": {"type": "string"}, "parent_database_id": {"type": "string"}, "operation_id": {"type": "string"}, "region": {"type": "string"}, "cutoff": {"type": "string", "format": "date-time"}, "retain_until": {"type": "string", "format": "date-time"}, "access_revoked": {"type": "boolean"}, "usage_stopped": {"type": "boolean"}}}));
+    schemas.insert("DeletionEdgeReceipt".to_owned(), serde_json::json!({"type": "object", "required": ["request", "cutoff", "access_revoked"], "properties": {"request": {"$ref": "#/components/schemas/DeletionRequest"}, "cutoff": {"type": "string", "format": "date-time"}, "access_revoked": {"type": "boolean"}}}));
+    schemas.insert("DeletionClaimReceipt".to_owned(), serde_json::json!({"type": "object", "required": ["schemaVersion", "environment", "tenant_id", "project_id", "database_id", "operation_id", "policy_revision", "policy_fingerprint", "grace_condition", "deadline", "accepted_at", "authority_epoch"], "properties": {"environment": {"type": "string"}, "tenant_id": {"type": "string"}, "project_id": {"type": "string"}, "database_id": {"type": "string"}, "operation_id": {"type": "string"}, "policy_revision": {"type": "string"}, "policy_fingerprint": {"type": "string"}, "grace_condition": {"type": "string"}, "authority_epoch": {"type": "string"}, "schemaVersion": {"type": "integer"}, "deadline": {"type": "string", "format": "date-time"}, "accepted_at": {"type": "string", "format": "date-time"}}}));
+    schemas.insert("DeletionTarget".to_owned(), serde_json::json!({"type": "object", "required": ["stop"], "properties": {"stop": {"$ref": "#/components/schemas/DeletionStop"}, "preparation": {"$ref": "#/components/schemas/DeletionPreparation"}, "receipt": {"$ref": "#/components/schemas/DeletionReceipt"}}}));
+    schemas.insert("DeletionOperation".to_owned(), serde_json::json!({"type": "object", "required": ["request", "requested_at", "state", "cutoff", "targets"], "properties": {"request": {"$ref": "#/components/schemas/DeletionRequest"}, "requested_at": {"type": "string", "format": "date-time"}, "state": {"type": "string", "enum": ["preparing", "stopping", "edge_pending", "cleanup_pending"]}, "cutoff": {"type": "string", "format": "date-time"}, "targets": {"type": "array", "minItems": 1, "maxItems": 3000, "items": {"$ref": "#/components/schemas/DeletionTarget"}}, "edge_receipt": {"$ref": "#/components/schemas/DeletionEdgeReceipt"}, "claim": {"$ref": "#/components/schemas/DeletionClaimReceipt"}, "automatic_policy_revision": {"type": "string"}, "automatic_grace_condition": {"type": "string"}, "automatic_deadline": {"type": "string", "format": "date-time"}}, "description": "Durable asynchronous database deletion progress. cleanup_pending preserves the accepted usage cutoff while physical cleanup remains incomplete."}));
     schemas.insert("SqlExplainResponse".to_owned(), serde_json::json!({
         "type": "object",
         "required": ["dialect", "collection", "order", "access"],
@@ -1467,7 +1478,10 @@ async fn authenticate(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if PUBLIC_PATHS.contains(&request.uri().path()) {
+    if PUBLIC_PATHS.contains(&request.uri().path())
+        || (request.method() == Method::GET
+            && crate::authorization_leases::is_public_lease_path(request.uri().path()))
+    {
         return next.run(request).await;
     }
     // Only the immutable reactive delivery paths may use the edge proof.
@@ -5290,6 +5304,8 @@ mod tests {
     async fn delegated_identity_is_live_on_actual_member_router() {
         let (verifier, reply, task) = crate::delegated_identity::tests::authority().await;
         let mut state = state();
+        Arc::get_mut(&mut state).unwrap().scope.0 =
+            crate::delegated_identity::tests::TEST_TENANT.into();
         Arc::get_mut(&mut state).unwrap().delegated_identity = Some(Arc::new(verifier));
         let app = router(state);
         let request = || {

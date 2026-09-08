@@ -102,7 +102,7 @@ impl Session {
 
         let result = match &self.authorization {
             Authorization::Bearer { principal, credential } => {
-                if let Some(scope) = principal.membership_scope() {
+                if let Some(scope) = principal.authority_scope() {
                     let now = super::now_seconds();
                     if !principal.reactive_allowed()
                         || principal.is_expired_at(now.saturating_mul(1000))
@@ -110,7 +110,7 @@ impl Session {
                             .state
                             .delegated_identity
                             .as_ref()
-                            .is_some_and(|identity| identity.membership.admits(scope, now))
+                            .is_some_and(|identity| identity.authorization.admits(scope, now))
                     {
                         return Err(ErrorCode::PermissionDenied);
                     }
@@ -190,7 +190,7 @@ impl Session {
                 Some(&self.state.guards),
             )
             .map_err(|_| ErrorCode::Unavailable)?;
-        super::bind_membership_capability(&self.state, &mut response, principal.membership_scope())
+        super::bind_authority_capability(&self.state, &mut response, principal.authority_scope())
             .map_err(|_| ErrorCode::PermissionDenied)?;
         Ok((response, view))
     }

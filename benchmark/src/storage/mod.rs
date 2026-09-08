@@ -1320,6 +1320,7 @@ pub(crate) trait StoragePort: Send {
 
     /// Recovers contiguous origin prefixes proven by durable storage.
     /// Missing history never proves a prefix; storage errors remain errors.
+    #[cfg(test)]
     fn durable_origin_prefixes(&self, _tenant: &TenantId) -> Result<Vec<AppliedFrontierEntry>, ()> {
         Err(())
     }

@@ -20,7 +20,12 @@ publish = false
 
 [workspace]
 
+[[bin]]
+name = "terrabase-sync"
+path = "src/sync.rs"
+
 [dependencies]
+terrabase-sync-core = { path = "../crates/terrabase-sync-core" }
 # The synchronous PostgreSQL client: one connection per concurrency slot,
 # prepared statements, autocommit per statement — the exact client shape
 # the SE-15 pin records. MIT/Apache-2.0.

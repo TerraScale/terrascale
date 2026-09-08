@@ -364,13 +364,7 @@ impl EngineHost {
         key: &[u8],
         operation: OperationId,
     ) -> Result<terrabase::engine::Transaction<'_>, terrabase::engine::EngineError> {
-        let shard = router.route(key).ok_or(terrabase::engine::EngineError::Conflict)?;
-        let token = terrabase::shard_split::ShardAdmissionToken::for_key(
-            u128::from_be_bytes(self.engine.database_id().as_bytes().to_owned()),
-            router.table().generation(),
-            shard,
-            key,
-        );
+        let token = self.engine.shard_admission_for_key(scope, router, key)?;
         let mut transaction =
             self.engine.begin(scope, self.engine.read_snapshot(scope)?, operation)?;
         transaction.bind_shard_admission(token)?;

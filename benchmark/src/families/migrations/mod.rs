@@ -751,6 +751,42 @@ pub fn finalize(
     Ok(receipt)
 }
 
+/// Stages rollback ownership alongside the caller's durable recovery intent.
+///
+/// This changes no documents. The caller must commit the transaction before
+/// driving [`rollback`]. A repeated call retains the last durable rollback
+/// cursor. Forward page operations refuse this marker, so an API envelope and
+/// its direction change can become visible atomically.
+///
+/// # Errors
+///
+/// Refuses an absent or completed drive, a different manifest, irreversible
+/// transforms, or unavailable durable state.
+pub fn stage_rollback(
+    transaction: &mut Transaction<'_>,
+    contract: &SchemaMigration,
+) -> Result<(), MigrationError> {
+    if contract.inverse_transforms().is_none() {
+        return Err(MigrationError::NotRollbackable);
+    }
+    let Some(mut record) = read_record(transaction, contract.collection())
+        .map_err(|_| MigrationError::StorageFailure)?
+    else {
+        return Err(MigrationError::NotInProgress);
+    };
+    if record.manifest != evidence::manifest_digest(contract) {
+        return Err(MigrationError::ManifestMismatch);
+    }
+    match record.state {
+        RecordState::Complete { .. } => return Err(MigrationError::NotInProgress),
+        RecordState::RollingBack { .. } => return Ok(()),
+        RecordState::InProgress { .. } | RecordState::Stopped { .. } => {}
+    }
+    record.state = RecordState::RollingBack { cursor: None, exhausted: false };
+    write_record(transaction, contract.collection(), &record)
+        .map_err(|_| MigrationError::StorageFailure)
+}
+
 /// Restores one bounded page of a seated, reversible migration.
 ///
 /// Rollback applies the contract's exact inverse transform list — the
@@ -793,12 +829,11 @@ pub fn rollback(
     }
     let (cursor, exhausted) = match &record.state {
         RecordState::Complete { .. } => return Err(MigrationError::NotInProgress),
-        RecordState::Stopped { .. } => return Err(MigrationError::MigrationStopped),
         // A forward drive entering rollback restarts the scan from the
         // beginning: every document of the collection is a rollback
         // candidate, and the inverse transforms skip restored documents
         // idempotently.
-        RecordState::InProgress { .. } => (None, false),
+        RecordState::InProgress { .. } | RecordState::Stopped { .. } => (None, false),
         RecordState::RollingBack { cursor, exhausted } => (cursor.clone(), *exhausted),
     };
     let mut staged: Vec<(DocumentId, DocumentValue)> = Vec::new();

@@ -30,6 +30,12 @@ impl Server {
         identity: Option<Arc<crate::delegated_identity::IdentityVerifier>>,
     ) -> Self {
         let mut state = state_with_keys_and_control();
+        let tenant = if identity.is_some() {
+            crate::delegated_identity::tests::TEST_TENANT
+        } else {
+            "terrabase-local"
+        };
+        Arc::get_mut(&mut state).unwrap().scope.0 = tenant.into();
         Arc::get_mut(&mut state).unwrap().delegated_identity = identity;
         Arc::get_mut(&mut state).unwrap().origin_proof_keys =
             Arc::new(crate::reactive_api::OriginProofKeyRing::new(ORIGIN_KEY, None).unwrap());
@@ -38,7 +44,7 @@ impl Server {
             .clone()
             .oneshot(
                 Request::post("/api/v1/databases")
-                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-tenant-id", tenant)
                     .header("x-terrascale-project-id", "local")
                     .header("authorization", KEY)
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
@@ -426,7 +432,7 @@ async fn feature_revocation_closes_active_socket_without_delivery_authority_call
 async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
     let (identity, reply, authority_task) =
         crate::delegated_identity::tests::authority_for_collection(
-            "terrabase-local",
+            crate::delegated_identity::tests::TEST_TENANT,
             "local",
             "prod",
             "read",
@@ -434,23 +440,6 @@ async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
         )
         .await;
     let identity = Arc::new(identity);
-    let snapshot = |entries: Vec<serde_json::Value>| {
-        let now =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        let canonical = entries
-            .iter()
-            .map(|entry| {
-                format!(
-                    "{}.{}\n",
-                    entry["scope"].as_str().unwrap(),
-                    entry["expiresAt"].as_u64().unwrap()
-                )
-            })
-            .collect::<String>();
-        serde_json::json!({"revision":hex::encode(aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256,canonical.as_bytes()).as_ref()),"validUntil":now+30,"entries":entries})
-    };
-    reply.lock().unwrap()["membershipRevocations"] = snapshot(vec![]);
-    identity.refresh_membership().await.unwrap();
     let server = Server::with_identity(Some(identity.clone())).await;
     server.put("one", 1).await;
     let attached_response = server
@@ -472,7 +461,7 @@ async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
     )
     .unwrap();
     let capability = attached["capability"].as_str().unwrap();
-    assert!(capability.split('.').nth(3).unwrap().contains(&format!(":scope-{}", "a".repeat(64))));
+    assert!(capability.split('.').nth(3).unwrap().contains(":authz-"));
     let view = attached["view"].as_str().unwrap();
     let mut request = format!("ws://{}/api/v1/reactive/views/{view}/1/websocket", server.address)
         .into_client_request()
@@ -484,11 +473,12 @@ async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     send(&mut socket, subscribe(view, None)).await;
     let _ = receive(&mut socket).await;
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-    reply.lock().unwrap()["membershipRevocations"] = snapshot(vec![
-        serde_json::json!({"scope":format!("scope-{}",revoked_scope.repeat(64)),"expiresAt":now+1320}),
-    ]);
-    identity.refresh_membership().await.unwrap();
+    crate::delegated_identity::tests::update_lease(
+        &reply,
+        u64::from(revoked_scope == "a"),
+        u64::from(revoked_scope == "b"),
+    );
+    identity.refresh_authorization().await.unwrap();
     // No authority or Worker is needed for the one-second local socket fence.
     authority_task.abort();
     assert!(matches!(
@@ -512,9 +502,9 @@ async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
 
 #[tokio::test]
 async fn collection_bearer_attaches_only_its_parsed_query_and_delivers_immutable_results() {
-    let (identity, reply, authority_task) =
+    let (identity, _reply, authority_task) =
         crate::delegated_identity::tests::authority_for_collection(
-            "terrabase-local",
+            crate::delegated_identity::tests::TEST_TENANT,
             "local",
             "prod",
             "read",
@@ -522,11 +512,6 @@ async fn collection_bearer_attaches_only_its_parsed_query_and_delivers_immutable
         )
         .await;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-    reply.lock().unwrap()["membershipRevocations"] = serde_json::json!({
-        "revision": hex::encode(aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, b"").as_ref()),
-        "validUntil": now + 30, "entries": [],
-    });
-    identity.refresh_membership().await.unwrap();
     let server = Server::with_identity(Some(Arc::new(identity))).await;
     server.put("one", 1).await;
     let attach = |statement: &str| {

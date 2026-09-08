@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E-13 sync family: served TerraBase reactive view attach and delivery.
 #
-# The Rust driver is compiled as a standalone program so this family does not
+# The Rust driver uses the server-owned wire codec via its dedicated Cargo binary and does not
 # edit bench/src/main.rs or the shared history/results registry.  It requires
 # a real served member and (for the CDN lane) a real CDN/cache endpoint.  A
 # missing service is reported as `unavailable`; a measured threshold breach is
@@ -14,11 +14,11 @@
 #   TERRABASE_SYNC_CDN_ENDPOINT
 #   TERRABASE_SYNC_RUNTIME_DIGEST and TERRABASE_SYNC_COMPARATOR_DIGEST
 #   TERRABASE_SYNC_RESOURCE_EVIDENCE (served member cgroup receipt)
+#   TERRABASE_SYNC_MEMBER_PID=<served member pid> (required for live resource
+#       verification; missing or unavailable member RSS reports unavailable)
 # Optional cross-region probes:
 #   TERRABASE_SYNC_REGIONS=GRU=http://...,SFO=http://...,FRA=http://...
 #   TERRABASE_SYNC_REPLICATION=single|rf2
-#   TERRABASE_SYNC_MEMBER_PID=<served member pid> (makes the RSS bound target
-#       the member; without it, the driver RSS is reported explicitly)
 #
 # Examples:
 #   bench/scripts/sync.sh --samples 25
@@ -42,8 +42,9 @@ for arg in "$@"; do
   esac
 done
 
-echo "sync: compiling standalone driver with Rust priority nice -n 19" >&2
-nice -n 19 rustc --edition=2024 -O "$REPO_ROOT/bench/src/sync.rs" -o "$SYNC_BIN"
+echo "sync: compiling canonical-codec driver with Rust priority nice -n 19" >&2
+nice -n 19 cargo build --manifest-path "$REPO_ROOT/bench/Cargo.toml" --release --bin terrabase-sync
+cp "$REPO_ROOT/bench/target/release/terrabase-sync" "$SYNC_BIN"
 
 # A sync result is only useful when the launch-member envelope was actually
 # available. The driver is the instrument, but placing it in the same cgroup

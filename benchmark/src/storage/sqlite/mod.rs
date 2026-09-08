@@ -6534,6 +6534,7 @@ impl StoragePort for SqliteStorage {
         rows.flatten().collect()
     }
 
+    #[cfg(test)]
     fn durable_origin_prefixes(&self, tenant: &TenantId) -> Result<Vec<AppliedFrontierEntry>, ()> {
         let reader = self.reader();
         origin_prefixes_on(reader.connection(), tenant.as_str())

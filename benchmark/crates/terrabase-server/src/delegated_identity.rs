@@ -43,8 +43,8 @@ pub struct IdentityVerifier {
     service_key_file: Option<std::path::PathBuf>,
     tls: Arc<rustls::ClientConfig>,
     permits: tokio::sync::Semaphore,
-    pub(crate) membership: crate::membership_revocations::MembershipRevocations,
-    membership_started: std::sync::atomic::AtomicBool,
+    pub(crate) authorization: crate::authorization_leases::AuthorizationLeases,
+    authorization_started: std::sync::atomic::AtomicBool,
 }
 
 /// Invalid configuration, authority refusal, or unavailable live authority.
@@ -72,8 +72,8 @@ struct Admission {
     collection: Option<String>,
     action: Option<String>,
     expires_at: Option<u64>,
-    membership_scope: Option<String>,
-    feature_scope: Option<String>,
+    authority_scope: Option<String>,
+    authority_lease: Option<crate::authorization_leases::Lease>,
     reactive_allowed: Option<bool>,
 }
 
@@ -147,9 +147,41 @@ impl IdentityVerifier {
             service_key_file: None,
             tls,
             permits: tokio::sync::Semaphore::new(32),
-            membership: Default::default(),
-            membership_started: std::sync::atomic::AtomicBool::new(false),
+            authorization: Default::default(),
+            authorization_started: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// Configures the separate producer lease verification ring and serving region.
+    pub fn with_authorization_lease_keys(
+        mut self,
+        region: terrabase::regions::RegionCode,
+        path: std::path::PathBuf,
+    ) -> Result<Self, IdentityError> {
+        self.authorization = crate::authorization_leases::AuthorizationLeases::from_file(
+            self.audience.clone(),
+            region,
+            path,
+        )
+        .map_err(|_| IdentityError::Configuration)?;
+        Ok(self)
+    }
+
+    fn authority_scope(
+        &self,
+        admission: &mut Admission,
+        organization: &str,
+        expires: u64,
+        now: u64,
+    ) -> Result<String, IdentityError> {
+        let scope = admission.authority_scope.take().ok_or(IdentityError::Denied)?;
+        let lease = admission.authority_lease.take().ok_or(IdentityError::Denied)?;
+        if lease.tenant_id != organization || lease.scope() != scope || lease.valid_until > expires
+        {
+            return Err(IdentityError::Denied);
+        }
+        self.authorization.install(lease, now, true).map_err(|_| IdentityError::Denied)?;
+        Ok(scope)
     }
 
     /// Reloads the owner-only service credential on every authority request.
@@ -175,7 +207,7 @@ impl IdentityVerifier {
         let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
         let body = serde_json::to_vec(&serde_json::json!({"token":"identity-key-adoption-probe",
             "audience":self.audience,"organizationId":"probe","projectId":"probe",
-            "databaseId":"probe","action":"read"}))
+            "databaseId":"probe","action":"read","region":self.authorization.region().map_err(|_| IdentityError::Configuration)?}))
         .map_err(|_| IdentityError::Unavailable)?;
         let response: Admission = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
             .await
@@ -214,13 +246,13 @@ impl IdentityVerifier {
         };
         let scope = format!("database:{action}");
         let mut input = serde_json::json!({"token":token,"audience":self.audience,
-            "organizationId":organization,"projectId":project,"databaseId":database,"action":action});
+            "organizationId":organization,"projectId":project,"databaseId":database,"action":action,"region":self.authorization.region().map_err(|_| IdentityError::Configuration)?});
         if let Some(collection) = collection {
             input["collection"] = collection.into();
         }
         let body = serde_json::to_vec(&input).map_err(|_| IdentityError::Denied)?;
         let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
-        let admission: Admission =
+        let mut admission: Admission =
             tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
                 .await
                 .map_err(|_| IdentityError::Unavailable)??;
@@ -231,6 +263,7 @@ impl IdentityVerifier {
         let expires = admission.expires_at.ok_or(IdentityError::Denied)?;
         let subject = admission
             .subject
+            .take()
             .filter(|value| !value.is_empty() && value.len() <= 255)
             .ok_or(IdentityError::Denied)?;
         if !admission.active
@@ -250,23 +283,16 @@ impl IdentityVerifier {
             || Scope::database(database, verb),
             |name| Scope::database_collection(database, name, verb),
         );
-        let membership_scope = admission
-            .membership_scope
-            .filter(|s| crate::membership_revocations::valid_scope(s))
-            .ok_or(IdentityError::Denied)?;
-        let feature_scope = admission
-            .feature_scope
-            .filter(|s| crate::membership_revocations::valid_scope(s))
-            .ok_or(IdentityError::Denied)?;
         let reactive_allowed = admission.reactive_allowed.ok_or(IdentityError::Denied)?;
+        let authority_scope = self.authority_scope(&mut admission, organization, expires, now)?;
         Ok(Principal::delegated_for_owner(
             subject,
             admitted_scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
             (organization.to_owned(), project.to_owned()),
         )
-        .with_membership_scope(membership_scope)
-        .with_reactive_policy(&feature_scope, reactive_allowed))
+        .with_authority_scope(authority_scope)
+        .with_reactive_policy(reactive_allowed))
     }
 
     /// Revalidates a locally signature-verified BYO-JWT subject through the
@@ -301,12 +327,13 @@ impl IdentityVerifier {
             "projectId": project,
             "databaseId": database,
             "action": action,
+            "region": self.authorization.region().map_err(|_| IdentityError::Configuration)?,
         });
         if let Some(collection) = collection {
             input["collection"] = collection.into();
         }
         let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
-        let admission: Admission = tokio::time::timeout(
+        let mut admission: Admission = tokio::time::timeout(
             Duration::from_secs(5),
             self.exchange(serde_json::to_vec(&input).map_err(|_| IdentityError::Denied)?),
         )
@@ -319,6 +346,7 @@ impl IdentityVerifier {
         let expires = admission.expires_at.ok_or(IdentityError::Denied)?;
         let mapped_subject = admission
             .subject
+            .take()
             .filter(|value| !value.is_empty() && value.len() <= 255)
             .ok_or(IdentityError::Denied)?;
         if !admission.active
@@ -341,23 +369,16 @@ impl IdentityVerifier {
             || Scope::database(database, verb),
             |name| Scope::database_collection(database, name, verb),
         );
-        let membership_scope = admission
-            .membership_scope
-            .filter(|s| crate::membership_revocations::valid_scope(s))
-            .ok_or(IdentityError::Denied)?;
-        let feature_scope = admission
-            .feature_scope
-            .filter(|s| crate::membership_revocations::valid_scope(s))
-            .ok_or(IdentityError::Denied)?;
         let reactive_allowed = admission.reactive_allowed.ok_or(IdentityError::Denied)?;
+        let authority_scope = self.authority_scope(&mut admission, organization, expires, now)?;
         Ok(Principal::delegated_for_owner(
             mapped_subject,
             scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
             (organization.to_owned(), project.to_owned()),
         )
-        .with_membership_scope(membership_scope)
-        .with_reactive_policy(&feature_scope, reactive_allowed))
+        .with_authority_scope(authority_scope)
+        .with_reactive_policy(reactive_allowed))
     }
 
     /// Project-wide variant of [`Self::admit_verified_byo`].
@@ -420,9 +441,9 @@ impl IdentityVerifier {
     }
 
     /// Starts one bounded control poll per identity authority, never per socket.
-    pub(crate) fn start_membership_poll(self: &Arc<Self>) {
+    pub(crate) fn start_authorization_poll(self: &Arc<Self>) {
         use std::sync::atomic::Ordering;
-        if self.membership_started.swap(true, Ordering::AcqRel) {
+        if self.authorization_started.swap(true, Ordering::AcqRel) {
             return;
         }
         let authority = Arc::downgrade(self);
@@ -431,36 +452,45 @@ impl IdentityVerifier {
                 let Some(current) = authority.upgrade() else {
                     return;
                 };
-                let _ = current.refresh_membership().await;
+                let _ = current.refresh_authorization().await;
                 drop(current);
                 tokio::time::sleep(Duration::from_secs(10)).await;
             }
         });
     }
 
-    pub(crate) async fn refresh_membership(&self) -> Result<(), IdentityError> {
+    pub(crate) async fn refresh_authorization(&self) -> Result<(), IdentityError> {
         #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Reply {
             active: bool,
-            membership_revocations: crate::membership_revocations::Snapshot,
-        }
-        let body =
-            serde_json::to_vec(&serde_json::json!({"kind":"revocations","audience":self.audience}))
-                .map_err(|_| IdentityError::Unavailable)?;
-        let reply: Reply = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
-            .await
-            .map_err(|_| IdentityError::Unavailable)??;
-        if reply.active {
-            return Err(IdentityError::Denied);
+            authorization_leases: Vec<crate::authorization_leases::Lease>,
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| IdentityError::Unavailable)?
             .as_secs();
-        self.membership
-            .install(reply.membership_revocations, now)
-            .map_err(|_| IdentityError::Unavailable)
+        let tenants = self.authorization.active_tenants(now);
+        // Bounded control work per tenant batch, independent of subscriber count.
+        use futures_util::StreamExt as _;
+        let outcomes = futures_util::stream::iter(tenants.chunks(32).map(|batch| async move {
+            let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
+            let body = serde_json::to_vec(&serde_json::json!({"kind":"authorization-leases","audience":self.audience,
+                "region":self.authorization.region().map_err(|_| IdentityError::Configuration)?,"tenantIds":batch})).map_err(|_| IdentityError::Unavailable)?;
+            let reply = tokio::time::timeout(Duration::from_secs(5), self.exchange::<Reply>(body)).await.map_err(|_| IdentityError::Unavailable)??;
+            if reply.active || reply.authorization_leases.len() > batch.len() { return Err(IdentityError::Unavailable); }
+            let mut seen = std::collections::BTreeSet::new();
+            if reply.authorization_leases.iter().any(|lease| !batch.contains(&lease.tenant_id) || !seen.insert(lease.tenant_id.clone())) {
+                return Err(IdentityError::Unavailable);
+            }
+            let mut failed = false;
+            for lease in reply.authorization_leases {
+                let received = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| IdentityError::Unavailable)?.as_secs();
+                if self.authorization.install(lease, received, false).is_err() { failed = true; }
+            }
+            if failed { Err(IdentityError::Unavailable) } else { Ok(()) }
+        })).buffer_unordered(8).collect::<Vec<_>>().await;
+        outcomes.into_iter().collect::<Result<Vec<_>, _>>().map(drop)
     }
 
     async fn exchange<T: serde::de::DeserializeOwned>(
@@ -511,7 +541,7 @@ impl IdentityVerifier {
             if response.status() != hyper::StatusCode::OK {
                 return Err(IdentityError::Unavailable);
             }
-            let body = Limited::new(response.into_body(), 16 * 1024)
+            let body = Limited::new(response.into_body(), 34 * 1024)
                 .collect()
                 .await
                 .map_err(|_| IdentityError::Unavailable)?
@@ -527,10 +557,25 @@ impl IdentityVerifier {
 pub(crate) mod tests {
     use super::*;
     use std::sync::Mutex;
+    pub(crate) const TEST_TENANT: &str = "01J00000000000000000000002";
+
+    pub(crate) fn update_lease(reply: &Arc<Mutex<serde_json::Value>>, epoch: u64, feature: u64) {
+        let mut reply = reply.lock().unwrap();
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let lease = crate::authorization_leases::signed_test_lease(
+            reply["organizationId"].as_str().unwrap(),
+            epoch,
+            feature,
+            now,
+        );
+        reply["authorityScope"] = lease.scope().into();
+        reply["authorityLease"] = serde_json::to_value(lease).unwrap();
+    }
 
     pub(crate) async fn authority()
     -> (IdentityVerifier, Arc<Mutex<serde_json::Value>>, tokio::task::JoinHandle<()>) {
-        authority_for("terrabase-local", "local", "db-a", "read").await
+        authority_for(TEST_TENANT, "local", "db-a", "read").await
     }
 
     pub(crate) async fn authority_for(
@@ -576,15 +621,16 @@ pub(crate) mod tests {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
         let reply = Arc::new(Mutex::new(
             serde_json::json!({"active":true,"issuer":"https://identity.example","audience":"https://api.example",
-            "subject":"user-1","membershipScope":format!("scope-{}", "a".repeat(64)),"featureScope":format!("scope-{}", "b".repeat(64)),"reactiveAllowed":true,"organizationId":organization,"projectId":project,"databaseId":database,
+            "subject":"user-1","reactiveAllowed":true,"organizationId":organization,"projectId":project,"databaseId":database,
             "action":action,"scopes":[format!("database:{action}")],"expiresAt":now+60}),
         ));
+        update_lease(&reply, 0, 0);
         let responses = reply.clone();
         let mut expected = serde_json::json!({"token":"delegated-token","organizationId":organization,"projectId":project,
-            "databaseId":database,"action":action,"audience":"https://api.example"});
+            "databaseId":database,"action":action,"audience":"https://api.example","region":"GRU"});
         let mut verified_expected = serde_json::json!({"verifiedIssuer":"https://issuer.example",
             "verifiedSubject":"user-1","audience":"https://api.example","organizationId":organization,
-            "projectId":project,"databaseId":database,"action":action});
+            "projectId":project,"databaseId":database,"action":action,"region":"GRU"});
         if let Some(collection) = collection {
             reply.lock().unwrap()["collection"] = collection.into();
             expected["collection"] = collection.into();
@@ -624,9 +670,13 @@ pub(crate) mod tests {
                                         let input: serde_json::Value =
                                             serde_json::from_slice(&body).unwrap();
                                         if input.get("kind").is_some() {
-                                            assert_eq!(input, serde_json::json!({"kind":"revocations","audience":"https://api.example"}));
+                                            assert_eq!(input["kind"], "authorization-leases");
+                                            assert_eq!(input["audience"], "https://api.example");
+                                            assert_eq!(input["region"], "GRU");
+                                            let response = responses.lock().unwrap();
+                                            assert_eq!(input["tenantIds"], serde_json::json!([response["organizationId"]]));
                                             return Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(Bytes::from(
-                                                serde_json::json!({"active":false,"membershipRevocations":responses.lock().unwrap()["membershipRevocations"]}).to_string()
+                                                serde_json::json!({"active":false,"authorizationLeases":[response["authorityLease"]]}).to_string()
                                             ))));
                                         }
                                         if input.get("collection") != expected.get("collection") {
@@ -664,7 +714,7 @@ pub(crate) mod tests {
                 });
             }
         });
-        let verifier = IdentityVerifier::with_tls(
+        let mut verifier = IdentityVerifier::with_tls(
             IdentityConfig {
                 endpoint,
                 issuer: "https://identity.example".into(),
@@ -674,6 +724,10 @@ pub(crate) mod tests {
             Arc::new(client),
         )
         .unwrap();
+        verifier.authorization = crate::authorization_leases::AuthorizationLeases::conformance(
+            "https://api.example",
+            terrabase::regions::RegionCode::from_text("GRU").unwrap(),
+        );
         (verifier, reply, task)
     }
 
@@ -693,14 +747,14 @@ pub(crate) mod tests {
         let verifier = verifier.with_service_key_file(path.clone());
         assert!(
             verifier
-                .admit("delegated-token", "terrabase-local", "local", "db-a", None, Verbs::READ)
+                .admit("delegated-token", TEST_TENANT, "local", "db-a", None, Verbs::READ)
                 .await
                 .is_ok()
         );
         std::fs::remove_file(&path).unwrap();
         assert_eq!(
             verifier
-                .admit("delegated-token", "terrabase-local", "local", "db-a", None, Verbs::READ)
+                .admit("delegated-token", TEST_TENANT, "local", "db-a", None, Verbs::READ)
                 .await
                 .unwrap_err(),
             IdentityError::Unavailable
@@ -742,7 +796,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             verifier
-                .admit("delegated-token", "terrabase-local", "local", "db-a", None, Verbs::READ)
+                .admit("delegated-token", TEST_TENANT, "local", "db-a", None, Verbs::READ)
                 .await
                 .unwrap_err(),
             IdentityError::Unavailable
@@ -753,7 +807,7 @@ pub(crate) mod tests {
             verifier.endpoint.to_string().replace("localhost", "127.0.0.1").parse().unwrap();
         assert_eq!(
             verifier
-                .admit("delegated-token", "terrabase-local", "local", "db-a", None, Verbs::READ)
+                .admit("delegated-token", TEST_TENANT, "local", "db-a", None, Verbs::READ)
                 .await
                 .unwrap_err(),
             IdentityError::Unavailable
@@ -764,9 +818,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn native_tls_live_revocation_reduction_expiry_and_tenant_binding() {
         let (verifier, reply, task) = authority().await;
-        let admit = || {
-            verifier.admit("delegated-token", "terrabase-local", "local", "db-a", None, Verbs::READ)
-        };
+        let admit =
+            || verifier.admit("delegated-token", TEST_TENANT, "local", "db-a", None, Verbs::READ);
         assert!(admit().await.is_ok());
         let original = reply.lock().unwrap().clone();
         for (field, value) in [

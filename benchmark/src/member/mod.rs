@@ -23,7 +23,7 @@ use std::{
 use crate::engine::EngineConfigError;
 use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
 use crate::regions::RegionCode;
-use crate::shard_split::{ShardAdmissionToken, ShardRouter};
+use crate::shard_split::ShardRouter;
 pub use crate::storage::{DatabaseOwner, EnvironmentName};
 use crate::types::{OperationId, TenantScope};
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
@@ -1655,13 +1655,7 @@ impl DatabaseLease {
         key: &[u8],
         operation: OperationId,
     ) -> Result<crate::engine::Transaction<'_>, crate::engine::EngineError> {
-        let shard_id = router.route(key).ok_or(crate::engine::EngineError::Conflict)?;
-        let token = ShardAdmissionToken::for_key(
-            u128::from_be_bytes(self.engine.database_id().as_bytes().to_owned()),
-            router.table().generation(),
-            shard_id,
-            key,
-        );
+        let token = self.engine.shard_admission_for_key(scope, router, key)?;
         let mut transaction =
             self.engine.begin(scope, self.engine.read_snapshot(scope)?, operation)?;
         transaction.bind_shard_admission(token)?;

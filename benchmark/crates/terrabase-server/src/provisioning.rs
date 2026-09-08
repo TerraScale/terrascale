@@ -242,7 +242,7 @@ impl ProvisioningClient {
         if result.get("request") != Some(&expected)
             || !matches!(
                 result.get("state").and_then(serde_json::Value::as_str),
-                Some("preparing" | "stopping" | "cleanup_pending")
+                Some("preparing" | "stopping" | "edge_pending" | "cleanup_pending")
             )
             || result.get("cutoff").and_then(serde_json::Value::as_str).is_none()
             || !result.get("targets").is_some_and(serde_json::Value::is_array)
@@ -271,12 +271,14 @@ impl ProvisioningClient {
                         .get("database_id")
                         .and_then(serde_json::Value::as_str)
                         .is_none_or(|id| !canonical_ulid(id))
-                    || (stop.get("database_id").and_then(serde_json::Value::as_str)
-                        != Some(database_id)
-                        && stop.get("parent_database_id").and_then(serde_json::Value::as_str)
-                            != Some(database_id))
             })
         {
+            return Err(ProvisioningError::Unavailable);
+        }
+        // A parent deletion includes its entire branch subtree. Verify every
+        // descendant reaches the requested root through receipt targets; a
+        // foreign branch, missing ancestor, or cycle cannot establish scope.
+        if !deletion_targets_rooted(targets, database_id) {
             return Err(ProvisioningError::Unavailable);
         }
         Ok(result)
@@ -459,9 +461,144 @@ fn canonical_ulid(value: &str) -> bool {
         && value.bytes().all(|c| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&c))
 }
 
+fn deletion_targets_rooted(targets: &[serde_json::Value], root: &str) -> bool {
+    let mut parents = std::collections::BTreeMap::new();
+    for target in targets {
+        let Some(stop) = target.get("stop") else { return false };
+        let Some(id) = stop.get("database_id").and_then(serde_json::Value::as_str) else {
+            return false;
+        };
+        let parent = stop.get("parent_database_id").and_then(serde_json::Value::as_str);
+        if parents.insert(id, parent).is_some_and(|prior| prior != parent) {
+            return false;
+        }
+    }
+    if !parents.contains_key(root) {
+        return false;
+    }
+    for id in parents.keys() {
+        let mut cursor = *id;
+        let mut seen = std::collections::BTreeSet::new();
+        while cursor != root {
+            if !seen.insert(cursor) {
+                return false;
+            }
+            let Some(Some(parent)) = parents.get(cursor) else { return false };
+            cursor = parent;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deletion_scope_covers_nested_branches_without_accepting_foreign_graphs() {
+        let targets = serde_json::json!([
+            {"stop":{"database_id":"root"}},
+            {"stop":{"database_id":"child","parent_database_id":"root"}},
+            {"stop":{"database_id":"grandchild","parent_database_id":"child"}},
+            {"stop":{"database_id":"grandchild","parent_database_id":"child"}}
+        ]);
+        let targets = targets.as_array().expect("targets");
+        assert!(deletion_targets_rooted(targets, "root"));
+        for parent in ["missing", "grandchild"] {
+            let mut invalid = targets.clone();
+            invalid[1]["stop"]["parent_database_id"] = parent.into();
+            assert!(!deletion_targets_rooted(&invalid, "root"));
+        }
+        assert!(!deletion_targets_rooted(&targets[1..], "root"));
+        let mut contradictory = targets.clone();
+        contradictory[3]["stop"]["parent_database_id"] = "root".into();
+        assert!(!deletion_targets_rooted(&contradictory, "root"));
+    }
+
+    #[tokio::test]
+    async fn deletion_status_preserves_authority_receipts_and_edge_pending() {
+        const DATABASE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+        const AT: &str = "2026-09-07T12:00:00Z";
+        for state in ["edge_pending", "cleanup_pending", "complete"] {
+            // This is the flattened receipt shape emitted by databaseadmission.Deletion.
+            let request = serde_json::json!({"environment":"production", "tenant_id":"tenant",
+                "project_id":"project", "database_id":DATABASE, "operation_id":"delete-one"});
+            let stop = serde_json::json!({"environment":"production", "organization_id":"tenant",
+                "project_id":"project", "database_id":DATABASE, "operation_id":"delete-one",
+                "region":"GRU", "cutoff":AT});
+            let mut receipt = stop.clone();
+            receipt["access_revoked"] = true.into();
+            receipt["usage_stopped"] = true.into();
+            let mut preparation = stop.clone();
+            preparation.as_object_mut().expect("object").remove("cutoff");
+            preparation["prepared"] = true.into();
+            preparation["last_accounted_at"] = AT.into();
+            let mut expected = serde_json::json!({"request":request, "requested_at":AT,
+                "state":state, "cutoff":AT,
+                "targets":[{"stop":stop, "preparation":preparation, "receipt":receipt}]});
+            if state == "cleanup_pending" {
+                expected["edge_receipt"] = serde_json::json!({"request":request,
+                    "cutoff":AT, "access_revoked":true});
+            }
+            let payload = serde_json::to_vec(&expected).expect("receipt JSON");
+            let path = std::env::temp_dir()
+                .join(format!("tb-deletion-status-{}-{state}.sock", std::process::id()));
+            let listener = tokio::net::UnixListener::bind(&path).expect("bind");
+            let probe = tokio::net::UnixStream::connect(&path).await.expect("probe");
+            let uid = probe.peer_cred().expect("credentials").uid();
+            let _ = listener.accept().await.expect("probe accept");
+            drop(probe);
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                hyper::server::conn::http1::Builder::new()
+                    .serve_connection(
+                        TokioIo::new(stream),
+                        hyper::service::service_fn(
+                            move |incoming: hyper::Request<hyper::body::Incoming>| {
+                                let payload = payload.clone();
+                                let request = request.clone();
+                                async move {
+                                    assert_eq!(
+                                        incoming.uri().path(),
+                                        "/internal/v1/databases/delete/status"
+                                    );
+                                    let body = incoming
+                                        .into_body()
+                                        .collect()
+                                        .await
+                                        .expect("body")
+                                        .to_bytes();
+                                    assert_eq!(
+                                        serde_json::from_slice::<serde_json::Value>(&body)
+                                            .expect("request"),
+                                        request
+                                    );
+                                    Ok::<_, std::convert::Infallible>(hyper::Response::new(
+                                        Full::new(Bytes::from(payload)),
+                                    ))
+                                }
+                            },
+                        ),
+                    )
+                    .await
+                    .expect("serve");
+            });
+            let client =
+                ProvisioningClient::new(path.clone(), uid, "production".into()).expect("client");
+            let scope = crate::delegated_identity::VerifiedProjectScope {
+                tenant_id: "tenant".into(),
+                project_id: "project".into(),
+            };
+            let result = client.deletion(&scope, DATABASE, "delete-one", false, None).await;
+            if state == "complete" {
+                assert_eq!(result.err(), Some(ProvisioningError::Unavailable));
+            } else {
+                assert_eq!(result.expect("authoritative pending receipt"), expected);
+            }
+            server.await.expect("server");
+            std::fs::remove_file(path).expect("cleanup");
+        }
+    }
 
     #[tokio::test]
     async fn preserves_authority_failure_class_without_reading_error_details() {

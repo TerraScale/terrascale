@@ -330,8 +330,8 @@ impl ViewCapabilityVerifier {
                 .authorization_scope
                 .strip_prefix(&format!("{}:", expected.authorization_scope))
                 .is_some_and(|scope| {
-                    crate::membership_revocations::valid_scope(&expected.authorization_scope)
-                        && crate::membership_revocations::valid_authority_scopes(scope)
+                    crate::authorization_leases::valid_database_scope(&expected.authorization_scope)
+                        && crate::authorization_leases::parse_scope(scope).is_some()
                 })
             || claims.entitlement_epoch != expected.entitlement_epoch
             || claims.region != expected.region
@@ -662,15 +662,18 @@ mod tests {
         ));
     }
     #[test]
-    fn native_membership_feature_vector_matches_edge_fixture() {
+    fn native_tenant_authority_vector_matches_edge_fixture() {
         let vector: serde_json::Value =
-            serde_json::from_str(include_str!("membership-capability-vector.json")).unwrap();
-        let scope = format!(
-            "{}:{}:{}",
-            vector["databaseScope"].as_str().unwrap(),
-            vector["membershipScope"].as_str().unwrap(),
-            vector["featureScope"].as_str().unwrap()
+            serde_json::from_str(include_str!("tenant-authority-capability-vector.json")).unwrap();
+        let lease: crate::authorization_leases::Lease =
+            serde_json::from_value(vector["lease"].clone()).unwrap();
+        let scope = format!("{}:{}", vector["databaseScope"].as_str().unwrap(), lease.scope());
+        let registry = crate::authorization_leases::AuthorizationLeases::conformance(
+            "https://api.example",
+            RegionCode::GRU,
         );
+        registry.install(lease.clone(), vector["now"].as_u64().unwrap(), true).unwrap();
+        assert!(registry.admits(&lease.scope(), vector["now"].as_u64().unwrap()));
         let key = hex::decode(vector["keyHex"].as_str().unwrap()).unwrap();
         let issuer = ViewCapabilityIssuer::new(&key).unwrap();
         let token = issuer

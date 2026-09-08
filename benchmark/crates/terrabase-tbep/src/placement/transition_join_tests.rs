@@ -224,3 +224,142 @@ fn checkpoint_and_acceptance_roll_back_together_on_storage_failure() {
     fixture.journal.connection.lock().unwrap().execute_batch("DROP TRIGGER fail_accept").unwrap();
     fixture.journal.accept("second", &fixture.request(&fixture.checkpoint)).unwrap();
 }
+
+#[test]
+fn join_authority_floor_fences_later_accept_and_drain_after_reopen() {
+    let fixture = JoinFixture::new();
+    let mut checkpoint = fixture.checkpoint.clone();
+    checkpoint["authority_epoch"] = json!(7);
+    fixture.journal.accept("second", &fixture.request(&checkpoint)).unwrap();
+    let journal = fixture.recipient.open();
+    journal.configure_transition_trust(fixture.pins.clone()).unwrap();
+    let mut next = fixture.recipient.request.clone();
+    next.expected_revision = 1;
+    next.proposal.as_mut().unwrap().epoch = 3;
+    next.proposal.as_mut().unwrap().generation = 3;
+    let proposal = stage(&journal, next, "third");
+    let mut third = proof(&proposal, "third", Some(&fixture.accepted), &["GRU"]);
+    add_inventory(&mut third);
+    third["authority_epoch"] = json!(6);
+    assert!(journal.accept("third", &acceptance(&third, 2)).is_err());
+    let prepared = json!({
+        "schema_version":1,"kind":"prepared_epoch","request":third["request"],
+        "request_digest":third["request_digest"],"prior_generation":2,
+        "previous_proof_digest":hash(&serde_json::to_vec(&fixture.accepted).unwrap()),
+        "authority_epoch":6,"lease_id":"stale-lease","journal_revision":3
+    });
+    assert!(journal.begin_transition_drain("third", &envelope(&prepared)).is_err());
+    assert_eq!(
+        journal
+            .connection
+            .lock()
+            .unwrap()
+            .query_row("SELECT count(*) FROM transition_drains", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        0
+    );
+    third["authority_epoch"] = json!(7);
+    journal.accept("third", &acceptance(&third, 2)).unwrap();
+}
+
+#[test]
+fn independent_go_checkpoint_joins_reopens_after_expiry_and_accepts_new_member_drain() {
+    let vector: Value =
+        serde_json::from_slice(include_bytes!("../../testdata/placement-join-checkpoint.json"))
+            .unwrap();
+    assert_eq!(vector["schema_version"], 1);
+    let decode = |value: &Value| {
+        base64::engine::general_purpose::STANDARD.decode(value.as_str().unwrap()).unwrap()
+    };
+    let keys = |name: &str| {
+        vector[name]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(identity, bytes)| (identity.clone(), decode(bytes)))
+            .collect()
+    };
+    let pins = TransitionTrust::new(
+        keys("authority_keys"),
+        keys("genesis_keys"),
+        keys("static_member_keys"),
+    )
+    .unwrap();
+    let proposal =
+        pb::PlacementProposal::decode(decode(&vector["stage_proposal"]).as_slice()).unwrap();
+    let member = vector["member_id"].as_str().unwrap();
+    let mut fixture = tests::Fixture::new();
+    fixture.boundary =
+        PlacementBoundary::new(&proposal.environment, &proposal.cluster, member, 2, 2, []).unwrap();
+    fixture.request = pb::PlacementStageRequest {
+        expected_revision: 0,
+        proposal: Some(proposal),
+        declarations: Vec::new(),
+    };
+    let request = pb::PlacementAcceptRequest {
+        proposal_revision: 1,
+        proof: serde_json::to_vec(&vector["accepted"]).unwrap(),
+    };
+    let checkpoint: Value =
+        serde_json::from_slice(&decode(&vector["accepted"]["join_checkpoint"]["payload"])).unwrap();
+    let issued = checkpoint["issued_at_unix_millis"].as_i64().unwrap();
+    let expired = checkpoint["expires_at_unix_millis"].as_i64().unwrap() + 1;
+    let accepted_payload: Value =
+        serde_json::from_slice(&decode(&vector["accepted"]["payload"])).unwrap();
+    let operation = accepted_payload["request"]["operation_id"].as_str().unwrap();
+    let journal = fixture.open();
+    journal.configure_transition_trust(pins.clone()).unwrap();
+    // A fixed nonce and clock make this immutable independent producer corpus
+    // reproducible. The separate nonce tests exercise actual random creation,
+    // storage loss, and signature handoff; production never takes these inputs.
+    journal
+        .connection
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE placement_join_nonce SET nonce=?1 WHERE id=1",
+            [checkpoint["bootstrap_nonce"].as_str().unwrap()],
+        )
+        .unwrap();
+    stage(&journal, fixture.request.clone(), operation);
+    assert!(journal.accept_at(operation, &request, Some(expired)).is_err());
+    assert!(join::stored(&journal.connection.lock().unwrap()).unwrap().is_none());
+    let receipt = journal.accept_at(operation, &request, Some(issued + 1)).unwrap();
+    drop(journal);
+    let journal = fixture.open();
+    journal.configure_transition_trust(pins.clone()).unwrap();
+    assert_eq!(journal.accepted().unwrap(), receipt);
+    assert_eq!(journal.accept_at(operation, &request, Some(expired)).unwrap(), receipt);
+    let later_proposal =
+        pb::PlacementProposal::decode(decode(&vector["later_stage_proposal"]).as_slice()).unwrap();
+    let later_payload: Value =
+        serde_json::from_slice(&decode(&vector["later_accepted"]["payload"])).unwrap();
+    let later_operation = later_payload["request"]["operation_id"].as_str().unwrap();
+    stage(
+        &journal,
+        pb::PlacementStageRequest {
+            expected_revision: 1,
+            proposal: Some(later_proposal),
+            declarations: Vec::new(),
+        },
+        later_operation,
+    );
+    let later = serde_json::to_vec(&vector["later_accepted"]).unwrap();
+    assert!(pins.decode_with_prior(&later, None).is_err());
+    journal
+        .accept(later_operation, &pb::PlacementAcceptRequest { proposal_revision: 2, proof: later })
+        .unwrap();
+    drop(journal);
+    let journal = fixture.open();
+    journal.configure_transition_trust(pins).unwrap();
+    assert_eq!(journal.accepted().unwrap().epoch, 3);
+    assert_eq!(
+        journal
+            .connection
+            .lock()
+            .unwrap()
+            .query_row("SELECT count(*) FROM accepted", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        2
+    );
+}

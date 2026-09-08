@@ -1,9 +1,9 @@
 //! E-13 sync benchmark driver.
 //!
-//! This is intentionally a standalone, dependency-free binary.  The normal
+//! This binary uses the server-owned canonical wire codec.  The normal
 //! benchmark lane has a single shared dispatcher, while this family has a
 //! different contract (REST attach + immutable MessagePack and WebSocket), so
-//! `bench/scripts/sync.sh` compiles this file directly and does not modify the
+//! `bench/scripts/sync.sh` builds the dedicated Cargo binary without changing the
 //! shared lane registry.  Every measured byte comes from a served TerraBase
 //! member or the configured CDN endpoint; this program never fabricates a
 //! successful sample.
@@ -15,6 +15,7 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use terrabase_sync_core::wire::{Envelope, Message, decode_envelope, encode_envelope};
 
 const CADENCE_MS: u64 = 100;
 const LOCAL_P99_MS: f64 = 50.0;
@@ -238,6 +239,20 @@ impl Config {
 
 fn run(config: &Config) -> Vec<(&'static str, Verdict)> {
     let mut report = Vec::new();
+    report.push((
+        "member_resources",
+        match member_resources(config.member_pid) {
+            Ok(_) => Verdict {
+                status: "pass",
+                reason: "live member cgroup matches receipt and configured CPU/memory bounds"
+                    .into(),
+                samples_ms: Vec::new(),
+                p50_ms: None,
+                p99_ms: None,
+            },
+            Err(error) => unavailable(&error),
+        },
+    ));
     let local = config.local.as_deref().and_then(|url| Endpoint::parse(url).ok());
     let token = config.token.as_deref().unwrap_or("");
     let local_verdict = match (local.as_ref(), config.token.as_ref()) {
@@ -276,7 +291,7 @@ fn websocket_lane(endpoint: &Endpoint, config: &Config, token: &str) -> Verdict 
         max_rss = max_rss.max(current_rss_bytes(config.member_pid));
         match result {
             Ok(bytes) => {
-                if valid_data_envelope(&bytes).is_none() {
+                if valid_snapshot(&bytes, None).is_none() {
                     return fail("WebSocket returned a non-data or malformed sync-v1 frame");
                 }
                 samples.push(elapsed);
@@ -293,7 +308,13 @@ fn websocket_lane(endpoint: &Endpoint, config: &Config, token: &str) -> Verdict 
             }
         }
     }
-    bounded_verdict(samples, LOCAL_P99_MS, config, max_rss, "local WebSocket p99")
+    bounded_verdict(
+        samples,
+        LOCAL_P99_MS,
+        config,
+        max_rss,
+        "local WebSocket initial attach and snapshot p99",
+    )
 }
 
 fn http_lane(endpoint: &Endpoint, config: &Config, token: &str, cdn_url: Option<&str>) -> Verdict {
@@ -336,6 +357,9 @@ fn http_lane(endpoint: &Endpoint, config: &Config, token: &str, cdn_url: Option<
             Ok(response) => return verdict_for_http(response, "origin snapshot"),
             Err(error) => return fail(&format!("origin snapshot failed: {error}")),
         };
+    if valid_snapshot(&origin_snapshot, Some(&attach)).is_none() {
+        return fail("origin snapshot malformed or attach identity mismatch");
+    }
     let delivery_endpoint = match cdn_url.and_then(|url| Endpoint::parse(url).ok()) {
         Some(endpoint) => endpoint,
         None => {
@@ -363,9 +387,13 @@ fn http_lane(endpoint: &Endpoint, config: &Config, token: &str, cdn_url: Option<
     let mut last_delivery: Option<Instant> = None;
     let mut max_rss = current_rss_bytes(config.member_pid);
     let mut offset = attach.offset;
+    let run_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     for sample in 0..config.samples {
         if config.drive_writes {
-            let id = format!("sync-bench-{sample}");
+            let id = format!("sync-bench-{run_id}-{sample}");
             let path = format!(
                 "/api/v1/databases/{}/collections/{}/documents/{}",
                 url_escape(&config.database),
@@ -438,12 +466,10 @@ fn http_lane(endpoint: &Endpoint, config: &Config, token: &str, cdn_url: Option<
         // A non-empty HTTP 200 is not evidence of a delta: error envelopes and
         // malformed frames can also carry bytes. Require the wire envelope and
         // its causal revision before advancing the cursor.
-        let causation = match valid_delta_causation(&response.body) {
-            Some(value) if value >= offset => value,
-            Some(value) => return fail(&format!("CDN delta causation regressed: {value} < {offset}")),
-            None => return fail("CDN delta was not a valid sync-v1 envelope"),
+        offset = match valid_delta(&response.body, &attach, offset) {
+            Some(value) => value,
+            None => return fail("CDN delta malformed or revision continuity failed"),
         };
-        offset = causation.saturating_add(1);
         max_rss = max_rss.max(current_rss_bytes(config.member_pid));
     }
     bounded_verdict(samples, CDN_P99_MS, config, max_rss, "CDN HTTP p99")
@@ -501,7 +527,10 @@ fn cross_region_lane(config: &Config, token: &str) -> Verdict {
                         &attach.capability,
                         Duration::from_secs(30),
                     ) {
-                        Ok(snapshot) if snapshot.status == 200 && !snapshot.body.is_empty() => {
+                        Ok(snapshot)
+                            if snapshot.status == 200
+                                && valid_snapshot(&snapshot.body, Some(&attach)).is_some() =>
+                        {
                             samples.push(started.elapsed().as_secs_f64() * 1_000.0)
                         }
                         Ok(snapshot) => {
@@ -590,6 +619,15 @@ fn websocket_subscribe(
             String::from_utf8_lossy(&header[..header.len().min(120)])
         ));
     }
+    let header_text = String::from_utf8_lossy(&header);
+    let accepted =
+        header_text.lines().filter_map(|line| line.split_once(':')).any(|(name, value)| {
+            name.eq_ignore_ascii_case("sec-websocket-accept")
+                && value.trim() == "NepcffuXDrU4/nsxEq6653ElBMo="
+        });
+    if !accepted {
+        return Err("WebSocket handshake accept mismatch".into());
+    }
     let payload = subscribe_envelope(&format!("sync-ws-{sample}"), &config.sql);
     write_ws_binary(&mut stream, &payload)?;
     let frame = read_ws_frame(&mut stream)?;
@@ -598,20 +636,18 @@ fn websocket_subscribe(
 }
 
 fn subscribe_envelope(subscription: &str, query: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    array(&mut out, 7);
-    uint(&mut out, 1);
-    uint(&mut out, 0);
-    uint(&mut out, 0);
-    uint(&mut out, 1);
-    uint(&mut out, 1);
-    uint(&mut out, 0);
-    array(&mut out, 4);
-    text(&mut out, subscription);
-    text(&mut out, query);
-    binary(&mut out, &[]);
-    out.push(0xc0);
-    out
+    encode_envelope(&Envelope {
+        features: 0,
+        correlation: 1,
+        causation: 0,
+        message: Message::Subscribe {
+            subscription: subscription.into(),
+            query: query.into(),
+            parameters: Vec::new(),
+            checkpoint: None,
+        },
+    })
+    .expect("bounded subscription")
 }
 
 fn write_ws_binary(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String> {
@@ -641,6 +677,9 @@ fn read_ws_frame(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
     stream.read_exact(&mut first).map_err(|e| e.to_string())?;
     let opcode = first[0] & 0x0f;
     let masked = first[1] & 0x80 != 0;
+    if first[0] & 0x80 == 0 || first[0] & 0x70 != 0 || masked {
+        return Err("WebSocket fragmented, reserved, or masked server frame".into());
+    }
     let mut length = (first[1] & 0x7f) as usize;
     if length == 126 {
         let mut b = [0_u8; 2];
@@ -895,134 +934,56 @@ fn read_until(stream: &mut TcpStream, needle: &[u8], limit: usize) -> Result<Vec
 }
 
 fn parse_attach(body: &[u8]) -> Result<Attach, String> {
-    let text = String::from_utf8_lossy(body);
+    let value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|error| error.to_string())?;
+    let text =
+        |key: &str| value[key].as_str().map(str::to_owned).ok_or_else(|| format!("invalid {key}"));
+    let number = |key: &str| value[key].as_u64().ok_or_else(|| format!("invalid {key}"));
     Ok(Attach {
-        view: json_string(&text, "view")?,
-        generation: json_u64(&text, "generation")?,
-        snapshot: json_array_first(&text, "snapshot_chunks")?,
-        log: json_string(&text, "log")?,
-        capability: json_string(&text, "capability")?,
-        offset: json_u64(&text, "offset")?,
+        view: text("view")?,
+        generation: number("generation")?,
+        snapshot: value["snapshot_chunks"][0].as_str().ok_or("missing snapshot chunk")?.to_owned(),
+        log: text("log")?,
+        capability: text("capability")?,
+        offset: number("offset")?,
     })
 }
-/// Read the six scalar envelope fields without interpreting the ordered body.
-/// The causation field is the journal revision and is the only offset advance
-/// the driver is allowed to make after accepting a real data-bearing frame.
-fn envelope_causation(bytes: &[u8]) -> Option<u64> {
-    let mut cursor = bytes;
-    let header = *cursor.first()?;
-    cursor = &cursor[1..];
-    if header != 0x97 {
-        return None;
-    }
-    for _ in 0..5 {
-        let _ = read_msgpack_uint(&mut cursor)?;
-    }
-    read_msgpack_uint(&mut cursor)
-}
 
-fn valid_envelope_causation(bytes: &[u8]) -> Option<u64> {
-    let mut cursor = bytes;
-    if *cursor.first()? != 0x97 {
+/// Decode the entire server-owned wire shape and require canonical encoding.
+fn canonical_envelope(bytes: &[u8]) -> Option<Envelope> {
+    let envelope = decode_envelope(bytes).ok()?;
+    (encode_envelope(&envelope).ok()?.as_slice() == bytes).then_some(envelope)
+}
+fn valid_snapshot(bytes: &[u8], expected: Option<&Attach>) -> Option<u64> {
+    let envelope = canonical_envelope(bytes)?;
+    let Message::Snapshot { subscription, snapshot } = envelope.message else { return None };
+    if envelope.causation != snapshot.revision {
         return None;
     }
-    cursor = &cursor[1..];
-    let major = read_msgpack_uint(&mut cursor)?;
-    let minor = read_msgpack_uint(&mut cursor)?;
-    let features = read_msgpack_uint(&mut cursor)?;
-    let tag = read_msgpack_uint(&mut cursor)?;
-    if major != 1 || minor != 0 || features != 0 || !matches!(tag, 3..=5 | 8) {
+    if let Some(attach) = expected {
+        if subscription != attach.view
+            || snapshot.view_generation != attach.generation
+            || snapshot.revision != attach.offset
+        {
+            return None;
+        }
+    }
+    Some(snapshot.revision)
+}
+fn valid_delta(bytes: &[u8], attach: &Attach, offset: u64) -> Option<u64> {
+    let envelope = canonical_envelope(bytes)?;
+    let Message::Delta { subscription, view_generation, from_revision, to_revision, .. } =
+        envelope.message
+    else {
         return None;
-    }
-    read_msgpack_uint(&mut cursor)?;
-    let causation = read_msgpack_uint(&mut cursor)?;
-    if cursor.is_empty() {
-        return None;
-    }
-    // Every server data message has an array body. This rejects typed Error,
-    // Heartbeat, and malformed/truncated scalar responses at the boundary.
-    if !matches!(*cursor.first()?, 0x90..=0x9f | 0xdc | 0xdd) {
-        return None;
-    }
-    Some(causation)
+    };
+    (subscription == attach.view
+        && view_generation == attach.generation
+        && from_revision == offset
+        && to_revision > offset
+        && envelope.causation == to_revision)
+        .then_some(to_revision)
 }
-
-fn valid_data_envelope(bytes: &[u8]) -> Option<u64> {
-    valid_envelope_causation(bytes)
-}
-
-fn valid_delta_causation(bytes: &[u8]) -> Option<u64> {
-    // Canonical sync-v1 encodes the small manifest tag as a fixint at index 3
-    // (byte 4 after the array header). The generic validator still checks all
-    // envelope fields and body structure below.
-    (bytes.get(4) == Some(&4)).then(|| valid_envelope_causation(bytes)).flatten()
-}
-fn read_msgpack_uint(cursor: &mut &[u8]) -> Option<u64> {
-    let tag = *cursor.first()?;
-    *cursor = &cursor[1..];
-    match tag {
-        value @ 0x00..=0x7f => Some(value as u64),
-        0xcc => {
-            let value = *cursor.first()?;
-            *cursor = &cursor[1..];
-            Some(value as u64)
-        }
-        0xcd => {
-            if cursor.len() < 2 {
-                return None;
-            }
-            let value = u16::from_be_bytes([cursor[0], cursor[1]]);
-            *cursor = &cursor[2..];
-            Some(value as u64)
-        }
-        0xce => {
-            if cursor.len() < 4 {
-                return None;
-            }
-            let value = u32::from_be_bytes(cursor[..4].try_into().ok()?);
-            *cursor = &cursor[4..];
-            Some(value as u64)
-        }
-        0xcf => {
-            if cursor.len() < 8 {
-                return None;
-            }
-            let value = u64::from_be_bytes(cursor[..8].try_into().ok()?);
-            *cursor = &cursor[8..];
-            Some(value)
-        }
-        _ => None,
-    }
-}
-fn json_string(body: &str, key: &str) -> Result<String, String> {
-    let needle = format!("\"{key}\"");
-    let start = body.find(&needle).ok_or_else(|| format!("missing {key}"))?;
-    let rest = &body[start + needle.len()..];
-    let quote = rest.find('"').ok_or_else(|| format!("invalid {key}"))? + 1;
-    let end = rest[quote..].find('"').ok_or_else(|| format!("invalid {key}"))? + quote;
-    Ok(rest[quote..end].replace("\\\"", "\"").replace("\\\\", "\\"))
-}
-fn json_array_first(body: &str, key: &str) -> Result<String, String> {
-    let needle = format!("\"{key}\"");
-    let start = body.find(&needle).ok_or_else(|| format!("missing {key}"))?;
-    let rest = &body[start + needle.len()..];
-    let open = rest.find('[').ok_or_else(|| format!("invalid {key}"))? + 1;
-    let quote = rest[open..].find('"').ok_or_else(|| format!("invalid {key}"))? + open;
-    let end = rest[quote + 1..].find('"').ok_or_else(|| format!("invalid {key}"))? + quote + 1;
-    Ok(rest[quote + 1..end].to_owned())
-}
-fn json_u64(body: &str, key: &str) -> Result<u64, String> {
-    let needle = format!("\"{key}\"");
-    let start = body.find(&needle).ok_or_else(|| format!("missing {key}"))?;
-    body[start + needle.len()..]
-        .trim_start_matches([' ', ':'])
-        .split(|c: char| !c.is_ascii_digit())
-        .next()
-        .unwrap_or("")
-        .parse()
-        .map_err(|_| format!("invalid {key}"))
-}
-
 fn bounded_verdict(
     mut samples: Vec<f64>,
     limit: f64,
@@ -1033,7 +994,10 @@ fn bounded_verdict(
     samples.sort_by(f64::total_cmp);
     let p50 = percentile(&samples, 0.50);
     let p99 = percentile(&samples, 0.99);
-    let rss_ok = max_rss == 0 || max_rss <= config.rss_limit_mib * 1024 * 1024;
+    if max_rss == 0 || current_rss_bytes(config.member_pid) == 0 {
+        return unavailable("member PID RSS is missing or process is no longer live");
+    }
+    let rss_ok = max_rss <= config.rss_limit_mib * 1024 * 1024;
     let status = if p99 <= limit && rss_ok { "pass" } else { "fail" };
     let reason = if rss_ok {
         format!(
@@ -1080,6 +1044,8 @@ fn percentile(values: &[f64], fraction: f64) -> f64 {
     if values.is_empty() {
         return 0.0;
     }
+    let mut values = values.to_vec();
+    values.sort_by(f64::total_cmp);
     let index = ((values.len() as f64 - 1.0) * fraction).round() as usize;
     values[index.min(values.len() - 1)]
 }
@@ -1097,19 +1063,22 @@ fn report_json(config: &Config, report: &[(&str, Verdict)]) -> String {
     out.push_str(&config.cadence_ms.to_string());
     out.push_str(",\"replication\":\"");
     out.push_str(&json_escape(&config.replication));
-    out.push_str("\",\"resource_evidence\":{\"ocpu\":2,\"memory_gib\":12,\"priority\":\"nice -n 19\"},\"bounds\":{\"max_regions\":3,\"max_member_connections\":");
+    out.push_str("\",\"configured_resources\":{\"ocpu\":2,\"memory_gib\":12,\"driver_nice\":19},\"resource_evidence\":");
+    out.push_str(
+        &member_resources(config.member_pid)
+            .map_or_else(|_| "null".into(), |value| value.to_string()),
+    );
+    out.push_str(",\"bounds\":{\"max_regions\":3,\"max_member_connections\":");
     out.push_str(&MAX_MEMBER_CONNECTIONS.to_string());
     out.push_str(",\"rss_limit_mib\":");
     out.push_str(&config.rss_limit_mib.to_string());
     out.push_str(",\"observed_rss_mib\":");
-    out.push_str(&observed_rss_mib.to_string());
-    out.push_str(",\"observed_connection_peak\":1,\"rss_subject\":\"");
-    out.push_str(if config.member_pid.is_some() {
-        "member"
+    if current_rss_bytes(config.member_pid) == 0 {
+        out.push_str("null");
     } else {
-        "driver (set TERRABASE_SYNC_MEMBER_PID for member RSS)"
-    });
-    out.push('"');
+        out.push_str(&observed_rss_mib.to_string());
+    }
+    out.push_str(",\"observed_connection_peak\":null,\"rss_subject\":\"member\"");
     out.push_str("},\"verdicts\":[");
     for (index, (name, verdict)) in report.iter().enumerate() {
         if index > 0 {
@@ -1208,9 +1177,56 @@ fn replace_offset(path: &str, offset: u64) -> String {
         format!("{path}&offset={offset}")
     }
 }
+fn member_resources(pid: Option<u32>) -> Result<serde_json::Value, String> {
+    let pid = pid.ok_or("TERRABASE_SYNC_MEMBER_PID is required for member resource evidence")?;
+    if current_rss_bytes(Some(pid)) == 0 {
+        return Err("member process RSS unavailable".into());
+    }
+    let receipt_path =
+        env_opt("TERRABASE_SYNC_RESOURCE_EVIDENCE").ok_or("member cgroup receipt missing")?;
+    let receipt =
+        std::fs::read_to_string(receipt_path).map_err(|_| "member cgroup receipt unreadable")?;
+    let field =
+        |name: &str| receipt.lines().find_map(|line| line.strip_prefix(&format!("{name}=")));
+    let cgroups = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
+        .map_err(|_| "member cgroup unavailable")?;
+    let cgroup = cgroups
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .ok_or("member cgroup v2 missing")?;
+    let read = |name: &str| {
+        std::fs::read_to_string(format!("/sys/fs/cgroup{cgroup}/{name}"))
+            .map(|v| v.trim().to_owned())
+            .map_err(|_| format!("member {name} unavailable"))
+    };
+    let cpu = read("cpu.max")?;
+    let memory = read("memory.max")?;
+    let cpuset = read("cpuset.cpus.effective")?;
+    if field("pid") != Some(pid.to_string().as_str())
+        || field("cgroup") != Some(cgroup)
+        || field("cpu_max") != Some(cpu.as_str())
+        || field("memory_max") != Some(memory.as_str())
+        || field("cpuset") != Some(cpuset.as_str())
+    {
+        return Err("member cgroup receipt does not match live process".into());
+    }
+    let quota: Vec<_> = cpu.split_whitespace().collect();
+    let cpu_ok = quota.len() == 2
+        && quota[0]
+            .parse::<u64>()
+            .ok()
+            .zip(quota[1].parse::<u64>().ok())
+            .is_some_and(|(q, p)| p > 0 && q > 0 && q == p.saturating_mul(2));
+    if !cpu_ok || memory != "12884901888" || cpuset.is_empty() {
+        return Err("member cgroup does not enforce 2 CPU / 12 GiB bounds".into());
+    }
+    Ok(
+        serde_json::json!({"pid":pid,"cgroup":cgroup,"cpu_max":cpu,"memory_max":memory,"cpuset":cpuset}),
+    )
+}
 fn current_rss_bytes(pid: Option<u32>) -> u64 {
-    let status_path =
-        pid.map_or_else(|| "/proc/self/status".to_owned(), |pid| format!("/proc/{pid}/status"));
+    let Some(pid) = pid else { return 0 };
+    let status_path = format!("/proc/{pid}/status");
     std::fs::read_to_string(status_path)
         .ok()
         .and_then(|text| {
@@ -1254,52 +1270,6 @@ impl Endpoint {
     }
 }
 
-fn array(out: &mut Vec<u8>, count: usize) {
-    if count < 16 {
-        out.push(0x90 | count as u8);
-    } else {
-        out.push(0xdc);
-        out.extend_from_slice(&(count as u16).to_be_bytes());
-    }
-}
-fn uint(out: &mut Vec<u8>, value: u64) {
-    if value <= 0x7f {
-        out.push(value as u8);
-    } else if value <= u8::MAX as u64 {
-        out.extend_from_slice(&[0xcc, value as u8]);
-    } else if value <= u16::MAX as u64 {
-        out.push(0xcd);
-        out.extend_from_slice(&(value as u16).to_be_bytes());
-    } else if value <= u32::MAX as u64 {
-        out.push(0xce);
-        out.extend_from_slice(&(value as u32).to_be_bytes());
-    } else {
-        out.push(0xcf);
-        out.extend_from_slice(&value.to_be_bytes());
-    }
-}
-fn text(out: &mut Vec<u8>, value: &str) {
-    let length = value.len();
-    if length <= 31 {
-        out.push(0xa0 | length as u8);
-    } else if length <= u8::MAX as usize {
-        out.extend_from_slice(&[0xd9, length as u8]);
-    } else {
-        out.push(0xda);
-        out.extend_from_slice(&(length as u16).to_be_bytes());
-    }
-    out.extend_from_slice(value.as_bytes());
-}
-fn binary(out: &mut Vec<u8>, value: &[u8]) {
-    if value.len() <= u8::MAX as usize {
-        out.extend_from_slice(&[0xc4, value.len() as u8]);
-    } else {
-        out.push(0xc5);
-        out.extend_from_slice(&(value.len() as u16).to_be_bytes());
-    }
-    out.extend_from_slice(value);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1323,22 +1293,97 @@ mod tests {
         assert_eq!(first[0], 0x97);
         assert_eq!(first[7], 0x94);
     }
-    #[test]
-    fn reads_messagepack_causation_without_reordering_body() {
-        let frame = subscribe_envelope("s", "SELECT id FROM orders ORDER BY id");
-        assert_eq!(envelope_causation(&frame), Some(0));
-        let mut data_frame = frame.clone();
-        data_frame[4] = 3; // Snapshot tag in the indexed envelope.
-        assert_eq!(valid_envelope_causation(&data_frame), Some(0));
+    fn fixture(message: Message, causation: u64) -> Vec<u8> {
+        encode_envelope(&Envelope { features: 0, correlation: 0, causation, message }).unwrap()
+    }
+    fn snapshot() -> Vec<u8> {
+        fixture(
+            Message::Snapshot {
+                subscription: "v".into(),
+                snapshot: terrabase_sync_core::wire::Snapshot {
+                    view_generation: 1,
+                    authorization_generation: 1,
+                    revision: 1,
+                    items: vec![],
+                    digest: "digest".into(),
+                    checkpoint: vec![1],
+                },
+            },
+            1,
+        )
     }
     #[test]
-    fn rejects_wrong_major_and_truncated_sync_envelopes() {
-        let mut frame = subscribe_envelope("s", "SELECT id FROM orders ORDER BY id");
-        frame[1] = 2;
-        assert_eq!(valid_envelope_causation(&frame), None);
-        frame[1] = 1;
-        frame.truncate(7);
-        assert_eq!(valid_envelope_causation(&frame), None);
+    fn validates_complete_real_snapshot_and_rejects_every_truncation() {
+        let bytes = snapshot();
+        assert_eq!(valid_snapshot(&bytes, None), Some(1));
+        for end in 0..bytes.len() {
+            assert_eq!(valid_snapshot(&bytes[..end], None), None);
+        }
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert_eq!(valid_snapshot(&trailing, None), None);
+        assert_eq!(valid_snapshot(&[0x97, 1, 0, 0, 3, 0, 1, 0xdc], None), None);
+        for tag in [1, 4, 5, 6, 8, 10] {
+            let mut wrong = bytes.clone();
+            wrong[4] = tag;
+            assert_eq!(valid_snapshot(&wrong, None), None);
+        }
+        let mut wrong = bytes;
+        wrong[1] = 2;
+        assert_eq!(valid_snapshot(&wrong, None), None);
+        assert_eq!(valid_snapshot(&fixture(Message::Heartbeat, 0), None), None);
+        assert_eq!(
+            valid_snapshot(
+                &fixture(
+                    Message::Error {
+                        code: terrabase_sync_core::wire::ErrorCode::MalformedFrame,
+                        detail: None
+                    },
+                    0
+                ),
+                None
+            ),
+            None
+        );
+    }
+    #[test]
+    fn delta_requires_exact_revision_continuity() {
+        let attach = Attach {
+            view: "v".into(),
+            generation: 1,
+            offset: 1,
+            snapshot: String::new(),
+            log: String::new(),
+            capability: String::new(),
+        };
+        let bytes = fixture(
+            Message::Delta {
+                subscription: "v".into(),
+                view_generation: 1,
+                from_revision: 1,
+                to_revision: 3,
+                operations: vec![],
+                digest: "digest".into(),
+                checkpoint: vec![1],
+            },
+            3,
+        );
+        assert_eq!(valid_delta(&bytes, &attach, 1), Some(3));
+        for offset in [0, 2, 3, 4] {
+            assert_eq!(valid_delta(&bytes, &attach, offset), None);
+        }
+        for end in 0..bytes.len() {
+            assert_eq!(valid_delta(&bytes[..end], &attach, 1), None);
+        }
+        assert_eq!(valid_delta(&snapshot(), &attach, 1), None);
+    }
+    #[test]
+    fn quantiles_sort_and_missing_member_resources_fail_closed() {
+        assert_eq!(percentile(&[100.0, 1.0, 3.0, 2.0], 0.5), 3.0);
+        assert_eq!(current_rss_bytes(None), 0);
+        assert_eq!(current_rss_bytes(Some(u32::MAX)), 0);
+        assert!(member_resources(None).is_err());
+        assert!(member_resources(Some(u32::MAX)).is_err());
     }
     #[test]
     fn url_escaping_does_not_change_slashes() {

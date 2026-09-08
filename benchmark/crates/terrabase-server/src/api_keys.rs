@@ -120,7 +120,7 @@ pub struct Principal {
     expires_at: Option<u64>,
     /// Immutable tenant/project owner, when this is a customer credential.
     owner: Option<(String, String)>,
-    membership_scope: Option<String>,
+    authority_scope: Option<String>,
     reactive_allowed: bool,
 }
 
@@ -131,7 +131,7 @@ impl Principal {
             scope,
             expires_at: Some(expires_at),
             owner: None,
-            membership_scope: None,
+            authority_scope: None,
             reactive_allowed: true,
         }
     }
@@ -148,21 +148,17 @@ impl Principal {
             scope,
             expires_at: Some(expires_at),
             owner: Some(owner),
-            membership_scope: None,
+            authority_scope: None,
             reactive_allowed: true,
         }
     }
 
-    pub(crate) fn with_membership_scope(mut self, scope: String) -> Self {
-        self.membership_scope = Some(scope);
+    pub(crate) fn with_authority_scope(mut self, scope: String) -> Self {
+        self.authority_scope = Some(scope);
         self
     }
 
-    pub(crate) fn with_reactive_policy(mut self, feature: &str, allowed: bool) -> Self {
-        if let Some(scope) = self.membership_scope.as_mut() {
-            scope.push(':');
-            scope.push_str(feature);
-        }
+    pub(crate) fn with_reactive_policy(mut self, allowed: bool) -> Self {
         self.reactive_allowed = allowed;
         self
     }
@@ -171,8 +167,8 @@ impl Principal {
         self.reactive_allowed
     }
 
-    pub(crate) fn membership_scope(&self) -> Option<&str> {
-        self.membership_scope.as_deref()
+    pub(crate) fn authority_scope(&self) -> Option<&str> {
+        self.authority_scope.as_deref()
     }
 
     /// Caps a producer admission by an earlier verified credential expiry.
@@ -305,7 +301,7 @@ impl KeyStore {
                 scope,
                 expires_at,
                 owner: Some(owner),
-                membership_scope: None,
+                authority_scope: None,
                 reactive_allowed: true,
             },
         );
@@ -331,7 +327,7 @@ impl KeyStore {
                 scope,
                 expires_at,
                 owner: None,
-                membership_scope: None,
+                authority_scope: None,
                 reactive_allowed: true,
             },
         );
@@ -591,7 +587,7 @@ mod tests {
             label: "probe".to_owned(),
             scope: Scope::every_database(Verbs::READ),
             expires_at: Some(1_000),
-            membership_scope: None,
+            authority_scope: None,
             reactive_allowed: true,
         };
         assert!(!principal.is_expired_at(999), "before the bound admits");
@@ -602,7 +598,7 @@ mod tests {
             label: "bootstrap".to_owned(),
             scope: Scope::every_database(Verbs::ALL),
             expires_at: None,
-            membership_scope: None,
+            authority_scope: None,
             reactive_allowed: true,
         };
         assert!(!bootstrap.is_expired_at(u64::MAX), "never-expiring admits at any clock");

@@ -17,6 +17,27 @@ const VERSION: u8 = 1;
 const MAX_ROUTES: usize = 1024;
 const MAX_BYTES: usize = 1024 * 1024;
 
+impl super::Transaction<'_> {
+    /// Admits a named document write against this file's durable route.
+    /// Databases without a shard catalog keep ordinary write admission.
+    ///
+    /// # Errors
+    /// Refuses a moved key, stale route, malformed file identity, or duplicate binding.
+    pub fn bind_document_shard_admission(
+        &mut self,
+        collection: &crate::types::CollectionName,
+        id: &crate::types::DocumentId,
+    ) -> Result<(), EngineError> {
+        let Some((router, _)) = self.engine.load_shard_router(&self.scope)? else {
+            return Ok(());
+        };
+        let token = self.engine.shard_admission_for_key(
+            &self.scope, &router, &canonical_shard_key(collection, id),
+        )?;
+        self.bind_shard_admission(token)
+    }
+}
+
 /// Engine cutover adapter bound to one admitted tenant and database
 /// incarnation. The scope prevents a split from crossing database owners.
 pub(crate) struct ScopedShardEngine {
@@ -655,6 +676,9 @@ fn key(incarnation: u128) -> String {
 fn split_key(incarnation: u128) -> String {
     format!("control:shard-split/v1/{incarnation:032x}")
 }
+fn file_shard_key(incarnation: u128) -> String {
+    format!("control:shard-file/v1/{incarnation:032x}")
+}
 
 fn push_bound(out: &mut Vec<u8>, bound: Option<&[u8]>) -> Result<(), RouteCatalogError> {
     let bytes = bound.unwrap_or_default();
@@ -761,6 +785,29 @@ fn bytes(value: Option<DocumentValue>) -> Result<Option<Vec<u8>>, RouteCatalogEr
 }
 
 impl Engine {
+    /// Validates that a canonical routed key belongs to this physical file.
+    /// The returned token is rechecked against durable routing at commit.
+    ///
+    /// # Errors
+    /// Refuses malformed keys, stale routes, and keys owned by another file.
+    pub fn shard_admission_for_key(
+        &self,
+        scope: &TenantScope,
+        router: &crate::shard_split::ShardRouter,
+        key: &[u8],
+    ) -> Result<ShardAdmissionToken, EngineError> {
+        decode_canonical_shard_key(key).map_err(|_| EngineError::InvalidDocument)?;
+        let shard = router.route(key).ok_or(EngineError::Conflict)?;
+        let token = ShardAdmissionToken::for_key(
+            u128::from_be_bytes(*self.database_id().as_bytes()),
+            router.table().generation(),
+            shard,
+            key,
+        );
+        self.validate_shard_admission(scope, &token, &[])?;
+        Ok(token)
+    }
+
     /// Loads the authoritative serving router for an admitted database.
     /// Catalog decoding remains engine-owned; callers receive only the
     /// validated router and its durable generation.
@@ -794,7 +841,16 @@ impl Engine {
         else {
             return Err(EngineError::Conflict);
         };
-        (catalog.generation == token.route_generation
+        let snapshot = self.read_snapshot(scope)?;
+        let identity = self.lock_storage()?.port.private_metadata_at(
+            scope.tenant(),
+            &file_shard_key(incarnation),
+            snapshot.sequence(),
+        ).map_err(|()| EngineError::StorageFailure)?;
+        let identity = bytes(identity).map_err(|_| EngineError::StorageFailure)?;
+        (identity.as_deref() == Some(token.shard_id.to_be_bytes().as_slice())
+            && catalog.generation == token.route_generation
+            && token.keys.iter().all(|key| decode_canonical_shard_key(key).is_ok())
             && token.keys.iter().all(|key| catalog.table.route(key) == Some(token.shard_id))
             && writes.iter().all(|write| {
                 let collection = match write {
@@ -860,6 +916,21 @@ impl Engine {
         let catalog = decode_catalog(replacement)?;
         let mut tx = self.begin(scope, self.read_snapshot(scope)?, operation)?;
         let current = bytes(tx.read_private_metadata(&key(incarnation))?)?;
+        let identity = bytes(tx.read_private_metadata(&file_shard_key(incarnation))?)?;
+        if incarnation != u128::from_be_bytes(*self.database_id().as_bytes()) {
+            return Err(RouteCatalogError::Conflict);
+        }
+        if current.is_none() {
+            let [route] = catalog.table.routes() else {
+                return Err(RouteCatalogError::Malformed);
+            };
+            if identity.is_some() || catalog.generation != 0 {
+                return Err(RouteCatalogError::Conflict);
+            }
+            tx.put_private_metadata(&file_shard_key(incarnation), value(&route.shard_id().to_be_bytes()))?;
+        } else if identity.as_ref().is_none_or(|bytes| bytes.len() != 8) {
+            return Err(RouteCatalogError::Conflict);
+        }
         if current.as_deref() == Some(replacement) {
             return Ok(catalog.generation);
         }
@@ -917,6 +988,11 @@ impl Engine {
         let mut tx = self.begin(scope, self.read_snapshot(scope)?, operation)?;
         tx.internal_maintenance = true;
         let route_key = key(context.split.database_incarnation());
+        if bytes(tx.read_private_metadata(&file_shard_key(context.split.database_incarnation()))?)?
+            .as_deref() != Some(context.split.source_shard().to_be_bytes().as_slice())
+        {
+            return Err(RouteCatalogError::Conflict);
+        }
         let current =
             bytes(tx.read_private_metadata(&route_key)?)?.ok_or(RouteCatalogError::Malformed)?;
         let catalog = decode_catalog(&current)?;

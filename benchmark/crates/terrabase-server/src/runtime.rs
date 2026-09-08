@@ -283,105 +283,146 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             .with_storage_cleanup(report.storage);
         return Err(Box::new(DaemonError::ProductionStartup(error)));
     }
-    // The registry is the sole public admission gate.  Keep it closed until
-    // admission, replication, native backup, and recovery have all been
-    // assembled against this exact Member.
-    let serving = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let readiness = {
-        let serving = Arc::clone(&serving);
-        Arc::new(move || serving.load(std::sync::atomic::Ordering::Acquire))
+    // Keep independent owners before each fallible composition step. Builders
+    // can consume admission and reconciliation can start workers before failing.
+    let mut startup_owners = ProductionStartupOwners {
+        member: Arc::clone(&member),
+        lifecycle: None,
+        auth: None,
+        native: None,
     };
-    let registry = Arc::new(crate::admitted_databases::AdmittedDatabaseRegistry::new(readiness));
-    let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
-    let endpoint = member.shared_transport();
-    let public = config.public_api.as_ref();
-    let auth = if let (Some(control), Some(public)) = (production.control.as_ref(), public) {
-        let auth_journal = open_pending_auth_journal(control, production).map_err(|error| {
-            Box::new(DaemonError::ProductionStartup(error)) as Box<dyn Error + Send + Sync>
-        })?;
-        let auth = crate::auth_runtime::AuthRuntime::new(
-            endpoint,
-            auth_journal,
-            production.clone(),
-            public,
+    let result: Result<(), Box<dyn Error + Send + Sync>> = async {
+        // The registry is the sole public admission gate.  Keep it closed until
+        // admission, replication, native backup, and recovery have all been
+        // assembled against this exact Member.
+        let serving = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let readiness = {
+            let serving = Arc::clone(&serving);
+            Arc::new(move || serving.load(std::sync::atomic::Ordering::Acquire))
+        };
+        let registry =
+            Arc::new(crate::admitted_databases::AdmittedDatabaseRegistry::new(readiness));
+        let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
+        let endpoint = member.shared_transport();
+        let public = config.public_api.as_ref();
+        let auth = if let (Some(control), Some(public)) = (production.control.as_ref(), public) {
+            let auth_journal = open_pending_auth_journal(control, production).map_err(|error| {
+                Box::new(DaemonError::ProductionStartup(error)) as Box<dyn Error + Send + Sync>
+            })?;
+            let auth = crate::auth_runtime::AuthRuntime::new(
+                endpoint,
+                auth_journal,
+                production.clone(),
+                public,
+            )
+            .map_err(|detail| {
+                Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                    crate::production::ProductionComponentError {
+                        component: crate::production::ProductionComponent::PublicApi,
+                        detail: "auth runtime could not be composed",
+                    },
+                ))) as Box<dyn Error + Send + Sync>
+            })?;
+            startup_owners.auth = Some(Arc::clone(&auth));
+            auth.reconcile_for_shared_listener().await.map_err(|_| {
+                Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                    crate::production::ProductionComponentError {
+                        component: crate::production::ProductionComponent::PublicApi,
+                        detail: "auth group reconciliation failed",
+                    },
+                ))) as Box<dyn Error + Send + Sync>
+            })?;
+            Some(auth)
+        } else {
+            None
+        };
+        let dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher> = auth
+            .clone()
+            .map(|auth| auth as Arc<dyn crate::replication_peers::PeerControlDispatcher>)
+            .ok_or_else(|| DaemonError::ProductionConfigurationMissing)?;
+        let admission_config = production.clone();
+        let admission_journal =
+            journal.clone().ok_or_else(|| DaemonError::ProductionConfigurationMissing)?;
+        let mut admission = crate::production_data_runtime::ProductionAdmissionRuntime::new(
+            Arc::clone(&member),
+            member_for_admission,
+            admission_config,
+            admission_journal,
+            Arc::clone(&registry),
+            Arc::clone(&progress),
+            production.transport.max_inflight,
+            config.instance_id,
+            64 * 1024 * 1024,
+            dispatcher,
         )
-        .map_err(|detail| {
+        .map_err(|_| {
             Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
                 crate::production::ProductionComponentError {
-                    component: crate::production::ProductionComponent::PublicApi,
-                    detail: "auth runtime could not be composed",
+                    component: crate::production::ProductionComponent::Replication,
+                    detail: "production admission could not be composed",
                 },
             ))) as Box<dyn Error + Send + Sync>
         })?;
-        auth.reconcile_for_shared_listener().await.map_err(|_| {
+        startup_owners.lifecycle = Some(admission.lifecycle());
+        admission.reconcile().await.map_err(|_| {
             Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
                 crate::production::ProductionComponentError {
-                    component: crate::production::ProductionComponent::PublicApi,
-                    detail: "auth group reconciliation failed",
+                    component: crate::production::ProductionComponent::Replication,
+                    detail: "accepted data lifecycle could not start",
                 },
             ))) as Box<dyn Error + Send + Sync>
         })?;
-        Some(auth)
-    } else {
-        None
-    };
-    let dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher> = auth
-        .clone()
-        .map(|auth| auth as Arc<dyn crate::replication_peers::PeerControlDispatcher>)
-        .ok_or_else(|| DaemonError::ProductionConfigurationMissing)?;
-    let admission_config = production.clone();
-    let admission_journal =
-        journal.clone().ok_or_else(|| DaemonError::ProductionConfigurationMissing)?;
-    let mut admission = crate::production_data_runtime::ProductionAdmissionRuntime::new(
-        Arc::clone(&member),
-        member_for_admission,
-        admission_config,
-        admission_journal,
-        Arc::clone(&registry),
-        Arc::clone(&progress),
-        production.transport.max_inflight,
-        config.instance_id,
-        64 * 1024 * 1024,
-        dispatcher,
-    )
-    .map_err(|_| {
-        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
-            crate::production::ProductionComponentError {
-                component: crate::production::ProductionComponent::Replication,
-                detail: "production admission could not be composed",
-            },
-        ))) as Box<dyn Error + Send + Sync>
-    })?;
-    admission.reconcile().await.map_err(|_| {
-        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
-            crate::production::ProductionComponentError {
-                component: crate::production::ProductionComponent::Replication,
-                detail: "accepted data lifecycle could not start",
-            },
-        ))) as Box<dyn Error + Send + Sync>
-    })?;
-    let limits = production
-        .native_backup_limits()
-        .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-    let native = Arc::new(admission.compose_native_backup(limits).map_err(|_| {
-        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
-            crate::production::ProductionComponentError {
-                component: crate::production::ProductionComponent::Backup,
-                detail: "native backup fleet could not be composed",
-            },
-        ))) as Box<dyn Error + Send + Sync>
-    })?);
-    admission = admission
-        .with_native_deletion(native.fleet())
-        .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-    let admission = Arc::new(admission);
-    serve_admitted_production(
-        &config,
-        production,
-        AdmittedProduction { member, admission, registry, progress, serving, journal, auth },
-        native,
-    )
-    .await
+        let limits = production
+            .native_backup_limits()
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+        let native = Arc::new(admission.compose_native_backup(limits).map_err(|_| {
+            Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                crate::production::ProductionComponentError {
+                    component: crate::production::ProductionComponent::Backup,
+                    detail: "native backup fleet could not be composed",
+                },
+            ))) as Box<dyn Error + Send + Sync>
+        })?);
+        startup_owners.native = Some(Arc::clone(&native));
+        admission = admission
+            .with_native_deletion(native.fleet())
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+        let admission = Arc::new(admission);
+        serve_admitted_production(
+            &config,
+            production,
+            AdmittedProduction { member, admission, registry, progress, serving, journal, auth },
+            native,
+        )
+        .await
+    }
+    .await;
+    if result.is_err() {
+        startup_owners.drain().await;
+    }
+    result
+}
+
+struct ProductionStartupOwners {
+    member: Arc<terrabase_cluster::production::ProductionMemberRuntime>,
+    lifecycle: Option<Arc<crate::production_data_runtime::ProductionDataLifecycle>>,
+    auth: Option<Arc<crate::auth_runtime::AuthRuntime>>,
+    native: Option<Arc<crate::native_backup_runtime::NativeBackupRuntime>>,
+}
+
+impl ProductionStartupOwners {
+    async fn drain(&self) {
+        if let Some(lifecycle) = &self.lifecycle {
+            let _ = lifecycle.drain().await;
+        }
+        if let Some(auth) = &self.auth {
+            auth.shutdown().await;
+        }
+        if let Some(native) = &self.native {
+            let _ = native.drain();
+        }
+        let _ = self.member.drain().await;
+    }
 }
 
 struct AdmittedProduction {
@@ -405,6 +446,7 @@ async fn serve_admitted_production(
     let AdmittedProduction { member, admission, registry, progress, serving, journal, auth } =
         owners;
     let public = config.public_api.as_ref();
+    let auth_for_cleanup = auth.clone();
     let native_shutdown = Arc::clone(&native);
     let recovery_root = parts_root_for_recovery(production);
     let (recovery, recovery_worker) = crate::native_recovery::NativeRecoveryRuntime::new(
@@ -533,11 +575,12 @@ async fn serve_admitted_production(
                         service_key: secret,
                     },
                 )
-                .map(|verifier| {
+                .and_then(|verifier| {
+                    let verifier = verifier.with_authorization_lease_keys(region, identity.authorization_lease_keys_file.clone())?;
                     let verifier =
                         Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
-                    verifier.start_membership_poll();
-                    verifier
+                    verifier.start_authorization_poll();
+                    Ok(verifier)
                 })
                 .map_err(|_| DaemonError::ProductionConfigurationMissing)
             })
@@ -786,6 +829,9 @@ async fn serve_admitted_production(
             .map_err(|_| DaemonError::ShutdownTimeout)?;
         serving.store(false, std::sync::atomic::Ordering::Release);
         admission.drain().await.map_err(|_| DaemonError::ShutdownTimeout)?;
+        if let Some(auth) = &auth_for_cleanup {
+            auth.shutdown().await;
+        }
         native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
         let report = member.drain().await;
         report.storage.map_err(|error| {
@@ -806,6 +852,7 @@ async fn serve_admitted_production(
             native_stop.clone(),
             native_task.take(),
             &admission_for_startup_cleanup,
+            auth_for_cleanup.as_deref(),
             &native_for_startup_cleanup,
             &member_for_startup_cleanup,
         )
@@ -822,6 +869,7 @@ async fn cleanup_failed_production_startup(
         tokio::task::JoinHandle<Result<(), crate::native_backup_runtime::NativeBackupRuntimeError>>,
     >,
     admission: &crate::production_data_runtime::ProductionAdmissionRuntime,
+    auth: Option<&crate::auth_runtime::AuthRuntime>,
     native: &crate::native_backup_runtime::NativeBackupRuntime,
     member: &terrabase_cluster::production::ProductionMemberRuntime,
 ) {
@@ -833,6 +881,9 @@ async fn cleanup_failed_production_startup(
         let _ = native_task.await;
     }
     let _ = admission.drain().await;
+    if let Some(auth) = auth {
+        auth.shutdown().await;
+    }
     let _ = native.drain();
     let _ = member.drain().await;
 }
@@ -1456,11 +1507,15 @@ async fn serve_public_api(
                     service_key: secret,
                 },
             )
-            .map(|verifier| {
+            .and_then(|verifier| {
+                let verifier = verifier.with_authorization_lease_keys(
+                    region,
+                    identity.authorization_lease_keys_file.clone(),
+                )?;
                 let verifier =
                     Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
-                verifier.start_membership_poll();
-                verifier
+                verifier.start_authorization_poll();
+                Ok(verifier)
             })
             .map_err(|_| DaemonError::Engine("invalid identity authority configuration".into()))
         })
@@ -1839,6 +1894,17 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn post_listener_startup_failure_joins_owners_and_releases_ledger() {
+        exercise_production_startup_cleanup(false).await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn consumed_admission_builder_failure_drains_retained_owners() {
+        exercise_production_startup_cleanup(true).await;
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn exercise_production_startup_cleanup(before_listeners: bool) {
         use crate::native_backup_runtime::{
             AdmittedBackupEngine, NativeBackupInput, NativeBackupRuntime,
         };
@@ -2012,6 +2078,24 @@ mod tests {
             .unwrap(),
         );
         drop(target);
+        if before_listeners {
+            let owners = ProductionStartupOwners {
+                member: Arc::clone(&member),
+                lifecycle: Some(admission.lifecycle()),
+                auth: None,
+                native: Some(Arc::clone(&native)),
+            };
+            // A consumed builder can fail without returning its admission value.
+            // The independent lifecycle must still release its retained hosts.
+            drop(admission);
+            owners.drain().await;
+            assert!(registry.retained_snapshot().unwrap().is_empty());
+            assert!(!native.contains(&record.database_id));
+            drop(owners);
+            drop((native, registry, member, storage, remote));
+            std::fs::remove_dir_all(root).unwrap();
+            return;
+        }
         let admission = Arc::new(admission.with_native_deletion(native.fleet()).unwrap());
         let publication_key = root.join("lifecycle-publisher.key");
         std::fs::write(&publication_key, "p".repeat(32)).unwrap();

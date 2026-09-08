@@ -378,6 +378,8 @@ pub struct PublicIdentityConfig {
     pub audience: String,
     /// Absolute path to the private service credential.
     pub service_key_file: PathBuf,
+    /// Separate owner-only producer lease verification key ring.
+    pub authorization_lease_keys_file: PathBuf,
 }
 
 /// Authenticated local ingress to the durable provisioning authority.
@@ -1798,6 +1800,7 @@ fn validate_public_api_paths(section: &FilePublicApi) -> Result<(), ConfigError>
     }
     if let Some(identity) = &section.identity {
         absolute(&identity.service_key_file)?;
+        absolute(&identity.authorization_lease_keys_file)?;
         for endpoint in [&identity.endpoint, &identity.issuer, &identity.audience] {
             let uri: axum::http::Uri =
                 endpoint.parse().map_err(|_| ConfigError::InvalidIdentityAuthority)?;

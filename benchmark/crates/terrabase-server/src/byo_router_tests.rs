@@ -44,7 +44,7 @@ fn token(
     let mut claims = json!({
         "iss": "https://issuer.example",
         "sub": "user-1",
-        "tenant": "terrabase-local",
+        "tenant": crate::delegated_identity::tests::TEST_TENANT,
         "aud": audience,
         "iat": expires_at.saturating_sub(60),
         "exp": expires_at,
@@ -73,7 +73,7 @@ fn service() -> (ByoJwtService<FixtureFetcher, AwsLcJwtVerifier>, EcdsaKeyPair) 
         }]
     });
     let config = TenantJwtConfig {
-        tenant: "terrabase-local".into(),
+        tenant: crate::delegated_identity::tests::TEST_TENANT.into(),
         issuer: "https://issuer.example".into(),
         audience: "https://api.example".into(),
         jwks_endpoint: JwksEndpoint::parse("https://keys.example/jwks.json").unwrap(),
@@ -100,6 +100,7 @@ async fn byo_router_admits_same_owner_route() {
     reply.lock().unwrap()["issuer"] = json!("https://issuer.example");
     let mut state = super::state();
     let editable = Arc::get_mut(&mut state).unwrap();
+    editable.scope.0 = crate::delegated_identity::tests::TEST_TENANT.into();
     editable.byo_jwt = Some(Arc::new(service));
     editable.delegated_identity = Some(Arc::new(verifier));
     let response = super::router(state)
@@ -145,6 +146,7 @@ async fn request_with_service(
     }
     let mut state = super::state();
     let editable = Arc::get_mut(&mut state).unwrap();
+    editable.scope.0 = crate::delegated_identity::tests::TEST_TENANT.into();
     editable.byo_jwt = Some(Arc::new(service));
     editable.delegated_identity = Some(Arc::new(verifier));
     let response = super::router(state)
@@ -169,6 +171,7 @@ async fn byo_router_rechecks_current_membership_and_permission() {
     reply.lock().unwrap()["issuer"] = json!("https://issuer.example");
     let mut state = super::state();
     let editable = Arc::get_mut(&mut state).unwrap();
+    editable.scope.0 = crate::delegated_identity::tests::TEST_TENANT.into();
     editable.byo_jwt = Some(Arc::new(service));
     editable.delegated_identity = Some(Arc::new(verifier));
     let app = super::router(state);
@@ -179,7 +182,7 @@ async fn byo_router_rechecks_current_membership_and_permission() {
         Some(("action", json!("write"))),
         Some(("scopes", json!(["database:write"]))),
         Some(("projectId", json!("other"))),
-        Some(("membershipScope", json!(null))),
+        Some(("authorityScope", json!(null))),
     ] {
         *reply.lock().unwrap() = original.clone();
         if let Some((field, value)) = &patch {

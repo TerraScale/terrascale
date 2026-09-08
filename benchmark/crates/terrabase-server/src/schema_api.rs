@@ -642,6 +642,8 @@ pub enum MigrationState {
     Pending,
     /// Worker has reported progress.
     Running,
+    /// A reversible migration is restoring its previous schema.
+    RollingBack,
     /// All steps completed.
     Complete,
     /// Worker stopped and supplied an error.
@@ -1047,9 +1049,23 @@ pub struct DurableSchemaRecord {
     /// Original ready-plan evidence retained before the first migration page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migration_plan: Option<Vec<u8>>,
+    /// Durable rollback intent, retained after completion for request replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback: Option<SchemaRollback>,
     /// Idempotency key → canonical request digest and response document.
     #[serde(default)]
     pub idempotency: BTreeMap<String, IdempotencyRecord>,
+}
+
+/// Identity of an admitted rollback request. The source generation stays fixed
+/// while the public schema generation advances when restoration is published.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaRollback {
+    /// Caller-supplied idempotency identity.
+    pub idempotency_key: String,
+    /// Strong ETag required when the rollback was admitted.
+    pub generation: u64,
 }
 
 /// Immutable collection contract identity; progress and replay records do not
@@ -1084,7 +1100,7 @@ pub struct SchemaError {
 }
 
 impl SchemaError {
-    fn new(status: u16, code: &str, message: impl Into<String>, fix: impl Into<String>) -> Self {
+    pub(crate) fn new(status: u16, code: &str, message: impl Into<String>, fix: impl Into<String>) -> Self {
         Self {
             status,
             code: code.to_owned(),
@@ -1291,7 +1307,7 @@ impl SchemaService {
         }
         if current.as_ref().is_some_and(|record| {
             record.document.migration.as_ref().is_some_and(|migration| {
-                matches!(migration.state, MigrationState::Pending | MigrationState::Running)
+                matches!(migration.state, MigrationState::Pending | MigrationState::Running | MigrationState::RollingBack)
                     || (migration.state == MigrationState::Failed
                         && record.migration_plan.is_some())
             })
@@ -1327,6 +1343,7 @@ impl SchemaService {
                         },
                     ),
                     migration_plan: None,
+                    rollback: None,
                     document: document.clone(),
                     idempotency,
                 },
@@ -1411,6 +1428,7 @@ impl SchemaService {
                     } else {
                         current.migration_plan.clone()
                     },
+                    rollback: current.rollback.clone(),
                     document: document.clone(),
                     idempotency,
                 },
@@ -1457,6 +1475,9 @@ impl SchemaService {
                 "refresh migration status and apply a schema change that requires backfill",
             ));
         };
+        if migration.state == MigrationState::RollingBack {
+            return Err(SchemaError::new(409, "rollback_in_progress", "forward progress cannot replace rollback ownership", "wait for rollback to finish"));
+        }
         if migration.operation_id != progress.operation_id {
             return Err(SchemaError::new(
                 409,
@@ -1683,7 +1704,7 @@ fn resolve_identity(
         .resolve(database, branch)
 }
 
-fn schema_response(status: StatusCode, document: &SchemaDocument, include_etag: bool) -> Response {
+pub(crate) fn schema_response(status: StatusCode, document: &SchemaDocument, include_etag: bool) -> Response {
     let mut response = json_response(status, document);
     if include_etag && let Ok(value) = format!("\"{}\"", document.generation).parse() {
         response.headers_mut().insert(ETAG, value);
@@ -1707,7 +1728,7 @@ fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response {
         .expect("schema response is valid")
 }
 
-fn parse_if_match(headers: &HeaderMap) -> Result<Option<u64>, SchemaError> {
+pub(crate) fn parse_if_match(headers: &HeaderMap) -> Result<Option<u64>, SchemaError> {
     let invalid = || {
         SchemaError::new(
             400,
@@ -1733,7 +1754,7 @@ fn parse_if_match(headers: &HeaderMap) -> Result<Option<u64>, SchemaError> {
     generation.parse::<u64>().map(Some).map_err(|_| invalid())
 }
 
-fn header_text(headers: &HeaderMap, name: &str) -> Result<Option<String>, SchemaError> {
+pub(crate) fn header_text(headers: &HeaderMap, name: &str) -> Result<Option<String>, SchemaError> {
     let invalid = || {
         SchemaError::new(
             400,
@@ -2069,7 +2090,7 @@ fn progress_digest(progress: &BackfillProgress) -> Result<String, SchemaError> {
     )
 }
 
-fn validate_durable_record(
+pub(crate) fn validate_durable_record(
     target: &SchemaTarget,
     record: &DurableSchemaRecord,
 ) -> Result<(), SchemaError> {
@@ -2231,7 +2252,7 @@ fn ensure_identity(
     Ok(())
 }
 
-fn validate_idempotency_key(key: &str) -> Result<(), SchemaError> {
+pub(crate) fn validate_idempotency_key(key: &str) -> Result<(), SchemaError> {
     if key.is_empty() || key.len() > MAX_IDEMPOTENCY_KEY_BYTES || !key.is_ascii() {
         return Err(SchemaError::new(
             400,

@@ -28,6 +28,8 @@ async fn setup() -> Arc<ApiState> {
         .oneshot(
             Request::post("/api/v1/databases")
                 .header("authorization", KEY)
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(r#"{"name":"replay","placement":["GRU"],"residency":null}"#))
                 .unwrap(),
         )
@@ -82,7 +84,21 @@ async fn batch_http_replay_preserves_original_receipt_after_patch_and_delete() {
         request(&server, "PUT", DOCUMENT_PATH, "seed", None, r#"{"a":1,"b":1}"#).await.0,
         StatusCode::OK
     );
-    let batch = r#"{"operations":[{"op":"patch","id":"doc","value":{"a":2}},{"op":"put","id":"gone","value":{"x":1}},{"op":"delete","id":"gone"}]}"#;
+    assert_eq!(
+        request(
+            &server,
+            "PUT",
+            "/api/v1/databases/replay/collections/items/documents/gone",
+            "seed-gone",
+            None,
+            r#"{"x":1}"#
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let batch =
+        r#"{"operations":[{"op":"patch","id":"doc","value":{"a":2}},{"op":"delete","id":"gone"}]}"#;
     let first = request(&server, "POST", PATH, "batch", None, batch).await;
     assert_eq!(first.0, StatusCode::OK, "{first:?}");
     let original = first.2;
@@ -141,7 +157,9 @@ async fn batch_http_postcommit_rf2_timeout_replays_without_repeating_effects() {
         owner.database(),
     );
     let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
-    progress.admit(route, std::collections::BTreeSet::from(["gru".into()])).unwrap();
+    progress
+        .admit(route, std::collections::BTreeSet::from([owner.region().as_str().into()]))
+        .unwrap();
     Arc::get_mut(&mut state).unwrap().replication_progress = Some(progress.clone());
     let server = serve(state.clone()).await;
     let before = host.engine().published_sequence().unwrap();

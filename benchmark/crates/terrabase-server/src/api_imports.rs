@@ -247,7 +247,11 @@ impl ImportWriteTarget for EngineImportWriteTarget {
                 }
                 Ok(ImportCommit::Committed { records: records.len() as u64 })
             }
-            terrabase::CommitOutcome::Rejected(_) => Ok(ImportCommit::Rejected),
+            terrabase::CommitOutcome::Rejected(reason) => {
+                #[cfg(test)]
+                eprintln!("import engine rejection: {reason:?}");
+                Ok(ImportCommit::Rejected)
+            }
             terrabase::CommitOutcome::Unknown(_) => Ok(ImportCommit::Unknown),
         }
     }
@@ -485,6 +489,8 @@ fn commit_batch<T: ImportWriteTarget>(
             .begin_batch(&job.operation_id, &operation, cursor, count)
             .map_err(|e| ImportExecutionError::Store(e.to_string()))?;
         target.commit_import_batch(&operation, database_id, batch).map_err(|error| {
+            #[cfg(test)]
+            eprintln!("import preparation error: {error}");
             let _ = store.clear_rejected(&job.operation_id);
             ImportExecutionError::Rejected(error)
         })?

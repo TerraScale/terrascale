@@ -62,8 +62,28 @@ async fn assert_auth_bootstrap(fixture: &Fixture, channel: tonic::transport::Cha
 
 #[tokio::test]
 async fn real_mtls_stage_get_retry_and_scope_isolation() {
+    use base64::Engine as _;
+    use prost::Message as _;
+    use ring::signature::KeyPair as _;
     let fixture = Fixture::new();
     let journal = Arc::new(fixture.open());
+    let proposal = fixture.request.proposal.as_ref().unwrap();
+    let identity = terrabase_cluster::production::MemberWorkloadIdentity::try_new(
+        &proposal.environment,
+        &proposal.cluster,
+        &proposal.assignments[0].writer_member,
+    )
+    .unwrap()
+    .as_str()
+    .to_owned();
+    let signing_der =
+        ring::signature::Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
+    let signing_key = ring::signature::Ed25519KeyPair::from_pkcs8(signing_der.as_ref()).unwrap();
+    let signer = crate::placement::transition::TransitionReceiptSigner::from_pkcs8(
+        identity.clone(),
+        signing_der.as_ref(),
+    )
+    .unwrap();
     let config = TbepGrpcConfig::try_new(
         256 * 1024,
         8,
@@ -80,7 +100,8 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
             config,
             BTreeSet::new(),
         )
-        .unwrap(),
+        .unwrap()
+        .with_join_signer(Arc::new(signer)),
     );
     let (ca, certificate, key, client_certificate, client_key) = tls_material();
     let listener =
@@ -111,7 +132,38 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
         .into_inner();
     assert_eq!(response.status, pb::PlacementProposalStatus::Pending as i32);
     assert_eq!(response.revision, 1);
+    let signed: serde_json::Value = serde_json::from_slice(&response.join_challenge).unwrap();
+    assert_eq!(signed["key_id"], identity);
+    let payload = base64::engine::general_purpose::STANDARD
+        .decode(signed["payload"].as_str().unwrap())
+        .unwrap();
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(signed["signature"].as_str().unwrap())
+        .unwrap();
+    let mut input = b"terrabase-placement-transition-v1\0".to_vec();
+    input.extend_from_slice(&payload);
+    ring::signature::UnparsedPublicKey::new(
+        &ring::signature::ED25519,
+        signing_key.public_key().as_ref(),
+    )
+    .verify(&input, &signature)
+    .unwrap();
+    let challenge: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    assert_eq!(challenge["kind"], "placement_join_challenge");
+    assert_eq!(challenge["member_identity"], identity);
+    assert_eq!(challenge["proposal_revision"], 1);
+    assert_eq!(challenge["bootstrap_nonce"].as_str().unwrap().len(), 64);
+    let digest = ring::digest::digest(
+        &ring::digest::SHA256,
+        &response.proposal.as_ref().unwrap().encode_to_vec(),
+    )
+    .as_ref()
+    .iter()
+    .map(|byte| format!("{byte:02x}"))
+    .collect::<String>();
+    assert_eq!(challenge["stage_proposal_digest"], digest);
     let fetched = client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap().into_inner();
+    assert_eq!(fetched.join_challenge, response.join_challenge);
     assert_eq!(fetched.revision, response.revision);
     assert_eq!(fetched.proposal, response.proposal);
     assert_eq!(fetched.status, response.status);

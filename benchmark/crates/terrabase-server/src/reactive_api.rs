@@ -1046,7 +1046,7 @@ pub async fn attach_view(
         }
     };
     if let Err(error) =
-        bind_membership_capability(&state, &mut response, principal.membership_scope())
+        bind_authority_capability(&state, &mut response, principal.authority_scope())
     {
         return error.into_response();
     }
@@ -1280,17 +1280,17 @@ fn verify_socket_capability(
         .ok_or_else(capability_error)?
         .verify_claims(credential, &expected, now_seconds())
         .map_err(|_| capability_error())?;
-    check_membership_scope(state, &claims.authorization_scope)
+    check_authority_scope(state, &claims.authorization_scope)
 }
 
-fn check_membership_scope(state: &ApiState, scope: &str) -> Result<(), ApiError> {
+fn check_authority_scope(state: &ApiState, scope: &str) -> Result<(), ApiError> {
     if let Some((database, membership)) = scope.split_once(':')
-        && crate::membership_revocations::valid_scope(database)
+        && crate::authorization_leases::valid_database_scope(database)
     {
         if !state
             .delegated_identity
             .as_ref()
-            .is_some_and(|identity| identity.membership.admits(membership, now_seconds()))
+            .is_some_and(|identity| identity.authorization.admits(membership, now_seconds()))
         {
             return Err(capability_error());
         }
@@ -1298,7 +1298,7 @@ fn check_membership_scope(state: &ApiState, scope: &str) -> Result<(), ApiError>
     Ok(())
 }
 
-fn bind_membership_capability(
+fn bind_authority_capability(
     state: &ApiState,
     response: &mut AttachResponse,
     membership: Option<&str>,
@@ -1308,7 +1308,7 @@ fn bind_membership_capability(
     };
     let expected = store().capability_claims(&response.view, response.generation)?;
     let scope = format!("{}:{membership}", expected.authorization_scope);
-    check_membership_scope(state, &scope)?;
+    check_authority_scope(state, &scope)?;
     response.capability = capability_for_region(
         &response.view,
         response.generation,
@@ -1618,7 +1618,7 @@ fn verify_view_header(
         .ok_or_else(capability_error)?
         .verify_claims(raw, &expected, now_seconds())
         .map_err(|_| capability_error())?;
-    check_membership_scope(state, &claims.authorization_scope)
+    check_authority_scope(state, &claims.authorization_scope)
 }
 
 /// Deterministically mints a D-14 capability for conformance tests.

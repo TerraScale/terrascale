@@ -15,6 +15,8 @@ async fn setup() -> (Arc<ApiState>, axum::Router) {
         .oneshot(
             Request::post("/api/v1/databases")
                 .header("authorization", KEY)
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(r#"{"name":"put-causal","placement":["GRU"],"residency":null}"#))
                 .expect("request"),
         )
