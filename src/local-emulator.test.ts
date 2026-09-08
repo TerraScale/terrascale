@@ -284,7 +284,7 @@ test("project deletion cascades every project-scoped core resource", async () =>
       await root.organizations.deleteProject(project.projectId, {
         confirm: true,
         projectName: project.name,
-      }),
+      }, { idempotencyKey: "cascade-project-delete" }),
     );
     assert.equal(deleted.databasesDeleted, 1);
     assert.equal(deleted.physicalStorageDeleted, true);

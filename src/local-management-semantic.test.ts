@@ -89,7 +89,7 @@ test("organizations, regions, and saved-query versions have real CRUD, isolation
     assert.equal(value(await root.organizations.removeMember(organization.organizationId, userId)), undefined);
     const rejoin = value(await root.organizations.createInvitation(organization.organizationId, { email: "rejoin@example.test", responseUrlTemplate: "https://example.test/rejoin" }));
     value(await root.organizations.acceptInvitation(organization.organizationId, rejoin.invitationId));
-    assert.equal(value(await root.organizations.leave(organization.organizationId)), undefined);
+    assert.equal(value(await root.organizations.leave(organization.organizationId, { idempotencyKey: "semantic-org-leave" })), undefined);
     assert.equal(value(await root.organizations.listMembers(organization.organizationId)).length, 0);
 
     const scoped = client(runtime, project.projectId);
@@ -112,8 +112,8 @@ test("organizations, regions, and saved-query versions have real CRUD, isolation
     assert.equal(value(await scoped.savedQueries.list()).items.length, 0);
     assert.equal(value(await client(runtime, otherProject.projectId).savedQueries.list()).items.length, 0);
 
-    assert.equal(value(await root.organizations.requestDeletion(organization.organizationId, { confirm: true, organizationName: "Renamed organization" })).status, "DeletionPending");
-    assert.equal(value(await root.organizations.deleteProject(project.projectId, { confirm: true, projectName: "Updated project" })).deleted, true);
+    assert.equal(value(await root.organizations.requestDeletion(organization.organizationId, { confirm: true, organizationName: "Renamed organization" }, { idempotencyKey: "semantic-org-delete" })).status, "DeletionPending");
+    assert.equal(value(await root.organizations.deleteProject(project.projectId, { confirm: true, projectName: "Updated project" }, { idempotencyKey: "semantic-project-delete" })).deleted, true);
     assert.equal(value(await root.organizations.listProjects(organization.organizationId)).length, 0);
     assert.equal(value(await root.organizations.getProject(otherProject.projectId)).name, "Other project");
   });
@@ -151,6 +151,54 @@ test("access and usage persist through SQLite reopen", async () => {
     } finally {
       await reopened.close();
     }
+  });
+});
+
+test("organization and project destructive mutations replay durably by actor and key", async () => {
+  await withRuntime(async (runtime) => {
+    const owner = client(runtime);
+    const organization = value(await owner.organizations.create({ name: "Replay organization" }));
+    const project = value(await owner.organizations.createProject(organization.organizationId, {
+      name: "Replay project", regions: ["GRU"], backupRegion: "GRU",
+    }));
+    const actorA = runtime.createClient({ accessToken: "actor-a" });
+    const actorB = runtime.createClient({ accessToken: "actor-b" });
+
+    const deletion = { confirm: true as const, organizationName: organization.name };
+    const firstOrganizationDeletion = value(await actorA.organizations.requestDeletion(
+      organization.organizationId,
+      deletion,
+      { idempotencyKey: "replay-organization-delete" },
+    ));
+    const replayedOrganizationDeletion = value(await actorA.organizations.requestDeletion(
+      organization.organizationId,
+      deletion,
+      { idempotencyKey: "replay-organization-delete" },
+    ));
+    assert.deepEqual(replayedOrganizationDeletion, firstOrganizationDeletion);
+    failure(await actorA.organizations.requestDeletion(
+      organization.organizationId,
+      { ...deletion, organizationName: "changed" },
+      { idempotencyKey: "replay-organization-delete" },
+    ), "idempotency_key_reused");
+
+    const projectDeletion = { confirm: true as const, projectName: project.name };
+    const firstProjectDeletion = value(await actorA.organizations.deleteProject(
+      project.projectId,
+      projectDeletion,
+      { idempotencyKey: "replay-project-delete" },
+    ));
+    const replayedProjectDeletion = value(await actorA.organizations.deleteProject(
+      project.projectId,
+      projectDeletion,
+      { idempotencyKey: "replay-project-delete" },
+    ));
+    assert.deepEqual(replayedProjectDeletion, firstProjectDeletion);
+    failure(await actorB.organizations.deleteProject(
+      project.projectId,
+      projectDeletion,
+      { idempotencyKey: "replay-project-delete" },
+    ), "not_found");
   });
 });
 

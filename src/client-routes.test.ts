@@ -110,6 +110,32 @@ describe("TerraScaleClient route contracts", () => {
     });
   });
 
+  test("requires explicit idempotency keys for organization and project destructive mutations", async () => {
+    const { client, requests } = createCapturingClientWithResponses([
+      { organizationId, name: "Org", status: "DeletionPending", ownerUserIds: [], createdAt: "2026-01-01T00:00:00Z" },
+      null,
+      { projectId, organizationId, name: "Project", deleted: true, databasesDeleted: 0, physicalStorageDeleted: true },
+    ]);
+    assert.throws(
+      () => client.organizations.leave(organizationId, undefined as never),
+      TypeError,
+    );
+    await client.organizations.requestDeletion(
+      organizationId,
+      { confirm: true, organizationName: "Org" },
+      { idempotencyKey: "organization-delete" },
+    );
+    await client.organizations.leave(organizationId, { idempotencyKey: "organization-leave" });
+    await client.organizations.deleteProject(
+      projectId,
+      { confirm: true, projectName: "Project" },
+      { idempotencyKey: "project-delete" },
+    );
+    assert.equal(requests[0]?.headers.get("idempotency-key"), "organization-delete");
+    assert.equal(requests[1]?.headers.get("idempotency-key"), "organization-leave");
+    assert.equal(requests[2]?.headers.get("idempotency-key"), "project-delete");
+  });
+
   test("uses project database routes, requires explicit deletion confirmation, and scopes its header", async () => {
     const deletedDatabase = {
       databaseId,

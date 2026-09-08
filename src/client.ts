@@ -1395,6 +1395,21 @@ function validateBackupConfirmationValue(
   }
 }
 
+function organizationMutationOptions(
+  options: Models.OrganizationMutationOptions,
+): Models.OrganizationMutationOptions {
+  if (options === null || typeof options !== "object") {
+    throw new TypeError("organization mutation options must be an object.");
+  }
+  if (typeof options.idempotencyKey !== "string" || options.idempotencyKey.trim().length === 0 || options.idempotencyKey.length > 128) {
+    throw new TypeError("idempotencyKey must be nonblank and contain at most 128 characters.");
+  }
+  if (options.idempotencyKey !== options.idempotencyKey.trim()) {
+    throw new TypeError("idempotencyKey cannot have leading or trailing whitespace.");
+  }
+  return options;
+}
+
 type DirectRequestOptions = {
   readonly method: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
   readonly path: string;
