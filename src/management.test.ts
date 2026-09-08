@@ -208,6 +208,41 @@ describe("management entrypoint", () => {
   });
 });
 
+it("publishes the producer import lifecycle routes and binary upload body", async () => {
+  const requests: Request[] = [];
+  const client = createTerraScaleManagementClient({
+    apiBaseUrl: "https://api.example.test",
+    fetch: async input => {
+      const request = new Request(input);
+      requests.push(request);
+      const pathname = new URL(request.url).pathname;
+      return Response.json(pathname.endsWith("/imports") && request.method === "GET" ? [] : {
+        committed_records: 0, cursor: 0, database_id: "db", durability: "regional", error: null,
+        format: "jsonl", input_committed: false, input_digest: null, input_length: null,
+        operation_id: "import-1", pending_cursor: null, pending_operation: null, pending_records: null,
+        project_id: "project", state: "uploading", tenant_id: "tenant",
+      }, { status: request.method === "POST" && pathname.endsWith("/imports") ? 202 : 200 });
+    },
+  });
+
+  await client.imports.list("db");
+  await client.imports.create("db", { format: "jsonl", idempotency_key: "import-one" });
+  await client.imports.get("db", "import-1");
+  await client.imports.upload("db", "import-1", new Uint8Array([1, 2, 3]));
+  await client.imports.resume("db", "import-1");
+
+  expect(requests.map(request => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
+    "GET /api/v1/databases/db/imports",
+    "POST /api/v1/databases/db/imports",
+    "GET /api/v1/databases/db/imports/import-1",
+    "PUT /api/v1/databases/db/imports/import-1/input",
+    "POST /api/v1/databases/db/imports/import-1/resume",
+  ]);
+  expect(await requests[1]!.json()).toEqual({ format: "jsonl", idempotency_key: "import-one" });
+  expect(requests[3]!.headers.get("content-type")).toBe("application/octet-stream");
+  expect(new Uint8Array(await requests[3]!.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+});
+
 it("carries schema generation preconditions and a stable apply identity", async () => {
   const requests: Request[] = [];
   const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });

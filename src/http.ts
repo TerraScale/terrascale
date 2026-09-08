@@ -429,6 +429,7 @@ function validateCredentialEndpoint(baseUrl: string, explicitTestTransport: bool
 }
 
 const internalHeaderNames = new Set([
+  "content-type",
   "if-match",
   "if-none-match",
   "x-terrascale-durability",

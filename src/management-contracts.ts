@@ -98,7 +98,7 @@ export type DevelopmentLogResponse = {
 
 export type ExportList = { readonly exports: readonly ExportStatus[]; readonly next_cursor: string | null };
 
-export type TransferFormat = "json" | "jsonl" | "csv";
+export type TransferFormat = "jsonl" | "csv" | "mongo_json" | "cosmos_json" | "dynamo_json";
 export type CreateImportRequest = {
   readonly format: TransferFormat;
   readonly idempotency_key: string;

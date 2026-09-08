@@ -11,10 +11,12 @@ const pathTemplateSegments = new Map<string, string>([
   [sampleIds.database, "{name}"],
   [sampleIds.collection, "{collection}"],
   [sampleIds.documentId, "{id}"],
-]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}").set("operation-1", "{operation_id}").set("auth-user", "{model}");
+]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("import-1", "{id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}").set("operation-1", "{operation_id}").set("auth-user", "{model}");
 
 /** Canonical producer operations not implemented by this SDK slice. */
 export const expectedContractGapRouteNames = [
+  "databases.authorizationLease",
+  "databases.rollbackSchema",
   "databases.websocket",
   "health.health",
 ] as const;
@@ -303,6 +305,26 @@ const captureOperations: readonly CaptureOperation[] = [
     client: "databases", operation: "resumeExport", routeName: "databases.resumeExport",
     invoke: (_client, management) => management.exports.resume(sampleIds.database, "export-1", { resume_cursor: "resume-1" }),
   },
+  {
+    client: "databases", operation: "listImports", routeName: "databases.listImports",
+    invoke: (_client, management) => management.imports.list(sampleIds.database),
+  },
+  {
+    client: "databases", operation: "createImport", routeName: "databases.createImport",
+    invoke: (_client, management) => management.imports.create(sampleIds.database, { format: "jsonl", idempotency_key: "import-1" }),
+  },
+  {
+    client: "databases", operation: "getImport", routeName: "databases.getImport",
+    invoke: (_client, management) => management.imports.get(sampleIds.database, "import-1"),
+  },
+  {
+    client: "databases", operation: "uploadImport", routeName: "databases.uploadImport",
+    invoke: (_client, management) => management.imports.upload(sampleIds.database, "import-1", new Uint8Array()),
+  },
+  {
+    client: "databases", operation: "resumeImport", routeName: "databases.resumeImport",
+    invoke: (_client, management) => management.imports.resume(sampleIds.database, "import-1"),
+  },
 
   {
     client: "databases", operation: "listDatabases", routeName: "databases.listDatabases",
@@ -388,9 +410,5 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "regions", operation: "list", routeName: "regions.list",
     invoke: (client) => client.regions.list(),
-  },
-  {
-    client: "regions", operation: "regions", routeName: "regions.regions",
-    invoke: (client) => client.regions.memberStatus("GRU"),
   },
 ];

@@ -77,13 +77,20 @@ test("generated route metadata pins the terrabase contract version", async () =>
     readonly contractVersion: string;
     readonly source?: { readonly repository?: string; readonly bundle?: string };
     readonly routeCount: number;
-    readonly routes: readonly { readonly pathTemplate: string }[];
+    readonly routes: readonly {
+      readonly pathTemplate: string;
+      readonly producer: "edge" | "terrabase";
+      readonly routeName: string;
+    }[];
   };
   assert.equal(version.trim(), "v1");
   assert.equal(parsed.manifestVersion, 2);
   assert.equal(parsed.contractVersion, version.trim());
-  assert.deepEqual(parsed.source, { repository: "terrabase", bundle: "contracts", openapi: "openapi.json" });
+  assert.deepEqual(parsed.source, { repository: "terrabase+ts-proxy", bundle: "contracts/v1", openapi: "openapi.json" });
   assert.equal(parsed.routeCount, parsed.routes.length);
+  assert.equal(parsed.routeCount, 73);
+  assert.deepEqual(parsed.routes.filter(({ producer }) => producer === "edge").map(({ routeName }) => routeName), ["regions.list"]);
+  assert.equal(parsed.routes.filter(({ routeName }) => routeName === "regions.list").length, 1);
   assert.equal(parsed.routes.some(({ pathTemplate }) => pathTemplate.includes("/documents")), true);
   assert.equal(parsed.routes.some(({ pathTemplate }) => pathTemplate.endsWith("/sql")), true);
   assert.equal(parsed.routes.some(({ pathTemplate }) => pathTemplate.includes("/reactive")), true);

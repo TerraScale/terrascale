@@ -613,7 +613,7 @@ export class ManagementImportsClient {
 
   create(databaseId: string, request: Contracts.CreateImportRequest, options: ManagementOperationOptions = {}): Promise<TerraScaleResult<Contracts.ImportJob>> {
     requireText(request?.idempotency_key, "idempotency_key", 256);
-    if (request?.format !== "json" && request?.format !== "jsonl" && request?.format !== "csv") throw new TypeError("format must be json, jsonl, or csv.");
+    if (request?.format !== "jsonl" && request?.format !== "csv" && request?.format !== "mongo_json" && request?.format !== "cosmos_json" && request?.format !== "dynamo_json") throw new TypeError("format must be jsonl, csv, mongo_json, cosmos_json, or dynamo_json.");
     return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/imports`, routeName: "databases.createImport", signal: options.signal, body: request, idempotencyKey: false });
   }
 

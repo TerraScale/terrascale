@@ -42,8 +42,11 @@ type ManifestRoute = {
   readonly method: string;
   readonly operation: string;
   readonly pathTemplate: string;
+  readonly producer: "edge" | "terrabase";
   readonly routeName: string;
 };
+
+type RouteManifestCore = Omit<ManifestRoute, "producer">;
 
 describe("TerraScaleClient route contracts", () => {
   test("keeps the generated SDK route manifest aligned with captured public routes", async () => {
@@ -66,6 +69,12 @@ describe("TerraScaleClient route contracts", () => {
       [...expectedContractGapRouteNames].sort(),
     );
     assert.ok(contractGapExpectations.every((expectation) => expectation.code === "contract_gap"));
+
+    const edgeRoutes = manifest.routes.filter((route) => route.producer === "edge");
+    assert.deepEqual(edgeRoutes.map((route) => route.routeName), ["regions.list"]);
+    assert.equal(manifest.routes.filter((route) => route.routeName === "regions.list").length, 1);
+    assert.equal(manifest.routes.filter((route) => route.producer === "terrabase").length, 72);
+    assert.equal(new Set(manifest.routes.map((route) => `${route.method} ${route.pathTemplate}`)).size, manifest.routes.length);
   });
 
   test("public factory hides private clients and exposes typed clients", async () => {
@@ -828,7 +837,7 @@ function assertRequest(
   assert.equal(request.url.pathname, pathname);
 }
 
-function routeManifestCore(route: ManifestRoute): ManifestRoute {
+function routeManifestCore(route: RouteManifestCore): RouteManifestCore {
   return {
     base: route.base,
     client: route.client,

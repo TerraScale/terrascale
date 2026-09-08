@@ -60,6 +60,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
   const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-release-package-"));
   const checkout = path.join(workspace, "sdk");
   const producerContracts = path.join(workspace, "terrabase", "contracts");
+  const edgeContracts = path.join(workspace, "edge", "contracts");
   const packages = path.join(workspace, "packages");
   const consumer = path.join(workspace, "consumer");
 
@@ -76,6 +77,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     } finally {
       await bundle.cleanup();
     }
+    await cp(path.join(repositoryRoot, "..", "ts-go", "contracts", "edge", "v1"), edgeContracts, { recursive: true });
     await mkdir(packages);
     await mkdir(consumer);
     const checkoutEnvironment = { ...process.env };
@@ -83,6 +85,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       if (/^(?:TERRASCALE_)?CONTRACT_(?:SOURCE|URL|REGISTRY(?:_URL)?)$/u.test(key)) delete checkoutEnvironment[key];
     }
     checkoutEnvironment.CONTRACT_SOURCE = producerContracts;
+    checkoutEnvironment.EDGE_CONTRACT_SOURCE = edgeContracts;
     await run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: checkout });
     await run("npm", ["run", "build"], { cwd: checkout });
     await run("npx", ["vitest", "run", "src/public-schema-parity.test.ts"], { cwd: checkout, env: checkoutEnvironment });

@@ -529,7 +529,7 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
       const url = new URL(request.url);
       assert.equal(url.pathname, "/api/v1/reactive/views/journey-orders/3/log");
       assert.equal(url.searchParams.get("offset"), "7");
-      assert.equal(request.headers.get("x-terrascale-view-capability"), "cap-journey");
+      assert.equal(request.headers.get("x-terrascale-capability"), "cap-journey");
       return new Response(
         serverFrame({
           kind: "delta",

@@ -150,7 +150,7 @@ describe("root database clients", () => {
           log: "/api/v1/reactive/views/orders/1/log",
           checkpoint: "AAE=",
           capability: "capability",
-          capability_header: "x-terrascale-view-capability",
+          capability_header: "x-terrascale-capability",
           offset: 0,
         }, 201);
       },
