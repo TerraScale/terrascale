@@ -282,8 +282,12 @@ pub(crate) fn capture_artifact_id(
     hasher.update(database.to_text().as_bytes());
     hasher.update(&[0]);
     match kind {
-        BackupKind::Full => hasher.update(b"full"),
-        BackupKind::Snapshot => hasher.update(b"snapshot"),
+        BackupKind::Full => {
+            hasher.update(b"full");
+        }
+        BackupKind::Snapshot => {
+            hasher.update(b"snapshot");
+        }
         BackupKind::Incremental { base } => {
             hasher.update(b"incremental");
             hasher.update(&base.get().to_be_bytes());

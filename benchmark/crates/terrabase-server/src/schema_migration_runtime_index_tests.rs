@@ -57,6 +57,100 @@ async fn production_tick_completes_initial_declared_index_reconciliation() {
     assert!(descriptor.active, "initial schema index must be published by the worker");
 }
 
+/// Retired schema indexes remain authoritative while a replacement unique
+/// index is still validating its bounded frontier. This is the publication
+/// ordering required for a restart to never expose a partially reconciled
+/// schema.
+#[tokio::test]
+async fn replacement_index_keeps_old_unique_constraint_until_publish() {
+    let state = super::super::tests::state_with_keys_and_control();
+    state.control.as_ref().unwrap().create("demo", &[RegionCode::GRU], None).unwrap();
+    let app = crate::api::router(Arc::clone(&state));
+    let apply = |app: &crate::api::Router, body: &'static str, key: &'static str, generation| async move {
+        let mut request = crate::api::Request::put(SCHEMA_ROUTE)
+            .header("authorization", KEY)
+            .header("idempotency-key", key);
+        if let Some(generation) = generation {
+            request = request.header("if-match", format!("\"{generation}\""));
+        }
+        let response = app.clone().oneshot(request.body(Body::from(body)).unwrap()).await.unwrap();
+        assert_eq!(response.status(), crate::api::StatusCode::OK);
+    };
+    apply(
+        &app,
+        r#"{"name":"orders","fields":[{"name":"account","type":"string"}],"indexes":[{"name":"old_account","fields":["account"],"unique":true}]}"#,
+        "old-index",
+        None,
+    )
+    .await;
+    assert_eq!(super::drive_database(&state, "demo", None).as_deref(), Some("orders"));
+
+    let host = document_host(&state, "demo").unwrap();
+    let engine = host.engine();
+    let scope = document_scope(engine).unwrap();
+    let collection = CollectionName::try_new("orders").unwrap();
+    let mut transaction = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            OperationId::try_new("seed-replacement-index").unwrap(),
+        )
+        .unwrap();
+    for index in 0..33 {
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new(&format!("order-{index:02}")).unwrap(),
+                    collection.clone(),
+                    DocumentValue::Object(std::collections::BTreeMap::from([(
+                        "account".into(),
+                        DocumentValue::String(format!("account-{index}")),
+                    )])),
+                ),
+                ExpectedVersion::New,
+            )
+            .unwrap();
+    }
+    assert!(matches!(
+        transaction.commit(LocalDurability::Synced),
+        terrabase::CommitOutcome::Committed(_)
+    ));
+
+    apply(
+        &app,
+        r#"{"name":"orders","fields":[{"name":"account","type":"string"}],"indexes":[{"name":"new_account","fields":["account"],"unique":true}]}"#,
+        "new-index",
+        Some(1),
+    )
+    .await;
+    assert_eq!(super::drive_database(&state, "demo", None).as_deref(), Some("orders"));
+
+    let mut transaction = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            OperationId::try_new("duplicate-before-replacement-publish").unwrap(),
+        )
+        .unwrap();
+    transaction
+        .put(
+            Document::new(
+                DocumentId::try_new("duplicate").unwrap(),
+                collection,
+                DocumentValue::Object(std::collections::BTreeMap::from([(
+                    "account".into(),
+                    DocumentValue::String("account-0".into()),
+                )])),
+            ),
+            ExpectedVersion::New,
+        )
+        .unwrap();
+    assert!(matches!(
+        transaction.commit(LocalDurability::Synced),
+        terrabase::CommitOutcome::Rejected(terrabase::CommitError::Validation)
+    ));
+}
+
 /// Exercises the production schema tick rather than calling the Engine pump
 /// directly.  A collection above the inline threshold must progress even
 /// when it has no pending schema envelope, because maintenance runs before

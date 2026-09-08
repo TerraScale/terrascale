@@ -1652,21 +1652,20 @@ mod tests {
         .unwrap();
         validate_parameters("SELECT * FROM users WHERE body MATCH :query", &parameters).unwrap();
 
-        validate_parameters(
+        let error = validate_parameters(
             "SELECT * FROM users JOIN archive ON users.id = archive.id WHERE users.body MATCH :query",
             &SqlParameters::try_new(&[("query", DocumentValue::String("quick OR secret".into()))])
                 .unwrap(),
         )
-        .unwrap();
+        .unwrap_err();
+        assert_eq!(error.class(), SqlErrorClass::UnsupportedStatement);
     }
 
     #[test]
     fn execute_only_match_shapes_are_rejected_before_sqlite() {
-        let parameters = SqlParameters::try_new(&[(
-            "query",
-            DocumentValue::String("quick".to_owned()),
-        )])
-        .unwrap();
+        let parameters =
+            SqlParameters::try_new(&[("query", DocumentValue::String("quick".to_owned()))])
+                .unwrap();
         let error = validate_parameters(
             "SELECT users._id FROM users JOIN archive ON users._id = archive._id WHERE users.body MATCH :query",
             &parameters,

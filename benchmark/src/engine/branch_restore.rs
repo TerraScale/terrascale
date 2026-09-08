@@ -184,7 +184,10 @@ impl Engine {
                 Some(child),
                 crate::storage::OwnershipMode::Production,
             )
-            .map_err(|_| EngineOpenError::FormatMismatch)?;
+            .map_err(|error| {
+                eprintln!("branch restore load_or_create staging failed: {error:?}");
+                EngineOpenError::FormatMismatch
+            })?;
             let source_owner = source.database_owner();
             let mut source_path = None;
             let registration = source
@@ -197,8 +200,14 @@ impl Engine {
                         keys.clone(),
                     )
                 })
-                .map_err(|_| EngineOpenError::StorageUnavailable)?
-                .map_err(|()| EngineOpenError::StorageUnavailable)?;
+                .map_err(|error| {
+                    eprintln!("branch restore quiescent source failed: {error:?}");
+                    EngineOpenError::StorageUnavailable
+                })?
+                .map_err(|()| {
+                    eprintln!("branch restore encrypted snapshot copy failed");
+                    EngineOpenError::StorageUnavailable
+                })?;
             let cut = transform_snapshot(
                 source_path.as_deref().ok_or(EngineOpenError::StorageUnavailable)?,
                 &staging,
@@ -210,11 +219,17 @@ impl Engine {
             )?;
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
-            drop(Self::open(staged)?);
+            drop(Self::open(staged).map_err(|error| {
+                eprintln!("branch restore staged open failed: {error:?}");
+                error
+            })?);
             drop(registration);
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())
-                .map_err(|_| EngineOpenError::StorageUnavailable)?;
+                .map_err(|error| {
+                    eprintln!("branch restore staging sync failed: {error:?}");
+                    EngineOpenError::StorageUnavailable
+                })?;
             if fs::rename(&staging, target).is_err() {
                 // Another restore may have won the target rename while this
                 // source was quiesced. Re-read the durable marker to make an
