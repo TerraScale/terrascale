@@ -203,7 +203,14 @@ impl TursoSlot {
 /// path), so a writer retries the whole statement.
 fn is_retryable(error: &turso::Error) -> bool {
     matches!(error, turso::Error::Busy(_) | turso::Error::BusySnapshot(_))
-        || matches!(error, turso::Error::Error(message) if message.contains("conflict") || message.contains("stale"))
+        || matches!(
+            error,
+            turso::Error::Error(message)
+                if message.contains("conflict")
+                    || message.contains("stale")
+                    || message.contains("locked")
+                    || message.contains("busy")
+        )
 }
 
 impl Slot for TursoSlot {
