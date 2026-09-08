@@ -102,7 +102,11 @@ function schemaName(value: OpenApiSchemaRef | undefined): string | undefined {
   const reference = value && "$ref" in value && typeof value.$ref === "string" ? value.$ref : undefined;
   return reference?.split("/").at(-1);
 }
-function requestType(body: OpenApiSchemaRef | undefined): string { return body === undefined ? "void" : schemaName(body.content?.["application/json"]?.schema) ?? "json"; }
+function requestType(body: OpenApiSchemaRef | undefined): string {
+  if (body === undefined) return "void";
+  if (body.content?.["application/octet-stream"] !== undefined) return "Uint8Array";
+  return schemaName(body.content?.["application/json"]?.schema) ?? "json";
+}
 function responseType(responses: Record<string, OpenApiResponse> | undefined): string {
   const successful = Object.entries(responses ?? {}).filter(([status]) => /^2(?:\d\d|xx)$/iu.test(status)).sort(([left], [right]) => left.localeCompare(right));
   if (successful.length === 0) return "never";

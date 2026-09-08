@@ -653,7 +653,7 @@
       "routeName": "databases.uploadImport",
       "method": "PUT",
       "pathTemplate": "/api/v1/databases/{name}/imports/{id}/input",
-      "requestType": "json",
+      "requestType": "Uint8Array",
       "responseType": "ImportJob"
     },
     {

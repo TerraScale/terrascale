@@ -176,6 +176,32 @@ describe("root database clients", () => {
     });
   });
 
+  test("wires the root management import consumer to the binary producer route", async () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleClient({
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request.clone());
+        return request.method === "GET"
+          ? response([])
+          : response({
+            committed_records: 0, cursor: 0, database_id: "prod", durability: "regional", error: null,
+            format: "jsonl", input_committed: true, input_digest: null, input_length: 3,
+            operation_id: "import-1", pending_cursor: null, pending_operation: null, pending_records: null,
+            project_id: "project", state: "complete", tenant_id: "tenant",
+          }, request.method === "POST" ? 202 : 200);
+      },
+    });
+
+    await client.management.imports.create("prod", { format: "jsonl", idempotency_key: "import-1" });
+    await client.management.imports.upload("prod", "import-1", new Uint8Array([1, 2, 3]));
+
+    assert.equal(new URL(requests[0]!.url).pathname, "/api/v1/databases/prod/imports");
+    assert.equal(new URL(requests[1]!.url).pathname, "/api/v1/databases/prod/imports/import-1/input");
+    assert.equal(requests[1]!.headers.get("content-type"), "application/octet-stream");
+    assert.deepEqual(new Uint8Array(await requests[1]!.arrayBuffer()), new Uint8Array([1, 2, 3]));
+  });
+
   test("rejects invalid direct identifiers and bounds before fetch", async () => {
     let calls = 0;
     const client = createTerraScaleClient({
