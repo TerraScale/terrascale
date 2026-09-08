@@ -18,6 +18,11 @@
       "blake3": "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c"
     },
     {
+      "path": "conformance/origin-proof.json",
+      "mediaType": "application/vnd.terrascale.conformance.v1+json",
+      "blake3": "5364b464193257d9a25f1ded3070e23fd9d913a4542e337ada004bb6497cb305"
+    },
+    {
       "path": "conformance/reactive.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
       "blake3": "425e7862bc0c82b18385fb3f74e99c148560cb5b4d21ab4ca09ff29dcc8f2f9a"

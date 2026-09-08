@@ -1605,7 +1605,7 @@ impl Regions {
     /// Returns the anonymous edge-published region catalog.
     pub async fn catalog(&self) -> Result<RegionCatalogResponse> {
         let request = Request {
-            route_name: "regions.catalog".to_owned(),
+            route_name: "regions.list".to_owned(),
             method: Method::Get,
             url: format!("{}/regions", self.shared.global_base_url()),
             headers: Vec::new(),
@@ -1638,7 +1638,7 @@ impl Regions {
         let request = Request {
             route_name: "regions.status".to_owned(),
             method: Method::Get,
-            url: format!("{}/regions", self.shared.pinned_base_url(Some(region))?),
+            url: format!("{}/health", self.shared.pinned_base_url(Some(region))?),
             headers: Vec::new(),
             body: None,
         };

@@ -549,13 +549,14 @@ async fn region_pinning_and_421_repair() {
         .last_request()
         .url
         .starts_with("https://api.terrascale.tech"));
+    assert_eq!(mock.last_request().route_name, "regions.list");
 
     // Strict affinity pins REST to the regional hostname.
     let mock = Mock::new(vec![Response::json(
         200,
         &json!({"region": "GRU", "healthy": true}),
     )]);
-    let transport: Arc<dyn HttpTransport> = mock;
+    let transport: Arc<dyn HttpTransport> = mock.clone();
     let strict = TerraScaleClient::with_transport(
         ClientConfig::builder()
             .api_key("ts_test_key")
@@ -573,6 +574,11 @@ async fn region_pinning_and_421_repair() {
         .await
         .expect("regions");
     assert!(strict.pinned_region() == Some(RegionCode::Gru));
+    assert_eq!(
+        mock.last_request().url,
+        "https://gru.api.terrascale.tech/api/v1/health"
+    );
+    assert_eq!(mock.last_request().route_name, "regions.status");
 
     // A 421 repairs the pin from X-TerraScale-Placement and surfaces retry.
     let mock = Mock::new(vec![Response {
