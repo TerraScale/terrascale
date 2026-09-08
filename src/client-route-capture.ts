@@ -319,7 +319,7 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "databases", operation: "uploadImport", routeName: "databases.uploadImport",
-    invoke: (_client, management) => management.imports.upload(sampleIds.database, "import-1", new Uint8Array()),
+    invoke: (_client, management) => management.imports.upload(sampleIds.database, "import-1", new Uint8Array([0])),
   },
   {
     client: "databases", operation: "resumeImport", routeName: "databases.resumeImport",

@@ -623,6 +623,7 @@ export class ManagementImportsClient {
 
   upload(databaseId: string, jobId: string, input: Uint8Array, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ImportJob>> {
     if (!(input instanceof Uint8Array)) throw new TypeError("input must be a Uint8Array.");
+    if (input.byteLength === 0) throw new TypeError("input must not be empty.");
     return this.#http.request({ method: "PUT", path: `${databasePath(databaseId)}/imports/${idSegment(jobId, "import id")}/input`, routeName: "databases.uploadImport", signal: options.signal, headers: { "content-type": "application/octet-stream" }, body: input });
   }
 

@@ -691,6 +691,11 @@ const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly
   "databases.resumeExport": ["created_at_millis", "pages", "records", "estimated_records", "manifest.length"],
   "databases.cancelExport": ["created_at_millis", "pages", "records", "estimated_records", "manifest.length"],
   "databases.listExports": ["exports.*.created_at_millis", "exports.*.pages", "exports.*.records", "exports.*.estimated_records", "exports.*.manifest.length"],
+  "databases.listImports": ["*.committed_records", "*.cursor", "*.input_length", "*.pending_cursor", "*.pending_records"],
+  "databases.createImport": ["committed_records", "cursor", "input_length", "pending_cursor", "pending_records"],
+  "databases.getImport": ["committed_records", "cursor", "input_length", "pending_cursor", "pending_records"],
+  "databases.uploadImport": ["committed_records", "cursor", "input_length", "pending_cursor", "pending_records"],
+  "databases.resumeImport": ["committed_records", "cursor", "input_length", "pending_cursor", "pending_records"],
 };
 
 const responseInt64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {

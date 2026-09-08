@@ -243,6 +243,49 @@ it("publishes the producer import lifecycle routes and binary upload body", asyn
   expect(new Uint8Array(await requests[3]!.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
 });
 
+it("preserves import uint64 fields above the JavaScript safe integer range", async () => {
+  const value = "9007199254740993";
+  const body = `{"committed_records":${value},"cursor":${value},"database_id":"db","durability":"regional","error":null,"format":"jsonl","input_committed":true,"input_digest":null,"input_length":${value},"operation_id":"import-1","pending_cursor":${value},"pending_operation":null,"pending_records":${value},"project_id":"project","state":"complete","tenant_id":"tenant"}`;
+  const client = createTerraScaleManagementClient({
+    apiBaseUrl: "https://api.example.test",
+    fetch: async input => {
+      const request = new Request(input);
+      return new Response(request.method === "GET" && new URL(request.url).pathname.endsWith("/imports") ? `[${body}]` : body, {
+        status: request.method === "POST" && new URL(request.url).pathname.endsWith("/imports") ? 202 : 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  const results = await Promise.all([
+    client.imports.list("db"),
+    client.imports.create("db", { format: "jsonl", idempotency_key: "import-1" }),
+    client.imports.get("db", "import-1"),
+    client.imports.upload("db", "import-1", new Uint8Array([1])),
+    client.imports.resume("db", "import-1"),
+  ]);
+
+  for (const result of results) {
+    expect(result.ok).toBe(true);
+    if (!result.ok) continue;
+    const job = Array.isArray(result.value) ? result.value[0] : result.value;
+    expect(job?.committed_records).toBe(9007199254740993n);
+    expect(job?.cursor).toBe(9007199254740993n);
+    expect(job?.input_length).toBe(9007199254740993n);
+    expect(job?.pending_cursor).toBe(9007199254740993n);
+    expect(job?.pending_records).toBe(9007199254740993n);
+  }
+});
+
+it("rejects an empty import upload before making a request", () => {
+  const client = createTerraScaleManagementClient({
+    apiBaseUrl: "https://api.example.test",
+    fetch: async () => { throw new Error("fetch must not run"); },
+  });
+
+  expect(() => client.imports.upload("db", "import-1", new Uint8Array())).toThrow("input must not be empty");
+});
+
 it("carries schema generation preconditions and a stable apply identity", async () => {
   const requests: Request[] = [];
   const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });
