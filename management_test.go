@@ -132,6 +132,46 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 	}
 }
 
+func TestRegionsListDecodesEdgeCatalogAndLegacyMemberHealth(t *testing.T) {
+	t.Run("edge catalog", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/regions" || r.Method != http.MethodGet {
+				t.Fatalf("request = %s %s", r.Method, r.URL)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"regions":[{"code":"gru","name":"Sao Paulo","country":"BR","latitude":-23.43,"longitude":-46.47,"available":true}],"hosts":{"GRU":"gru.api.terrascale.tech"}}`))
+		}))
+		defer server.Close()
+		client, err := NewClient(Config{APIBaseURL: server.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		regions, err := client.Regions.List(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(regions) != 1 || regions[0].Code != RegionGRU || regions[0].Name != "Sao Paulo" || regions[0].Country != "BR" || !regions[0].Available || !regions[0].Healthy {
+			t.Fatalf("regions = %+v", regions)
+		}
+	})
+
+	t.Run("member health is not a catalog", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"region":"SFO","healthy":false}`))
+		}))
+		defer server.Close()
+		client, err := NewClient(Config{APIBaseURL: server.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		regions, err := client.Regions.List(t.Context())
+		if regions != nil || err == nil {
+			t.Fatalf("member health accepted as catalog: regions=%+v err=%v", regions, err)
+		}
+	})
+}
+
 func TestTerraBaseManagementValidationCancellationAndIdempotency(t *testing.T) {
 	c, err := NewClient(Config{APIBaseURL: "http://127.0.0.1:1"})
 	if err != nil {

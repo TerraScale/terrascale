@@ -713,9 +713,7 @@ func (r *RegionsClient) Health(ctx context.Context, opts ...RequestOption) (*Hea
 	return &out, nil
 }
 
-// List returns the admitted public region catalog. Until the producer exposes
-// separate catalog and member-health routes, it also accepts the current
-// member-health response and returns its one serving region.
+// List returns the admitted public region catalog.
 func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Region, error) {
 	var out RegionCatalogResponse
 	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions.list", opts...); err != nil {
@@ -732,10 +730,7 @@ func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Regi
 		}
 		return out.Regions, nil
 	}
-	if _, err := ParseRegionCode(string(out.Region)); err != nil {
-		return nil, err
-	}
-	return []Region{{Code: out.Region, Available: out.Healthy, Healthy: out.Healthy}}, nil
+	return nil, fmt.Errorf("sdk: region catalog response contains no regions")
 }
 
 // Get returns one region.
