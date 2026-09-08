@@ -1919,10 +1919,7 @@ impl SqliteStorage {
         if allow_create {
             flags |= OpenFlags::SQLITE_OPEN_CREATE;
         }
-        let mut writer = raw_connection(&database_path, flags, encryption.as_deref()).map_err(|error| {
-            eprintln!("encrypted reopen raw connection failed dir={} err={error:?}", dir.display());
-            error
-        })?;
+        let mut writer = raw_connection(&database_path, flags, encryption.as_deref())?;
         if database_exists || !allow_create {
             let legacy = validate_database_binding(&writer, &expected_binding)?;
             if !legacy {
@@ -2873,7 +2870,8 @@ fn stage_intent(
             *watermark = sequence - 1;
             return Ok(CommitResult::Rejected(CommitRejection::Storage));
         };
-        let Some(durable) = DurableUsageFact::try_new(fact.clone(), sequence, replica_epoch).ok() else {
+        let Some(durable) = DurableUsageFact::try_new(fact.clone(), sequence, replica_epoch).ok()
+        else {
             transaction.execute_batch("RELEASE schema_unique_admission").map_err(|_| ())?;
             *watermark = sequence - 1;
             return Ok(CommitResult::Rejected(CommitRejection::Storage));
@@ -5297,8 +5295,8 @@ impl StoragePort for SqliteStorage {
         };
         usage_seal::ensure_unsealed(&transaction, &fact)
             .map_err(|()| UsageStorageError::Unavailable)?;
-        let replica_epoch = current_usage_epoch(&transaction)
-            .map_err(|_| UsageStorageError::Unavailable)?;
+        let replica_epoch =
+            current_usage_epoch(&transaction).map_err(|_| UsageStorageError::Unavailable)?;
         let durable = DurableUsageFact::try_new(fact.clone(), sequence, replica_epoch)
             .map_err(|_| UsageStorageError::Corrupt)?;
         let scope = durable.fact().scope();

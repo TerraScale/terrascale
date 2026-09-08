@@ -409,10 +409,7 @@ impl NativeBackupRuntime {
     pub fn detach(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet.detach(database);
-        self.databases
-            .lock()
-            .map_err(|_| NativeBackupRuntimeError::Poisoned)?
-            .remove(database);
+        self.databases.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?.remove(database);
         Ok(())
     }
 

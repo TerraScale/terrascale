@@ -4,9 +4,9 @@ use super::{
     ApiError, ApiState, Arc, Path, Response, State, StatusCode, check_read_guard, database_record,
     database_records, document_host, document_scope, push_value,
 };
+use crate::api_keys::{Principal, Verbs};
 use crate::export_api::{self as export, ExportService, ExportSource, ExportSourceError};
 use crate::export_formats::{ExportScope, TransferFormat, content_type};
-use crate::api_keys::{Principal, Verbs};
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::{Extension, response::IntoResponse};
 use serde::Deserialize;
@@ -234,10 +234,11 @@ pub(super) async fn create_export(
         return export_error(&export::ExportError::InvalidRequest("empty identity"))
             .into_response();
     }
-    let (service, destination, placement) = match resolve(state, name.clone(), &principal, true).await {
-        Ok(value) => value,
-        Err(error) => return error.into_response(),
-    };
+    let (service, destination, placement) =
+        match resolve(state, name.clone(), &principal, true).await {
+            Ok(value) => value,
+            Err(error) => return error.into_response(),
+        };
     match service
         .submit(export::ExportRequest {
             database: name.clone(),

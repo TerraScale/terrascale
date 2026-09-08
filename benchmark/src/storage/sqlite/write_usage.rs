@@ -142,7 +142,8 @@ pub(super) fn insert(
 ) -> Result<(), ()> {
     super::usage_seal::ensure_unsealed(connection, fact)?;
     let replica_epoch = super::current_usage_epoch(connection)?;
-    let durable = DurableUsageFact::try_new(fact.clone(), sequence, replica_epoch).map_err(|_| ())?;
+    let durable =
+        DurableUsageFact::try_new(fact.clone(), sequence, replica_epoch).map_err(|_| ())?;
     let scope: &UsageScope = fact.scope();
     connection.execute(
         "INSERT INTO usage_facts(tenant,project,database,partition,region,rule,fact_id,seq,start_millis,end_millis,body) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",

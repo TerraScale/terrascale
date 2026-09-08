@@ -362,18 +362,14 @@ impl NativeRecoveryRuntime {
         // still has it.
         let digest = envelope.digest().to_owned();
         for provider in providers {
-            let destination = {
-                let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-                fleet
-                    .envelope_destination(source, provider)
-                    .map_err(map_fleet_error)?
-            };
-            let remote = terrabase::backup::worker::NativeBackupFleet::download_envelope_from_destination(
-                source,
-                &digest,
-                destination,
-            )
-            .await;
+            let destination = self.envelope_destination(source, provider)?;
+            let remote =
+                terrabase::backup::worker::NativeBackupFleet::download_envelope_from_destination(
+                    source,
+                    &digest,
+                    destination,
+                )
+                .await;
             match remote {
                 Ok(remote) => return Ok(Some((remote, provider))),
                 Err(terrabase::backup::worker::FleetError::Configuration) => {
@@ -387,6 +383,18 @@ impl NativeRecoveryRuntime {
             }
         }
         Err(NativeRecoveryError::Unavailable)
+    }
+
+    /// Clones an admitted provider destination while holding the fleet lock
+    /// only for this synchronous lookup. Provider I/O uses the owned
+    /// destination after the guard has been dropped.
+    fn envelope_destination(
+        &self,
+        source: &str,
+        provider: terrabase::backup::object_store::Provider,
+    ) -> Result<Arc<terrabase::backup::object_store::ObjectDestination>, NativeRecoveryError> {
+        let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+        fleet.envelope_destination(source, provider).map_err(map_fleet_error)
     }
 
     /// Resolves an authenticated retained manifest without creating recovery state.
@@ -592,9 +600,9 @@ impl NativeRecoveryRuntime {
                     facts: None,
                     error: None,
                 };
-                let _lifecycle =
+                let lifecycle =
                     runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-                if *_lifecycle {
+                if *lifecycle {
                     return Err(NativeRecoveryError::Unavailable);
                 }
                 let mut connection =
@@ -604,6 +612,7 @@ impl NativeRecoveryRuntime {
                 let admitted =
                     admission::admit_operation(&mut connection, runtime.limits, proposed)?;
                 runtime.notify.notify_one();
+                drop(lifecycle);
                 Ok(admitted)
             }
         })
@@ -726,6 +735,7 @@ impl NativeRecoveryRuntime {
         )
         .map_err(|_| NativeRecoveryError::Unavailable)?;
         tx.commit().map_err(|_| NativeRecoveryError::Unavailable)?;
+        drop(lifecycle);
         self.notify.notify_one();
         Ok(record)
     }
@@ -785,6 +795,7 @@ impl NativeRecoveryRuntime {
         operation.phase = NativeRestorePhase::Verifying;
         operation.error = None;
         self.save_restore(&operation)?;
+        drop(lifecycle);
         self.notify.notify_one();
         Ok(operation)
     }
@@ -1807,6 +1818,7 @@ mod tests {
             journal_cut: "1".into(),
             restore_epoch: 1,
             provider: RestoreProvider::Oci as i32,
+            envelope: None,
         };
         rpc.restore_to_target(&wire)
             .await

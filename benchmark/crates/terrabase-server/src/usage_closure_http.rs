@@ -204,6 +204,10 @@ async fn close(
         return unavailable();
     };
     let close_host = Arc::clone(&admitted);
+    let expected_scope = placement.scope.clone();
+    let Ok(expected_regions) = u32::try_from(placement.selected_regions.len()) else {
+        return unavailable();
+    };
     let Ok(Ok(receipt)) = tokio::task::spawn_blocking(move || {
         let engine = close_host.host.engine();
         let scope = engine.scope_for(&tenant);
@@ -213,6 +217,16 @@ async fn close(
     else {
         return unavailable();
     };
+    // The closure is an attestation for the frozen placement. Refuse to emit
+    // a receipt if a storage replay or stale placement returns a different
+    // scope/window/Region count, since the consumer would otherwise pool the
+    // wrong local stream or multiply it under another placement.
+    if receipt.scope() != &expected_scope
+        || receipt.window() != window
+        || receipt.selected_regions() != expected_regions
+    {
+        return unavailable();
+    }
     if progress.wait_regional(route, receipt.sequence(), Duration::from_secs(5)).await.is_err() {
         return unavailable();
     }
@@ -478,6 +492,18 @@ mod tests {
             &axum::body::to_bytes(first.into_body(), 16 * 1024 * 1024).await.unwrap(),
         )
         .unwrap();
+        assert_eq!(first["scope"]["tenant_id"], record.tenant_id);
+        assert_eq!(first["scope"]["project_id"], record.project_id);
+        assert_eq!(first["scope"]["database_id"], record.database_id);
+        assert_eq!(first["scope"]["partition_id"], "partition");
+        assert_eq!(first["scope"]["region_id"], record.region);
+        assert_eq!(first["start_millis"], start);
+        assert_eq!(first["end_millis"], end);
+        assert_eq!(first["selected_regions"], 1);
+        assert!(first["checksum"].as_str().is_some_and(|value| {
+            value.len() == 64
+                && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        }));
         assert_eq!(
             first["storage_intervals"],
             serde_json::Value::Array(

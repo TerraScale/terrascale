@@ -1442,15 +1442,17 @@ async fn sync_stream(
             let bridge_clock = if let Some((_, clock)) = rotation::read(stream)? {
                 // Distinguish the bridge durably from pre-intent no-op points
                 // even when two captures fall within one wall-clock millisecond.
-                tokio::time::sleep(Duration::from_millis(1)).await;
-                let captured = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| FleetError::Capture)?
-                    .as_millis();
-                let captured = u64::try_from(captured).map_err(|_| FleetError::Capture)?;
-                if captured <= clock {
-                    return Err(FleetError::Capture);
-                }
+                let captured = loop {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    let captured = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(|_| FleetError::Capture)?
+                        .as_millis();
+                    let captured = u64::try_from(captured).map_err(|_| FleetError::Capture)?;
+                    if captured > clock {
+                        break captured;
+                    }
+                };
                 Some(captured)
             } else {
                 None
@@ -2301,7 +2303,8 @@ mod tests {
                 LocalDurability::Synced,
             ));
             fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
-            assert!(fleet.sync_once().await.is_empty(), "tick {tick}");
+            let failures = fleet.sync_once().await;
+            assert!(failures.is_empty(), "tick {tick}: {failures:?}");
             assert!(fleet.observe_protection(&identity).unwrap().protected);
             assert!(point_paths(&staging, 64).unwrap().len() <= 32);
             assert!(staged_bytes(&staging).unwrap() < limits.staging_bytes_per_stream / 2);

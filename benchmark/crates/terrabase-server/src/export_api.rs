@@ -1159,6 +1159,17 @@ impl Worker {
                 state.error = None;
                 self.store.save(&state)
             }
+            // A provider can return an indeterminate result after accepting
+            // a write (for example, when its response is lost).  The durable
+            // cursor remains valid, but marking the job failed would make a
+            // retry look like a terminal source error and could discard the
+            // provider's committed staging state.  Leave the job admitted so
+            // recovery or an explicit resume can reconcile the provider.
+            Err(ExportError::DependencyUnavailable) => {
+                state.status = JobStatus::Accepted;
+                state.error = None;
+                self.store.save(&state)
+            }
             Err(error) => {
                 state.status = JobStatus::Failed;
                 state.error = Some(error.public_message().to_owned());
@@ -2301,6 +2312,27 @@ mod tests {
         }
     }
 
+    struct UnknownProvider {
+        opens: AtomicUsize,
+    }
+
+    impl ArtifactPort for UnknownProvider {
+        fn attestation(&self) -> Option<EncryptionAttestation> {
+            Some(EncryptionAttestation { provider: "test".into(), key_version: "v1".into() })
+        }
+
+        fn open<'a>(
+            &'a self,
+            _job: &'a str,
+            _database: &'a str,
+            _destination: &'a ExportDestination,
+            _placement: &'a PlacementLock,
+        ) -> ExportFuture<'a, Box<dyn ArtifactWriter>> {
+            self.opens.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async { Err(ExportError::DependencyUnavailable) })
+        }
+    }
+
     fn service(source: Source, port: Port) -> ExportService {
         ExportService::new(
             Some(Arc::new(source)),
@@ -2375,6 +2407,52 @@ mod tests {
         assert_eq!(fs::read(first_path).expect("original page"), first);
         assert!(directory.join("documents/000000000001.jsonl").is_file());
         assert!(directory.join("COMMITTED").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn unknown_provider_result_keeps_export_pending_for_reconciliation() {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-export-provider-{}",
+            terrabase::identity::DatabaseUlid::generate()
+        ));
+        let source = Arc::new(Source { pages: Mutex::new(Vec::new()) });
+        let store = Arc::new(MemoryExportStore::default());
+        let provider = Arc::new(UnknownProvider { opens: AtomicUsize::new(0) });
+        let service =
+            ExportService::new(Some(source), Some(store.clone()), Some(provider.clone()), [9; 32])
+                .expect("service");
+        let accepted = service
+            .submit(ExportRequest {
+                database: "db".into(),
+                destination: ExportDestination::File {
+                    root: root.join("artifacts"),
+                    region: RegionCode::GRU,
+                },
+                format: TransferFormat::Jsonl,
+                scope: ExportScope::All,
+                placement: PlacementLock::single(RegionCode::GRU),
+                idempotency_key: Some("provider-timeout".into()),
+            })
+            .await
+            .expect("admitted");
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if provider.opens.load(Ordering::Relaxed) != 0
+                    && store.load(&accepted.job_id).expect("load").expect("job").status
+                        == JobStatus::Accepted
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("provider result settles as pending");
+        let state = store.load(&accepted.job_id).expect("load").expect("job");
+        assert_eq!(state.status, JobStatus::Accepted);
+        assert!(state.error.is_none());
+        assert!(service.status_async(&accepted.job_id).await.expect("status").is_some());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

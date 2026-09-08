@@ -595,6 +595,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             checksum,
             row_count,
             placement: database.record.regions.clone(),
+            envelope: None,
         })
     }
 
@@ -939,6 +940,7 @@ impl ProductionLifecycleControl {
                 .map_err(|_| "restore row count exceeds the wire range")?,
             journal_cut: request.journal_cut.clone(),
             placement,
+            envelope: None,
         })
     }
     /// Ensures a complete snapshot after verifying accepted authority.
@@ -1231,6 +1233,7 @@ mod restore_stats_tests {
             target_database: "target-db".into(),
             journal_cut: "42".into(),
             restore_epoch: 7,
+            envelope: None,
         }
     }
     fn control(complete: bool) -> ProductionLifecycleControl {
