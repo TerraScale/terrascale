@@ -148,6 +148,12 @@ impl PlacementDataControl for ProductionPlacementDataControl {
         request: &pb::PlacementReadinessRequest,
     ) -> Result<Vec<u8>, terrabase_tbep::placement::PlacementError> {
         let scope = Self::scope(request)?;
+        if self.lifecycle.is_draining() {
+            return Err(terrabase_tbep::placement::PlacementError::Conflict);
+        }
+        let data =
+            self.lifecycle.get().ok_or(terrabase_tbep::placement::PlacementError::Conflict)?;
+        data.ensure_running().map_err(|_| terrabase_tbep::placement::PlacementError::Conflict)?;
         let snapshot = self
             .registry
             .retained_snapshot()
@@ -155,13 +161,14 @@ impl PlacementDataControl for ProductionPlacementDataControl {
         let database = snapshot
             .into_iter()
             .find_map(|entry| {
-                (DatabaseRouteScope::try_new(
-                    &entry.database.record.tenant_id,
-                    &entry.database.record.project_id,
-                    &entry.database.record.database_id,
-                )
-                .ok()
-                    == Some(scope)
+                (entry.activated
+                    && DatabaseRouteScope::try_new(
+                        &entry.database.record.tenant_id,
+                        &entry.database.record.project_id,
+                        &entry.database.record.database_id,
+                    )
+                    .ok()
+                        == Some(scope)
                     && entry.database.record.operation_id == request.operation_id)
                     .then_some(entry.database)
             })
@@ -174,16 +181,8 @@ impl PlacementDataControl for ProductionPlacementDataControl {
         let digest = self.journal.accepted_placement_digest()?;
         let nonce = hex::decode(&request.nonce)
             .map_err(|_| terrabase_tbep::placement::PlacementError::Invalid)?;
-        let observations = self
-            .lifecycle
-            .get()
-            .map(|data| data.observations())
-            .ok_or(terrabase_tbep::placement::PlacementError::Conflict)?;
-        let progress = self
-            .lifecycle
-            .get()
-            .map(|data| data.progress())
-            .ok_or(terrabase_tbep::placement::PlacementError::Conflict)?;
+        let observations = data.observations();
+        let progress = data.progress();
         let binding = replication_proof::ReadinessBinding {
             environment: self
                 .runtime

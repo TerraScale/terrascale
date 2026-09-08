@@ -578,6 +578,12 @@ impl NativeRecoveryRuntime {
             error: None,
         };
         let bytes = serde_json::to_vec(&record).map_err(|_| NativeRecoveryError::Unavailable)?;
+        // Serialize durable admission with shutdown, as capture admission does.
+        // Once shutdown begins no caller may enqueue work behind the drained worker.
+        let lifecycle = self.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+        if *lifecycle {
+            return Err(NativeRecoveryError::Unavailable);
+        }
         let mut connection =
             self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
         let tx = connection.transaction().map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -600,6 +606,35 @@ impl NativeRecoveryRuntime {
         }
         if !self.restore_residency_matches(&request)? {
             return Err(NativeRecoveryError::VerificationFailed);
+        }
+        // Uncertain restores still own repairable work and may never be evicted.
+        // Check and prune inside the insertion transaction, after replay, so
+        // concurrent admissions cannot exceed either durable ledger bound.
+        let pending: i64 = tx
+            .query_row(
+                "SELECT count(*) FROM native_restore_operations WHERE phase NOT IN ('complete','failed')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
+        if pending >= self.limits.pending_operations as i64 {
+            return Err(NativeRecoveryError::Unavailable);
+        }
+        let total: i64 = tx
+            .query_row("SELECT count(*) FROM native_restore_operations", [], |row| row.get(0))
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
+        if total >= self.limits.retained_operations as i64 {
+            tx.execute(
+                "DELETE FROM native_restore_operations WHERE operation_id=(SELECT operation_id FROM native_restore_operations WHERE phase IN ('complete','failed') ORDER BY operation_id LIMIT 1)",
+                [],
+            )
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
+            let remaining: i64 = tx
+                .query_row("SELECT count(*) FROM native_restore_operations", [], |row| row.get(0))
+                .map_err(|_| NativeRecoveryError::Unavailable)?;
+            if remaining >= self.limits.retained_operations as i64 {
+                return Err(NativeRecoveryError::Unavailable);
+            }
         }
         tx.execute(
             "INSERT INTO native_restore_operations(operation_id,source_database_id,target_database_id,phase,record) VALUES(?1,?2,?3,'accepted',?4)",
@@ -654,6 +689,10 @@ impl NativeRecoveryRuntime {
         &self,
         operation_id: &str,
     ) -> Result<NativeRestoreOperation, NativeRecoveryError> {
+        let lifecycle = self.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+        if *lifecycle {
+            return Err(NativeRecoveryError::Unavailable);
+        }
         let mut operation =
             self.restore_status(operation_id)?.ok_or(NativeRecoveryError::InvalidRequest)?;
         if operation.phase != NativeRestorePhase::Uncertain {
@@ -1308,6 +1347,127 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restore_admission_bounds_survive_concurrency_pruning_failure_and_reopen() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let runtime_root = root.join("restore-bounds");
+        let bounds = NativeRecoveryLimits { pending_operations: 2, retained_operations: 3 };
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            bounds,
+            Arc::new(RejectRestore),
+        )
+        .unwrap();
+        worker.shutdown().await.unwrap();
+        *runtime.lifecycle.lock().unwrap() = false;
+        let request = NativeRestoreRequest {
+            operation_id: "capacity".into(),
+            source_owner: format!("{}/{}", records[0].tenant_id, records[0].project_id),
+            source_database_id: records[0].database_id.clone(),
+            recovery_point_id: "a".repeat(64),
+            recovery_point_digest: "a".repeat(64),
+            target_owner: format!("{}/{}", records[1].tenant_id, records[1].project_id),
+            target_database_id: records[1].database_id.clone(),
+            journal_cut: "1".into(),
+            restore_epoch: 1,
+            authority_epoch: 7,
+            authority_lease: "lease".into(),
+            accepted_proof_digest: "a".repeat(64),
+            operation_grant: vec![1],
+            provider: "oci".into(),
+            selection: NativeRestoreSelection::PointId("a".repeat(64)),
+            residency: records[0].residency.clone(),
+            placement: records[0].regions.clone(),
+        };
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|index| {
+                    let runtime = Arc::clone(&runtime);
+                    let barrier = Arc::clone(&barrier);
+                    let mut request = request.clone();
+                    request.operation_id = format!("concurrent-{index}");
+                    scope.spawn(move || {
+                        barrier.wait();
+                        runtime.admit_restore(request)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|handle| handle.join().unwrap()).collect::<Vec<_>>()
+        });
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 2);
+        assert!(
+            results
+                .iter()
+                .filter_map(|result| result.as_ref().err())
+                .all(|error| *error == NativeRecoveryError::Unavailable)
+        );
+        let mut accepted: Vec<_> = results.into_iter().filter_map(Result::ok).collect();
+        for operation in &mut accepted {
+            assert_eq!(runtime.admit_restore(operation.request.clone()).unwrap(), *operation);
+            operation.phase = NativeRestorePhase::Uncertain;
+            runtime.save_restore(operation).unwrap();
+        }
+        assert_eq!(runtime.admit_restore(request.clone()), Err(NativeRecoveryError::Unavailable));
+        accepted[0].phase = NativeRestorePhase::Failed;
+        runtime.save_restore(&accepted[0]).unwrap();
+        let mut third = runtime.admit_restore(request.clone()).unwrap();
+        third.phase = NativeRestorePhase::Failed;
+        runtime.save_restore(&third).unwrap();
+        let mut fourth = request.clone();
+        fourth.operation_id = "replacement".into();
+        runtime.operations.lock().unwrap().execute_batch(
+            "CREATE TRIGGER reject_restore BEFORE INSERT ON native_restore_operations BEGIN SELECT RAISE(ABORT, 'injected insert failure'); END;"
+        ).unwrap();
+        assert_eq!(runtime.admit_restore(fourth.clone()), Err(NativeRecoveryError::Unavailable));
+        // Failed insertion rolls terminal eviction back in the same transaction.
+        for operation in [&accepted[0], &accepted[1], &third] {
+            assert_eq!(
+                runtime.restore_status(&operation.request.operation_id).unwrap(),
+                Some(operation.clone())
+            );
+        }
+        runtime.operations.lock().unwrap().execute_batch("DROP TRIGGER reject_restore").unwrap();
+        let mut replacement = runtime.admit_restore(fourth).unwrap();
+        replacement.phase = NativeRestorePhase::Uncertain;
+        runtime.save_restore(&replacement).unwrap();
+        assert_eq!(
+            runtime.restore_status(&accepted[1].request.operation_id).unwrap(),
+            Some(accepted[1].clone())
+        );
+        let count: i64 = runtime
+            .operations
+            .lock()
+            .unwrap()
+            .query_row("SELECT count(*) FROM native_restore_operations", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 3);
+        drop(runtime);
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            bounds,
+            Arc::new(RejectRestore),
+        )
+        .unwrap();
+        worker.shutdown().await.unwrap();
+        *runtime.lifecycle.lock().unwrap() = false;
+        let mut fresh = request;
+        fresh.operation_id = "after-reopen".into();
+        assert_eq!(runtime.admit_restore(fresh), Err(NativeRecoveryError::Unavailable));
+        assert_eq!(runtime.admit_restore(replacement.request.clone()).unwrap(), replacement);
+        assert_eq!(
+            runtime.restore_status(&accepted[1].request.operation_id).unwrap(),
+            Some(accepted[1].clone())
+        );
+        drop((runtime, registry, member));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn uncertain_restore_requires_explicit_readback_retry() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
@@ -1342,6 +1502,10 @@ mod tests {
             residency: records[0].residency.clone(),
             placement: records[0].regions.clone(),
         };
+        assert_eq!(runtime.admit_restore(request.clone()), Err(NativeRecoveryError::Unavailable));
+        assert!(runtime.restore_status(&request.operation_id).unwrap().is_none());
+        // Manually dispatch durable phases with background processing stopped.
+        *runtime.lifecycle.lock().unwrap() = false;
         let mut wrong_residency = request.clone();
         wrong_residency.residency.push_str("-mismatch");
         assert_eq!(
@@ -1376,6 +1540,13 @@ mod tests {
             error: Some("unknown".into()),
         };
         runtime.save_restore(&operation).unwrap();
+        *runtime.lifecycle.lock().unwrap() = true;
+        assert_eq!(
+            runtime.retry_restore_readback("uncertain-operation"),
+            Err(NativeRecoveryError::Unavailable)
+        );
+        assert_eq!(runtime.restore_status("uncertain-operation").unwrap(), Some(operation.clone()));
+        *runtime.lifecycle.lock().unwrap() = false;
         let retried = runtime.retry_restore_readback("uncertain-operation").unwrap();
         assert_eq!(retried.phase, NativeRestorePhase::Verifying);
         assert!(retried.receipt.is_none());
@@ -1452,6 +1623,7 @@ mod tests {
         .unwrap();
         worker.shutdown().await.unwrap();
         let target = &records[1];
+        *runtime.lifecycle.lock().unwrap() = false;
         let source = records[0].database_id.clone();
         let owner = format!("{}/{}", target.tenant_id, target.project_id);
         let request = NativeRestoreRequest {
@@ -1504,6 +1676,7 @@ mod tests {
                 .unwrap(),
             Some(request.clone())
         );
+        *runtime.lifecycle.lock().unwrap() = false;
         let der = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(
             &aws_lc_rs::rand::SystemRandom::new(),
         )

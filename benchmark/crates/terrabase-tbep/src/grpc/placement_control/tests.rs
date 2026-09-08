@@ -186,3 +186,93 @@ async fn metadata_without_peer_certificate_cannot_reach_journal() {
     assert_eq!(error.code(), Code::Unauthenticated);
     assert_eq!(journal.latest(), Err(PlacementError::NotFound));
 }
+
+#[tokio::test]
+async fn admitted_listener_retains_authenticated_placement_control() {
+    let fixture = Fixture::new();
+    let config = TbepGrpcConfig::try_new(
+        256 * 1024,
+        8,
+        Duration::from_secs(2),
+        Duration::from_secs(2),
+        Duration::from_secs(2),
+        [PRINCIPAL.to_owned()].into(),
+    )
+    .unwrap();
+    let placement = Arc::new(
+        PlacementControlServer::new(
+            Arc::new(fixture.open()),
+            Arc::new(fixture.open_auth()),
+            config.clone(),
+            BTreeSet::new(),
+        )
+        .unwrap(),
+    );
+    let host = crate::engine_host::EngineHost::open(
+        &fixture.root.join("host"),
+        1,
+        "tenant-a",
+        "project-a",
+        "database-a",
+    )
+    .unwrap();
+    let server = Arc::new(
+        super::super::TbepGrpcServer::with_config_and_metrics(
+            Arc::new(host),
+            pb::BindingKind::NetworkMtls,
+            config,
+            terrabase::observability::Region::Unknown,
+            Arc::new(terrabase::observability::MetricsRegistry::new()),
+        )
+        .with_placement_control(Arc::clone(&placement)),
+    );
+    let (ca, certificate, key, client_certificate, client_key) = tls_material();
+    let mut listener =
+        server.serve_tls("127.0.0.1:0".parse().unwrap(), &certificate, &key, Some(&ca)).unwrap();
+    let tls = ClientTlsConfig::new()
+        .ca_certificate(Certificate::from_pem(&ca))
+        .domain_name("localhost")
+        .identity(Identity::from_pem(&client_certificate, &client_key));
+    let channel = Endpoint::from_shared(format!("https://{}", listener.local_addr().unwrap()))
+        .unwrap()
+        .tls_config(tls)
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+    assert_auth_bootstrap(&fixture, channel.clone()).await;
+    let mut client = PlacementControlServiceClient::new(channel);
+    let staged = client
+        .stage(request(fixture.request.clone(), Some("admitted-stage")))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(staged.revision, 1);
+    assert_eq!(
+        client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap().into_inner(),
+        staged
+    );
+    assert_eq!(
+        client.get(Request::new(pb::PlacementGetRequest {})).await.unwrap_err().code(),
+        Code::Unauthenticated
+    );
+    assert_eq!(
+        client
+            .readiness(request(
+                pb::PlacementReadinessRequest { nonce: "ab".repeat(32), ..Default::default() },
+                None,
+            ))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::FailedPrecondition
+    );
+    placement.begin_drain();
+    assert_eq!(
+        client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap_err().code(),
+        Code::Unavailable
+    );
+    drop(client);
+    tokio::task::spawn_blocking(move || listener.shutdown_and_wait()).await.unwrap().unwrap();
+    placement.drain().await.unwrap();
+}

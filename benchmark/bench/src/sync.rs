@@ -275,8 +275,12 @@ fn websocket_lane(endpoint: &Endpoint, config: &Config, token: &str) -> Verdict 
         let elapsed = started.elapsed().as_secs_f64() * 1_000.0;
         max_rss = max_rss.max(current_rss_bytes(config.member_pid));
         match result {
-            Ok(bytes) if !bytes.is_empty() => samples.push(elapsed),
-            Ok(_) => return fail("WebSocket returned an empty frame"),
+            Ok(bytes) => {
+                if valid_data_envelope(&bytes).is_none() {
+                    return fail("WebSocket returned a non-data or malformed sync-v1 frame");
+                }
+                samples.push(elapsed);
+            }
             Err(error) => {
                 return if samples.is_empty() {
                     unavailable(&format!("WebSocket unavailable: {error}"))
@@ -434,7 +438,7 @@ fn http_lane(endpoint: &Endpoint, config: &Config, token: &str, cdn_url: Option<
         // A non-empty HTTP 200 is not evidence of a delta: error envelopes and
         // malformed frames can also carry bytes. Require the wire envelope and
         // its causal revision before advancing the cursor.
-        let causation = match valid_envelope_causation(&response.body) {
+        let causation = match valid_delta_causation(&response.body) {
             Some(value) if value >= offset => value,
             Some(value) => return fail(&format!("CDN delta causation regressed: {value} < {offset}")),
             None => return fail("CDN delta was not a valid sync-v1 envelope"),
@@ -571,7 +575,8 @@ fn websocket_subscribe(
     .map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(Duration::from_secs(30))).map_err(|e| e.to_string())?;
     stream.set_nodelay(true).map_err(|e| e.to_string())?;
-    let key = "dGVycmFzY2FsZS1zeW5jLWJlbmNo";
+    // RFC 6455 requires Sec-WebSocket-Key to decode to exactly 16 bytes.
+    let key = "c3luYy1iZW5jaC1rZXktMQ==";
     let path = format!(
         "{}/api/v1/databases/{}/reactive",
         endpoint.base_path.trim_end_matches('/'),
@@ -923,16 +928,34 @@ fn valid_envelope_causation(bytes: &[u8]) -> Option<u64> {
     }
     cursor = &cursor[1..];
     let major = read_msgpack_uint(&mut cursor)?;
-    if major != 1 {
+    let minor = read_msgpack_uint(&mut cursor)?;
+    let features = read_msgpack_uint(&mut cursor)?;
+    let tag = read_msgpack_uint(&mut cursor)?;
+    if major != 1 || minor != 0 || features != 0 || !matches!(tag, 3..=5 | 8) {
         return None;
     }
-    for _ in 0..5 {
-        read_msgpack_uint(&mut cursor)?;
-    }
+    read_msgpack_uint(&mut cursor)?;
+    let causation = read_msgpack_uint(&mut cursor)?;
     if cursor.is_empty() {
         return None;
     }
-    envelope_causation(bytes)
+    // Every server data message has an array body. This rejects typed Error,
+    // Heartbeat, and malformed/truncated scalar responses at the boundary.
+    if !matches!(*cursor.first()?, 0x90..=0x9f | 0xdc | 0xdd) {
+        return None;
+    }
+    Some(causation)
+}
+
+fn valid_data_envelope(bytes: &[u8]) -> Option<u64> {
+    valid_envelope_causation(bytes)
+}
+
+fn valid_delta_causation(bytes: &[u8]) -> Option<u64> {
+    // Canonical sync-v1 encodes the small manifest tag as a fixint at index 3
+    // (byte 4 after the array header). The generic validator still checks all
+    // envelope fields and body structure below.
+    (bytes.get(4) == Some(&4)).then(|| valid_envelope_causation(bytes)).flatten()
 }
 fn read_msgpack_uint(cursor: &mut &[u8]) -> Option<u64> {
     let tag = *cursor.first()?;
@@ -1304,7 +1327,9 @@ mod tests {
     fn reads_messagepack_causation_without_reordering_body() {
         let frame = subscribe_envelope("s", "SELECT id FROM orders ORDER BY id");
         assert_eq!(envelope_causation(&frame), Some(0));
-        assert_eq!(valid_envelope_causation(&frame), Some(0));
+        let mut data_frame = frame.clone();
+        data_frame[4] = 3; // Snapshot tag in the indexed envelope.
+        assert_eq!(valid_envelope_causation(&data_frame), Some(0));
     }
     #[test]
     fn rejects_wrong_major_and_truncated_sync_envelopes() {

@@ -88,6 +88,18 @@ pub(crate) trait ImportWriteTarget: Send + Sync {
     ) -> Result<ImportCommit, String> {
         Ok(ImportCommit::Unknown)
     }
+    /// Replays the original pending attempt. Only a durable rejection proves
+    /// that its identity can be retired; preparation errors remain uncertain.
+    fn replay_import_batch(
+        &self,
+        _operation: &str,
+        _database: &str,
+        _records: &[ImportRecord],
+    ) -> Result<ImportCommit, String> {
+        Ok(ImportCommit::Unknown)
+    }
+    /// An error proves no commit was submitted. Once a commit may have
+    /// landed, return `Unknown` so the persisted identity is retained.
     fn commit_import_batch(
         &self,
         operation_id: &str,
@@ -97,7 +109,7 @@ pub(crate) trait ImportWriteTarget: Send + Sync {
 }
 
 /// Production import target bound to the same Engine transaction seams as the
-/// public document batch route. The import executor supplies deterministic
+/// public document batch route. The import executor durably stages unique
 /// operation identities; the target owns validation, metering, and durable
 /// commit of each batch.
 pub(crate) struct EngineImportWriteTarget {
@@ -151,6 +163,21 @@ impl ImportWriteTarget for EngineImportWriteTarget {
             }
             terrabase::DurableResolution::Rejected(_) => Ok(ImportCommit::Rejected),
             terrabase::DurableResolution::Pending => Ok(ImportCommit::Unknown),
+        }
+    }
+
+    fn replay_import_batch(
+        &self,
+        operation: &str,
+        database: &str,
+        records: &[ImportRecord],
+    ) -> Result<ImportCommit, String> {
+        match self.commit_import_batch(operation, database, records) {
+            Ok(ImportCommit::Committed { records }) => Ok(ImportCommit::Committed { records }),
+            // A changed schema or budget may refuse this replay before it can
+            // observe an earlier commit. Resolve the original ledger identity
+            // before retiring it, including after an operation-digest conflict.
+            _ => self.resolve_import_batch(operation, records.len() as u64),
         }
     }
 
@@ -220,11 +247,7 @@ impl ImportWriteTarget for EngineImportWriteTarget {
                 }
                 Ok(ImportCommit::Committed { records: records.len() as u64 })
             }
-            terrabase::CommitOutcome::Rejected(reason) => {
-                #[cfg(test)]
-                eprintln!("import engine commit rejected: {reason:?}");
-                Ok(ImportCommit::Rejected)
-            }
+            terrabase::CommitOutcome::Rejected(_) => Ok(ImportCommit::Rejected),
             terrabase::CommitOutcome::Unknown(_) => Ok(ImportCommit::Unknown),
         }
     }
@@ -247,7 +270,7 @@ impl From<io::Error> for ImportExecutionError {
 }
 
 /// Executes a committed upload from its durable cursor. Every batch has a
-/// deterministic operation identity, and its cursor is persisted only after
+/// durably staged operation identity, and its cursor is persisted only after
 /// the write target reports a proven commit. A failed or cancelled operation
 /// remains resumable from its last checkpoint.
 pub(crate) fn execute_import<C, T>(
@@ -271,13 +294,13 @@ where
     let database_id = job.database_id.as_str();
     let mut cursor = job.cursor;
     let mut committed_records = job.committed_records;
-    let mut ordinal = committed_records;
     let mut batch = Vec::with_capacity(IMPORT_BATCH_RECORDS);
     let mut batch_cursor = cursor;
     let mut batch_bytes = 0usize;
     let mut batch_error = None;
     let mut result = Ok(());
     let format = parse_format(&job.format)?;
+    let mut replay = None;
 
     if let Some(operation) = &job.pending_operation {
         let records = job
@@ -294,12 +317,21 @@ where
                 store
                     .checkpoint(&job.operation_id, cursor, committed_records)
                     .map_err(|e| ImportExecutionError::Store(e.to_string()))?;
-                ordinal = committed_records;
             }
             Ok(ImportCommit::Rejected) => {
                 store
                     .clear_rejected(&job.operation_id)
                     .map_err(|e| ImportExecutionError::Store(e.to_string()))?;
+            }
+            Ok(ImportCommit::Unknown) => {
+                let end = job
+                    .pending_cursor
+                    .filter(|end| *end > cursor)
+                    .ok_or_else(|| ImportExecutionError::Store("invalid pending cursor".into()))?;
+                if records == 0 || records > IMPORT_BATCH_RECORDS as u64 {
+                    return Err(ImportExecutionError::Store("invalid pending count".into()));
+                }
+                replay = Some((operation.as_str(), end, records));
             }
             _ => {
                 let _ = store.hold(&job.operation_id);
@@ -322,23 +354,41 @@ where
             batch_bytes = batch_bytes.saturating_add(record.value.len());
             batch.push(record);
             batch_cursor = source_offset;
-            if batch.len() == IMPORT_BATCH_RECORDS || batch_bytes >= 8 * 1024 * 1024 {
+            let replay_operation = if let Some((operation, end, count)) = replay {
+                if source_offset > end || batch.len() as u64 > count {
+                    batch_error = Some(ImportExecutionError::Unknown(operation.into()));
+                    return Err(io::Error::other("invalid pending batch boundary"));
+                }
+                if source_offset < end {
+                    return Ok(());
+                }
+                if batch.len() as u64 != count {
+                    batch_error = Some(ImportExecutionError::Unknown(operation.into()));
+                    return Err(io::Error::other("invalid pending batch count"));
+                }
+                Some(operation)
+            } else {
+                None
+            };
+            if replay_operation.is_some()
+                || batch.len() == IMPORT_BATCH_RECORDS
+                || batch_bytes >= 8 * 1024 * 1024
+            {
                 match commit_batch(
                     store,
                     target,
                     job,
-                    digest,
                     database_id,
-                    ordinal,
                     source_offset,
                     &mut batch,
                     committed_records,
+                    replay_operation,
                 ) {
                     Ok((next_cursor, next_records)) => {
                         cursor = next_cursor;
                         committed_records = next_records;
-                        ordinal = committed_records;
                         batch_bytes = 0;
+                        replay = None;
                     }
                     Err(error) => {
                         batch_error = Some(error);
@@ -358,18 +408,22 @@ where
             Err(ImportExecutionError::Codec(error))
         };
     }
+    if result.is_ok()
+        && let Some((operation, _, _)) = replay
+    {
+        result = Err(ImportExecutionError::Unknown(operation.into()));
+    }
     if result.is_ok() && !batch.is_empty() {
         let offset = batch_cursor.max(job.cursor);
         match commit_batch(
             store,
             target,
             job,
-            digest,
             database_id,
-            ordinal,
             offset,
             &mut batch,
             committed_records,
+            None,
         ) {
             Ok((next_cursor, next_records)) => {
                 cursor = next_cursor;
@@ -408,22 +462,33 @@ fn commit_batch<T: ImportWriteTarget>(
     store: &ImportStore,
     target: &T,
     job: &ImportJob,
-    digest: &str,
     database_id: &str,
-    ordinal: u64,
     cursor: u64,
     batch: &mut Vec<ImportRecord>,
     committed_records: u64,
+    replay_operation: Option<&str>,
 ) -> Result<(u64, u64), ImportExecutionError> {
-    let operation = export_formats::batch_operation_id(&job.operation_id, digest, ordinal);
+    // Rejected operation identities remain rejected in the engine ledger. A
+    // new attempt gets a fresh identity, durably saved before submission; an
+    // uncertain attempt keeps its pending identity until resolution proves
+    // whether it committed or was rejected.
+    let operation = replay_operation
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("import-batch-{}", terrabase::identity::generate()));
     let count = batch.len() as u64;
-    store
-        .begin_batch(&job.operation_id, &operation, cursor, count)
-        .map_err(|e| ImportExecutionError::Store(e.to_string()))?;
-    let outcome = target.commit_import_batch(&operation, database_id, batch).map_err(|error| {
-        let _ = store.clear_rejected(&job.operation_id);
-        ImportExecutionError::Rejected(error)
-    })?;
+    let outcome = if replay_operation.is_some() {
+        target
+            .replay_import_batch(&operation, database_id, batch)
+            .map_err(|_| ImportExecutionError::Unknown(operation.clone()))?
+    } else {
+        store
+            .begin_batch(&job.operation_id, &operation, cursor, count)
+            .map_err(|e| ImportExecutionError::Store(e.to_string()))?;
+        target.commit_import_batch(&operation, database_id, batch).map_err(|error| {
+            let _ = store.clear_rejected(&job.operation_id);
+            ImportExecutionError::Rejected(error)
+        })?
+    };
     match outcome {
         ImportCommit::Committed { records } if records == count => {
             let total = committed_records.checked_add(records).ok_or_else(|| {
@@ -953,6 +1018,199 @@ mod tests {
         }
     }
 
+    struct RejectionLedgerTarget {
+        attempts: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl ImportWriteTarget for RejectionLedgerTarget {
+        fn commit_import_batch(
+            &self,
+            operation: &str,
+            _: &str,
+            records: &[ImportRecord],
+        ) -> Result<ImportCommit, String> {
+            let mut attempts = self.attempts.lock().unwrap();
+            attempts.push(operation.to_owned());
+            // Like SQLite's durable rejection ledger, this identity can never
+            // become a successful write even after the original refusal clears.
+            if operation == attempts[0] {
+                Ok(ImportCommit::Rejected)
+            } else {
+                Ok(ImportCommit::Committed { records: records.len() as u64 })
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_batch_resumes_after_restart_with_new_attempt_identity() {
+        let (registry, _member, records, root) = crate::admitted_databases::tests::fixture();
+        let host = &registry.resolve(&records[0].database_id).unwrap().unwrap().host;
+        let lease = host
+            .engine()
+            .artifact_key_source(&document_scope(host.engine()).unwrap())
+            .unwrap()
+            .current_lease()
+            .unwrap();
+        let version = lease.metadata().version().to_text();
+        let runtime = ImportRuntime::open(root.join("imports")).unwrap();
+        let job = ImportJob {
+            operation_id: "rejected-regression".into(),
+            tenant_id: records[0].tenant_id.clone(),
+            project_id: records[0].project_id.clone(),
+            database_id: records[0].database_id.clone(),
+            format: "jsonl".into(),
+            durability: "regional".into(),
+            key_version: version,
+            pending_operation: None,
+            pending_cursor: None,
+            pending_records: None,
+            input_digest: None,
+            input_length: None,
+            input_path: None,
+            input_committed: false,
+            cursor: 0,
+            committed_records: 0,
+            state: "uploading".into(),
+            error: None,
+        };
+        runtime.store.admit(&job).unwrap();
+        let mut writer = crate::import_runtime::ImportInputWriter::create(
+            &runtime.root,
+            &job.operation_id,
+            cipher(host, &job.key_version).unwrap(),
+        )
+        .unwrap();
+        writer.write_chunk(b"{\"collection\":\"items\",\"id\":\"one\",\"value\":{}}\n").unwrap();
+        writer.finish_and_commit(&runtime.store).unwrap();
+        let target = RejectionLedgerTarget { attempts: Default::default() };
+        assert!(runtime.store.claim(&job.operation_id).unwrap());
+        let current = runtime.store.get(&job.operation_id).unwrap().unwrap();
+        let reader = ImportInputReader::open(
+            current.input_path.as_ref().unwrap(),
+            &current.operation_id,
+            cipher(host, &current.key_version).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            execute_import(&runtime.store, &current, reader, &target, &AtomicBool::new(false)),
+            Err(ImportExecutionError::Rejected(_))
+        ));
+        let failed = runtime.store.get(&job.operation_id).unwrap().unwrap();
+        assert_eq!((failed.cursor, failed.committed_records), (0, 0));
+        assert!(failed.pending_operation.is_none());
+        drop(runtime);
+        let runtime = ImportRuntime::open(root.join("imports")).unwrap();
+        runtime.store.queue_resume(&job.operation_id).unwrap();
+        assert!(runtime.store.claim(&job.operation_id).unwrap());
+        let current = runtime.store.get(&job.operation_id).unwrap().unwrap();
+        let reader = ImportInputReader::open(
+            current.input_path.as_ref().unwrap(),
+            &current.operation_id,
+            cipher(host, &current.key_version).unwrap(),
+        )
+        .unwrap();
+        let completed =
+            execute_import(&runtime.store, &current, reader, &target, &AtomicBool::new(false))
+                .unwrap();
+        assert_eq!(completed.operation_id, job.operation_id);
+        assert_eq!(completed.state, "completed");
+        assert_eq!(completed.committed_records, 1);
+        let attempts = target.attempts.lock().unwrap();
+        assert_eq!(attempts.len(), 2);
+        assert_ne!(attempts[0], attempts[1]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pending_before_submission_replays_original_identity_after_restart() {
+        tokio::task::spawn_blocking(|| {
+            let (registry, _member, records, root) = crate::admitted_databases::tests::fixture();
+            let host = &registry.resolve(&records[0].database_id).unwrap().unwrap().host;
+            let lease = host
+                .engine()
+                .artifact_key_source(&document_scope(host.engine()).unwrap())
+                .unwrap()
+                .current_lease()
+                .unwrap();
+            let version = lease.metadata().version().to_text();
+            let runtime = ImportRuntime::open(root.join("imports")).unwrap();
+            let job = ImportJob {
+                operation_id: "presubmit-regression".into(),
+                tenant_id: records[0].tenant_id.clone(),
+                project_id: records[0].project_id.clone(),
+                database_id: records[0].database_id.clone(),
+                format: "jsonl".into(),
+                durability: "regional".into(),
+                key_version: version,
+                pending_operation: None,
+                pending_cursor: None,
+                pending_records: None,
+                input_digest: None,
+                input_length: None,
+                input_path: None,
+                input_committed: false,
+                cursor: 0,
+                committed_records: 0,
+                state: "uploading".into(),
+                error: None,
+            };
+            runtime.store.admit(&job).unwrap();
+            let mut writer = crate::import_runtime::ImportInputWriter::create(
+                &runtime.root,
+                &job.operation_id,
+                cipher(host, &job.key_version).unwrap(),
+            )
+            .unwrap();
+            writer
+                .write_chunk(b"{\"collection\":\"items\",\"id\":\"one\",\"value\":{}}\n")
+                .unwrap();
+            writer.finish_and_commit(&runtime.store).unwrap();
+            assert!(runtime.store.claim(&job.operation_id).unwrap());
+            let current = runtime.store.get(&job.operation_id).unwrap().unwrap();
+            let attempt = "persisted-before-submission";
+            runtime
+                .store
+                .begin_batch(&job.operation_id, attempt, current.input_length.unwrap(), 1)
+                .unwrap();
+            drop(runtime);
+            let runtime = ImportRuntime::open(root.join("imports")).unwrap();
+            let recovered = runtime.store.get(&job.operation_id).unwrap().unwrap();
+            assert_eq!(recovered.state, "unknown");
+            assert_eq!(recovered.pending_operation.as_deref(), Some(attempt));
+            assert!(runtime.store.claim(&job.operation_id).unwrap());
+            let current = runtime.store.get(&job.operation_id).unwrap().unwrap();
+            let reader = ImportInputReader::open(
+                current.input_path.as_ref().unwrap(),
+                &current.operation_id,
+                cipher(host, &current.key_version).unwrap(),
+            )
+            .unwrap();
+            let mut state = super::super::tests::state_with_keys_and_control();
+            Arc::get_mut(&mut state).unwrap().standalone_durability = true;
+            let target = EngineImportWriteTarget::new(
+                state,
+                Arc::clone(host),
+                records[0].tenant_id.clone(),
+                records[0].project_id.clone(),
+                HeaderMap::new(),
+            );
+            let completed =
+                execute_import(&runtime.store, &current, reader, &target, &AtomicBool::new(false))
+                    .unwrap();
+            assert_eq!(completed.state, "completed");
+            assert_eq!(completed.committed_records, 1);
+            assert!(completed.pending_operation.is_none());
+            let scope = document_scope(host.engine()).unwrap();
+            assert!(matches!(
+                host.engine()
+                    .resolve_commit(&scope, OperationId::try_new(attempt).unwrap())
+                    .unwrap(),
+                terrabase::DurableResolution::Committed(_)
+            ));
+        })
+        .await
+        .unwrap();
+    }
+
     #[test]
     fn unknown_resume_resolves_before_any_second_write() {
         let (registry, _member, records, root) = crate::admitted_databases::tests::fixture();
@@ -1014,6 +1272,15 @@ mod tests {
         assert_eq!(held.state, "unknown");
         assert_eq!((held.cursor, held.committed_records), (0, 0));
         assert!(held.pending_operation.is_some());
+
+        // Simulate a process dying after claiming the unresolved attempt.
+        assert!(runtime.store.claim(&job.operation_id).unwrap());
+        let mut recovering = runtime.store.get(&job.operation_id).unwrap().unwrap();
+        assert_eq!(recovering.pending_operation, held.pending_operation);
+        recovering.state = "unknown".into();
+        drop(runtime);
+        let runtime = ImportRuntime::open(root.join("imports")).unwrap();
+        assert_eq!(runtime.store.get(&job.operation_id).unwrap().unwrap(), recovering);
 
         // Once the durable engine receipt becomes available, recovery advances
         // the original checkpoint without submitting or billing the batch again.

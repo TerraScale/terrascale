@@ -150,3 +150,58 @@ pub(super) fn insert(
     ).map_err(|_| ())?;
     Ok(())
 }
+
+#[cfg(test)]
+mod placement_read_tests {
+    use super::*;
+
+    fn placement() -> UsagePlacement {
+        UsagePlacement::try_new(
+            TenantId::try_new("tenant").unwrap(),
+            "project",
+            "database",
+            "partition",
+            crate::regions::RegionCode::GRU,
+            vec![crate::regions::RegionCode::GRU],
+            "revision-one",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn placement_repeat_reads_committed_binding_without_writer_reservation() {
+        let path = std::env::temp_dir()
+            .join(format!("terrabase-placement-read-{}", crate::identity::generate()));
+        let mut connection = rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch("PRAGMA journal_mode=WAL").unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let placement = placement();
+        configure(&mut connection, &placement).unwrap();
+        let mut other = rusqlite::Connection::open(&path).unwrap();
+        let tx = other.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).unwrap();
+        assert!(configure(&mut connection, &placement).is_ok());
+        let mut changed = placement.clone();
+        changed.revision = "revision-two".into();
+        assert!(configure(&mut connection, &changed).is_err());
+        assert_eq!(binding_for(&connection, placement.scope.tenant_id()).unwrap(), Some(placement));
+        drop(tx);
+        drop(other);
+        drop(connection);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn placement_first_configuration_refuses_preexisting_writes() {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection.execute(
+            "INSERT INTO operation_facts(tenant,client_request_ulid,digest,committed,sequence,writes,bytes)
+             VALUES('tenant','prior',0,1,1,1,1)",
+            [],
+        ).unwrap();
+        let placement = placement();
+        assert!(configure(&mut connection, &placement).is_err());
+        assert!(binding_for(&connection, placement.scope.tenant_id()).unwrap().is_none());
+    }
+}

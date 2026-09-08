@@ -63,7 +63,11 @@ impl NativeHttpsTransport {
                 (host.as_str(), port)
                     .to_socket_addrs()
                     .map_err(|_| DeliveryError::Retryable)
-                    .map(|addresses| addresses.map(|address| address.ip()).collect())
+                    // Retain one overflow sentinel so oversized answers are
+                    // rejected below without copying the entire resolver list.
+                    .map(|addresses| {
+                        addresses.take(MAX_ADDRESSES + 1).map(|address| address.ip()).collect()
+                    })
             }),
         })
     }
@@ -362,6 +366,123 @@ mod tests {
         let first = NativeHttpsTransport::new(Handle::current()).expect("first");
         let second = NativeHttpsTransport::new(Handle::current()).expect("second");
         assert!(Arc::ptr_eq(&first.admission, &second.admission));
+    }
+
+    #[tokio::test]
+    async fn native_timeout_closes_a_stalled_tls_socket_and_releases_admission() {
+        use tokio::io::AsyncReadExt;
+
+        let (_, client) = test_tls();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let (connected, connection) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            // Consume ClientHello but deliberately never complete TLS. Keep
+            // reading to prove deadline cancellation closes the actual socket.
+            let mut buffer = [0; 4096];
+            assert!(stream.read(&mut buffer).await.expect("ClientHello") > 0);
+            connected.send(()).expect("connected");
+            loop {
+                if stream.read(&mut buffer).await.expect("socket closure") == 0 {
+                    break;
+                }
+            }
+        });
+        let mut transport = NativeHttpsTransport::new(Handle::current()).expect("transport");
+        transport.timeout = Duration::from_millis(250);
+        transport.admission = Arc::new(Semaphore::new(1));
+        let admission = Arc::clone(&transport.admission);
+        let uri: Uri = format!("https://hooks.example:{port}/events").parse().expect("uri");
+        let request = request(&uri, &BTreeMap::new(), b"payload").expect("request");
+        let worker = tokio::task::spawn_blocking(move || {
+            // Loopback is supplied only below the production public-IP gate;
+            // TLS, connection lifecycle, and deadline use production code.
+            transport.wait(send_pinned(
+                uri,
+                vec!["127.0.0.1".parse().expect("ip")],
+                request,
+                client,
+            ))
+        });
+        tokio::time::timeout(Duration::from_secs(2), connection)
+            .await
+            .expect("connection deadline")
+            .expect("connection signal");
+        assert_eq!(worker.await.expect("worker"), Err(DeliveryError::Retryable));
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("socket must close after the attempt deadline")
+            .expect("server");
+        assert_eq!(admission.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn native_resolver_rejects_overflow_instead_of_truncating_to_public_answers() {
+        let (_, tls) = test_tls();
+        let transport = NativeHttpsTransport::new_for_test(
+            Handle::current(),
+            tls,
+            Arc::new(|_, _| {
+                let mut addresses = vec!["1.1.1.1".parse().expect("public IP"); MAX_ADDRESSES];
+                addresses.push("127.0.0.1".parse().expect("private IP"));
+                Ok(addresses)
+            }),
+        );
+        assert_eq!(
+            tokio::task::spawn_blocking(move || transport.resolve("https://hooks.example/events"))
+                .await
+                .expect("resolver worker"),
+            Err(DeliveryError::TargetRejected)
+        );
+    }
+
+    #[tokio::test]
+    async fn native_dns_timeout_keeps_admission_until_resolver_work_finishes() {
+        let (_, tls) = test_tls();
+        let (release, released) = mpsc::sync_channel(1);
+        let released = std::sync::Mutex::new(released);
+        let (started, started_rx) = tokio::sync::oneshot::channel();
+        let started = std::sync::Mutex::new(Some(started));
+        let mut transport = NativeHttpsTransport::new_for_test(
+            Handle::current(),
+            tls,
+            Arc::new(move |_, _| {
+                started
+                    .lock()
+                    .expect("signal lock")
+                    .take()
+                    .expect("one resolver")
+                    .send(())
+                    .expect("started");
+                released.lock().expect("release lock").recv().expect("release");
+                Ok(vec!["1.1.1.1".parse().expect("public IP")])
+            }),
+        );
+        transport.timeout = Duration::from_millis(50);
+        transport.admission = Arc::new(Semaphore::new(1));
+        let transport = Arc::new(transport);
+        let resolver = Arc::clone(&transport);
+        let worker =
+            tokio::task::spawn_blocking(move || resolver.resolve("https://hooks.example/events"));
+        started_rx.await.expect("resolver started");
+        let result = worker.await.expect("worker");
+        let permits_while_stalled = transport.admission.available_permits();
+        let second = transport.resolve("https://hooks.example/events");
+        // Unblock before assertions so a failure cannot strand a runtime worker.
+        release.send(()).expect("release resolver");
+        assert_eq!(result, Err(DeliveryError::Retryable));
+        assert_eq!(permits_while_stalled, 0);
+        assert_eq!(second, Err(DeliveryError::Retryable));
+        let permit = tokio::time::timeout(
+            Duration::from_secs(2),
+            transport.admission.clone().acquire_owned(),
+        )
+        .await
+        .expect("resolver must release its admission slot")
+        .expect("admission remains open");
+        drop(permit);
+        assert_eq!(transport.admission.available_permits(), 1);
     }
 
     #[tokio::test]

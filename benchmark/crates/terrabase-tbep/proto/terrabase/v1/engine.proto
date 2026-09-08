@@ -1013,6 +1013,8 @@ message PlacementProposalResponse {
   uint64 revision = 1;
   PlacementProposal proposal = 2;
   PlacementProposalStatus status = 3;
+  // Member-signed fresh join challenge bound to the staged proposal.
+  bytes join_challenge = 4;
 }
 
 // Dedicated GRU-authorized auth consensus bootstrap control. No user data.

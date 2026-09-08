@@ -14,6 +14,8 @@ use super::{
 pub enum SplitRuntimeError<SE, DE, CE, OE> {
     /// No operation context was attached to the split.
     MissingContext,
+    /// The planned copy range or shard identities do not match the serving route.
+    InvalidPlan,
     /// Durable split state could not be loaded or saved.
     State(SE),
     /// Target creation, verification, or cleanup failed.
@@ -92,6 +94,31 @@ where
         >,
     > {
         let context = split.context().ok_or(SplitRuntimeError::MissingContext)?;
+        let source = self
+            .router
+            .table()
+            .routes()
+            .iter()
+            .find(|route| route.shard_id() == context.source_shard())
+            .ok_or(SplitRuntimeError::InvalidPlan)?;
+        // The copy and the atomic route replacement must move the same range.
+        // A narrower caller-supplied lower bound would otherwise omit records
+        // while cutover still transfers the source's complete lower half.
+        if context.split_id() == 0
+            || context.database_incarnation() == 0
+            || context.source_shard() == 0
+            || context.target_shard() == 0
+            || source.lower() != split.lower()
+            || self.router.route(split.split_key()) != Some(context.source_shard())
+            || self
+                .router
+                .table()
+                .routes()
+                .iter()
+                .any(|route| route.shard_id() == context.target_shard())
+        {
+            return Err(SplitRuntimeError::InvalidPlan);
+        }
         self.orchestrator
             .validate_split_placement(context.database_incarnation(), context.placement_epoch())
             .map_err(SplitRuntimeError::Placement)?;
@@ -173,15 +200,19 @@ where
             O::Error,
         >,
     > {
-        let split =
-            self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
+        let mut split =
+            self.split.clone().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
         split.begin_catch_up(through).map_err(|error| {
             SplitRuntimeError::WrongPhase(match error {
                 super::SplitCutoverError::WrongPhase(phase) => phase,
                 _ => SplitPhase::Backfilling,
             })
         })?;
-        self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)
+        // Keep the live worker at its last persisted phase when a checkpoint
+        // fails. Its next bounded step must be able to retry this transition.
+        self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)?;
+        self.split = Some(split);
+        Ok(())
     }
 
     /// Records monotonic source, target, and acknowledged frontiers durably.
@@ -346,5 +377,144 @@ where
         split.note_verified().map_err(|_| SplitRuntimeError::WrongPhase(split.phase()))?;
         self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)?;
         self.engine.cleanup_split_source(&context).map_err(SplitRuntimeError::Data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shard_split::{CommittedSplitRoute, DurableSplitState, SplitContext};
+
+    #[derive(Default)]
+    struct CheckpointEngine {
+        state: Option<DurableSplitState>,
+        fail_save: bool,
+    }
+
+    impl SplitStateStore for CheckpointEngine {
+        type Error = ();
+
+        fn load(&self) -> Result<Option<DurableSplitState>, ()> {
+            Ok(self.state.clone())
+        }
+
+        fn save(&mut self, state: &DurableSplitState) -> Result<(), ()> {
+            if std::mem::take(&mut self.fail_save) {
+                return Err(());
+            }
+            self.state = Some(state.clone());
+            Ok(())
+        }
+
+        fn remove(&mut self) -> Result<(), ()> {
+            self.state = None;
+            Ok(())
+        }
+    }
+
+    impl AtomicSplitCutover for CheckpointEngine {
+        type Error = ();
+
+        fn install_split_route(
+            &mut self,
+            _: &CutoverContext,
+            _: &DurableSplitState,
+        ) -> Result<u64, ()> {
+            unreachable!("checkpoint retry must not install a route")
+        }
+
+        fn recover_split_route(
+            &mut self,
+            _: &SplitContext,
+        ) -> Result<Option<CommittedSplitRoute>, ()> {
+            Ok(None)
+        }
+    }
+
+    impl SplitEngineAdapter for CheckpointEngine {
+        type DataError = ();
+
+        fn create_split_target(&mut self, _: &SplitContext) -> Result<(), ()> {
+            Ok(())
+        }
+
+        fn rollback_split_target(&mut self, _: &SplitContext) -> Result<(), ()> {
+            unreachable!()
+        }
+
+        fn verify_split_target(&mut self, _: &SplitContext) -> Result<(), ()> {
+            unreachable!()
+        }
+
+        fn cleanup_split_source(&mut self, _: &SplitContext) -> Result<(), ()> {
+            unreachable!()
+        }
+    }
+
+    struct Placement;
+
+    impl SplitOrchestratorAdapter for Placement {
+        type Error = ();
+
+        fn validate_split_placement(&mut self, _: u128, _: u64) -> Result<(), ()> {
+            Ok(())
+        }
+
+        fn publish_split_frontier(&mut self, _: &SplitContext, _: u64) -> Result<(), ()> {
+            unreachable!("checkpoint retry must not publish a route")
+        }
+    }
+
+    #[test]
+    fn failed_backfill_checkpoint_can_retry_without_restart() {
+        let mut runtime =
+            SplitRuntime::new(CheckpointEngine::default(), Placement, ShardRouter::single(1));
+        let context = SplitContext::new(1, 2, 1, 2, 3, 0);
+        runtime
+            .admit(ShardSplit::plan_with_context(None, b"m".to_vec(), context).unwrap())
+            .unwrap();
+        runtime.engine.fail_save = true;
+
+        assert_eq!(runtime.begin_catch_up(7), Err(SplitRuntimeError::State(())));
+        assert_eq!(runtime.split().unwrap().phase(), SplitPhase::Backfilling);
+        assert_eq!(runtime.engine.state.as_ref().unwrap().phase(), SplitPhase::Backfilling);
+
+        runtime.begin_catch_up(7).unwrap();
+        assert_eq!(runtime.split().unwrap().phase(), SplitPhase::CatchingUp);
+        assert_eq!(runtime.engine.state.as_ref().unwrap().phase(), SplitPhase::CatchingUp);
+    }
+
+    #[test]
+    fn admission_rejects_copy_range_that_differs_from_routed_range() {
+        let context = SplitContext::new(1, 2, 1, 2, 3, 0);
+        let routes = super::super::RouteTable::new(vec![
+            super::super::ShardRoute::new(1, Some(b"a".to_vec()), Some(b"z".to_vec())).unwrap(),
+        ])
+        .unwrap();
+        for (lower, key) in [
+            (None, b"m".to_vec()),
+            (Some(b"b".to_vec()), b"m".to_vec()),
+            (Some(b"a".to_vec()), b"z".to_vec()),
+        ] {
+            let mut runtime = SplitRuntime::new(
+                CheckpointEngine::default(),
+                Placement,
+                ShardRouter::from_table(routes.clone()),
+            );
+            let split = ShardSplit::plan_with_context(lower, key, context).unwrap();
+            assert_eq!(runtime.admit(split), Err(SplitRuntimeError::InvalidPlan));
+            assert!(runtime.engine.state.is_none());
+            assert!(runtime.split().is_none());
+        }
+        let mut runtime = SplitRuntime::new(
+            CheckpointEngine::default(),
+            Placement,
+            ShardRouter::from_table(routes),
+        );
+        runtime
+            .admit(
+                ShardSplit::plan_with_context(Some(b"a".to_vec()), b"m".to_vec(), context).unwrap(),
+            )
+            .unwrap();
     }
 }

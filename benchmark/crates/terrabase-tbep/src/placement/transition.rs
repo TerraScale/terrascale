@@ -49,8 +49,10 @@ impl TransitionReceiptSigner {
         serde_json::to_vec(&Signed {
             key_id: self.key_id.clone(),
             payload: base64::engine::general_purpose::STANDARD.encode(payload),
-            signature: base64::engine::general_purpose::STANDARD.encode(self.key.sign(&input).as_ref()),
-        }).map_err(|_| PlacementError::Storage)
+            signature: base64::engine::general_purpose::STANDARD
+                .encode(self.key.sign(&input).as_ref()),
+        })
+        .map_err(|_| PlacementError::Storage)
     }
     /// Loads a dedicated member receipt key from PKCS#8 bytes.
     pub fn from_pkcs8(key_id: String, der: &[u8]) -> Result<Self, PlacementError> {
@@ -204,7 +206,10 @@ impl TransitionTrust {
         self.verify_authority_payload(encoded)
     }
 
-    pub(super) fn verify_authority_payload(&self, encoded: &[u8]) -> Result<Vec<u8>, PlacementError> {
+    pub(super) fn verify_authority_payload(
+        &self,
+        encoded: &[u8],
+    ) -> Result<Vec<u8>, PlacementError> {
         if encoded.len() > MAX_PROOF_BYTES {
             return Err(PlacementError::Invalid);
         }
@@ -253,11 +258,19 @@ impl TransitionTrust {
 
     /// The caller must first validate a fresh GRU checkpoint attesting this
     /// exact accepted proof. This does not reconstruct or fabricate its history.
-    pub(super) fn decode_checkpoint_prior(&self, encoded: &[u8]) -> Result<VerifiedProof, PlacementError> {
+    pub(super) fn decode_checkpoint_prior(
+        &self,
+        encoded: &[u8],
+    ) -> Result<VerifiedProof, PlacementError> {
         self.decode_bound(encoded, None, true)
     }
 
-    fn decode_bound(&self, encoded: &[u8], prior: Option<&VerifiedProof>, checkpoint_attested: bool) -> Result<VerifiedProof, PlacementError> {
+    fn decode_bound(
+        &self,
+        encoded: &[u8],
+        prior: Option<&VerifiedProof>,
+        checkpoint_attested: bool,
+    ) -> Result<VerifiedProof, PlacementError> {
         if encoded.len() > MAX_PROOF_BYTES {
             return Err(PlacementError::Invalid);
         }
@@ -299,8 +312,15 @@ impl TransitionTrust {
         }
         let member_keys = admitted_member_keys(&proof)?;
         if checkpoint_attested {
-            if member_keys.is_empty() { return Err(PlacementError::Invalid); }
-            return Ok(VerifiedProof { proof, digest: hash(&payload), fences: Vec::new(), member_keys });
+            if member_keys.is_empty() {
+                return Err(PlacementError::Invalid);
+            }
+            return Ok(VerifiedProof {
+                proof,
+                digest: hash(&payload),
+                fences: Vec::new(),
+                member_keys,
+            });
         }
         // A successor may not substitute its own keys for old-epoch fences.
         // Only the retained predecessor's signed inventory can extend the

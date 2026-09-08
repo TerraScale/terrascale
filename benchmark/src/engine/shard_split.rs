@@ -797,7 +797,21 @@ impl Engine {
         (catalog.generation == token.route_generation
             && token.keys.iter().all(|key| catalog.table.route(key) == Some(token.shard_id))
             && writes.iter().all(|write| {
-                token.keys.iter().any(|key| write.document_id().as_str().as_bytes() == key)
+                let collection = match write {
+                    crate::storage::StagedWrite::Put { document, .. }
+                    | crate::storage::StagedWrite::ReplicatedPut { document, .. } => {
+                        document.collection()
+                    }
+                    crate::storage::StagedWrite::Delete {
+                        collection: Some(collection), ..
+                    }
+                    | crate::storage::StagedWrite::ReplicatedDelete { collection, .. } => {
+                        collection
+                    }
+                    crate::storage::StagedWrite::Delete { collection: None, .. } => return false,
+                };
+                let key = canonical_shard_key(collection, write.document_id());
+                token.keys.contains(&key)
             }))
         .then_some(())
         .ok_or(EngineError::Conflict)

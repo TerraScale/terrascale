@@ -61,6 +61,7 @@ impl PlacementJournal {
         if verified.operation_id() != operation {
             return Err(PlacementError::RetryMismatch);
         }
+        self.require_control_epoch(&transaction, trust, verified.authority_epoch())?;
         if read_intent(&transaction, trust, prior)?.is_some() {
             return Err(PlacementError::Conflict);
         }

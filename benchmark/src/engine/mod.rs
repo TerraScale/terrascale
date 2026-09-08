@@ -1345,7 +1345,7 @@ impl Engine {
             storage.committed_tenants().map_err(|()| EngineOpenError::StorageUnavailable)?
         {
             for entry in storage
-                .durable_origin_prefixes(&tenant)
+                .live_origin_prefixes(&tenant)
                 .map_err(|()| EngineOpenError::StorageUnavailable)?
             {
                 let (ticks, counter) = unfold_stamp(entry.hlc);
@@ -1616,8 +1616,9 @@ impl Engine {
             }
             batch =
                 self.coalesce_wave(batch, wave_width, GROUP_QUIET_GAP, GROUP_HARVEST_WINDOW_MAX);
-            let intents: Vec<storage::CommitIntent> =
-                batch.iter().map(|(intent, _)| intent.clone()).collect();
+            let batch_len = batch.len();
+            let (intents, senders): (Vec<storage::CommitIntent>, Vec<_>) =
+                batch.into_iter().unzip();
             // Two or more concurrent committers is the pipelined signal:
             // the batch appends and publishes under the lock, and the
             // leader witnesses it outside the lock before answering. A
@@ -1626,15 +1627,15 @@ impl Engine {
             // caller on a quiescent engine keeps the synchronous order,
             // byte-identical to a direct storage commit.
             carry_pending = false;
-            wave_width = wave_width.max(batch.len().saturating_add(1));
+            wave_width = wave_width.max(batch_len.saturating_add(1));
             let results = match self.lock_storage() {
                 Ok(mut storage) => storage.port.commit_batch(intents, false),
                 Err(_) => vec![
                     storage::CommitResult::Rejected(storage::CommitRejection::Storage);
-                    batch.len()
+                    batch_len
                 ],
             };
-            for ((_, sender), result) in batch.into_iter().zip(results) {
+            for (sender, result) in senders.into_iter().zip(results) {
                 let _ = sender.send(result);
             }
         }
@@ -1835,7 +1836,7 @@ impl Engine {
         let storage = self.lock_storage()?;
         for entry in storage
             .port
-            .durable_origin_prefixes(scope.tenant())
+            .live_origin_prefixes(scope.tenant())
             .map_err(|()| EngineError::StorageFailure)?
         {
             let origin =
@@ -4519,7 +4520,7 @@ impl Engine {
         let storage = self.lock_storage()?;
         let entries = storage
             .port
-            .durable_origin_prefixes(scope.tenant())
+            .live_origin_prefixes(scope.tenant())
             .map_err(|()| EngineError::StorageFailure)?;
         Ok(entries.into_iter().map(|entry| (entry.origin, entry.origin_sequence)).collect())
     }

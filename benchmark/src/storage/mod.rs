@@ -1324,6 +1324,10 @@ pub(crate) trait StoragePort: Send {
         Err(())
     }
 
+    /// Reads transactionally maintained contiguous progress in work bounded
+    /// by the tenant's origins, independent of retained journal history.
+    fn live_origin_prefixes(&self, tenant: &TenantId) -> Result<Vec<AppliedFrontierEntry>, ()>;
+
     /// Returns every tenant that has at least one recorded published commit,
     /// in canonical tenant order (W4-CA-4).
     fn committed_tenants(&self) -> Result<Vec<TenantId>, ()>;

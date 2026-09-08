@@ -213,16 +213,13 @@ fn load_state(
     connection: &rusqlite::Connection,
     tenant: &TenantId,
 ) -> Result<LifecycleState, LifecycleError> {
-        let bytes: Option<Vec<u8>> = connection
-            .query_row(
-                "SELECT body FROM database_lifecycle WHERE tenant=?1",
-                [tenant.as_str()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|_| LifecycleError::Unavailable)?;
-        bytes.map(|b| decode(&b)).transpose().map(Option::unwrap_or_default)
-
+    let bytes: Option<Vec<u8>> = connection
+        .query_row("SELECT body FROM database_lifecycle WHERE tenant=?1", [tenant.as_str()], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(|_| LifecycleError::Unavailable)?;
+    bytes.map(|b| decode(&b)).transpose().map(Option::unwrap_or_default)
 }
 
 fn validate_stop_fence(
@@ -230,21 +227,21 @@ fn validate_stop_fence(
     tenant: &TenantId,
     state: &LifecycleState,
 ) -> Result<(), LifecycleError> {
-        let stopped: Option<i64> = connection
-            .query_row(
-                "SELECT millis FROM storage_accounting_stops WHERE tenant=?1",
-                [tenant.as_str()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|_| LifecycleError::Unavailable)?;
-        // Refuse inconsistent legacy/external fences instead of inventing intent.
-        if stopped.map(|v| u64::try_from(v).ok())
-            != state.deletion.as_ref().map(|d| Some(d.usage_stopped_at))
-        {
-            return Err(LifecycleError::Conflict);
-        }
-        Ok(())
+    let stopped: Option<i64> = connection
+        .query_row(
+            "SELECT millis FROM storage_accounting_stops WHERE tenant=?1",
+            [tenant.as_str()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| LifecycleError::Unavailable)?;
+    // Refuse inconsistent legacy/external fences instead of inventing intent.
+    if stopped.map(|v| u64::try_from(v).ok())
+        != state.deletion.as_ref().map(|d| Some(d.usage_stopped_at))
+    {
+        return Err(LifecycleError::Conflict);
+    }
+    Ok(())
 }
 
 fn encode(state: &LifecycleState) -> Vec<u8> {
@@ -339,4 +336,104 @@ pub(super) fn permits_origin_activation(connection: &rusqlite::Connection) -> Re
         }
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+
+    fn open() -> (std::path::PathBuf, SqliteStorage, TenantId) {
+        let path = std::env::temp_dir()
+            .join(format!("terrabase-lifecycle-read-{}", crate::identity::generate()));
+        let storage = SqliteStorage::open(&path).unwrap();
+        (path, storage, TenantId::try_new("tenant").unwrap())
+    }
+
+    #[test]
+    fn lifecycle_read_uses_committed_state_while_writer_is_reserved() {
+        let (path, storage, tenant) = open();
+        assert_eq!(
+            storage.update_lifecycle(&tenant, LifecycleCommand::Read).unwrap(),
+            LifecycleState::default()
+        );
+        let mut writer = storage.writer.lock().unwrap();
+        let tx = writer.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
+        let paused = LifecycleState { paused: true, ..LifecycleState::default() };
+        tx.execute(
+            "INSERT INTO database_lifecycle(tenant,body) VALUES(?1,?2)",
+            params![tenant.as_str(), encode(&paused)],
+        )
+        .unwrap();
+        assert!(!storage.update_lifecycle(&tenant, LifecycleCommand::Read).unwrap().paused);
+        tx.commit().unwrap();
+        drop(writer);
+        assert!(storage.update_lifecycle(&tenant, LifecycleCommand::Read).unwrap().paused);
+        drop(storage);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_read_rejects_corrupt_state_and_inconsistent_stop_fence() {
+        let (path, storage, tenant) = open();
+        {
+            let writer = storage.writer.lock().unwrap();
+            writer
+                .execute(
+                    "INSERT INTO database_lifecycle(tenant,body) VALUES(?1,X'00')",
+                    [tenant.as_str()],
+                )
+                .unwrap();
+        }
+        assert!(matches!(
+            storage.update_lifecycle(&tenant, LifecycleCommand::Read),
+            Err(LifecycleError::Invalid)
+        ));
+        {
+            let writer = storage.writer.lock().unwrap();
+            writer.execute("DELETE FROM database_lifecycle", []).unwrap();
+            writer
+                .execute(
+                    "INSERT INTO storage_accounting_stops(tenant,millis) VALUES(?1,1)",
+                    [tenant.as_str()],
+                )
+                .unwrap();
+        }
+        assert!(matches!(
+            storage.update_lifecycle(&tenant, LifecycleCommand::Read),
+            Err(LifecycleError::Conflict)
+        ));
+        drop(storage);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_read_state_and_stop_fence_share_a_snapshot() {
+        let (path, storage, tenant) = open();
+        let reader = storage.reader();
+        let tx = rusqlite::Transaction::new_unchecked(
+            reader.connection(),
+            TransactionBehavior::Deferred,
+        )
+        .unwrap();
+        let state = load_state(&tx, &tenant).unwrap();
+        {
+            let writer = storage.writer.lock().unwrap();
+            writer
+                .execute(
+                    "INSERT INTO storage_accounting_stops(tenant,millis) VALUES(?1,1)",
+                    [tenant.as_str()],
+                )
+                .unwrap();
+        }
+        // The second query must not observe a fence committed after the first.
+        validate_stop_fence(&tx, &tenant, &state).unwrap();
+        drop(tx);
+        drop(reader);
+        assert!(matches!(
+            storage.update_lifecycle(&tenant, LifecycleCommand::Read),
+            Err(LifecycleError::Conflict)
+        ));
+        drop(storage);
+        std::fs::remove_dir_all(path).unwrap();
+    }
 }

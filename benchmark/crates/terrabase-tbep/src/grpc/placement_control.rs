@@ -53,7 +53,10 @@ pub struct PlacementControlServer {
 impl PlacementControlServer {
     /// Attaches the provisioned member identity for deterministic join challenges.
     #[must_use]
-    pub fn with_join_signer(mut self, signer: Arc<crate::placement::transition::TransitionReceiptSigner>) -> Self {
+    pub fn with_join_signer(
+        mut self,
+        signer: Arc<crate::placement::transition::TransitionReceiptSigner>,
+    ) -> Self {
         self.join_signer = Some(signer);
         self
     }
@@ -317,9 +320,13 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         let signer = self.join_signer.clone();
         self.work(move || {
             let mut response = journal.stage(&principal, &operation, request)?;
-            if let Some(signer) = signer { response.join_challenge = journal.sign_join_challenge(&response, &signer)?; }
+            if let Some(signer) = signer {
+                response.join_challenge = journal.sign_join_challenge(&response, &signer)?;
+            }
             Ok(response)
-        }).await.map(Response::new)
+        })
+        .await
+        .map(Response::new)
     }
 
     async fn accept(
@@ -402,9 +409,13 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         let signer = self.join_signer.clone();
         self.work(move || {
             let mut response = journal.latest()?;
-            if let Some(signer) = signer { response.join_challenge = journal.sign_join_challenge(&response, &signer)?; }
+            if let Some(signer) = signer {
+                response.join_challenge = journal.sign_join_challenge(&response, &signer)?;
+            }
             Ok(response)
-        }).await.map(Response::new)
+        })
+        .await
+        .map(Response::new)
     }
 }
 

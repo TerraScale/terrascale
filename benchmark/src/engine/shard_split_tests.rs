@@ -470,3 +470,60 @@ fn supervisor_restart_after_snapshot_replays_original_history_from_zero() {
     drop(source);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn shard_admission_matches_collection_and_id_in_canonical_keyspace() {
+    use crate::{
+        shard_split::{ShardAdmissionToken, canonical_shard_key},
+        storage::StagedWrite,
+        types::{CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion},
+    };
+    let (dir, engine) = super::tests::open_engine("split-canonical-admission");
+    let scope = super::tests::tenant_scope(&engine, "split-canonical-admission");
+    let incarnation = u128::from_be_bytes(engine.database_id().as_bytes().to_owned());
+    engine
+        .install_shard_route_catalog(
+            &scope,
+            incarnation,
+            None,
+            &encode_catalog(&RouteCatalog { table: RouteTable::single(1), generation: 0 }).unwrap(),
+            &DurableSplitState::new(None, b"m".to_vec(), 0, 0, 0, SplitPhase::Planned),
+            super::tests::operation("canonical-route-init"),
+        )
+        .unwrap();
+    let collection = CollectionName::try_new("docs").unwrap();
+    let other = CollectionName::try_new("other").unwrap();
+    let id = DocumentId::try_new("same-id").unwrap();
+    let key = canonical_shard_key(&collection, &id);
+    let token = ShardAdmissionToken::for_key(incarnation, 0, 1, &key);
+    let put = |collection| StagedWrite::Put {
+        document: Document::new(id.clone(), collection, DocumentValue::Integer(1)),
+        expected: ExpectedVersion::Any,
+    };
+    assert_eq!(engine.validate_shard_admission(&scope, &token, &[put(collection.clone())]), Ok(()));
+    assert_eq!(
+        engine.validate_shard_admission(&scope, &token, &[put(other)]),
+        Err(super::EngineError::Conflict)
+    );
+    let raw_token = ShardAdmissionToken::for_key(incarnation, 0, 1, id.as_str().as_bytes());
+    assert_eq!(
+        engine.validate_shard_admission(&scope, &raw_token, &[put(collection.clone())]),
+        Err(super::EngineError::Conflict)
+    );
+    let delete = |collection| StagedWrite::Delete {
+        collection,
+        id: id.clone(),
+        expected: ExpectedVersion::Any,
+        ttl_guard: None,
+    };
+    assert_eq!(
+        engine.validate_shard_admission(&scope, &token, &[delete(Some(collection))]),
+        Ok(())
+    );
+    assert_eq!(
+        engine.validate_shard_admission(&scope, &token, &[delete(None)]),
+        Err(super::EngineError::Conflict)
+    );
+    drop(engine);
+    let _ = std::fs::remove_dir_all(dir);
+}

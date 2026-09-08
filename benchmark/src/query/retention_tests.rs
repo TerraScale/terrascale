@@ -26,7 +26,7 @@ fn query(
 
 fn document(index: u32, payload: usize) -> Document {
     Document::new(
-        DocumentId::try_new(format!("doc-{index:04}")).unwrap(),
+        DocumentId::try_new(&format!("doc-{index:04}")).unwrap(),
         CollectionName::try_new("items").unwrap(),
         DocumentValue::Object(
             [
@@ -100,10 +100,7 @@ fn rejected_candidates_still_check_cancellation_and_deadline() {
     ] {
         let query = query(OrderDirection::Ascending, signal, deadline);
         let document = document(0, 0);
-        assert_eq!(
-            retain_candidate(&query, &mut Vec::new(), &mut 0, &document, 0),
-            Err(error.clone())
-        );
+        assert_eq!(retain_candidate(&query, &mut Vec::new(), &mut 0, &document, 0), Err(error));
         assert_eq!(
             retain_scored(
                 &query,

@@ -92,20 +92,6 @@ pub struct ImportRecord {
     pub value: Vec<u8>,
 }
 
-/// Derives the operation identity for one import batch. The source operation
-/// and input digest bind retries to the same upload, while the ordinal keeps
-/// each committed batch independently idempotent.
-#[must_use]
-pub fn batch_operation_id(operation_id: &str, input_digest: &str, ordinal: u64) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(operation_id.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(input_digest.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(&ordinal.to_be_bytes());
-    format!("import-batch-{ordinal}-{}", hasher.finalize().to_hex())
-}
-
 /// Codec failures are deliberately free of source contents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CodecError {
@@ -813,13 +799,5 @@ mod tests {
         let encoded = encode(&records, TransferFormat::Csv).unwrap();
         assert_eq!(decode(&encoded, TransferFormat::Csv, 1024).unwrap(), records);
         assert_eq!(decode(&encoded, TransferFormat::Csv, 32), Err(CodecError::Oversized));
-    }
-
-    #[test]
-    fn batch_identity_is_stable_and_ordinal_bound() {
-        let first = batch_operation_id("import-1", &"a".repeat(64), 0);
-        assert_eq!(first, batch_operation_id("import-1", &"a".repeat(64), 0));
-        assert_ne!(first, batch_operation_id("import-1", &"a".repeat(64), 1));
-        assert_ne!(first, batch_operation_id("import-2", &"a".repeat(64), 0));
     }
 }

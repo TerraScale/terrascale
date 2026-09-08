@@ -10,6 +10,9 @@ use transition::{Request, Signed, TransitionMember, TransitionTrust, hash};
 #[path = "transition_inventory_tests.rs"]
 mod inventory_tests;
 
+#[path = "transition_join_tests.rs"]
+mod join_tests;
+
 fn key(seed: u8) -> Ed25519KeyPair {
     Ed25519KeyPair::from_seed_unchecked(&[seed; 32]).unwrap()
 }

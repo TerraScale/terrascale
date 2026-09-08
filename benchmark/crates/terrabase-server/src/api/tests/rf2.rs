@@ -57,7 +57,7 @@ pub(in crate::api) fn replicate(
     let scope = DatabaseRouteScope::new(owner.tenant(), owner.project(), owner.database());
     if !progress.boundaries().unwrap().contains_key(&scope) {
         // Concurrent requests can discover the same database together.
-        if progress.admit(scope, BTreeSet::from(["gru".into()])).is_err() {
+        if progress.admit(scope, BTreeSet::from([owner.region().as_str().to_owned()])).is_err() {
             assert!(progress.boundaries().unwrap().contains_key(&scope));
         }
     }

@@ -2824,7 +2824,11 @@ async fn batch_documents(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let fingerprint = batch_request_fingerprint(&collection, &operations);
+    let fingerprint = if has_idempotency_key(&headers) {
+        batch_request_fingerprint(&collection, &operations)
+    } else {
+        [0; 32]
+    };
     match replay_batch_request(&state, engine, &scope, &headers, &operation, fingerprint).await {
         Ok(Some(response)) => return response,
         Ok(None) => {}
@@ -5167,6 +5171,8 @@ mod tests {
     #[path = "conditional_replay.rs"]
     mod conditional_replay;
     mod cors;
+    #[path = "put_causal_snapshot.rs"]
+    mod put_causal_snapshot;
     pub(super) mod rf2;
     mod shared_journal;
     mod websocket;

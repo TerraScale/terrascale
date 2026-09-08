@@ -25,3 +25,15 @@ Initial Rust/manifest source hash inventory: `/tmp/terrabase-performance-verific
 5. Live benchmark load belongs to `benchmark_completion`; timing under unrelated load is not silently treated as isolated performance evidence.
 
 Current-source qualification is pending worker readiness and coordinated builds.
+
+## Frozen worker regression plan
+
+| Change | Selector | Required new tests |
+| --- | --- | --- |
+| Query candidate retention | `query::execute::retention_tests::` | 4 |
+| Lifecycle reader snapshot | `storage::sqlite::lifecycle_state::read_tests::` | 3 |
+| Existing placement reader path | `storage::sqlite::write_usage::placement_read_tests::` | 2 |
+| Borrowed batch ordering | `batch_efficiency_tests` | 2 |
+| PUT causal snapshot | `api::tests::put_causal_snapshot::` | 2 |
+
+Supporting selectors cover usage placement, query scan accounting/relevance/typed-SQL parity, paused lifecycle, bulk ingest, atomic/faulted batches, conditional create/replay, public billing allocation, and batch replay. Final selector names and source hashes are captured with the built artifact. Frontier regressions remain pending worker freeze.

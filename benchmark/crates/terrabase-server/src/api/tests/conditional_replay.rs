@@ -155,7 +155,9 @@ async fn conditional_http_postcommit_rf2_timeout_replays_only_after_durable_conf
         owner.database(),
     );
     let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
-    progress.admit(route, std::collections::BTreeSet::from(["gru".into()])).unwrap();
+    progress
+        .admit(route, std::collections::BTreeSet::from([owner.region().as_str().into()]))
+        .unwrap();
     Arc::get_mut(&mut state).unwrap().replication_progress = Some(progress.clone());
     let server = serve(state.clone()).await;
     let before = host.engine().published_sequence().unwrap();

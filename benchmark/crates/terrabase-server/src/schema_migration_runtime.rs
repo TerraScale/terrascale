@@ -367,9 +367,18 @@ mod tests {
             None,
         )
         .await;
+        // Initial declared indexes have their own durable reconciliation.
+        // Finish it through the production tick before requesting a rename.
+        assert_eq!(drive_database(&state, "demo", None).as_deref(), Some("orders"));
         {
             let host = document_host(&state, "demo").unwrap();
             let engine = host.engine();
+            let record: DurableSchemaRecord = serde_json::from_slice(
+                &engine.schema_metadata_load("demo", "main", "orders").unwrap().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(record.document.generation, 1);
+            assert_eq!(record.document.migration.unwrap().state, MigrationState::Complete);
             let scope = document_scope(engine).unwrap();
             let mut transaction = engine
                 .begin(

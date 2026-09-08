@@ -176,53 +176,52 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     Ok(())
 }
 
-/// Opens the production catalog and performs the production-only startup
-/// checks before any serving claim is made.
-///
-/// The storage/catalog half of the production process is available today. The
-/// remaining Member-host adapter is intentionally an explicit seam: silently
-/// opening one compatibility [`EngineHost`] here would create a second
-/// storage authority and could acknowledge writes without the RF=2 data
-/// plane. Until that adapter is supplied, startup fails with its component
-/// name after opening (and dropping) the real catalog.
+/// Opens retained membership and the production catalog before assembling the
+/// admitted Member, public API, and authenticated control listeners.
 async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
     let production =
         config.production.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
 
     // Pending control is separate from accepted data admission. Reuse the
     // signed journal on restart and never infer membership from config.
-    let journal = if production.control.is_some() {
-        let journal = open_production_placement_journal(production).map_err(|detail| {
-            Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
-                crate::production::ProductionComponentError {
-                    component: crate::production::ProductionComponent::ControlApi,
-                    detail,
-                },
-            ))) as Box<dyn Error + Send + Sync>
-        })?;
-        match journal.accepted() {
-            Ok(_) => Some(journal),
-            Err(terrabase_tbep::placement::PlacementError::NotFound) => {
-                return serve_pending_placement_control(&config, production).await.map_err(
-                    |error| {
-                        Box::new(DaemonError::ProductionStartup(error))
-                            as Box<dyn Error + Send + Sync>
+    let journal = loop {
+        break if production.control.is_some() {
+            let journal = open_production_placement_journal(production).map_err(|detail| {
+                Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                    crate::production::ProductionComponentError {
+                        component: crate::production::ProductionComponent::ControlApi,
+                        detail,
                     },
-                );
+                ))) as Box<dyn Error + Send + Sync>
+            })?;
+            match journal.accepted() {
+                Ok(_) => Some(journal),
+                Err(terrabase_tbep::placement::PlacementError::NotFound) => {
+                    let accepted = serve_pending_placement_control(&config, production)
+                        .await
+                        .map_err(|error| {
+                            Box::new(DaemonError::ProductionStartup(error))
+                                as Box<dyn Error + Send + Sync>
+                        })?;
+                    if accepted {
+                        continue;
+                    }
+                    return Ok(());
+                }
+                Err(_) => {
+                    return Err(Box::new(DaemonError::ProductionStartup(
+                        ProductionStartupError::Component(
+                            crate::production::ProductionComponentError {
+                                component: crate::production::ProductionComponent::Membership,
+                                detail: "retained membership proof is unavailable or invalid",
+                            },
+                        ),
+                    )));
+                }
             }
-            Err(_) => {
-                return Err(Box::new(DaemonError::ProductionStartup(
-                    ProductionStartupError::Component(
-                        crate::production::ProductionComponentError {
-                            component: crate::production::ProductionComponent::Membership,
-                            detail: "retained membership proof is unavailable or invalid",
-                        },
-                    ),
-                )));
-            }
-        }
-    } else {
-        None
+        } else {
+            None
+        };
     };
 
     // This is the production storage boundary. It opens every enabled
@@ -638,6 +637,51 @@ async fn serve_admitted_production(
                 authority: lifecycle_authority,
             }),
         ));
+        let control =
+            production.control.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
+        let placement_journal =
+            journal.clone().ok_or(DaemonError::ProductionConfigurationMissing)?;
+        let transition_signer = load_transition_receipt_signer(control)
+            .map_err(|detail| DaemonError::ProductionStartup(pending_control_error(detail)))?;
+        let readiness_signer = Arc::new(
+            crate::replication_proof::MemberReceiptSigner::from_pkcs8(
+                control
+                    .receipt_signing_key_id
+                    .clone()
+                    .ok_or(DaemonError::ProductionConfigurationMissing)?,
+                &read_private_receipt_key(control)?,
+            )
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?,
+        );
+        let placement_config = TbepGrpcConfig::try_new(
+            config.max_message_bytes,
+            config.max_inflight,
+            config.request_timeout,
+            config.tls_handshake_timeout,
+            config.shutdown_grace,
+            control.orchestrator_principals.clone(),
+        )?;
+        let placement = Arc::new(
+            terrabase_tbep::grpc::placement_control::PlacementControlServer::new(
+                Arc::clone(&placement_journal),
+                open_pending_auth_journal(control, production)?,
+                placement_config,
+                control.observer_principals.clone(),
+            )
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?
+            .with_join_signer(Arc::clone(&transition_signer))
+            .with_data_control(Arc::new(
+                crate::production_placement_control::ProductionPlacementDataControl::new(
+                    Arc::clone(&member),
+                    admission.lifecycle(),
+                    Arc::clone(&registry),
+                    placement_journal,
+                    transition_signer,
+                    readiness_signer,
+                    member.transport().config().local_identity().as_str().to_owned(),
+                ),
+            )),
+        );
         let grpc_metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
         let grpc = Arc::new(
             TbepGrpcServer::with_config_and_metrics(
@@ -647,7 +691,8 @@ async fn serve_admitted_production(
                 config.region,
                 grpc_metrics,
             )
-            .with_lifecycle_control(lifecycle),
+            .with_lifecycle_control(lifecycle)
+            .with_placement_control(Arc::clone(&placement)),
         );
         let certificate = read_pem(&production.transport.server_certificate, false)?;
         let private_key = read_pem(&production.transport.server_private_key, true)?;
@@ -660,17 +705,14 @@ async fn serve_admitted_production(
         let mut grpc_handle =
             grpc.serve_tls_reloadable(production.transport.tbep_listen, grpc_tls)?;
         let (metrics_stop, metrics_signal) = tokio::sync::oneshot::channel();
-        let metrics_task = tokio::spawn(prepared_metrics.serve(async {
+        let mut metrics_task = tokio::spawn(prepared_metrics.serve(async {
             let _ = metrics_signal.await;
         }));
         serving.store(true, std::sync::atomic::Ordering::Release);
         let status = public_status;
         let (public_stop, public_signal) = tokio::sync::oneshot::channel();
         let mut public_task = tokio::spawn(prepared.serve(async {
-            tokio::select! {
-                _ = wait_for_shutdown() => {},
-                _ = public_signal => {},
-            }
+            let _ = public_signal.await;
         }));
         let readiness = tokio::time::timeout(config.shutdown_grace, async {
             loop {
@@ -690,24 +732,47 @@ async fn serve_admitted_production(
         })
         .await
         .unwrap_or(Err(DaemonError::ShutdownTimeout));
-        if readiness.is_err() {
-            serving.store(false, std::sync::atomic::Ordering::Release);
-            let _ = public_stop.send(());
-        }
-        // Every post-listener result, including readiness timeout and task
-        // panic, joins all listeners before any error can drain their owners.
-        let public_result = (&mut public_task).await;
+        let listener_outcome = if readiness.is_ok() {
+            tokio::select! {
+                result = wait_for_shutdown() => result.map_err(|_| DaemonError::ShutdownTimeout),
+                result = async {
+                    loop {
+                        if public_task.is_finished()
+                            || metrics_task.is_finished()
+                            || native_task.as_ref().is_some_and(tokio::task::JoinHandle::is_finished)
+                            || !status.is_serving()
+                            || !matches!(grpc_handle.try_wait(), Ok(false))
+                        {
+                            break Err(DaemonError::ProductionStartup(pending_control_error(
+                                "admitted runtime listener or maintenance worker stopped unexpectedly",
+                            )));
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                } => result,
+            }
+        } else {
+            Ok(())
+        };
         serving.store(false, std::sync::atomic::Ordering::Release);
+        let _ = public_stop.send(());
         let _ = metrics_stop.send(());
+        placement.begin_drain();
         grpc_handle.begin_drain();
         let grpc_drain = tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait());
-        let metrics_result = metrics_task.await;
-        let grpc_result = grpc_drain.await;
+        // Begin all drains together; no failed or hung listener may detach its
+        // siblings or retain a port while storage owners are being closed.
+        let (public_result, metrics_result, grpc_result, placement_result) = tokio::join!(
+            drain_listener(&mut public_task, false, config.shutdown_grace),
+            drain_listener(&mut metrics_task, false, config.shutdown_grace),
+            grpc_drain,
+            placement.drain(),
+        );
+        placement_result?;
         readiness?;
-        let result = public_result.map_err(|_| DaemonError::ShutdownTimeout)?;
-        metrics_result
-            .map_err(|_| DaemonError::ShutdownTimeout)?
-            .map_err(|_| DaemonError::ShutdownTimeout)?;
+        listener_outcome?;
+        public_result.map_err(|_| DaemonError::ShutdownTimeout)?;
+        metrics_result.map_err(|_| DaemonError::ShutdownTimeout)?;
         grpc_result
             .map_err(|_| DaemonError::ShutdownTimeout)?
             .map_err(|_| DaemonError::ShutdownTimeout)?;
@@ -731,7 +796,7 @@ async fn serve_admitted_production(
                 },
             ))) as Box<dyn Error + Send + Sync>
         })?;
-        result.map_err(|_| Box::new(DaemonError::ShutdownTimeout) as Box<dyn Error + Send + Sync>)
+        Ok(())
     }
     .await;
     if let Err(error) = startup_result {
@@ -782,13 +847,14 @@ fn parts_root_for_recovery(production: &crate::config::ProductionConfig) -> std:
 }
 
 /// Runs authenticated control intent and lifecycle observations while admission is
-/// pending. The journal has no accepted-membership operation, so no public API or
-/// writer is started and process readiness stays false throughout this phase.
+/// pending. Once signed acceptance is retained, all pending listeners drain before
+/// the caller opens the admitted runtime. Process readiness stays false here.
 async fn serve_pending_placement_control(
     config: &ServerConfig,
     production: &crate::config::ProductionConfig,
-) -> Result<(), ProductionStartupError> {
+) -> Result<bool, ProductionStartupError> {
     let unavailable = pending_control_error;
+    let journal = open_production_placement_journal(production).map_err(unavailable)?;
     let setup = prepare_pending_control(config, production).await?;
     let PendingControlSetup { server, listener, observations, auth_runtime, rotation } = setup;
     let (auth_stop, auth_signal) = oneshot::channel();
@@ -831,7 +897,18 @@ async fn serve_pending_placement_control(
     let mut auth_finished = false;
     let mut rotation_finished = false;
     let outcome = tokio::select! {
-        result = wait_for_shutdown() => result.map_err(|_| unavailable("shutdown signal listener failed")),
+        result = wait_for_shutdown() => result.map(|()| false).map_err(|_| unavailable("shutdown signal listener failed")),
+        accepted = async {
+            loop {
+                let retained = Arc::clone(&journal);
+                match tokio::task::spawn_blocking(move || retained.accepted()).await {
+                    Ok(Ok(_)) => break Ok(true),
+                    Ok(Err(terrabase_tbep::placement::PlacementError::NotFound)) => {},
+                    _ => break Err(unavailable("retained placement acceptance unavailable")),
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        } => accepted,
         _ = &mut control_task => {
             control_finished = true;
             Err(unavailable("placement control listener stopped unexpectedly"))
@@ -854,37 +931,69 @@ async fn serve_pending_placement_control(
     let _ = metrics_stop.send(());
     let _ = auth_stop.send(());
     let _ = rotation_stop.send(());
-    let drained = tokio::time::timeout(config.shutdown_grace, async {
-        if !control_finished {
-            control_task
-                .await
-                .map_err(|_| unavailable("placement control task failed"))?
-                .map_err(|_| unavailable("placement control listener drain failed"))?;
-        }
-        if !metrics_finished {
-            metrics_task
-                .await
-                .map_err(|_| unavailable("pending placement metrics task failed"))?
-                .map_err(|_| unavailable("pending placement metrics drain failed"))?;
-        }
-        if !rotation_finished {
-            rotation_task
-                .await
-                .map_err(|_| unavailable("credential rotation task failed"))?
-                .map_err(|_| unavailable("credential rotation drain failed"))?;
-        }
-        if !auth_finished {
-            auth_task
-                .await
-                .map_err(|_| unavailable("auth runtime task failed"))?
-                .map_err(|_| unavailable("auth runtime drain failed"))?;
-        }
-        server.drain().await.map_err(|_| unavailable("placement journal work did not drain"))
-    })
-    .await
-    .map_err(|_| unavailable("pending placement shutdown deadline elapsed"))?;
-    drained?;
+    // Join every listener even when one fails. A timed-out JoinHandle must be
+    // aborted and joined; dropping it would leave the pending port occupied
+    // while the admitted runtime tries to bind it.
+    let (control_result, metrics_result, rotation_result, auth_result) = tokio::join!(
+        drain_listener(&mut control_task, control_finished, config.shutdown_grace),
+        drain_listener(&mut metrics_task, metrics_finished, config.shutdown_grace),
+        drain_listener(&mut rotation_task, rotation_finished, config.shutdown_grace),
+        drain_listener(&mut auth_task, auth_finished, config.shutdown_grace),
+    );
+    let journal_result = server.drain().await;
+    control_result
+        .and(metrics_result)
+        .and(rotation_result)
+        .and(auth_result)
+        .map_err(unavailable)?;
+    journal_result.map_err(|_| unavailable("placement journal work did not drain"))?;
     outcome
+}
+
+async fn drain_listener<E>(
+    task: &mut tokio::task::JoinHandle<Result<(), E>>,
+    already_joined: bool,
+    grace: std::time::Duration,
+) -> Result<(), &'static str> {
+    if already_joined {
+        return Ok(());
+    }
+    match tokio::time::timeout(grace, &mut *task).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(_) => Err("listener drain failed"),
+        Err(_) => {
+            task.abort();
+            let _ = task.await;
+            Err("listener shutdown deadline elapsed")
+        }
+    }
+}
+
+fn read_private_receipt_key(
+    control: &crate::config::ProductionControl,
+) -> Result<Vec<u8>, DaemonError> {
+    let path = control
+        .receipt_signing_key_file
+        .as_ref()
+        .ok_or(DaemonError::ProductionConfigurationMissing)?;
+    let file = open_readonly(path)?;
+    let metadata = file.metadata().map_err(|_| DaemonError::SecretFile)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 16 * 1024 {
+        return Err(DaemonError::SecretFile);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(DaemonError::PrivateKeyPermissions);
+        }
+    }
+    let mut bytes = Vec::new();
+    file.take(16 * 1024 + 1).read_to_end(&mut bytes).map_err(|_| DaemonError::SecretFile)?;
+    if bytes.len() != metadata.len() as usize {
+        return Err(DaemonError::SecretFile);
+    }
+    Ok(bytes)
 }
 
 fn pending_control_error(detail: &'static str) -> ProductionStartupError {
@@ -971,21 +1080,13 @@ async fn prepare_pending_control(
 pub(crate) fn load_transition_receipt_signer(
     control: &crate::config::ProductionControl,
 ) -> Result<Arc<terrabase_tbep::placement::transition::TransitionReceiptSigner>, &'static str> {
-    let id = control.receipt_signing_key_id.clone().ok_or("member receipt signing identity missing")?;
-    let path = control.receipt_signing_key_file.as_ref().ok_or("member receipt signing key missing")?;
-    let mut file = open_readonly(path).map_err(|_| "member receipt signing key unavailable")?;
-    let metadata = file.metadata().map_err(|_| "member receipt signing key unavailable")?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 16 * 1024 {
-        return Err("member receipt signing key invalid");
-    }
-    #[cfg(unix)] {
-        use std::os::unix::fs::PermissionsExt as _;
-        if metadata.permissions().mode() & 0o077 != 0 { return Err("member receipt signing key must be owner-private"); }
-    }
-    let mut bytes = Vec::new();
-    file.by_ref().take(16 * 1024 + 1).read_to_end(&mut bytes).map_err(|_| "member receipt signing key unavailable")?;
+    let id =
+        control.receipt_signing_key_id.clone().ok_or("member receipt signing identity missing")?;
+    let bytes = read_private_receipt_key(control)
+        .map_err(|_| "member receipt signing key unavailable or invalid")?;
     terrabase_tbep::placement::transition::TransitionReceiptSigner::from_pkcs8(id, &bytes)
-        .map(Arc::new).map_err(|_| "member receipt signing key invalid")
+        .map(Arc::new)
+        .map_err(|_| "member receipt signing key invalid")
 }
 
 fn open_pending_auth_journal(
@@ -1813,7 +1914,7 @@ mod tests {
         drop(reservations);
         production.control = Some(crate::config::ProductionControl {
             proposal_journal: root.join("placement.sqlite"),
-            orchestrator_principals: BTreeSet::new(),
+            orchestrator_principals: BTreeSet::from(["spiffe://production/orchestrator".into()]),
             observer_principals: BTreeSet::new(),
             transition: None,
             receipt_signing_key_file: Some(receipt_key),
@@ -2014,6 +2115,42 @@ mod tests {
         drop(reopened);
         drop((admission, native, registry, member, storage, remote));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn listener_deadline_cancels_and_joins_port_owner() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut task = tokio::spawn(async move {
+            let _listener = listener;
+            std::future::pending::<()>().await;
+            Ok::<(), std::io::Error>(())
+        });
+        assert_eq!(
+            drain_listener(&mut task, false, std::time::Duration::from_millis(10)).await,
+            Err("listener shutdown deadline elapsed")
+        );
+        assert!(task.is_finished());
+        let _reopened = tokio::net::TcpListener::bind(address).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_listener_does_not_skip_sibling_drain() {
+        let mut failed = tokio::spawn(async { Err::<(), _>(std::io::Error::other("injected")) });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut sibling = tokio::spawn(async move {
+            let _listener = listener;
+            std::future::pending::<()>().await;
+            Ok::<(), std::io::Error>(())
+        });
+        let (failed_result, sibling_result) = tokio::join!(
+            drain_listener(&mut failed, false, std::time::Duration::from_millis(10)),
+            drain_listener(&mut sibling, false, std::time::Duration::from_millis(10)),
+        );
+        assert_eq!(failed_result, Err("listener drain failed"));
+        assert_eq!(sibling_result, Err("listener shutdown deadline elapsed"));
+        let _reopened = tokio::net::TcpListener::bind(address).await.unwrap();
     }
 
     #[tokio::test]

@@ -226,7 +226,9 @@ pub(crate) fn decode_document(reader: &mut Reader<'_>) -> Option<Document> {
 /// A collection-less delete asserts that the identifier is absent from every
 /// collection, so it conflicts with any other write carrying that identifier.
 pub(crate) fn staged_writes_have_duplicate_targets(writes: &[StagedWrite]) -> bool {
-    let mut seen: Vec<(Option<&str>, &str)> = Vec::new();
+    // An empty collection set marks a collection-less delete: it overlaps
+    // every collection for this identifier. Keys borrow the staged writes.
+    let mut seen = std::collections::BTreeMap::<&str, std::collections::BTreeSet<&str>>::new();
     for write in writes {
         let target = match write {
             StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. } => {
@@ -239,13 +241,18 @@ pub(crate) fn staged_writes_have_duplicate_targets(writes: &[StagedWrite]) -> bo
                 (Some(collection.as_str()), id.as_str())
             }
         };
-        if seen.iter().any(|(collection, id)| {
-            *id == target.1
-                && (collection.is_none() || target.0.is_none() || *collection == target.0)
-        }) {
-            return true;
+        match seen.entry(target.1) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(target.0.into_iter().collect());
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let Some(collection) = target.0 else { return true };
+                let collections = entry.get_mut();
+                if collections.is_empty() || !collections.insert(collection) {
+                    return true;
+                }
+            }
         }
-        seen.push(target);
     }
     false
 }
@@ -258,17 +265,17 @@ pub(crate) fn staged_writes_have_duplicate_targets(writes: &[StagedWrite]) -> bo
 /// the version that existed at that key.
 /// Reads one encoded reconstructable publication write.
 /// Orders staged writes canonically so a digest is independent of staging order.
-fn sort_key(write: &StagedWrite) -> (u8, String, String) {
+fn sort_key(write: &StagedWrite) -> (u8, &str, &str) {
     match write {
         StagedWrite::Put { document, .. } => {
-            (1, document.collection().as_str().to_owned(), document.id().as_str().to_owned())
+            (1, document.collection().as_str(), document.id().as_str())
         }
-        StagedWrite::Delete { id, .. } => (2, String::new(), id.as_str().to_owned()),
+        StagedWrite::Delete { id, .. } => (2, "", id.as_str()),
         StagedWrite::ReplicatedPut { document, .. } => {
-            (3, document.collection().as_str().to_owned(), document.id().as_str().to_owned())
+            (3, document.collection().as_str(), document.id().as_str())
         }
         StagedWrite::ReplicatedDelete { collection, id, .. } => {
-            (4, collection.as_str().to_owned(), id.as_str().to_owned())
+            (4, collection.as_str(), id.as_str())
         }
     }
 }
@@ -593,4 +600,143 @@ pub(crate) fn decode_private_changes(
         });
     }
     (reader.remaining() == 0).then_some((metadata, schemas))
+}
+
+#[cfg(test)]
+mod batch_efficiency_tests {
+    use super::*;
+
+    fn fixture(collection: Option<&str>, id: &str, kind: u8) -> StagedWrite {
+        let id = DocumentId::try_new(id).unwrap();
+        let collection = collection.map(|name| CollectionName::try_new(name).unwrap());
+        match kind {
+            0 => StagedWrite::Put {
+                document: Document::new(id, collection.unwrap(), DocumentValue::String("é".into())),
+                expected: ExpectedVersion::New,
+            },
+            1 => StagedWrite::Delete {
+                collection,
+                id,
+                expected: ExpectedVersion::Any,
+                ttl_guard: None,
+            },
+            2 => StagedWrite::ReplicatedPut {
+                document: Document::new(id, collection.unwrap(), DocumentValue::Integer(42)),
+                commit_ulid: "source-operation".into(),
+                hlc: 19,
+                origin: "source".into(),
+                origin_sequence: 7,
+                context: vec![1, 2],
+            },
+            _ => StagedWrite::ReplicatedDelete {
+                collection: collection.unwrap(),
+                id,
+                commit_ulid: "source-operation".into(),
+                hlc: 19,
+                origin: "source".into(),
+                origin_sequence: 7,
+                context: vec![1, 2],
+            },
+        }
+    }
+
+    fn target(write: &StagedWrite) -> (Option<&str>, &str) {
+        match write {
+            StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. } => {
+                (Some(document.collection().as_str()), document.id().as_str())
+            }
+            StagedWrite::Delete { collection, id, .. } => {
+                (collection.as_ref().map(CollectionName::as_str), id.as_str())
+            }
+            StagedWrite::ReplicatedDelete { collection, id, .. } => {
+                (Some(collection.as_str()), id.as_str())
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_targets_match_pairwise_contract_for_all_write_kinds() {
+        let mut fixtures = Vec::new();
+        for id in ["one", "two"] {
+            fixtures.push(fixture(None, id, 1));
+            for collection in ["alpha", "beta"] {
+                for kind in 0..4 {
+                    fixtures.push(fixture(Some(collection), id, kind));
+                }
+            }
+        }
+        assert!(!staged_writes_have_duplicate_targets(&[]));
+        for a in &fixtures {
+            assert!(!staged_writes_have_duplicate_targets(std::slice::from_ref(a)));
+            for b in &fixtures {
+                for c in &fixtures {
+                    let writes = [a.clone(), b.clone(), c.clone()];
+                    let expected = writes.iter().enumerate().any(|(index, write)| {
+                        let (collection, id) = target(write);
+                        writes[..index].iter().any(|previous| {
+                            let (prior_collection, prior_id) = target(previous);
+                            id == prior_id
+                                && (collection.is_none()
+                                    || prior_collection.is_none()
+                                    || collection == prior_collection)
+                        })
+                    });
+                    assert_eq!(staged_writes_have_duplicate_targets(&writes), expected);
+                }
+            }
+        }
+    }
+
+    // Retain the original owned-key ordering as an independent byte-level oracle.
+    fn original_key(write: &StagedWrite) -> (u8, String, String) {
+        match write {
+            StagedWrite::Put { document, .. } => {
+                (1, document.collection().as_str().to_owned(), document.id().as_str().to_owned())
+            }
+            StagedWrite::Delete { id, .. } => (2, String::new(), id.as_str().to_owned()),
+            StagedWrite::ReplicatedPut { document, .. } => {
+                (3, document.collection().as_str().to_owned(), document.id().as_str().to_owned())
+            }
+            StagedWrite::ReplicatedDelete { collection, id, .. } => {
+                (4, collection.as_str().to_owned(), id.as_str().to_owned())
+            }
+        }
+    }
+
+    fn digest_bytes(tenant: &TenantId, ordered: &[&StagedWrite]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        push_str(&mut bytes, tenant.as_str());
+        push_u32(&mut bytes, ordered.len() as u32);
+        for write in ordered {
+            encode_digest_write(&mut bytes, write);
+        }
+        bytes
+    }
+
+    #[test]
+    fn borrowed_digest_sort_preserves_original_bytes_and_delete_resolution() {
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let mut writes = vec![
+            fixture(Some("beta"), "two", 0),
+            fixture(Some("alpha"), "one", 0),
+            fixture(None, "deleted", 1),
+            fixture(Some("alpha"), "two", 2),
+            fixture(Some("beta"), "one", 3),
+        ];
+        let expected_digest = write_set_digest(&tenant, &writes);
+        for _ in 0..writes.len() {
+            writes.rotate_left(1);
+            let mut original: Vec<_> = writes.iter().collect();
+            original.sort_by_key(|write| original_key(write));
+            let mut borrowed: Vec<_> = writes.iter().collect();
+            borrowed.sort_by_key(|write| sort_key(write));
+            let original_bytes = digest_bytes(&tenant, &original);
+            assert_eq!(digest_bytes(&tenant, &borrowed), original_bytes);
+            assert_eq!(write_set_digest(&tenant, &writes), fnv1a(&original_bytes));
+            assert_eq!(write_set_digest(&tenant, &writes), expected_digest);
+        }
+        let absent = fixture(None, "deleted", 1);
+        let resolved = fixture(Some("alpha"), "deleted", 1);
+        assert_eq!(write_set_digest(&tenant, &[absent]), write_set_digest(&tenant, &[resolved]));
+    }
 }

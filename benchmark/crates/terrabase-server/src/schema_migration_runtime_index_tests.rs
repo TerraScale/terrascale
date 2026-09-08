@@ -8,12 +8,12 @@ use tower::ServiceExt;
 const SCHEMA_ROUTE: &str = "/api/v1/databases/demo/collections/orders/schema";
 const KEY: &str = "Bearer tskey_test_abcdefghijklmnop";
 
-/// Initial schema declarations have no migration status, but still need the
-/// same startup worker to publish their physical indexes. This exercises the
+/// Initial indexed schema declarations need the startup worker to finish
+/// their durable reconciliation and publish physical indexes. This exercises the
 /// production router and worker caller rather than registering through Engine
 /// directly.
 #[tokio::test]
-async fn production_tick_publishes_initial_declared_index_without_migration() {
+async fn production_tick_completes_initial_declared_index_reconciliation() {
     let state = super::super::tests::state_with_keys_and_control();
     state.control.as_ref().unwrap().create("demo", &[RegionCode::GRU], None).unwrap();
     let app = crate::api::router(Arc::clone(&state));
@@ -34,6 +34,11 @@ async fn production_tick_publishes_initial_declared_index_without_migration() {
     assert_eq!(super::drive_database(&state, "demo", None).as_deref(), Some("orders"));
     let host = document_host(&state, "demo").unwrap();
     let engine = host.engine();
+    let record: DurableSchemaRecord = serde_json::from_slice(
+        &engine.schema_metadata_load("demo", "main", "orders").unwrap().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record.document.migration.unwrap().state, MigrationState::Complete);
     let descriptor = engine
         .index_descriptors()
         .unwrap()
@@ -106,8 +111,56 @@ async fn production_tick_completes_large_descriptor_without_schema_record() {
     let _ = worker.await;
     assert!(partial, "the production tick must pump large descriptors");
 
+    // Change rows on both sides of the saved cursor before reopening. The
+    // resumed descriptor must retain write maintenance for covered rows and
+    // backfill the current value of rows it has not reached yet.
+    let mut transaction = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            OperationId::try_new("runtime-index-during-backfill").unwrap(),
+        )
+        .unwrap();
+    for index in [0, ROWS - 1] {
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new(&format!("order-{index:05}")).unwrap(),
+                    collection.clone(),
+                    DocumentValue::Object(std::collections::BTreeMap::from([(
+                        "account".to_owned(),
+                        DocumentValue::String("changed-during-backfill".into()),
+                    )])),
+                ),
+                ExpectedVersion::Any,
+            )
+            .unwrap();
+    }
+    assert!(matches!(
+        transaction.commit(LocalDurability::Synced),
+        terrabase::CommitOutcome::Committed(_)
+    ));
+    let pending_before_restart = engine
+        .index_descriptors()
+        .unwrap()
+        .into_iter()
+        .find(|descriptor| descriptor.collection == "orders" && descriptor.field == "account")
+        .unwrap();
+    drop(host);
     state.catalog.as_ref().unwrap().close_database(&state.scope.0, &state.scope.1, "demo");
     let reopened = document_host(&state, "demo").unwrap();
+    let pending_after_restart = reopened
+        .engine()
+        .index_descriptors()
+        .unwrap()
+        .into_iter()
+        .find(|descriptor| descriptor.collection == "orders" && descriptor.field == "account")
+        .unwrap();
+    assert!(!pending_after_restart.active);
+    assert_eq!(
+        pending_after_restart.backfill_remaining, pending_before_restart.backfill_remaining,
+        "reopen must retain the durable cursor"
+    );
     let resumed_worker = spawn(&state).unwrap();
     let mut active = false;
     for _ in 0..20 {
@@ -122,4 +175,22 @@ async fn production_tick_completes_large_descriptor_without_schema_record() {
     resumed_worker.abort();
     let _ = resumed_worker.await;
     assert!(active, "the restarted production tick must resume the descriptor");
+    let engine = reopened.engine();
+    let scope = document_scope(engine).unwrap();
+    for (account, expected_rows) in
+        [("changed-during-backfill", 2), ("account-0", 0), ("account-10000", 0)]
+    {
+        let plan = engine
+            .queries()
+            .compile(terrabase::QueryInput::sql(
+                terrabase::SqlQueryText::try_new(&format!(
+                    "SELECT account FROM orders WHERE account = '{account}'"
+                ))
+                .unwrap(),
+            ))
+            .unwrap();
+        let result =
+            engine.queries().execute(&plan, &engine.read_snapshot(&scope).unwrap()).unwrap();
+        assert_eq!(result.rows().len(), expected_rows, "stale index result for {account}");
+    }
 }

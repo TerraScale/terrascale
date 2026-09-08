@@ -155,11 +155,10 @@ pub(super) fn remove_point(point: &Path) -> Result<(), FleetError> {
 fn cleanup_interrupted(directory: &Path) -> Result<(), FleetError> {
     for entry in std::fs::read_dir(directory).map_err(|_| FleetError::Capture)? {
         let entry = entry.map_err(|_| FleetError::Capture)?;
-        if entry
-            .file_name()
-            .to_str()
-            .is_some_and(|name| name.starts_with(".evict-rp-") || name.starts_with(".pending-"))
-        {
+        if entry.file_name().to_str().is_some_and(owned_ephemeral) {
+            if !entry.file_type().map_err(|_| FleetError::Capture)?.is_dir() {
+                return Err(FleetError::Capture);
+            }
             std::fs::remove_dir_all(entry.path()).map_err(|_| FleetError::Capture)?;
         }
     }
@@ -179,9 +178,49 @@ pub(super) fn has_capacity(
         && bytes.saturating_add(reserve) <= limits.inventory_bytes_per_stream)
 }
 
+fn owned_ephemeral(name: &str) -> bool {
+    if let Some(identity) =
+        name.strip_prefix(".evict-rp-").or_else(|| name.strip_prefix(".pending-"))
+    {
+        return super::super::manifest::validate_identity(identity).is_ok();
+    }
+    if let Some(identity) =
+        name.strip_prefix("restore-").or_else(|| name.strip_prefix("migration-"))
+    {
+        return identity.parse::<::ulid::Ulid>().is_ok();
+    }
+    name.strip_prefix(".staging-")
+        .and_then(|parts| parts.split_once('-'))
+        .is_some_and(|(pid, index)| pid.parse::<u32>().is_ok() && index.parse::<u64>().is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::scheduled_point_limit;
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_cleanup_refuses_symlinks_and_preserves_owned_journals() {
+        let directory = crate::backup::tests::location("backup-cleanup-symlink");
+        let outside = crate::backup::tests::location("backup-cleanup-outside");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("sentinel"), b"retained").unwrap();
+        for name in ["rotation-pending", "uploaded-oci", "policy-active", "delete-oci"] {
+            std::fs::write(directory.join(name), b"retained").unwrap();
+        }
+        let point = directory.join(format!("rp-{}", "a".repeat(64)));
+        std::fs::create_dir(&point).unwrap();
+        std::os::unix::fs::symlink(&outside, directory.join(".staging-1-1")).unwrap();
+        assert_eq!(super::cleanup_interrupted(&directory), Err(super::FleetError::Capture));
+        assert!(outside.join("sentinel").exists());
+        assert!(point.exists());
+        for name in ["rotation-pending", "uploaded-oci", "policy-active", "delete-oci"] {
+            assert_eq!(std::fs::read(directory.join(name)).unwrap(), b"retained");
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
 
     #[test]
     fn small_cache_rotation_fits_each_plan_window_and_provider_listing_bound() {

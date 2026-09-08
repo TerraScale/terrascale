@@ -304,6 +304,7 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
     let mut has_owner = false;
     let mut has_database = false;
     let mut has_companion = false;
+    let mut has_shards = false;
     for entry in entries {
         let entry = entry.map_err(|_| OwnershipError::Unavailable)?;
         let name = entry.file_name();
@@ -313,6 +314,17 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
                 return Err(OwnershipError::InvalidLocation);
             }
             return Err(OwnershipError::ForeignLocation);
+        }
+        // Split targets are separate owned Engine locations. Their staging
+        // may be incomplete after a crash, so opening the admitted parent
+        // must not depend on opening every child. Each selected target is
+        // validated against its own owner record and keys when it is opened.
+        if name == "shards" {
+            if !entry_type.is_dir() {
+                return Err(OwnershipError::ForeignLocation);
+            }
+            has_shards = true;
+            continue;
         }
         if name == FILE_NAME {
             if !entry_type.is_file() {
@@ -357,6 +369,9 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
             has_companion = true;
             continue;
         }
+        return Err(OwnershipError::ForeignLocation);
+    }
+    if has_shards && (!has_owner || !has_database) {
         return Err(OwnershipError::ForeignLocation);
     }
     if (has_database || has_companion) && !has_owner {
@@ -537,6 +552,41 @@ mod tests {
         let second = load_or_create(&path, None, OwnershipMode::LocalDevelopment).expect("read");
         assert_eq!(first, second);
         assert!(!path.join("format").exists(), "ownership needs no backend selector");
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn shard_staging_does_not_prevent_parent_reopen_or_allow_foreign_adoption() {
+        let path = location("shard-staging");
+        fs::create_dir(path.join("shards")).unwrap();
+        assert_eq!(
+            load_or_create(&path, None, OwnershipMode::LocalDevelopment),
+            Err(OwnershipError::ForeignLocation)
+        );
+        fs::remove_dir(path.join("shards")).unwrap();
+        let owner = load_or_create(&path, None, OwnershipMode::LocalDevelopment).unwrap();
+        fs::write(path.join(DATABASE_FILE), b"sqlite-owned-by-test").unwrap();
+        let shards = path.join("shards");
+        fs::create_dir_all(shards.join("0000000000000002.sqlite3")).unwrap();
+        assert_eq!(
+            load_existing(&path, Some(&owner), OwnershipMode::LocalDevelopment),
+            Ok(owner.clone())
+        );
+        fs::remove_dir_all(&shards).unwrap();
+        fs::write(&shards, b"not a directory").unwrap();
+        assert_eq!(
+            load_existing(&path, Some(&owner), OwnershipMode::LocalDevelopment),
+            Err(OwnershipError::ForeignLocation)
+        );
+        fs::remove_file(&shards).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(path.join("missing"), &shards).unwrap();
+            assert_eq!(
+                load_existing(&path, Some(&owner), OwnershipMode::LocalDevelopment),
+                Err(OwnershipError::ForeignLocation)
+            );
+        }
         let _ = fs::remove_dir_all(path);
     }
 

@@ -957,7 +957,14 @@ fn serve_routes(
     }
     Ok(builder
         .add_optional_service(server.placement.as_ref().map(|placement| {
-            pb::placement_control_service_server::PlacementControlServiceServer::new(
+            pb::placement_control_service_server::PlacementControlServiceServer::new(Arc::clone(
+                placement,
+            ))
+            .max_decoding_message_size(message_bytes)
+            .max_encoding_message_size(message_bytes)
+        }))
+        .add_optional_service(server.placement.as_ref().map(|placement| {
+            pb::auth_group_bootstrap_service_server::AuthGroupBootstrapServiceServer::new(
                 Arc::clone(placement),
             )
             .max_decoding_message_size(message_bytes)

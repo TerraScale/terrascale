@@ -600,9 +600,19 @@ impl PlacementJournal {
         if *accepted_revision != revision || environment.is_empty() {
             return Err(PlacementError::Conflict);
         }
-        let joined = join::stored(&connection)?.map(|bytes| self.verify_join(&connection, trust, &bytes, false)).transpose()?;
+        let joined = join::stored(&connection)?
+            .map(|bytes| self.verify_join(&connection, trust, &bytes, None))
+            .transpose()?;
         let supplied = trust
-            .decode_with_prior(signature, chain.iter().rev().nth(1).map(|(_, _, proof)| proof).or_else(|| joined.as_ref().map(|joined| &joined.prior)))
+            .decode_with_prior(
+                signature,
+                chain
+                    .iter()
+                    .rev()
+                    .nth(1)
+                    .map(|(_, _, proof)| proof)
+                    .or_else(|| joined.as_ref().map(|joined| &joined.prior)),
+            )
             .map_err(|_| PlacementError::Conflict)?;
         if supplied.digest != accepted.digest
             || supplied.proof.authority_epoch != accepted.proof.authority_epoch
@@ -933,6 +943,15 @@ impl PlacementJournal {
         operation: &str,
         request: &pb::PlacementAcceptRequest,
     ) -> Result<pb::PlacementAcceptanceResponse, PlacementError> {
+        self.accept_at(operation, request, None)
+    }
+
+    fn accept_at(
+        &self,
+        operation: &str,
+        request: &pb::PlacementAcceptRequest,
+        join_now: Option<i64>,
+    ) -> Result<pb::PlacementAcceptanceResponse, PlacementError> {
         let attempt = join::decode_acceptance(&request.proof)?;
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
@@ -941,22 +960,36 @@ impl PlacementJournal {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| PlacementError::Storage)?;
         let chain = self.verified_chain(&transaction, trust)?;
-        let position = chain
-            .iter()
-            .position(|(_, _, proof)| proof.proof.request.operation_id == operation);
+        let position =
+            chain.iter().position(|(_, _, proof)| proof.proof.request.operation_id == operation);
         let retained_checkpoint = join::stored(&transaction)?;
         let joined = if chain.is_empty() {
-            attempt.checkpoint.as_ref().map(|bytes| self.verify_join(&transaction, trust, bytes, true)).transpose()?
+            attempt
+                .checkpoint
+                .as_ref()
+                .map(|bytes| {
+                    self.verify_join(
+                        &transaction,
+                        trust,
+                        bytes,
+                        Some(join_now.map_or_else(join::now_millis, Ok)?),
+                    )
+                })
+                .transpose()?
         } else {
-            if attempt.checkpoint.is_some() && (position != Some(0) || attempt.checkpoint != retained_checkpoint)
-                || position == Some(0) && retained_checkpoint.is_some() && attempt.checkpoint != retained_checkpoint
-            { return Err(PlacementError::RetryMismatch); }
-            retained_checkpoint.as_ref().map(|bytes| self.verify_join(&transaction, trust, bytes, false)).transpose()?
+            if attempt.checkpoint.is_some() && position.is_none() {
+                return Err(PlacementError::RetryMismatch);
+            }
+            retained_checkpoint
+                .as_ref()
+                .map(|bytes| self.verify_join(&transaction, trust, bytes, None))
+                .transpose()?
         };
         let predecessor = match position {
             Some(index) => index.checked_sub(1).map(|previous| &chain[previous].2),
             None => chain.last().map(|(_, _, proof)| proof),
-        }.or_else(|| joined.as_ref().map(|joined| &joined.prior));
+        }
+        .or_else(|| joined.as_ref().map(|joined| &joined.prior));
         let verified = trust.decode_with_prior(&attempt.proof, predecessor)?;
         if operation != verified.proof.request.operation_id {
             return Err(PlacementError::RetryMismatch);
@@ -968,6 +1001,9 @@ impl PlacementJournal {
                 return Err(PlacementError::RetryMismatch);
             }
             return Ok(acceptance_response(*revision, prior));
+        }
+        if !chain.is_empty() || joined.is_none() {
+            self.require_control_epoch(&transaction, trust, verified.proof.authority_epoch)?;
         }
         let latest_revision: u64 = transaction
             .query_row(
@@ -986,7 +1022,10 @@ impl PlacementJournal {
         if chain.is_empty() {
             if let Some(joined) = &joined {
                 self.match_join(&transaction, joined, &verified, request.proposal_revision)?;
-                join::persist(&transaction, attempt.checkpoint.as_ref().ok_or(PlacementError::Invalid)?)?;
+                join::persist(
+                    &transaction,
+                    attempt.checkpoint.as_ref().ok_or(PlacementError::Invalid)?,
+                )?;
             }
         }
         drain::match_successor(
@@ -1080,7 +1119,9 @@ impl PlacementJournal {
         connection: &Connection,
         trust: &transition::TransitionTrust,
     ) -> Result<Vec<(u64, u64, transition::VerifiedProof)>, PlacementError> {
-        let joined = join::stored(connection)?.map(|bytes| self.verify_join(connection, trust, &bytes, false)).transpose()?;
+        let joined = join::stored(connection)?
+            .map(|bytes| self.verify_join(connection, trust, &bytes, None))
+            .transpose()?;
         let mut statement = connection
             .prepare(
                 "SELECT sequence,proposal_revision,proof,digest FROM accepted ORDER BY sequence",
@@ -1099,15 +1140,27 @@ impl PlacementJournal {
             {
                 return Err(PlacementError::Storage);
             }
-            let predecessor = chain.last().map(|(_, _, prior)| prior).or_else(|| joined.as_ref().map(|joined| &joined.prior));
+            let predecessor = chain
+                .last()
+                .map(|(_, _, prior)| prior)
+                .or_else(|| joined.as_ref().map(|joined| &joined.prior));
             let verified = trust.decode_with_prior(&bytes, predecessor)?;
             if digest != verified.digest {
                 return Err(PlacementError::Storage);
             }
             self.match_proposal(connection, revision, &verified)?;
             verified.follows(predecessor)?;
+            if !chain.is_empty()
+                && joined
+                    .as_ref()
+                    .is_some_and(|joined| verified.proof.authority_epoch < joined.authority_epoch())
+            {
+                return Err(PlacementError::Conflict);
+            }
             if chain.is_empty() {
-                if let Some(joined) = &joined { self.match_join(connection, joined, &verified, revision)?; }
+                if let Some(joined) = &joined {
+                    self.match_join(connection, joined, &verified, revision)?;
+                }
             }
             drain::match_successor(
                 connection,
@@ -1117,7 +1170,9 @@ impl PlacementJournal {
             )?;
             chain.push((sequence, revision, verified));
         }
-        if joined.is_some() && chain.is_empty() { return Err(PlacementError::Storage); }
+        if joined.is_some() && chain.is_empty() {
+            return Err(PlacementError::Storage);
+        }
         drain::validate_intents(connection, trust, &chain)?;
         Ok(chain)
     }

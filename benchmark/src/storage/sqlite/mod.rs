@@ -94,6 +94,8 @@ mod accounting;
 pub(crate) mod branch_import;
 pub(crate) mod branch_provenance;
 mod budget;
+#[cfg(test)]
+mod causal_frontier_tests;
 mod descriptor_removal;
 pub(super) mod encrypted_file;
 pub(super) mod encrypted_vfs;
@@ -118,6 +120,8 @@ mod storage_closure;
 mod storage_intervals;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ttl_history_tests;
 pub(crate) mod usage_seal;
 mod webhook_metadata;
 mod write_usage;
@@ -234,10 +238,7 @@ pub fn database_file(location: &Path) -> PathBuf {
 /// future engine-side read-concurrency split use this backend unchanged.
 const READ_POOL_WIDTH: usize = 4;
 
-/// A commit wave is deliberately short and fixed. The committer waits this
-/// long after the first arrival, allowing concurrent callers to share one
-/// SQLite transaction without making a quiet single writer wait indefinitely.
-const COMMIT_WAVE_WAIT: Duration = Duration::from_millis(2);
+/// Idle checkpoint workers periodically recheck their stop signal.
 const CHECKPOINT_IDLE_WAIT: Duration = Duration::from_secs(1);
 
 /// A pathological producer cannot grow one transaction without bound. The
@@ -1286,7 +1287,7 @@ CREATE TABLE IF NOT EXISTS metering_db_facts (
 ) WITHOUT ROWID;
 
 -- Optional per-collection history windows.  A missing row means the D-25
--- default (30 days here, capped by the plan at the caller).  The CHECK is
+-- default (seven days, capped by the plan at the caller).  The CHECK is
 -- deliberately in SQLite so old files and direct migrations cannot install
 -- an unsupported retention window.
 CREATE TABLE IF NOT EXISTS collection_history (
@@ -1701,22 +1702,17 @@ fn spawn_committer(
                     Ok(request) => request,
                     Err(_) => break,
                 };
-                // Fixed bounded wave: collect concurrent arrivals for 2 ms,
-                // but never let one producer monopolize the transaction.
-                let deadline = Instant::now() + COMMIT_WAVE_WAIT;
+                // The engine already groups waiting writes. Drain queued work
+                // without delaying a caller holding the engine storage lock.
                 let mut requests = vec![first];
                 let mut count = requests[0].intents.len();
                 while count < COMMIT_WAVE_MAX_INTENTS {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        break;
-                    }
-                    match receiver.recv_timeout(remaining) {
+                    match receiver.try_recv() {
                         Ok(request) => {
                             count = count.saturating_add(request.intents.len());
                             requests.push(request);
                         }
-                        Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => break,
+                        Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
                     }
                 }
                 let lengths: Vec<usize> =
@@ -2144,7 +2140,7 @@ impl SqliteStorage {
         // The D-42 history floor: a row is prunable only when every
         // consumer frontier has passed it AND it is older than its
         // collection's 1..30 day retention window. Missing declarations use
-        // the 30-day default. The cutoff rises with the sweep's own clock,
+        // the seven-day default. The cutoff rises with the sweep's own clock,
         // so a fresh row is never prunable regardless of frontiers.
         let now = unix_millis();
         // Each row's history window pins its entire commit. Independent
@@ -2199,7 +2195,7 @@ impl SqliteStorage {
                    SELECT pin.commit_seq FROM documents pin
                    WHERE pin.committed_at >= ?2 -
                      COALESCE((SELECT days FROM collection_history
-                               WHERE collection = pin.collection), 30) * ?3
+                               WHERE collection = pin.collection), 7) * ?3
                    OR NOT EXISTS (
                      SELECT 1 FROM documents newer
                      WHERE newer.tenant = pin.tenant
@@ -2604,24 +2600,28 @@ fn stage_intent(
                 snapshot_sequence,
                 *watermark,
             )?,
-            StagedWrite::Delete { collection: Some(collection), id, expected, ttl_guard } => conflict_between(
-                transaction,
-                &intent.tenant,
-                collection,
-                id,
-                *expected,
-                ttl_guard.as_ref(),
-                snapshot_sequence,
-                *watermark,
-            )?,
-            StagedWrite::Delete { collection: None, id, expected, .. } => conflict_for_absent_document(
-                transaction,
-                &intent.tenant,
-                id,
-                *expected,
-                snapshot_sequence,
-                *watermark,
-            )?,
+            StagedWrite::Delete { collection: Some(collection), id, expected, ttl_guard } => {
+                conflict_between(
+                    transaction,
+                    &intent.tenant,
+                    collection,
+                    id,
+                    *expected,
+                    ttl_guard.as_ref(),
+                    snapshot_sequence,
+                    *watermark,
+                )?
+            }
+            StagedWrite::Delete { collection: None, id, expected, .. } => {
+                conflict_for_absent_document(
+                    transaction,
+                    &intent.tenant,
+                    id,
+                    *expected,
+                    snapshot_sequence,
+                    *watermark,
+                )?
+            }
             StagedWrite::ReplicatedDelete { collection, id, .. } => conflict_between(
                 transaction,
                 &intent.tenant,
@@ -2979,16 +2979,21 @@ fn stage_intent(
             }
         }
     }
-    // Retired replicated writes may not have a publication row. Their
-    // document provenance still becomes part of the live causal cache only
-    // after the document rows exist, preserving gap checks for both paths.
-    advance_causal_frontier(
-        transaction,
-        intent.tenant.as_str(),
-        provenance.origin(),
-        origin_sequence,
-        provenance.hlc(),
-    )?;
+    // Per-record replication has document provenance but no complete
+    // publication. Every row's source identity must contribute independently.
+    for write in &intent.writes {
+        if let StagedWrite::ReplicatedPut { origin, origin_sequence, hlc, .. }
+        | StagedWrite::ReplicatedDelete { origin, origin_sequence, hlc, .. } = write
+        {
+            advance_causal_frontier(
+                transaction,
+                intent.tenant.as_str(),
+                origin,
+                *origin_sequence,
+                *hlc,
+            )?;
+        }
+    }
     if provenance.kind() != JournalKind::Replicated
         && !schema_indexes::validate_local_writes(transaction, &intent.tenant, sequence)?
     {
@@ -3693,7 +3698,7 @@ impl FoldedCommit<'_> {
     }
 }
 
-/// Rebuilds the live frontier cache once for a database that predates it.
+/// Rebuilds the derived live frontier cache from authoritative provenance on open.
 fn initialize_causal_frontiers(connection: &Connection) -> Result<(), ()> {
     // Rebuild at open so an interrupted upgrade or a repaired legacy file
     // cannot leave this derived cache ahead of its authoritative provenance.
@@ -3711,7 +3716,12 @@ fn initialize_causal_frontiers(connection: &Connection) -> Result<(), ()> {
             connection
                 .execute(
                     "INSERT INTO causal_frontiers(tenant,origin,seq,hlc) VALUES(?1,?2,?3,?4)",
-                    rusqlite::params![tenant, entry.origin, entry.origin_sequence as i64, entry.hlc as i64],
+                    rusqlite::params![
+                        tenant,
+                        entry.origin,
+                        entry.origin_sequence as i64,
+                        entry.hlc as i64
+                    ],
                 )
                 .map_err(|_| ())?;
         }
@@ -3732,7 +3742,7 @@ fn advance_causal_frontier(
     source: u64,
     hlc: u64,
 ) -> Result<(), ()> {
-    if origin.is_empty() || source == 0 {
+    if origin.is_empty() || source == 0 || source > i64::MAX as u64 {
         return Err(());
     }
     let current: Option<(i64, i64)> = connection
@@ -3744,10 +3754,31 @@ fn advance_causal_frontier(
         .optional()
         .map_err(|_| ())?;
     let (mut seq, mut max_hlc) = match current {
-        Some((seq, hlc)) => (u64::try_from(seq).map_err(|_| ())?, u64::from_le_bytes(hlc.to_le_bytes())),
+        Some((seq, hlc)) => {
+            (u64::try_from(seq).map_err(|_| ())?, u64::from_le_bytes(hlc.to_le_bytes()))
+        }
         None => (0, 0),
     };
+    // Additional rows at an already contiguous sequence can raise its HLC.
+    // Evidence at/below a pruning checkpoint is deliberately ignored, exactly
+    // as reconstruction ignores retained rows already covered by that cut.
+    if source <= seq {
+        let checkpoint: Option<i64> = connection
+            .query_row(
+                "SELECT seq FROM origin_prefixes WHERE tenant=?1 AND origin=?2",
+                rusqlite::params![tenant, origin],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ())?;
+        if source > checkpoint.unwrap_or(0) as u64 {
+            max_hlc = max_hlc.max(hlc);
+        }
+    }
     loop {
+        if seq == i64::MAX as u64 {
+            break;
+        }
         let next = seq.checked_add(1).ok_or(())?;
         let mut next_hlc: Option<u64> = None;
         for sql in [
@@ -3770,9 +3801,6 @@ fn advance_causal_frontier(
         seq = next;
         max_hlc = unsigned_max(max_hlc, next_hlc);
     }
-    if source <= seq {
-        max_hlc = unsigned_max(max_hlc, hlc);
-    }
     if seq == 0 {
         return Ok(());
     }
@@ -3780,7 +3808,12 @@ fn advance_causal_frontier(
         .execute(
             "INSERT INTO causal_frontiers(tenant,origin,seq,hlc) VALUES(?1,?2,?3,?4)
              ON CONFLICT(tenant,origin) DO UPDATE SET seq=excluded.seq,hlc=excluded.hlc",
-            rusqlite::params![tenant, origin, i64::try_from(seq).map_err(|_| ())?, i64::from_le_bytes(max_hlc.to_le_bytes())],
+            rusqlite::params![
+                tenant,
+                origin,
+                i64::try_from(seq).map_err(|_| ())?,
+                i64::from_le_bytes(max_hlc.to_le_bytes())
+            ],
         )
         .map(|_| ())
         .map_err(|_| ())
@@ -3845,6 +3878,32 @@ fn origin_prefixes_on(
     Ok(prefixes.into_values().filter(|entry| entry.origin_sequence != 0).collect())
 }
 
+const LIVE_ORIGIN_PREFIXES_SQL: &str =
+    "SELECT origin,seq,hlc FROM causal_frontiers WHERE tenant=?1 ORDER BY origin";
+
+fn live_origin_prefixes_on(
+    connection: &Connection,
+    tenant: &str,
+) -> Result<Vec<AppliedFrontierEntry>, ()> {
+    let mut statement = connection.prepare_cached(LIVE_ORIGIN_PREFIXES_SQL).map_err(|_| ())?;
+    let mut rows = statement.query([tenant]).map_err(|_| ())?;
+    let mut entries = Vec::new();
+    while let Some(row) = rows.next().map_err(|_| ())? {
+        let origin: String = row.get(0).map_err(|_| ())?;
+        let sequence: i64 = row.get(1).map_err(|_| ())?;
+        let hlc: i64 = row.get(2).map_err(|_| ())?;
+        if origin.is_empty() || sequence <= 0 {
+            return Err(());
+        }
+        entries.push(AppliedFrontierEntry {
+            origin,
+            origin_sequence: sequence as u64,
+            hlc: hlc as u64,
+        });
+    }
+    Ok(entries)
+}
+
 /// Encodes the per-origin frontier visible at the transaction's commit cut.
 /// The query runs inside the same `BEGIN IMMEDIATE` transaction as the row,
 /// so every row in a commit carries the exact same causal context and a
@@ -3858,9 +3917,7 @@ fn context_frontier(
         .prepare("SELECT origin,seq FROM causal_frontiers WHERE tenant=?1 ORDER BY origin")
         .map_err(|_| ())?;
     let entries = statement
-        .query_map([tenant.as_str()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })
+        .query_map([tenant.as_str()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
         .map_err(|_| ())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| ())?;
@@ -4313,13 +4370,20 @@ fn conflict_between(
                     "SELECT version, deleted, revision, expires_at FROM documents
                      WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
                      ORDER BY commit_seq DESC LIMIT 1",
-                    rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str(), sequence as i64],
-                    |row| Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<i64>>(3)?,
-                    )),
+                    rusqlite::params![
+                        tenant.as_str(),
+                        collection.as_str(),
+                        id.as_str(),
+                        sequence as i64
+                    ],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, Option<i64>>(3)?,
+                        ))
+                    },
                 )
                 .optional()
                 .map_err(|_| ())?;
@@ -4824,11 +4888,7 @@ impl StoragePort for SqliteStorage {
         self.load_schema_metadata(database, branch, collection)
     }
 
-    fn set_collection_history(
-        &mut self,
-        collection: &CollectionName,
-        days: u32,
-    ) -> Result<(), ()> {
+    fn set_collection_history(&mut self, collection: &CollectionName, days: u32) -> Result<(), ()> {
         SqliteStorage::set_collection_history(self, collection, days)
     }
 
@@ -4938,12 +4998,13 @@ impl StoragePort for SqliteStorage {
         // backend.
         let _ = defer_flips;
         self.touch();
-        match self.committer.submit(intents.clone()) {
+        let count = intents.len();
+        match self.committer.submit(intents) {
             Ok(results) => results,
             // A rolled-back transaction definitely published nothing, so
             // every intent gets a definite refusal — the uncertain outcome
             // the append-then-sync backends report cannot occur here.
-            Err(()) => vec![CommitResult::Rejected(CommitRejection::Storage); intents.len()],
+            Err(()) => vec![CommitResult::Rejected(CommitRejection::Storage); count],
         }
     }
 
@@ -6478,10 +6539,15 @@ impl StoragePort for SqliteStorage {
         origin_prefixes_on(reader.connection(), tenant.as_str())
     }
 
+    fn live_origin_prefixes(&self, tenant: &TenantId) -> Result<Vec<AppliedFrontierEntry>, ()> {
+        let reader = self.reader();
+        live_origin_prefixes_on(reader.connection(), tenant.as_str())
+    }
+
     fn committed_tenants(&self) -> Result<Vec<TenantId>, ()> {
         let reader = self.reader();
         let mut statement = reader.connection().prepare_cached(
-            "SELECT tenant FROM documents UNION SELECT tenant FROM origin_prefixes ORDER BY tenant",
+            "SELECT tenant FROM documents UNION SELECT tenant FROM origin_prefixes UNION SELECT tenant FROM replication_publications ORDER BY tenant",
         ).map_err(|_| ())?;
         let rows = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|_| ())?;
         rows.map(|row| TenantId::try_new(&row.map_err(|_| ())?).map_err(|_| ())).collect()

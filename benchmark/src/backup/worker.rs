@@ -1716,6 +1716,7 @@ mod tests {
             assert!(staged_bytes(&staging).unwrap() <= bytes);
             assert_eq!(point_paths(&staging, 4).unwrap().len(), 3);
             assert!(!fleet.observe_protection(&identity).unwrap().protected);
+            assert!(staging.join("rotation-pending").exists());
         }
         std::fs::remove_file(&provider_path).unwrap();
         std::fs::rename(&parked_path, &provider_path).unwrap();
@@ -1870,6 +1871,20 @@ mod tests {
                     std::fs::write(tombstone.join("remaining-artifact"), b"partial eviction")
                         .unwrap();
                 }
+                for name in [
+                    ".staging-123-0".to_owned(),
+                    format!("restore-{}", crate::identity::generate()),
+                    format!("migration-{}", crate::identity::generate()),
+                ] {
+                    let pending = staging.join(name);
+                    std::fs::create_dir(&pending).unwrap();
+                    std::fs::write(pending.join("partial-artifact"), vec![0_u8; 1024 * 1024])
+                        .unwrap();
+                }
+                let pending_manifest =
+                    staging.join(".inventory").join(format!(".pending-{}", "b".repeat(64)));
+                std::fs::create_dir(&pending_manifest).unwrap();
+                std::fs::write(pending_manifest.join("partial-envelope"), b"unpublished").unwrap();
                 drop(fleet);
                 fleet = NativeBackupFleet::new(limits).unwrap();
                 fleet.attach(config()).unwrap();
@@ -1879,6 +1894,13 @@ mod tests {
         for directory in [&staging, &staging.join(".inventory")] {
             assert!(!directory.join(format!(".evict-rp-{}", "a".repeat(64))).exists());
         }
+        assert!(std::fs::read_dir(&staging).unwrap().all(|entry| {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            !name.starts_with(".staging-")
+                && !name.starts_with("restore-")
+                && !name.starts_with("migration-")
+        }));
+        assert!(!staging.join(".inventory").join(format!(".pending-{}", "b".repeat(64))).exists());
         let retained = fleet.retained_points(&identity).unwrap().len();
         // Metadata admission fails before publishing another archive, then
         // resumes after capacity is restored without losing retained points.

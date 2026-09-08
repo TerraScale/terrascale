@@ -54,7 +54,9 @@ pin the previous archived boundary and a following incremental covers subsequent
 transactions, preserving timestamp recovery across rotation. A durable intent
 resumes an interrupted replacement. Provider copies retain the entire promised
 window while obsolete local chains are atomically hidden, fsynced, and removed.
-Restart cleanup reclaims interrupted local evictions. Inventory admission checks
+Restart cleanup reclaims interrupted local evictions and unpublished capture,
+restore, and migration directories in the source cache. It rejects symlinks and
+preserves sealed points and durable journals. Inventory admission checks
 both manifest count and bytes before capture; full inventories remain readable
 for retention and recovery.
 
