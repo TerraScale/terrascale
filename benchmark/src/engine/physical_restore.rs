@@ -56,7 +56,6 @@ impl Engine {
             drop(staged);
             crate::storage::import_backup_file(source, backup, &staging, &child_owner)
                 .map_err(|()| EngineOpenError::FormatMismatch)?;
-            drop(Self::open(staged_config)?);
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;

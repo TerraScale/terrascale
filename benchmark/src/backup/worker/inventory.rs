@@ -53,6 +53,7 @@ pub(super) fn persist_inventory(stream: &Stream, limits: FleetLimits) -> Result<
     let root = inventory_path(stream);
     std::fs::create_dir_all(&root).map_err(|_| FleetError::Capture)?;
     super::super::sync_directory(&stream.config.staging).map_err(|_| FleetError::Capture)?;
+    cleanup_unsealed_points(&stream.config.staging)?;
     cleanup_interrupted(&stream.config.staging)?;
     cleanup_interrupted(&root)?;
     for point in super::super::restore::discover_encrypted_points(
@@ -97,6 +98,40 @@ pub(super) fn persist_inventory(stream: &Stream, limits: FleetLimits) -> Result<
         super::super::sync_directory(&temporary).map_err(|_| FleetError::Capture)?;
         std::fs::rename(&temporary, &destination).map_err(|_| FleetError::Capture)?;
         super::super::sync_directory(&root).map_err(|_| FleetError::Capture)?;
+    }
+    Ok(())
+}
+
+/// Removes a valid-identity point directory left before its manifest commit.
+///
+/// A production retry cannot recover the capture clock from member files, so
+/// retaining such a directory would leave an unrepairable orphan beside the
+/// next capture. A directory with either manifest form is sealed (and is
+/// therefore validated by discovery instead of being removed here).
+fn cleanup_unsealed_points(directory: &Path) -> Result<(), FleetError> {
+    for entry in std::fs::read_dir(directory).map_err(|_| FleetError::Capture)? {
+        let entry = entry.map_err(|_| FleetError::Capture)?;
+        let filename = entry.file_name();
+        let Some(identity) = filename
+            .to_str()
+            .and_then(|name| name.strip_prefix("rp-"))
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        if super::super::manifest::validate_identity(&identity).is_err() {
+            continue;
+        }
+        let path = entry.path();
+        if !entry.file_type().map_err(|_| FleetError::Capture)?.is_dir() {
+            return Err(FleetError::Capture);
+        }
+        if path.join(super::super::manifest::MANIFEST_FILE).is_file()
+            || path.join(super::super::manifest::ENCRYPTED_MANIFEST_FILE).is_file()
+        {
+            continue;
+        }
+        remove_point(&path)?;
     }
     Ok(())
 }
@@ -206,6 +241,23 @@ fn owned_ephemeral(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::scheduled_point_limit;
+
+    #[test]
+    fn unsealed_recovery_point_orphan_is_removed_during_inventory_reconcile() {
+        let directory = crate::backup::tests::location("backup-inventory-orphan");
+        std::fs::remove_dir_all(&directory).ok();
+        std::fs::create_dir_all(directory.join(format!("rp-{}", "a".repeat(64)))).unwrap();
+        std::fs::write(
+            directory.join(format!("rp-{}/member-000001", "a".repeat(64))),
+            b"staged",
+        )
+        .unwrap();
+
+        super::cleanup_unsealed_points(&directory).unwrap();
+
+        assert!(!directory.join(format!("rp-{}", "a".repeat(64))).exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]

@@ -9,13 +9,52 @@ use crate::{
 use std::{
     fs,
     path::Path,
-    sync::{LazyLock, Mutex},
 };
 
-// A restore owns the source quiescence window while it builds and publishes
-// its staging directory. Serializing that ownership also makes the target's
-// empty-directory reservation atomic with respect to another restore.
-static BRANCH_RESTORE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+/// A cross-process reservation for one branch target.
+///
+/// The lock file is intentionally retained after the operation. Removing a
+/// lock file while another process has it open would allow a third process to
+/// create a second inode and enter a different lock domain. `flock` releases
+/// the reservation automatically when the owning process exits.
+struct BranchRestoreReservation {
+    #[cfg(unix)]
+    file: fs::File,
+}
+
+impl BranchRestoreReservation {
+    fn acquire(target: &Path) -> Result<Self, EngineOpenError> {
+        let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
+        let name = target.file_name().ok_or(EngineOpenError::InvalidConfig)?;
+        let lock_path = parent.join(format!(".{}.branch-restore.lock", name.to_string_lossy()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .mode(0o600)
+                .open(lock_path)
+                .map_err(|_| EngineOpenError::StorageUnavailable)?;
+            rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
+                .map_err(|_| EngineOpenError::StorageUnavailable)?;
+            return Ok(Self { file });
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = lock_path;
+            Err(EngineOpenError::StorageUnavailable)
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for BranchRestoreReservation {
+    fn drop(&mut self) {
+        let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock);
+    }
+}
 
 impl Engine {
     /// Installs an immutable encrypted snapshot as a fresh branch database.
@@ -31,9 +70,6 @@ impl Engine {
         config: &EngineConfig,
         operation: &OperationId,
     ) -> Result<StorageSequence, EngineOpenError> {
-        let _restore_guard = BRANCH_RESTORE_LOCK
-            .lock()
-            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         config.validate_storage_keys()?;
         let source_owner = source.database_owner();
         let child = config.owner.as_ref().ok_or(EngineOpenError::InvalidConfig)?;
@@ -64,6 +100,7 @@ impl Engine {
         )
         .map_err(|_| EngineOpenError::InvalidConfig)?;
         let target = &config.location;
+        let _restore_reservation = BranchRestoreReservation::acquire(target)?;
         if let Ok(metadata) = fs::symlink_metadata(target)
             && (!metadata.is_dir() || metadata.file_type().is_symlink())
         {

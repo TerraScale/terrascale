@@ -3,6 +3,51 @@ use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, TenantId,
 };
+use std::{
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
+
+#[test]
+fn branch_restore_reservation_child() {
+    let Ok(target) = std::env::var("TERRABASE_BRANCH_RESTORE_LOCK_CHILD") else {
+        return;
+    };
+    let target = std::path::PathBuf::from(target);
+    let _reservation = BranchRestoreReservation::acquire(&target).unwrap();
+    thread::sleep(Duration::from_millis(750));
+}
+
+#[test]
+fn branch_restore_reservation_is_cross_process() {
+    let root = std::env::temp_dir()
+        .join(format!("terrabase-branch-lock-{}", crate::identity::generate()));
+    std::fs::create_dir_all(&root).unwrap();
+    let target = root.join("target");
+    std::fs::create_dir(&target).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "engine::branch_restore_tests::branch_restore_reservation_child",
+            "--nocapture",
+        ])
+        .env("TERRABASE_BRANCH_RESTORE_LOCK_CHILD", &target)
+        .spawn()
+        .unwrap();
+    let lock_path = root.join(".target.branch-restore.lock");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !lock_path.exists() {
+        assert!(Instant::now() < deadline, "child did not create reservation");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let started = Instant::now();
+    let reservation = BranchRestoreReservation::acquire(&target).unwrap();
+    assert!(started.elapsed() >= Duration::from_millis(500));
+    drop(reservation);
+    assert!(child.wait().unwrap().success());
+    std::fs::remove_dir_all(root).unwrap();
+}
 
 fn assert_branch_contents(engine: &Engine, tenant: &TenantId, database: &str) {
     assert_eq!(
