@@ -100,3 +100,44 @@ fn generated_http_and_reactive_surface_is_non_empty() {
         8_388_608
     );
 }
+
+#[test]
+fn generated_contract_publishes_import_lifecycle_routes() {
+    let expected = [
+        (
+            "list_imports",
+            generated_contract::HttpMethod::Get,
+            "/api/v1/databases/{name}/imports",
+        ),
+        (
+            "create_import",
+            generated_contract::HttpMethod::Post,
+            "/api/v1/databases/{name}/imports",
+        ),
+        (
+            "get_import",
+            generated_contract::HttpMethod::Get,
+            "/api/v1/databases/{name}/imports/{id}",
+        ),
+        (
+            "upload_import",
+            generated_contract::HttpMethod::Put,
+            "/api/v1/databases/{name}/imports/{id}/input",
+        ),
+        (
+            "resume_import",
+            generated_contract::HttpMethod::Post,
+            "/api/v1/databases/{name}/imports/{id}/resume",
+        ),
+    ];
+    for (operation_id, method, path) in expected {
+        assert!(
+            generated_contract::OPERATIONS
+                .iter()
+                .any(|operation| operation.operation_id == operation_id
+                    && operation.method == method
+                    && operation.path == path),
+            "missing generated import operation {operation_id}: {method:?} {path}"
+        );
+    }
+}
