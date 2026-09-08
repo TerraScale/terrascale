@@ -1523,7 +1523,7 @@ mod tests {
         let elapsed = started.elapsed();
         let branch = host_of_existing(&branch_at);
         assert_eq!(orders_of(&branch).len(), 100_000, "the branch serves every document");
-        assert!(elapsed < Duration::from_secs(10), "the branch took {elapsed:?}");
+        assert!(elapsed < Duration::from_secs(1), "the branch took {elapsed:?}");
         drop(branch);
         fleet.detach_all();
         drop(host);

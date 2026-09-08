@@ -63,10 +63,7 @@ impl BranchRestoreReservation {
         let lock_path = parent.join(format!(".{}.branch-restore.lock", name.to_string_lossy()));
         let process_lock = PROCESS_TARGET_LOCKS
             .lock()
-            .map_err(|error| {
-                eprintln!("source placement: {error:?}");
-                EngineOpenError::StorageUnavailable
-            })?
+            .map_err(|_| EngineOpenError::StorageUnavailable)?
             .entry(lock_path.clone())
             .or_insert_with(|| {
                 Arc::new(ProcessTargetLock { held: Mutex::new(false), wake: Condvar::new() })
@@ -116,11 +113,7 @@ impl Engine {
         config: &EngineConfig,
         operation: &OperationId,
     ) -> Result<StorageSequence, EngineOpenError> {
-        eprintln!("restore enter {}", operation);
-        config.validate_storage_keys().map_err(|error| {
-            eprintln!("validate child keys: {error:?}");
-            error
-        })?;
+        config.validate_storage_keys()?;
         let source_owner = source.database_owner();
         let child = config.owner.as_ref().ok_or(EngineOpenError::InvalidConfig)?;
         let keys = config.storage_keys.as_ref().ok_or(EngineOpenError::InvalidConfig)?;
@@ -150,10 +143,7 @@ impl Engine {
         )
         .map_err(|_| EngineOpenError::InvalidConfig)?;
         let target = &config.location;
-        let _restore_reservation = BranchRestoreReservation::acquire(target).map_err(|error| {
-            eprintln!("reservation: {error:?}");
-            error
-        })?;
+        let _restore_reservation = BranchRestoreReservation::acquire(target)?;
         if let Ok(metadata) = fs::symlink_metadata(target)
             && (!metadata.is_dir() || metadata.file_type().is_symlink())
         {
@@ -188,7 +178,6 @@ impl Engine {
             builder.mode(0o700);
         }
         builder.create(&staging).map_err(|error| {
-            eprintln!("staging mkdir: {error:?}");
             EngineOpenError::StorageUnavailable
         })?;
         let result = (|| {
@@ -200,7 +189,7 @@ impl Engine {
             .map_err(|_| EngineOpenError::FormatMismatch)?;
             let source_owner = source.database_owner();
             let mut source_path = None;
-            let registration = source
+        let registration = source
                 .with_quiescent_wal(|source_location| {
                     source_path = Some(source_location.to_owned());
                     crate::storage::copy_encrypted_snapshot(
@@ -210,14 +199,8 @@ impl Engine {
                         keys.clone(),
                     )
                 })
-                .map_err(|_| {
-                    eprintln!("branch source quiesce failed");
-                    EngineOpenError::StorageUnavailable
-                })?
-                .map_err(|()| {
-                    eprintln!("branch source copy failed");
-                    EngineOpenError::StorageUnavailable
-                })?;
+                .map_err(|_| EngineOpenError::StorageUnavailable)?
+                .map_err(|()| EngineOpenError::StorageUnavailable)?;
             let cut = transform_snapshot(
                 source_path.as_deref().ok_or(EngineOpenError::StorageUnavailable)?,
                 &staging,
@@ -227,15 +210,14 @@ impl Engine {
                 &marker,
                 &child_placement,
             )?;
-            drop(registration);
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
             drop(Self::open(staged)?);
+            drop(registration);
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
             if let Err(error) = fs::rename(&staging, target) {
-                eprintln!("branch rename failed: {error}");
                 // Another restore may have won the target rename while this
                 // source was quiesced. Re-read the durable marker to make an
                 // exact same-operation loser idempotent; a different marker
@@ -355,29 +337,24 @@ fn transform_snapshot(
                 placement.revision,
             ],
         )
-        .map_err(|error| { eprintln!("branch usage placement: {error:?}"); EngineOpenError::StorageUnavailable })?;
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
     let origin = config
         .replication_origin
         .as_ref()
         .map_or_else(|| child.region().as_str().to_owned(), |origin| origin.as_str().to_owned());
-    transaction.execute("INSERT INTO meta(key,value) VALUES('local_origin',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [origin]).map_err(|error| { eprintln!("branch local origin: {error:?}"); EngineOpenError::StorageUnavailable })?;
+    transaction.execute("INSERT INTO meta(key,value) VALUES('local_origin',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [origin]).map_err(|_| EngineOpenError::StorageUnavailable)?;
     let cut = i64::try_from(cut).map_err(|_| EngineOpenError::FormatMismatch)?;
     transaction
         .execute(
             "INSERT INTO meta(key,value) VALUES('branch_restore_operation',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             [&marker],
         )
-        .map_err(|error| { eprintln!("branch operation: {error:?}"); EngineOpenError::StorageUnavailable })?;
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
     transaction
         .execute("INSERT INTO meta(key,value) VALUES('branch_restore_cut',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [cut])
-        .map_err(|error| { eprintln!("branch cut: {error:?}"); EngineOpenError::StorageUnavailable })?;
-    transaction.commit().map_err(|error| {
-        eprintln!("branch commit: {error:?}");
-        EngineOpenError::StorageUnavailable
-    })?;
-    connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").map_err(|error| {
-        eprintln!("branch checkpoint: {error:?}");
-        EngineOpenError::StorageUnavailable
-    })?;
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+    transaction.commit().map_err(|_| EngineOpenError::StorageUnavailable)?;
+    connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
     Ok(cut)
 }

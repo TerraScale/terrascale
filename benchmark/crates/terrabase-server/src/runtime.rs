@@ -6,6 +6,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
+
 use base64::Engine as _;
 use terrabase::observability::Component;
 use terrabase::observability::HealthStatus;
