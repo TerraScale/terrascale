@@ -2029,7 +2029,7 @@ impl SqliteStorage {
         let mut readers = ReaderPool::new(rss_budget_bytes());
         for _ in 0..READ_POOL_WIDTH {
             let connection =
-                open_connection(&database_path, &expected_binding, encryption.as_deref()).map_err(|error| { eprintln!("reader open {:?}: {error:?}", database_path); error })?;
+                open_connection(&database_path, &expected_binding, encryption.as_deref())?;
             readers.push(connection, cache_resident_bytes());
         }
         let mut extracted = ExtractedState::default();
