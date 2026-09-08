@@ -131,6 +131,36 @@ fn placement_and_residency_fail_closed_before_transport() {
 }
 
 #[tokio::test]
+async fn create_requires_contract_provisioning_fields_before_transport() {
+    let mock = Mock::new(vec![]);
+    let api = client(Arc::clone(&mock)).management().databases();
+
+    let operation_only = CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
+        .expect("placement")
+        .operation_id("op")
+        .expect("operation id");
+    let error = api
+        .create_with_placement(operation_only, None, OperationOptions::default())
+        .await
+        .expect_err("residency is required by the create contract");
+    assert_eq!(error.kind, terrascale::ErrorKind::Validation);
+    assert_eq!(error.code, "provisioning_fields_required");
+
+    let residency_only = CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
+        .expect("placement")
+        .residency("br-only")
+        .expect("residency");
+    let error = api
+        .create_with_placement(residency_only, None, OperationOptions::default())
+        .await
+        .expect_err("operation_id is required by the create contract");
+    assert_eq!(error.kind, terrascale::ErrorKind::Validation);
+    assert_eq!(error.code, "provisioning_fields_required");
+
+    assert!(mock.requests.lock().expect("requests mutex").is_empty());
+}
+
+#[tokio::test]
 async fn schema_is_one_collection_schema_and_direct_path() {
     let mock = Mock::new(vec![Response::json(
         200,
