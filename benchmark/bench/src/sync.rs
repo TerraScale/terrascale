@@ -431,9 +431,15 @@ fn http_lane(endpoint: &Endpoint, config: &Config, token: &str, cdn_url: Option<
         }
         last_delivery = Some(arrival);
         samples.push(elapsed);
-        // We do not decode the envelope here: the server's causation revision
-        // is deliberately opaque. Advance only after a real data-bearing byte.
-        offset = envelope_causation(&response.body).unwrap_or_else(|| offset.saturating_add(1));
+        // A non-empty HTTP 200 is not evidence of a delta: error envelopes and
+        // malformed frames can also carry bytes. Require the wire envelope and
+        // its causal revision before advancing the cursor.
+        let causation = match valid_envelope_causation(&response.body) {
+            Some(value) if value >= offset => value,
+            Some(value) => return fail(&format!("CDN delta causation regressed: {value} < {offset}")),
+            None => return fail("CDN delta was not a valid sync-v1 envelope"),
+        };
+        offset = causation.saturating_add(1);
         max_rss = max_rss.max(current_rss_bytes(config.member_pid));
     }
     bounded_verdict(samples, CDN_P99_MS, config, max_rss, "CDN HTTP p99")
@@ -564,6 +570,7 @@ fn websocket_subscribe(
     )
     .map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(Duration::from_secs(30))).map_err(|e| e.to_string())?;
+    stream.set_nodelay(true).map_err(|e| e.to_string())?;
     let key = "dGVycmFzY2FsZS1zeW5jLWJlbmNo";
     let path = format!(
         "{}/api/v1/databases/{}/reactive",
@@ -588,7 +595,7 @@ fn websocket_subscribe(
 fn subscribe_envelope(subscription: &str, query: &str) -> Vec<u8> {
     let mut out = Vec::new();
     array(&mut out, 7);
-    uint(&mut out, 2);
+    uint(&mut out, 1);
     uint(&mut out, 0);
     uint(&mut out, 0);
     uint(&mut out, 1);
@@ -618,10 +625,9 @@ fn write_ws_binary(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String>
     // RFC 6455.  It is deterministic and has no bearing on server output.
     let mask = [0x53, 0x79, 0x6e, 0x63];
     header.extend_from_slice(&mask);
-    stream.write_all(&header).map_err(|e| e.to_string())?;
-    for (index, byte) in payload.iter().enumerate() {
-        stream.write_all(&[byte ^ mask[index % 4]]).map_err(|e| e.to_string())?;
-    }
+    let mut frame = header;
+    frame.extend(payload.iter().enumerate().map(|(index, byte)| byte ^ mask[index % 4]));
+    stream.write_all(&frame).map_err(|e| e.to_string())?;
     stream.flush().map_err(|e| e.to_string())
 }
 
@@ -908,6 +914,25 @@ fn envelope_causation(bytes: &[u8]) -> Option<u64> {
         let _ = read_msgpack_uint(&mut cursor)?;
     }
     read_msgpack_uint(&mut cursor)
+}
+
+fn valid_envelope_causation(bytes: &[u8]) -> Option<u64> {
+    let mut cursor = bytes;
+    if *cursor.first()? != 0x97 {
+        return None;
+    }
+    cursor = &cursor[1..];
+    let major = read_msgpack_uint(&mut cursor)?;
+    if major != 1 {
+        return None;
+    }
+    for _ in 0..5 {
+        read_msgpack_uint(&mut cursor)?;
+    }
+    if cursor.is_empty() {
+        return None;
+    }
+    envelope_causation(bytes)
 }
 fn read_msgpack_uint(cursor: &mut &[u8]) -> Option<u64> {
     let tag = *cursor.first()?;
@@ -1279,6 +1304,16 @@ mod tests {
     fn reads_messagepack_causation_without_reordering_body() {
         let frame = subscribe_envelope("s", "SELECT id FROM orders ORDER BY id");
         assert_eq!(envelope_causation(&frame), Some(0));
+        assert_eq!(valid_envelope_causation(&frame), Some(0));
+    }
+    #[test]
+    fn rejects_wrong_major_and_truncated_sync_envelopes() {
+        let mut frame = subscribe_envelope("s", "SELECT id FROM orders ORDER BY id");
+        frame[1] = 2;
+        assert_eq!(valid_envelope_causation(&frame), None);
+        frame[1] = 1;
+        frame.truncate(7);
+        assert_eq!(valid_envelope_causation(&frame), None);
     }
     #[test]
     fn url_escaping_does_not_change_slashes() {

@@ -47,9 +47,16 @@ pub struct PlacementControlServer {
     observer_principals: BTreeSet<String>,
     observation_frames: AtomicU64,
     catchup: Option<Arc<dyn crate::catchup::CatchUpSource>>,
+    join_signer: Option<Arc<crate::placement::transition::TransitionReceiptSigner>>,
 }
 
 impl PlacementControlServer {
+    /// Attaches the provisioned member identity for deterministic join challenges.
+    #[must_use]
+    pub fn with_join_signer(mut self, signer: Arc<crate::placement::transition::TransitionReceiptSigner>) -> Self {
+        self.join_signer = Some(signer);
+        self
+    }
     /// Attaches the actual admitted data-plane fencing and proof producer.
     #[must_use]
     pub fn with_data_control(mut self, data_control: Arc<dyn PlacementDataControl>) -> Self {
@@ -95,6 +102,7 @@ impl PlacementControlServer {
             observer_principals,
             observation_frames: AtomicU64::new(0),
             catchup: None,
+            join_signer: None,
         })
     }
 
@@ -306,7 +314,12 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         )?;
         let request = request.into_inner();
         let journal = Arc::clone(&self.journal);
-        self.work(move || journal.stage(&principal, &operation, request)).await.map(Response::new)
+        let signer = self.join_signer.clone();
+        self.work(move || {
+            let mut response = journal.stage(&principal, &operation, request)?;
+            if let Some(signer) = signer { response.join_challenge = journal.sign_join_challenge(&response, &signer)?; }
+            Ok(response)
+        }).await.map(Response::new)
     }
 
     async fn accept(
@@ -386,13 +399,12 @@ impl PlacementControlService for Arc<PlacementControlServer> {
     ) -> Result<Response<pb::PlacementProposalResponse>, Status> {
         self.authenticate(&request)?;
         let journal = Arc::clone(&self.journal);
-        self.work(move || journal.latest()).await.map(|response| {
-            Response::new(pb::PlacementProposalResponse {
-                revision: response.revision,
-                proposal: response.proposal,
-                status: response.status,
-            })
-        })
+        let signer = self.join_signer.clone();
+        self.work(move || {
+            let mut response = journal.latest()?;
+            if let Some(signer) = signer { response.join_challenge = journal.sign_join_challenge(&response, &signer)?; }
+            Ok(response)
+        }).await.map(Response::new)
     }
 }
 

@@ -1201,6 +1201,17 @@ CREATE TABLE IF NOT EXISTS origin_prefixes (
     PRIMARY KEY (tenant, origin)
 ) WITHOUT ROWID;
 
+-- Live causal state is maintained per publication.  Unlike origin_prefixes,
+-- this is not a pruning checkpoint: it is an incremental cache used while
+-- admitting the next commit, and is rebuilt from the journal on open.
+CREATE TABLE IF NOT EXISTS causal_frontiers (
+    tenant TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    seq INTEGER NOT NULL CHECK (seq > 0),
+    hlc INTEGER NOT NULL,
+    PRIMARY KEY (tenant, origin)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS journal_pruning (
     tenant TEXT PRIMARY KEY,
     pruned_through INTEGER NOT NULL CHECK (pruned_through > 0)
@@ -1947,6 +1958,11 @@ impl SqliteStorage {
         migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_idempotency(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_row_aliases(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        {
+            let transaction = writer.transaction().map_err(|_| StorageOpenError::Unavailable)?;
+            initialize_causal_frontiers(&transaction).map_err(|_| StorageOpenError::Unavailable)?;
+            transaction.commit().map_err(|_| StorageOpenError::Unavailable)?;
+        }
         storage_closure::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         accounting::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         storage_intervals::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
@@ -2963,6 +2979,16 @@ fn stage_intent(
             }
         }
     }
+    // Retired replicated writes may not have a publication row. Their
+    // document provenance still becomes part of the live causal cache only
+    // after the document rows exist, preserving gap checks for both paths.
+    advance_causal_frontier(
+        transaction,
+        intent.tenant.as_str(),
+        provenance.origin(),
+        origin_sequence,
+        provenance.hlc(),
+    )?;
     if provenance.kind() != JournalKind::Replicated
         && !schema_indexes::validate_local_writes(transaction, &intent.tenant, sequence)?
     {
@@ -3667,6 +3693,99 @@ impl FoldedCommit<'_> {
     }
 }
 
+/// Rebuilds the live frontier cache once for a database that predates it.
+fn initialize_causal_frontiers(connection: &Connection) -> Result<(), ()> {
+    // Rebuild at open so an interrupted upgrade or a repaired legacy file
+    // cannot leave this derived cache ahead of its authoritative provenance.
+    connection.execute("DELETE FROM causal_frontiers", []).map_err(|_| ())?;
+    let mut tenants = connection
+        .prepare("SELECT tenant FROM documents UNION SELECT tenant FROM origin_prefixes UNION SELECT tenant FROM replication_publications")
+        .map_err(|_| ())?;
+    let tenants = tenants
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    for tenant in tenants {
+        for entry in origin_prefixes_on(connection, &tenant)? {
+            connection
+                .execute(
+                    "INSERT INTO causal_frontiers(tenant,origin,seq,hlc) VALUES(?1,?2,?3,?4)",
+                    rusqlite::params![tenant, entry.origin, entry.origin_sequence as i64, entry.hlc as i64],
+                )
+                .map_err(|_| ())?;
+        }
+    }
+    Ok(())
+}
+
+fn unsigned_max(left: u64, right: u64) -> u64 {
+    left.max(right)
+}
+
+/// Advances one cached origin prefix after its source row has been inserted.
+/// Each iteration closes a real next-sequence row, so gaps never get promoted.
+fn advance_causal_frontier(
+    connection: &Connection,
+    tenant: &str,
+    origin: &str,
+    source: u64,
+    hlc: u64,
+) -> Result<(), ()> {
+    if origin.is_empty() || source == 0 {
+        return Err(());
+    }
+    let current: Option<(i64, i64)> = connection
+        .query_row(
+            "SELECT seq,hlc FROM causal_frontiers WHERE tenant=?1 AND origin=?2",
+            rusqlite::params![tenant, origin],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| ())?;
+    let (mut seq, mut max_hlc) = match current {
+        Some((seq, hlc)) => (u64::try_from(seq).map_err(|_| ())?, u64::from_le_bytes(hlc.to_le_bytes())),
+        None => (0, 0),
+    };
+    loop {
+        let next = seq.checked_add(1).ok_or(())?;
+        let mut next_hlc: Option<u64> = None;
+        for sql in [
+            "SELECT hlc FROM documents WHERE tenant=?1 AND origin=?2 AND origin_seq=?3",
+            "SELECT hlc FROM replication_publications WHERE tenant=?1 AND origin=?2 AND origin_seq=?3",
+        ] {
+            let mut statement = connection.prepare(sql).map_err(|_| ())?;
+            let mut rows = statement
+                .query(rusqlite::params![tenant, origin, i64::try_from(next).map_err(|_| ())?])
+                .map_err(|_| ())?;
+            while let Some(row) = rows.next().map_err(|_| ())? {
+                let value: i64 = row.get(0).map_err(|_| ())?;
+                let value = u64::from_le_bytes(value.to_le_bytes());
+                next_hlc = Some(next_hlc.map_or(value, |old| unsigned_max(old, value)));
+            }
+        }
+        let Some(next_hlc) = next_hlc else {
+            break;
+        };
+        seq = next;
+        max_hlc = unsigned_max(max_hlc, next_hlc);
+    }
+    if source <= seq {
+        max_hlc = unsigned_max(max_hlc, hlc);
+    }
+    if seq == 0 {
+        return Ok(());
+    }
+    connection
+        .execute(
+            "INSERT INTO causal_frontiers(tenant,origin,seq,hlc) VALUES(?1,?2,?3,?4)
+             ON CONFLICT(tenant,origin) DO UPDATE SET seq=excluded.seq,hlc=excluded.hlc",
+            rusqlite::params![tenant, origin, i64::try_from(seq).map_err(|_| ())?, i64::from_le_bytes(max_hlc.to_le_bytes())],
+        )
+        .map(|_| ())
+        .map_err(|_| ())
+}
+
 /// Combines durable prefixes saved before pruning with contiguous retained
 /// rows. A gap stops advancement for its origin, including after a restart.
 fn origin_prefixes_on(
@@ -3735,13 +3854,22 @@ fn context_frontier(
     transaction: &rusqlite::Transaction<'_>,
     tenant: &TenantId,
 ) -> Result<Vec<u8>, ()> {
-    let entries = origin_prefixes_on(transaction, tenant.as_str())?;
+    let mut statement = transaction
+        .prepare("SELECT origin,seq FROM causal_frontiers WHERE tenant=?1 ORDER BY origin")
+        .map_err(|_| ())?;
+    let entries = statement
+        .query_map([tenant.as_str()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
     let mut output = Vec::with_capacity(5 + entries.len() * 20);
     codec::push_u8(&mut output, 1);
     codec::push_u32(&mut output, entries.len() as u32);
-    for entry in entries {
-        codec::push_str(&mut output, &entry.origin);
-        codec::push_u64(&mut output, entry.origin_sequence);
+    for (origin, sequence) in entries {
+        codec::push_str(&mut output, &origin);
+        codec::push_u64(&mut output, u64::try_from(sequence).map_err(|_| ())?);
     }
     Ok(output)
 }

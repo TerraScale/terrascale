@@ -220,7 +220,11 @@ impl ImportWriteTarget for EngineImportWriteTarget {
                 }
                 Ok(ImportCommit::Committed { records: records.len() as u64 })
             }
-            terrabase::CommitOutcome::Rejected(_) => Ok(ImportCommit::Rejected),
+            terrabase::CommitOutcome::Rejected(reason) => {
+                #[cfg(test)]
+                eprintln!("import engine commit rejected: {reason:?}");
+                Ok(ImportCommit::Rejected)
+            }
             terrabase::CommitOutcome::Unknown(_) => Ok(ImportCommit::Unknown),
         }
     }

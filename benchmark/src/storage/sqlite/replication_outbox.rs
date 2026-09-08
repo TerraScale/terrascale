@@ -47,6 +47,13 @@ pub(super) fn persist_publication(
         "INSERT INTO replication_publications (tenant, origin, origin_seq, hlc, operation, local_seq, committed_at, context, private_payload) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![intent.tenant.as_str(), provenance.origin(), provenance.origin_sequence() as i64, provenance.hlc() as i64, operation.as_str(), local_sequence as i64, committed_at, provenance.context(), payload],
     ).map_err(|_| ())?;
+    super::advance_causal_frontier(
+        connection,
+        intent.tenant.as_str(),
+        provenance.origin(),
+        provenance.origin_sequence(),
+        provenance.hlc(),
+    )?;
     let records = if let Some(group) = &intent.replication_publication {
         group.records.clone()
     } else {

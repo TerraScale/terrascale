@@ -43,19 +43,24 @@ impl SqliteStorage {
         tenant: &TenantId,
         command: LifecycleCommand,
     ) -> Result<LifecycleState, LifecycleError> {
+        if matches!(command, LifecycleCommand::Read) {
+            let reader = self.reader();
+            // Both authoritative tables must belong to one SQLite snapshot.
+            // A read never reserves the writer or competes with origin commits.
+            let tx = rusqlite::Transaction::new_unchecked(
+                reader.connection(),
+                TransactionBehavior::Deferred,
+            )
+            .map_err(|_| LifecycleError::Unavailable)?;
+            let state = load_state(&tx, tenant)?;
+            validate_stop_fence(&tx, tenant, &state)?;
+            return Ok(state);
+        }
         let mut writer = self.writer.lock().map_err(|_| LifecycleError::Unavailable)?;
         let tx = writer
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| LifecycleError::Unavailable)?;
-        let bytes: Option<Vec<u8>> = tx
-            .query_row(
-                "SELECT body FROM database_lifecycle WHERE tenant=?1",
-                [tenant.as_str()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|_| LifecycleError::Unavailable)?;
-        let mut state: LifecycleState = bytes.map(|b| decode(&b)).transpose()?.unwrap_or_default();
+        let mut state = load_state(&tx, tenant)?;
         let before = state.clone();
         let operation = match &command {
             LifecycleCommand::Pause(id) => Some((id.clone(), true)),
@@ -80,20 +85,7 @@ impl SqliteStorage {
                 return Ok(state);
             }
         }
-        let stopped: Option<i64> = tx
-            .query_row(
-                "SELECT millis FROM storage_accounting_stops WHERE tenant=?1",
-                [tenant.as_str()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|_| LifecycleError::Unavailable)?;
-        // Refuse inconsistent legacy/external fences instead of inventing intent.
-        if stopped.map(|v| u64::try_from(v).ok())
-            != state.deletion.as_ref().map(|d| Some(d.usage_stopped_at))
-        {
-            return Err(LifecycleError::Conflict);
-        }
+        validate_stop_fence(&tx, tenant, &state)?;
         match command {
             LifecycleCommand::Read => return Ok(state),
             LifecycleCommand::Prepare(operation_id) => {
@@ -215,6 +207,44 @@ impl SqliteStorage {
         tx.commit().map_err(|_| LifecycleError::Unavailable)?;
         Ok(state)
     }
+}
+
+fn load_state(
+    connection: &rusqlite::Connection,
+    tenant: &TenantId,
+) -> Result<LifecycleState, LifecycleError> {
+        let bytes: Option<Vec<u8>> = connection
+            .query_row(
+                "SELECT body FROM database_lifecycle WHERE tenant=?1",
+                [tenant.as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|_| LifecycleError::Unavailable)?;
+        bytes.map(|b| decode(&b)).transpose().map(Option::unwrap_or_default)
+
+}
+
+fn validate_stop_fence(
+    connection: &rusqlite::Connection,
+    tenant: &TenantId,
+    state: &LifecycleState,
+) -> Result<(), LifecycleError> {
+        let stopped: Option<i64> = connection
+            .query_row(
+                "SELECT millis FROM storage_accounting_stops WHERE tenant=?1",
+                [tenant.as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|_| LifecycleError::Unavailable)?;
+        // Refuse inconsistent legacy/external fences instead of inventing intent.
+        if stopped.map(|v| u64::try_from(v).ok())
+            != state.deletion.as_ref().map(|d| Some(d.usage_stopped_at))
+        {
+            return Err(LifecycleError::Conflict);
+        }
+        Ok(())
 }
 
 fn encode(state: &LifecycleState) -> Vec<u8> {

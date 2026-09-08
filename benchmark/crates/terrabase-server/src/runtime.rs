@@ -929,7 +929,8 @@ async fn prepare_pending_control(
             grpc,
             control.observer_principals.clone(),
         )
-        .map_err(|_| pending_control_error("placement control principal policy is invalid"))?,
+        .map_err(|_| pending_control_error("placement control principal policy is invalid"))?
+        .with_join_signer(load_transition_receipt_signer(control).map_err(pending_control_error)?),
     );
     let (live_tls, rotation) = prepare_pending_tls(production)?;
     let listener = server
@@ -965,6 +966,26 @@ async fn prepare_pending_control(
         None
     };
     Ok(PendingControlSetup { server, listener, observations, auth_runtime, rotation })
+}
+
+pub(crate) fn load_transition_receipt_signer(
+    control: &crate::config::ProductionControl,
+) -> Result<Arc<terrabase_tbep::placement::transition::TransitionReceiptSigner>, &'static str> {
+    let id = control.receipt_signing_key_id.clone().ok_or("member receipt signing identity missing")?;
+    let path = control.receipt_signing_key_file.as_ref().ok_or("member receipt signing key missing")?;
+    let mut file = open_readonly(path).map_err(|_| "member receipt signing key unavailable")?;
+    let metadata = file.metadata().map_err(|_| "member receipt signing key unavailable")?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 16 * 1024 {
+        return Err("member receipt signing key invalid");
+    }
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt as _;
+        if metadata.permissions().mode() & 0o077 != 0 { return Err("member receipt signing key must be owner-private"); }
+    }
+    let mut bytes = Vec::new();
+    file.by_ref().take(16 * 1024 + 1).read_to_end(&mut bytes).map_err(|_| "member receipt signing key unavailable")?;
+    terrabase_tbep::placement::transition::TransitionReceiptSigner::from_pkcs8(id, &bytes)
+        .map(Arc::new).map_err(|_| "member receipt signing key invalid")
 }
 
 fn open_pending_auth_journal(

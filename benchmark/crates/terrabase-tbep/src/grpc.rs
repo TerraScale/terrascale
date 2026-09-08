@@ -393,6 +393,7 @@ pub struct TbepGrpcServer {
     background: Arc<AtomicUsize>,
     draining: Arc<std::sync::atomic::AtomicBool>,
     lifecycle: Option<Arc<dyn crate::lifecycle::LifecycleControl>>,
+    placement: Option<Arc<placement_control::PlacementControlServer>>,
 }
 
 fn authenticate_gateway_certificate(principal: &str, leaf: &[u8]) -> Result<(), Status> {
@@ -534,7 +535,18 @@ impl TbepGrpcServer {
             background: Arc::new(AtomicUsize::new(0)),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             lifecycle: None,
+            placement: None,
         }
+    }
+
+    /// Retains authenticated placement control on the admitted member listener.
+    #[must_use]
+    pub fn with_placement_control(
+        mut self,
+        placement: Arc<placement_control::PlacementControlServer>,
+    ) -> Self {
+        self.placement = Some(placement);
+        self
     }
 
     /// Composes the native lifecycle owner into the real TBEP listener.
@@ -944,6 +956,13 @@ fn serve_routes(
         builder = builder.tls_config(tls)?;
     }
     Ok(builder
+        .add_optional_service(server.placement.as_ref().map(|placement| {
+            pb::placement_control_service_server::PlacementControlServiceServer::new(
+                Arc::clone(placement),
+            )
+            .max_decoding_message_size(message_bytes)
+            .max_encoding_message_size(message_bytes)
+        }))
         .add_service(
             ChannelServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)

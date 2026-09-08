@@ -1131,6 +1131,11 @@ fn retain_scored(
                 == std::cmp::Ordering::Less
         })
         .unwrap_or(retained.len());
+    // A full window cannot retain this candidate. Avoid traversing and
+    // cloning its body only to discard it immediately below.
+    if retained.len() == capacity && position >= capacity {
+        return Ok(());
+    }
     *retained_bytes = (*retained_bytes).saturating_add(document_bytes(document));
     retained.insert(position, (score, document.clone()));
     if retained.len() > capacity
@@ -1233,6 +1238,11 @@ fn retain_candidate(
         }
         low
     };
+    // A full window cannot retain this candidate. Avoid traversing and
+    // cloning its body only to discard it immediately below.
+    if retained.len() == capacity && position >= capacity {
+        return Ok(());
+    }
     *retained_bytes = (*retained_bytes).saturating_add(document_bytes(document));
     retained.insert(position, document.clone());
     if retained.len() > capacity
@@ -1534,3 +1544,7 @@ fn project(
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "retention_tests.rs"]
+mod retention_tests;

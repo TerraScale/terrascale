@@ -28,6 +28,8 @@ async fn setup() -> Arc<ApiState> {
         .oneshot(
             Request::post("/api/v1/databases")
                 .header("authorization", KEY)
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(r#"{"name":"replay","placement":["GRU"],"residency":null}"#))
                 .unwrap(),
         )

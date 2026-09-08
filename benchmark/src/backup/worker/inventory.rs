@@ -6,9 +6,14 @@ pub(super) fn inventory_path(stream: &Stream) -> PathBuf {
 }
 
 pub(super) fn inventory_point_limit(stream: &Stream) -> usize {
-    // One scheduled point per ten seconds, including one extra root day and
-    // bounded explicit snapshots. This is a metadata guard, not a pruning rule.
-    (usize::from(stream.config.retention_days) + 1) * 8_640 + 8_640
+    scheduled_point_limit(stream.config.retention_days)
+}
+
+fn scheduled_point_limit(retention_days: u8) -> usize {
+    // A rotation tick can seal both a pinned root and its covering incremental.
+    // Include an extra root day and bounded explicit snapshots. This metadata
+    // guard never authorizes pruning an unexpired point.
+    (usize::from(retention_days) + 1) * 8_640 * 2 + 8_640
 }
 
 pub(super) fn inventory_points(
@@ -172,4 +177,19 @@ pub(super) fn has_capacity(
         .saturating_mul((super::super::manifest::MAX_MANIFEST_BYTES + 4096) as u64);
     Ok(count.saturating_add(additional) <= inventory_point_limit(stream)
         && bytes.saturating_add(reserve) <= limits.inventory_bytes_per_stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scheduled_point_limit;
+
+    #[test]
+    fn small_cache_rotation_fits_each_plan_window_and_provider_listing_bound() {
+        for days in [1_u8, 7, 30, 35] {
+            let two_points_every_tick = usize::from(days) * 24 * 60 * 6 * 2;
+            let limit = scheduled_point_limit(days);
+            assert!(limit > two_points_every_tick);
+            assert!(limit <= 1_000_000);
+        }
+    }
 }

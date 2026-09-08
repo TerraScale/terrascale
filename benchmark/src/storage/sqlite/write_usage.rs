@@ -40,6 +40,12 @@ pub(super) fn configure(
     connection: &mut rusqlite::Connection,
     placement: &UsagePlacement,
 ) -> Result<(), ()> {
+    // An accepted binding is immutable. Consult SQLite on every call, but an
+    // exact repeat needs no write reservation. First configuration still
+    // rechecks under the immediate transaction before claiming coverage.
+    if let Some(existing) = binding_for(connection, placement.scope.tenant_id())? {
+        return if existing == *placement { Ok(()) } else { Err(()) };
+    }
     let transaction = connection
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|_| ())?;

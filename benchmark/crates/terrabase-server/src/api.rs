@@ -3474,6 +3474,10 @@ fn document_write_response(
     revision: Option<String>,
 ) -> Result<Response, ApiError> {
     let token = refresh_session(session, collection, id)?;
+    Ok(document_write_response_with_token(&token, revision))
+}
+
+fn document_write_response_with_token(token: &SessionToken, revision: Option<String>) -> Response {
     let mut response = match revision {
         Some(revision) => {
             let mut response =
@@ -3485,8 +3489,8 @@ fn document_write_response(
         }
         None => json_response(StatusCode::NO_CONTENT, String::new()),
     };
-    with_session(&mut response, &token);
-    Ok(response)
+    with_session(&mut response, token);
+    response
 }
 
 /// One document's live revision for a response `ETag`: the same probe the
@@ -3499,6 +3503,16 @@ fn live_revision(
     id: &DocumentId,
 ) -> Result<String, ApiError> {
     let snapshot = engine.read_snapshot(scope).map_err(|_| ApiError::storage_failure())?;
+    revision_at_snapshot(engine, scope, snapshot, collection, id)
+}
+
+fn revision_at_snapshot(
+    engine: &terrabase::Engine,
+    scope: &terrabase::types::TenantScope,
+    snapshot: terrabase::ReadSnapshot,
+    collection: &CollectionName,
+    id: &DocumentId,
+) -> Result<String, ApiError> {
     let operation = crate::read_operation::next().map_err(|()| ApiError::storage_failure())?;
     let transaction =
         engine.begin(scope, snapshot, operation).map_err(|_| ApiError::storage_failure())?;
@@ -3814,12 +3828,11 @@ async fn put_document(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    if let Err(error) = session.load(document.collection(), document.id()) {
-        return session_error(error).into_response();
-    }
-    mark(trace, &mut t, "session_open_load");
-    let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::storage_failure().into_response();
+    // Enforce the incoming causal token without decoding a document that
+    // the mutation transaction will read again for its precondition.
+    let snapshot = match session.read_snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return session_error(error).into_response(),
     };
     mark(trace, &mut t, "read_snapshot");
     let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
@@ -3934,6 +3947,12 @@ async fn put_document(
             if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
                 return error.into_response();
             }
+            // Observe the durable frontier after acknowledgement and use
+            // its snapshot for the response's metadata-only revision read.
+            let snapshot = match session.read_snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(error) => return session_error(error).into_response(),
+            };
             let revision = if has_idempotency_key(&headers) {
                 match engine.resolve_document_request(&scope, operation.clone(), fingerprint) {
                     Ok(Some((_, revision))) => revision,
@@ -3941,15 +3960,12 @@ async fn put_document(
                     Err(error) => return document_request_error(error).into_response(),
                 }
             } else {
-                match live_revision(engine, &scope, &collection, &id) {
+                match revision_at_snapshot(engine, &scope, snapshot, &collection, &id) {
                     Ok(revision) => Some(revision),
                     Err(error) => return error.into_response(),
                 }
             };
-            match document_write_response(&mut session, &collection, &id, revision) {
-                Ok(response) => response,
-                Err(error) => error.into_response(),
-            }
+            document_write_response_with_token(session.session_token(), revision)
         }
         CommitOutcome::Rejected(terrabase::CommitError::Conflict) if create_only => {
             ApiError::precondition_failed("If-None-Match: * needs the document to be absent")

@@ -14,6 +14,8 @@ async fn setup() -> Router {
         .oneshot(
             Request::post("/api/v1/databases")
                 .header("authorization", KEY)
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(r#"{"name":"create-only","placement":["GRU"],"residency":null}"#))
                 .expect("request"),
         )
