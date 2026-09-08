@@ -530,7 +530,17 @@ pub(super) struct CreateImport {
 }
 
 fn refusal(status: StatusCode, message: &'static str) -> Response {
-    (status, Json(serde_json::json!({"code":"import_failed", "message":message}))).into_response()
+    (
+        status,
+        Json(serde_json::json!({
+            "error": {
+                "code": "import_failed",
+                "message": message,
+                "fix": "resolve the import condition and retry",
+            }
+        })),
+    )
+        .into_response()
 }
 
 fn resolve(
@@ -884,6 +894,24 @@ mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn refusal_uses_pinned_error_response_envelope() {
+        let response = refusal(StatusCode::CONFLICT, "import input already committed");
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(response.headers()[axum::http::header::CONTENT_TYPE], "application/json");
+        let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            serde_json::json!({
+                "error": {
+                    "code": "import_failed",
+                    "message": "import input already committed",
+                    "fix": "resolve the import condition and retry",
+                }
+            })
+        );
+    }
 
     async fn request(
         app: &axum::Router,

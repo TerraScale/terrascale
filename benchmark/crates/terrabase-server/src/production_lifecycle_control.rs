@@ -1280,6 +1280,7 @@ mod restore_stats_tests {
         assert_eq!(stats.checksum, "logical-blake3");
         assert_eq!(stats.row_count, 12);
         assert_eq!(stats.journal_cut, "42");
+        assert_eq!(stats.signed_completed_receipt, b"test observation");
         assert!(control(false).restore_stats(&request).await.is_err());
         let mut wrong_owner = request.clone();
         wrong_owner.target_owner = "other-tenant/project".into();

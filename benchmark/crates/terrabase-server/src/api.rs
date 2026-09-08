@@ -1490,7 +1490,7 @@ async fn authenticate(
     }
     // Only the immutable reactive delivery paths may use the edge proof.
     // Attach, REST, WebSocket, and every unknown path remain bearer-only.
-    if request.method() == Method::GET
+    if (request.method() == Method::GET || request.method() == Method::HEAD)
         && is_reactive_delivery_path(request.uri().path())
         && crate::reactive_api::verify_origin_proof(
             request.headers(),

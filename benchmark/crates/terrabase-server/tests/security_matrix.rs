@@ -409,6 +409,22 @@ async fn origin_proof_admits_only_the_real_reactive_delivery_route() {
     let delivery = send(fixture.router(), request).await;
     assert_eq!(delivery.status(), StatusCode::OK, "edge proof did not admit snapshot delivery");
 
+    let head_path = format!("/api/v1/reactive/views/{view}/{generation}/snapshot/0?cut=0");
+    let head_proof = origin_proof_for(
+        &Method::HEAD,
+        &head_path,
+        bucket,
+        b"e17-origin-current-key",
+        terrabase::regions::RegionCode::GRU,
+    );
+    let mut head = security_support::request(Method::HEAD, &head_path, Body::empty());
+    head.headers_mut().insert(
+        "x-terrascale-origin-proof",
+        HeaderValue::from_str(&head_proof).expect("HEAD proof header"),
+    );
+    let head_delivery = send(fixture.router(), head).await;
+    assert_eq!(head_delivery.status(), StatusCode::OK, "edge HEAD proof did not admit snapshot delivery");
+
     let mut wrong = security_support::request(
         Method::GET,
         &format!("/api/v1/reactive/views/{view}/{generation}/snapshot/1?cut=0"),
