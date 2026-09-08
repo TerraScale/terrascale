@@ -112,10 +112,8 @@ fn cleanup_unsealed_points(directory: &Path) -> Result<(), FleetError> {
     for entry in std::fs::read_dir(directory).map_err(|_| FleetError::Capture)? {
         let entry = entry.map_err(|_| FleetError::Capture)?;
         let filename = entry.file_name();
-        let Some(identity) = filename
-            .to_str()
-            .and_then(|name| name.strip_prefix("rp-"))
-            .map(str::to_owned)
+        let Some(identity) =
+            filename.to_str().and_then(|name| name.strip_prefix("rp-")).map(str::to_owned)
         else {
             continue;
         };
@@ -247,11 +245,8 @@ mod tests {
         let directory = crate::backup::tests::location("backup-inventory-orphan");
         std::fs::remove_dir_all(&directory).ok();
         std::fs::create_dir_all(directory.join(format!("rp-{}", "a".repeat(64)))).unwrap();
-        std::fs::write(
-            directory.join(format!("rp-{}/member-000001", "a".repeat(64))),
-            b"staged",
-        )
-        .unwrap();
+        std::fs::write(directory.join(format!("rp-{}/member-000001", "a".repeat(64))), b"staged")
+            .unwrap();
 
         super::cleanup_unsealed_points(&directory).unwrap();
 

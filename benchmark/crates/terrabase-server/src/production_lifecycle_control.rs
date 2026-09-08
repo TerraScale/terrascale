@@ -111,7 +111,7 @@ fn verify_restore_request_digest(
 pub(crate) fn restore_request_digest(
     request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
 ) -> Result<String, String> {
-    use aws_lc_rs::digest::{digest, SHA256};
+    use aws_lc_rs::digest::{SHA256, digest};
     let mut bytes = Vec::new();
     for value in [
         &request.source_owner,
@@ -1164,11 +1164,7 @@ mod restore_stats_tests {
     #[async_trait::async_trait]
     impl NativeLifecycleWorker for Worker {
         async fn signed_completed_receipt(&self, _: &str) -> Result<Vec<u8>, String> {
-            if self.complete {
-                Ok(b"test observation".to_vec())
-            } else {
-                Err("pending".into())
-            }
+            if self.complete { Ok(b"test observation".to_vec()) } else { Err("pending".into()) }
         }
         async fn restore_request_facts(
             &self,

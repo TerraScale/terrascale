@@ -1,3 +1,4 @@
+use super::branch_restore::BranchRestoreReservation;
 use super::*;
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
@@ -21,8 +22,8 @@ fn branch_restore_reservation_child() {
 
 #[test]
 fn branch_restore_reservation_is_cross_process() {
-    let root = std::env::temp_dir()
-        .join(format!("terrabase-branch-lock-{}", crate::identity::generate()));
+    let root =
+        std::env::temp_dir().join(format!("terrabase-branch-lock-{}", crate::identity::generate()));
     std::fs::create_dir_all(&root).unwrap();
     let target = root.join("target");
     std::fs::create_dir(&target).unwrap();
@@ -185,6 +186,7 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
     let operation = OperationId::try_new("restore-branch").unwrap();
     let (same_first, same_second) =
         restore_concurrently(&source, &child_config, &operation, &operation);
+    eprintln!("same results: {same_first:?} / {same_second:?}");
     let same_first = same_first.unwrap();
     let same_second = same_second.unwrap();
     assert_eq!(same_first, same_second);

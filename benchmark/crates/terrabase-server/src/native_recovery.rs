@@ -30,6 +30,31 @@ fn map_fleet_error(error: terrabase::backup::worker::FleetError) -> NativeRecove
     }
 }
 
+fn validate_restore_row(
+    row: (String, String, String, String, Vec<u8>),
+) -> Result<NativeRestoreOperation, NativeRecoveryError> {
+    let (operation_id, source_database_id, target_database_id, phase, record) = row;
+    if record.is_empty() || record.len() > 262_144 {
+        return Err(NativeRecoveryError::VerificationFailed);
+    }
+    let operation: NativeRestoreOperation =
+        serde_json::from_slice(&record).map_err(|_| NativeRecoveryError::VerificationFailed)?;
+    let expected_phase = serde_json::to_string(&operation.phase)
+        .map_err(|_| NativeRecoveryError::VerificationFailed)?
+        .trim_matches('"')
+        .to_owned();
+    if operation.request.operation_id != operation_id
+        || operation.request.source_database_id != source_database_id
+        || operation.request.target_database_id != target_database_id
+        || phase != expected_phase
+        || (matches!(operation.phase, NativeRestorePhase::Complete)
+            && (operation.receipt.is_none() || operation.error.is_some()))
+    {
+        return Err(NativeRecoveryError::VerificationFailed);
+    }
+    Ok(operation)
+}
+
 /// Finite bounds for the durable recovery ledger.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeRecoveryLimits {
@@ -326,11 +351,12 @@ impl NativeRecoveryRuntime {
         if database.record.regions != placement || database.record.database_id != source {
             return Err(NativeRecoveryError::VerificationFailed);
         }
-        let (envelopes, providers) = {
+        let (envelopes, destinations) = {
             let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
             let envelopes = fleet.retained_envelopes(source).map_err(map_fleet_error)?;
-            let providers = fleet.configured_providers(source).map_err(map_fleet_error)?;
-            (envelopes, providers)
+            let destinations =
+                fleet.recovery_envelope_destinations(source).map_err(map_fleet_error)?;
+            (envelopes, destinations)
         };
         if envelopes.is_empty() {
             return Ok(None);
@@ -361,8 +387,7 @@ impl NativeRecoveryRuntime {
         // envelope after a policy transition while another retained provider
         // still has it.
         let digest = envelope.digest().to_owned();
-        for provider in providers {
-            let destination = self.envelope_destination(source, provider)?;
+        for (provider, destination) in destinations {
             let remote =
                 terrabase::backup::worker::NativeBackupFleet::download_envelope_from_destination(
                     source,
@@ -383,18 +408,6 @@ impl NativeRecoveryRuntime {
             }
         }
         Err(NativeRecoveryError::Unavailable)
-    }
-
-    /// Clones an admitted provider destination while holding the fleet lock
-    /// only for this synchronous lookup. Provider I/O uses the owned
-    /// destination after the guard has been dropped.
-    fn envelope_destination(
-        &self,
-        source: &str,
-        provider: terrabase::backup::object_store::Provider,
-    ) -> Result<Arc<terrabase::backup::object_store::ObjectDestination>, NativeRecoveryError> {
-        let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-        fleet.envelope_destination(source, provider).map_err(map_fleet_error)
     }
 
     /// Resolves an authenticated retained manifest without creating recovery state.
@@ -683,15 +696,22 @@ impl NativeRecoveryRuntime {
         let tx = connection.transaction().map_err(|_| NativeRecoveryError::Unavailable)?;
         if let Some(existing) = tx
             .query_row(
-                "SELECT record FROM native_restore_operations WHERE operation_id=?1",
+                "SELECT operation_id,source_database_id,target_database_id,phase,record FROM native_restore_operations WHERE operation_id=?1",
                 [&request.operation_id],
-                |row| row.get::<_, Vec<u8>>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Vec<u8>>(4)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|_| NativeRecoveryError::Unavailable)?
         {
-            let existing: NativeRestoreOperation = serde_json::from_slice(&existing)
-                .map_err(|_| NativeRecoveryError::VerificationFailed)?;
+            let existing = validate_restore_row(existing)?;
             if existing.request != request {
                 return Err(NativeRecoveryError::VerificationFailed);
             }
@@ -749,15 +769,21 @@ impl NativeRecoveryRuntime {
         let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
         connection
             .query_row(
-                "SELECT record FROM native_restore_operations WHERE operation_id=?1",
+                "SELECT operation_id,source_database_id,target_database_id,phase,record FROM native_restore_operations WHERE operation_id=?1",
                 [operation_id],
-                |row| row.get::<_, Vec<u8>>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Vec<u8>>(4)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|_| NativeRecoveryError::Unavailable)?
-            .map(|bytes| {
-                serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)
-            })
+            .map(validate_restore_row)
             .transpose()
     }
 
@@ -949,16 +975,23 @@ impl NativeRecoveryRuntime {
                 self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
             connection
                 .query_row(
-                    "SELECT record FROM native_restore_operations WHERE phase IN ('accepted','restoring','verifying') ORDER BY operation_id LIMIT 1",
+                    "SELECT operation_id,source_database_id,target_database_id,phase,record FROM native_restore_operations WHERE phase IN ('accepted','restoring','verifying') ORDER BY operation_id LIMIT 1",
                     [],
-                    |row| row.get::<_, Vec<u8>>(0),
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, Vec<u8>>(4)?,
+                        ))
+                    },
                 )
                 .optional()
                 .map_err(|_| NativeRecoveryError::Unavailable)?
         };
-        let Some(bytes) = row else { return Ok(false) };
-        let mut operation: NativeRestoreOperation =
-            serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)?;
+        let Some(row) = row else { return Ok(false) };
+        let mut operation = validate_restore_row(row)?;
         let request = &operation.request;
         if matches!(
             operation.phase,
@@ -1220,6 +1253,66 @@ impl NativeRecoveryRuntime {
 mod tests {
     use super::*;
     use terrabase::backup::worker::{FleetLimits, NativeBackupFleet};
+
+    fn restore_operation() -> NativeRestoreOperation {
+        NativeRestoreOperation {
+            request: NativeRestoreRequest {
+                operation_id: "op".into(),
+                source_owner: "tenant/project".into(),
+                source_database_id: "source".into(),
+                recovery_point_id: "point".into(),
+                recovery_point_digest: "a".repeat(64),
+                target_owner: "tenant/project".into(),
+                target_database_id: "target".into(),
+                journal_cut: "1".into(),
+                restore_epoch: 1,
+                authority_epoch: 1,
+                authority_lease: "lease".into(),
+                accepted_proof_digest: "b".repeat(64),
+                operation_grant: vec![1],
+                provider: "oci".into(),
+                selection: NativeRestoreSelection::PointId("point".into()),
+                residency: "GRU".into(),
+                placement: vec!["GRU".into()],
+            },
+            phase: NativeRestorePhase::Accepted,
+            receipt: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn restore_ledger_rejects_sql_metadata_mismatch() {
+        let operation = restore_operation();
+        let record = serde_json::to_vec(&operation).unwrap();
+        for row in [
+            ("other".into(), "source".into(), "target".into(), "accepted".into()),
+            ("op".into(), "other".into(), "target".into(), "accepted".into()),
+            ("op".into(), "source".into(), "other".into(), "accepted".into()),
+            ("op".into(), "source".into(), "target".into(), "complete".into()),
+        ] {
+            assert_eq!(
+                validate_restore_row((row.0, row.1, row.2, row.3, record.clone())),
+                Err(NativeRecoveryError::VerificationFailed)
+            );
+        }
+    }
+
+    #[test]
+    fn restore_ledger_rejects_oversized_record() {
+        let operation = restore_operation();
+        let record = vec![b'x'; 262_145];
+        assert_eq!(
+            validate_restore_row((
+                operation.request.operation_id,
+                operation.request.source_database_id,
+                operation.request.target_database_id,
+                "accepted".into(),
+                record,
+            )),
+            Err(NativeRecoveryError::VerificationFailed)
+        );
+    }
 
     fn limits() -> NativeRecoveryLimits {
         NativeRecoveryLimits { pending_operations: 2, retained_operations: 4 }

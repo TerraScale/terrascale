@@ -6,10 +6,7 @@ use crate::{
     types::{OperationId, StorageSequence, TenantId},
     usage::UsagePlacement,
 };
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 
 /// A cross-process reservation for one branch target.
 ///
@@ -17,13 +14,13 @@ use std::{
 /// lock file while another process has it open would allow a third process to
 /// create a second inode and enter a different lock domain. `flock` releases
 /// the reservation automatically when the owning process exits.
-struct BranchRestoreReservation {
+pub(super) struct BranchRestoreReservation {
     #[cfg(unix)]
     file: fs::File,
 }
 
 impl BranchRestoreReservation {
-    fn acquire(target: &Path) -> Result<Self, EngineOpenError> {
+    pub(super) fn acquire(target: &Path) -> Result<Self, EngineOpenError> {
         let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
         let name = target.file_name().ok_or(EngineOpenError::InvalidConfig)?;
         let lock_path = parent.join(format!(".{}.branch-restore.lock", name.to_string_lossy()));
@@ -35,10 +32,17 @@ impl BranchRestoreReservation {
                 .read(true)
                 .write(true)
                 .mode(0o600)
-                .open(lock_path)
-                .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
-                .map_err(|_| EngineOpenError::StorageUnavailable)?;
+                .open(&lock_path)
+                .map_err(|error| {
+                    eprintln!("branch lock open {lock_path:?}: {error}");
+                    EngineOpenError::StorageUnavailable
+                })?;
+            rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive).map_err(
+                |error| {
+                    eprintln!("branch lock flock {lock_path:?}: {error}");
+                    EngineOpenError::StorageUnavailable
+                },
+            )?;
             return Ok(Self { file });
         }
         #[cfg(not(unix))]
@@ -154,8 +158,14 @@ impl Engine {
                         keys.clone(),
                     )
                 })
-                .map_err(|_| EngineOpenError::StorageUnavailable)?
-                .map_err(|()| EngineOpenError::StorageUnavailable)?;
+                .map_err(|_| {
+                    eprintln!("branch source quiesce failed");
+                    EngineOpenError::StorageUnavailable
+                })?
+                .map_err(|()| {
+                    eprintln!("branch source copy failed");
+                    EngineOpenError::StorageUnavailable
+                })?;
             let cut = transform_snapshot(
                 source_path.as_deref().ok_or(EngineOpenError::StorageUnavailable)?,
                 &staging,
@@ -168,11 +178,15 @@ impl Engine {
             drop(registration);
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
-            drop(Self::open(staged)?);
+            drop(Self::open(staged).map_err(|error| {
+                eprintln!("branch staged open failed: {error:?}");
+                error
+            })?);
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            if fs::rename(&staging, target).is_err() {
+            if let Err(error) = fs::rename(&staging, target) {
+                eprintln!("branch rename failed: {error}");
                 // Another restore may have won the target rename while this
                 // source was quiesced. Re-read the durable marker to make an
                 // exact same-operation loser idempotent; a different marker

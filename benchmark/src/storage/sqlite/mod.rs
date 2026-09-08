@@ -320,7 +320,12 @@ const ROW_KIND_REPLICATED: &str = "replicated";
 /// persisted in `meta`; the path-derived value is only the first-open seed.
 fn local_origin_for(path: &Path) -> String {
     let digest = blake3::hash(path.to_string_lossy().as_bytes());
-    format!("local-{}", hex_digest(digest.as_bytes()))
+    // Session and replication frontiers require the canonical lane spelling.
+    // Keep the path-derived identity stable while using the first 128 bits as
+    // the non-zero lane incarnation.
+    let mut incarnation = [0_u8; 16];
+    incarnation.copy_from_slice(&digest.as_bytes()[..16]);
+    format!("lane1.local.{:032x}", u128::from_be_bytes(incarnation))
 }
 
 fn hex_digest(bytes: &[u8; 32]) -> String {
@@ -2147,12 +2152,13 @@ impl SqliteStorage {
         {
             return Err(());
         }
+        let sequence = i64::try_from(sequence).map_err(|_| ())?;
         let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         writer
             .execute(
                 "INSERT INTO consumer_frontiers (name, seq) VALUES (?1, ?2)
                  ON CONFLICT(name) DO UPDATE SET seq = MAX(seq, excluded.seq)",
-                rusqlite::params![name, sequence as i64],
+                rusqlite::params![name, sequence],
             )
             .map(|_| ())
             .map_err(|_| ())
@@ -2584,6 +2590,10 @@ fn stage_intent(
                 return Ok(CommitResult::Rejected(CommitRejection::Storage));
             }
         } else if entry.digest != intent.digest {
+            eprintln!(
+                "operation digest mismatch op={} stored={} incoming={}",
+                intent.operation, entry.digest, intent.digest
+            );
             return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
         }
         if entry.rejection.is_none()

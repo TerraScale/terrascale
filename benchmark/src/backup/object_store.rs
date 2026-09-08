@@ -270,21 +270,26 @@ impl ObjectDestination {
             })
             .build()
             .map_err(|_| TransferError::Configuration)?;
+        // Keep credential rotations distinct in the historical catalog. The
+        // fingerprint is opaque and cannot recover either credential, while
+        // allowing fallback to a destination that still has its old key.
+        let mut identity_input = blake3::Hasher::new();
+        for value in [
+            format!("{:?}", config.provider),
+            config.endpoint.clone(),
+            config.bucket.clone(),
+            config.signing_region.clone(),
+            config.admitted_region.to_string(),
+        ] {
+            identity_input.update(value.as_bytes());
+            identity_input.update(&[0]);
+        }
+        identity_input.update(config.credentials.access_key.as_bytes());
+        identity_input.update(&[0]);
+        identity_input.update(config.credentials.secret_key.as_bytes());
+        let identity = identity_input.finalize().to_hex().to_string();
         // Discard and zeroize the admission copy once the client owns its credentials.
         drop(config.credentials);
-        let identity = blake3::hash(
-            format!(
-                "{:?}\n{}\n{}\n{}\n{}",
-                config.provider,
-                config.endpoint,
-                config.bucket,
-                config.signing_region,
-                config.admitted_region
-            )
-            .as_bytes(),
-        )
-        .to_hex()
-        .to_string();
         Ok(Self {
             identity,
             admitted_region: config.admitted_region,
@@ -1076,5 +1081,29 @@ mod tests {
         config.verified_geography = "BR".into();
         config.endpoint = "http://fly.storage.tigris.dev".into();
         assert_eq!(validate_config(&config), Err(TransferError::Configuration));
+    }
+
+    #[test]
+    fn destination_identity_retains_credential_rotations() {
+        let config = || DestinationConfig {
+            admitted_region: crate::regions::RegionCode::GRU,
+            provider: Provider::Oci,
+            endpoint: "https://namespace.compat.objectstorage.sa-saopaulo-1.oraclecloud.com".into(),
+            signing_region: "sa-saopaulo-1".into(),
+            database_region: "sa-saopaulo-1".into(),
+            bucket: "backups".into(),
+            verified_geography: "BR".into(),
+            permitted_geographies: vec!["BR".into()],
+            placement_revision: "verified-bucket-revision-1".into(),
+            credentials: Credentials::new("access-a".into(), "secret-a".into()),
+            max_artifact_bytes: 1024,
+            max_point_bytes: 4096,
+        };
+        let first = ObjectDestination::new(config()).unwrap();
+        let mut rotated = config();
+        rotated.credentials = Credentials::new("access-b".into(), "secret-b".into());
+        let second = ObjectDestination::new(rotated).unwrap();
+
+        assert_ne!(first.identity(), second.identity());
     }
 }

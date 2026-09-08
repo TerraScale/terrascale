@@ -468,6 +468,27 @@ impl NativeBackupFleet {
             .ok_or(FleetError::Configuration)
     }
 
+    /// Returns current destinations followed by every retained historical
+    /// destination for envelope recovery. Policy changes retain old copies so
+    /// a point published before the transition remains recoverable after the
+    /// active destination set changes.
+    pub fn recovery_envelope_destinations(
+        &self,
+        database: &str,
+    ) -> Result<Vec<(Provider, Arc<ObjectDestination>)>, FleetError> {
+        let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        let mut destinations = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (provider, destination) in
+            stream.config.destinations.iter().chain(stream.config.historical_destinations.iter())
+        {
+            if seen.insert(destination.identity().to_owned()) {
+                destinations.push((*provider, Arc::clone(destination)));
+            }
+        }
+        Ok(destinations)
+    }
+
     /// Downloads and authenticates an envelope using an already admitted
     /// destination. The destination is owned by the future, so no fleet lock
     /// needs to remain held while provider I/O is in flight.
@@ -2903,6 +2924,15 @@ mod tests {
             .unwrap();
         assert_eq!(fleet.policy(&identity).unwrap().0, "policy-2");
         assert_eq!(fleet.health(&identity).unwrap().providers, vec![(Provider::Tigris, true)]);
+        assert_eq!(
+            fleet
+                .recovery_envelope_destinations(&identity)
+                .unwrap()
+                .into_iter()
+                .map(|(provider, _)| provider)
+                .collect::<Vec<_>>(),
+            vec![Provider::Tigris, Provider::Oci]
+        );
         // Explicit removal retains old provider history for retention/deletion.
         assert!(!first.list_points(&identity, 8).await.unwrap().is_empty());
         fleet

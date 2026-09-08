@@ -27,6 +27,14 @@ use crate::types::{
 use super::SqliteStorage;
 
 #[test]
+fn default_local_origin_uses_canonical_lane_identity() {
+    let origin = super::local_origin_for(Path::new("/tmp/terrabase-session-origin"));
+    let parsed = crate::origin_lane::OriginLaneId::parse(&origin).expect("canonical lane origin");
+    assert_eq!(parsed.region().as_str(), "local");
+    assert_ne!(parsed.incarnation(), 0);
+}
+
+#[test]
 fn sequence_watermarks_and_billing_fold_do_not_scan_retained_facts() {
     let connection = Connection::open_in_memory().expect("database");
     connection.execute_batch(super::SCHEMA).expect("schema");
@@ -1781,6 +1789,23 @@ fn required_frontiers_are_registered_before_retention_can_prune() {
     }
     assert_eq!(storage.prune_below_consumer_frontiers().expect("prune runs"), 1);
     assert_eq!(storage.journal_records(), 1, "the newest row remains the live-state pin");
+}
+
+#[test]
+fn retention_frontier_rejects_sequences_sqlite_cannot_represent() {
+    let (_dir, mut storage) = sqlite_store("frontier-sequence-range");
+    let maximum = i64::MAX as u64;
+    storage
+        .advance_consumer_frontier("replication", maximum)
+        .expect("the SQLite maximum is representable");
+    assert!(storage.advance_consumer_frontier("replication", maximum + 1).is_err());
+    let stored: i64 = storage
+        .raw_writer_connection()
+        .query_row("SELECT seq FROM consumer_frontiers WHERE name = 'replication'", [], |row| {
+            row.get(0)
+        })
+        .expect("frontier remains durable");
+    assert_eq!(stored, i64::MAX);
 }
 
 #[test]
