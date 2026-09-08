@@ -3,6 +3,7 @@
 #pragma warning disable CS1591
 namespace TerraScale.DotNet.Generated;
 
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, GenerationMode = JsonSourceGenerationMode.Metadata)]
@@ -54,8 +55,6 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(HealthResponse))]
 [JsonSerializable(typeof(HistoryResponse))]
 [JsonSerializable(typeof(ImportJob))]
-[JsonSerializable(typeof(IReadOnlyList<ImportJob>))]
- [JsonSerializable(typeof(EmptyImportRequest))]
 [JsonSerializable(typeof(Increment))]
 [JsonSerializable(typeof(IndexCreatedResponse))]
 [JsonSerializable(typeof(IndexDescriptor))]
@@ -106,6 +105,7 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(SqlRequestParameters))]
 [JsonSerializable(typeof(SqlResponseRows))]
 [JsonSerializable(typeof(UniqueInsertRecord))]
+[JsonSerializable(typeof(IReadOnlyList<ImportJob>))]
 public partial class TerraScaleContractJsonContext : JsonSerializerContext
 {
 }

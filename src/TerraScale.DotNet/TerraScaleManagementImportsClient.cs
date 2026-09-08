@@ -62,16 +62,13 @@ public sealed class TerraScaleManagementImportsClient(TerraScaleClient client)
     }
 
     public Task<ImportJob> ResumeAsync(string database, string importId, CancellationToken cancellationToken = default) =>
-        client.SendNonRetryableJsonAsync(
+        client.SendJsonAsync(
             HttpMethod.Post,
             Job(database, importId) + "/resume",
-            new EmptyImportRequest(),
-            TerraScaleContractJsonContext.Default.EmptyImportRequest,
             TerraScaleContractJsonContext.Default.ImportJob,
-            cancellationToken);
+            cancellationToken,
+            idempotencyKey: string.Empty);
 
     private static string Route(string database) => TerraScaleManagementPaths.Database(database) + "/imports";
     private static string Job(string database, string importId) => Route(database) + "/" + TerraScaleManagementPaths.Escape(importId);
 }
-
-internal sealed record EmptyImportRequest;

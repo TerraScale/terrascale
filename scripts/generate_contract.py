@@ -225,11 +225,29 @@ class OpenApiGenerator:
         return "\n".join(lines) + "\n"
 
     def json_context(self) -> str:
-        lines = [header("source-generated System.Text.Json metadata"), "namespace TerraScale.DotNet.Generated;", "", "using System.Text.Json.Serialization;", "", "[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, GenerationMode = JsonSourceGenerationMode.Metadata)]"]
+        lines = [header("source-generated System.Text.Json metadata"), "namespace TerraScale.DotNet.Generated;", "", "using System.Text.Json;", "using System.Text.Json.Serialization;", "", "[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, GenerationMode = JsonSourceGenerationMode.Metadata)]"]
         for name in self.model_names():
             schema = self.model_schema(name)
             if schema.get("type") == "object":
                 lines.append(f"[JsonSerializable(typeof({pascal(name)}))]")
+        # Some operations return a bare JSON array rather than an object. Keep
+        # source-generated metadata for those response shapes as well.
+        array_responses: set[str] = set()
+        for path in self.document.get("paths", {}).values():
+            for operation in path.values():
+                for status, response in operation.get("responses", {}).items():
+                    if not status.startswith(("2", "3")):
+                        continue
+                    schema = response.get("content", {}).get("application/json", {}).get("schema", {})
+                    if schema.get("type") != "array":
+                        continue
+                    item = schema.get("items", {})
+                    if "$ref" in item:
+                        array_responses.add(f"IReadOnlyList<{pascal(item['$ref'].rsplit('/', 1)[-1])}>")
+                    elif item.get("type") == "object":
+                        array_responses.add("IReadOnlyList<JsonElement>")
+        for response_type in sorted(array_responses):
+            lines.append(f"[JsonSerializable(typeof({response_type}))]")
         lines += ["public partial class TerraScaleContractJsonContext : JsonSerializerContext", "{", "}", ""]
         return "\n".join(lines)
 
