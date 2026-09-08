@@ -480,6 +480,7 @@ async fn subscribe_attaches_with_checkpoint_and_hint() {
         "snapshot_chunks": [],
         "log": "/api/v1/reactive/views/view_1/3/log?cut=1",
         "capability": "capability",
+        "capability_header": "X-TerraScale-Capability",
         "offset": 1,
     });
     let mock = Mock::new(vec![Response::json(200, &snapshot)]);
@@ -497,6 +498,7 @@ async fn subscribe_attaches_with_checkpoint_and_hint() {
         .await
         .expect("subscribe");
     assert_eq!(attached.view_id, "view_1");
+    assert_eq!(attached.capability.as_deref(), Some("capability"));
     let request = mock.last_request();
     assert_eq!(request.route_name, "reactive.subscribe");
     assert!(request.url.starts_with("https://sfo.api.terrascale.tech"));

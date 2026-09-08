@@ -827,7 +827,7 @@ impl ReactiveClient {
                 body: None,
             };
             request.headers.push((
-                VIEW_CAPABILITY_HEADER.to_owned(),
+                CAPABILITY_HEADER.to_owned(),
                 view.capability.clone().expect("capability checked above"),
             ));
             request
@@ -948,7 +948,7 @@ impl ReactiveClient {
                 body: None,
             };
             request.headers.push((
-                VIEW_CAPABILITY_HEADER.to_owned(),
+                CAPABILITY_HEADER.to_owned(),
                 view.capability.clone().ok_or_else(|| {
                     Error::new(
                         ErrorKind::InvalidResponse,
@@ -1068,6 +1068,13 @@ fn decode_attached_view(value: serde_json::Value) -> std::result::Result<Attache
     let capability = string_field(object, &["capability", "viewCapability", "view_capability"])
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "reactive attach response has no view capability".to_owned())?;
+    if let Some(header) = string_field(object, &["capability_header", "capabilityHeader"]) {
+        if header != CAPABILITY_HEADER {
+            return Err(format!(
+                "reactive attach response advertises unsupported capability header {header}"
+            ));
+        }
+    }
     let checkpoint = object
         .get("checkpoint")
         .ok_or_else(|| "reactive attach response has no checkpoint".to_owned())
@@ -1521,7 +1528,7 @@ impl LiveSubscription {
 }
 
 /// Header carrying the short-lived authorization-equivalent view capability.
-pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
+pub const CAPABILITY_HEADER: &str = "X-TerraScale-Capability";
 
 pub(crate) const MSGPACK_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 const MSGPACK_MAX_STRING_BYTES: usize = 262_144;

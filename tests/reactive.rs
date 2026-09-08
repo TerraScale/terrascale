@@ -6,7 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use terrascale::reactive::{
     ApplyOutcome, CancellationToken, PollOptions, PollOutcome, PollResponse, ResetFrame,
-    ResetReason, ViewDelta, ViewOperation, ViewSnapshot, VIEW_CAPABILITY_HEADER,
+    ResetReason, ViewDelta, ViewOperation, ViewSnapshot, CAPABILITY_HEADER,
 };
 use terrascale::{
     AttachedView, ClientConfig, DatabaseScope, Error, HttpTransport, Query, RegionCode, Request,
@@ -159,7 +159,7 @@ async fn poll_sends_capability_header_and_keeps_canonical_log_url_immutable() {
         requests[0]
             .headers
             .iter()
-            .find(|(name, _)| name == VIEW_CAPABILITY_HEADER)
+            .find(|(name, _)| name == CAPABILITY_HEADER)
             .map(|(_, value)| value.as_str()),
         Some("capability")
     );
@@ -725,7 +725,7 @@ async fn websocket_live_subscription_uses_capability_and_decodes_event() {
         let mut request = vec![0_u8; 8192];
         http.readable().await.expect("http readable");
         let _ = http.try_read(&mut request).expect("attach request");
-        let body = br#"{"view":"v-conformance-view","generation":1,"snapshot_chunks":[],"log":"/api/v1/reactive/views/v-conformance-view/1/log","checkpoint":"Y3Ax","capability":"capability-tag","offset":0}"#;
+        let body = br#"{"view":"v-conformance-view","generation":1,"snapshot_chunks":[],"log":"/api/v1/reactive/views/v-conformance-view/1/log","checkpoint":"Y3Ax","capability":"capability-tag","capability_header":"X-TerraScale-Capability","offset":0}"#;
         let response = format!("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
         http.writable().await.expect("http writable");
         http.try_write(response.as_bytes()).expect("attach headers");

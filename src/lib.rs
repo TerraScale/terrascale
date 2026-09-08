@@ -61,7 +61,7 @@ pub use reactive::{
     ApplyOutcome, AttachedView, CancellationToken, Checkpoint, LiveSubscription, PollOptions,
     PollOutcome, PollResponse, ReactiveClient, ResetFrame, ResetReason, ResultItem,
     SubscribeOptions, Subscription, Transport, ViewDelta, ViewOperation, ViewSnapshot,
-    VIEW_CAPABILITY_HEADER,
+    CAPABILITY_HEADER,
 };
 pub use regions::{
     normalize_base_url, pin_base_url, regional_host, RegionAffinity, RegionCode,
