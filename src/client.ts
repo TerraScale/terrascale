@@ -537,12 +537,17 @@ export class OrganizationsClient {
 
   create(
     request: Models.CreateOrganizationRequest,
+    options?: Models.OrganizationMutationOptions,
   ): Promise<TerraScaleResult<Models.Organization>> {
+    const mutation = options === undefined ? undefined : organizationMutationOptions(options);
     return this.#http.request({
       method: "POST",
       path: `${apiRoot}/organizations`,
       routeName: "organizations.create",
       body: request,
+      ...(mutation === undefined
+        ? {}
+        : { idempotencyKey: mutation.idempotencyKey, signal: mutation.signal }),
     });
   }
 

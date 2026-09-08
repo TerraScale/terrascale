@@ -90,6 +90,7 @@ export type OrganizationMember = {
 
 export type CreateOrganizationRequest = {
   readonly name: string;
+  readonly plan?: "free" | "starter" | "pro" | "scale";
 };
 
 export type UpdateOrganizationRequest = {
