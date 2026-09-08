@@ -95,6 +95,14 @@ pub const MAX_SUBSCRIPTIONS_PER_ENGINE: usize = 64;
 /// design record.
 pub const MAX_SUBSCRIPTION_SCAN_EVENTS: usize = 4096;
 
+/// The optional storage retention consumer shared by live change streams.
+///
+/// Storage exposes one optional sync frontier. The stream registry therefore
+/// owns the fan-in and publishes the minimum floor of every live subscription
+/// rather than letting the most recently acknowledged reader release history
+/// still needed by another reader.
+const RETENTION_CONSUMER: &str = "sync";
+
 /// The reserved family collection, mirrored from the W3 family contract
 /// (`src/query/spec.rs` mirrors it the same way).
 const RESERVED_FAMILY_COLLECTION: &str = "terrabase.families";
@@ -401,6 +409,40 @@ fn release_engine_set_if_empty(identity: u128, set: &Arc<EngineSubscriptions>) {
     }
 }
 
+/// Converts a subscription cursor into a complete-publication retention floor.
+///
+/// A cursor in the middle of a commit still needs the preceding complete
+/// publication boundary retained: SQLite retention removes whole commits and
+/// cannot preserve only the unread suffix of a split commit.
+fn retention_floor(checkpoint: &CheckpointInner) -> StorageSequence {
+    StorageSequence::new(if checkpoint.write_index == 0 {
+        checkpoint.sequence.get()
+    } else {
+        checkpoint.sequence.get().saturating_sub(1)
+    })
+}
+
+/// Advances the shared sync frontier to the minimum accepted checkpoint of
+/// every live subscription. The registry and each core are read under the
+/// same lock order used by ingress and lookup paths.
+fn advance_retention_floor(
+    engine: &Engine,
+    set: &Arc<EngineSubscriptions>,
+) -> Result<(), StreamError> {
+    let inner = lock_recovered(&set.inner);
+    let Some(floor) = inner
+        .cores
+        .values()
+        .map(|handle| retention_floor(&lock_recovered(&handle.state).checkpoint))
+        .min_by_key(|sequence| sequence.get())
+    else {
+        return Ok(());
+    };
+    engine
+        .advance_retention_frontier(RETENTION_CONSUMER, floor)
+        .map_err(|error| sources::map_engine_error(&error))
+}
+
 /// Fans one publication event into every subscription's bounded queue.
 ///
 /// The committing thread runs this closure, so it is strictly
@@ -558,7 +600,26 @@ pub(crate) fn subscribe(
         return Err(StreamError::InvalidSource);
     }
     let epoch = CHECKPOINT_EPOCHS.fetch_add(1, AtomicOrdering::Relaxed);
-    let checkpoint = initial_checkpoint(engine, spec, epoch)?;
+    let checkpoint = match initial_checkpoint(engine, spec, epoch) {
+        Ok(checkpoint) => checkpoint,
+        Err(error) => {
+            drop(set_guard);
+            release_engine_set_if_empty(identity, &set);
+            return Err(error);
+        }
+    };
+    // Registration precedes insertion into the live set. A concurrent
+    // retention sweep therefore cannot observe a reader after it has already
+    // allowed that reader's starting history to be pruned.
+    if let Err(error) = engine
+        .register_retention_consumer(RETENTION_CONSUMER, retention_floor(&checkpoint))
+    {
+        // Registration is part of opening the live set. Do not leave an empty
+        // publication sink behind when durable lease admission fails.
+        drop(set_guard);
+        release_engine_set_if_empty(identity, &set);
+        return Err(sources::map_engine_error(&error));
+    }
     let handle = Arc::new(SubscriptionHandle {
         state: Mutex::new(SubscriptionCore {
             #[cfg(test)]
@@ -618,7 +679,7 @@ pub(crate) fn next_batch(
         // released and the subscription reports Closed(Cancelled) from
         // then on.
         drop(handle);
-        remove_core(identity, &set, scope, name);
+        remove_core(engine, identity, &set, scope, name);
         return Err(StreamError::Cancelled);
     }
     let mut state = lock_recovered(&handle.state);
@@ -817,7 +878,7 @@ pub(crate) fn acknowledge(
     scope: &TenantScope,
     acknowledgement: &SubscriptionAcknowledgement,
 ) -> Result<SubscriptionStatus, StreamError> {
-    let (_identity, _set, handle) = find_core_by_epoch(engine, scope, acknowledgement)?;
+    let (_identity, set, handle) = find_core_by_epoch(engine, scope, acknowledgement)?;
     let mut state = lock_recovered(&handle.state);
     let confirmed = acknowledgement.confirmed().inner.clone();
     if let Some(recorded) = &state.pending
@@ -829,7 +890,13 @@ pub(crate) fn acknowledge(
         state.checkpoint = confirmed;
         state.pending = None;
         state.state = SubscriptionState::Active;
-        return Ok(state.state.status());
+        let status = state.state.status();
+        drop(state);
+        // The shared storage row is the minimum across all live readers. A
+        // faster reader can acknowledge freely without releasing history the
+        // slower reader still needs.
+        advance_retention_floor(engine, &set)?;
+        return Ok(status);
     }
     if state.pending.is_none() && state.checkpoint == confirmed {
         // An idempotent re-acknowledgement of the current checkpoint.
@@ -902,13 +969,29 @@ pub(crate) fn close(
     name: &str,
 ) -> Result<SubscriptionStatus, StreamError> {
     let (identity, set, _handle) = find_core(engine, scope, name)?;
-    remove_core(identity, &set, scope, name);
+    remove_core(engine, identity, &set, scope, name);
     Ok(SubscriptionStatus::Closed(StreamCompletion::Cancelled))
 }
 
 /// Removes one core from its engine set, releasing the notification queue.
-fn remove_core(identity: u128, set: &Arc<EngineSubscriptions>, scope: &TenantScope, name: &str) {
+fn remove_core(
+    engine: &Engine,
+    identity: u128,
+    set: &Arc<EngineSubscriptions>,
+    scope: &TenantScope,
+    name: &str,
+) {
     let key = (scope.tenant().as_str().to_owned(), name.to_owned());
     lock_recovered(&set.inner).cores.remove(&key);
+    let has_readers = !lock_recovered(&set.inner).cores.is_empty();
+    if has_readers {
+        // A closing reader may have been the minimum. Recompute before the
+        // next sweep can release its retained history.
+        let _ = advance_retention_floor(engine, set);
+    } else {
+        // No live reader remains, so the optional lease must not pin history
+        // indefinitely across a restart.
+        let _ = engine.retire_retention_consumer(RETENTION_CONSUMER);
+    }
     release_engine_set_if_empty(identity, set);
 }

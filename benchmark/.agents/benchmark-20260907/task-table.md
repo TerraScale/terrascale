@@ -11,6 +11,21 @@ modify the product, benchmark drivers, or human-owned instruction files.
 | TB-BENCH-3 | Render a readable TerraBase-only Markdown comparison from the fresh receipts, with diagnostic/unavailable limits explicit and no comparator rows. | `bench/src/history.rs`; `bench/RESULTS.md`; `bench/FAMILIES.md` | TB-BENCH-1 receipts and report schema | report owner: new `.md` under `bench/` | ready, report lane active |
 | TB-BENCH-4 | Diagnose and correct any remaining run failures from the fresh manifest, preserving failed attempts and rerunning only affected lanes after source/build handoff. | Previous failures: `bench/results/run-20260907/verification.md`; current member process snapshot | TB-BENCH-1 failure logs; server source freeze; one shared build owner | assigned failure worker by root; benchmark reruns bench_owner | blocked on fresh evidence |
 | TB-BENCH-5 | Keep historical engine diagnostics accounted for without mixing them into the served-lane comparison: engine/auto-index, materializer, ACK, FTS, and restore selectors remain separately labeled. | `/tmp/terrabase-bench-inventory.txt`; `/tmp/terrabase-engine-bench.log`; `/tmp/terrabase-materializer-bench.log`; `/tmp/terrabase-ack-bench.log`; `/tmp/terrabase-fts-bench.log`; `/tmp/terrascale-restore-redundant-index-benchmark.log` | No shared build until bench_owner schedules; restore has a historical threshold failure | bench_owner owns artifact selection; report owner owns Markdown | ready, unassigned |
+| TB-BENCH-6 | Produce a release artifact from frozen snapshot `/tmp/terrabase-qual-20260907.7lF9` after the shard split compile fix and harness fixes (`advance_consumer_frontier`, scoped `load_shard_router`) land. | `brief-shard-split-region-compare.md`; current build handoff from root; `/tmp/terrabase-qual-20260907.7lF9` | harness/snapshot_fixer completion, then one source-frozen build; no benchmark run against old `/tmp/terrabase-benchmark-20260907` binary | snapshot_fixer owns coherent snapshot closure; bench_owner owns snapshot build | implementation in progress; build may be active |
+| TB-BENCH-7 | Run all locally applicable TerraBase-only families with the frozen release member; retain unavailable statuses for comparator/external-only families. | `brief-local-family-coverage.md`; `bench/src/indexed_query.rs:485-589`; `bench/scripts/auto-index.sh:18-29` | TB-BENCH-6 release artifact and fresh member env | bench_owner: `<RUN>` receipts and logs | ready after source handoff |
+
+## Explicit family coverage
+
+| Entry point | Requested/attempted count | Current status / limits |
+| --- | ---: | --- |
+| `run-terrabase-final.sh` point lane (`read`, `write`, `query`, `mixed`) | 4 | Early same-day attempts exist; final source-frozen run pending TB-BENCH-6 |
+| `run-terrabase-final.sh` ingest | 1 | Single-node intended; prior attempts failed or were diagnostic; pending |
+| `run-terrabase-final.sh` local auto-index | 1 | Intended diagnostic; final script env defect prepared in TB-BENCH-2 |
+| `run-terrabase-final.sh` sync | 1 | Single replication/local lane intended; CDN and cross-region require unavailable external endpoints |
+| `bench/scripts/indexed-query.sh` | 0 | Not part of TerraBase-only final run; requires comparator images/adapters, so report as unavailable rather than success |
+| `bench/scripts/auto-index.sh` | 0 | Served comparator/shadow endpoints required; not run for TerraBase-only scope |
+| `bench/scripts/ingest.sh --topology rf2` | 0 | Requires real RF=2 topology; single-node and RF=2 never combine |
+| `resource-envelope.sh` + `io-pressure.sh` | per run metadata | Supporting evidence only; not benchmark families or performance rows |
 
 Shared build resource: one `terrabase` release build and one `bench` release
 build at a time. The existing `/tmp/terrabase-benchmark-20260907` member and

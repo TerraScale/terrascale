@@ -78,6 +78,46 @@ impl RouteParticipantRegistry {
         transaction.bind_shard_admission(token)?;
         Ok(transaction)
     }
+
+    pub(crate) fn begin_batch(
+        &self,
+        scope: &TenantScope,
+        keys: &[Vec<u8>],
+        operation: OperationId,
+    ) -> Result<crate::engine::Transaction<'_>, crate::engine::EngineError> {
+        let Some(router) = &self.router else {
+            let engine = self.participants.values().next().ok_or(crate::engine::EngineError::Conflict)?;
+            return Ok(engine.begin(scope, engine.read_snapshot(scope)?, operation)?);
+        };
+        let Some(shard) = keys.first().and_then(|key| router.route(key)) else {
+            return Err(crate::engine::EngineError::Conflict);
+        };
+        let engine = self.participants.get(&shard).ok_or(crate::engine::EngineError::Conflict)?;
+        let token = engine.shard_admission_for_keys(scope, router, keys)?;
+        let mut transaction = engine.begin(scope, engine.read_snapshot(scope)?, operation)?;
+        transaction.bind_shard_admission(token)?;
+        Ok(transaction)
+    }
+
+    pub(crate) fn resolve_document_request(
+        &self,
+        scope: &TenantScope,
+        key: &[u8],
+        operation: OperationId,
+        fingerprint: [u8; 32],
+    ) -> Result<Option<(Arc<Engine>, crate::CommitReceipt, Option<String>)>, crate::engine::EngineError> {
+        let Some(router) = &self.router else {
+            let engine = self.participants.values().next().ok_or(crate::engine::EngineError::Conflict)?;
+            return Ok(engine
+                .resolve_document_request(scope, operation, fingerprint)?
+                .map(|(receipt, revision)| (Arc::clone(engine), receipt, revision)));
+        };
+        let shard = router.route(key).ok_or(crate::engine::EngineError::Conflict)?;
+        let engine = self.participants.get(&shard).ok_or(crate::engine::EngineError::Conflict)?;
+        Ok(engine
+            .resolve_document_request(scope, operation, fingerprint)?
+            .map(|(receipt, revision)| (Arc::clone(engine), receipt, revision)))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

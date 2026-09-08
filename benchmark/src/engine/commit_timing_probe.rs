@@ -7,8 +7,8 @@ use super::*;
 fn probe_single_document_commit_timings() {
     let dir = std::env::temp_dir().join(format!("terrabase-commit-probe-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let engine = Engine::open(EngineConfig::durable(&dir).expect("durable location"))
-        .expect("engine opens");
+    let engine =
+        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
     let scope = TenantScope::from_parts(
         TenantId::try_new("tenant-a").expect("valid tenant"),
         engine.identity(),

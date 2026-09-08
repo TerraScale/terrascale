@@ -2837,6 +2837,14 @@ async fn batch_documents(
         Ok(operations) => operations,
         Err(error) => return error.into_response(),
     };
+    // A batch transaction has one physical participant. Validate every key
+    // before reserving durability or opening a transaction so a split target
+    // cannot be staged on the source, and mixed-participant batches fail
+    // before any effect.
+    let ids = match batch_route_ids(&operations) {
+        Ok(ids) => ids,
+        Err(error) => return error,
+    };
     let operation = match write_operation(&headers, "api-batch") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
@@ -2859,11 +2867,10 @@ async fn batch_documents(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    let snapshot = match session.read_snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(error) => return session_error(error).into_response(),
-    };
-    let mut transaction = match engine.begin(&scope, snapshot, operation.clone()) {
+    let mut transaction = match host
+        .engine_host()
+        .begin_routed_batch(&scope, &collection, &ids, operation.clone())
+    {
         Ok(transaction) => transaction,
         Err(terrabase::EngineError::OperationIdReuse { .. }) => {
             return durability_unknown().into_response();
@@ -2943,6 +2950,21 @@ async fn batch_documents(
     }
 }
 
+fn batch_route_ids(
+    operations: &[serde_json::Value],
+) -> Result<Vec<DocumentId>, Response> {
+    let mut ids = Vec::with_capacity(operations.len());
+    for (index, item) in operations.iter().enumerate() {
+        let Some(id) = item.get("id").and_then(serde_json::Value::as_str) else {
+            return Err(batch_refusal(index, "missing_id", "the op names no document"));
+        };
+        let id = DocumentId::try_new(id)
+            .map_err(|_| batch_refusal(index, "invalid_id", "the op names an invalid document"))?;
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
 fn batch_request_fingerprint(
     collection: &CollectionName,
     operations: &[serde_json::Value],
@@ -2962,7 +2984,7 @@ fn batch_request_fingerprint(
 
 async fn replay_batch_request(
     state: &ApiState,
-    engine: &terrabase::Engine,
+    _engine: &terrabase::Engine,
     scope: &terrabase::types::TenantScope,
     headers: &axum::http::HeaderMap,
     operation: &OperationId,
@@ -3465,6 +3487,7 @@ fn document_request_error(error: terrabase::EngineError) -> ApiError {
 )]
 async fn replay_document_request(
     state: &ApiState,
+    host: &terrabase_tbep::member_host::MemberHost,
     engine: &terrabase::Engine,
     scope: &terrabase::types::TenantScope,
     headers: &axum::http::HeaderMap,
@@ -3476,22 +3499,16 @@ async fn replay_document_request(
     if !has_idempotency_key(headers) {
         return Ok(None);
     }
-    engine
-        .validate_document_shard_route(scope, collection, id)
-        .map_err(|_| ApiError::control_unavailable())?;
-    let Some((receipt, revision)) = engine
-        .resolve_document_request(scope, operation.clone(), fingerprint)
+    let Some((resolved_engine, receipt, revision)) = host
+        .resolve_routed_document_request(scope, collection, id, operation.clone(), fingerprint)
         .map_err(document_request_error)?
     else {
         return Ok(None);
     };
-    let durability = WriteDurability::prepare_replay(state, engine, scope, headers).await?;
-    durability.confirm(engine, scope, &receipt).await?;
-    let mut session = open_session(engine, scope, headers)?;
+    let durability = WriteDurability::prepare_replay(state, &resolved_engine, scope, headers).await?;
+    durability.confirm(&resolved_engine, scope, &receipt).await?;
+    let mut session = open_session(&resolved_engine, scope, headers)?;
     let response = document_write_response(&mut session, collection, id, revision)?;
-    engine
-        .validate_document_shard_route(scope, collection, id)
-        .map_err(|_| ApiError::control_unavailable())?;
     Ok(Some(response))
 }
 
@@ -3825,6 +3842,7 @@ async fn put_document(
     };
     match replay_document_request(
         &state,
+        host.engine_host(),
         engine,
         &scope,
         &headers,
@@ -3861,6 +3879,7 @@ async fn put_document(
     // this identity. Recheck before any live-state precondition or merge.
     match replay_document_request(
         &state,
+        host.engine_host(),
         engine,
         &scope,
         &headers,
@@ -3935,8 +3954,9 @@ async fn put_document(
     let outcome = transaction.commit(LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
         match replay_document_request(
-            &state,
-            engine,
+        &state,
+        host.engine_host(),
+        engine,
             &scope,
             &headers,
             &operation,
@@ -4030,6 +4050,7 @@ async fn patch_document(
     };
     match replay_document_request(
         &state,
+        host.engine_host(),
         engine,
         &scope,
         &headers,
@@ -4065,6 +4086,7 @@ async fn patch_document(
     // this identity. Recheck before any live-state precondition or merge.
     match replay_document_request(
         &state,
+        host.engine_host(),
         engine,
         &scope,
         &headers,
@@ -4130,8 +4152,9 @@ async fn patch_document(
     let outcome = transaction.commit(LocalDurability::Synced);
     if !matches!(outcome, CommitOutcome::Committed(_)) {
         match replay_document_request(
-            &state,
-            engine,
+        &state,
+        host.engine_host(),
+        engine,
             &scope,
             &headers,
             &operation,
@@ -4300,6 +4323,7 @@ async fn delete_document(
     };
     match replay_document_request(
         &state,
+        host.engine_host(),
         engine,
         &scope,
         &headers,
@@ -4335,6 +4359,7 @@ async fn delete_document(
     // this identity. Recheck before any live-state precondition or merge.
     match replay_document_request(
         &state,
+        host.engine_host(),
         engine,
         &scope,
         &headers,
@@ -4399,6 +4424,7 @@ async fn delete_document(
     if !matches!(outcome, CommitOutcome::Committed(_)) {
         match replay_document_request(
             &state,
+            host.engine_host(),
             engine,
             &scope,
             &headers,
@@ -7635,5 +7661,8 @@ pub(crate) async fn confirm_regional_for_replication_test(
         scope,
         timeout,
         standalone: false,
-    }.confirm(engine, tenant, receipt).await.map_err(|error| error.code.to_owned())
+    }
+    .confirm(engine, tenant, receipt)
+    .await
+    .map_err(|error| error.code.to_owned())
 }

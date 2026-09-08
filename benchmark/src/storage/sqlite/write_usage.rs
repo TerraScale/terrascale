@@ -109,11 +109,7 @@ pub(super) fn mint(
         let expected = i128::from(billed_writes)
             .checked_mul(i128::try_from(binding.selected_regions.len()).map_err(|_| ())?)
             .ok_or(())?;
-        return if admission.integer_units() == expected {
-            Ok(())
-        } else {
-            Err(())
-        };
+        return if admission.integer_units() == expected { Ok(()) } else { Err(()) };
     }
     let at = provenance.hlc() >> 16;
     if at == 0 {

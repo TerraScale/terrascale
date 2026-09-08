@@ -18,9 +18,11 @@ use std::{
 };
 
 mod authorized;
+mod batch_request;
 mod branch_restore;
 #[cfg(test)]
 mod branch_restore_tests;
+mod document_request;
 mod export;
 mod ingest;
 pub mod lifecycle_state;
@@ -30,13 +32,11 @@ mod origin_fencing;
 mod patch;
 mod physical_restore;
 mod private_metadata;
-mod batch_request;
-mod document_request;
 mod recovery_statistics;
-mod retention;
 mod repair_summary;
 mod replicated_publication;
 mod replication_outbox;
+mod retention;
 pub use repair_summary::ReplicationRepairCut;
 mod storage_usage;
 mod usage_placement;
@@ -55,9 +55,9 @@ mod shard_split;
 pub(crate) mod shard_supervisor;
 mod webhook_metadata;
 
+mod commit_timing_probe;
 #[cfg(test)]
 mod ingest_tests;
-mod commit_timing_probe;
 
 #[cfg(test)]
 mod metadata_tests;
@@ -2781,10 +2781,7 @@ impl Engine {
     /// readers, so an absent consumer does not pin history forever.
     pub(crate) fn retire_retention_consumer(&self, name: &str) -> Result<(), EngineError> {
         let mut storage = self.storage.lock().map_err(|_| EngineError::StorageFailure)?;
-        storage
-            .port
-            .retire_consumer_frontier(name)
-            .map_err(|()| EngineError::StorageFailure)
+        storage.port.retire_consumer_frontier(name).map_err(|()| EngineError::StorageFailure)
     }
 
     /// Runs one storage retention sweep: prune publication history every
@@ -5139,7 +5136,10 @@ impl Transaction<'_> {
         guard: crate::storage::TtlGuard,
     ) {
         self.writes.push(StagedWrite::Delete {
-            collection: Some(collection.clone()), id, expected, ttl_guard: Some(guard),
+            collection: Some(collection.clone()),
+            id,
+            expected,
+            ttl_guard: Some(guard),
         });
     }
 

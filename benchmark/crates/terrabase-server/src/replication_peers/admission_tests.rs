@@ -494,20 +494,23 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
             .unwrap();
     let mut follower = WalFollowerDriver::new(follower_binding, follower_replica);
     let engine = follower_engine.engine();
-    let tenant = engine.scope_for(
-        &terrabase::types::TenantId::try_new(&scope.tenant().to_text()).unwrap(),
-    );
+    let tenant =
+        engine.scope_for(&terrabase::types::TenantId::try_new(&scope.tenant().to_text()).unwrap());
     let commit = || {
         use terrabase::types::*;
         let snapshot = engine.read_snapshot(&tenant).unwrap();
-        let mut transaction = engine
-            .begin(&tenant, snapshot, OperationId::try_new("lost-wal-ack").unwrap())
+        let mut transaction =
+            engine.begin(&tenant, snapshot, OperationId::try_new("lost-wal-ack").unwrap()).unwrap();
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new("doc").unwrap(),
+                    CollectionName::try_new("items").unwrap(),
+                    DocumentValue::Null,
+                ),
+                ExpectedVersion::Any,
+            )
             .unwrap();
-        transaction.put(
-            Document::new(DocumentId::try_new("doc").unwrap(),
-                CollectionName::try_new("items").unwrap(), DocumentValue::Null),
-            ExpectedVersion::Any,
-        ).unwrap();
         match transaction.commit(LocalDurability::Synced) {
             terrabase::CommitOutcome::Committed(receipt) => receipt,
             outcome => panic!("unexpected commit: {outcome:?}"),
@@ -525,12 +528,16 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         loop {
             let frame = connection.receive_frame().await.unwrap();
             if frame.starts_with(b"TBWCP") {
-                let response = follower.checkpoint(&authenticated,
-                    WalCheckpointMessage::decode(&frame).unwrap()).await.unwrap();
+                let response = follower
+                    .checkpoint(&authenticated, WalCheckpointMessage::decode(&frame).unwrap())
+                    .await
+                    .unwrap();
                 connection.send_frame(&response.encode().unwrap()).await.unwrap();
             } else if frame.starts_with(b"TBWAL") {
-                let ack = follower.apply(&authenticated,
-                    ScopedWalBatch::decode(&frame).unwrap()).await.unwrap();
+                let ack = follower
+                    .apply(&authenticated, ScopedWalBatch::decode(&frame).unwrap())
+                    .await
+                    .unwrap();
                 assert!(ack.encode().unwrap().starts_with(b"TBWACK"));
                 // The disk sync completed, but its acknowledgement never reaches the writer.
                 applied_tx.send(()).unwrap();
@@ -544,8 +551,10 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         loop {
             let frame = connection.receive_frame().await.unwrap();
             if frame.starts_with(b"TBWCP") {
-                let response = follower.checkpoint(&authenticated,
-                    WalCheckpointMessage::decode(&frame).unwrap()).await.unwrap();
+                let response = follower
+                    .checkpoint(&authenticated, WalCheckpointMessage::decode(&frame).unwrap())
+                    .await
+                    .unwrap();
                 connection.send_frame(&response.encode().unwrap()).await.unwrap();
                 recovered_tx.send(()).unwrap();
                 break;
@@ -567,27 +576,61 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
             }
         }
     });
-    tokio::time::timeout(Duration::from_secs(5), applied_rx).await
-        .expect("real WAL reaches follower").unwrap();
-    let first = observations.lock().unwrap()
-        .get(&(peer.member().as_str().to_owned(), scope)).unwrap().session_id;
+    tokio::time::timeout(Duration::from_secs(5), applied_rx)
+        .await
+        .expect("real WAL reaches follower")
+        .unwrap();
+    let first = observations
+        .lock()
+        .unwrap()
+        .get(&(peer.member().as_str().to_owned(), scope))
+        .unwrap()
+        .session_id;
     assert!(!progress.regional_covers(scope, receipt.sequence().get()).unwrap());
-    assert_eq!(crate::api::confirm_regional_for_replication_test(
-        engine, &tenant, &receipt, progress.clone(), scope, Duration::from_millis(20),
-    ).await, Err("commit_unknown".to_owned()));
+    assert_eq!(
+        crate::api::confirm_regional_for_replication_test(
+            engine,
+            &tenant,
+            &receipt,
+            progress.clone(),
+            scope,
+            Duration::from_millis(20),
+        )
+        .await,
+        Err("commit_unknown".to_owned())
+    );
     disconnect_tx.send(()).unwrap();
-    tokio::time::timeout(Duration::from_secs(5), recovered_rx).await
-        .expect("replacement receives durable follower checkpoint").unwrap();
+    tokio::time::timeout(Duration::from_secs(5), recovered_rx)
+        .await
+        .expect("replacement receives durable follower checkpoint")
+        .unwrap();
     let replay = commit();
     assert_eq!(receipt, replay, "retry must return the original operation receipt");
     crate::api::confirm_regional_for_replication_test(
-        engine, &tenant, &replay, progress.clone(), scope, Duration::from_secs(5),
-    ).await.unwrap();
-    assert!(observations.lock().unwrap()
-        .get(&(peer.member().as_str().to_owned(), scope)).unwrap().session_id > first);
+        engine,
+        &tenant,
+        &replay,
+        progress.clone(),
+        scope,
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    assert!(
+        observations
+            .lock()
+            .unwrap()
+            .get(&(peer.member().as_str().to_owned(), scope))
+            .unwrap()
+            .session_id
+            > first
+    );
     assert_eq!(engine.read_snapshot(&tenant).unwrap().sequence(), receipt.sequence());
-    assert_eq!(engine.journal_rows(&tenant, before.get(), 10).unwrap().len(), 1,
-        "the same operation creates exactly one durable journal record");
+    assert_eq!(
+        engine.journal_rows(&tenant, before.get(), 10).unwrap().len(),
+        1,
+        "the same operation creates exactly one durable journal record"
+    );
     stop_tx.send(()).unwrap();
     remote_task.await.unwrap();
     peers.drain().await.unwrap();

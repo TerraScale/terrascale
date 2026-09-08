@@ -240,8 +240,7 @@ const READ_POOL_WIDTH: usize = 4;
 
 /// Every admitted database starts with all durable consumers at sequence zero.
 /// A missing acknowledgement must therefore hold the pruning floor back.
-const REQUIRED_CONSUMER_FRONTIERS: &[&str] =
-    &["replication", "metering", "native-backup"];
+const REQUIRED_CONSUMER_FRONTIERS: &[&str] = &["replication", "metering", "native-backup"];
 const OPTIONAL_CONSUMER_FRONTIERS: &[&str] = &["sync"];
 
 /// Idle checkpoint workers periodically recheck their stop signal.
@@ -1823,7 +1822,7 @@ impl SqliteStorage {
         name: &str,
         sequence: u64,
     ) -> Result<(), ()> {
-        <Self as StoragePort>::advance_consumer_frontier(self, name, sequence)
+        self.advance_consumer_frontier_inner(name, sequence)
     }
 
     /// Opens (or creates) the `SQLite` location in `dir`.
@@ -2118,7 +2117,7 @@ impl SqliteStorage {
     /// # Errors
     ///
     /// Returns `Err(())` when durable storage failed.
-    fn advance_consumer_frontier(&mut self, name: &str, sequence: u64) -> Result<(), ()> {
+    fn advance_consumer_frontier_inner(&mut self, name: &str, sequence: u64) -> Result<(), ()> {
         #[cfg(not(test))]
         if !REQUIRED_CONSUMER_FRONTIERS.contains(&name)
             && !OPTIONAL_CONSUMER_FRONTIERS.contains(&name)
@@ -4774,6 +4773,18 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
+    fn advance_consumer_frontier(&mut self, name: &str, sequence: u64) -> Result<(), ()> {
+        self.advance_consumer_frontier_inner(name, sequence)
+    }
+
+    fn register_consumer_frontier(&mut self, name: &str, sequence: u64) -> Result<(), ()> {
+        SqliteStorage::register_consumer_frontier(self, name, sequence)
+    }
+
+    fn retire_consumer_frontier(&mut self, name: &str) -> Result<(), ()> {
+        SqliteStorage::retire_consumer_frontier(self, name)
+    }
+
     fn prepare_participant(
         &mut self,
         prepare: &crate::storage::ParticipantPrepare,

@@ -340,18 +340,25 @@ fn indexed_timestamp_roots_handle_long_chains_and_noop_heads() {
 #[test]
 fn latest_same_boundary_prefers_capture_clock_and_complete_coverage() {
     use crate::backup::manifest::ManifestFacts;
-    let point = |kind, captured| BackupManifest::assemble(ManifestFacts {
-        database_id: "0123456789abcdef0123456789abcdef".to_owned(),
-        partition_id: "partition-000000".to_owned(),
-        kind,
-        boundary: StorageSequence::new(7),
-        boundary_unix_millis: 10,
-        captured_unix_millis: captured,
-        retain_until_unix_millis: captured + 86_400_000,
-        logical_checksum: crate::engine::logical_state_hasher().finalize().to_hex().to_string(),
-        logical_documents: 0, documents: 0, family_records: 0, deletes: 0, disclosures: 0,
-        tenants: Vec::new(), members: Vec::new(),
-    });
+    let point = |kind, captured| {
+        BackupManifest::assemble(ManifestFacts {
+            database_id: "0123456789abcdef0123456789abcdef".to_owned(),
+            partition_id: "partition-000000".to_owned(),
+            kind,
+            boundary: StorageSequence::new(7),
+            boundary_unix_millis: 10,
+            captured_unix_millis: captured,
+            retain_until_unix_millis: captured + 86_400_000,
+            logical_checksum: crate::engine::logical_state_hasher().finalize().to_hex().to_string(),
+            logical_documents: 0,
+            documents: 0,
+            family_records: 0,
+            deletes: 0,
+            disclosures: 0,
+            tenants: Vec::new(),
+            members: Vec::new(),
+        })
+    };
     let root = point(BackupKind::Full, 10);
     let snapshot = point(BackupKind::Snapshot, 20);
     let noop = point(BackupKind::Incremental { base: StorageSequence::new(7) }, 20);
@@ -376,8 +383,10 @@ fn latest_same_boundary_prefers_capture_clock_and_complete_coverage() {
         assert_eq!(chain.last().unwrap().identity(), later_noop.identity());
         assert_eq!(chain.first().unwrap().identity(), snapshot.identity());
         let historical = resolve_encrypted_points_chain(
-            &points, &Selection::Point { identity: noop.identity().into() },
-        ).unwrap();
+            &points,
+            &Selection::Point { identity: noop.identity().into() },
+        )
+        .unwrap();
         assert_eq!(historical.first().unwrap().identity(), snapshot.identity());
         assert_eq!(historical.last().unwrap().identity(), noop.identity());
         let timestamp = resolve_timestamp_points_chain(&points, 15).unwrap();

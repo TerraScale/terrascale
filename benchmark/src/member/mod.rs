@@ -1680,6 +1680,49 @@ impl DatabaseLease {
         self.route_registry.begin(scope, &key, operation)
     }
 
+    /// Begins one transaction for document IDs that all route to one
+    /// admitted shard participant.
+    pub fn begin_routed_batch(
+        &self,
+        scope: &TenantScope,
+        collection: &crate::types::CollectionName,
+        ids: &[crate::types::DocumentId],
+        operation: OperationId,
+    ) -> Result<crate::engine::Transaction<'_>, crate::engine::EngineError> {
+        let keys = ids
+            .iter()
+            .map(|id| crate::shard_split::canonical_shard_key(collection, id))
+            .collect::<Vec<_>>();
+        self.route_registry.begin_batch(scope, &keys, operation)
+    }
+
+    /// Begins a routed batch from precomputed canonical keys.
+    ///
+    /// This lower-level form is reserved for serving adapters that already
+    /// own the canonical key encoding; ordinary callers should use
+    /// [`Self::begin_routed_batch`].
+    pub fn begin_routed_batch_keys(
+        &self,
+        scope: &TenantScope,
+        keys: &[Vec<u8>],
+        operation: OperationId,
+    ) -> Result<crate::engine::Transaction<'_>, crate::engine::EngineError> {
+        self.route_registry.begin_batch(scope, keys, operation)
+    }
+
+    /// Resolves an idempotent document request on its admitted participant.
+    pub fn resolve_routed_document_request(
+        &self,
+        scope: &TenantScope,
+        collection: &crate::types::CollectionName,
+        id: &crate::types::DocumentId,
+        operation: OperationId,
+        fingerprint: [u8; 32],
+    ) -> Result<Option<(Arc<Engine>, crate::CommitReceipt, Option<String>)>, crate::engine::EngineError> {
+        let key = crate::shard_split::canonical_shard_key(collection, id);
+        self.route_registry.resolve_document_request(scope, &key, operation, fingerprint)
+    }
+
     /// Converts this sole admitted lease into an exclusive restore permit.
     /// The engine and admission permits are dropped before the permit returns.
     pub fn reserve_restore(self) -> Result<RestorePermit, (DatabaseLease, MemberError)> {

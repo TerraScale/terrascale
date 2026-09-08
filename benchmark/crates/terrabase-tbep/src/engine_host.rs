@@ -233,7 +233,7 @@ fn wire_usage_fact(
 
 /// The TBEP host backed by one durable Engine.
 enum HostEngine {
-    Local(Box<Engine>),
+    Local(Arc<Engine>),
     Admitted(Arc<terrabase::member::DatabaseLease>),
 }
 
@@ -304,7 +304,7 @@ impl EngineHost {
         )
         .map_err(|_| HostingError::EngineFailure("engine open refused".into()))?;
         Ok(Self {
-            engine: HostEngine::Local(Box::new(engine)),
+            engine: HostEngine::Local(Arc::new(engine)),
             location: location.to_path_buf(),
             tenant: tenant.to_owned(),
             project: project.to_owned(),
@@ -371,6 +371,52 @@ impl EngineHost {
             HostEngine::Local(engine) => {
                 Ok(engine.begin(scope, engine.read_snapshot(scope)?, operation)?)
             }
+        }
+    }
+
+    /// Begins one routed transaction for a batch sharing one participant.
+    pub fn begin_routed_batch(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+        ids: &[terrabase::types::DocumentId],
+        operation: OperationId,
+    ) -> Result<terrabase::engine::Transaction<'_>, terrabase::engine::EngineError> {
+        match &self.engine {
+            HostEngine::Admitted(lease) => {
+                lease.begin_routed_batch(scope, collection, ids, operation)
+            }
+            HostEngine::Local(engine) => {
+                Ok(engine.begin(scope, engine.read_snapshot(scope)?, operation)?)
+            }
+        }
+    }
+
+    /// Begins one routed transaction from canonical keys.
+    pub fn begin_routed_batch_keys(
+        &self,
+        scope: &TenantScope,
+        keys: &[Vec<u8>],
+        operation: OperationId,
+    ) -> Result<terrabase::engine::Transaction<'_>, terrabase::engine::EngineError> {
+        match &self.engine {
+            HostEngine::Admitted(lease) => lease.begin_routed_batch_keys(scope, keys, operation),
+            HostEngine::Local(engine) => Ok(engine.begin(scope, engine.read_snapshot(scope)?, operation)?),
+        }
+    }
+
+    /// Resolves an idempotent document request on its selected participant.
+    pub fn resolve_routed_document_request(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+        id: &terrabase::types::DocumentId,
+        operation: OperationId,
+        fingerprint: [u8; 32],
+    ) -> Result<Option<(Arc<Engine>, terrabase::CommitReceipt, Option<String>)>, terrabase::engine::EngineError> {
+        match &self.engine {
+            HostEngine::Admitted(lease) => lease.resolve_routed_document_request(scope, collection, id, operation, fingerprint),
+            HostEngine::Local(engine) => Ok(engine.resolve_document_request(scope, operation, fingerprint)?.map(|(receipt, revision)| (Arc::clone(engine), receipt, revision))),
         }
     }
 

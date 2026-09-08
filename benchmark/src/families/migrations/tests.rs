@@ -1738,39 +1738,65 @@ fn stopped_partial_migration_rolls_back_across_two_reopens() {
     let source = SchemaDefinition::try_new(
         version(1),
         vec![SchemaRule::FieldType { field: "a".into(), kind: SchemaFieldType::Text }],
-    ).unwrap();
+    )
+    .unwrap();
     declare_schema(&engine, &users, "users", source);
     let count = super::MAX_MIGRATION_PAGE + 1;
     seed_many(&engine, &users, count, &[("a", "x")]);
-    let target = SchemaDefinition::try_new(version(2), vec![
-        SchemaRule::FieldType { field: "b".into(), kind: SchemaFieldType::Text },
-        SchemaRule::TextLength { field: "b".into(), min: None, max: Some(3) },
-    ]).unwrap();
-    let contract = SchemaMigration::try_new(collection("users"), version(1), version(2), target,
-        vec![FieldTransform::RenameField { from: "a".into(), to: "b".into() }]).unwrap();
+    let target = SchemaDefinition::try_new(
+        version(2),
+        vec![
+            SchemaRule::FieldType { field: "b".into(), kind: SchemaFieldType::Text },
+            SchemaRule::TextLength { field: "b".into(), min: None, max: Some(3) },
+        ],
+    )
+    .unwrap();
+    let contract = SchemaMigration::try_new(
+        collection("users"),
+        version(1),
+        version(2),
+        target,
+        vec![FieldTransform::RenameField { from: "a".into(), to: "b".into() }],
+    )
+    .unwrap();
     let plan = dry_run(&engine, &users, &contract).unwrap();
     let last = format!("doc-{:05}", count - 1);
-    put_document(&engine, &users, &last, "users", object(&[("a", text("source-still-valid"))])).unwrap();
+    put_document(&engine, &users, &last, "users", object(&[("a", text("source-still-valid"))]))
+        .unwrap();
     begin(&engine, &users, &contract, &plan, MigrationOptions::default()).unwrap();
-    assert!(matches!(apply_page(&engine, &users, &contract, &plan), Ok(MigrationStep::PageApplied { .. })));
+    assert!(matches!(
+        apply_page(&engine, &users, &contract, &plan),
+        Ok(MigrationStep::PageApplied { .. })
+    ));
     assert_eq!(apply_page(&engine, &users, &contract, &plan), Err(MigrationError::TargetViolation));
-    assert!(matches!(status(&engine, &users, &collection("users")).unwrap(),
-        MigrationStatus::Stopped { documents: 1024, pages: 1, .. }));
+    assert!(matches!(
+        status(&engine, &users, &collection("users")).unwrap(),
+        MigrationStatus::Stopped { documents: 1024, pages: 1, .. }
+    ));
     assert_eq!(user_value(&engine, &users, "doc-00000"), object(&[("b", text("x"))]));
     drop(engine);
 
     let engine = Engine::open(EngineConfig::durable(&dir).unwrap()).unwrap();
     let users = scope(&engine, "alpha");
-    assert_eq!(rollback(&engine, &users, &contract), Ok(RollbackStep::PageRestored { restored: 1024 }));
-    assert!(matches!(status(&engine, &users, &collection("users")).unwrap(), MigrationStatus::RollingBack { pages: 2, .. }));
+    assert_eq!(
+        rollback(&engine, &users, &contract),
+        Ok(RollbackStep::PageRestored { restored: 1024 })
+    );
+    assert!(matches!(
+        status(&engine, &users, &collection("users")).unwrap(),
+        MigrationStatus::RollingBack { pages: 2, .. }
+    ));
     drop(engine);
 
     let engine = Engine::open(EngineConfig::durable(&dir).unwrap()).unwrap();
     let users = scope(&engine, "alpha");
     // Admission replay must preserve the cursor, not restore the first page again.
-    assert!(matches!(commit(&engine, &users, |_, transaction, _| {
-        super::stage_rollback(transaction, &contract).unwrap();
-    }), CommitOutcome::Committed(_)));
+    assert!(matches!(
+        commit(&engine, &users, |_, transaction, _| {
+            super::stage_rollback(transaction, &contract).unwrap();
+        }),
+        CommitOutcome::Committed(_)
+    ));
     assert_eq!(rollback(&engine, &users, &contract), Ok(RollbackStep::Complete { restored: 0 }));
     assert_eq!(user_value(&engine, &users, "doc-00000"), object(&[("a", text("x"))]));
     assert_eq!(user_value(&engine, &users, &last), object(&[("a", text("source-still-valid"))]));

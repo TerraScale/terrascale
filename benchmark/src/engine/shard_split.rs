@@ -153,7 +153,7 @@ impl ScopedShardEngine {
             return Err(EngineError::Conflict);
         }
         let (_, source_generation) =
-            self.load_shard_router(&self.scope)?.ok_or(EngineError::Conflict)?;
+            self.engine.load_shard_router(&self.scope)?.ok_or(EngineError::Conflict)?;
         let target_generation = source_generation.checked_add(1).ok_or(EngineError::Conflict)?;
         // A proof transaction advances the target sequence itself. Reuse the
         // pinned boundary on retry instead of rebinding its operation identity
@@ -1002,6 +1002,28 @@ impl Engine {
             router.table().generation(),
             shard,
             key,
+        );
+        self.validate_shard_admission(scope, &token, &[])?;
+        Ok(token)
+    }
+
+    /// Validates a bounded batch whose canonical keys all route to one file.
+    pub fn shard_admission_for_keys(
+        &self,
+        scope: &TenantScope,
+        router: &crate::shard_split::ShardRouter,
+        keys: &[Vec<u8>],
+    ) -> Result<ShardAdmissionToken, EngineError> {
+        let Some(first) = keys.first() else { return Err(EngineError::Conflict) };
+        let shard = router.route(first).ok_or(EngineError::Conflict)?;
+        if keys.iter().any(|key| router.route(key) != Some(shard)) {
+            return Err(EngineError::Conflict);
+        }
+        let token = ShardAdmissionToken::for_keys(
+            u128::from_be_bytes(self.database_id().as_bytes()),
+            router.table().generation(),
+            shard,
+            keys.iter().map(Vec::as_slice),
         );
         self.validate_shard_admission(scope, &token, &[])?;
         Ok(token)
