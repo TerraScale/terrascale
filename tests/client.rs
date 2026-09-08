@@ -397,11 +397,10 @@ fn root_reexports_all_published_client_types() {
         IndexDescriptor, IndexListResponse, LiveSubscription, ManagementCancellationToken,
         OperationOptions, PageOptions, PlacementLock, PlanBackupRequest, PollOptions, PollOutcome,
         PollResponse, RegionCatalogResponse, RegionDetails, ResetFrame, RestoreAt, RestoreJob,
-        RestorePoint,
-        RestoreRequest, Schemas, SqlParameters, StartRestore, Tenant, TenantApiKey, TenantBranch,
-        TenantListOptions, TenantOperationOptions, TenantPage, TenantPlacementLock, TenantTemplate,
-        TenantsClient, TransferFormat, Usage, UsageClient, UsagePoint, UsageRange, UsageSummary,
-        UsageWorkload,
+        RestorePoint, RestoreRequest, Schemas, SqlParameters, StartRestore, Tenant, TenantApiKey,
+        TenantBranch, TenantListOptions, TenantOperationOptions, TenantPage, TenantPlacementLock,
+        TenantTemplate, TenantsClient, TransferFormat, Usage, UsageClient, UsagePoint, UsageRange,
+        UsageSummary, UsageWorkload,
     };
 
     type PublishedClientTypes = (

@@ -220,7 +220,7 @@ pub enum CreateDatabaseResult {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeleteDatabaseResult {
     Deleted(DatabaseRecord),
-    Accepted(DeleteDatabaseAccepted),
+    Accepted(Box<DeleteDatabaseAccepted>),
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeleteDatabaseAccepted {
@@ -690,20 +690,22 @@ impl Databases {
             let location = response.header("location").ok_or_else(|| {
                 Error::invalid_response("accepted database deletion has no Location header")
             })?;
-            return Ok(DeleteDatabaseResult::Accepted(DeleteDatabaseAccepted {
-                operation_id: operation.request.operation_id.clone(),
-                state: operation.state.clone(),
-                location: location.to_owned(),
-                request: operation.request,
-                requested_at: operation.requested_at,
-                cutoff: operation.cutoff,
-                targets: operation.targets,
-                edge_receipt: operation.edge_receipt,
-                claim: operation.claim,
-                automatic_policy_revision: operation.automatic_policy_revision,
-                automatic_grace_condition: operation.automatic_grace_condition,
-                automatic_deadline: operation.automatic_deadline,
-            }));
+            return Ok(DeleteDatabaseResult::Accepted(Box::new(
+                DeleteDatabaseAccepted {
+                    operation_id: operation.request.operation_id.clone(),
+                    state: operation.state.clone(),
+                    location: location.to_owned(),
+                    request: operation.request,
+                    requested_at: operation.requested_at,
+                    cutoff: operation.cutoff,
+                    targets: operation.targets,
+                    edge_receipt: operation.edge_receipt,
+                    claim: operation.claim,
+                    automatic_policy_revision: operation.automatic_policy_revision,
+                    automatic_grace_condition: operation.automatic_grace_condition,
+                    automatic_deadline: operation.automatic_deadline,
+                },
+            )));
         }
         Err(Error::invalid_response(
             "database deletion returned an unsupported success status",
