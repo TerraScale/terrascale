@@ -1196,6 +1196,16 @@ pub struct Engine {
     /// chrony/NTP itself; `None` is the explicit unknown or stale state.
     clock_offset_seconds: Mutex<Option<f64>>,
     pub(crate) storage: Arc<Mutex<StorageState>>,
+    /// Tenants whose primary-file identity has been observed or durably
+    /// staged by this Engine. Once populated, ordinary origin writes avoid a
+    /// metadata read (and its storage mutex) on the pre-queue path.
+    primary_file_shard_identities: Mutex<BTreeSet<String>>,
+    /// Last observed pause state per tenant. Commit admission reads this
+    /// cache so concurrent writers can reach the group mailbox without
+    /// serializing on the storage mutex. Lifecycle mutations refresh it after
+    /// their durable operation succeeds; a missing entry falls back to the
+    /// authoritative storage read.
+    pub(crate) lifecycle_paused: Mutex<BTreeMap<String, bool>>,
     /// One bounded registry shared by the engine, storage, TBEP, probes, and
     /// Prometheus adapter for this process-local engine instance.
     metrics: Arc<MetricsRegistry>,
@@ -1456,6 +1466,8 @@ impl Engine {
             // fail-closed through `clear_clock_offset_seconds()`.
             clock_offset_seconds: Mutex::new(Some(0.0)),
             storage: Arc::new(Mutex::new(StorageState { port: storage })),
+            primary_file_shard_identities: Mutex::new(BTreeSet::new()),
+            lifecycle_paused: Mutex::new(BTreeMap::new()),
             metrics,
             in_flight: Mutex::new(BTreeSet::new()),
             subscriptions,
@@ -4725,6 +4737,18 @@ impl Engine {
         self.storage.lock().map_err(|_| EngineError::StorageFailure)
     }
 
+    fn primary_file_shard_identity_cached(&self, tenant: &TenantId) -> bool {
+        self.primary_file_shard_identities
+            .lock()
+            .is_ok_and(|identities| identities.contains(tenant.as_str()))
+    }
+
+    fn cache_primary_file_shard_identity(&self, tenant: &TenantId) {
+        if let Ok(mut identities) = self.primary_file_shard_identities.lock() {
+            identities.insert(tenant.as_str().to_owned());
+        }
+    }
+
     /// Opens the engine's bounded `SQLite` read handle for SQL execution.
     ///
     /// The physical location remains Engine-owned; this capability is
@@ -5395,7 +5419,10 @@ impl Transaction<'_> {
         if usage_admission.is_some() && durability != LocalDurability::Synced {
             return CommitOutcome::Rejected(CommitError::UsageRequiresSynced);
         }
-        if !replicated && !writes.is_empty() {
+        let needs_primary_file_shard_identity = !replicated
+            && !writes.is_empty()
+            && !self.engine.primary_file_shard_identity_cached(self.scope.tenant());
+        if needs_primary_file_shard_identity {
             if self.ensure_primary_file_shard_identity().is_err() {
                 return CommitOutcome::Rejected(CommitError::StorageFailure);
             }
@@ -5460,6 +5487,9 @@ impl Transaction<'_> {
             engine.drive_as_leader();
         }
         let result = engine.await_commit_answer(receiver);
+        if needs_primary_file_shard_identity && matches!(&result, CommitResult::Committed(_)) {
+            engine.cache_primary_file_shard_identity(self.scope.tenant());
+        }
         if let CommitResult::Committed(receipt) = &result {
             let event = CommitPublicationEvent::new(
                 operation.clone(),

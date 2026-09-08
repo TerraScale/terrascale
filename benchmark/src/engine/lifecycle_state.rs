@@ -117,10 +117,19 @@ impl Engine {
     /// # Errors
     /// Returns an error on a scope mismatch or storage failure.
     pub fn lifecycle_state(&self, scope: &TenantScope) -> Result<LifecycleState, LifecycleError> {
-        self.lifecycle_command(scope, LifecycleCommand::Read)
+        let state = self.lifecycle_command(scope, LifecycleCommand::Read)?;
+        if let Ok(mut cache) = self.lifecycle_paused.lock() {
+            cache.insert(scope.tenant().as_str().to_owned(), state.paused);
+        }
+        Ok(state)
     }
 
     pub(crate) fn lifecycle_is_paused(&self, scope: &TenantScope) -> Result<bool, LifecycleError> {
+        if let Ok(cache) = self.lifecycle_paused.lock()
+            && let Some(paused) = cache.get(scope.tenant().as_str())
+        {
+            return Ok(*paused);
+        }
         Ok(self.lifecycle_state(scope)?.paused)
     }
     /// Caller must authenticate the database owner before changing protection.
@@ -171,10 +180,18 @@ impl Engine {
         let _barrier =
             self.origin_commit_barrier.write().map_err(|_| LifecycleError::Unavailable)?;
         self.validate_scope(scope).map_err(|_| LifecycleError::Invalid)?;
-        self.lock_storage()
+        let state = self
+            .lock_storage()
             .map_err(|_| LifecycleError::Unavailable)?
             .port
-            .lifecycle_operation(scope.tenant(), LifecycleCommand::Pause(operation_id.to_owned()))
+            .lifecycle_operation(
+                scope.tenant(),
+                LifecycleCommand::Pause(operation_id.to_owned()),
+            )?;
+        if let Ok(mut cache) = self.lifecycle_paused.lock() {
+            cache.insert(scope.tenant().as_str().to_owned(), state.state.paused);
+        }
+        Ok(state)
     }
 
     /// Resumes authorized activity for a tenant by clearing its durable pause state.
@@ -187,10 +204,18 @@ impl Engine {
         operation_id: &str,
     ) -> Result<LifecycleOperationOutcome, LifecycleError> {
         self.validate_scope(scope).map_err(|_| LifecycleError::Invalid)?;
-        self.lock_storage()
+        let state = self
+            .lock_storage()
             .map_err(|_| LifecycleError::Unavailable)?
             .port
-            .lifecycle_operation(scope.tenant(), LifecycleCommand::Resume(operation_id.to_owned()))
+            .lifecycle_operation(
+                scope.tenant(),
+                LifecycleCommand::Resume(operation_id.to_owned()),
+            )?;
+        if let Ok(mut cache) = self.lifecycle_paused.lock() {
+            cache.insert(scope.tenant().as_str().to_owned(), state.state.paused);
+        }
+        Ok(state)
     }
     fn lifecycle_command(
         &self,
