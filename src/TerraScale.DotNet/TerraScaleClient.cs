@@ -269,6 +269,26 @@ public sealed class TerraScaleClient
         return new ExportDownload(bytes, length, checksum.ToLowerInvariant());
     }
 
+    internal async Task<ImportJob> UploadImportAsync(string route, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
+        using var response = await SendWithRetriesAsync(
+            HttpMethod.Put,
+            route,
+            () =>
+            {
+                var content = new ByteArrayContent(payload.ToArray());
+                content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                return content;
+            },
+            RequestAuthenticationMode.Authenticated,
+            configureRequest: null,
+            activity: null,
+            cancellationToken,
+            idempotencyKeyOverride: null,
+            allowUnkeyedPutRetry: true).ConfigureAwait(false);
+        return await ReadJsonResponseAsync(response, TerraScaleContractJsonContext.Default.ImportJob, null, cancellationToken).ConfigureAwait(false);
+    }
+
     private static string? ExactlyOneHeader(HttpResponseMessage response, string name)
     {
         var values = response.Headers.TryGetValues(name, out var responseValues)

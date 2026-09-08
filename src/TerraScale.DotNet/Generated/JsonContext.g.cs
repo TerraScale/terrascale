@@ -54,6 +54,8 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(HealthResponse))]
 [JsonSerializable(typeof(HistoryResponse))]
 [JsonSerializable(typeof(ImportJob))]
+[JsonSerializable(typeof(IReadOnlyList<ImportJob>))]
+ [JsonSerializable(typeof(EmptyImportRequest))]
 [JsonSerializable(typeof(Increment))]
 [JsonSerializable(typeof(IndexCreatedResponse))]
 [JsonSerializable(typeof(IndexDescriptor))]

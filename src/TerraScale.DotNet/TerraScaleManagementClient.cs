@@ -13,6 +13,7 @@ public sealed class TerraScaleManagementClient
         Collections = client.Collections;
         Backups = client.Backups;
         Exports = new(client);
+        Imports = new(client);
         Usage = new(client);
         Schema = new(client);
         Indexes = new(client);
@@ -23,6 +24,7 @@ public sealed class TerraScaleManagementClient
     public TerraScaleCollectionsClient Collections { get; }
     public TerraScaleBackupsClient Backups { get; }
     public TerraScaleManagementExportsClient Exports { get; }
+    public TerraScaleManagementImportsClient Imports { get; }
     public TerraScaleUsageClient Usage { get; }
     public TerraScaleSchemaClient Schema { get; }
     public TerraScaleIndexesClient Indexes { get; }
