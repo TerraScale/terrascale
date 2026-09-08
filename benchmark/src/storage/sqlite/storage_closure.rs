@@ -78,6 +78,12 @@ pub(super) fn close(
     let observed = super::accounting::byte_millis(connection, tenant, start, end)?;
     let storage_intervals =
         super::storage_intervals::observe(connection, tenant, start_sql, end_sql)?;
+    // The accounting ledger is local to this database. Freeze the regional
+    // multiplier into the closure exactly once, before carrying the
+    // sub-second remainder into the next window.
+    let observed = observed
+        .checked_mul(u128::from(selected_regions))
+        .ok_or(())?;
     let byte_millis = observed
         .checked_add(
             u128::try_from(previous.map_or(0, |(_, remainder)| remainder)).map_err(|_| ())?,
@@ -163,7 +169,7 @@ mod tests {
             transaction.commit().unwrap();
             receipt
         };
-        assert_eq!(receipt.byte_seconds(), 1);
+        assert_eq!(receipt.byte_seconds(), 4);
         let transaction = connection.transaction().unwrap();
         assert_eq!(close(&transaction, scope.clone(), 3, window).unwrap(), receipt);
         assert!(
@@ -172,7 +178,7 @@ mod tests {
         );
         let next = close(&transaction, scope, 3, MeasurementWindow::interval(1500, 2000).unwrap())
             .unwrap();
-        assert_eq!(next.byte_seconds(), 2);
+        assert_eq!(next.byte_seconds(), 5);
         transaction.commit().unwrap();
         assert_eq!(
             connection
@@ -294,7 +300,7 @@ mod tests {
             totals.push(receipt.byte_seconds());
             transaction.commit().unwrap();
         }
-        assert_eq!(totals, vec![20, 10]);
-        assert_eq!(totals.iter().sum::<u128>(), 30);
+        assert_eq!(totals, vec![40, 20]);
+        assert_eq!(totals.iter().sum::<u128>(), 60);
     }
 }

@@ -708,6 +708,17 @@ fn backup_cancellation_leaves_no_usable_partial_recovery_point() {
 }
 
 #[test]
+fn throttled_read_returns_cancelled_before_waiting_for_next_window() {
+    let token = Cancellation::new();
+    let mut budget = super::ReadBudget::new(Some(1));
+
+    budget.spend(Some(&token)).expect("first read fits the window");
+    token.cancel();
+
+    assert_eq!(budget.spend(Some(&token)), Err(BackupError::Cancelled));
+}
+
+#[test]
 fn backup_admits_one_job_and_rejects_a_concurrent_attempt_with_a_typed_error() {
     let (_dir, engine) = open_engine("admission");
     let engine = Arc::new(engine);

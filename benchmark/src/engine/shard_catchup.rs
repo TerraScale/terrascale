@@ -150,7 +150,12 @@ fn range_publication(
         // target would reject later target transactions against source routes;
         // copying target identity/proof would overwrite the new split owner.
         metadata.retain(|entry| {
-            !["control:shard-route/v1/", "control:shard-split/v1/", "control:shard-target/v1/"]
+            ![
+                "control:shard-route/v1/",
+                "control:shard-split/v1/",
+                "control:shard-target/v1/",
+                "control:shard-file/v1/",
+            ]
                 .iter()
                 .any(|prefix| entry.key.starts_with(prefix))
         });
@@ -213,6 +218,7 @@ mod tests {
             "control:shard-route/v1/source",
             "control:shard-split/v1/source",
             "control:shard-target/v1/identity",
+            "control:shard-file/v1/source",
             "retained-control",
         ] {
             transaction.put_private_metadata(key, DocumentValue::String(key.to_owned())).unwrap();

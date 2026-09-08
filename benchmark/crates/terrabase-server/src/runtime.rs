@@ -243,6 +243,19 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
     })?;
     let production = &effective;
 
+    // An accepted placement is only launchable when the public data plane is
+    // configured. Pending placement control may run without it while waiting
+    // for acceptance, but do not open durable member resources only to reject
+    // the admitted runtime later in `serve_admitted_production`.
+    if config.public_api.is_none() {
+        return Err(Box::new(DaemonError::ProductionStartup(
+            ProductionStartupError::Component(crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::PublicApi,
+                detail: "production public API configuration missing",
+            }),
+        )));
+    }
+
     // This is the production storage boundary. It opens every enabled
     // database below one root and verifies the route and placement catalogs;
     // it must happen before a listener is allowed to claim readiness.

@@ -4362,6 +4362,50 @@ fn execute_only_sql_preserves_parameter_slots_aliases_and_metadata() {
 }
 
 #[test]
+fn execute_only_sql_input_budget_is_scoped_to_referenced_relations() {
+    let (dir, engine) = open_engine("sql-relation-input-budget");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "seed-users",
+        vec![
+            object_document("young", "users", &[("age", DocumentValue::Integer(12))]),
+            object_document("adult", "users", &[("age", DocumentValue::Integer(42))]),
+        ],
+    );
+    let oversized: Vec<_> = (0..=super::sql_execute::MAX_SQL_INPUT_DOCUMENTS)
+        .map(|index| object_document(&format!("archive-{index}"), "archive", &[]))
+        .collect();
+    commit_documents(&engine, &tenant_scope, "seed-archive", oversized);
+
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let selective = store
+        .compile(QueryInput::sql(
+            SqlQueryText::try_new("SELECT count(*) AS total FROM users WHERE age >= 18")
+                .expect("valid SQL"),
+        ))
+        .expect("compiles");
+    let result = store.execute(&selective, &snapshot).expect("unrelated rows do not reject query");
+    assert_eq!(result.rows().len(), 1);
+    assert_eq!(result.rows()[0].projected()[0].1, DocumentValue::Integer(1));
+
+    let oversized_plan = store
+        .compile(QueryInput::sql(
+            SqlQueryText::try_new("SELECT count(*) AS total FROM archive").expect("valid SQL"),
+        ))
+        .expect("compiles");
+    assert_eq!(
+        store.execute(&oversized_plan, &snapshot).unwrap_err(),
+        QueryError::CandidateBoundExceeded,
+        "the input budget still rejects an oversized referenced relation"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn index_tenant_observations_use_the_executed_snapshot_scope() {
     let (dir, engine) = open_engine("index-tenant-observations");
     let a = scope(&engine, "tenant-a");

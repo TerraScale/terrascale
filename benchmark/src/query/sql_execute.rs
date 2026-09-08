@@ -153,10 +153,11 @@ pub(crate) fn execute(
         .progress_handler(SQL_PROGRESS_INTERVAL, Some(move || progress_control.progress()))
         .map_err(|_| QueryError::StorageFailure)?;
     let transaction = connection.unchecked_transaction().map_err(|_| QueryError::StorageFailure)?;
-    check_input_bounds(
+    check_relation_input_bounds(
         &transaction,
         snapshot.tenant().as_str(),
         snapshot.sequence().get(),
+        &runtime.tables,
         &control,
     )?;
     create_collection_views(
@@ -520,6 +521,56 @@ fn check_input_bounds(
         || usize::try_from(bytes).unwrap_or(usize::MAX) > MAX_SQL_INPUT_BYTES
     {
         return Err(QueryError::CandidateBoundExceeded);
+    }
+    control.check()
+}
+
+/// Applies the SQL input budget to the relations the statement can actually
+/// read.  The execute-only adapter has no typed predicate plan to use for
+/// candidate narrowing, but it does know the validated relation list.  Keep
+/// the guard relation-scoped so a large unrelated collection in the same
+/// tenant cannot reject a small query.  The window is evaluated before the
+/// live/expiry filter, which preserves the latest-version semantics of the
+/// collection views and avoids counting a superseded version as input.
+fn check_relation_input_bounds(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &str,
+    sequence: u64,
+    tables: &[String],
+    control: &SqlControl,
+) -> Result<(), QueryError> {
+    let sequence = i64::try_from(sequence).map_err(|_| QueryError::CandidateBoundExceeded)?;
+    let mut documents = 0usize;
+    let mut bytes = 0usize;
+    for collection in tables {
+        control.check()?;
+        let (relation_documents, relation_bytes) = transaction
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(body) + LENGTH(id) + LENGTH(collection)), 0)
+                 FROM (
+                     SELECT id, collection, body, deleted, expires_at,
+                            ROW_NUMBER() OVER (PARTITION BY id ORDER BY commit_seq DESC) AS row_number
+                     FROM documents
+                     WHERE tenant = ?1 AND collection = ?2 AND commit_seq <= ?3
+                 )
+                 WHERE row_number = 1 AND deleted = 0
+                   AND (expires_at IS NULL OR expires_at > ?4)",
+                rusqlite::params![tenant, collection, sequence, unix_millis()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .map_err(|_| control.interrupted(QueryError::StorageFailure))?;
+        if relation_documents < 0 || relation_bytes < 0 {
+            return Err(QueryError::StorageFailure);
+        }
+        documents = documents
+            .checked_add(usize::try_from(relation_documents).unwrap_or(usize::MAX))
+            .ok_or(QueryError::CandidateBoundExceeded)?;
+        bytes = bytes
+            .checked_add(usize::try_from(relation_bytes).unwrap_or(usize::MAX))
+            .ok_or(QueryError::CandidateBoundExceeded)?;
+        if documents > MAX_SQL_INPUT_DOCUMENTS || bytes > MAX_SQL_INPUT_BYTES {
+            return Err(QueryError::CandidateBoundExceeded);
+        }
     }
     control.check()
 }

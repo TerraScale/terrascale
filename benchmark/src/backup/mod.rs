@@ -1090,8 +1090,11 @@ impl RunState {
 
     /// Spends one source read through the throttle budget.
     fn spend_read(&mut self) -> Result<(), BackupError> {
+        if self.cancellation.as_ref().is_some_and(|token| token.is_cancelled()) {
+            return Err(BackupError::Cancelled);
+        }
         self.source_reads += 1;
-        self.budget.spend()
+        self.budget.spend(self.cancellation.as_deref())
     }
 }
 
@@ -1937,12 +1940,15 @@ impl ReadBudget {
     /// # Errors
     ///
     /// Returns [`BackupError::Throttled`] when the bound is zero.
-    fn spend(&mut self) -> Result<(), BackupError> {
+    fn spend(&mut self, cancellation: Option<&Cancellation>) -> Result<(), BackupError> {
         let Some(rate) = self.rate else {
             return Ok(());
         };
         if rate == 0 {
             return Err(BackupError::Throttled);
+        }
+        if cancellation.is_some_and(Cancellation::is_cancelled) {
+            return Err(BackupError::Cancelled);
         }
         let now = Instant::now();
         let window_expired = self
@@ -1959,8 +1965,11 @@ impl ReadBudget {
         }
         let start = self.window_start.unwrap_or(now);
         let wake = start + Duration::from_secs(1);
-        if wake > now {
-            std::thread::sleep(wake - now);
+        while let Some(remaining) = wake.checked_duration_since(Instant::now()) {
+            if cancellation.is_some_and(Cancellation::is_cancelled) {
+                return Err(BackupError::Cancelled);
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(10)));
         }
         self.window_start = Some(Instant::now());
         self.spent = 1;
