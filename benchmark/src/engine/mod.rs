@@ -1205,7 +1205,7 @@ pub struct Engine {
     /// serializing on the storage mutex. Lifecycle mutations refresh it after
     /// their durable operation succeeds; a missing entry falls back to the
     /// authoritative storage read.
-    pub(crate) lifecycle_paused: Mutex<BTreeMap<String, bool>>,
+    pub(crate) lifecycle_paused: Mutex<BTreeMap<String, (u64, bool)>>,
     /// One bounded registry shared by the engine, storage, TBEP, probes, and
     /// Prometheus adapter for this process-local engine instance.
     metrics: Arc<MetricsRegistry>,
@@ -5325,9 +5325,6 @@ impl Transaction<'_> {
             return CommitOutcome::Rejected(CommitError::StorageFailure);
         }
         let engine = self.engine;
-        if engine.lifecycle_is_paused(&self.scope).unwrap_or(true) {
-            return CommitOutcome::Rejected(CommitError::StorageFailure);
-        }
         let started = Instant::now();
         let metrics = Arc::clone(&self.engine.metrics);
         // Keep source authority locked through target publication and sync.
@@ -5379,6 +5376,12 @@ impl Transaction<'_> {
         } else {
             None
         };
+        // Pause takes the exclusive side of this barrier and refreshes the
+        // cache before releasing it. Check after acquiring the read side so
+        // an admission cannot race through a just-completed pause.
+        if engine.lifecycle_is_paused(&self.scope).unwrap_or(true) {
+            return CommitOutcome::Rejected(CommitError::StorageFailure);
+        }
         let outcome = if self.internal_maintenance {
             self.commit_unobserved(durability)
         } else {

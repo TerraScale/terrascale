@@ -118,19 +118,28 @@ impl Engine {
     /// Returns an error on a scope mismatch or storage failure.
     pub fn lifecycle_state(&self, scope: &TenantScope) -> Result<LifecycleState, LifecycleError> {
         let state = self.lifecycle_command(scope, LifecycleCommand::Read)?;
-        if let Ok(mut cache) = self.lifecycle_paused.lock() {
-            cache.insert(scope.tenant().as_str().to_owned(), state.paused);
-        }
+        self.cache_lifecycle_pause(scope, &state);
         Ok(state)
     }
 
     pub(crate) fn lifecycle_is_paused(&self, scope: &TenantScope) -> Result<bool, LifecycleError> {
         if let Ok(cache) = self.lifecycle_paused.lock()
-            && let Some(paused) = cache.get(scope.tenant().as_str())
+            && let Some((_, paused)) = cache.get(scope.tenant().as_str())
         {
             return Ok(*paused);
         }
         Ok(self.lifecycle_state(scope)?.paused)
+    }
+
+    fn cache_lifecycle_pause(&self, scope: &TenantScope, state: &LifecycleState) {
+        if let Ok(mut cache) = self.lifecycle_paused.lock() {
+            let entry = cache.entry(scope.tenant().as_str().to_owned()).or_insert((0, false));
+            // A concurrent authoritative read may finish after a newer pause
+            // or resume; never let that older observation replace the fence.
+            if state.generation >= entry.0 {
+                *entry = (state.generation, state.paused);
+            }
+        }
     }
     /// Caller must authenticate the database owner before changing protection.
     ///
@@ -188,9 +197,7 @@ impl Engine {
                 scope.tenant(),
                 LifecycleCommand::Pause(operation_id.to_owned()),
             )?;
-        if let Ok(mut cache) = self.lifecycle_paused.lock() {
-            cache.insert(scope.tenant().as_str().to_owned(), state.state.paused);
-        }
+        self.cache_lifecycle_pause(scope, &state.state);
         Ok(state)
     }
 
@@ -212,9 +219,7 @@ impl Engine {
                 scope.tenant(),
                 LifecycleCommand::Resume(operation_id.to_owned()),
             )?;
-        if let Ok(mut cache) = self.lifecycle_paused.lock() {
-            cache.insert(scope.tenant().as_str().to_owned(), state.state.paused);
-        }
+        self.cache_lifecycle_pause(scope, &state.state);
         Ok(state)
     }
     fn lifecycle_command(
