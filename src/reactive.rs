@@ -3,8 +3,7 @@
 //! `.subscribe()` uses bounded HTTP long-polling on `sync.api.` by default;
 //! snapshot and log bodies are strict indexed `terrascale.sync.v1.msgpack`
 //! envelopes with the manifest's allocation bounds.
-//! [`Transport::WebSocket`] remains an explicit boundary and fails closed in
-//! this HTTP-only crate until a WebSocket transport is published. `.execute()`
+//! [`Transport::WebSocket`] opts into direct member delivery. `.execute()`
 //! is "subscribe once". A checkpoint is an opaque authorized-view position;
 //! any mismatch returns a typed [`ResetReason`] with a fresh authorized
 //! snapshot (GOAL D-46).
@@ -282,6 +281,7 @@ impl Default for PollOptions {
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
+    notification: Arc<tokio::sync::Notify>,
 }
 
 impl CancellationToken {
@@ -295,6 +295,7 @@ impl CancellationToken {
     /// polling operation, and no retry is started afterwards.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
+        self.notification.notify_waiters();
     }
 
     /// Whether cancellation was requested.
@@ -304,8 +305,16 @@ impl CancellationToken {
     }
 
     pub(crate) async fn cancelled(&self) {
-        while !self.is_cancelled() {
-            tokio::task::yield_now().await;
+        loop {
+            // Register before checking state so cancellation cannot be lost
+            // between the check and suspension, including with cloned tokens.
+            let notified = self.notification.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.await;
         }
     }
 }
@@ -2290,4 +2299,44 @@ pub(crate) fn cancelled_error() -> Error {
         "cancelled",
         "The reactive poll was cancelled.",
     )
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::CancellationToken;
+    use futures_util::task::{waker, ArcWake};
+    use std::future::Future;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::task::{Context, Poll};
+
+    #[derive(Default)]
+    struct WakeCount(AtomicUsize);
+    impl ArcWake for WakeCount {
+        fn wake_by_ref(this: &Arc<Self>) {
+            this.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn cancellation_sleeps_and_wakes_every_clone_without_lost_notification() {
+        let token = CancellationToken::new();
+        let clone = token.clone();
+        let wakes = Arc::new(WakeCount::default());
+        let waker = waker(wakes.clone());
+        let mut context = Context::from_waker(&waker);
+        let mut first = Box::pin(token.cancelled());
+        let mut second = Box::pin(clone.cancelled());
+        assert_eq!(first.as_mut().poll(&mut context), Poll::Pending);
+        assert_eq!(second.as_mut().poll(&mut context), Poll::Pending);
+        assert_eq!(wakes.0.load(Ordering::SeqCst), 0);
+        token.cancel();
+        assert_eq!(wakes.0.load(Ordering::SeqCst), 2);
+        assert_eq!(first.as_mut().poll(&mut context), Poll::Ready(()));
+        assert_eq!(second.as_mut().poll(&mut context), Poll::Ready(()));
+        assert_eq!(
+            Box::pin(token.cancelled()).as_mut().poll(&mut context),
+            Poll::Ready(())
+        );
+    }
 }

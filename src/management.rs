@@ -10,10 +10,6 @@ use crate::regions::RegionCode;
 use crate::schema::CollectionSchema;
 use crate::transport::{Method, Request};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
 
 const DEFAULT_PAGE_SIZE: u32 = 100;
 const MAX_PAGE_SIZE: u32 = 1_000;
@@ -51,22 +47,7 @@ impl PageOptions {
     }
 }
 
-/// Cooperative cancellation checked before and during a management request.
-#[derive(Debug, Clone, Default)]
-pub struct CancellationToken(Arc<AtomicBool>);
-impl CancellationToken {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
-    }
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
-    }
-}
+pub use crate::reactive::CancellationToken;
 
 /// Options for retry-safe management mutations.
 #[derive(Debug, Clone, Default)]
@@ -187,9 +168,7 @@ async fn send_with_options<T: DeserializeOwned>(
     }
 }
 async fn wait_cancelled(token: CancellationToken) {
-    while !token.is_cancelled() {
-        tokio::task::yield_now().await;
-    }
+    token.cancelled().await;
 }
 fn database_url(shared: &SharedClient, name: &str) -> Result<String> {
     Ok(format!(
@@ -229,8 +208,6 @@ pub struct DatabaseRecord {
 pub struct DatabaseListResponse {
     pub databases: Vec<DatabaseRecord>,
 }
-/// Compatibility name from the pre-contract Rust draft.
-pub type ProjectDatabase = DatabaseRecord;
 
 /// Database creation distinguishes a created database from accepted provisioning.
 #[derive(Debug, Clone, PartialEq)]
@@ -280,14 +257,6 @@ pub struct CreateDatabaseRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub residency: Option<String>,
 }
-/// Compatibility request retained only to produce a useful validation error;
-/// placement is required by the current contract.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CreateDatabase {
-    pub name: String,
-}
-pub type CreateDatabaseWithPlacement = CreateDatabaseRequest;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlacementLock {
     EuOnly,
@@ -422,17 +391,6 @@ impl Databases {
             body: None,
         };
         self.shared.send_typed(request).await
-    }
-    pub async fn create(
-        &self,
-        _request: CreateDatabase,
-        _project_id: Option<&str>,
-    ) -> Result<DatabaseRecord> {
-        Err(Error::new(
-            ErrorKind::Validation,
-            "placement_required",
-            "database creation requires an explicit placement; use CreateDatabaseRequest.",
-        ))
     }
     pub async fn create_with_placement(
         &self,

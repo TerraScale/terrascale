@@ -41,3 +41,10 @@ and preserves it when another Region is advertised.
 runs Clippy with warnings denied, and runs tests. Supply an immutable
 `CONTRACT_URL` with `CONTRACT_ARCHIVE_SHA256`, or an explicit `CONTRACT_SOURCE`
 for local producer development. Missing provenance fails the check.
+
+Cancellation tokens interrupt local waiting, including an in-flight request or
+retry delay. They do not prove that a submitted mutation was rolled back; retain
+its operation or idempotency identity and reconcile durable server state before
+resubmitting. Operation discovery reports the producer’s explicit `covered_kinds`
+and cancellation capability; it does not imply that every asynchronous owner
+is represented or remotely cancellable.
