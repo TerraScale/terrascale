@@ -208,12 +208,19 @@ export class TerraScaleHttp {
             const repaired = placementRegion(response.headers);
             if (repaired !== undefined && repaired !== (requestRegionHint ?? this.#pinnedRegion)) {
               this.#pinnedRegion = repaired;
-              repaired421 = true;
-              requestRegionHint = repaired;
-              // Placement is authoritative for this one replay, including
-              // when the original request supplied a per-call hint.
-              attempt++;
-              continue;
+              // A 421 advertises placement, but does not prove that the
+              // original request had no effect. Only replay safe reads or a
+              // mutation carrying the same stable identity used on the first
+              // attempt. Unkeyed mutations surface the response after learning
+              // the pin so a later explicit retry can choose the right member.
+              if (canRepairPlacement(options.method, idempotencyKey, options.retryableRead)) {
+                repaired421 = true;
+                requestRegionHint = repaired;
+                // Placement is authoritative for this one replay, including
+                // when the original request supplied a per-call hint.
+                attempt++;
+                continue;
+              }
             }
           }
 
@@ -444,6 +451,14 @@ function validateInternalHeaders(headers: HeadersInit | undefined): void {
 
 function isMutation(method: TerraScaleHttpMethod): boolean {
   return method === "DELETE" || method === "PATCH" || method === "POST" || method === "PUT";
+}
+
+function canRepairPlacement(
+  method: TerraScaleHttpMethod,
+  idempotencyKey: string | undefined,
+  retryableRead = false,
+): boolean {
+  return method === "GET" || (retryableRead && method === "POST") || idempotencyKey !== undefined;
 }
 
 const retryableStatuses = new Set([408, 429, 500, 502, 503, 504]);
