@@ -48,6 +48,21 @@ type AuthPageQuery struct {
 	Offset     uint32          `json:"offset"`
 	Limit      uint32          `json:"limit"`
 }
+type AuthPredicateOnly struct {
+	Model      string          `json:"model"`
+	Predicates []AuthPredicate `json:"predicates"`
+}
+type AuthPredicateUpdate struct {
+	Model      string          `json:"model"`
+	Predicates []AuthPredicate `json:"predicates"`
+	Update     AuthRecord      `json:"update"`
+}
+type AuthIncrement struct {
+	Model      string             `json:"model"`
+	Predicates []AuthPredicate    `json:"predicates"`
+	Increment  map[string]float64 `json:"increment"`
+	Set        AuthRecord         `json:"set,omitempty"`
+}
 
 // AuthPersistenceOptions always names one stable operation identity. TransactionID
 // binds writes/findPage to an existing transaction; record GET is quorum-read only.
@@ -122,6 +137,21 @@ func (a *AuthPersistenceClient) ConsumeOne(ctx context.Context, database string,
 	}
 	return a.mutate(ctx, database, "consumeOne", request.Model, request, options)
 }
+func (a *AuthPersistenceClient) ConsumeMatching(ctx context.Context, database string, request AuthPredicateOnly, options AuthPersistenceOptions) (*AuthResult, error) {
+	return a.mutate(ctx, database, "consumeMatching", request.Model, request, options)
+}
+func (a *AuthPersistenceClient) Count(ctx context.Context, database string, request AuthPredicateOnly, options AuthPersistenceOptions) (*AuthResult, error) {
+	return a.mutate(ctx, database, "count", request.Model, request, options)
+}
+func (a *AuthPersistenceClient) DeleteMany(ctx context.Context, database string, request AuthPredicateOnly, options AuthPersistenceOptions) (*AuthResult, error) {
+	return a.mutate(ctx, database, "deleteMany", request.Model, request, options)
+}
+func (a *AuthPersistenceClient) DeleteOne(ctx context.Context, database string, request AuthPredicateOnly, options AuthPersistenceOptions) (*AuthResult, error) {
+	return a.mutate(ctx, database, "deleteOne", request.Model, request, options)
+}
+func (a *AuthPersistenceClient) IncrementOne(ctx context.Context, database string, request AuthIncrement, options AuthPersistenceOptions) (*AuthResult, error) {
+	return a.mutate(ctx, database, "incrementOne", request.Model, request, options)
+}
 func (a *AuthPersistenceClient) Index(ctx context.Context, database string, request AuthUniqueIndex, options AuthPersistenceOptions) (*AuthResult, error) {
 	if len(request.Fields) == 0 {
 		return nil, &ValidationError{Field: "fields", Message: "must not be empty"}
@@ -136,6 +166,12 @@ func (a *AuthPersistenceClient) FindPage(ctx context.Context, database string, r
 		request.Predicates = []AuthPredicate{}
 	}
 	return a.mutate(ctx, database, "findPage", request.Model, request, options)
+}
+func (a *AuthPersistenceClient) UpdateMany(ctx context.Context, database string, request AuthPredicateUpdate, options AuthPersistenceOptions) (*AuthResult, error) {
+	return a.mutate(ctx, database, "updateMany", request.Model, request, options)
+}
+func (a *AuthPersistenceClient) UpdateOne(ctx context.Context, database string, request AuthPredicateUpdate, options AuthPersistenceOptions) (*AuthResult, error) {
+	return a.mutate(ctx, database, "updateOne", request.Model, request, options)
 }
 func (a *AuthPersistenceClient) FindOne(ctx context.Context, database, model, id string) (*AuthResult, error) {
 	if err := managementContext(ctx); err != nil {

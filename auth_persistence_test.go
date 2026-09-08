@@ -75,3 +75,65 @@ func TestAuthPersistenceWireAndUnknownCommit(t *testing.T) {
 		t.Fatalf("uncertain commit replayed: %d calls", calls)
 	}
 }
+
+func TestAuthPersistenceGeneratedMutationRoutes(t *testing.T) {
+	var path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"matched":true}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL, MaxRetryAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	predicate := AuthPredicateOnly{Model: "users", Predicates: []AuthPredicate{}}
+	update := AuthPredicateUpdate{Model: "users", Predicates: []AuthPredicate{}, Update: AuthRecord{"active": json.RawMessage(`true`)}}
+	increment := AuthIncrement{Model: "users", Predicates: []AuthPredicate{}, Increment: map[string]float64{"logins": 1}}
+	options := AuthPersistenceOptions{IdempotencyKey: "auth-key"}
+	cases := []struct {
+		name string
+		call func() error
+		want string
+	}{
+		{"consume matching", func() error {
+			_, err := client.AuthPersistence.ConsumeMatching(t.Context(), "demo", predicate, options)
+			return err
+		}, "/api/v1/databases/demo/auth/consumeMatching"},
+		{"count", func() error {
+			_, err := client.AuthPersistence.Count(t.Context(), "demo", predicate, options)
+			return err
+		}, "/api/v1/databases/demo/auth/count"},
+		{"delete many", func() error {
+			_, err := client.AuthPersistence.DeleteMany(t.Context(), "demo", predicate, options)
+			return err
+		}, "/api/v1/databases/demo/auth/deleteMany"},
+		{"delete one", func() error {
+			_, err := client.AuthPersistence.DeleteOne(t.Context(), "demo", predicate, options)
+			return err
+		}, "/api/v1/databases/demo/auth/deleteOne"},
+		{"increment one", func() error {
+			_, err := client.AuthPersistence.IncrementOne(t.Context(), "demo", increment, options)
+			return err
+		}, "/api/v1/databases/demo/auth/incrementOne"},
+		{"update many", func() error {
+			_, err := client.AuthPersistence.UpdateMany(t.Context(), "demo", update, options)
+			return err
+		}, "/api/v1/databases/demo/auth/updateMany"},
+		{"update one", func() error {
+			_, err := client.AuthPersistence.UpdateOne(t.Context(), "demo", update, options)
+			return err
+		}, "/api/v1/databases/demo/auth/updateOne"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); err != nil {
+				t.Fatal(err)
+			}
+			if path != tc.want {
+				t.Fatalf("route = %q, want %q", path, tc.want)
+			}
+		})
+	}
+}

@@ -325,11 +325,24 @@ def copy_conformance(source: Path, destination: Path) -> None:
             shutil.copyfile(source_file, mirror)
 
 
-def ref_name(schema: object) -> str:
+def schema_type(schema: object) -> str:
     if isinstance(schema, dict):
         reference = schema.get("$ref")
         if isinstance(reference, str) and reference.startswith("#/components/schemas/"):
             return reference.rsplit("/", 1)[-1]
+        kind = schema.get("type")
+        if kind == "array":
+            return "[]" + (schema_type(schema.get("items", {})) or "any")
+        if isinstance(kind, list):
+            types = [schema_type({"type": item}) for item in kind if item != "null"]
+            return types[0] if types else "any"
+        return {
+            "string": "string",
+            "integer": "int64",
+            "number": "float64",
+            "boolean": "bool",
+            "object": "map[string]any",
+        }.get(kind, "any")
     return ""
 
 
@@ -358,7 +371,7 @@ def openapi_metadata(openapi: dict) -> tuple[list[dict], list[dict], list[dict]]
             if isinstance(request, dict) and isinstance(request.get("content"), dict):
                 for content in request["content"].values():
                     if isinstance(content, dict):
-                        request_model = ref_name(content.get("schema"))
+                        request_model = schema_type(content.get("schema"))
                         if request_model:
                             break
             response_model = ""
@@ -371,7 +384,7 @@ def openapi_metadata(openapi: dict) -> tuple[list[dict], list[dict], list[dict]]
                     if isinstance(response, dict) and isinstance(response.get("content"), dict):
                         for content in response["content"].values():
                             if isinstance(content, dict):
-                                response_model = ref_name(content.get("schema"))
+                                response_model = schema_type(content.get("schema"))
                                 if response_model:
                                     break
                     if response_model:

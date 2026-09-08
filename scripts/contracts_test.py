@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from contracts import unpack_url
+from contracts import openapi_metadata, unpack_url
 
 
 class _Response:
@@ -84,6 +84,26 @@ class ArchiveBoundaryTests(unittest.TestCase):
         entries = [(f"entry-{index}", tarfile.DIRTYPE, b"") for index in range(257)]
         self.assert_rejected(archive(*entries))
 
+
+class OpenApiMetadataTests(unittest.TestCase):
+    def test_resolves_inline_array_and_scalar_success_schemas(self):
+        document = {
+            "components": {"schemas": {"ImportJob": {"type": "object"}}},
+            "paths": {
+                "/imports": {"get": {"operationId": "list_imports", "responses": {
+                    "200": {"content": {"application/json": {"schema": {
+                        "type": "array", "items": {"$ref": "#/components/schemas/ImportJob"}
+                    }}}}
+                }}},
+                "/exports/{member}": {"get": {"operationId": "download_export", "responses": {
+                    "200": {"content": {"application/octet-stream": {"schema": {"type": "string"}}}}
+                }}},
+            },
+        }
+        operations, _, _ = openapi_metadata(document)
+        by_id = {operation["operationID"]: operation for operation in operations}
+        self.assertEqual(by_id["list_imports"]["responseModel"], "[]ImportJob")
+        self.assertEqual(by_id["download_export"]["responseModel"], "string")
 
 if __name__ == "__main__":
     unittest.main()
