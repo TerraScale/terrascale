@@ -14,7 +14,7 @@ use terrabase_tbep::member_host::MemberHost;
 /// One published database bound to its existing Member storage lease.
 pub struct AdmittedDatabase {
     /// Lock-free high-water of fully authorized native requests.
-    pub activity: terrabase::engine::lifecycle_state::AuthorizedActivity,
+    pub activity: Arc<terrabase::engine::lifecycle_state::AuthorizedActivity>,
     /// Persisted authenticated immutable ownership and placement.
     pub record: AdmissionRecord,
     /// The same engine lease used by Member admission and replication.
@@ -404,7 +404,9 @@ impl AdmittedDatabaseRegistry {
             Arc::new(AdmittedDatabase {
                 record,
                 host,
-                activity: terrabase::engine::lifecycle_state::AuthorizedActivity::default(),
+                activity: Arc::new(
+                    terrabase::engine::lifecycle_state::AuthorizedActivity::default(),
+                ),
             }),
         );
         Ok(())
@@ -497,12 +499,23 @@ impl AdmittedDatabaseRegistry {
         if !serving.contains(database) {
             return Ok(None);
         }
-        let entry = self
-            .databases
-            .read()
-            .map_err(|_| "admitted registry unavailable")?
-            .get(database)
-            .cloned();
+        let mut databases = self.databases.write().map_err(|_| "admitted registry unavailable")?;
+        if let Some(entry) = databases.get(database) {
+            if let Some(host) = entry
+                .host
+                .refreshed_serving_host()
+                .map_err(|_| "shard serving refresh unavailable")?
+            {
+                let replacement = Arc::new(AdmittedDatabase {
+                    activity: entry.activity.clone(),
+                    record: entry.record.clone(),
+                    host: Arc::new(host),
+                });
+                databases.insert(database.to_owned(), replacement);
+            }
+        }
+        let entry = databases.get(database).cloned();
+        drop(databases);
         if let Some(entry) = &entry {
             let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
                 .map_err(|_| "invalid admitted tenant")?;

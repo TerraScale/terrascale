@@ -309,12 +309,12 @@ impl UsageAdmissionJournal {
             .map_err(|_| "admission transaction unavailable")?;
         tx.execute(
             "INSERT OR IGNORE INTO operation_admissions(tenant,project,database_id,operation,payload_digest,accepted_at_millis) VALUES(?1,?2,?3,?4,?5,?6)",
-            params![grant.organization_id, project, grant.database_id, grant.operation_id,
+            params![grant.organization_id, project, grant.database_id, grant.refill_operation_id,
                 allocation.payload_digest().as_slice(), now],
         ).map_err(|_| "admission persistence failed")?;
         let (digest, accepted): (Vec<u8>, i64) = tx.query_row(
             "SELECT payload_digest,accepted_at_millis FROM operation_admissions WHERE tenant=?1 AND project=?2 AND database_id=?3 AND operation=?4",
-            params![grant.organization_id, project, grant.database_id, grant.operation_id],
+            params![grant.organization_id, project, grant.database_id, grant.refill_operation_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(|_| "admission persistence failed")?;
         if digest != allocation.payload_digest().as_slice() {
@@ -359,7 +359,7 @@ impl UsageAdmissionJournal {
                 .payload,
         )
         .map_err(|_| "allocation payload invalid")?;
-        if envelope.grant.operation_id != operation_id || envelope.grant.database_id != database_id
+        if envelope.grant.refill_operation_id != operation_id || envelope.grant.database_id != database_id
         {
             return Err("allocation identity conflict".into());
         }

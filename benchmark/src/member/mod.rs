@@ -1376,8 +1376,8 @@ impl Member {
             location,
             engine,
             route_registry,
-            _global: global,
-            _local: local,
+            _global: Arc::new(global),
+            _local: Arc::new(local),
             restore_paths: Arc::clone(&self.inner.restore_paths),
         })
     }
@@ -1609,8 +1609,8 @@ pub struct DatabaseLease {
     location: PathBuf,
     engine: Arc<Engine>,
     route_registry: Arc<shard_registry::RouteParticipantRegistry>,
-    _global: AdmissionPermit,
-    _local: AdmissionPermit,
+    _global: Arc<AdmissionPermit>,
+    _local: Arc<AdmissionPermit>,
     restore_paths: Arc<Mutex<BTreeSet<PathBuf>>>,
 }
 
@@ -1665,6 +1665,30 @@ impl DatabaseLease {
 
     pub(crate) fn shared_engine(&self) -> Arc<Engine> {
         Arc::clone(&self.engine)
+    }
+
+    /// Replaces a stale route snapshot while sharing its existing admission permits.
+    pub fn refreshed_serving_lease(&self) -> Result<Option<Self>, crate::EngineError> {
+        if self.route_registry.is_current()? {
+            return Ok(None);
+        }
+        let tenant = self.route_registry.tenant_id();
+        let scope = self.engine.scope_for(tenant);
+        let route_registry =
+            shard_registry::RouteParticipantRegistry::load(self.engine.clone(), &scope)
+                .map_err(|_| crate::EngineError::StorageFailure)?;
+        if !route_registry.is_current()? {
+            return Err(crate::EngineError::Conflict);
+        }
+        Ok(Some(Self {
+            database: self.database.clone(),
+            location: self.location.clone(),
+            engine: self.engine.clone(),
+            route_registry,
+            _global: self._global.clone(),
+            _local: self._local.clone(),
+            restore_paths: self.restore_paths.clone(),
+        }))
     }
 
     /// Selects the physical participant shared by all supplied document IDs.
@@ -1766,7 +1790,10 @@ impl DatabaseLease {
             Ok(paths) => paths,
             Err(_) => return Err((self, MemberError::DatabaseBusy(database.clone()))),
         };
-        if self._local.counter.active() != 1 || !paths.insert(location.clone()) {
+        if self._local.counter.active() != 1
+            || Arc::strong_count(&self._local) != 1
+            || !paths.insert(location.clone())
+        {
             drop(paths);
             return Err((self, MemberError::DatabaseBusy(database)));
         }

@@ -2845,11 +2845,6 @@ async fn batch_documents(
         Ok(ids) => ids,
         Err(error) => return error,
     };
-    let engine = match host.engine_host().document_participant(&collection, &ids) {
-        Ok(engine) => engine,
-        Err(_) => return ApiError::control_unavailable().into_response(),
-    };
-    let scope = engine.scope_for(scope.tenant());
     let operation = match write_operation(&headers, "api-batch") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
@@ -2864,6 +2859,11 @@ async fn batch_documents(
         Ok(None) => {}
         Err(error) => return error.into_response(),
     }
+    let engine = match host.engine_host().document_participant(&collection, &ids) {
+        Ok(engine) => engine,
+        Err(_) => return ApiError::control_unavailable().into_response(),
+    };
+    let scope = engine.scope_for(scope.tenant());
     let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
@@ -4007,12 +4007,15 @@ async fn put_document(
                     Err(error) => return document_request_error(error).into_response(),
                 }
             } else {
-                match routed_live_revision(host, &scope, &collection, &id) {
+                match routed_live_revision(&host, &scope, &collection, &id) {
                     Ok(revision) => Some(revision),
                     Err(error) => return error.into_response(),
                 }
             };
-            document_write_response_with_token(session.session_token(), revision)
+            match document_write_response(&mut session, &collection, &id, revision) {
+                Ok(response) => response,
+                Err(error) => error.into_response(),
+            }
         }
         CommitOutcome::Rejected(terrabase::CommitError::Conflict) if create_only => {
             ApiError::precondition_failed("If-None-Match: * needs the document to be absent")
@@ -4210,7 +4213,7 @@ async fn patch_document(
                     Err(error) => return document_request_error(error).into_response(),
                 }
             } else {
-                match routed_live_revision(host, &scope, &collection, &id) {
+                match routed_live_revision(&host, &scope, &collection, &id) {
                     Ok(revision) => Some(revision),
                     Err(error) => return error.into_response(),
                 }

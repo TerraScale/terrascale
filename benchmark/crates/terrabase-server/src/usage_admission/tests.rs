@@ -505,7 +505,7 @@ fn unsafe_usage_paths_are_refused() {
 #[test]
 fn allocation_retry_identity_ignores_randomized_signature() {
     let first = terrabase::usage::SignedAllocation {
-        payload: br#"{"grant":{"operation_id":"op"}}"#.to_vec(),
+        payload: br#"{"grant":{"refill_operation_id":"op"}}"#.to_vec(),
         signature: vec![1, 2, 3],
         key_id: "key".into(),
     };

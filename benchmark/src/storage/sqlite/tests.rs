@@ -416,6 +416,112 @@ fn journal_rows_keep_origin_counters_and_tombstones_across_reopen() {
 }
 
 #[test]
+fn origin_allocation_uses_each_durable_source_max_without_cross_scope_rows() {
+    let (dir, mut storage) = sqlite_store("origin-allocation-max-sources");
+    stored_sequence(&commit(
+        &mut storage,
+        "seed-origin",
+        vec![put(document("seed", "users", "seed"), ExpectedVersion::New)],
+    ));
+    let local_origin: String = storage
+        .raw_writer_connection()
+        .query_row("SELECT value FROM meta WHERE key = 'local_origin'", [], |row| row.get(0))
+        .expect("local origin");
+    {
+        let writer = storage.raw_writer_connection();
+        writer
+            .execute(
+                "INSERT INTO replication_publications
+                 (tenant, origin, origin_seq, hlc, operation, local_seq, committed_at, context, private_payload)
+                 VALUES ('tenant-a', 'other-origin', 100, 100, 'other', 701, 0, X'', X'')",
+                [],
+            )
+            .expect("other origin frontier");
+        writer
+            .execute(
+                "INSERT INTO replication_publications
+                 (tenant, origin, origin_seq, hlc, operation, local_seq, committed_at, context, private_payload)
+                 VALUES ('other-tenant', ?1, 100, 100, 'other-tenant', 702, 0, X'', X'')",
+                 [&local_origin],
+            )
+            .expect("other tenant frontier");
+        writer
+            .execute(
+                "UPDATE documents SET origin_seq = 10 WHERE tenant = 'tenant-a' AND origin = ?1",
+                [&local_origin],
+            )
+            .expect("document frontier");
+    }
+    let document_sequence = stored_sequence(&commit(
+        &mut storage,
+        "after-document-max",
+        vec![put(document("after", "users", "after"), ExpectedVersion::New)],
+    ));
+    let row = storage
+        .journal_rows(&tenant(), StorageSequence::new(0), 16)
+        .into_iter()
+        .find(|row| row.commit_sequence == document_sequence)
+        .expect("post-frontier journal row");
+    assert_eq!(row.origin, local_origin);
+    assert_eq!(row.origin_sequence, 11, "document maximum allocates the next sequence");
+    storage
+        .raw_writer_connection()
+        .execute(
+            "INSERT INTO origin_prefixes (tenant, origin, seq, hlc) VALUES ('tenant-a', ?1, 20, 20)",
+            [&local_origin],
+        )
+        .expect("prefix frontier");
+    let prefix_sequence = stored_sequence(&commit(
+        &mut storage,
+        "after-prefix-max",
+        vec![put(document("prefix", "users", "prefix"), ExpectedVersion::New)],
+    ));
+    let row = storage
+        .journal_rows(&tenant(), StorageSequence::new(0), 16)
+        .into_iter()
+        .find(|row| row.commit_sequence == prefix_sequence)
+        .expect("prefix journal row");
+    assert_eq!(row.origin_sequence, 21, "prefix maximum allocates the next sequence");
+    storage
+        .raw_writer_connection()
+        .execute(
+            "INSERT INTO replication_publications
+             (tenant, origin, origin_seq, hlc, operation, local_seq, committed_at, context, private_payload)
+             VALUES ('tenant-a', ?1, 30, 30, 'replicated', 700, 0, X'', X'')",
+            [&local_origin],
+        )
+        .expect("replication frontier");
+    let publication_sequence = stored_sequence(&commit(
+        &mut storage,
+        "after-publication-max",
+        vec![put(document("publication", "users", "publication"), ExpectedVersion::New)],
+    ));
+    let row = storage
+        .journal_rows(&tenant(), StorageSequence::new(0), 16)
+        .into_iter()
+        .find(|row| row.commit_sequence == publication_sequence)
+        .expect("publication journal row");
+    assert_eq!(row.origin_sequence, 31, "publication maximum allocates the next sequence");
+    drop(storage);
+    std::fs::remove_dir_all(dir).ok();
+
+    let (empty_dir, mut empty_storage) = sqlite_store("origin-allocation-max-empty");
+    let empty_sequence = stored_sequence(&commit(
+        &mut empty_storage,
+        "empty-origin",
+        vec![put(document("empty", "users", "empty"), ExpectedVersion::New)],
+    ));
+    let row = empty_storage
+        .journal_rows(&tenant(), StorageSequence::new(0), 16)
+        .into_iter()
+        .find(|row| row.commit_sequence == empty_sequence)
+        .expect("empty journal row");
+    assert_eq!(row.origin_sequence, 1, "empty sources start at sequence one");
+    drop(empty_storage);
+    std::fs::remove_dir_all(empty_dir).ok();
+}
+
+#[test]
 fn migration_backfills_local_origin_counter_without_global_identity() {
     let (dir, engine) = open_sqlite_engine("anti-entropy-migration");
     assert!(matches!(
@@ -876,6 +982,7 @@ fn intent(operation: &str, writes: Vec<StagedWrite>, durability: LocalDurability
         usage_admission: None,
         budget_allocation: None,
         internal_maintenance: false,
+        shard_copy: false,
         expected_origin_epoch: Some(0),
         expected_uniform_context: None,
         merge_conflict: None,
@@ -1645,11 +1752,9 @@ fn reopened_location_does_not_retain_process_owned_sync_lease() {
     let reopened = SqliteStorage::open(&dir).expect("reopens location");
     let sync_rows: i64 = reopened
         .raw_writer_connection()
-        .query_row(
-            "SELECT COUNT(*) FROM consumer_frontiers WHERE name = 'sync'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM consumer_frontiers WHERE name = 'sync'", [], |row| {
+            row.get(0)
+        })
         .expect("reads consumer leases");
     assert_eq!(sync_rows, 0, "a process-owned sync lease cannot survive restart");
 }
@@ -1949,6 +2054,7 @@ fn commit_as(
         usage_admission: None,
         budget_allocation: None,
         internal_maintenance: false,
+        shard_copy: false,
         expected_origin_epoch: Some(0),
         expected_uniform_context: None,
         merge_conflict: None,

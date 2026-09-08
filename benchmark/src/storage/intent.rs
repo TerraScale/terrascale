@@ -143,6 +143,8 @@ pub(crate) struct CommitIntent {
     pub(crate) budget_allocation: Option<VerifiedAllocation>,
     /// Engine-internal TTL cleanup and restore replay are unbilled.
     pub(crate) internal_maintenance: bool,
+    /// Explicit staging-file shard import; preserve the authenticated source version.
+    pub(crate) shard_copy: bool,
     /// Original source content, independent of the merged publication bytes.
     pub(crate) replication_fingerprint: Option<[u8; 32]>,
     pub(crate) replication_publication: Option<ReplicationPublicationIntent>,

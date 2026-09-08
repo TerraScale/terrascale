@@ -473,13 +473,10 @@ impl IdentityVerifier {
         let tenants = self.authorization.active_tenants(now);
         // Bounded control work per tenant batch, independent of subscriber count.
         use futures_util::StreamExt as _;
-        let outcomes = futures_util::stream::iter(tenants.chunks(32).map(|batch| {
-            let batch = batch.to_vec();
-            async move {
-                let _permit = self
-                    .permits
-                    .try_acquire()
-                    .map_err(|_| IdentityError::Unavailable)?;
+        let batches = tenants.chunks(32).map(ToOwned::to_owned).collect::<Vec<_>>();
+        let outcomes = futures_util::stream::iter(batches)
+            .map(|batch| async move {
+                let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
                 let body = serde_json::to_vec(&serde_json::json!({
                     "kind": "authorization-leases",
                     "audience": self.audience,
@@ -490,12 +487,10 @@ impl IdentityVerifier {
                     "tenantIds": batch,
                 }))
                 .map_err(|_| IdentityError::Unavailable)?;
-                let reply = tokio::time::timeout(
-                    Duration::from_secs(5),
-                    self.exchange::<Reply>(body),
-                )
-                .await
-                .map_err(|_| IdentityError::Unavailable)??;
+                let reply =
+                    tokio::time::timeout(Duration::from_secs(5), self.exchange::<Reply>(body))
+                        .await
+                        .map_err(|_| IdentityError::Unavailable)??;
                 if reply.active || reply.authorization_leases.len() > batch.len() {
                     return Err(IdentityError::Unavailable);
                 }
@@ -515,16 +510,11 @@ impl IdentityVerifier {
                         failed = true;
                     }
                 }
-                if failed {
-                    Err(IdentityError::Unavailable)
-                } else {
-                    Ok(())
-                }
-            }
-        }))
-        .buffer_unordered(8)
-        .collect::<Vec<_>>()
-        .await;
+                if failed { Err(IdentityError::Unavailable) } else { Ok(()) }
+            })
+            .buffer_unordered(8)
+            .collect::<Vec<_>>()
+            .await;
         outcomes.into_iter().collect::<Result<Vec<_>, _>>().map(drop)
     }
 

@@ -28,6 +28,7 @@ fn metadata_intent(operation: &str, maintenance: bool, writes: Vec<StagedWrite>)
         usage_admission: None,
         budget_allocation: None,
         internal_maintenance: maintenance,
+        shard_copy: false,
         expected_origin_epoch: Some(0),
         expected_uniform_context: None,
         merge_conflict: None,

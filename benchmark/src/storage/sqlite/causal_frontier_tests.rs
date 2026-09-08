@@ -134,6 +134,7 @@ fn intent(operation: &str, writes: Vec<StagedWrite>) -> CommitIntent {
         usage_admission: None,
         budget_allocation: None,
         internal_maintenance: false,
+        shard_copy: false,
         expected_origin_epoch: Some(0),
         expected_uniform_context: None,
         merge_conflict: None,

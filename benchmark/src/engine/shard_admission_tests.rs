@@ -53,6 +53,17 @@ fn source_file_rejects_moved_and_cross_collection_tokens_after_cutover() {
     .unwrap();
     assert!(matches!(tx.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
 
+    let mut in_flight = engine
+        .begin(&scope, engine.read_snapshot(&scope).unwrap(), operation("pre-cutover-in-flight"))
+        .unwrap();
+    in_flight.bind_document_shard_admission(&collection, &id).unwrap();
+    in_flight
+        .put(
+            Document::new(id.clone(), collection.clone(), DocumentValue::Integer(99)),
+            ExpectedVersion::Any,
+        )
+        .unwrap();
+
     let through = engine.published_sequence().unwrap().get();
     split.begin_backfill().unwrap();
     split.begin_catch_up(through).unwrap();
@@ -75,6 +86,13 @@ fn source_file_rejects_moved_and_cross_collection_tokens_after_cutover() {
             operation("admission-cutover"),
         )
         .unwrap();
+    assert!(
+        matches!(
+            in_flight.commit(LocalDurability::Synced),
+            CommitOutcome::Rejected(CommitError::Conflict)
+        ),
+        "a transaction staged before cutover cannot publish on the former owner"
+    );
     let (router, _) = engine.load_shard_router(&scope).unwrap().unwrap();
     assert_eq!(router.route(&key), Some(12));
     assert!(engine.shard_admission_for_key(&scope, &router, &key).is_err());

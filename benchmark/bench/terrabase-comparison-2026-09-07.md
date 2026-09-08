@@ -19,21 +19,27 @@ throughput and are shown as failed rather than zero.
 
 | Workload | Status | Ops/s | p50 (µs) | p95 (µs) | p99 (µs) | Receipt |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| Read | Pending current-source receipt | — | — | — | — | [results](results/) |
-| Write | Pending current-source receipt | — | — | — | — | [results](results/) |
-| Query | Pending current-source receipt | — | — | — | — | [results](results/) |
-| Mixed | Pending current-source receipt | — | — | — | — | [results](results/) |
+| Read | Complete diagnostic; current cohort | 1,744.589 | 8,886.641 | 13,758.746 | 18,382.490 | [receipt](results/run-20260907-independent-1714381/final/terrabase-read-1788833575687752642-1977542-0.json) |
+| Write | Failed; measured operation 5,631 timed out | — | — | — | — | [receipt](results/run-20260907-independent-1714381/final/terrabase-write-1788833630322882176-1984173-0.json) |
+| Query | Failed; measured operation 11,306 timed out | — | — | — | — | [receipt](results/run-20260907-independent-1714381/final/terrabase-query-1788833703538524482-1987194-0.json) |
+| Mixed | Not started; driver stopped after query failure | — | — | — | — | [run directory](results/run-20260907-independent-1714381/final/) |
 
-The latest complete read attempt in `results/run-20260907-independent-1714381/`
-reported 1,839.6 ops/s (p50 8,448.0 us, p95 12,937.8 us, p99 15,378.1 us),
-but it reused the prior release binary after the current source failed to
-compile. It is retained diagnostic evidence and cannot qualify the current
-source or establish an optimization result.
+The final cohort read completed five samples using the pinned `fae32` server
+artifact and the required 2 OCPU / 12 GiB envelope. It remains diagnostic until
+all requested local lanes complete and the full evidence set is reviewed.
 
-The same attempt's write, query, and mixed lanes failed before samples (503 or
-timeout). Those receipts remain audit evidence and contribute no measurements.
-The current-source benchmark run is blocked until the small `shard_split`
-compile correction is built and exercised.
+The same cohort's write and query lanes failed during measurement at operations
+5,631 and 11,306 respectively; both retained zero samples because the lane
+requires a complete run. The driver then stopped before mixed. Earlier attempts
+in this run directory had separate warm-up 429/503/timeout failures and are not
+merged with this final cohort.
+
+## Final cohort attempt ledger
+
+| Cohort | Read | Write | Query | Mixed | Artifact |
+| --- | --- | --- | --- | --- | --- |
+| `e13-local-20260908T0212Z` | Complete (5 samples) | Failed at op 5,631 | Failed at op 11,306 | Not started | `f1aa1737…` |
+| Earlier attempts | Failed before samples | Failed before samples | Failed before samples | Failed before samples | prior/diagnostic artifacts |
 
 ### Additional families
 
@@ -63,7 +69,7 @@ different settings.
 
 | Workload | Historical comparable value | Current value | Change |
 | --- | ---: | ---: | ---: |
-| Read | Not qualified | Pending current-source receipt | Undefined until matched receipts |
+| Read | Not qualified | 1,744.589 ops/s diagnostic | Undefined: historical artifact/schema identity differs |
 | Write | Not available | Pending | Undefined until matched receipts |
 | Query | Not qualified | Pending | Undefined until matched receipts |
 | Mixed | Not qualified | Pending | Undefined until matched receipts |

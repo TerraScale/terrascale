@@ -44,8 +44,8 @@ pub type ReactiveOpen = (
 /// One TBEP host over a single engine and its durable publication journal.
 pub struct MemberHost {
     engine: EngineHost,
-    delivery: SyncDeliveryHost,
-    journal_sync: Mutex<()>,
+    delivery: std::sync::Arc<SyncDeliveryHost>,
+    journal_sync: std::sync::Arc<Mutex<()>>,
 }
 
 type SubscriptionSeed = (crate::reactive::ProjectedMembers, Vec<(String, Vec<u8>)>);
@@ -81,8 +81,8 @@ impl MemberHost {
         }
         Ok(Self {
             engine: EngineHost::open(location, instance, tenant, project, database)?,
-            delivery: SyncDeliveryHost::new(instance),
-            journal_sync: Mutex::new(()),
+            delivery: std::sync::Arc::new(SyncDeliveryHost::new(instance)),
+            journal_sync: std::sync::Arc::new(Mutex::new(())),
         })
     }
 
@@ -95,8 +95,8 @@ impl MemberHost {
     ) -> Self {
         Self {
             engine: EngineHost::from_admitted(lease, location, instance),
-            delivery: SyncDeliveryHost::new(instance),
-            journal_sync: Mutex::new(()),
+            delivery: std::sync::Arc::new(SyncDeliveryHost::new(instance)),
+            journal_sync: std::sync::Arc::new(Mutex::new(())),
         }
     }
 
@@ -117,6 +117,15 @@ impl MemberHost {
     #[must_use]
     pub fn engine(&self) -> &Engine {
         self.engine.engine()
+    }
+
+    /// Refreshes document routing while retaining existing reactive delivery and admission.
+    pub fn refreshed_serving_host(&self) -> Result<Option<Self>, terrabase::EngineError> {
+        Ok(self.engine.refreshed_serving_host()?.map(|engine| Self {
+            engine,
+            delivery: self.delivery.clone(),
+            journal_sync: self.journal_sync.clone(),
+        }))
     }
 
     /// Returns the engine host this member composes: the plane the

@@ -102,7 +102,7 @@ impl ProductionBudgetRuntime {
             .ok_or("write allocation unavailable")?;
         if allocation.grant().database_id != database_id
             || allocation.grant().organization_id != tenant_id
-            || allocation.grant().operation_id != operation_id
+            || allocation.grant().refill_operation_id != operation_id
             || units == 0
             || units
                 > u64::try_from(allocation.local_units()).map_err(|_| "allocation units invalid")?

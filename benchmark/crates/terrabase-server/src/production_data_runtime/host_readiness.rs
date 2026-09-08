@@ -189,7 +189,7 @@ pub(super) mod tests {
         let database = Arc::new(crate::admitted_databases::AdmittedDatabase {
             record,
             host,
-            activity: terrabase::engine::lifecycle_state::AuthorizedActivity::default(),
+            activity: Arc::new(terrabase::engine::lifecycle_state::AuthorizedActivity::default()),
         });
         (AdmittedDatabaseSnapshot { database, activated: true }, scope, member, root)
     }

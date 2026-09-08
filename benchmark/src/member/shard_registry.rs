@@ -71,12 +71,19 @@ impl RouteParticipantRegistry {
         }))
     }
 
-    pub(crate) fn participant(&self, keys: &[Vec<u8>]) -> Result<&Engine, crate::EngineError> {
+    pub(crate) fn tenant_id(&self) -> &crate::types::TenantId {
+        &self.tenant
+    }
+
+    pub(crate) fn is_current(&self) -> Result<bool, crate::EngineError> {
         let scope = self.source.scope_for(&self.tenant);
         let current = self.source.load_shard_router(&scope)?;
-        if current.as_ref().map(|(router, _)| router.table().generation())
-            != self.router.as_ref().map(|router| router.table().generation())
-        {
+        Ok(current.as_ref().map(|(router, _)| router.table().generation())
+            == self.router.as_ref().map(|router| router.table().generation()))
+    }
+
+    pub(crate) fn participant(&self, keys: &[Vec<u8>]) -> Result<&Engine, crate::EngineError> {
+        if !self.is_current()? {
             return Err(crate::EngineError::Conflict);
         }
         let shard = if let Some(router) = &self.router {
@@ -170,7 +177,10 @@ impl RouteParticipantRegistry {
         operation: OperationId,
         fingerprint: [u8; 32],
     ) -> Result<Option<(Arc<Engine>, crate::CommitReceipt, usize)>, crate::EngineError> {
-        self.participant(keys)?;
+        for key in keys {
+            self.participant(std::slice::from_ref(key))?;
+        }
+
         for engine in self.participants.values() {
             let scope = engine.scope_for(scope.tenant());
             if let Some((receipt, count)) =

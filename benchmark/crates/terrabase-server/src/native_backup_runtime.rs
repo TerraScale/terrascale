@@ -425,11 +425,12 @@ mod restore_tests {
         let tenant = terrabase::types::TenantId::try_new(&host.database.record.tenant_id).unwrap();
         let scope = engine.scope_for(&tenant);
         let snapshot = engine.read_snapshot(&scope).unwrap();
+        let operation = format!("native-pitr-{marker}");
         let mut transaction = engine
             .begin(
                 &scope,
                 snapshot,
-                terrabase::types::OperationId::try_new(format!("native-pitr-{marker}")).unwrap(),
+                terrabase::types::OperationId::try_new(&operation).unwrap(),
             )
             .unwrap();
         transaction
@@ -718,7 +719,9 @@ mod restore_tests {
         assert!(runtime.attached(&records[0].database_id).unwrap());
         assert!(runtime.attached(&records[1].database_id).unwrap());
         for record in &records {
-            runtime.capture_snapshot(&record.database_id).await.unwrap();
+            runtime.capture(&record.database_id, &format!("capture-{}", record.database_id))
+                .await
+                .unwrap();
         }
         let points = runtime.retained_points(&records[0].database_id).unwrap();
         assert_eq!(points.len(), 1);
@@ -741,7 +744,7 @@ mod restore_tests {
             .with_owner(target_owner)
             .with_storage_keys(
                 crate::test_keys::storage_keys(&target_scope)
-                    .remove(&target.database.record.database_id)
+                    .remove(&target.database.record.database_id.parse().unwrap())
                     .unwrap(),
             );
         let placement = PlacementLock::explicit([target.database.record.region.parse().unwrap()]).unwrap();

@@ -2473,9 +2473,9 @@ fn stage_intent(
         let next = transaction
             .query_row(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM (
-                    SELECT origin_seq AS seq FROM documents WHERE origin = ?1 AND tenant = ?2
-                    UNION ALL SELECT seq FROM origin_prefixes WHERE origin = ?1 AND tenant = ?2
-                    UNION ALL SELECT origin_seq FROM replication_publications WHERE origin = ?1 AND tenant = ?2)",
+                    SELECT MAX(origin_seq) AS seq FROM documents WHERE origin = ?1 AND tenant = ?2
+                    UNION ALL SELECT MAX(seq) FROM origin_prefixes WHERE origin = ?1 AND tenant = ?2
+                    UNION ALL SELECT MAX(origin_seq) FROM replication_publications WHERE origin = ?1 AND tenant = ?2)",
                 rusqlite::params![provenance.origin(), intent.tenant.as_str()],
                 |row| row.get::<_, i64>(0),
             )
@@ -2511,6 +2511,13 @@ fn stage_intent(
         // A concurrent apply already stored a no-publication result. Retry
         // through the engine to resolve that result without staging a write.
         return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+    }
+    if intent.shard_copy && (!intent.internal_maintenance
+        || intent.usage_admission.is_some()
+        || intent.budget_allocation.is_some()
+        || intent.replication_publication.is_some()
+        || !intent.writes.iter().all(|write| matches!(write, StagedWrite::Put { document, .. } if document.metadata().version() > 0))) {
+        return Ok(CommitResult::Rejected(CommitRejection::Storage));
     }
     // Step 2: a retried identity resolves from its folded rows (or its
     // rejection record, which always binds the caller's own identity).
@@ -2932,6 +2939,9 @@ fn stage_intent(
                     sequence - 1,
                 )?
                 .map_or(1, |prior| prior.saturating_add(1));
+                let version = if intent.shard_copy {
+                    document.metadata().version()
+                } else { version };
                 let mut published = document.clone();
                 published.set_version(version);
                 let body = encode_document_body(&published);

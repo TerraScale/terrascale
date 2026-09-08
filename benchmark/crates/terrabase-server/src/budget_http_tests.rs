@@ -211,33 +211,36 @@ fn signed_for_regions(
     ];
     spki.extend_from_slice(key.public_key().as_ref());
     let key_id = hex::encode(digest(&SHA256, &spki).as_ref());
+    let region_count = i64::try_from(regions.len()).unwrap();
     let payload = serde_json::to_vec(&terrabase::usage::AllocationEnvelope {
-        schema_version: 1,
+        schema_version: 2,
         grant: terrabase::usage::AllocationGrant {
+            schema_version: 2,
+            kind: "regional_write_pool_refill".into(),
+            refill_operation_id: format!("refill-{operation}"),
+            pool_id: format!("pool-{database}"),
             cycle_id: "cycle".into(),
             rate_nano_dollar: 1000,
-            operation_id: operation.into(),
             organization_id: tenant.into(),
             database_id: database.into(),
             branch_id: "main".into(),
             holder_id: "holder".into(),
-            requested_units: 1,
-            included_units: i64::from(!paid),
-            paid_units: i64::from(paid),
+            region: "gru".into(),
             regions: regions.into_iter().map(str::to_owned).collect(),
-            units: 1,
-            cost_nano_dollar: if paid { 1000 } else { 0 },
+            placement: "db-placement".into(),
+            local_units: 1,
+            aggregate_units: region_count,
+            included_local_units: i64::from(!paid),
+            paid_local_units: i64::from(paid),
+            included_aggregate_units: region_count * i64::from(!paid),
+            paid_aggregate_units: region_count * i64::from(paid),
+            pool_sequence: 1,
             policy_epoch: 1,
             consent_epoch: 1,
             writer_epoch: 1,
             issued_at: "2026-01-01T00:00:00Z".into(),
             expires_at: "2099-01-01T00:00:00Z".into(),
-            revoked: false,
-            fenced: false,
         },
-        cycle_id: "cycle".into(),
-        rate_nano_dollar: 1000,
-        placement: "db-placement".into(),
     })
     .unwrap();
     (sign_allocation(&key, &key_id, &payload), spki, key)

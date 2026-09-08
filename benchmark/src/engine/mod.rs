@@ -2040,6 +2040,7 @@ impl Engine {
             usage_admission: None,
             budget_allocation: None,
             internal_maintenance: false,
+            shard_copy: false,
             expected_origin_epoch: origin_epoch,
             expected_uniform_context: None,
             merge_conflict: None,
@@ -2759,11 +2760,7 @@ impl Engine {
     /// Advances one required retention consumer after its durable
     /// acknowledgement. Unknown consumers are rejected so a caller cannot
     /// accidentally create an unaccounted pruning floor.
-    pub fn advance_retention_frontier(
-        &self,
-        name: &str,
-        sequence: u64,
-    ) -> Result<(), EngineError> {
+    pub fn advance_retention_frontier(&self, name: &str, sequence: u64) -> Result<(), EngineError> {
         let mut storage = self.storage.lock().map_err(|_| EngineError::StorageFailure)?;
         storage
             .port
@@ -4835,6 +4832,7 @@ pub struct Transaction<'engine> {
     usage_admission: Option<UsageAdmissionContext>,
     budget_allocation: Option<crate::usage::VerifiedAllocation>,
     internal_maintenance: bool,
+    shard_copy: bool,
     expected_origin_epoch: u64,
     expected_uniform_context: Option<Vec<u8>>,
     merge_conflict: Option<(CollectionName, DocumentId, storage::MergeConflictEntry)>,
@@ -5286,6 +5284,7 @@ impl Transaction<'_> {
             usage_admission,
             budget_allocation,
             internal_maintenance: self.internal_maintenance,
+            shard_copy: self.shard_copy,
             expected_origin_epoch: if replicated { None } else { Some(self.expected_origin_epoch) },
             expected_uniform_context: self.expected_uniform_context.take(),
             merge_conflict: self.merge_conflict.clone(),

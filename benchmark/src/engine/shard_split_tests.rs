@@ -527,3 +527,86 @@ fn shard_admission_matches_collection_and_id_in_canonical_keyspace() {
     drop(engine);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn staging_copy_preserves_version_and_rejects_changed_same_provenance() {
+    use super::{CommitOutcome, LocalDurability};
+    use crate::shard_split::{CopyBatch, CopyEntry, RangeCopyTarget, canonical_shard_key};
+    use crate::types::{CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion};
+    let (dir, source, tenant) = super::tests::open_owned_engine("split-copy-version");
+    let scope = source.scope_for(&tenant);
+    let source = std::sync::Arc::new(source);
+    let incarnation = u128::from_be_bytes(source.database_id().as_bytes());
+    let collection = CollectionName::try_new("records").unwrap();
+    let id = DocumentId::try_new("a").unwrap();
+    for index in 0..2 {
+        let mut tx = source
+            .begin(
+                &scope,
+                source.read_snapshot(&scope).unwrap(),
+                super::tests::operation(&format!("version-{index}")),
+            )
+            .unwrap();
+        tx.put(
+            Document::new(id.clone(), collection.clone(), DocumentValue::Integer(index)),
+            ExpectedVersion::Any,
+        )
+        .unwrap();
+        assert!(matches!(tx.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    }
+    let tx = source
+        .begin(&scope, source.read_snapshot(&scope).unwrap(), super::tests::operation("read-copy"))
+        .unwrap();
+    let document = tx.read_in_collection(&collection, &id).unwrap().unwrap();
+    assert_eq!(document.metadata().version(), 2);
+    drop(tx);
+    let context = SplitContext::new(73, incarnation, 11, 12, 3, 0);
+    let split = ShardSplit::plan_with_context(
+        None,
+        canonical_shard_key(&collection, &DocumentId::try_new("m").unwrap()),
+        context,
+    )
+    .unwrap();
+    let mut adapter =
+        super::shard_split::ScopedShardEngine::new(source.clone(), scope.clone()).unwrap();
+    adapter.save(&split.durable_state()).unwrap();
+    adapter.create_split_target(&context).unwrap();
+    let target = std::sync::Arc::new(adapter.open_existing_target(&context).unwrap());
+    let target_scope = target.scope_for(&tenant);
+    let mut copier = super::shard_split::ScopedShardRangeTarget::open(target.clone(), &scope);
+    let key = canonical_shard_key(&collection, &id);
+    let body = crate::storage::encode_document_body(&document);
+    let batch = CopyBatch::new(
+        vec![CopyEntry::new(key.clone(), body)],
+        source.published_sequence().unwrap().get(),
+        true,
+    );
+    copier.apply_copy_batch(&batch).unwrap();
+    let first = target.published_sequence().unwrap();
+    copier.apply_copy_batch(&batch).unwrap();
+    assert_eq!(target.published_sequence().unwrap(), first);
+    let tx = target
+        .begin(
+            &target_scope,
+            target.read_snapshot(&target_scope).unwrap(),
+            super::tests::operation("read-target-copy"),
+        )
+        .unwrap();
+    let copied = tx.read_in_collection(&collection, &id).unwrap().unwrap();
+    assert_eq!(copied, document);
+    drop(tx);
+    let mut changed = Document::new(id, collection, DocumentValue::Integer(999));
+    changed.set_version(2);
+    let changed = CopyBatch::new(
+        vec![CopyEntry::new(key, crate::storage::encode_document_body(&changed))],
+        first.get(),
+        true,
+    );
+    assert!(copier.apply_copy_batch(&changed).is_err());
+    assert_eq!(target.published_sequence().unwrap(), first);
+    drop(copier);
+    drop(target);
+    drop(adapter);
+    drop(source);
+    std::fs::remove_dir_all(dir).unwrap();
+}

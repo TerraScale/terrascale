@@ -355,6 +355,16 @@ impl EngineHost {
         &self.engine
     }
 
+    /// Refreshes a stale serving snapshot without acquiring more admission capacity.
+    pub fn refreshed_serving_host(&self) -> Result<Option<Self>, terrabase::EngineError> {
+        let HostEngine::Admitted(lease) = &self.engine else {
+            return Ok(None);
+        };
+        Ok(lease
+            .refreshed_serving_lease()?
+            .map(|lease| Self::from_admitted(lease, self.location.clone(), self.instance)))
+    }
+
     /// Selects the engine used for document reads, replay, sessions and durability.
     pub fn document_participant(
         &self,

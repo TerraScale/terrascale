@@ -39,7 +39,7 @@ pub struct AllocationGrant {
     pub included_aggregate_units: i64,
     pub paid_aggregate_units: i64,
     pub pool_sequence: u64,
-	pub policy_epoch: u64,
+    pub policy_epoch: u64,
     pub consent_epoch: u64,
     pub writer_epoch: u64,
     pub issued_at: String,
@@ -177,12 +177,19 @@ impl VerifiedAllocation {
             || grant.holder_id != expected_holder
             || grant.local_units <= 0
             || grant.aggregate_units
-                != grant.local_units.checked_mul(i64::try_from(regions.len()).map_err(|_| AllocationError::Binding)?).ok_or(AllocationError::Binding)?
+                != grant
+                    .local_units
+                    .checked_mul(
+                        i64::try_from(regions.len()).map_err(|_| AllocationError::Binding)?,
+                    )
+                    .ok_or(AllocationError::Binding)?
             || grant.aggregate_units <= 0
             || grant.included_local_units < 0
             || grant.paid_local_units < 0
-            || grant.included_local_units.checked_add(grant.paid_local_units) != Some(grant.local_units)
-            || grant.included_aggregate_units.checked_add(grant.paid_aggregate_units) != Some(grant.aggregate_units)
+            || grant.included_local_units.checked_add(grant.paid_local_units)
+                != Some(grant.local_units)
+            || grant.included_aggregate_units.checked_add(grant.paid_aggregate_units)
+                != Some(grant.aggregate_units)
             || grant.paid_aggregate_units.checked_mul(grant.rate_nano_dollar).is_none()
             || grant.policy_epoch != expected_policy_epoch
             || grant.consent_epoch != expected_consent_epoch
@@ -348,33 +355,35 @@ mod tests {
         public_spki.extend_from_slice(key.public_key().as_ref());
         let key_id = hex::encode(digest(&SHA256, &public_spki).as_ref());
         let grant = AllocationGrant {
+            schema_version: 2,
+            kind: "regional_write_pool_refill".into(),
+            refill_operation_id: "refill-1".into(),
+            pool_id: "pool-1".into(),
             cycle_id: "cycle-1".into(),
             rate_nano_dollar: 1,
-            operation_id: "op-1".into(),
             organization_id: "org-1".into(),
             database_id: "db-1".into(),
             branch_id: "main".into(),
             holder_id: holder.into(),
-            requested_units: 2,
-            included_units: 0,
-            paid_units: 6,
+            region: "gru".into(),
             regions: vec!["gru".into(), "sfo".into(), "fra".into()],
-            units: 6,
-            cost_nano_dollar: 6,
+            placement: "placement-1".into(),
+            local_units: 2,
+            aggregate_units: 6,
+            included_local_units: 0,
+            paid_local_units: 2,
+            included_aggregate_units: 0,
+            paid_aggregate_units: 6,
+            pool_sequence: 1,
             policy_epoch: 4,
             consent_epoch: 7,
             writer_epoch: 9,
             issued_at: "2026-01-01T00:00:00Z".into(),
             expires_at: "2099-01-01T00:00:00Z".into(),
-            revoked: false,
-            fenced: false,
         };
         let envelope = AllocationEnvelope {
-            schema_version: 1,
+            schema_version: 2,
             grant,
-            cycle_id: "cycle-1".into(),
-            rate_nano_dollar: 1,
-            placement: "placement-1".into(),
         };
         let payload = serde_json::to_vec(&envelope).unwrap();
         let mut message = ALLOCATION_SIGNING_DOMAIN.to_vec();

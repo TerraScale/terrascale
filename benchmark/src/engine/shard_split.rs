@@ -541,11 +541,30 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
         if batch.entries().is_empty() {
             return Ok(());
         }
+        if self.engine.shard_catalog_exists(&self.scope)? {
+            return Err(EngineError::Conflict);
+        }
+        // Bind import identities to the durable split, keys and source versions.
+        // Same provenance with different bytes must conflict, never mint a new copy.
+        let snapshot = self.engine.read_snapshot(&self.scope)?;
+        let identity = self
+            .engine
+            .lock_storage()?
+            .port
+            .private_metadata_at(self.scope.tenant(), target_identity_key(), snapshot.sequence())
+            .map_err(|()| EngineError::StorageFailure)?;
+        let Some(DocumentValue::String(identity)) = identity else {
+            return Err(EngineError::Conflict);
+        };
         let mut digest = blake3::Hasher::new();
-        digest.update(b"shard-copy-page-v1\0");
+        digest.update(b"shard-copy-page-v2\0");
+        digest.update(identity.as_bytes());
         for entry in batch.entries() {
+            let document = crate::storage::decode_document_body(entry.value())
+                .ok_or(EngineError::InvalidDocument)?;
+            digest.update(&(entry.key().len() as u64).to_be_bytes());
             digest.update(entry.key());
-            digest.update(entry.value());
+            digest.update(&document.metadata().version().to_be_bytes());
         }
         let operation = OperationId::try_new(&format!(
             "shard-copy-{}",
@@ -555,6 +574,7 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
         let mut tx =
             self.engine.begin(&self.scope, self.engine.read_snapshot(&self.scope)?, operation)?;
         tx.internal_maintenance = true;
+        tx.shard_copy = true;
         for entry in batch.entries() {
             let (collection, id) = decode_canonical_shard_key(entry.key())
                 .map_err(|_| EngineError::InvalidDocument)?;
@@ -567,7 +587,9 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
         }
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
-            CommitOutcome::Rejected(CommitError::OperationIdReuse { .. }) => Ok(()),
+            CommitOutcome::Rejected(CommitError::OperationIdReuse { .. }) => {
+                Err(EngineError::Conflict)
+            }
             CommitOutcome::Rejected(CommitError::Conflict) | CommitOutcome::Unknown(_) => {
                 Err(EngineError::StorageFailure)
             }
