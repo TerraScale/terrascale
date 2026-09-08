@@ -23,7 +23,6 @@ use std::{
 use crate::engine::EngineConfigError;
 use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
 use crate::regions::RegionCode;
-use crate::shard_split::ShardRouter;
 pub use crate::storage::{DatabaseOwner, EnvironmentName};
 use crate::types::{OperationId, TenantId, TenantScope};
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
@@ -1670,30 +1669,15 @@ impl DatabaseLease {
 
     /// Begins an origin transaction through the lease-owned durable route.
     /// Callers cannot supply a router or filesystem location.
-    pub fn begin_routed_origin(
+    pub fn begin_routed_document(
         &self,
         scope: &TenantScope,
-        key: &[u8],
+        collection: &crate::types::CollectionName,
+        id: &crate::types::DocumentId,
         operation: OperationId,
     ) -> Result<crate::engine::Transaction<'_>, crate::engine::EngineError> {
-        self.route_registry.begin(scope, key, operation)
-    }
-
-    /// Begins an origin transaction after routing its key through the
-    /// admitted serving mirror. The token is checked again by Engine commit,
-    /// so a cutover racing this call fails with a stale generation conflict.
-    pub fn begin_routed_transaction(
-        &self,
-        scope: &TenantScope,
-        router: &ShardRouter,
-        key: &[u8],
-        operation: OperationId,
-    ) -> Result<crate::engine::Transaction<'_>, crate::engine::EngineError> {
-        // Existing consumers retain this migration seam, but serving
-        // authority is now the lease-owned registry rather than the supplied
-        // router.
-        let _ = router;
-        self.begin_routed_origin(scope, key, operation)
+        let key = crate::shard_split::canonical_shard_key(collection, id);
+        self.route_registry.begin(scope, &key, operation)
     }
 
     /// Converts this sole admitted lease into an exclusive restore permit.

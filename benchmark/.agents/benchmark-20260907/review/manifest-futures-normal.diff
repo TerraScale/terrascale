@@ -1,0 +1,18 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index d82885c7..365c8933 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -53,12 +53,15 @@ name = "member"
+ path = "tests/member/main.rs"
+ 
+ [dependencies]
++object_store = { version = "0.12.4", features = ["aws"] }
++tokio = { version = "1", features = ["rt-multi-thread"] }
++futures-util = "0.3"
+ aws-lc-rs = { version = "1.18.0", default-features = false, features = ["non-fips"] }
+ 
+ blake3 = "1.8.2"
+ zeroize = "1.9.0"
+ memmap2 = "0.9.9"
+-rustix = { version = "1.1.4", features = ["net", "process"] }
++rustix = { version = "1.1.4", features = ["net", "process", "fs"] }

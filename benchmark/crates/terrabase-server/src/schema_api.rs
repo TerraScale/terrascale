@@ -1100,7 +1100,12 @@ pub struct SchemaError {
 }
 
 impl SchemaError {
-    pub(crate) fn new(status: u16, code: &str, message: impl Into<String>, fix: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        status: u16,
+        code: &str,
+        message: impl Into<String>,
+        fix: impl Into<String>,
+    ) -> Self {
         Self {
             status,
             code: code.to_owned(),
@@ -1307,9 +1312,10 @@ impl SchemaService {
         }
         if current.as_ref().is_some_and(|record| {
             record.document.migration.as_ref().is_some_and(|migration| {
-                matches!(migration.state, MigrationState::Pending | MigrationState::Running | MigrationState::RollingBack)
-                    || (migration.state == MigrationState::Failed
-                        && record.migration_plan.is_some())
+                matches!(
+                    migration.state,
+                    MigrationState::Pending | MigrationState::Running | MigrationState::RollingBack
+                ) || (migration.state == MigrationState::Failed && record.migration_plan.is_some())
             })
         }) {
             return Err(SchemaError::new(
@@ -1476,7 +1482,12 @@ impl SchemaService {
             ));
         };
         if migration.state == MigrationState::RollingBack {
-            return Err(SchemaError::new(409, "rollback_in_progress", "forward progress cannot replace rollback ownership", "wait for rollback to finish"));
+            return Err(SchemaError::new(
+                409,
+                "rollback_in_progress",
+                "forward progress cannot replace rollback ownership",
+                "wait for rollback to finish",
+            ));
         }
         if migration.operation_id != progress.operation_id {
             return Err(SchemaError::new(
@@ -1704,7 +1715,11 @@ fn resolve_identity(
         .resolve(database, branch)
 }
 
-pub(crate) fn schema_response(status: StatusCode, document: &SchemaDocument, include_etag: bool) -> Response {
+pub(crate) fn schema_response(
+    status: StatusCode,
+    document: &SchemaDocument,
+    include_etag: bool,
+) -> Response {
     let mut response = json_response(status, document);
     if include_etag && let Ok(value) = format!("\"{}\"", document.generation).parse() {
         response.headers_mut().insert(ETAG, value);
@@ -2101,9 +2116,11 @@ pub(crate) fn validate_durable_record(
         if rollback.generation == 0
             || if active {
                 record.document.generation != rollback.generation
-                    || !record.document.migration.as_ref().is_some_and(|migration| {
-                        migration.state == MigrationState::RollingBack
-                    })
+                    || !record
+                        .document
+                        .migration
+                        .as_ref()
+                        .is_some_and(|migration| migration.state == MigrationState::RollingBack)
             } else {
                 rollback.generation.checked_add(1) != Some(record.document.generation)
                     || record.document.migration.is_some()

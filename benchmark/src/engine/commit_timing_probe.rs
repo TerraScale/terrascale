@@ -3,8 +3,6 @@
 use std::time::Instant;
 
 use super::*;
-use crate::types::{CollectionName, DocumentId, LocalDurability, OperationId};
-
 #[test]
 fn probe_single_document_commit_timings() {
     let dir = std::env::temp_dir().join(format!("terrabase-commit-probe-{}", std::process::id()));

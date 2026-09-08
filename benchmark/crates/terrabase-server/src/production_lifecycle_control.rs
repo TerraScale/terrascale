@@ -532,8 +532,12 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             )
             .map_err(|_| "retained recovery point is unavailable or unverified")?;
         let provider = match provider {
-            terrabase::backup::object_store::Provider::Oci => terrabase_tbep::proto::terrabase::v1::RestoreProvider::Oci,
-            terrabase::backup::object_store::Provider::Tigris => terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris,
+            terrabase::backup::object_store::Provider::Oci => {
+                terrabase_tbep::proto::terrabase::v1::RestoreProvider::Oci
+            }
+            terrabase::backup::object_store::Provider::Tigris => {
+                terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris
+            }
         };
         Ok(terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointResponse {
             operation_id: request.operation_id.clone(),

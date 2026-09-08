@@ -106,7 +106,10 @@ pub(super) fn mint(
         // stage_intent already minted the verified admission fact inside this
         // transaction. Check it covers the actual local write set, then leave
         // that single fact authoritative instead of minting a duplicate.
-        return if admission.integer_units() == i128::from(billed_writes) {
+        let expected = i128::from(billed_writes)
+            .checked_mul(i128::try_from(binding.selected_regions.len()).map_err(|_| ())?)
+            .ok_or(())?;
+        return if admission.integer_units() == expected {
             Ok(())
         } else {
             Err(())

@@ -279,7 +279,10 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
         || !record.document.migration.as_ref().is_none_or(|migration| {
             matches!(
                 migration.state,
-                MigrationState::Pending | MigrationState::Running | MigrationState::Failed | MigrationState::RollingBack
+                MigrationState::Pending
+                    | MigrationState::Running
+                    | MigrationState::Failed
+                    | MigrationState::RollingBack
             )
         })
     {
@@ -298,7 +301,11 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
             Ok(false) if record.rollback.is_some() => migration.state = MigrationState::RollingBack,
             Ok(false) => migration.state = MigrationState::Running,
             Err(message) => {
-                migration.state = if record.rollback.is_some() { MigrationState::RollingBack } else { MigrationState::Failed };
+                migration.state = if record.rollback.is_some() {
+                    MigrationState::RollingBack
+                } else {
+                    MigrationState::Failed
+                };
                 migration.message = message;
             }
         }

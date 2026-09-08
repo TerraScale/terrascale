@@ -43,6 +43,7 @@ pub mod provisioning;
 pub mod reactive_api;
 mod read_operation;
 pub mod replication_cut;
+pub mod replication_frontier;
 pub mod replication_proof;
 pub mod replication_runtime;
 pub mod runtime;

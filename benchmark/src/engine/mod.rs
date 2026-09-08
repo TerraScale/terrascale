@@ -2748,6 +2748,45 @@ impl Engine {
             .map_err(|()| EngineError::StorageFailure)
     }
 
+    /// Advances one required retention consumer after its durable
+    /// acknowledgement. Unknown consumers are rejected so a caller cannot
+    /// accidentally create an unaccounted pruning floor.
+    pub(crate) fn advance_retention_frontier(
+        &self,
+        name: &str,
+        sequence: StorageSequence,
+    ) -> Result<(), EngineError> {
+        let mut storage = self.storage.lock().map_err(|_| EngineError::StorageFailure)?;
+        storage
+            .port
+            .advance_consumer_frontier(name, sequence.get())
+            .map_err(|()| EngineError::StorageFailure)
+    }
+
+    /// Registers an optional live retention consumer at its durable start
+    /// boundary. The sync stream uses this while at least one reader exists.
+    pub(crate) fn register_retention_consumer(
+        &self,
+        name: &str,
+        sequence: StorageSequence,
+    ) -> Result<(), EngineError> {
+        let mut storage = self.storage.lock().map_err(|_| EngineError::StorageFailure)?;
+        storage
+            .port
+            .register_consumer_frontier(name, sequence.get())
+            .map_err(|()| EngineError::StorageFailure)
+    }
+
+    /// Retires an optional consumer when its owning subsystem has no live
+    /// readers, so an absent consumer does not pin history forever.
+    pub(crate) fn retire_retention_consumer(&self, name: &str) -> Result<(), EngineError> {
+        let mut storage = self.storage.lock().map_err(|_| EngineError::StorageFailure)?;
+        storage
+            .port
+            .retire_consumer_frontier(name)
+            .map_err(|()| EngineError::StorageFailure)
+    }
+
     /// Runs one storage retention sweep: prune publication history every
     /// consumer frontier has passed, then fold the WAL back into the
     /// database file. Expired TTL keys sweep first (bounded), so one

@@ -80,10 +80,10 @@ pub fn spawn_webhook_dispatcher(state: &Arc<ApiState>) -> Option<DispatchWorker>
 mod schema;
 #[path = "schema_index_runtime.rs"]
 mod schema_index_runtime;
-#[path = "schema_migration_runtime.rs"]
-mod schema_migration_runtime;
 #[path = "schema_migration_recovery.rs"]
 mod schema_migration_recovery;
+#[path = "schema_migration_runtime.rs"]
+mod schema_migration_runtime;
 
 /// Starts the member's schema migration driver once. The serving runtime
 /// aborts and joins the returned task during shutdown.
@@ -3476,7 +3476,8 @@ async fn replay_document_request(
     if !has_idempotency_key(headers) {
         return Ok(None);
     }
-    engine.validate_document_shard_route(scope, collection, id)
+    engine
+        .validate_document_shard_route(scope, collection, id)
         .map_err(|_| ApiError::control_unavailable())?;
     let Some((receipt, revision)) = engine
         .resolve_document_request(scope, operation.clone(), fingerprint)
@@ -3488,7 +3489,8 @@ async fn replay_document_request(
     durability.confirm(engine, scope, &receipt).await?;
     let mut session = open_session(engine, scope, headers)?;
     let response = document_write_response(&mut session, collection, id, revision)?;
-    engine.validate_document_shard_route(scope, collection, id)
+    engine
+        .validate_document_shard_route(scope, collection, id)
         .map_err(|_| ApiError::control_unavailable())?;
     Ok(Some(response))
 }
@@ -3522,26 +3524,16 @@ fn document_write_response_with_token(token: &SessionToken, revision: Option<Str
 /// One document's live revision for a response `ETag`: the same probe the
 /// GET path answers `If-None-Match` from, so a write's `ETag` always names
 /// what the next `GET` serves.
-fn live_revision(
-    engine: &terrabase::Engine,
+fn routed_live_revision(
+    host: &terrabase_tbep::member_host::MemberHost,
     scope: &terrabase::types::TenantScope,
-    collection: &CollectionName,
-    id: &DocumentId,
-) -> Result<String, ApiError> {
-    let snapshot = engine.read_snapshot(scope).map_err(|_| ApiError::storage_failure())?;
-    revision_at_snapshot(engine, scope, snapshot, collection, id)
-}
-
-fn revision_at_snapshot(
-    engine: &terrabase::Engine,
-    scope: &terrabase::types::TenantScope,
-    snapshot: terrabase::ReadSnapshot,
     collection: &CollectionName,
     id: &DocumentId,
 ) -> Result<String, ApiError> {
     let operation = crate::read_operation::next().map_err(|()| ApiError::storage_failure())?;
-    let transaction =
-        engine.begin(scope, snapshot, operation).map_err(|_| ApiError::storage_failure())?;
+    let transaction = host
+        .begin_routed_document(scope, collection, id, operation)
+        .map_err(|_| ApiError::storage_failure())?;
     transaction
         .revision_in_collection(collection, id)
         .map_err(|_| ApiError::storage_failure())?
@@ -3601,18 +3593,12 @@ async fn get_document(
             session.as_ref().map(terrabase::Session::session_token),
         );
     }
-    let snapshot = match &mut session {
-        Some(session) => session.read_snapshot().map_err(session_error),
-        None => engine.read_snapshot(&scope).map_err(|_| ApiError::storage_failure()),
-    };
-    let snapshot = match snapshot {
-        Ok(snapshot) => snapshot,
-        Err(error) => return error.into_response(),
-    };
     let Ok(operation) = crate::read_operation::next() else {
         return ApiError::storage_failure().into_response();
     };
-    let Ok(transaction) = engine.begin(&scope, snapshot, operation) else {
+    let Ok(transaction) =
+        host.engine_host().begin_routed_document(&scope, &collection, &id, operation)
+    else {
         return ApiError::storage_failure().into_response();
     };
     let Ok(revision) = transaction.revision_in_collection(&collection, &id) else {
@@ -3857,28 +3843,20 @@ async fn put_document(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    // Enforce the incoming causal token without decoding a document that
-    // the mutation transaction will read again for its precondition.
-    let snapshot = match session.read_snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(error) => return session_error(error).into_response(),
-    };
-    mark(trace, &mut t, "read_snapshot");
     let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
     mark(trace, &mut t, "durability_prepare");
-    let mut transaction = match engine.begin(&scope, snapshot, operation.clone()) {
-        Ok(transaction) => transaction,
-        Err(terrabase::EngineError::OperationIdReuse { .. }) => {
-            return durability_unknown().into_response();
-        }
-        Err(_) => return ApiError::storage_failure().into_response(),
-    };
-    if transaction.bind_document_shard_admission(&collection, &id).is_err() {
-        return ApiError::control_unavailable().into_response();
-    }
+    let mut transaction =
+        match host.engine_host().begin_routed_document(&scope, &collection, &id, operation.clone())
+        {
+            Ok(transaction) => transaction,
+            Err(terrabase::EngineError::OperationIdReuse { .. }) => {
+                return durability_unknown().into_response();
+            }
+            Err(_) => return ApiError::storage_failure().into_response(),
+        };
     // The operation reservation now excludes a simultaneous publisher of
     // this identity. Recheck before any live-state precondition or merge.
     match replay_document_request(
@@ -3979,12 +3957,6 @@ async fn put_document(
             if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
                 return error.into_response();
             }
-            // Observe the durable frontier after acknowledgement and use
-            // its snapshot for the response's metadata-only revision read.
-            let snapshot = match session.read_snapshot() {
-                Ok(snapshot) => snapshot,
-                Err(error) => return session_error(error).into_response(),
-            };
             let revision = if has_idempotency_key(&headers) {
                 match engine.resolve_document_request(&scope, operation.clone(), fingerprint) {
                     Ok(Some((_, revision))) => revision,
@@ -3992,7 +3964,7 @@ async fn put_document(
                     Err(error) => return document_request_error(error).into_response(),
                 }
             } else {
-                match revision_at_snapshot(engine, &scope, snapshot, &collection, &id) {
+                match routed_live_revision(host, &scope, &collection, &id) {
                     Ok(revision) => Some(revision),
                     Err(error) => return error.into_response(),
                 }
@@ -4080,20 +4052,15 @@ async fn patch_document(
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
-    let snapshot = match session.read_snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(error) => return session_error(error).into_response(),
-    };
-    let mut transaction = match engine.begin(&scope, snapshot, operation.clone()) {
-        Ok(transaction) => transaction,
-        Err(terrabase::EngineError::OperationIdReuse { .. }) => {
-            return durability_unknown().into_response();
-        }
-        Err(_) => return ApiError::storage_failure().into_response(),
-    };
-    if transaction.bind_document_shard_admission(&collection, &id).is_err() {
-        return ApiError::control_unavailable().into_response();
-    }
+    let mut transaction =
+        match host.engine_host().begin_routed_document(&scope, &collection, &id, operation.clone())
+        {
+            Ok(transaction) => transaction,
+            Err(terrabase::EngineError::OperationIdReuse { .. }) => {
+                return durability_unknown().into_response();
+            }
+            Err(_) => return ApiError::storage_failure().into_response(),
+        };
     // The operation reservation now excludes a simultaneous publisher of
     // this identity. Recheck before any live-state precondition or merge.
     match replay_document_request(
@@ -4191,7 +4158,7 @@ async fn patch_document(
                     Err(error) => return document_request_error(error).into_response(),
                 }
             } else {
-                match live_revision(engine, &scope, &collection, &id) {
+                match routed_live_revision(host, &scope, &collection, &id) {
                     Ok(revision) => Some(revision),
                     Err(error) => return error.into_response(),
                 }
@@ -4351,27 +4318,19 @@ async fn delete_document(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    let present = match session.load(&collection, &id) {
-        Ok(document) => document.is_some(),
-        Err(error) => return session_error(error).into_response(),
-    };
-    let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::storage_failure().into_response();
-    };
     let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
-    let mut transaction = match engine.begin(&scope, snapshot, operation.clone()) {
-        Ok(transaction) => transaction,
-        Err(terrabase::EngineError::OperationIdReuse { .. }) => {
-            return durability_unknown().into_response();
-        }
-        Err(_) => return ApiError::storage_failure().into_response(),
-    };
-    if transaction.bind_document_shard_admission(&collection, &id).is_err() {
-        return ApiError::control_unavailable().into_response();
-    }
+    let mut transaction =
+        match host.engine_host().begin_routed_document(&scope, &collection, &id, operation.clone())
+        {
+            Ok(transaction) => transaction,
+            Err(terrabase::EngineError::OperationIdReuse { .. }) => {
+                return durability_unknown().into_response();
+            }
+            Err(_) => return ApiError::storage_failure().into_response(),
+        };
     // The operation reservation now excludes a simultaneous publisher of
     // this identity. Recheck before any live-state precondition or merge.
     match replay_document_request(
@@ -4393,6 +4352,10 @@ async fn delete_document(
     if let Err(error) = check_if_match(&headers, &transaction, &collection, &id) {
         return error.into_response();
     }
+    let present = match transaction.read_in_collection(&collection, &id) {
+        Ok(document) => document.is_some(),
+        Err(_) => return ApiError::storage_failure().into_response(),
+    };
     if !present {
         return document_not_found(collection.as_str(), id.as_str()).into_response();
     }
@@ -7655,3 +7618,22 @@ mod tests {
 #[cfg(test)]
 #[path = "api_write_durability_tests.rs"]
 mod write_durability_tests;
+
+#[cfg(test)]
+pub(crate) async fn confirm_regional_for_replication_test(
+    engine: &terrabase::Engine,
+    tenant: &terrabase::types::TenantScope,
+    receipt: &terrabase::CommitReceipt,
+    progress: Arc<crate::replication_runtime::ReplicationProgress>,
+    scope: terrabase_cluster::production::DatabaseRouteScope,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    WriteDurability {
+        class: Durability::Regional,
+        uniform_context: None,
+        progress,
+        scope,
+        timeout,
+        standalone: false,
+    }.confirm(engine, tenant, receipt).await.map_err(|error| error.code.to_owned())
+}

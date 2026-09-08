@@ -355,20 +355,23 @@ impl EngineHost {
         &self.engine
     }
 
-    /// Begins a named document write through the authoritative serving
-    /// router and binds its generation to the Engine transaction.
-    pub fn begin_routed_transaction(
+    /// Begins a named document write through the admitted serving registry.
+    /// Local development hosts retain their ordinary single-engine path.
+    pub fn begin_routed_document(
         &self,
         scope: &TenantScope,
-        router: &terrabase::shard_split::ShardRouter,
-        key: &[u8],
+        collection: &CollectionName,
+        id: &terrabase::types::DocumentId,
         operation: OperationId,
     ) -> Result<terrabase::engine::Transaction<'_>, terrabase::engine::EngineError> {
-        let token = self.engine.shard_admission_for_key(scope, router, key)?;
-        let mut transaction =
-            self.engine.begin(scope, self.engine.read_snapshot(scope)?, operation)?;
-        transaction.bind_shard_admission(token)?;
-        Ok(transaction)
+        match &self.engine {
+            HostEngine::Admitted(lease) => {
+                lease.begin_routed_document(scope, collection, id, operation)
+            }
+            HostEngine::Local(engine) => {
+                Ok(engine.begin(scope, engine.read_snapshot(scope)?, operation)?)
+            }
+        }
     }
 
     /// Takes a read snapshot for a validated engine scope.

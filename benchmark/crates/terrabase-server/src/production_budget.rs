@@ -34,7 +34,10 @@ impl AcceptedAdmissionBindingResolver {
 }
 
 impl crate::usage_admission::AllocationBindingResolver for AcceptedAdmissionBindingResolver {
-    fn binding(&self, database_id: &str) -> Result<(String, String, String, u64), String> {
+    fn binding(
+        &self,
+        database_id: &str,
+    ) -> Result<(String, String, String, u64, Vec<String>), String> {
         let record = self
             .records
             .lock()
@@ -56,7 +59,13 @@ impl crate::usage_admission::AllocationBindingResolver for AcceptedAdmissionBind
         if assignment.epoch == 0 || assignment.writer.member().as_str() != record.member_id {
             return Err("database is not admitted at the local writer epoch".into());
         }
-        Ok((record.tenant_id, record.member_id, accepted.proof_digest, assignment.epoch))
+        Ok((
+            record.tenant_id,
+            record.member_id,
+            accepted.proof_digest,
+            assignment.epoch,
+            record.regions,
+        ))
     }
 }
 
@@ -104,6 +113,10 @@ impl ProductionBudgetRuntime {
             .map_err(|_| "write operation identity is invalid")?;
         let accepted_at =
             self.journal.operation_admitted_at(&allocation, project_id, unix_millis())?;
+        let selected_regions = allocation.grant().regions.len();
+        let aggregate_units = units
+            .checked_mul(u64::try_from(selected_regions).map_err(|_| "allocation regions invalid")?)
+            .ok_or("write usage units overflow")?;
         let context = UsageAdmissionContext::try_new(
             project_id,
             database_id,
@@ -112,7 +125,7 @@ impl ProductionBudgetRuntime {
             request_id,
             accepted_at,
             1,
-            i128::from(units),
+            i128::from(aggregate_units),
         )
         .map_err(|_| "write usage context is invalid")?;
         transaction

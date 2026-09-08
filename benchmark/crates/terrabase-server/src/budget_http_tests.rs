@@ -29,21 +29,26 @@ struct Binding {
     holder: String,
     placement: String,
     writer_epoch: u64,
+    selected_regions: Vec<String>,
 }
 
 impl AllocationBindingResolver for Binding {
-    fn binding(&self, _: &str) -> Result<(String, String, String, u64), String> {
+    fn binding(&self, _: &str) -> Result<(String, String, String, u64, Vec<String>), String> {
         Ok((
             self.organization.clone(),
             self.holder.clone(),
             self.placement.clone(),
             self.writer_epoch,
+            self.selected_regions.clone(),
         ))
     }
 }
 
 impl AllocationBindingResolver for std::sync::Mutex<Binding> {
-    fn binding(&self, database: &str) -> Result<(String, String, String, u64), String> {
+    fn binding(
+        &self,
+        database: &str,
+    ) -> Result<(String, String, String, u64, Vec<String>), String> {
         self.lock().unwrap().binding(database)
     }
 }
@@ -66,6 +71,18 @@ impl Fixture {
     }
 
     fn with_verifier(holder: &str, verifier: Option<AllocationVerifierConfig>) -> Self {
+        Self::with_verifier_regions(holder, verifier, vec!["GRU".into(), "SFO".into()])
+    }
+
+    fn with_regions(regions: Vec<String>) -> Self {
+        Self::with_verifier_regions("writer-vector-1", None, regions)
+    }
+
+    fn with_verifier_regions(
+        holder: &str,
+        verifier: Option<AllocationVerifierConfig>,
+        regions: Vec<String>,
+    ) -> Self {
         let nonce =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let root = std::env::temp_dir().join(format!("terrabase-budget-http-{nonce}"));
@@ -88,7 +105,7 @@ impl Fixture {
             [(
                 terrabase_cluster::production::DatabaseRouteScope::new(tenant, project, database),
                 Some("GRU".into()),
-                std::collections::BTreeSet::from(["GRU".into()]),
+                regions.iter().cloned().collect(),
             )],
         )
         .unwrap();
@@ -123,6 +140,7 @@ impl Fixture {
                     holder: holder.into(),
                     placement: "db-placement".into(),
                     writer_epoch: 9,
+                    selected_regions: regions,
                 }),
             }
         }))
@@ -173,6 +191,16 @@ fn signed_for(
     operation: &str,
     paid: bool,
 ) -> (Value, Vec<u8>, EcdsaKeyPair) {
+    signed_for_regions(tenant, database, operation, paid, vec!["GRU"])
+}
+
+fn signed_for_regions(
+    tenant: &str,
+    database: &str,
+    operation: &str,
+    paid: bool,
+    regions: Vec<&str>,
+) -> (Value, Vec<u8>, EcdsaKeyPair) {
     let key_der =
         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &SystemRandom::new())
             .unwrap();
@@ -196,7 +224,7 @@ fn signed_for(
             requested_units: 1,
             included_units: i64::from(!paid),
             paid_units: i64::from(paid),
-            regions: vec!["GRU".into()],
+            regions: regions.into_iter().map(str::to_owned).collect(),
             units: 1,
             cost_nano_dollar: if paid { 1000 } else { 0 },
             policy_epoch: 1,
@@ -287,6 +315,90 @@ async fn canonical_delivery_is_denied_when_holder_binding_changes() {
     assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
+#[tokio::test]
+async fn three_region_origin_fact_reconciles_local_debit_after_reopen() {
+    let fixture = Fixture::with_regions(vec!["GRU".into(), "SFO".into(), "FRA".into()]);
+    let mut state = super::state_with_keys_and_control();
+    let response = super::router(state.clone())
+        .oneshot(
+            Request::post("/api/v1/databases")
+                .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
+                .body(Body::from(
+                    r#"{"name":"prod","placement":["GRU","SFO","FRA"],"residency":null}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let host = super::super::document_host(&state, "prod").unwrap();
+    let database = host.engine().database_owner().database().to_text();
+    let operation = "three-region-replay";
+    let (signed, spki, _) = signed_for_regions(
+        "terrabase-local",
+        &database,
+        operation,
+        false,
+        vec!["GRU", "SFO", "FRA"],
+    );
+    let binding = Arc::new(std::sync::Mutex::new(Binding {
+        organization: "terrabase-local".into(),
+        holder: "holder".into(),
+        placement: "db-placement".into(),
+        writer_epoch: 1,
+        selected_regions: vec!["GRU".into(), "SFO".into(), "FRA".into()],
+    }));
+    let verifier = AllocationVerifierConfig {
+        key_id: signed["key_id"].as_str().unwrap().into(),
+        public_key_spki: spki,
+        policy_epoch: 1,
+        consent_epoch: 1,
+        resolver: binding,
+    };
+    let deliver = || {
+        Request::post("/internal/v1/databases/usage/allocation")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&signed).unwrap()))
+            .unwrap()
+    };
+    let admitted = fixture.reopen(verifier.clone());
+    let response = admitted.router().oneshot(deliver()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    Arc::get_mut(&mut state).unwrap().budget =
+        Some(Arc::new(crate::production_budget::ProductionBudgetRuntime::new(admitted)));
+    let mut app = super::router(state.clone());
+    let put = || public_write(false, operation, "Ada");
+    assert_eq!(app.clone().oneshot(put()).await.unwrap().status(), StatusCode::OK);
+
+    drop(app);
+    Arc::get_mut(&mut state).unwrap().budget = Some(Arc::new(
+        crate::production_budget::ProductionBudgetRuntime::new(fixture.reopen(verifier)),
+    ));
+    app = super::router(state.clone());
+    assert_eq!(app.clone().oneshot(put()).await.unwrap().status(), StatusCode::OK);
+
+    let path = state
+        .catalog
+        .as_ref()
+        .unwrap()
+        .location_for("terrabase-local", "local", "prod")
+        .join("terrabase.sqlite3");
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let (local_units, body): (i64, Vec<u8>) = connection
+        .query_row(
+            "SELECT units_total, (SELECT body FROM usage_facts WHERE fact_id=?1)
+             FROM usage_budget_allocations WHERE operation=?1",
+            [operation],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let fact = terrabase::usage::DurableUsageFact::decode(&body).unwrap();
+    assert_eq!(local_units, 1, "allowance debit remains local allocation units");
+    assert_eq!(fact.fact().integer_units(), 3, "origin fact is multiplied by three regions");
+}
+
 fn public_write(batch: bool, key: &str, name: &str) -> Request<Body> {
     let value = serde_json::json!({"name": name});
     let (request, body) = if batch {
@@ -329,6 +441,7 @@ async fn public_writes_consume_signed_included_and_paid_allocations_once() {
             holder: "holder".into(),
             placement: "db-placement".into(),
             writer_epoch: 1,
+            selected_regions: vec!["GRU".into()],
         }));
         let verifier = AllocationVerifierConfig {
             key_id: signed["key_id"].as_str().unwrap().into(),

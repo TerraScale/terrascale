@@ -469,8 +469,6 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         },
     )
     .unwrap();
-    progress.advance_regional_from_peer(scope, peer.member().as_str(), 8);
-    assert!(progress.regional_covers(scope, 8).unwrap());
     let observations = peers.observations();
     // The follower must authorize from its own local placement view.
     let follower_placement = terrabase_cluster::production::ProductionPlacement::try_new(
@@ -495,76 +493,105 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         WalFollower::bootstrap_engine(follower_engine.engine(), &root.join("real-follower"))
             .unwrap();
     let mut follower = WalFollowerDriver::new(follower_binding, follower_replica);
-    let checkpoint_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let checkpoint_sent_remote = checkpoint_sent.clone();
+    let engine = follower_engine.engine();
+    let tenant = engine.scope_for(
+        &terrabase::types::TenantId::try_new(&scope.tenant().to_text()).unwrap(),
+    );
+    let commit = || {
+        use terrabase::types::*;
+        let snapshot = engine.read_snapshot(&tenant).unwrap();
+        let mut transaction = engine
+            .begin(&tenant, snapshot, OperationId::try_new("lost-wal-ack").unwrap())
+            .unwrap();
+        transaction.put(
+            Document::new(DocumentId::try_new("doc").unwrap(),
+                CollectionName::try_new("items").unwrap(), DocumentValue::Null),
+            ExpectedVersion::Any,
+        ).unwrap();
+        match transaction.commit(LocalDurability::Synced) {
+            terrabase::CommitOutcome::Committed(receipt) => receipt,
+            outcome => panic!("unexpected commit: {outcome:?}"),
+        }
+    };
+    let before = engine.read_snapshot(&tenant).unwrap().sequence();
+    let receipt = commit();
+    let (applied_tx, applied_rx) = tokio::sync::oneshot::channel();
+    let (disconnect_tx, disconnect_rx) = tokio::sync::oneshot::channel();
+    let (recovered_tx, recovered_rx) = tokio::sync::oneshot::channel();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
     let remote_task = tokio::spawn(async move {
-        for index in 0..2 {
-            let Some(connection) = remote.accept().await.unwrap() else { return };
-            let _ = connection.receive_frame().await;
-            let Some(checkpoint) = connection.receive_frame().await.ok() else { return };
-            let request = WalCheckpointMessage::decode(&checkpoint).expect("encoded checkpoint");
-            if index == 1 {
-                let peer = WalAuthenticatedPeer::from_connection(&connection);
-                let response = follower.checkpoint(&peer, request).await.unwrap();
+        let connection = remote.accept().await.unwrap().unwrap();
+        let authenticated = WalAuthenticatedPeer::from_connection(&connection);
+        loop {
+            let frame = connection.receive_frame().await.unwrap();
+            if frame.starts_with(b"TBWCP") {
+                let response = follower.checkpoint(&authenticated,
+                    WalCheckpointMessage::decode(&frame).unwrap()).await.unwrap();
                 connection.send_frame(&response.encode().unwrap()).await.unwrap();
-                checkpoint_sent_remote.store(true, Ordering::Release);
+            } else if frame.starts_with(b"TBWAL") {
+                let ack = follower.apply(&authenticated,
+                    ScopedWalBatch::decode(&frame).unwrap()).await.unwrap();
+                assert!(ack.encode().unwrap().starts_with(b"TBWACK"));
+                // The disk sync completed, but its acknowledgement never reaches the writer.
+                applied_tx.send(()).unwrap();
+                disconnect_rx.await.unwrap();
+                drop(connection);
+                break;
             }
-            // Closing immediately after authentication forces the real session
-            // owner through its transport-error fence and restart path.
-            drop(connection);
+        }
+        let connection = remote.accept().await.unwrap().unwrap();
+        let authenticated = WalAuthenticatedPeer::from_connection(&connection);
+        loop {
+            let frame = connection.receive_frame().await.unwrap();
+            if frame.starts_with(b"TBWCP") {
+                let response = follower.checkpoint(&authenticated,
+                    WalCheckpointMessage::decode(&frame).unwrap()).await.unwrap();
+                connection.send_frame(&response.encode().unwrap()).await.unwrap();
+                recovered_tx.send(()).unwrap();
+                break;
+            }
+        }
+        // Continue servicing real WAL replays while the replacement owner proves catch-up.
+        tokio::pin!(stop_rx);
+        loop {
+            tokio::select! {
+                _ = &mut stop_rx => break,
+                frame = connection.receive_frame() => {
+                    let frame = frame.unwrap();
+                    if frame.starts_with(b"TBWAL") {
+                        let ack = follower.apply(&authenticated,
+                            ScopedWalBatch::decode(&frame).unwrap()).await.unwrap();
+                        connection.send_frame(&ack.encode().unwrap()).await.unwrap();
+                    }
+                }
+            }
         }
     });
-    let first = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            if let Some(facts) =
-                observations.lock().unwrap().get(&(peer.member().as_str().to_owned(), scope))
-                && facts.connected
-                && facts.session_id != 0
-            {
-                break facts.session_id;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("first authenticated session");
-    assert!(progress.regional_covers(scope, 8).unwrap());
-    let second = tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            if let Some(facts) =
-                observations.lock().unwrap().get(&(peer.member().as_str().to_owned(), scope))
-                && facts.session_id > first
-                && checkpoint_sent.load(Ordering::Acquire)
-            {
-                break facts.session_id;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("replacement session");
-    assert!(second > first);
-    assert!(
-        checkpoint_sent.load(Ordering::Acquire),
-        "replacement must receive a real follower checkpoint"
-    );
-    assert_eq!(
-        progress.regional_covers(scope, 8),
-        Ok(false),
-        "session fencing removes old evidence while retaining database admission"
-    );
-    {
-        let observations = observations.lock().unwrap();
-        let facts = observations.get(&(peer.member().as_str().to_owned(), scope)).unwrap();
-        assert!(facts.physical.is_none(), "closed session must not publish physical proof");
-        assert!(facts.readiness.is_none(), "closed session must not publish readiness proof");
-    }
-    assert!(
-        peers.ensure_running().is_ok(),
-        "terminal command path remains usable after session restart"
-    );
-    peers.drain().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), applied_rx).await
+        .expect("real WAL reaches follower").unwrap();
+    let first = observations.lock().unwrap()
+        .get(&(peer.member().as_str().to_owned(), scope)).unwrap().session_id;
+    assert!(!progress.regional_covers(scope, receipt.sequence().get()).unwrap());
+    assert_eq!(crate::api::confirm_regional_for_replication_test(
+        engine, &tenant, &receipt, progress.clone(), scope, Duration::from_millis(20),
+    ).await, Err("commit_unknown".to_owned()));
+    disconnect_tx.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), recovered_rx).await
+        .expect("replacement receives durable follower checkpoint").unwrap();
+    let replay = commit();
+    assert_eq!(receipt, replay, "retry must return the original operation receipt");
+    crate::api::confirm_regional_for_replication_test(
+        engine, &tenant, &replay, progress.clone(), scope, Duration::from_secs(5),
+    ).await.unwrap();
+    assert!(observations.lock().unwrap()
+        .get(&(peer.member().as_str().to_owned(), scope)).unwrap().session_id > first);
+    assert_eq!(engine.read_snapshot(&tenant).unwrap().sequence(), receipt.sequence());
+    assert_eq!(engine.journal_rows(&tenant, before.get(), 10).unwrap().len(), 1,
+        "the same operation creates exactly one durable journal record");
+    stop_tx.send(()).unwrap();
     remote_task.await.unwrap();
+    peers.drain().await.unwrap();
+    drop(follower_engine);
     drop(runtime);
     drop(member);
     let _ = std::fs::remove_dir_all(root);

@@ -70,12 +70,12 @@
 //! the floor fail closed: [`StoragePort::snapshot_boundary_available`] is
 //! false there and [`StoragePort::servable_history_start`] is the floor
 //! (the oldest retained journal row when no consumer has registered).
-//! Consumers register through
-//! [`SqliteStorage::advance_consumer_frontier`], test-gated until the
-//! engine wires its real consumers (replication acks, sync checkpoints,
-//! metering export, and the TB-22 backup lane's Litestream-position
-//! frontier — that seam is why the lifecycle is shaped as a named
-//! frontier table). Usage facts are billing records and are never pruned.
+//! Required consumers register at admission and advance through
+//! [`StoragePort::advance_consumer_frontier`] only after their durable
+//! acknowledgement (replication acks, metering export, and the TB-22 backup
+//! lane's Litestream-position frontier). The optional sync consumer is
+//! registered while a shared subscription exists and retired when the last
+//! reader closes. Usage facts are billing records and are never pruned.
 //!
 //! ## Usage facts
 //!
@@ -237,6 +237,12 @@ pub fn database_file(location: &Path) -> PathBuf {
 /// The read-pool width. Reads take `&self`, so the pool is what lets a
 /// future engine-side read-concurrency split use this backend unchanged.
 const READ_POOL_WIDTH: usize = 4;
+
+/// Every admitted database starts with all durable consumers at sequence zero.
+/// A missing acknowledgement must therefore hold the pruning floor back.
+const REQUIRED_CONSUMER_FRONTIERS: &[&str] =
+    &["replication", "metering", "native-backup"];
+const OPTIONAL_CONSUMER_FRONTIERS: &[&str] = &["sync"];
 
 /// Idle checkpoint workers periodically recheck their stop signal.
 const CHECKPOINT_IDLE_WAIT: Duration = Duration::from_secs(1);
@@ -1811,6 +1817,15 @@ impl Drop for ReaderGuard<'_> {
 }
 
 impl SqliteStorage {
+    #[cfg(test)]
+    pub(crate) fn advance_consumer_frontier(
+        &mut self,
+        name: &str,
+        sequence: u64,
+    ) -> Result<(), ()> {
+        <Self as StoragePort>::advance_consumer_frontier(self, name, sequence)
+    }
+
     /// Opens (or creates) the `SQLite` location in `dir`.
     ///
     /// # Errors
@@ -1907,6 +1922,14 @@ impl SqliteStorage {
                 [], |row| row.get(0),
             ).map_err(|_| StorageOpenError::Unavailable)?;
             transaction.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
+            for name in REQUIRED_CONSUMER_FRONTIERS {
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO consumer_frontiers(name, seq) VALUES (?1, 0)",
+                        [*name],
+                    )
+                    .map_err(|_| StorageOpenError::Unavailable)?;
+            }
             repair_summary::initialize(&transaction).map_err(|_| StorageOpenError::Unavailable)?;
             if !has_pruning_watermarks {
                 // Legacy files have no exact deletion evidence. Refuse the
@@ -2089,23 +2112,19 @@ impl SqliteStorage {
         self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Records or advances one consumer's journal frontier. The frontier is
-    /// monotonic: a lower sequence never moves it back.
-    ///
-    /// Test-gated until the engine wires its real consumers (replication
-    /// acks, sync checkpoints, metering export) and the TB-22 backup lane
-    /// feeds its Litestream-position frontier in; the pruning semantics and
-    /// their bound are pinned here first.
+    /// Records or advances one required consumer's journal frontier. The
+    /// frontier is monotonic: a lower sequence never moves it back.
     ///
     /// # Errors
     ///
     /// Returns `Err(())` when durable storage failed.
-    #[cfg(test)]
-    pub(crate) fn advance_consumer_frontier(
-        &mut self,
-        name: &str,
-        sequence: u64,
-    ) -> Result<(), ()> {
+    fn advance_consumer_frontier(&mut self, name: &str, sequence: u64) -> Result<(), ()> {
+        #[cfg(not(test))]
+        if !REQUIRED_CONSUMER_FRONTIERS.contains(&name)
+            && !OPTIONAL_CONSUMER_FRONTIERS.contains(&name)
+        {
+            return Err(());
+        }
         let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         writer
             .execute(
@@ -2113,6 +2132,35 @@ impl SqliteStorage {
                  ON CONFLICT(name) DO UPDATE SET seq = MAX(seq, excluded.seq)",
                 rusqlite::params![name, sequence as i64],
             )
+            .map(|_| ())
+            .map_err(|_| ())
+    }
+
+    fn register_consumer_frontier(&mut self, name: &str, sequence: u64) -> Result<(), ()> {
+        #[cfg(not(test))]
+        if !OPTIONAL_CONSUMER_FRONTIERS.contains(&name) {
+            return Err(());
+        }
+        let sequence = i64::try_from(sequence).map_err(|_| ())?;
+        let writer = self.writer.lock().map_err(|_| ())?;
+        writer
+            .execute(
+                "INSERT INTO consumer_frontiers(name, seq) VALUES (?1, ?2)
+                 ON CONFLICT(name) DO UPDATE SET seq = MAX(seq, excluded.seq)",
+                rusqlite::params![name, sequence],
+            )
+            .map(|_| ())
+            .map_err(|_| ())
+    }
+
+    fn retire_consumer_frontier(&mut self, name: &str) -> Result<(), ()> {
+        #[cfg(not(test))]
+        if !OPTIONAL_CONSUMER_FRONTIERS.contains(&name) {
+            return Err(());
+        }
+        let writer = self.writer.lock().map_err(|_| ())?;
+        writer
+            .execute("DELETE FROM consumer_frontiers WHERE name = ?1", [name])
             .map(|_| ())
             .map_err(|_| ())
     }
@@ -2811,7 +2859,7 @@ fn stage_intent(
                 .map_err(|_| ())?;
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
         };
-        let units = i64::try_from(admission.integer_units()).map_err(|_| ())?;
+        let units = allocation.local_units();
         if budget::consume(transaction, &intent.tenant, allocation, units).is_err() {
             transaction
                 .execute_batch(
@@ -6657,19 +6705,6 @@ impl StoragePort for SqliteStorage {
                 // root or sequence zero from a failed/corrupt query.
                 (StorageSequence::new(0), StorageRootId::from_recorded(String::new()))
             })
-    }
-
-    fn advance_backup_frontier(&mut self, sequence: u64) -> Result<(), ()> {
-        let sequence = i64::try_from(sequence).map_err(|_| ())?;
-        let writer = self.writer.lock().map_err(|_| ())?;
-        writer
-            .execute(
-                "INSERT INTO consumer_frontiers (name, seq) VALUES ('native-backup', ?1)
-             ON CONFLICT(name) DO UPDATE SET seq = MAX(seq, excluded.seq)",
-                [sequence],
-            )
-            .map(|_| ())
-            .map_err(|_| ())
     }
 
     fn run_retention_sweep(&mut self) -> Result<(), ()> {

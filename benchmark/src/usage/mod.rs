@@ -1022,7 +1022,7 @@ impl UsageAdmissionContext {
         self.meter_version
     }
 
-    /// Returns the positive integer request units.
+    /// Returns the positive integer billed units, including accepted Region copies.
     #[must_use]
     pub const fn integer_units(&self) -> i128 {
         self.integer_units

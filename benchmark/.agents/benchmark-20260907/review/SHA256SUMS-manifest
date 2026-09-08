@@ -1,0 +1,8 @@
+cd6500716d828609d05c5f136f3531aa313fc05cd6cf27dbf0327b10cd0a7080  manifest-futures-index.md
+65301d30b6ef091a383a1b259b99e9616c77a23781085ba536bd84add376e065  manifest-futures-normal.diff
+d2e45b7853d86a3276ba2150569a9f588763410aae5ea5b9ff19f94428d0caf1  ../../../Cargo.toml
+3bd5352f35cd859ae3611ddaf3a4917f2fa2f4821ff57e3123f2535ed70b6077  ../../../Cargo.lock
+ec8cbbf3920ff32a129d49e2fd404f022b8dd99904397c2881bbe61e9436eec5  ../../../src/backup/object_store.rs
+0f8761e7ec90650d987c10538d9b243c724452ffbcfac5c23130762d845e888e  ../../../crates/terrabase-server/src/delegated_identity.rs
+f378abc58cb9bc3a7ac4c169901a86ce9e28454734352d42af3a51858121e12b  ../../../crates/terrabase-server/src/native_backup_runtime.rs
+db46ffaf2e44e8034f9d96be17332b951195b97c675a348c5fa8c132f8f57cd3  ../../../crates/terrabase-server/src/production_backup.rs

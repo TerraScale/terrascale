@@ -1,0 +1,25 @@
+diff --git a/src/engine/commit_timing_probe.rs b/src/engine/commit_timing_probe.rs
+index 5e2d74d9..243c29c0 100644
+--- a/src/engine/commit_timing_probe.rs
++++ b/src/engine/commit_timing_probe.rs
+@@ -3,8 +3,6 @@
+ use std::time::Instant;
+ 
+ use super::*;
+-use crate::types::{CollectionName, DocumentId, LocalDurability, OperationId};
+-
+ #[test]
+ fn probe_single_document_commit_timings() {
+diff --git a/src/engine/shard_split.rs b/src/engine/shard_split.rs
+index fb3191d0..7f29dfc7 100644
+--- a/src/engine/shard_split.rs
++++ b/src/engine/shard_split.rs
+@@ -914,7 +914,7 @@ impl Engine {
+         ).map_err(|()| EngineError::StorageFailure)?;
+         let Some(raw) = bytes(raw).map_err(|_| EngineError::StorageFailure)? else { return Ok(None); };
+         let identity = decode_file_identity(&raw)?;
+-        if identity.database_incarnation != incarnation || identity.region != *self.database_owner().region() {
++        if identity.database_incarnation != incarnation || identity.region != self.database_owner().region() {
+             return Err(EngineError::Conflict);
+         }
+         Ok(Some(identity))

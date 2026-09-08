@@ -1446,8 +1446,26 @@ pub(crate) trait StoragePort: Send {
         Vec::new()
     }
 
+    /// Durably advances one required retention consumer's floor.
+    ///
+    /// Implementations must reject unknown consumer names. Required
+    /// consumers are registered at database admission and start at zero, so
+    /// pruning remains fail-safe until each consumer has acknowledged durable
+    /// progress.
+    fn advance_consumer_frontier(&mut self, name: &str, sequence: u64) -> Result<(), ()>;
+
+    /// Registers a live optional retention consumer at a known durable
+    /// boundary. Registration is monotonic with respect to the existing row.
+    fn register_consumer_frontier(&mut self, name: &str, sequence: u64) -> Result<(), ()>;
+
+    /// Removes a consumer that is no longer present. A missing consumer must
+    /// not pin retention when the owning subsystem has no live readers.
+    fn retire_consumer_frontier(&mut self, name: &str) -> Result<(), ()>;
+
     /// Durably advances the independent native backup retention floor.
-    fn advance_backup_frontier(&mut self, sequence: u64) -> Result<(), ()>;
+    fn advance_backup_frontier(&mut self, sequence: u64) -> Result<(), ()> {
+        self.advance_consumer_frontier("native-backup", sequence)
+    }
 
     /// Runs one retention sweep: prune publication history below every
     /// consumer frontier, then checkpoint the WAL.

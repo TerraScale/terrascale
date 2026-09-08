@@ -59,8 +59,11 @@ pub struct UsageRegistration {
 /// local placement. Implementations must fail closed when the database is not
 /// currently admitted.
 pub trait AllocationBindingResolver: Send + Sync {
-    /// Returns organization, holder, placement revision, and writer epoch.
-    fn binding(&self, database_id: &str) -> Result<(String, String, String, u64), String>;
+    /// Returns organization, holder, placement revision, writer epoch, and accepted Regions.
+    fn binding(
+        &self,
+        database_id: &str,
+    ) -> Result<(String, String, String, u64, Vec<String>), String>;
 }
 
 /// Explicit command-signature trust configuration for budget delivery.
@@ -234,7 +237,7 @@ impl UsageAdmissionJournal {
             serde_json::from_slice(signed_bytes).map_err(|_| "allocation encoding invalid")?;
         let envelope: terrabase::usage::AllocationEnvelope =
             serde_json::from_slice(&wire.payload).map_err(|_| "allocation payload invalid")?;
-        let (organization, holder, placement, writer_epoch) =
+        let (organization, holder, placement, writer_epoch, selected_regions) =
             config.resolver.binding(&envelope.grant.database_id)?;
         let verified = terrabase::usage::VerifiedAllocation::verify(
             signed_bytes,
@@ -251,6 +254,9 @@ impl UsageAdmissionJournal {
             unix_millis(),
         )
         .map_err(|_| "allocation verification failed")?;
+        if !same_regions(&verified.grant().regions, &selected_regions) {
+            return Err("allocation Region selection mismatch".into());
+        }
         if verified.grant().writer_epoch != writer_epoch {
             return Err("allocation writer epoch mismatch".into());
         }
@@ -357,7 +363,7 @@ impl UsageAdmissionJournal {
         {
             return Err("allocation identity conflict".into());
         }
-        let (organization, holder, placement, writer_epoch) =
+        let (organization, holder, placement, writer_epoch, selected_regions) =
             config.resolver.binding(database_id)?;
         let verified = terrabase::usage::VerifiedAllocation::verify(
             &signed,
@@ -374,6 +380,9 @@ impl UsageAdmissionJournal {
             unix_millis(),
         )
         .map_err(|_| "allocation verification failed")?;
+        if !same_regions(&verified.grant().regions, &selected_regions) {
+            return Err("allocation Region selection mismatch".into());
+        }
         Ok(Some(verified))
     }
 
@@ -570,6 +579,18 @@ fn same_allocation_identity(
     incoming: &terrabase::usage::SignedAllocation,
 ) -> bool {
     stored.key_id == incoming.key_id && stored.payload == incoming.payload
+}
+
+fn same_regions(grant: &[String], accepted: &[String]) -> bool {
+    let grant = grant
+        .iter()
+        .map(|region| region.parse::<RegionCode>().map(|code| code.as_str().to_owned()))
+        .collect::<Result<BTreeSet<_>, _>>();
+    let accepted = accepted
+        .iter()
+        .map(|region| region.parse::<RegionCode>().map(|code| code.as_str().to_owned()))
+        .collect::<Result<BTreeSet<_>, _>>();
+    matches!((grant, accepted), (Ok(grant), Ok(accepted)) if grant == accepted)
 }
 async fn admit_allocation(
     State(journal): State<Arc<UsageAdmissionJournal>>,

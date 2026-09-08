@@ -1613,6 +1613,29 @@ fn compact_sweeps_the_pruning_floor() {
     );
 }
 
+#[test]
+fn required_frontiers_are_registered_before_retention_can_prune() {
+    let (_dir, mut storage) = sqlite_store("required-frontiers");
+    commit(&mut storage, "op-1", vec![put(document("doc", "users", "v1"), ExpectedVersion::New)]);
+    commit(
+        &mut storage,
+        "op-2",
+        vec![put(document("doc", "users", "v2"), ExpectedVersion::Exact(1))],
+    );
+    backdate_all_rows(&storage);
+
+    // The production-required consumers are admitted at sequence zero. A
+    // backup acknowledgement alone cannot move the minimum floor past zero.
+    storage.advance_backup_frontier(2).expect("backup frontier advances");
+    assert_eq!(storage.prune_below_consumer_frontiers().expect("prune runs"), 0);
+
+    for name in ["replication", "sync", "metering"] {
+        storage.advance_consumer_frontier(name, 2).expect("required frontier advances");
+    }
+    assert_eq!(storage.prune_below_consumer_frontiers().expect("prune runs"), 1);
+    assert_eq!(storage.journal_records(), 1, "the newest row remains the live-state pin");
+}
+
 // ---- SQLite-focused: crash atomicity against the file --------------------
 
 /// Asserts the folded row model's crash invariant directly against the
