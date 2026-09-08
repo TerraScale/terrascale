@@ -885,6 +885,40 @@ function regionEndpoints(raw: string | undefined, fallback: string | undefined, 
   return endpoints;
 }
 
+function requireStrictG1Configuration(config: {
+  readonly apiBaseUrl: string | undefined;
+  readonly accessToken: string | undefined;
+  readonly dashboardBaseUrl: string | undefined;
+  readonly regionBaseUrls: string | undefined;
+}, strict = strictG1): void {
+  if (!strict) return;
+  const required: readonly [name: string, value: string | undefined][] = [
+    ["TERRASCALE_API_BASE_URL", config.apiBaseUrl],
+    ["TERRASCALE_E2E_ACCESS_TOKEN", config.accessToken],
+    ["TERRASCALE_DASHBOARD_BASE_URL", config.dashboardBaseUrl],
+  ];
+  for (const [name, value] of required) {
+    if (value === undefined) throw new Error(`[G1 contract gap] ${name} is not configured`);
+  }
+
+  const validateUrl = (name: string, value: string): void => {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new Error(`[G1 contract gap] ${name} must be an absolute HTTP(S) URL`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`[G1 contract gap] ${name} must be an absolute HTTP(S) URL`);
+    }
+  };
+  validateUrl("TERRASCALE_API_BASE_URL", config.apiBaseUrl!);
+  validateUrl("TERRASCALE_DASHBOARD_BASE_URL", config.dashboardBaseUrl!);
+  for (const [region, base] of regionEndpoints(config.regionBaseUrls, config.apiBaseUrl, true)) {
+    validateUrl(`TERRASCALE_E2E_REGION_BASE_URLS ${region}`, base);
+  }
+}
+
 type LiveContract = {
   readonly paths?: Record<string, Record<string, unknown>>;
 };
@@ -984,11 +1018,33 @@ function requirePublishedDomain(contract: LiveContract, domain: string): void {
 
 describe("strict G1 configuration guards", () => {
   test("requires every live input when strict mode is enabled", () => {
-    if (!strictG1) return;
-    assert.ok(liveApiBaseUrl, "[G1 contract gap] TERRASCALE_API_BASE_URL is not configured");
-    assert.ok(liveAccessToken, "[G1 contract gap] TERRASCALE_E2E_ACCESS_TOKEN is not configured");
-    assert.ok(liveDashboardBaseUrl, "[G1 contract gap] TERRASCALE_DASHBOARD_BASE_URL is not configured");
-    regionEndpoints(process.env.TERRASCALE_E2E_REGION_BASE_URLS, liveApiBaseUrl, true);
+    requireStrictG1Configuration({
+      apiBaseUrl: liveApiBaseUrl,
+      accessToken: liveAccessToken,
+      dashboardBaseUrl: liveDashboardBaseUrl,
+      regionBaseUrls: process.env.TERRASCALE_E2E_REGION_BASE_URLS,
+    });
+  });
+
+  test("rejects malformed strict HTTP endpoints before the live journey starts", () => {
+    assert.throws(
+      () => requireStrictG1Configuration({
+        apiBaseUrl: "file:///tmp/api",
+        accessToken: "token",
+        dashboardBaseUrl: "https://dashboard.example",
+        regionBaseUrls: "GRU=https://gru.example,SFO=https://sfo.example,FRA=https://fra.example",
+      }, true),
+      /TERRASCALE_API_BASE_URL must be an absolute HTTP\(S\) URL/u,
+    );
+    assert.throws(
+      () => requireStrictG1Configuration({
+        apiBaseUrl: "https://api.example",
+        accessToken: "token",
+        dashboardBaseUrl: "https://dashboard.example",
+        regionBaseUrls: "GRU=https://gru.example,SFO=not-a-url,FRA=https://fra.example",
+      }, true),
+      /TERRASCALE_E2E_REGION_BASE_URLS SFO must be an absolute HTTP\(S\) URL/u,
+    );
   });
 
   test("rejects incomplete or malformed strict Region declarations", () => {

@@ -86,7 +86,7 @@ try {
 
 type OpenApiDocument = { readonly paths?: Record<string, Record<string, unknown>> };
 type OpenApiOperation = { readonly operationId?: string; readonly requestBody?: OpenApiSchemaRef; readonly responses?: Record<string, OpenApiResponse> };
-type OpenApiSchemaRef = { readonly $ref?: string; readonly content?: Record<string, { readonly schema?: OpenApiSchemaRef }> };
+type OpenApiSchemaRef = { readonly $ref?: string; readonly type?: string | readonly string[]; readonly items?: OpenApiSchemaRef; readonly content?: Record<string, { readonly schema?: OpenApiSchemaRef }> };
 type OpenApiResponse = { readonly content?: Record<string, { readonly schema?: OpenApiSchemaRef }> };
 type ManifestRoute = { readonly method: string; readonly pathTemplate: string };
 
@@ -102,6 +102,27 @@ function schemaName(value: OpenApiSchemaRef | undefined): string | undefined {
   const reference = value && "$ref" in value && typeof value.$ref === "string" ? value.$ref : undefined;
   return reference?.split("/").at(-1);
 }
+function schemaType(value: OpenApiSchemaRef | undefined): string | undefined {
+  const name = schemaName(value);
+  if (name !== undefined) return name;
+  if (value === undefined) return undefined;
+  if (value.type === "array") {
+    const item = schemaType(value.items);
+    return item === undefined ? "json[]" : `${item}[]`;
+  }
+  if (Array.isArray(value.type)) {
+    const types = value.type.filter((type) => type !== "null").map((type) => schemaType({ type }));
+    return [...new Set(types.filter((type): type is string => type !== undefined))].join(" | ") || "null";
+  }
+  switch (value.type) {
+    case "string": return "string";
+    case "number":
+    case "integer": return "number";
+    case "boolean": return "boolean";
+    case "null": return "null";
+    default: return "json";
+  }
+}
 function requestType(body: OpenApiSchemaRef | undefined): string {
   if (body === undefined) return "void";
   if (body.content?.["application/octet-stream"] !== undefined) return "Uint8Array";
@@ -113,7 +134,7 @@ function responseType(responses: Record<string, OpenApiResponse> | undefined): s
   const types = successful.map(([, response]) => {
     if (response.content?.["application/octet-stream"] !== undefined) return "Uint8Array";
     const content = response.content?.["application/json"] ?? Object.values(response.content ?? {})[0];
-    return schemaName(content?.schema) ?? (content?.schema === undefined ? "void" : "json");
+    return schemaType(content?.schema) ?? "void";
   });
   return [...new Set(types)].join(" | ");
 }
