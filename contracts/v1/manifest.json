@@ -25,7 +25,7 @@
     {
       "path": "conformance/reactive.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "20f4f63ea988a78bb352de7796e68c0e493e558cb79a77bd7e502aaddbf3f4d8"
+      "blake3": "6acd4fd3b9c35c4bebb0460d4414eb6132fc551c96335a9dd5f39aab4f5a4dff"
     },
     {
       "path": "msgpack/hostile-vectors.json",
