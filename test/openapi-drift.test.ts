@@ -42,4 +42,24 @@ describe("combined TerraBase and edge OpenAPI drift", () => {
     assert.equal(manifest.routeCount, descriptor.routeCount);
     assert.equal(manifest.routes.length, descriptor.routes.length);
   });
+
+  test("manifest has one canonical producer per method and path", async () => {
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      readonly routes: readonly {
+        readonly method: string;
+        readonly pathTemplate: string;
+        readonly producer?: string;
+      }[];
+    };
+    const keys = new Set<string>();
+    for (const route of manifest.routes) {
+      const key = `${route.method} ${route.pathTemplate}`;
+      assert.equal(keys.has(key), false, `duplicate manifest route: ${key}`);
+      keys.add(key);
+    }
+
+    const regions = manifest.routes.filter((route) => route.pathTemplate === "/api/v1/regions" && route.method === "GET");
+    assert.equal(regions.length, 1);
+    assert.equal(regions[0]?.producer, "edge");
+  });
 });

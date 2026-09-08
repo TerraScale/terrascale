@@ -57,8 +57,8 @@ try {
   // Edge owns public routes that overlap a TerraBase member route. Keep one
   // canonical SDK entry for each method/path so consumers cannot resolve the
   // same request to two different response contracts.
-  const edgeRouteKeys = new Set(edgeRoutes.map((route) => `${route.method} ${route.pathTemplate}`));
-  const routes = [...terrabaseRoutes.filter((route) => !edgeRouteKeys.has(`${route.method} ${route.pathTemplate}`)), ...edgeRoutes]
+  const edgeRouteKeys = new Set(edgeRoutes.map(routeKey));
+  const routes = [...terrabaseRoutes.filter((route) => !edgeRouteKeys.has(routeKey(route))), ...edgeRoutes]
     .sort((left, right) => `${left.pathTemplate} ${left.method} ${left.producer}`.localeCompare(`${right.pathTemplate} ${right.method} ${right.producer}`));
   const manifest = {
     manifestVersion: 2,
@@ -88,6 +88,11 @@ type OpenApiDocument = { readonly paths?: Record<string, Record<string, unknown>
 type OpenApiOperation = { readonly operationId?: string; readonly requestBody?: OpenApiSchemaRef; readonly responses?: Record<string, OpenApiResponse> };
 type OpenApiSchemaRef = { readonly $ref?: string; readonly content?: Record<string, { readonly schema?: OpenApiSchemaRef }> };
 type OpenApiResponse = { readonly content?: Record<string, { readonly schema?: OpenApiSchemaRef }> };
+type ManifestRoute = { readonly method: string; readonly pathTemplate: string };
+
+function routeKey(route: ManifestRoute): string {
+  return `${route.method} ${route.pathTemplate}`;
+}
 
 function operationName(value: string): string {
   return camelCase(value.split(".").at(-1) ?? value);

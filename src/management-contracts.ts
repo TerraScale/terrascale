@@ -97,3 +97,27 @@ export type DevelopmentLogResponse = {
 };
 
 export type ExportList = { readonly exports: readonly ExportStatus[]; readonly next_cursor: string | null };
+
+export type TransferFormat = "json" | "jsonl" | "csv";
+export type CreateImportRequest = {
+  readonly format: TransferFormat;
+  readonly idempotency_key: string;
+};
+export type ImportJob = {
+  readonly committed_records: UInt64Value;
+  readonly cursor: UInt64Value;
+  readonly database_id: string;
+  readonly durability: string;
+  readonly error: string | null;
+  readonly format: string;
+  readonly input_committed: boolean;
+  readonly input_digest: string | null;
+  readonly input_length: UInt64Value | null;
+  readonly operation_id: string;
+  readonly pending_cursor: UInt64Value | null;
+  readonly pending_operation: string | null;
+  readonly pending_records: UInt64Value | null;
+  readonly project_id: string;
+  readonly state: string;
+  readonly tenant_id: string;
+};

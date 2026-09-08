@@ -604,7 +604,31 @@ export class ManagementDevelopmentClient {
 }
 
 export class ManagementImportsClient {
-  create(_databaseId: string, _request: unknown, _options?: ManagementOperationOptions): Promise<never> { return contractGap("imports.create"); }
+  readonly #http: TerraScaleHttp;
+  constructor(http: TerraScaleHttp) { this.#http = http; }
+
+  list(databaseId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<readonly Contracts.ImportJob[]>> {
+    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/imports`, routeName: "databases.listImports", signal: options.signal });
+  }
+
+  create(databaseId: string, request: Contracts.CreateImportRequest, options: ManagementOperationOptions = {}): Promise<TerraScaleResult<Contracts.ImportJob>> {
+    requireText(request?.idempotency_key, "idempotency_key", 256);
+    if (request?.format !== "json" && request?.format !== "jsonl" && request?.format !== "csv") throw new TypeError("format must be json, jsonl, or csv.");
+    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/imports`, routeName: "databases.createImport", signal: options.signal, body: request, idempotencyKey: false });
+  }
+
+  get(databaseId: string, jobId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ImportJob>> {
+    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/imports/${idSegment(jobId, "import id")}`, routeName: "databases.getImport", signal: options.signal });
+  }
+
+  upload(databaseId: string, jobId: string, input: Uint8Array, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ImportJob>> {
+    if (!(input instanceof Uint8Array)) throw new TypeError("input must be a Uint8Array.");
+    return this.#http.request({ method: "PUT", path: `${databasePath(databaseId)}/imports/${idSegment(jobId, "import id")}/input`, routeName: "databases.uploadImport", signal: options.signal, headers: { "content-type": "application/octet-stream" }, body: input });
+  }
+
+  resume(databaseId: string, jobId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ImportJob>> {
+    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/imports/${idSegment(jobId, "import id")}/resume`, routeName: "databases.resumeImport", signal: options.signal, idempotencyKey: false });
+  }
 }
 
 export class ManagementUsageClient {
@@ -647,7 +671,7 @@ export class TerraScaleManagementClient {
     this.schemas = new ManagementSchemasClient(this.#http);
     this.collections = new ManagementCollectionsClient(this.#http);
     this.exports = new ManagementExportsClient(this.#http);
-    this.imports = new ManagementImportsClient();
+    this.imports = new ManagementImportsClient(this.#http);
     this.development = new ManagementDevelopmentClient(this.#http);
     this.webhooks = new ManagementWebhooksClient(this.#http);
     this.usage = new ManagementUsageClient(this.#http);

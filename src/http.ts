@@ -137,7 +137,11 @@ export class TerraScaleHttp {
       idempotencyKey = this.resolveIdempotencyKey(options);
       // One logical operation must retain the same bytes across retries,
       // even when the caller mutates its object while a request is pending.
-      const requestBody = options.body === undefined ? undefined : JSON.stringify(options.body);
+      const requestBody = options.body === undefined
+        ? undefined
+        : options.body instanceof Uint8Array
+          ? options.body
+          : JSON.stringify(options.body);
       let attempt = 0;
       let repaired421 = false;
       let requestRegionHint = options.regionHint;
@@ -162,7 +166,7 @@ export class TerraScaleHttp {
           };
           if (requestBody !== undefined) {
             headers.set("content-type", headers.get("content-type") ?? "application/json");
-            requestInit.body = requestBody;
+            requestInit.body = requestBody instanceof Uint8Array ? requestBody as unknown as BodyInit : requestBody;
           }
 
           const request = new Request(url, requestInit);

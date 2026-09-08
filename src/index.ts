@@ -21,8 +21,10 @@ export type {
   SavedQueriesClient,
   UsageClient,
 } from "./client.js";
-export type { TerraScaleManagementClient } from "./management.js";
+export type { ManagementImportsClient, TerraScaleManagementClient } from "./management.js";
 export type {
+  CreateImportRequest,
+  ImportJob,
   OperationListOptions,
   OperationPage,
   OperationSummary,
