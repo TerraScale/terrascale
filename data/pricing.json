@@ -42,7 +42,7 @@
     "storage": "100 MB",
     "writesPerMonth": 100000,
     "maxRegions": 3,
-    "notes": "Free indefinitely with a valid verified card and automated fraud checks. Free eligibility and the first paid month promotion each have one entitlement per verified billing customer across organizations; only audited owner exceptions may expand eligibility."
+    "notes": "Free indefinitely with a valid verified card and automated fraud checks after public launch. Each verified billing customer has one Free entitlement across all organizations: creating or joining another organization does not grant another Free plan. The first paid month promotion is likewise limited to one entitlement across organizations; only audited owner exceptions may expand eligibility."
   },
   "plans": [
     {

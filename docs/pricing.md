@@ -35,7 +35,7 @@ Overage and PAYG: **$1 per 1M writes**, **$0.20 per GB-month per region** (Draft
 
 **Shared organization allowances.** Databases and branches share their owning organization’s normal plan allowances and billing cycle. There is no additional branch allowance or separate branch reset. Writes consume allowances after Region multiplication. 100 MB stored across three Regions consumes 300 MB of included storage, measured over time in byte-seconds.
 
-**Free tier.** 1 database, 100 MB, **100,000 writes/month**, up to 3 regions. Free indefinitely with a valid verified card and automated fraud checks. Free eligibility and the first paid month promotion each have one entitlement per verified billing customer across organizations; only audited owner exceptions may expand eligibility.
+**Free tier.** 1 database, 100 MB, **100,000 writes/month**, up to 3 regions. Free indefinitely with a valid verified card and automated fraud checks after public launch. Each verified billing customer has one Free entitlement across all organizations: creating or joining another organization does not grant another Free plan. The first paid month promotion is likewise limited to one entitlement across organizations; only audited owner exceptions may expand eligibility.
 
 **Scale.** The $500/month target is a paid support/compliance offering. Available benefits require confirmation before enrollment; priority response, SOC 2, and contractual SLA benefits are not available launch promises.
 
