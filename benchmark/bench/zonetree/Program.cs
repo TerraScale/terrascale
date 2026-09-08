@@ -4,8 +4,9 @@
 // The "async runtime" comparison is ZoneTree's write-ahead log mode:
 //
 //   --mode sync   WriteAheadLogMode.Sync — the plain synchronous WAL stream;
-//                 the caller waits until the record is in the WAL, the same
-//                 caller-waited durability class as SQLite synchronous=FULL.
+//                 the caller waits until the record is in the WAL stream.
+//                 Process-crash durable; power-loss durability still depends
+//                 on OS/filesystem/device (not an fsync-per-write class).
 //   --mode async  WriteAheadLogMode.AsyncCompressed — the library default:
 //                 compressed WAL records through a background path. Higher
 //                 throughput, durability deferred to the background writer.
@@ -119,7 +120,7 @@ var perSlotOperations = operations / concurrency;
 var operationRemainder = operations % concurrency;
 
 var threads = new Thread[concurrency];
-var threadSamples = new List<double>?[concurrency];
+var threadSamples = new List<double>[concurrency][];
 var threadErrors = new string?[concurrency];
 
 for (var slot = 0; slot < concurrency; slot++)
@@ -127,7 +128,9 @@ for (var slot = 0; slot < concurrency; slot++)
     var slotIndex = slot;
     threads[slot] = new Thread(() =>
     {
-        List<double>[]? mySamples = null;
+        // Empty until measured samples exist; an early return leaves it empty
+        // and the merge below only runs for fully successful runs.
+        var mySamples = Array.Empty<List<double>>();
         string? error = null;
         try
         {
@@ -276,7 +279,7 @@ var measuredSamples = walls
     {
         var latencies = new List<double>(operations);
         foreach (var slotSamples in threadSamples)
-            latencies.AddRange(slotSamples![sample]);
+            latencies.AddRange(slotSamples[sample]);
         latencies.Sort();
         double Percentile(double fraction) =>
             latencies.Count == 0 ? 0.0 : latencies[Math.Min((int)Math.Round((latencies.Count - 1) * fraction), latencies.Count - 1)];
@@ -306,8 +309,7 @@ var receipt = new
 Console.WriteLine($"target: zonetree-{mode} workload: {workload} samples: {measuredSamples.Length}");
 foreach (var (sample, measured) in measuredSamples.Index())
     Console.WriteLine(FormattableString.Invariant(
-        $"  sample {sample}: {measured.operations} ops in {measured.wall_seconds:F3}s = {measured.throughput_ops_per_s:F0} ops/s, " +
-        $"p50 {measured.p50_us:F1}us p95 {measured.p95_us:F1}us p99 {measured.p99_us:F1}us"));
+        $"  sample {sample}: {measured.operations} ops in {measured.wall_seconds:F3}s = {measured.throughput_ops_per_s:F0} ops/s, p50 {measured.p50_us:F1}us p95 {measured.p95_us:F1}us p99 {measured.p99_us:F1}us"));
 Console.WriteLine(FormattableString.Invariant($"elapsed: {(Stopwatch.GetTimestamp() - startedAt) * 1.0 / Stopwatch.Frequency:F1}s"));
 Console.WriteLine($"written: {WriteReceipt(JsonSerializer.Serialize(receipt, new JsonSerializerOptions { WriteIndented = true }))}");
 return 0;
