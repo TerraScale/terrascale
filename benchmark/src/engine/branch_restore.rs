@@ -3,7 +3,8 @@
 use super::{Engine, EngineConfig, EngineOpenError};
 use crate::{
     storage::DatabaseOwner,
-    types::{OperationId, StorageSequence},
+    types::{OperationId, StorageSequence, TenantId},
+    usage::UsagePlacement,
 };
 use std::{fs, path::Path};
 
@@ -33,6 +34,23 @@ impl Engine {
         {
             return Err(EngineOpenError::InvalidConfig);
         }
+        let source_tenant = TenantId::try_new(source_owner.tenant().to_text().as_str())
+            .map_err(|_| EngineOpenError::InvalidConfig)?;
+        let source_scope = source.scope_for(&source_tenant);
+        let source_placement = source
+            .usage_placement(&source_scope)
+            .map_err(|_| EngineOpenError::StorageUnavailable)?
+            .ok_or(EngineOpenError::InvalidConfig)?;
+        let child_placement = UsagePlacement::try_new(
+            source_placement.scope.tenant_id().clone(),
+            source_placement.scope.project_id().as_str(),
+            child.database().to_text().as_str(),
+            source_placement.scope.partition_id().as_str(),
+            *source_placement.scope.region_id(),
+            source_placement.selected_regions.clone(),
+            &source_placement.revision,
+        )
+        .map_err(|_| EngineOpenError::InvalidConfig)?;
         let target = &config.location;
         if let Ok(metadata) = fs::symlink_metadata(target)
             && (!metadata.is_dir() || metadata.file_type().is_symlink())
@@ -96,6 +114,7 @@ impl Engine {
                 child,
                 config,
                 &marker,
+                &child_placement,
             )?;
             drop(registration);
             let mut staged = config.clone();
@@ -185,6 +204,7 @@ fn transform_snapshot(
     child: &DatabaseOwner,
     config: &EngineConfig,
     marker: &str,
+    placement: &UsagePlacement,
 ) -> Result<i64, EngineOpenError> {
     let mut connection = crate::storage::open_physical_sqlite(
         &crate::storage::database_file(staging),
@@ -201,6 +221,26 @@ fn transform_snapshot(
         .map_err(|()| EngineOpenError::FormatMismatch)?;
     crate::storage::rebind_owner(&transaction, source, staging)
         .map_err(|()| EngineOpenError::FormatMismatch)?;
+    let selected_regions = placement
+        .selected_regions
+        .iter()
+        .map(crate::regions::RegionCode::as_str)
+        .collect::<Vec<_>>()
+        .join(",");
+    transaction
+        .execute(
+            "INSERT INTO usage_placement(singleton,tenant,project,database,partition,region,selected_regions,revision) VALUES(1,?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params![
+                placement.scope.tenant_id().as_str(),
+                placement.scope.project_id().as_str(),
+                placement.scope.database_id().as_str(),
+                placement.scope.partition_id().as_str(),
+                placement.scope.region_id().as_str(),
+                selected_regions,
+                placement.revision,
+            ],
+        )
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
     let origin = config
         .replication_origin
         .as_ref()

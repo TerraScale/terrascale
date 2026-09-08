@@ -47,7 +47,7 @@ pub mod usage;
 
 pub use usage::UsageAdmissionContext;
 
-#[cfg(any(test, feature = "bench-tools"))]
+#[cfg(test)]
 #[doc(hidden)]
 pub mod benchmarks;
 

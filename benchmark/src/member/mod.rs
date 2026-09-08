@@ -25,9 +25,10 @@ use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
 use crate::regions::RegionCode;
 use crate::shard_split::ShardRouter;
 pub use crate::storage::{DatabaseOwner, EnvironmentName};
-use crate::types::{OperationId, TenantScope};
+use crate::types::{OperationId, TenantId, TenantScope};
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
+mod shard_registry;
 mod split_runtime;
 pub use split_runtime::{
     MemberSplitError, MemberSplitRuntime, MemberSplitStep, SplitAdmission, SplitAdmissionAuthority,
@@ -703,6 +704,8 @@ pub enum MemberError {
         /// The engine failure.
         error: EngineOpenError,
     },
+    /// Durable shard serving state cannot be admitted safely.
+    ShardServingUnavailable(DatabaseId),
     /// The bounded drain deadline elapsed while work remained active.
     DrainTimeout,
     /// The host clock is unknown or outside the safe write bound.
@@ -1351,10 +1354,29 @@ impl Member {
                 return Err(error);
             }
         };
+        let tenant = match TenantId::try_new(&engine.database_owner().tenant().to_text()) {
+            Ok(tenant) => tenant,
+            Err(_) => {
+                drop(local);
+                drop(global);
+                return Err(MemberError::ShardServingUnavailable(database.clone()));
+            }
+        };
+        let scope = engine.scope_for(&tenant);
+        let route_registry =
+            match shard_registry::RouteParticipantRegistry::load(Arc::clone(&engine), &scope) {
+                Ok(registry) => registry,
+                Err(_) => {
+                    drop(local);
+                    drop(global);
+                    return Err(MemberError::ShardServingUnavailable(database.clone()));
+                }
+            };
         Ok(DatabaseLease {
             database: database.clone(),
             location,
             engine,
+            route_registry,
             _global: global,
             _local: local,
             restore_paths: Arc::clone(&self.inner.restore_paths),
@@ -1587,6 +1609,7 @@ pub struct DatabaseLease {
     database: DatabaseId,
     location: PathBuf,
     engine: Arc<Engine>,
+    route_registry: Arc<shard_registry::RouteParticipantRegistry>,
     _global: AdmissionPermit,
     _local: AdmissionPermit,
     restore_paths: Arc<Mutex<BTreeSet<PathBuf>>>,
@@ -1645,6 +1668,17 @@ impl DatabaseLease {
         Arc::clone(&self.engine)
     }
 
+    /// Begins an origin transaction through the lease-owned durable route.
+    /// Callers cannot supply a router or filesystem location.
+    pub fn begin_routed_origin(
+        &self,
+        scope: &TenantScope,
+        key: &[u8],
+        operation: OperationId,
+    ) -> Result<crate::engine::Transaction<'_>, crate::engine::EngineError> {
+        self.route_registry.begin(scope, key, operation)
+    }
+
     /// Begins an origin transaction after routing its key through the
     /// admitted serving mirror. The token is checked again by Engine commit,
     /// so a cutover racing this call fails with a stale generation conflict.
@@ -1655,11 +1689,11 @@ impl DatabaseLease {
         key: &[u8],
         operation: OperationId,
     ) -> Result<crate::engine::Transaction<'_>, crate::engine::EngineError> {
-        let token = self.engine.shard_admission_for_key(scope, router, key)?;
-        let mut transaction =
-            self.engine.begin(scope, self.engine.read_snapshot(scope)?, operation)?;
-        transaction.bind_shard_admission(token)?;
-        Ok(transaction)
+        // Existing consumers retain this migration seam, but serving
+        // authority is now the lease-owned registry rather than the supplied
+        // router.
+        let _ = router;
+        self.begin_routed_origin(scope, key, operation)
     }
 
     /// Converts this sole admitted lease into an exclusive restore permit.

@@ -817,6 +817,88 @@ fn bytes(value: Option<DocumentValue>) -> Result<Option<Vec<u8>>, RouteCatalogEr
 }
 
 impl Engine {
+    /// Opens an existing split participant beneath this database's durable
+    /// root. Member admission uses this only after the route catalog names
+    /// the shard; callers cannot supply an arbitrary path.
+    pub(crate) fn open_shard_participant(
+        &self,
+        shard_id: u64,
+    ) -> Result<Option<Engine>, EngineOpenError> {
+        let path = self.location.join("shards").join(format!("{shard_id:016x}.sqlite3"));
+        if !crate::storage::database_file(&path).is_file() {
+            return Ok(None);
+        }
+        let mut config = super::EngineConfig::existing_durable(path)
+            .map_err(|_| EngineOpenError::InvalidConfig)?
+            .with_owner(self.database_owner().clone());
+        if let Some(keys) = &self.storage_keys {
+            config = config.with_storage_keys(std::sync::Arc::clone(keys));
+        }
+        let origin = crate::types::RegionId::try_new(self.database_owner().region().as_str())
+            .map_err(|_| EngineOpenError::InvalidConfig)?;
+        config = config.with_replication_origin(origin);
+        Engine::open(config).map(Some)
+    }
+
+    /// Returns the durable source-file shard identity, if this file is a
+    /// routed participant.
+    pub(crate) fn shard_file_id(
+        &self,
+        scope: &crate::types::TenantScope,
+    ) -> Result<Option<u64>, EngineError> {
+        let snapshot = self.read_snapshot(scope)?;
+        let value = self
+            .lock_storage()?
+            .port
+            .private_metadata_at(
+                scope.tenant(),
+                &file_shard_key(u128::from_be_bytes(self.database_id().as_bytes().to_owned())),
+                snapshot.sequence(),
+            )
+            .map_err(|()| EngineError::StorageFailure)?;
+        let Some(value) = bytes(value).map_err(|_| EngineError::Conflict)? else {
+            return Ok(None);
+        };
+        Ok(Some(decode_file_identity(&value)?.shard_id))
+    }
+
+    /// Validates a target's immutable split identity and verification receipt.
+    pub(crate) fn validate_shard_target(
+        &self,
+        scope: &crate::types::TenantScope,
+        database_incarnation: u128,
+        shard_id: u64,
+    ) -> Result<bool, EngineError> {
+        let snapshot = self.read_snapshot(scope)?;
+        let identity = self
+            .lock_storage()?
+            .port
+            .private_metadata_at(scope.tenant(), &target_identity_key(), snapshot.sequence())
+            .map_err(|()| EngineError::StorageFailure)?;
+        let Some(DocumentValue::String(identity)) = identity else {
+            return Ok(false);
+        };
+        let identity = hex::decode(identity).map_err(|_| EngineError::Conflict)?;
+        if identity.len() < 55 || &identity[..7] != b"TSPLIT1" {
+            return Ok(false);
+        }
+        let incarnation = u128::from_be_bytes(
+            identity[23..39].try_into().map_err(|_| EngineError::Conflict)?,
+        );
+        let target = u64::from_be_bytes(
+            identity[47..55].try_into().map_err(|_| EngineError::Conflict)?,
+        );
+        if incarnation != database_incarnation || target != shard_id {
+            return Ok(false);
+        }
+        let verified = self
+            .lock_storage()?
+            .port
+            .private_metadata_at(scope.tenant(), &TARGET_VERIFICATION_KEY, snapshot.sequence())
+            .map_err(|()| EngineError::StorageFailure)?;
+        Ok(matches!(verified, Some(DocumentValue::String(_))))
+    }
+
     /// Reads the immutable physical shard/origin identity without inventing defaults.
     ///
     /// # Errors

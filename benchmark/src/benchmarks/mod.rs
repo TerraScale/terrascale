@@ -76,24 +76,12 @@
 mod driver;
 mod gates;
 mod lane;
-#[cfg(any(test, feature = "bench-tools"))]
+#[cfg(test)]
 mod lane_run;
 mod optimizer;
 mod record;
 mod reference;
 mod vocabulary;
-
-/// Compatibility entry point for the retired served benchmark binary.
-///
-/// The old Go gateway/qualification lifecycle was removed. Direct public
-/// boundary families own their adapters under `bench/`; this function remains
-/// only so an old binary fails closed instead of launching deleted code.
-#[doc(hidden)]
-pub fn run_served_boundary_cli(workload: &str) -> Result<std::path::PathBuf, String> {
-    Err(format!(
-        "served benchmark workload {workload:?} was retired with the obsolete Go gateway; use a direct public-boundary family adapter"
-    ))
-}
 
 #[cfg(test)]
 mod optimizer_tests;

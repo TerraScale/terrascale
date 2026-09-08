@@ -1016,7 +1016,7 @@ pub(crate) fn regression_rule() -> &'static str {
     REGRESSION_RULE
 }
 
-#[cfg(any(test, feature = "bench-tools"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

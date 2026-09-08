@@ -72,6 +72,20 @@ fn open_branch_source(root: &std::path::Path) -> (Engine, crate::storage::Databa
     .unwrap();
     source.activate_origin_epoch(1).unwrap();
     let tenant = TenantId::try_new(&source_owner.tenant().to_string()).unwrap();
+    source
+        .configure_usage_placement(
+            crate::usage::UsagePlacement::try_new(
+                tenant.clone(),
+                source_owner.project().to_text().as_str(),
+                source_owner.database().to_text().as_str(),
+                "partition",
+                source_owner.region(),
+                vec![crate::RegionCode::GRU, crate::RegionCode::FRA],
+                "branch-placement",
+            )
+            .unwrap(),
+        )
+        .unwrap();
     seed_branch_source(&source, &tenant);
     (source, source_owner, tenant)
 }
@@ -141,6 +155,12 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
     let child = Engine::open(child_config).unwrap();
     assert_eq!(child.database_id(), child_owner.database());
     assert_branch_contents(&child, &tenant, &child_owner.database().to_string());
+    let child_placement = child.usage_placement(&child.scope_for(&tenant)).unwrap().unwrap();
+    assert_eq!(
+        child_placement.selected_regions,
+        vec![crate::RegionCode::GRU, crate::RegionCode::FRA]
+    );
+    assert_eq!(child_placement.scope.database_id().as_str(), child_owner.database().to_text());
 
     let distinct_target = root.join("distinct-target");
     let distinct_config = EngineConfig::durable(&distinct_target)

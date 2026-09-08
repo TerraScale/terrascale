@@ -1,0 +1,36 @@
+diff --git a/bench/scripts/run-terrabase-final.sh b/bench/scripts/run-terrabase-final.sh
+index d8ce1775..9255152 100755
+--- a/bench/scripts/run-terrabase-final.sh
++++ b/bench/scripts/run-terrabase-final.sh
+@@ -20,7 +20,8 @@ TIMEOUT_SECS="${TERRABASE_BENCH_FINAL_TIMEOUT_SECONDS:-1800}"
+   echo "final bench: LOCAL_MEMBER_BIN must name the handed-off release executable" >&2
+   exit 2
+ }
+-[[ -n "${TERRABASE_BENCH_MEMBER_API:-}" && -n "${TERRABASE_BENCH_MEMBER_AUTH:-}" ]] || {
++[[ -n "${TERRABASE_BENCH_MEMBER_API:-}" && -n "${TERRABASE_BENCH_MEMBER_AUTH:-}" && \
++  -n "${TERRABASE_BENCH_MEMBER_KEY:-}" && -n "${TERRABASE_BENCH_MEMBER_VERSION:-}" ]] || {
+   echo "final bench: source the verified member environment first" >&2
+   exit 2
+ }
+@@ -38,6 +39,11 @@ new_database() {
+     --data "{\"name\":\"$database\",\"placement\":[\"${LOCAL_MEMBER_REGION:-GRU}\"]}" \
+     >"$OUT/${lane}-database.json"
+   export TERRABASE_BENCH_TERRABASE_DATABASE="$database"
++  # The point and local auto-index drivers consume the bearer value without
++  # a header name. Keep this scoped to the fresh database lane and derive it
++  # from the verified member credential rather than copying the environment.
++  export TERRABASE_BENCH_TERRABASE_API="$TERRABASE_BENCH_MEMBER_API"
++  export TERRABASE_BENCH_TERRABASE_AUTH="Bearer $TERRABASE_BENCH_MEMBER_KEY"
+ }
+ 
+ run_point() {
+@@ -63,6 +69,9 @@ for workload in read write query mixed; do run_point "$workload"; done
+ 
+ new_database ingest
+ export TERRABASE_BENCH_INGEST_TERRABASE_SINGLE_NODE_ENDPOINT="$TERRABASE_BENCH_MEMBER_API/api/v1/databases/$TERRABASE_BENCH_TERRABASE_DATABASE/collections/users/documents/batch"
++export TERRABASE_BENCH_INGEST_TERRABASE_HEALTH_ENDPOINT="$TERRABASE_BENCH_MEMBER_API/api/v1/health"
++export TERRABASE_BENCH_INGEST_TERRABASE_VERSION="$TERRABASE_BENCH_MEMBER_VERSION"
++export TERRABASE_BENCH_INGEST_AUTHORIZATION="Bearer $TERRABASE_BENCH_MEMBER_KEY"
+ export TERRABASE_BENCH_INGEST_TARGET=terrabase
+ export TERRABASE_BENCH_INGEST_OUTPUT_DIR="$OUT"
+ export TERRABASE_BENCH_INGEST_DOCUMENTS=100000
