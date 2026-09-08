@@ -57,6 +57,32 @@ class GeneratorSchemaTests(unittest.TestCase):
         self.assertIn("ParentParent? ParentValue", output)
         self.assertIn("ParentParentValue? ParentValueValue", output)
 
+    def test_json_context_composes_resolved_array_response_metadata(self):
+        api = OpenApiGenerator({
+            "components": {"schemas": {
+                "ImportJob": {"type": "object"},
+                "ImportJobs": {"type": "array", "items": {"$ref": "#/components/schemas/ImportJob"}},
+            }},
+            "paths": {
+                "/imports": {"get": {"operationId": "list_imports", "responses": {
+                    "200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ImportJobs"}}}}
+                }}}
+            },
+        })
+        output = api.json_context()
+        self.assertIn("[JsonSerializable(typeof(IReadOnlyList<ImportJob>))]", output)
+
+    def test_json_context_composes_scalar_array_response_metadata(self):
+        api = OpenApiGenerator({
+            "paths": {
+                "/regions": {"get": {"operationId": "list_regions", "responses": {
+                    "200": {"content": {"application/json": {"schema": {"type": "array", "items": {"type": "string"}}}}}
+                }}}
+            },
+        })
+        output = api.json_context()
+        self.assertIn("[JsonSerializable(typeof(IReadOnlyList<string>))]", output)
+
 
 if __name__ == "__main__":
     unittest.main()

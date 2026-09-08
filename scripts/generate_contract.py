@@ -235,17 +235,15 @@ class OpenApiGenerator:
         array_responses: set[str] = set()
         for path in self.document.get("paths", {}).values():
             for operation in path.values():
+                if not isinstance(operation, dict):
+                    continue
                 for status, response in operation.get("responses", {}).items():
                     if not status.startswith(("2", "3")):
                         continue
                     schema = response.get("content", {}).get("application/json", {}).get("schema", {})
-                    if schema.get("type") != "array":
-                        continue
-                    item = schema.get("items", {})
-                    if "$ref" in item:
-                        array_responses.add(f"IReadOnlyList<{pascal(item['$ref'].rsplit('/', 1)[-1])}>")
-                    elif item.get("type") == "object":
-                        array_responses.add("IReadOnlyList<JsonElement>")
+                    response_type = self.type_name(schema, operation.get("operationId", "response"))
+                    if response_type.startswith("IReadOnlyList<"):
+                        array_responses.add(response_type)
         for response_type in sorted(array_responses):
             lines.append(f"[JsonSerializable(typeof({response_type}))]")
         lines += ["public partial class TerraScaleContractJsonContext : JsonSerializerContext", "{", "}", ""]
