@@ -219,10 +219,7 @@ impl Engine {
             )?;
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
-            drop(Self::open(staged).map_err(|error| {
-                eprintln!("branch restore staged open failed: {error:?}");
-                error
-            })?);
+            drop(Self::open(staged)?);
             drop(registration);
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())

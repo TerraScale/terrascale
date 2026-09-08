@@ -16,8 +16,8 @@ const KEY: &str = "Bearer tskey_test_abcdefghijklmnop";
 async fn production_tick_completes_initial_declared_index_reconciliation() {
     let state = super::super::tests::state_with_keys_and_control();
     state.control.as_ref().unwrap().create("demo", &[RegionCode::GRU], None).unwrap();
-    let app = crate::api::router(Arc::clone(&state));
-    let response = app
+    let app = Arc::new(crate::api::router(Arc::clone(&state)));
+    let response = app.as_ref().clone()
         .oneshot(
             crate::api::Request::put(SCHEMA_ROUTE)
                 .header("authorization", KEY)
@@ -65,19 +65,19 @@ async fn production_tick_completes_initial_declared_index_reconciliation() {
 async fn replacement_index_keeps_old_unique_constraint_until_publish() {
     let state = super::super::tests::state_with_keys_and_control();
     state.control.as_ref().unwrap().create("demo", &[RegionCode::GRU], None).unwrap();
-    let app = crate::api::router(Arc::clone(&state));
-    let apply = |app: &crate::api::Router, body: &'static str, key: &'static str, generation| async move {
+    let app = Arc::new(crate::api::router(Arc::clone(&state)));
+    let apply = |app: Arc<crate::api::Router>, body: &'static str, key: &'static str, generation| async move {
         let mut request = crate::api::Request::put(SCHEMA_ROUTE)
             .header("authorization", KEY)
             .header("idempotency-key", key);
         if let Some(generation) = generation {
             request = request.header("if-match", format!("\"{generation}\""));
         }
-        let response = app.clone().oneshot(request.body(Body::from(body)).unwrap()).await.unwrap();
+        let response = app.as_ref().clone().oneshot(request.body(Body::from(body)).unwrap()).await.unwrap();
         assert_eq!(response.status(), crate::api::StatusCode::OK);
     };
     apply(
-        &app,
+        Arc::clone(&app),
         r#"{"name":"orders","fields":[{"name":"account","type":"string"}],"indexes":[{"name":"old_account","fields":["account"],"unique":true}]}"#,
         "old-index",
         None,
@@ -117,7 +117,7 @@ async fn replacement_index_keeps_old_unique_constraint_until_publish() {
     ));
 
     apply(
-        &app,
+        Arc::clone(&app),
         r#"{"name":"orders","fields":[{"name":"account","type":"string"}],"indexes":[{"name":"new_account","fields":["account"],"unique":true}]}"#,
         "new-index",
         Some(1),
