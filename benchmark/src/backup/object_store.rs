@@ -108,14 +108,9 @@ struct S3WorkloadIdentityProvider(Arc<dyn WorkloadIdentityProvider>);
 impl object_store::CredentialProvider for S3WorkloadIdentityProvider {
     type Credential = AwsCredential;
 
-    async fn get_credential(
-        &self,
-    ) -> object_store::Result<Arc<Self::Credential>> {
+    async fn get_credential(&self) -> object_store::Result<Arc<Self::Credential>> {
         let credentials = self.0.credentials().await.map_err(|error| {
-            object_store::Error::Generic {
-                store: "S3",
-                source: Box::new(error),
-            }
+            object_store::Error::Generic { store: "S3", source: Box::new(error) }
         })?;
         if credentials.access_key.is_empty()
             || credentials.secret_key.is_empty()
@@ -448,6 +443,53 @@ impl ObjectDestination {
         drop(config.credentials);
         Ok(Self {
             identity,
+            admitted_region: config.admitted_region,
+            provider: config.provider,
+            store: Arc::new(store),
+            max_artifact_bytes: config.max_artifact_bytes,
+            max_point_bytes: config.max_point_bytes,
+        })
+    }
+
+    /// Builds a production S3 client backed exclusively by workload identity.
+    ///
+    /// Credentials are resolved lazily for every request. No environment
+    /// provider, static secret, or expired credential can be selected.
+    pub fn new_with_workload_identity(
+        config: DestinationConfig,
+        provider: Arc<dyn WorkloadIdentityProvider>,
+    ) -> Result<Self, TransferError> {
+        validate_config_for_workload_identity(&config)?;
+        let store = AmazonS3Builder::new()
+            .with_bucket_name(&config.bucket)
+            .with_region(&config.signing_region)
+            .with_endpoint(&config.endpoint)
+            .with_credentials(Arc::new(S3WorkloadIdentityProvider(provider)))
+            .with_virtual_hosted_style_request(false)
+            .with_copy_if_not_exists(S3CopyIfNotExists::Multipart)
+            .with_client_options(
+                ClientOptions::new().with_allow_http(false).with_timeout(Duration::from_mins(1)),
+            )
+            .with_retry(RetryConfig {
+                max_retries: 2,
+                retry_timeout: Duration::from_mins(2),
+                ..RetryConfig::default()
+            })
+            .build()
+            .map_err(|_| TransferError::Configuration)?;
+        let mut identity_input = blake3::Hasher::new();
+        for value in [
+            format!("{:?}", config.provider),
+            config.endpoint.clone(),
+            config.bucket.clone(),
+            config.signing_region.clone(),
+            config.admitted_region.to_string(),
+        ] {
+            identity_input.update(value.as_bytes());
+            identity_input.update(&[0]);
+        }
+        Ok(Self {
+            identity: identity_input.finalize().to_hex().to_string(),
             admitted_region: config.admitted_region,
             provider: config.provider,
             store: Arc::new(store),
@@ -1161,6 +1203,37 @@ fn validate_config(config: &DestinationConfig) -> Result<(), TransferError> {
     Ok(())
 }
 
+fn validate_config_for_workload_identity(config: &DestinationConfig) -> Result<(), TransferError> {
+    let host = config.endpoint.strip_prefix("https://").ok_or(TransferError::Configuration)?;
+    let endpoint_valid = match config.provider {
+        Provider::Oci => {
+            config.signing_region == config.database_region
+                && host.ends_with(&format!(
+                    ".compat.objectstorage.{}.oraclecloud.com",
+                    config.database_region
+                ))
+        }
+        Provider::Tigris => host == "fly.storage.tigris.dev",
+    };
+    if !crate::regions::RegionCatalog::production().is_registered(&config.admitted_region)
+        || !endpoint_valid
+        || host.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+        || config.signing_region.is_empty()
+        || config.database_region.is_empty()
+        || config.bucket.is_empty()
+        || config.bucket.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+        || config.verified_geography.is_empty()
+        || config.placement_revision.is_empty()
+        || !config.permitted_geographies.contains(&config.verified_geography)
+        || config.max_artifact_bytes == 0
+        || config.max_artifact_bytes > 256 * 1024 * 1024
+        || config.max_point_bytes < config.max_artifact_bytes
+    {
+        return Err(TransferError::Configuration);
+    }
+    Ok(())
+}
+
 #[cfg(any(test, feature = "test-support"))]
 fn validate_config_for_test(config: &DestinationConfig) -> Result<(), TransferError> {
     if config.endpoint.starts_with("http://") {
@@ -1279,9 +1352,72 @@ fn parse_index(
 mod tests {
     use super::*;
     use object_store::memory::InMemory;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct FakeWorkloadIdentity {
+        calls: AtomicUsize,
+        revoked: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkloadIdentityProvider for FakeWorkloadIdentity {
+        async fn credentials(&self) -> Result<Credentials, WorkloadIdentityError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            if self.revoked.load(Ordering::Relaxed) {
+                return Err(WorkloadIdentityError::Unavailable);
+            }
+            Ok(Credentials::temporary(
+                "short-lived-access".into(),
+                "short-lived-secret".into(),
+                "short-lived-token".into(),
+                SystemTime::now() + Duration::from_secs(60),
+            ))
+        }
+    }
 
     fn destination(store: Arc<InMemory>) -> ObjectDestination {
         ObjectDestination::for_test(Provider::Oci, store, 1024, 4096)
+    }
+
+    #[tokio::test]
+    async fn workload_identity_refreshes_and_fails_closed_after_revocation() {
+        let provider = Arc::new(FakeWorkloadIdentity {
+            calls: AtomicUsize::new(0),
+            revoked: std::sync::atomic::AtomicBool::new(false),
+        });
+        let adapter = S3WorkloadIdentityProvider(provider.clone());
+        let first = object_store::CredentialProvider::get_credential(&adapter)
+            .await
+            .expect("initial short-lived credential");
+        assert_eq!(first.key_id, "short-lived-access");
+        provider.revoked.store(true, Ordering::Relaxed);
+        let revoked = object_store::CredentialProvider::get_credential(&adapter).await;
+        assert!(revoked.is_err(), "revocation must be observed on the next request");
+        assert_eq!(provider.calls.load(Ordering::Relaxed), 2);
+        assert!(!format!("{revoked:?}").contains("short-lived-secret"));
+    }
+
+    #[tokio::test]
+    async fn workload_identity_rejects_expired_credentials() {
+        #[derive(Debug)]
+        struct Expired;
+        #[async_trait::async_trait]
+        impl WorkloadIdentityProvider for Expired {
+            async fn credentials(&self) -> Result<Credentials, WorkloadIdentityError> {
+                Ok(Credentials::temporary(
+                    "access".into(),
+                    "secret".into(),
+                    "token".into(),
+                    SystemTime::now() - Duration::from_secs(1),
+                ))
+            }
+        }
+        let result = object_store::CredentialProvider::get_credential(&S3WorkloadIdentityProvider(
+            Arc::new(Expired),
+        ))
+        .await;
+        assert!(result.is_err());
     }
 
     /// SQLite WAL transport/recovery qualification (not the native backup format). Set

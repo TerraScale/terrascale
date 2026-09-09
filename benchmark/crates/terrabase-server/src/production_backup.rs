@@ -12,7 +12,9 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
-use terrabase::backup::object_store::{Credentials, DestinationConfig, ObjectDestination};
+use terrabase::backup::object_store::{
+    Credentials, DestinationConfig, ObjectDestination, WorkloadIdentityProvider,
+};
 use terrabase::backup::worker::FleetLimits;
 use terrabase::regions::RegionCode;
 
@@ -56,6 +58,63 @@ pub fn destination_from_config(
     })
     .map_err(|_| ProductionBackupFactoryError::Destination)?;
     Ok(Arc::new(destination))
+}
+
+/// Resolves one destination through the caller-supplied workload identity.
+///
+/// This is the production path for customer-owned S3. The provider is called
+/// lazily by the object store for each request, allowing expiry and revocation
+/// to take effect without rebuilding the destination.
+pub fn destination_from_config_with_workload_identity(
+    config: &ProductionBackupDestination,
+    database_region: RegionCode,
+    provider: Arc<dyn WorkloadIdentityProvider>,
+) -> Result<Arc<ObjectDestination>, ProductionBackupFactoryError> {
+    let destination = ObjectDestination::new_with_workload_identity(DestinationConfig {
+        admitted_region: database_region,
+        provider: config.provider,
+        endpoint: config.endpoint.clone(),
+        signing_region: config.signing_region.clone(),
+        database_region: match config.provider {
+            terrabase::backup::object_store::Provider::Oci => config.signing_region.clone(),
+            terrabase::backup::object_store::Provider::Tigris => {
+                database_region.as_str().to_owned()
+            }
+        },
+        bucket: config.bucket.clone(),
+        verified_geography: config.verified_geography.clone(),
+        permitted_geographies: config.permitted_geographies.clone(),
+        placement_revision: config.placement_revision.clone(),
+        credentials: Credentials::new(String::new(), String::new()),
+        max_artifact_bytes: config.max_artifact_bytes,
+        max_point_bytes: config.max_point_bytes,
+    })
+    .map_err(|_| ProductionBackupFactoryError::Destination)?;
+    Ok(Arc::new(destination))
+}
+
+/// Resolves all destinations through one explicit workload identity authority.
+pub fn destinations_from_config_with_workload_identity(
+    configs: &[ProductionBackupDestination],
+    database_region: RegionCode,
+    provider: Arc<dyn WorkloadIdentityProvider>,
+) -> Result<
+    Vec<(terrabase::backup::object_store::Provider, Arc<ObjectDestination>)>,
+    ProductionBackupFactoryError,
+> {
+    configs
+        .iter()
+        .map(|config| {
+            Ok((
+                config.provider,
+                destination_from_config_with_workload_identity(
+                    config,
+                    database_region,
+                    Arc::clone(&provider),
+                )?,
+            ))
+        })
+        .collect()
 }
 
 /// Resolves every selected destination in configuration order. A failure

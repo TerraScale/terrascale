@@ -210,12 +210,11 @@ fn backup_envelopes_bind_nonce_and_metadata_to_the_key() {
         Compression::None,
     )
     .unwrap();
-    let mut writer =
-        ArtifactCipher::new(
-            ProviderMode::LocalFile,
-            DatabaseKey::from_bytes([0x37; 32]),
-            context.clone(),
-        )
+    let mut writer = ArtifactCipher::new(
+        ProviderMode::LocalFile,
+        DatabaseKey::from_bytes([0x37; 32]),
+        context.clone(),
+    )
         .unwrap();
     let envelope = writer.seal(b"backup payload").unwrap();
     let next = writer.seal(b"backup payload").unwrap();
