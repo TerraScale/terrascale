@@ -4,7 +4,7 @@
 //! one bounded fleet. Provider clients and key leases are supplied by the
 //! caller; this module never invents credentials, destinations, or engines.
 
-use crate::config::ProductionBackupDestination;
+use crate::config::{ProductionBackupDestination, ProductionByokConfig};
 use crate::native_backup_runtime::{
     NativeBackupInput, NativeBackupRuntime, NativeBackupRuntimeError,
 };
@@ -47,6 +47,7 @@ pub fn destination_from_config(
             terrabase::backup::object_store::Provider::Tigris => {
                 database_region.as_str().to_owned()
             }
+            terrabase::backup::object_store::Provider::CustomerS3 => config.signing_region.clone(),
         },
         bucket: config.bucket.clone(),
         verified_geography: config.verified_geography.clone(),
@@ -80,6 +81,9 @@ pub fn destination_from_config_with_workload_identity(
                 terrabase::backup::object_store::Provider::Oci => config.signing_region.clone(),
                 terrabase::backup::object_store::Provider::Tigris => {
                     database_region.as_str().to_owned()
+                }
+                terrabase::backup::object_store::Provider::CustomerS3 => {
+                    config.signing_region.clone()
                 }
             },
             bucket: config.bucket.clone(),
@@ -118,6 +122,36 @@ pub fn destinations_from_config_with_workload_identity(
             ))
         })
         .collect()
+}
+
+/// Resolves the single customer-owned destination and binds every credential
+/// request to its durable role, endpoint, bucket, region, and placement.
+pub fn customer_destination_from_config(
+    byok: &ProductionByokConfig,
+    policy: &ProductionBackupDestination,
+    database_region: RegionCode,
+    provider: Arc<dyn WorkloadIdentityProvider>,
+) -> Result<
+    (terrabase::backup::object_store::Provider, Arc<ObjectDestination>),
+    ProductionBackupFactoryError,
+> {
+    let config = ProductionBackupDestination {
+        provider: terrabase::backup::object_store::Provider::CustomerS3,
+        endpoint: byok.backup_endpoint.clone(),
+        signing_region: byok.backup_region.clone(),
+        bucket: byok.backup_bucket.clone(),
+        verified_geography: policy.verified_geography.clone(),
+        permitted_geographies: policy.permitted_geographies.clone(),
+        placement_revision: policy.placement_revision.clone(),
+        access_key_file: std::path::PathBuf::new(),
+        secret_key_file: std::path::PathBuf::new(),
+        max_artifact_bytes: policy.max_artifact_bytes,
+        max_point_bytes: policy.max_point_bytes,
+    };
+    Ok((
+        config.provider,
+        destination_from_config_with_workload_identity(&config, database_region, provider)?,
+    ))
 }
 
 /// Resolves every selected destination in configuration order. A failure

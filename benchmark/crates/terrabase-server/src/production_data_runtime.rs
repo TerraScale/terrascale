@@ -10,9 +10,12 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use terrabase::backup::worker::FleetLimits;
+use terrabase::backup::workload_identity_delivery::{
+    UnixWorkloadIdentityProvider, WorkloadIdentityScope,
+};
 use terrabase::encryption::{
-    DatabaseKeySource, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
-    OciVaultDatabaseKeys, OciVaultKeyDelivery,
+    CustomerKmsDatabaseKeys, CustomerKmsKeyDelivery, DatabaseKeySource, DatabaseKeyVersion,
+    KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys, OciVaultKeyDelivery,
 };
 use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
 use terrabase_cluster::wal_driver::{WalEngineHandle, WalWriterDriver};
@@ -987,96 +990,11 @@ impl ProductionAdmissionRuntime {
         &self,
         limits: FleetLimits,
     ) -> Result<crate::native_backup_runtime::NativeBackupRuntime, String> {
-        use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
-        use terrabase::backup::{PlacementLock, worker::CustomerKmsBackupKeys};
-        use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
-        let key_config = self.config.keys.as_ref().ok_or("production key delivery missing")?;
-        let provider = OciVaultKeyDelivery::new(
-            key_config.socket.clone(),
-            key_config.orchestrator_uid,
-            key_config.socket_gid,
-        )
-        .map_err(failure)?;
         let snapshots = self.registry.retained_snapshot()?;
-        let records = self.admitted_records()?;
         let mut inputs = Vec::new();
         for snapshot in snapshots.into_iter().filter(|snapshot| snapshot.activated) {
-            let read_cut = snapshot
-                .database
-                .host
-                .engine_host()
-                .admitted_shard_read_cut()
-                .map_err(|_| "admitted shard inventory unavailable")?;
-            ensure_native_backup_shard_capture_supported(
-                read_cut.as_ref().and_then(|cut| cut.route_generation),
-            )?;
-            let record = records
-                .iter()
-                .find(|record| record.database_id == snapshot.database.record.database_id)
-                .ok_or("admitted backup record unavailable")?;
-            let policy = self
-                .config
-                .databases
-                .iter()
-                .find(|database| database.database.to_text() == record.database_id)
-                .and_then(|database| database.backup.as_ref())
-                .ok_or("native backup policy missing")?;
-            let scope = KeyScope::new_with_project(
-                &record.environment,
-                terrabase::identity::TenantUlid::from_text(&record.tenant_id).map_err(failure)?,
-                terrabase::identity::ProjectUlid::from_text(&record.project_id).map_err(failure)?,
-                terrabase::identity::DatabaseUlid::from_text(&record.database_id)
-                    .map_err(failure)?,
-                KeyPurpose::Backup,
-            )
-            .map_err(failure)?;
-            let version = DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?;
-            let source = OciVaultDatabaseKeys::new(
-                provider.clone(),
-                KeyVersionMetadata::new(scope, version),
-                record.region.parse().map_err(|_| "invalid admitted Region")?,
-            )
-            .map_err(failure)?;
-            let destinations = crate::production_backup::destinations_from_config(
-                &policy.destinations,
-                record.region.parse().map_err(|_| "invalid admitted Region")?,
-            )
-            .map_err(|_| "native backup destination unavailable")?;
-            let mut historical_destinations = crate::production_backup::destinations_from_config(
-                &policy.historical_destinations,
-                record.region.parse().map_err(|_| "invalid admitted Region")?,
-            )
-            .map_err(|_| "native backup historical destination unavailable")?;
-            historical_destinations.extend(destinations.iter().cloned());
-            let placement = PlacementLock::explicit(
-                record
-                    .regions
-                    .iter()
-                    .map(|region| region.parse())
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|_| "invalid admitted placement")?,
-            )
-            .map_err(|_| "invalid admitted placement")?;
-            inputs.push(NativeBackupInput {
-                engine: Arc::new(AdmittedBackupEngine::new(snapshot.database.host.clone())),
-                keys: Arc::new(
-                    CustomerKmsBackupKeys::new(Arc::new(source))
-                        .map_err(|_| "backup key authorization unavailable")?,
-                ),
-                destinations,
-                historical_destinations,
-                policy_revision: policy.policy_revision.clone(),
-                retention_days: policy.retention_days,
-                staging: self
-                    .config
-                    .databases
-                    .iter()
-                    .find(|database| database.database.to_text() == record.database_id)
-                    .ok_or("configured database unavailable")?
-                    .backup_root
-                    .clone(),
-                placement,
-            });
+            let database = snapshot.database.record.database_id.clone();
+            inputs.push(self.resolve_native_backup_input(&database)?);
         }
         crate::production_backup::compose_native_backup(limits, inputs)
             .map_err(|error| error.to_string())
@@ -1090,14 +1008,25 @@ impl ProductionAdmissionRuntime {
         database: &str,
     ) -> Result<crate::native_backup_runtime::NativeBackupInput, String> {
         use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
-        use terrabase::backup::{PlacementLock, worker::CustomerKmsBackupKeys};
-        use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
+        use terrabase::backup::worker::CustomerKmsBackupKeys;
+        use terrabase::encryption::{
+            CustomerKmsDatabaseKeys, KeyPurpose, KeyScope, KeyVersionMetadata,
+        };
         let snapshot = self
             .registry
             .retained_snapshot()?
             .into_iter()
             .find(|snapshot| snapshot.activated && snapshot.database.record.database_id == database)
             .ok_or("database is not actively admitted")?;
+        let read_cut = snapshot
+            .database
+            .host
+            .engine_host()
+            .admitted_shard_read_cut()
+            .map_err(|_| "admitted shard inventory unavailable")?;
+        ensure_native_backup_shard_capture_supported(
+            read_cut.as_ref().and_then(|cut| cut.route_generation),
+        )?;
         let record = self
             .admitted_records()?
             .into_iter()
@@ -1133,12 +1062,6 @@ impl ProductionAdmissionRuntime {
         }
         let policy = configured.backup.as_ref().ok_or("native backup policy missing")?;
         let key_config = self.config.keys.as_ref().ok_or("production key delivery missing")?;
-        let provider = OciVaultKeyDelivery::new(
-            key_config.socket.clone(),
-            key_config.orchestrator_uid,
-            key_config.socket_gid,
-        )
-        .map_err(failure)?;
         let scope = KeyScope::new_with_project(
             &record.environment,
             terrabase::identity::TenantUlid::from_text(&record.tenant_id).map_err(failure)?,
@@ -1147,24 +1070,97 @@ impl ProductionAdmissionRuntime {
             KeyPurpose::Backup,
         )
         .map_err(failure)?;
-        let source = OciVaultDatabaseKeys::new(
-            provider,
-            KeyVersionMetadata::new(
-                scope,
-                DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?,
-            ),
-            record.region.parse().map_err(|_| "invalid admitted Region")?,
-        )
-        .map_err(failure)?;
         let region = record.region.parse().map_err(|_| "invalid admitted Region")?;
-        let destinations =
-            crate::production_backup::destinations_from_config(&policy.destinations, region)
-                .map_err(|_| "native backup destination unavailable")?;
-        let mut historical_destinations = crate::production_backup::destinations_from_config(
-            &policy.historical_destinations,
-            region,
-        )
-        .map_err(|_| "native backup historical destination unavailable")?;
+        let (keys, destinations, mut historical_destinations) = if let Some(byok) = &configured.byok
+        {
+            if configured.encryption_provider
+                != terrabase::encryption::KeyProviderIdentity::CustomerKms
+                || byok.key_provider != "customer-kms"
+            {
+                return Err("customer BYOK provider disagrees with admitted configuration".into());
+            }
+            let key_region = byok.key_region.parse().map_err(|_| "invalid customer KMS Region")?;
+            let endpoint = byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?;
+            let adapter = terrabase::encryption::CustomerKmsKeyDelivery::new(
+                key_config.socket.clone(),
+                key_config.orchestrator_uid,
+                key_config.socket_gid,
+                byok.key_provider.clone(),
+                byok.key_id.clone(),
+                key_region,
+                endpoint,
+            )
+            .map_err(|_| "customer KMS adapter unavailable")?;
+            let source = CustomerKmsDatabaseKeys::new(
+                adapter,
+                KeyVersionMetadata::new(
+                    scope,
+                    DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?,
+                ),
+                region,
+            )
+            .map_err(|_| "customer key authorization unavailable")?;
+            let identity =
+                terrabase::backup::workload_identity_delivery::UnixWorkloadIdentityProvider::new(
+                    key_config.socket.clone(),
+                    terrabase::backup::workload_identity_delivery::WorkloadIdentityScope {
+                        role: byok.backup_role_arn.clone(),
+                        external_id: byok.backup_external_id.clone(),
+                        endpoint: byok.backup_endpoint.clone(),
+                        bucket: byok.backup_bucket.clone(),
+                        region: byok.backup_region.clone(),
+                        placement_revision: policy.destinations[0].placement_revision.clone(),
+                    },
+                )
+                .map_err(|_| "customer S3 workload identity unavailable")?;
+            let destination = crate::production_backup::customer_destination_from_config(
+                byok,
+                &policy.destinations[0],
+                region,
+                Arc::new(identity),
+            )
+            .map_err(|_| "customer backup destination unavailable")?;
+            (
+                Arc::new(
+                    CustomerKmsBackupKeys::new(Arc::new(source))
+                        .map_err(|_| "backup key authorization unavailable")?,
+                ) as Arc<dyn terrabase::backup::worker::BackupKeys>,
+                vec![destination.clone()],
+                vec![destination],
+            )
+        } else {
+            let provider = OciVaultKeyDelivery::new(
+                key_config.socket.clone(),
+                key_config.orchestrator_uid,
+                key_config.socket_gid,
+            )
+            .map_err(failure)?;
+            let source = OciVaultDatabaseKeys::new(
+                provider,
+                KeyVersionMetadata::new(
+                    scope,
+                    DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?,
+                ),
+                region,
+            )
+            .map_err(failure)?;
+            let destinations =
+                crate::production_backup::destinations_from_config(&policy.destinations, region)
+                    .map_err(|_| "native backup destination unavailable")?;
+            let historical = crate::production_backup::destinations_from_config(
+                &policy.historical_destinations,
+                region,
+            )
+            .map_err(|_| "native backup historical destination unavailable")?;
+            (
+                Arc::new(
+                    CustomerKmsBackupKeys::new(Arc::new(source))
+                        .map_err(|_| "backup key authorization unavailable")?,
+                ) as Arc<dyn terrabase::backup::worker::BackupKeys>,
+                destinations,
+                historical,
+            )
+        };
         historical_destinations.extend(destinations.iter().cloned());
         let placement = terrabase::backup::PlacementLock::explicit(
             record
@@ -1177,10 +1173,7 @@ impl ProductionAdmissionRuntime {
         .map_err(|_| "invalid admitted placement")?;
         Ok(NativeBackupInput {
             engine: Arc::new(AdmittedBackupEngine::new(snapshot.database.host.clone())),
-            keys: Arc::new(
-                CustomerKmsBackupKeys::new(Arc::new(source))
-                    .map_err(|_| "backup key authorization unavailable")?,
-            ),
+            keys,
             destinations,
             historical_destinations,
             policy_revision: policy.policy_revision.clone(),

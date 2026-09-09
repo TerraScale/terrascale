@@ -28,6 +28,8 @@ pub enum Provider {
     Oci,
     /// A Tigris bucket with operator-verified geography restrictions.
     Tigris,
+    /// Customer-owned S3-compatible destination; workload identity is mandatory.
+    CustomerS3,
 }
 
 /// S3 credentials whose formatting never reveals key material.
@@ -407,6 +409,9 @@ impl ObjectDestination {
     /// # Errors
     /// Rejects unverified residency, wrong OCI Region, and non-provider endpoints.
     pub fn new(config: DestinationConfig) -> Result<Self, TransferError> {
+        if config.provider == Provider::CustomerS3 {
+            return Err(TransferError::Configuration);
+        }
         validate_config(&config)?;
         let store = AmazonS3Builder::new()
             .with_bucket_name(&config.bucket)
@@ -1186,6 +1191,7 @@ fn validate_config(config: &DestinationConfig) -> Result<(), TransferError> {
                 ))
         }
         Provider::Tigris => host == "fly.storage.tigris.dev",
+        Provider::CustomerS3 => false,
     };
     if !crate::regions::RegionCatalog::production().is_registered(&config.admitted_region)
         || !endpoint_valid
@@ -1220,6 +1226,7 @@ fn validate_config_for_workload_identity(config: &DestinationConfig) -> Result<(
                 ))
         }
         Provider::Tigris => host == "fly.storage.tigris.dev",
+        Provider::CustomerS3 => true,
     };
     if !crate::regions::RegionCatalog::production().is_registered(&config.admitted_region)
         || !endpoint_valid

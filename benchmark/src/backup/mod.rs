@@ -120,6 +120,7 @@ use std::time::{Duration, Instant};
 
 use manifest::{ENCRYPTED_MANIFEST_FILE, MANIFEST_FILE, ManifestFacts, point_directory};
 pub mod object_store;
+pub mod workload_identity_delivery;
 use records::{MemberWriter, Record};
 use sha256::digest_file;
 

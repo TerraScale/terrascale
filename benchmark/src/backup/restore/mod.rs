@@ -2583,10 +2583,7 @@ mod publication_tests {
         std::env::temp_dir().join(format!(
             "terrabase-restore-{name}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
         ))
     }
 

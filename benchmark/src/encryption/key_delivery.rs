@@ -122,7 +122,12 @@ impl OciVaultKeyDelivery {
         let mut key = DatabaseKey::locked()?;
         stream.read_exact(key.material_mut()).map_err(unavailable)?;
         let expires_at = started.checked_add(duration).ok_or(EncryptionError::InvalidKeyLease)?;
-        DatabaseKeyLease::from_adapter_until(metadata.clone(), key, expires_at)
+        DatabaseKeyLease::from_adapter_until(
+            metadata.clone(),
+            key,
+            expires_at,
+            KeyProviderIdentity::OciVault,
+        )
     }
 
     fn validate_path(&self) -> Result<(), EncryptionError> {
@@ -142,6 +147,10 @@ impl OciVaultKeyDelivery {
 }
 
 impl CustomerKmsAdapter for OciVaultKeyDelivery {
+    fn identity(&self) -> KeyProviderIdentity {
+        KeyProviderIdentity::OciVault
+    }
+
     fn lease(
         &self,
         metadata: &KeyVersionMetadata,
@@ -205,7 +214,7 @@ impl<A: CustomerKmsAdapter> DatabaseKeySource for CustomerKmsDatabaseKeys<A> {
         }
         let metadata = KeyVersionMetadata::new(self.metadata.scope().clone(), version);
         let lease = Arc::new(self.provider.lease(&metadata, self.region)?);
-        if lease.metadata() != &metadata || lease.provider() != KeyProviderIdentity::OciVault {
+        if lease.metadata() != &metadata || lease.provider() != self.provider.identity() {
             return Err(EncryptionError::InvalidKeyMetadata);
         }
         let now = Instant::now();
@@ -275,6 +284,10 @@ mod tests {
     struct InjectedAdapter;
 
     impl CustomerKmsAdapter for InjectedAdapter {
+        fn identity(&self) -> KeyProviderIdentity {
+            KeyProviderIdentity::OciVault
+        }
+
         fn lease(
             &self,
             metadata: &KeyVersionMetadata,

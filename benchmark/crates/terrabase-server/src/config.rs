@@ -1118,9 +1118,16 @@ impl ServerConfig {
             paths.extend([location.clone(), policy_journal.clone(), backup_root.clone()]);
             let provider = match entry.encryption_provider.as_str() {
                 "oci-vault" => KeyProviderIdentity::OciVault,
+                "customer-kms" => KeyProviderIdentity::CustomerKms,
                 "local-file" => return Err(ConfigError::LocalProviderInProduction),
                 _ => return Err(ConfigError::InvalidProductionBoundary),
             };
+            if provider == KeyProviderIdentity::CustomerKms && entry.byok.is_none() {
+                return Err(ConfigError::InvalidProductionBoundary);
+            }
+            if provider != KeyProviderIdentity::CustomerKms && entry.byok.is_some() {
+                return Err(ConfigError::InvalidProductionBoundary);
+            }
             if let Some(byok) = &entry.byok {
                 let valid_provider = matches!(
                     byok.key_provider.as_str(),

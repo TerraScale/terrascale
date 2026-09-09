@@ -1540,6 +1540,7 @@ impl NativeBackupFleet {
                 let label = match provider {
                     Provider::Oci => "oci",
                     Provider::Tigris => "tigris",
+                    Provider::CustomerS3 => "customer-s3",
                 };
                 let healthy = stream
                     .health
@@ -1881,6 +1882,7 @@ fn has_pending_uploads(
         let journal = stream.config.staging.join(match provider {
             Provider::Oci => "uploaded-oci",
             Provider::Tigris => "uploaded-tigris",
+            Provider::CustomerS3 => "uploaded-customer-s3",
         });
         let acknowledged = read_upload_journal(
             &journal,
@@ -1913,6 +1915,7 @@ async fn upload_destinations(
         let journal = stream.config.staging.join(match provider {
             Provider::Oci => "uploaded-oci",
             Provider::Tigris => "uploaded-tigris",
+            Provider::CustomerS3 => "uploaded-customer-s3",
         });
         let mut acknowledged = read_upload_journal(
             &journal,
@@ -2022,6 +2025,7 @@ async fn enforce_retention_at(
             let path = stream.config.staging.join(match provider {
                 Provider::Oci => "uploaded-oci",
                 Provider::Tigris => "uploaded-tigris",
+                Provider::CustomerS3 => "uploaded-customer-s3",
             });
             let mut uploaded = read_upload_journal(
                 &path,
@@ -2114,6 +2118,7 @@ fn destination_history_key(provider: Provider, destination: &ObjectDestination) 
     let provider = match provider {
         Provider::Oci => "oci",
         Provider::Tigris => "tigris",
+        Provider::CustomerS3 => "customer-s3",
     };
     format!("{provider}:{}", destination.identity())
 }
@@ -2274,20 +2279,167 @@ mod tests {
         std::fs::remove_dir_all(outside).unwrap();
     }
 
-    #[test]
-    fn restore_staging_cleanup_reclaims_crash_left_workspace() {
-        let directory = location("restore-staging-cleanup");
-        std::fs::create_dir_all(&directory).unwrap();
-        let workspace = directory.join(format!("restore-{}", crate::identity::generate()));
-        std::fs::create_dir(&workspace).unwrap();
-        std::fs::write(workspace.join("partial-member"), b"crash leftover").unwrap();
+    #[derive(Debug)]
+    struct BlockingDownloadStore {
+        inner: Arc<object_store::memory::InMemory>,
+        started: Arc<tokio::sync::Notify>,
+    }
 
-        {
-            let _cleanup = RestoreStagingCleanup { path: workspace.clone() };
+    impl std::fmt::Display for BlockingDownloadStore {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("blocking test object store")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ObjectStore for BlockingDownloadStore {
+        async fn put_opts(
+            &self,
+            location: &object_store::path::Path,
+            payload: object_store::PutPayload,
+            opts: object_store::PutOptions,
+        ) -> object_store::Result<object_store::PutResult> {
+            self.inner.put_opts(location, payload, opts).await
         }
 
-        assert!(!workspace.exists());
-        std::fs::remove_dir_all(directory).unwrap();
+        async fn put_multipart_opts(
+            &self,
+            location: &object_store::path::Path,
+            opts: object_store::PutMultipartOptions,
+        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
+            self.inner.put_multipart_opts(location, opts).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &object_store::path::Path,
+            opts: object_store::GetOptions,
+        ) -> object_store::Result<object_store::GetResult> {
+            if location.as_ref().ends_with("member-000001") {
+                self.started.notify_one();
+                std::future::pending().await
+            }
+            self.inner.get_opts(location, opts).await
+        }
+
+        async fn delete(&self, location: &object_store::path::Path) -> object_store::Result<()> {
+            self.inner.delete(location).await
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&object_store::path::Path>,
+        ) -> futures_util::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
+        {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&object_store::path::Path>,
+        ) -> object_store::Result<object_store::ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy(
+            &self,
+            from: &object_store::path::Path,
+            to: &object_store::path::Path,
+        ) -> object_store::Result<()> {
+            self.inner.copy(from, to).await
+        }
+
+        async fn copy_if_not_exists(
+            &self,
+            from: &object_store::path::Path,
+            to: &object_store::path::Path,
+        ) -> object_store::Result<()> {
+            self.inner.copy_if_not_exists(from, to).await
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_restore_removes_workspace_after_blocked_download() {
+        let (_, engine) = open_engine("restore-cancelled-download");
+        let engine = Arc::new(engine);
+        let owner = engine.database_owner().clone();
+        let keys = keys(&engine);
+        let staging = location("restore-cancelled-download-staging");
+        let started = Arc::new(tokio::sync::Notify::new());
+        let store = Arc::new(BlockingDownloadStore {
+            inner: Arc::new(object_store::memory::InMemory::new()),
+            started: started.clone(),
+        });
+        let destination = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            store,
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let config = StreamConfig {
+            engine: engine.clone(),
+            keys: keys.clone(),
+            destinations: vec![(Provider::Oci, destination.clone())],
+            historical_destinations: Vec::new(),
+            policy_revision: "restore-cancelled".into(),
+            retention_days: 1,
+            staging: staging.clone(),
+            placement: PlacementLock::br_only(),
+        };
+        let limits = FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
+            inventory_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 4,
+        };
+        let mut fleet = NativeBackupFleet::new(limits).unwrap();
+        fleet.attach(config).unwrap();
+        let database = engine.database_id().to_string();
+        committed(put(
+            &engine,
+            owner.tenant().to_text().as_str(),
+            "restore-cancelled-op",
+            "restore-cancelled-doc",
+            "users",
+            text("value"),
+            LocalDurability::Synced,
+        ));
+        let point = fleet.capture_snapshot(&database).await.unwrap();
+        let at = point.recoverable_through_unix_millis();
+        for path in point_paths(&staging, 4).unwrap() {
+            std::fs::remove_dir_all(path).unwrap();
+        }
+        let (target_owner, target) = restore_config("restore-cancelled-target", &owner);
+        let identity = crate::backup::restore::RestoreIdentity {
+            operation_id: "restore-cancelled-operation".into(),
+            source_database_id: database.clone(),
+            target_database_id: target_owner.database().to_string(),
+            provider: "oci".into(),
+            selection: at.to_string(),
+            expected_manifest_digest: point.identity().into(),
+            expected_journal_boundary: point.boundary_sequence().get(),
+            restore_epoch: 1,
+        };
+        let task = tokio::spawn(async move {
+            fleet.restore_at_from_provider(&database, Provider::Oci, at, &target, &identity).await
+        });
+        started.notified().await;
+        assert!(
+            std::fs::read_dir(&staging).unwrap().any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("restore-"))
+        );
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(
+            std::fs::read_dir(&staging).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("restore-"))
+        );
     }
 
     #[test]

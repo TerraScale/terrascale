@@ -273,6 +273,8 @@ pub enum KeyProviderIdentity {
     LocalFile,
     /// The Orchestrator-owned OCI Vault adapter.
     OciVault,
+    /// A customer-selected KMS adapter owned by the host orchestrator.
+    CustomerKms,
 }
 
 impl KeyProviderIdentity {
@@ -282,6 +284,7 @@ impl KeyProviderIdentity {
         match self {
             Self::LocalFile => "local-file",
             Self::OciVault => "oci-vault",
+            Self::CustomerKms => "customer-kms",
         }
     }
 }
@@ -635,7 +638,7 @@ impl DatabaseKeyLease {
         duration: Duration,
         provider: KeyProviderIdentity,
     ) -> Result<Self, EncryptionError> {
-        if provider != KeyProviderIdentity::OciVault {
+        if matches!(provider, KeyProviderIdentity::LocalFile) {
             return Err(EncryptionError::InvalidKeyMetadata);
         }
         if duration.is_zero() || duration > MAX_DATABASE_KEY_LEASE {
@@ -650,6 +653,7 @@ impl DatabaseKeyLease {
         metadata: KeyVersionMetadata,
         key: DatabaseKey,
         expires_at: Instant,
+        provider: KeyProviderIdentity,
     ) -> Result<Self, EncryptionError> {
         let remaining = expires_at
             .checked_duration_since(Instant::now())
@@ -658,7 +662,10 @@ impl DatabaseKeyLease {
         if remaining > MAX_DATABASE_KEY_LEASE {
             return Err(EncryptionError::InvalidKeyLease);
         }
-        Ok(Self { metadata, key, provider: KeyProviderIdentity::OciVault, expires_at })
+        if matches!(provider, KeyProviderIdentity::LocalFile) {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        Ok(Self { metadata, key, provider, expires_at })
     }
 
     /// Constructs an OCI Vault lease for injected test fixtures.
@@ -669,6 +676,16 @@ impl DatabaseKeyLease {
         duration: Duration,
     ) -> Result<Self, EncryptionError> {
         Self::from_adapter(metadata, key, duration, KeyProviderIdentity::OciVault)
+    }
+
+    /// Constructs a customer KMS lease for injected test fixtures.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_customer_kms(
+        metadata: KeyVersionMetadata,
+        key: DatabaseKey,
+        duration: Duration,
+    ) -> Result<Self, EncryptionError> {
+        Self::from_adapter(metadata, key, duration, KeyProviderIdentity::CustomerKms)
     }
 
     /// Returns the authorized key-version metadata.
@@ -789,6 +806,12 @@ pub trait DatabaseKeySource: fmt::Debug + Send + Sync {
 /// and revocation checks. TerraBase receives only the already-authorized,
 /// bounded lease and its durable request metadata.
 pub trait CustomerKmsAdapter: fmt::Debug + Send + Sync {
+    /// Returns the provider identity carried by every lease from this adapter.
+    fn identity(&self) -> KeyProviderIdentity {
+        // Existing host adapters predate provider-neutral customer KMS. They
+        // issue OCI leases unless they explicitly opt into another identity.
+        KeyProviderIdentity::OciVault
+    }
     /// Obtains one authorized lease for exactly this scope, version, and
     /// region. Missing or revoked versions must fail closed.
     fn lease(

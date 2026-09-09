@@ -13,12 +13,15 @@ use aws_lc_rs::{aead, digest, hkdf, rand};
 use zeroize::Zeroize;
 
 #[cfg(target_os = "linux")]
+mod customer_key_delivery;
+#[cfg(target_os = "linux")]
 mod key_delivery;
 mod local_file;
 mod oci_vault;
 mod provider;
 
 #[cfg(target_os = "linux")]
+pub use customer_key_delivery::CustomerKmsKeyDelivery;
 pub use key_delivery::{CustomerKmsDatabaseKeys, OciVaultDatabaseKeys, OciVaultKeyDelivery};
 pub use local_file::LocalFileKeyProvider;
 pub use oci_vault::UnconfiguredOciVaultProvider;

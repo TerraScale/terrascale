@@ -173,6 +173,7 @@ pub(super) fn evict_retired_local_chains(
         let journal = stream.config.staging.join(match provider {
             Provider::Oci => "uploaded-oci",
             Provider::Tigris => "uploaded-tigris",
+            Provider::CustomerS3 => "uploaded-customer-s3",
         });
         persist_upload_journal(&journal, &stream.config.policy_revision, &retained)?;
     }
