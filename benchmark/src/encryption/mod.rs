@@ -19,12 +19,12 @@ mod oci_vault;
 mod provider;
 
 #[cfg(target_os = "linux")]
-pub use key_delivery::{OciVaultDatabaseKeys, OciVaultKeyDelivery};
+pub use key_delivery::{CustomerKmsDatabaseKeys, OciVaultDatabaseKeys, OciVaultKeyDelivery};
 pub use local_file::LocalFileKeyProvider;
 pub use oci_vault::UnconfiguredOciVaultProvider;
 pub use provider::{
     ArtifactKind, DatabaseKeyHierarchy, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion,
-    KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
+    CustomerKmsAdapter, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
     KeyWrappingProvider, MAX_DATABASE_KEY_LEASE, MAX_WRAPPED_KEY_BYTES, ProductionCapabilityStatus,
     ProviderCapability, WrappedDatabaseKey, production_capability_status,
 };

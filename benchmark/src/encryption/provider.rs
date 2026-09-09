@@ -783,6 +783,21 @@ pub trait DatabaseKeySource: fmt::Debug + Send + Sync {
     ) -> Result<std::sync::Arc<DatabaseKeyLease>, EncryptionError>;
 }
 
+/// Adapter-owned customer KMS lease delivery.
+///
+/// The adapter owns provider credentials, resource identifiers, authorization,
+/// and revocation checks. TerraBase receives only the already-authorized,
+/// bounded lease and its durable request metadata.
+pub trait CustomerKmsAdapter: fmt::Debug + Send + Sync {
+    /// Obtains one authorized lease for exactly this scope, version, and
+    /// region. Missing or revoked versions must fail closed.
+    fn lease(
+        &self,
+        metadata: &KeyVersionMetadata,
+        region: RegionCode,
+    ) -> Result<DatabaseKeyLease, EncryptionError>;
+}
+
 /// Provider-neutral key wrapping, rotation, recovery, and destruction seam.
 ///
 /// Provider implementations must keep OCI OCIDs and credentials outside all

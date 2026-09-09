@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionError,
-    KeyVersionMetadata, MAX_DATABASE_KEY_LEASE,
+    CustomerKmsAdapter, KeyVersionMetadata, MAX_DATABASE_KEY_LEASE,
 };
 use crate::regions::{RegionCatalog, RegionCode};
 
@@ -141,14 +141,24 @@ impl OciVaultKeyDelivery {
     }
 }
 
+impl CustomerKmsAdapter for OciVaultKeyDelivery {
+    fn lease(
+        &self,
+        metadata: &KeyVersionMetadata,
+        region: RegionCode,
+    ) -> Result<DatabaseKeyLease, EncryptionError> {
+        Self::lease(self, metadata, region)
+    }
+}
+
 /// Bounded, renewable OCI leases for one immutable database scope and version.
 ///
 /// Replace this source only after a new active version is durably admitted.
 /// Historical versions are requested explicitly and remain usable only while
 /// the orchestrator authorizes their regional wrappers.
 #[derive(Debug)]
-pub struct OciVaultDatabaseKeys {
-    provider: OciVaultKeyDelivery,
+pub struct CustomerKmsDatabaseKeys<A> {
+    provider: A,
     metadata: KeyVersionMetadata,
     region: RegionCode,
     cache: Mutex<BTreeMap<DatabaseKeyVersion, CachedLease>>,
@@ -160,13 +170,13 @@ struct CachedLease {
     renew_at: Instant,
 }
 
-impl OciVaultDatabaseKeys {
+impl<A: CustomerKmsAdapter> CustomerKmsDatabaseKeys<A> {
     /// Authorizes the active key before returning a production storage source.
     ///
     /// # Errors
     /// Fails closed when the bound scope/version/Region cannot obtain a lease.
     pub fn new(
-        provider: OciVaultKeyDelivery,
+        provider: A,
         metadata: KeyVersionMetadata,
         region: RegionCode,
     ) -> Result<Self, EncryptionError> {
@@ -176,7 +186,7 @@ impl OciVaultDatabaseKeys {
     }
 }
 
-impl DatabaseKeySource for OciVaultDatabaseKeys {
+impl<A: CustomerKmsAdapter> DatabaseKeySource for CustomerKmsDatabaseKeys<A> {
     fn current_lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
         self.lease(self.metadata.version())
     }
@@ -195,6 +205,9 @@ impl DatabaseKeySource for OciVaultDatabaseKeys {
         }
         let metadata = KeyVersionMetadata::new(self.metadata.scope().clone(), version);
         let lease = Arc::new(self.provider.lease(&metadata, self.region)?);
+        if lease.metadata() != &metadata {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
         let now = Instant::now();
         let remaining = lease
             .expires_at()
@@ -210,6 +223,9 @@ impl DatabaseKeySource for OciVaultDatabaseKeys {
         Ok(lease)
     }
 }
+
+/// OCI Vault's host-delivered implementation of [`CustomerKmsDatabaseKeys`].
+pub type OciVaultDatabaseKeys = CustomerKmsDatabaseKeys<OciVaultKeyDelivery>;
 
 fn validate_component(
     path: &Path,
