@@ -12,6 +12,10 @@ description: TerraScale plans, quotas, write and storage definitions, abuse guar
 > are sourced from `data/pricing.json`. The values must be confirmed by the
 > owner before publication, and every published number must have a
 > measured unit cost behind it.
+>
+> **Pre-launch.** Public registration and hosted database access are not
+> available yet. These draft terms, including Free eligibility, take effect
+> only when public self-service opens.
 
 TerraScale bills exactly two dimensions: **writes and storage**. Reads,
 queries, and direct member read egress are free and unbilled, but are metered
@@ -110,7 +114,12 @@ has no bandwidth guard.** Subscribers per view are unlimited on every plan.
 
 ## Free eligibility and idle databases
 
-Free indefinitely with a valid verified card and automated fraud checks. Free eligibility and the first paid month promotion each have one entitlement per verified billing customer across organizations; only audited owner exceptions may expand eligibility.
+Free indefinitely with a valid verified card and automated fraud checks after
+public launch. Each verified billing customer has one Free entitlement across
+all organizations: creating or joining another organization does not grant
+another Free plan. The first paid month promotion is likewise limited to one
+entitlement across organizations; only audited owner exceptions may expand
+eligibility.
 
 Free databases pause after 30 idle days; a request resumes them. They may be deleted after 90 idle days with advance notices unless deletion protection is enabled. Paid databases are never idle-reaped. The final notice schedule requires owner approval.
 

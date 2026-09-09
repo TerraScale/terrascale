@@ -132,13 +132,6 @@ Deletion protection is opt-in and disabled by default. An owner must explicitly 
 See the draft [billing policy](/zh-cn/pricing/) for separate unpaid-storage and
 required-card grace periods. These exceptions are not overridden by protection.
 
-## Single-provider risk
-
-Every customer byte lives in a single Oracle Cloud Infrastructure tenancy.
-We accept this single-provider risk knowingly; it is a documented, accepted
-risk we revisit at our first $10k MRR. Backups are distributed across your
-selected Regions.
-
 ## Limitations of liability
 
 [PLACEHOLDER — liability cap, exclusion of consequential damages, sole

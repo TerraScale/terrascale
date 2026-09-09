@@ -30,7 +30,7 @@ Stripe Tax account/configuration and provider confirmation pending O-4.]
 
 | Sub-processor | Processing | Locations |
 | --- | --- | --- |
-| Oracle Cloud Infrastructure | Compute hosts, block storage, object storage (backups), and email delivery | Tenancy in [JURISDICTION(S)] with GRU home region; [written residency/processing confirmation pending O-4] |
+| Oracle Cloud Infrastructure | Compute hosts, block storage, object storage (backups), and email delivery | [Hosting and storage locations pending written confirmation (O-4)] |
 | Cloudflare | Edge network: DNS, TLS termination, WAF, CDN cache and delivery of authorized reactive data; edge decryption at the PoP nearest the reader worldwide | Global edge network; [written CDN/cache terms and processing confirmation pending O-4] |
 | Stripe | Billing, invoicing, and intended Stripe Tax processing; no customer database content | [PLACEHOLDER — Stripe account/configuration and processing locations pending confirmation] |
 | [IDENTITY PROVIDER — placeholder] | Account authentication and identity data | [PLACEHOLDER — provider, role, locations, and written terms pending confirmation] |
@@ -59,12 +59,6 @@ On account deletion, we revoke access, stop new writes, and remove retained
 copies under the applicable deletion workflow. [PLACEHOLDER — exact retained-
 copy completion and provider retention windows pending written provider
 confirmation (O-4).]
-
-## Single-provider risk
-
-The service depends on its approved hosting and delivery providers. This
-provider-concentration risk is accepted and documented; we revisit it at our
-first $10k MRR.
 
 ## Audits and questionnaires
 

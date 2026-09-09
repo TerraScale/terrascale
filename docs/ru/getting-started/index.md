@@ -13,7 +13,8 @@ production use the same engine in the same regions.
 
 ::: warning Pre-launch
 TerraScale is preparing for public self-service launch. Billing starts when
-the service opens. Runnable snippets require a real cloud sandbox branch
+the service opens; public registration and hosted database access are not
+available yet. Runnable snippets require a real cloud sandbox branch
 pre-filled with the reader's key; if that branch or its credentials are
 unavailable, the runner fails closed rather than substituting a local result.
 See [Runnable snippets](/ru/snippets). The remote snippet gate is separate from
