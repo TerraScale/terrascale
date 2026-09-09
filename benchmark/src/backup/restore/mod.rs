@@ -1554,7 +1554,7 @@ fn execute_configured_restore(
     match outcome {
         Ok(facts) => {
             if replace_existing {
-                staging.discard();
+                staging.discard_replaced();
             }
             let mut result = receipt(chain, facts);
             result.requested_unix_millis = cutoff;
@@ -1588,6 +1588,10 @@ fn admit_target(target: &Path) -> Result<(), BackupError> {
 /// recovery-point name, removed when the run ends without publishing.
 struct StagingDir {
     path: PathBuf,
+    /// Set once the staging path has been renamed into the target slot. For
+    /// an exchange this path is then the retired target, so generic failure
+    /// cleanup must not remove it.
+    published: std::cell::Cell<bool>,
 }
 
 impl StagingDir {
@@ -1604,7 +1608,7 @@ impl StagingDir {
         std::fs::create_dir_all(parent).map_err(|_| BackupError::DestinationUnavailable)?;
         let path = parent.join(format!(".restore-staging-{}-{index}", std::process::id()));
         std::fs::create_dir(&path).map_err(|_| BackupError::DestinationUnavailable)?;
-        Ok(Self { path })
+        Ok(Self { path, published: std::cell::Cell::new(false) })
     }
 
     /// Returns the staging engine location.
@@ -1612,8 +1616,24 @@ impl StagingDir {
         &self.path
     }
 
+    /// Records that the staging pathname no longer names the in-progress
+    /// restore. In the exchange case it now owns the previous target.
+    fn mark_published(&self) {
+        self.published.set(true);
+    }
+
     /// Removes the staging tree: nothing was published from it.
     fn discard(&self) {
+        if self.published.get() {
+            return;
+        }
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+
+    /// Removes the retired target left at the staging pathname after a
+    /// successful exchange.
+    fn discard_replaced(&self) {
+        debug_assert!(self.published.get());
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
@@ -1637,6 +1657,9 @@ fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
     {
         return Err(BackupError::DestinationUnavailable);
     }
+    // The rename is complete before the parent sync. Mark ownership first so
+    // a sync error cannot make generic cleanup remove the published path.
+    staging.mark_published();
     if let Some(parent) = target.parent() {
         super::sync_directory(parent)?;
     }
@@ -1753,6 +1776,10 @@ fn publish_with_identity(
     {
         return Err(BackupError::DestinationUnavailable);
     }
+    // With EXCHANGE, `staging.path()` now names the previous target. Record
+    // that ownership before syncing the parent so failure cleanup preserves
+    // it for recovery.
+    staging.mark_published();
     if let Some(parent) = target.parent() {
         super::sync_directory(parent)?;
     }

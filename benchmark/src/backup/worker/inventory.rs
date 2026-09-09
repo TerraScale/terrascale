@@ -194,14 +194,25 @@ pub(super) fn remove_point(point: &Path) -> Result<(), FleetError> {
     super::super::sync_directory(parent).map_err(|_| FleetError::Capture)
 }
 
-fn cleanup_interrupted(directory: &Path) -> Result<(), FleetError> {
+pub(super) fn cleanup_interrupted(directory: &Path) -> Result<(), FleetError> {
     for entry in std::fs::read_dir(directory).map_err(|_| FleetError::Capture)? {
         let entry = entry.map_err(|_| FleetError::Capture)?;
-        if entry.file_name().to_str().is_some_and(owned_ephemeral) {
-            if !entry.file_type().map_err(|_| FleetError::Capture)?.is_dir() {
-                return Err(FleetError::Capture);
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if owned_ephemeral(&name) {
+            let file_type = entry.file_type().map_err(|_| FleetError::Capture)?;
+            if name == "rotation-pending.tmp" {
+                if !file_type.is_file() {
+                    return Err(FleetError::Capture);
+                }
+                std::fs::remove_file(entry.path()).map_err(|_| FleetError::Capture)?;
+            } else {
+                if !file_type.is_dir() {
+                    return Err(FleetError::Capture);
+                }
+                std::fs::remove_dir_all(entry.path()).map_err(|_| FleetError::Capture)?;
             }
-            std::fs::remove_dir_all(entry.path()).map_err(|_| FleetError::Capture)?;
         }
     }
     super::super::sync_directory(directory).map_err(|_| FleetError::Capture)
@@ -221,6 +232,14 @@ pub(super) fn has_capacity(
 }
 
 fn owned_ephemeral(name: &str) -> bool {
+    if name == "rotation-pending.tmp" {
+        return true;
+    }
+    if let Some(identity) =
+        name.strip_prefix(".env-").and_then(|name| name.strip_suffix(".staging"))
+    {
+        return super::super::manifest::validate_identity(identity).is_ok();
+    }
     if let Some(identity) =
         name.strip_prefix(".evict-rp-").or_else(|| name.strip_prefix(".pending-"))
     {
@@ -313,6 +332,68 @@ mod tests {
 
         assert!(!stale.exists());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn interrupted_cleanup_reclaims_envelope_and_rotation_temporaries() {
+        let directory = crate::backup::tests::location("backup-cleanup-temporaries");
+        std::fs::remove_dir_all(&directory).ok();
+        std::fs::create_dir_all(&directory).unwrap();
+        let envelope = directory.join(format!(".env-{}.staging", "a".repeat(64)));
+        std::fs::create_dir(&envelope).unwrap();
+        std::fs::write(directory.join("rotation-pending.tmp"), b"0 1\n").unwrap();
+
+        super::cleanup_interrupted(&directory).unwrap();
+
+        assert!(!envelope.exists());
+        assert!(!directory.join("rotation-pending.tmp").exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn interrupted_cleanup_refuses_temporary_type_mismatches() {
+        let directory = crate::backup::tests::location("backup-cleanup-temporary-types");
+        std::fs::remove_dir_all(&directory).ok();
+        std::fs::create_dir_all(&directory).unwrap();
+        let rotation = directory.join("rotation-pending.tmp");
+        std::fs::create_dir(&rotation).unwrap();
+        assert_eq!(super::cleanup_interrupted(&directory), Err(super::FleetError::Capture));
+        assert!(rotation.is_dir());
+        std::fs::remove_dir(&rotation).unwrap();
+
+        let envelope = directory.join(format!(".env-{}.staging", "b".repeat(64)));
+        std::fs::write(&envelope, b"wrong type").unwrap();
+        assert_eq!(super::cleanup_interrupted(&directory), Err(super::FleetError::Capture));
+        assert!(envelope.is_file());
+        std::fs::remove_file(envelope).unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_cleanup_refuses_temporary_symlinks() {
+        let directory = crate::backup::tests::location("backup-cleanup-temporary-symlinks");
+        let outside = crate::backup::tests::location("backup-cleanup-temporary-symlinks-outside");
+        std::fs::remove_dir_all(&directory).ok();
+        std::fs::remove_dir_all(&outside).ok();
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("sentinel"), b"retained").unwrap();
+        std::os::unix::fs::symlink(&outside, directory.join("rotation-pending.tmp")).unwrap();
+        assert_eq!(super::cleanup_interrupted(&directory), Err(super::FleetError::Capture));
+        assert!(outside.join("sentinel").exists());
+        std::fs::remove_file(directory.join("rotation-pending.tmp")).unwrap();
+
+        std::os::unix::fs::symlink(
+            &outside,
+            directory.join(format!(".env-{}.staging", "c".repeat(64))),
+        )
+        .unwrap();
+        assert_eq!(super::cleanup_interrupted(&directory), Err(super::FleetError::Capture));
+        assert!(outside.join("sentinel").exists());
+        std::fs::remove_file(directory.join(format!(".env-{}.staging", "c".repeat(64)))).unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]

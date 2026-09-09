@@ -5,9 +5,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use terrabase::backup::object_store::ObjectDestination;
 use terrabase::backup::BackupReader;
 use terrabase::backup::PlacementLock;
+use terrabase::backup::object_store::ObjectDestination;
 use terrabase::encryption::{
     ArtifactCipher, ArtifactKind, Compression, DatabaseKeyLease, DatabaseKeySource,
     EncryptionContext,
@@ -293,6 +293,9 @@ pub async fn restore_snapshot(
             reader.open_backup_envelope(&envelope).map_err(|_| SnapshotBackupError::Encryption)?;
         let manifest = WalSnapshotManifest::decode(&manifest_bytes)
             .map_err(|_| SnapshotBackupError::Snapshot)?;
+        let manifest_scope = manifest.scope;
+        let manifest_epoch = manifest.replica_epoch;
+        let manifest_identity = manifest.identity();
         let lengths: Vec<_> = (0..3).map(|slot| manifest.file_bytes(slot).unwrap_or(0)).collect();
         let mut sink =
             WalSnapshotSink::begin_local(binding, manifest, target, max_bytes, Some(keys))
@@ -310,6 +313,15 @@ pub async fn restore_snapshot(
                     .map_err(|_| SnapshotBackupError::Encryption)?;
                 let chunk = WalSnapshotChunk::decode(&plaintext)
                     .map_err(|_| SnapshotBackupError::Snapshot)?;
+                if chunk.request().scope != manifest_scope
+                    || chunk.request().replica_epoch != manifest_epoch
+                    || chunk.request().identity != manifest_identity
+                    || chunk.request().file != slot as u8
+                    || chunk.request().offset != offset
+                {
+                    plaintext.fill(0);
+                    return Err(SnapshotBackupError::Snapshot);
+                }
                 plaintext.fill(0);
                 let next = offset
                     .checked_add(chunk.bytes().len() as u64)

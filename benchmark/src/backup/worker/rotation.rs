@@ -24,7 +24,7 @@ pub(super) fn read(stream: &Stream) -> Result<Option<(StorageSequence, u64)>, Fl
 pub(super) fn begin(stream: &Stream, base: StorageSequence, clock: u64) -> Result<(), FleetError> {
     use std::io::Write;
     let temporary = stream.config.staging.join("rotation-pending.tmp");
-    let mut file = std::fs::File::create(&temporary).map_err(|_| FleetError::Capture)?;
+    let mut file = super::open_staging_temporary(&temporary)?;
     writeln!(file, "{} {clock}", base.get()).map_err(|_| FleetError::Capture)?;
     file.sync_all().map_err(|_| FleetError::Capture)?;
     std::fs::rename(temporary, stream.config.staging.join("rotation-pending"))

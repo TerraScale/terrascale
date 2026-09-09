@@ -124,10 +124,7 @@ impl NativeBackupRuntime {
             return Err(NativeBackupRuntimeError::Envelope);
         }
         let common_cut = cut.participants[0].snapshot.sequence();
-        if cut
-            .participants
-            .iter()
-            .any(|participant| participant.snapshot.sequence() != common_cut)
+        if cut.participants.iter().any(|participant| participant.snapshot.sequence() != common_cut)
         {
             return Err(NativeBackupRuntimeError::Envelope);
         }

@@ -13,6 +13,7 @@ use inventory::{
 mod remote;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,6 +26,28 @@ use crate::encryption::{DatabaseKeyLease, EncryptionError};
 use crate::engine::Engine;
 use crate::observability::{BackupMode, TaskOutcome};
 use crate::types::StorageSequence;
+
+/// Opens a staging temporary as a new private file.  Journals are replaced
+/// by rename, so following an attacker-controlled temporary symlink here
+/// would truncate a file outside the staging tree.
+pub(super) fn open_staging_temporary(path: &Path) -> Result<File, FleetError> {
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            return Err(FleetError::Capture);
+        }
+        std::fs::remove_file(path).map_err(|_| FleetError::Capture)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+        #[cfg(target_os = "linux")]
+        options.custom_flags(0o400_000); // O_NOFOLLOW
+    }
+    options.open(path).map_err(|_| FleetError::Capture)
+}
 
 /// Retains the admitted engine owner for the complete backup worker lifetime.
 /// Server adapters can retain a member lease without extracting an unfenced Engine.
@@ -1029,13 +1052,20 @@ impl NativeBackupFleet {
         retained_destinations: &[Arc<ObjectDestination>],
     ) -> Result<usize, FleetError> {
         let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
+        let configured = stream
+            .config
+            .historical_destinations
+            .iter()
+            .map(|(_, destination)| destination.identity())
+            .collect::<BTreeSet<_>>();
+        let supplied = retained_destinations
+            .iter()
+            .map(|destination| destination.identity())
+            .collect::<BTreeSet<_>>();
         if retained_destinations.is_empty()
             || retained_destinations.len() > 64
-            || stream.config.destinations.iter().any(|(_, current)| {
-                !retained_destinations
-                    .iter()
-                    .any(|destination| current.identity() == destination.identity())
-            })
+            || retained_destinations.len() != supplied.len()
+            || supplied != configured
         {
             return Err(FleetError::Configuration);
         }
@@ -2118,7 +2148,7 @@ fn persist_upload_journal(
 ) -> Result<(), FleetError> {
     use std::io::Write;
     let temporary = path.with_extension("pending");
-    let mut file = std::fs::File::create(&temporary).map_err(|_| FleetError::Capture)?;
+    let mut file = open_staging_temporary(&temporary)?;
     writeln!(file, "{revision}").map_err(|_| FleetError::Capture)?;
     for point in points {
         writeln!(file, "{point}").map_err(|_| FleetError::Capture)?;
@@ -2139,6 +2169,8 @@ mod tests {
     };
     use crate::types::LocalDurability;
     use object_store::ObjectStore;
+
+    mod purge_retained_tests;
 
     struct Keys(Arc<DatabaseKeyLease>);
     impl BackupReader for Keys {
@@ -2170,6 +2202,25 @@ mod tests {
             )
             .unwrap(),
         )))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_temporary_rejects_symlink_without_touching_target() {
+        let directory = location("backup-journal-temporary-symlink");
+        let outside = location("backup-journal-temporary-outside");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("sentinel");
+        std::fs::write(&target, b"preserve").unwrap();
+        let temporary = directory.join("uploaded-oci.pending");
+        std::os::unix::fs::symlink(&target, &temporary).unwrap();
+
+        assert!(matches!(open_staging_temporary(&temporary), Err(FleetError::Capture)));
+        assert_eq!(std::fs::read(&target).unwrap(), b"preserve");
+
+        std::fs::remove_dir_all(directory).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]

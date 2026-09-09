@@ -229,9 +229,11 @@ fn retention_builder_accepts_only_supported_policy_terms() {
         );
     }
     for days in [0, 2, 6, 8, 29, 31, 34, 36, u8::MAX] {
-        assert_eq!(
-            BackupPlan::local_test_full_plaintext().with_retention_days(days),
-            Err(BackupError::ManifestInvalid),
+        assert!(
+            matches!(
+                BackupPlan::local_test_full_plaintext().with_retention_days(days),
+                Err(BackupError::ManifestInvalid)
+            ),
             "unsupported retention term {days} was accepted"
         );
     }

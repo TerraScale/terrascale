@@ -207,23 +207,17 @@ fn backup_envelopes_bind_nonce_and_metadata_to_the_key() {
         Compression::None,
     )
     .unwrap();
-    let mut writer = ArtifactCipher::new(
-        ProviderMode::LocalFile,
-        DatabaseKey::from_bytes([0x37; 32]),
-        context,
-    )
-    .unwrap();
+    let mut writer =
+        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([0x37; 32]), context)
+            .unwrap();
     let envelope = writer.seal(b"backup payload").unwrap();
     let next = writer.seal(b"backup payload").unwrap();
     assert_ne!(envelope, next, "each backup record must use a fresh ordinal nonce");
     assert_eq!(writer.open(&envelope).unwrap(), b"backup payload");
 
-    let wrong_key = ArtifactCipher::new(
-        ProviderMode::LocalFile,
-        DatabaseKey::from_bytes([0x38; 32]),
-        context,
-    )
-    .unwrap();
+    let wrong_key =
+        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([0x38; 32]), context)
+            .unwrap();
     assert_eq!(wrong_key.open(&envelope), Err(EncryptionError::AuthenticationFailed));
 
     let mut altered_ordinal = envelope.clone();

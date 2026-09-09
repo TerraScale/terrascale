@@ -555,6 +555,11 @@ impl ObjectDestination {
         {
             let key = object_key(prefix, &entry.name)?;
             if entry.length == 0 {
+                // Reopen the source after the initial scan. An empty artifact
+                // must still be present as the same valid zero-length file at
+                // the immutable create boundary; otherwise a mutation after
+                // the scan could publish a stale empty claim.
+                validate_empty_artifact(&point.join(&entry.name), entry)?;
                 match self
                     .store
                     .put_opts(&key, Vec::<u8>::new().into(), PutMode::Create.into())
@@ -566,6 +571,9 @@ impl ObjectDestination {
                     }
                     Err(_) => return Err(TransferError::Unavailable),
                 }
+                // Revalidate the local source immediately before accepting
+                // the remote read-back as proof of a complete upload.
+                validate_empty_artifact(&point.join(&entry.name), entry)?;
                 self.verify_remote(&key, entry).await?;
                 continue;
             }
@@ -1005,6 +1013,14 @@ fn open_regular(path: &Path) -> std::io::Result<File> {
     Ok(file)
 }
 
+fn validate_empty_artifact(path: &Path, expected: &Entry) -> Result<(), TransferError> {
+    let file = open_regular(path).map_err(|_| TransferError::LocalIo)?;
+    if expected.length != 0 || file.metadata().map_err(|_| TransferError::LocalIo)?.len() != 0 {
+        return Err(TransferError::Integrity);
+    }
+    Ok(())
+}
+
 fn validate_config(config: &DestinationConfig) -> Result<(), TransferError> {
     let host = config.endpoint.strip_prefix("https://").ok_or(TransferError::Configuration)?;
     let endpoint_valid = match config.provider {
@@ -1312,7 +1328,8 @@ mod tests {
         let identity = "a".repeat(64);
         let point = root.join(format!("rp-{identity}"));
         fs::create_dir_all(&point).unwrap();
-        fs::write(point.join(super::manifest::ENCRYPTED_MANIFEST_FILE), b"manifest").unwrap();
+        fs::write(point.join(super::super::manifest::ENCRYPTED_MANIFEST_FILE), b"manifest")
+            .unwrap();
         fs::write(point.join("member.tbv3e"), b"original").unwrap();
 
         assert_eq!(

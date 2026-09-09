@@ -1,7 +1,5 @@
 //! Regression coverage for encrypted retry publication.
 
-use std::sync::Arc;
-
 use super::tests::{committed, location, open_engine, put, text};
 use crate::backup::{BackupEncryption, BackupPlan, run_backup};
 use crate::encryption::{
