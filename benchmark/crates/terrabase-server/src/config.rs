@@ -2291,6 +2291,70 @@ historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.sto
     }
 
     #[test]
+    fn vmengineconfig_byok_fixture_round_trips_customer_providers() {
+        let config = production_valid()
+            .replace("encryption_provider = \"oci-vault\"", "encryption_provider = \"customer-kms\"")
+            .replace(
+                "[databases.backup]\n",
+                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nbackup_external_id = \"external-123\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/abcd1234\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
+            )
+            .replace(
+                "{ provider = \"oci\", endpoint = \"https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com\", signing_region = \"sa-saopaulo-1\", bucket = \"backup-a\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
+                "{ provider = \"customer-s3\", endpoint = \"https://s3.customer.example\", signing_region = \"us-east-1\", bucket = \"customer-backups\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"\", secret_key_file = \"\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
+            );
+        let production = ServerConfig::parse(&config)
+            .expect("vmengineconfig BYOK output parses")
+            .production
+            .expect("production section");
+        let database = &production.databases[0];
+        assert_eq!(database.encryption_provider, KeyProviderIdentity::CustomerKms);
+        let byok = database.byok.as_ref().expect("BYOK references");
+        assert_eq!(byok.key_provider, "aws-kms");
+        let backup = database.backup.as_ref().expect("backup policy");
+        assert_eq!(backup.destinations[0].provider, Provider::CustomerS3);
+        assert!(backup.destinations[0].access_key_file.as_os_str().is_empty());
+        assert!(backup.destinations[0].secret_key_file.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn production_byok_provider_names_and_endpoints_fail_closed() {
+        let valid = production_valid()
+            .replace("encryption_provider = \"oci-vault\"", "encryption_provider = \"customer-kms\"")
+            .replace(
+                "[databases.backup]\n",
+                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/abcd1234\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
+            )
+            .replace(
+                "{ provider = \"oci\", endpoint = \"https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com\", signing_region = \"sa-saopaulo-1\", bucket = \"backup-a\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
+                "{ provider = \"customer-s3\", endpoint = \"https://s3.customer.example\", signing_region = \"us-east-1\", bucket = \"customer-backups\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"\", secret_key_file = \"\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
+            );
+
+        for provider in ["oci-vault", "aws-kms", "azure-key-vault", "customer-kms"] {
+            let config = valid
+                .replace("key_provider = \"aws-kms\"", &format!("key_provider = \"{provider}\""));
+            assert!(ServerConfig::parse(&config).is_ok(), "BYOK provider {provider} rejected");
+        }
+        for invalid in [
+            valid.replace("key_provider = \"aws-kms\"", "key_provider = \"unimplemented\""),
+            valid.replace("provider = \"customer-s3\"", "provider = \"unimplemented\""),
+            valid.replace(
+                "backup_endpoint = \"https://s3.customer.example\"",
+                "backup_endpoint = \"https://user:secret@s3.customer.example\"",
+            ),
+            valid.replace(
+                "backup_endpoint = \"https://s3.customer.example\"",
+                "backup_endpoint = \"https://s3.customer.example/path?token=secret\"",
+            ),
+            valid.replace(
+                "key_endpoint = \"https://kms.us-east-1.amazonaws.com\"",
+                "key_endpoint = \"https://kms.us-east-1.amazonaws.com?token=secret\"",
+            ),
+        ] {
+            assert!(ServerConfig::parse(&invalid).is_err(), "unsafe or unknown provider accepted");
+        }
+    }
+
+    #[test]
     fn pending_control_requires_private_path_and_explicit_principals() {
         let suffix = r#"
 [control]
