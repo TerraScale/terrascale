@@ -96,14 +96,23 @@ pub struct ProductionDatabase {
 /// Nonsecret customer provider references carried through production admission.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductionByokConfig {
+    /// Object storage endpoint for customer-managed backup copies.
     pub backup_endpoint: String,
+    /// Object storage bucket for customer-managed backup copies.
     pub backup_bucket: String,
+    /// Object storage signing/placement region.
     pub backup_region: String,
+    /// IAM role assumed for customer-managed backup access.
     pub backup_role_arn: String,
+    /// Optional external identifier bound to the assumed role.
     pub backup_external_id: Option<String>,
+    /// Key management provider identity.
     pub key_provider: String,
+    /// Customer-managed encryption key identifier.
     pub key_id: String,
+    /// Key management service region.
     pub key_region: String,
+    /// Optional key management service endpoint.
     pub key_endpoint: Option<String>,
 }
 
