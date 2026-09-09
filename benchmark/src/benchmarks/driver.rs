@@ -280,6 +280,39 @@ impl TerraBaseLane {
         self.commit_put_at(document, ExpectedVersion::Any, durability);
     }
 
+    /// Commits a bounded group of measured puts in one durable transaction.
+    /// The returned receipt covers the whole batch, so callers can account
+    /// each staged document as one logical write while paying one WAL flush.
+    pub(crate) fn commit_batch_measured(
+        &self,
+        start: u64,
+        count: u64,
+        durability: LocalDurability,
+    ) {
+        let snapshot = self.engine.read_snapshot(&self.scope).expect("snapshot");
+        let mut transaction = self
+            .engine
+            .begin(&self.scope, snapshot, self.operation("bench-batch"))
+            .expect("begins");
+        let collection = CollectionName::try_new("users").expect("valid identifier");
+        for index in start..start.saturating_add(count) {
+            let document = Document::new(
+                DocumentId::try_new(&format!("batch-{index}")).expect("valid identifier"),
+                collection.clone(),
+                DocumentValue::Object(std::collections::BTreeMap::from([
+                    ("name".to_owned(), DocumentValue::String("measured".to_owned())),
+                    ("group".to_owned(), DocumentValue::Integer(42)),
+                    ("payload".to_owned(), DocumentValue::String("x".repeat(256))),
+                ])),
+            );
+            transaction.put(document, ExpectedVersion::Any).expect("stages");
+        }
+        match transaction.commit(durability) {
+            crate::engine::CommitOutcome::Committed(_) => {}
+            other => panic!("expected a committed receipt, got {other:?}"),
+        }
+    }
+
     /// Commits one document put at an explicit durability level, for the
     /// probe that attributes write cost per level.
     pub(crate) fn commit_put_at(

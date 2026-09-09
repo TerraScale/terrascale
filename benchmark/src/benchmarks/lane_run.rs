@@ -1611,6 +1611,80 @@ mod tests {
         lane.remove();
     }
 
+    /// Aggregate durable-write probe across independent SQLite shard files.
+    /// Each lane owns its writer and commit queue; the wall clock covers all
+    /// lanes so the result characterizes physical shard parallelism rather
+    /// than one-file serialization.
+    #[test]
+    fn probe_parallel_synced_shards() {
+        const SHARDS: usize = 16;
+        const WRITES_PER_SHARD: u64 = 100;
+        let lanes: Vec<_> = (0..SHARDS)
+            .map(|index| TerraBaseLane::open(&format!("parallel-shard-{index}")))
+            .collect();
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            for (shard, lane) in lanes.iter().enumerate() {
+                scope.spawn(move || {
+                    for index in 0..WRITES_PER_SHARD {
+                        lane.commit_put_measured(
+                            (shard as u64) * WRITES_PER_SHARD + index,
+                            crate::types::LocalDurability::Synced,
+                        );
+                    }
+                });
+            }
+        });
+        let elapsed = started.elapsed().as_secs_f64();
+        let operations = (SHARDS as u64) * WRITES_PER_SHARD;
+        println!(
+            "probe {SHARDS}-shard synced writes: {:.0} ops/s ({:.1} us/op)",
+            operations as f64 / elapsed,
+            elapsed * 1e6 / operations as f64
+        );
+        for lane in lanes {
+            lane.remove();
+        }
+    }
+
+    /// Aggregate probe combining shard lanes with first-class batch writes.
+    /// This measures logical operations, while each lane pays one FULL WAL
+    /// flush per batch.
+    #[test]
+    fn probe_parallel_batched_synced_shards() {
+        const SHARDS: usize = 16;
+        const BATCHES_PER_SHARD: u64 = 8;
+        const WRITES_PER_BATCH: u64 = 64;
+        let lanes: Vec<_> = (0..SHARDS)
+            .map(|index| TerraBaseLane::open(&format!("parallel-batch-shard-{index}")))
+            .collect();
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            for (shard, lane) in lanes.iter().enumerate() {
+                scope.spawn(move || {
+                    for batch in 0..BATCHES_PER_SHARD {
+                        let start = ((shard as u64) * BATCHES_PER_SHARD + batch) * WRITES_PER_BATCH;
+                        lane.commit_batch_measured(
+                            start,
+                            WRITES_PER_BATCH,
+                            crate::types::LocalDurability::Synced,
+                        );
+                    }
+                });
+            }
+        });
+        let operations = (SHARDS as u64) * BATCHES_PER_SHARD * WRITES_PER_BATCH;
+        let elapsed = started.elapsed().as_secs_f64();
+        println!(
+            "probe {SHARDS}-shard batched synced writes: {:.0} ops/s ({:.1} us/op)",
+            operations as f64 / elapsed,
+            elapsed * 1e6 / operations as f64
+        );
+        for lane in lanes {
+            lane.remove();
+        }
+    }
+
     fn config_as_tuple(config: LaneConfig) -> String {
         format!(
             "seed {} / ops {} / samples {} / concurrency {} / warmup {}",

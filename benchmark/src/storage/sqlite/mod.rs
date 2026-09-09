@@ -2386,6 +2386,10 @@ impl CommitContext {
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
         let mut watermark = durable_watermark(&transaction)?;
         let mut origin_sequences = std::collections::HashMap::new();
+        // The origin epoch is immutable for this transaction snapshot. Cache
+        // it once so a wide group does not issue the same metadata query for
+        // every intent.
+        let mut observed_origin_epoch: Option<(u64, bool)> = None;
         // The wave's journal floor: every sequence above it was allocated by
         // this wave, so the per-database metering flush below scans exactly
         // this wave's rows.
@@ -2447,6 +2451,7 @@ impl CommitContext {
                 &mut watermark,
                 &mut root_head,
                 &mut origin_sequences,
+                &mut observed_origin_epoch,
                 intent,
                 &self.local_origin,
                 &fields,
@@ -2516,6 +2521,7 @@ fn stage_intent(
     watermark: &mut u64,
     root_head: &mut String,
     origin_sequences: &mut std::collections::HashMap<(String, String), u64>,
+    observed_origin_epoch: &mut Option<(u64, bool)>,
     intent: &CommitIntent,
     local_origin: &str,
     extracted_fields: &[String],
@@ -2526,7 +2532,13 @@ fn stage_intent(
     merge_schemas: &std::collections::BTreeMap<String, String>,
 ) -> Result<CommitResult, ()> {
     if let Some(expected) = intent.expected_origin_epoch {
-        let (epoch, closed) = origin_epoch_on(transaction)?;
+        let (epoch, closed) = if let Some(observed) = *observed_origin_epoch {
+            observed
+        } else {
+            let observed = origin_epoch_on(transaction)?;
+            *observed_origin_epoch = Some(observed);
+            observed
+        };
         if closed || epoch != expected {
             return Ok(CommitResult::Rejected(CommitRejection::Conflict));
         }
