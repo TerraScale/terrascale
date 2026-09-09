@@ -1,9 +1,16 @@
 //! `#[derive(Schema)]` for the TerraScale Rust SDK.
 //!
-//! The derive emits the collection name and extracted field metadata. It
-//! infers only types with an unambiguous wire representation; application
-//! structs fall back to JSON and can override that with `#[schema(type =
-//! "...")]`.
+//! The derive implements `terrascale::schema::Document` for named-field and
+//! unit structs, emitting the collection name and field metadata. `Option<T>`
+//! fields are optional. Scalar types with an unambiguous wire representation
+//! are inferred; other application types fall back to JSON and can override
+//! that with `#[schema(type = "...")]`.
+//!
+//! Container attributes include `collection`/`name`, `ttl`/`ttl_field`,
+//! `history`/`history_window_days`/`history_retention_days`, and
+//! `merge_policy`. Field attributes include `rename`, `type`, `indexed`,
+//! `unique`, `optional`, `merge`, and `skip`. Serde `rename`, `rename_all`, and
+//! `skip` are also honored for schema metadata.
 
 use proc_macro::TokenStream;
 use quote::quote;
