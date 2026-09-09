@@ -826,7 +826,7 @@ impl NativeBackupFleet {
         sync_stream(database, stream, self.limits).await?;
         let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
         super::verify_latest_chain_encrypted(&stream.config.staging, reader.as_ref())
-            .map_err(|_| FleetError::Capture)?
+            .map_err(|error| { eprintln!("native final verify failed: {error:?}"); FleetError::Capture })?
             .pop()
             .ok_or(FleetError::Capture)
     }
@@ -941,7 +941,7 @@ impl NativeBackupFleet {
             &points,
             &super::restore::Selection::Latest,
         )
-        .map_err(|_| FleetError::Capture)?;
+        .map_err(|error| { eprintln!("native rotation discovery failed: {error:?}"); FleetError::Capture })?;
         let names = destinations
             .iter()
             .map(|(provider, destination)| destination_history_key(*provider, destination))
@@ -1502,7 +1502,7 @@ async fn sync_stream(
     stream: &mut Stream,
     limits: FleetLimits,
 ) -> Result<(), FleetError> {
-    persist_inventory(stream, limits)?;
+    persist_inventory(stream, limits).map_err(|error| { eprintln!("native initial inventory failed: {error:?}"); error })?;
     if stream.retention_due.is_none_or(|due| due <= Instant::now()) {
         enforce_retention(identity, stream, limits).await?;
         stream.retention_due = Some(Instant::now() + Duration::from_secs(3600));
@@ -1540,13 +1540,13 @@ async fn sync_stream(
         Vec::new()
     } else {
         super::verify_latest_chain_encrypted(&stream.config.staging, reader.as_ref())
-            .map_err(|_| FleetError::Capture)?
+            .map_err(|error| { eprintln!("native chain verify failed: {error:?}"); FleetError::Capture })?
     };
     let rotation = rotation::read(stream)?;
     if let Some((base, clock)) = rotation {
         let snapshots =
             super::restore::discover_encrypted_points(&stream.config.staging, reader.as_ref())
-                .map_err(|_| FleetError::Capture)?;
+                .map_err(|error| { eprintln!("native snapshot discovery failed: {error:?}"); FleetError::Capture })?;
         if let Some(snapshot) = snapshots.into_iter().find(|point| {
             point.kind() == super::BackupKind::Snapshot
                 && point.boundary_sequence() == base
@@ -1567,11 +1567,11 @@ async fn sync_stream(
         .engine
         .engine()
         .journaled_high_water()
-        .map_err(|_| FleetError::Capture)?
+        .map_err(|error| { eprintln!("native staged discovery failed: {error:?}"); FleetError::Capture })?
         .unwrap_or_default();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| FleetError::Capture)?
+            .map_err(|error| { eprintln!("native chain verify failed: {error:?}"); FleetError::Capture })?
         .as_millis();
     let now = u64::try_from(now).map_err(|_| FleetError::Capture)?;
     // Reserve space for a replacement root before the bounded active chain
@@ -1656,7 +1656,7 @@ async fn sync_stream(
                     tokio::time::sleep(Duration::from_millis(1)).await;
                     let captured = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .map_err(|_| FleetError::Capture)?
+                .map_err(|error| { eprintln!("native rotation discovery failed: {error:?}"); FleetError::Capture })?
                         .as_millis();
                     let captured = u64::try_from(captured).map_err(|_| FleetError::Capture)?;
                     if captured > clock {
@@ -1705,8 +1705,8 @@ async fn sync_stream(
         .engine
         .engine()
         .advance_backup_frontier(captured_boundary)
-        .map_err(|_| FleetError::Capture)?;
-    persist_inventory(stream, limits)?;
+        .map_err(|error| { eprintln!("native frontier advance failed: {error:?}"); FleetError::Capture })?;
+    persist_inventory(stream, limits).map_err(|error| { eprintln!("native final inventory failed: {error:?}"); error })?;
     if capture_refusal.is_none() {
         rotation::finish(stream)?;
         evict_retired_local_chains(stream, limits)?;
