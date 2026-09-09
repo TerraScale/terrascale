@@ -11,8 +11,6 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
   - Lower priority (recommended, yields to other work)
   - When running make and using the Makefile always use the lowest cpu priority
 
--SQLite is the only storage engine
-
 # Benchmark
 - We need to save all benchmarks in an easy to see .md tables so we can compare from the very beginning the difference and improvements
 - Benchmarks land as `.md` tables in `bench/`.
