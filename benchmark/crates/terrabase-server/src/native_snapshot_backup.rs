@@ -2,17 +2,19 @@
 //! Logical SQLite/WAL bytes exist only in bounded memory between the encrypted
 //! physical source and per-database backup envelopes. Installation returns a
 //! follower driver which must still tail and reconcile before serving.
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use terrabase::backup::object_store::ObjectDestination;
 use terrabase::backup::BackupReader;
 use terrabase::backup::PlacementLock;
-use terrabase::backup::object_store::ObjectDestination;
 use terrabase::encryption::{
     ArtifactCipher, ArtifactKind, Compression, DatabaseKeyLease, DatabaseKeySource,
     EncryptionContext,
 };
 use terrabase::regions::RegionCode;
 use terrabase_cluster::wal_driver::{WalCheckpointMessage, WalFollowerDriver};
+use terrabase_cluster::wal_follower::MAX_WAL_BATCH_BYTES;
 use terrabase_cluster::wal_route::WalReplicaBinding;
 use terrabase_cluster::wal_snapshot::{
     WalSnapshotChunk, WalSnapshotManifest, WalSnapshotSink, WalSnapshotSource,
@@ -47,6 +49,7 @@ fn validate_residency(
 /// Rejects missing providers, expired keys, oversized snapshots and failed uploads.
 pub async fn upload_snapshot(
     source: &WalSnapshotSource,
+    source_region: RegionCode,
     lease: &DatabaseKeyLease,
     staging: &Path,
     prefix: &str,
@@ -60,7 +63,12 @@ pub async fn upload_snapshot(
     {
         return Err(SnapshotBackupError::Provider);
     }
-    if destinations.iter().any(|destination| !placement.allows(destination.admitted_region())) {
+    if !placement.allows(source_region)
+        || destinations.iter().any(|destination| {
+            destination.admitted_region() != source_region
+                || !placement.allows(destination.admitted_region())
+        })
+    {
         return Err(SnapshotBackupError::Provider);
     }
     let metadata = lease.metadata();
@@ -82,6 +90,13 @@ pub async fn upload_snapshot(
     let mut cipher = ArtifactCipher::from_database_key_lease(lease, context, 0)
         .map_err(|_| SnapshotBackupError::Encryption)?;
     if staging.exists() {
+        if !std::fs::symlink_metadata(staging)
+            .map_err(|_| SnapshotBackupError::Snapshot)?
+            .file_type()
+            .is_dir()
+        {
+            return Err(SnapshotBackupError::Snapshot);
+        }
         let envelope = read_bounded(&staging.join("manifest.tbv3e"), 2 * 1024 * 1024)?;
         let bytes =
             lease.open_backup_envelope(&envelope).map_err(|_| SnapshotBackupError::Encryption)?;
@@ -90,6 +105,7 @@ pub async fn upload_snapshot(
         if prior.identity() != source.manifest().identity() {
             return Err(SnapshotBackupError::Snapshot);
         }
+        validate_retry_staging(source, lease, staging, max_bytes).await?;
         let mut failed = false;
         for destination in destinations {
             failed |= destination.upload_point(staging, prefix).await.is_err();
@@ -156,6 +172,95 @@ pub async fn upload_snapshot(
     result
 }
 
+async fn validate_retry_staging(
+    source: &WalSnapshotSource,
+    lease: &DatabaseKeyLease,
+    staging: &Path,
+    max_bytes: u64,
+) -> Result<(), SnapshotBackupError> {
+    let manifest_path = staging.join("manifest.tbv3e");
+    let manifest_envelope = read_bounded(&manifest_path, 2 * 1024 * 1024)?;
+    let manifest_bytes = lease
+        .open_backup_envelope(&manifest_envelope)
+        .map_err(|_| SnapshotBackupError::Encryption)?;
+    let manifest =
+        WalSnapshotManifest::decode(&manifest_bytes).map_err(|_| SnapshotBackupError::Snapshot)?;
+    if manifest.identity() != source.manifest().identity()
+        || manifest.scope != source.manifest().scope
+        || manifest.replica_epoch != source.manifest().replica_epoch
+    {
+        return Err(SnapshotBackupError::Snapshot);
+    }
+    let mut expected = HashSet::new();
+    let mut total = manifest_envelope.len() as u64;
+    if total > max_bytes {
+        return Err(SnapshotBackupError::Snapshot);
+    }
+    for slot in 0..3_u8 {
+        let Some(length) = source.manifest().file_bytes(slot) else { continue };
+        let mut offset = 0_u64;
+        while offset < length {
+            let name = format!("chunk-{slot}-{offset:020}");
+            expected.insert(name.clone());
+            let path = staging.join(&name);
+            let metadata =
+                std::fs::symlink_metadata(&path).map_err(|_| SnapshotBackupError::Snapshot)?;
+            if !metadata.file_type().is_file() {
+                return Err(SnapshotBackupError::Snapshot);
+            }
+            let envelope = read_bounded(&path, 2 * 1024 * 1024)?;
+            total =
+                total.checked_add(envelope.len() as u64).ok_or(SnapshotBackupError::Snapshot)?;
+            if total > max_bytes {
+                return Err(SnapshotBackupError::Snapshot);
+            }
+            let mut plaintext = lease
+                .open_backup_envelope(&envelope)
+                .map_err(|_| SnapshotBackupError::Encryption)?;
+            let chunk =
+                WalSnapshotChunk::decode(&plaintext).map_err(|_| SnapshotBackupError::Snapshot)?;
+            if chunk.request().scope != source.manifest().scope
+                || chunk.request().replica_epoch != source.manifest().replica_epoch
+                || chunk.request().identity != source.manifest().identity()
+                || chunk.request().file != slot
+                || chunk.request().offset != offset
+            {
+                plaintext.fill(0);
+                return Err(SnapshotBackupError::Snapshot);
+            }
+            let chunk_len = chunk.bytes().len() as u64;
+            let source_chunk =
+                source.read_local(slot, offset).await.map_err(|_| SnapshotBackupError::Snapshot)?;
+            if source_chunk.bytes() != chunk.bytes() {
+                plaintext.fill(0);
+                return Err(SnapshotBackupError::Snapshot);
+            }
+            plaintext.fill(0);
+            let next = offset.checked_add(chunk_len).ok_or(SnapshotBackupError::Snapshot)?;
+            if next <= offset || next > length || chunk_len > MAX_WAL_BATCH_BYTES as u64 {
+                return Err(SnapshotBackupError::Snapshot);
+            }
+            offset = next;
+        }
+    }
+    let manifest_metadata =
+        std::fs::symlink_metadata(&manifest_path).map_err(|_| SnapshotBackupError::Snapshot)?;
+    if !manifest_metadata.file_type().is_file() {
+        return Err(SnapshotBackupError::Snapshot);
+    }
+    for entry in std::fs::read_dir(staging).map_err(|_| SnapshotBackupError::Snapshot)? {
+        let entry = entry.map_err(|_| SnapshotBackupError::Snapshot)?;
+        let name = entry.file_name().into_string().map_err(|_| SnapshotBackupError::Snapshot)?;
+        if name != "manifest.tbv3e" && !expected.remove(&name) {
+            return Err(SnapshotBackupError::Snapshot);
+        }
+    }
+    if !expected.is_empty() {
+        return Err(SnapshotBackupError::Snapshot);
+    }
+    Ok(())
+}
+
 /// Downloads from one provider, authenticates the physical manifest/chunks and
 /// installs through the accepted follower binding. The resulting checkpoint is
 /// a bootstrap cut, not proof of peer catch-up or permission to serve.
@@ -176,41 +281,53 @@ pub async fn restore_snapshot(
     max_bytes: u64,
 ) -> Result<(WalFollowerDriver, WalCheckpointMessage), SnapshotBackupError> {
     validate_residency(source_region, destination.admitted_region(), placement)?;
-    destination
-        .download_point_with_byte_limit(prefix, staging, max_bytes)
-        .await
-        .map_err(|_| SnapshotBackupError::Provider)?;
-    let envelope = read_bounded(&staging.join("manifest.tbv3e"), 2 * 1024 * 1024)?;
-    let manifest_bytes =
-        reader.open_backup_envelope(&envelope).map_err(|_| SnapshotBackupError::Encryption)?;
-    let manifest =
-        WalSnapshotManifest::decode(&manifest_bytes).map_err(|_| SnapshotBackupError::Snapshot)?;
-    let lengths: Vec<_> = (0..3).map(|slot| manifest.file_bytes(slot).unwrap_or(0)).collect();
-    let mut sink = WalSnapshotSink::begin_local(binding, manifest, target, max_bytes, Some(keys))
-        .await
-        .map_err(|_| SnapshotBackupError::Snapshot)?;
-    for (slot, length) in lengths.into_iter().enumerate() {
-        let mut offset = 0;
-        while offset < length {
-            let envelope =
-                read_bounded(&staging.join(format!("chunk-{slot}-{offset:020}")), 2 * 1024 * 1024)?;
-            let mut plaintext = reader
-                .open_backup_envelope(&envelope)
-                .map_err(|_| SnapshotBackupError::Encryption)?;
-            let chunk =
-                WalSnapshotChunk::decode(&plaintext).map_err(|_| SnapshotBackupError::Snapshot)?;
-            plaintext.fill(0);
-            let next = offset
-                .checked_add(chunk.bytes().len() as u64)
-                .ok_or(SnapshotBackupError::Snapshot)?;
-            if next <= offset || next > length {
-                return Err(SnapshotBackupError::Snapshot);
+    let mut downloaded = false;
+    let result = async {
+        destination
+            .download_point_with_byte_limit(prefix, staging, max_bytes)
+            .await
+            .map_err(|_| SnapshotBackupError::Provider)?;
+        downloaded = true;
+        let envelope = read_bounded(&staging.join("manifest.tbv3e"), 2 * 1024 * 1024)?;
+        let manifest_bytes =
+            reader.open_backup_envelope(&envelope).map_err(|_| SnapshotBackupError::Encryption)?;
+        let manifest = WalSnapshotManifest::decode(&manifest_bytes)
+            .map_err(|_| SnapshotBackupError::Snapshot)?;
+        let lengths: Vec<_> = (0..3).map(|slot| manifest.file_bytes(slot).unwrap_or(0)).collect();
+        let mut sink =
+            WalSnapshotSink::begin_local(binding, manifest, target, max_bytes, Some(keys))
+                .await
+                .map_err(|_| SnapshotBackupError::Snapshot)?;
+        for (slot, length) in lengths.into_iter().enumerate() {
+            let mut offset = 0;
+            while offset < length {
+                let envelope = read_bounded(
+                    &staging.join(format!("chunk-{slot}-{offset:020}")),
+                    2 * 1024 * 1024,
+                )?;
+                let mut plaintext = reader
+                    .open_backup_envelope(&envelope)
+                    .map_err(|_| SnapshotBackupError::Encryption)?;
+                let chunk = WalSnapshotChunk::decode(&plaintext)
+                    .map_err(|_| SnapshotBackupError::Snapshot)?;
+                plaintext.fill(0);
+                let next = offset
+                    .checked_add(chunk.bytes().len() as u64)
+                    .ok_or(SnapshotBackupError::Snapshot)?;
+                if next <= offset || next > length {
+                    return Err(SnapshotBackupError::Snapshot);
+                }
+                sink.write_local(chunk).await.map_err(|_| SnapshotBackupError::Snapshot)?;
+                offset = next;
             }
-            sink.write_local(chunk).await.map_err(|_| SnapshotBackupError::Snapshot)?;
-            offset = next;
         }
+        sink.finish_local().await.map_err(|_| SnapshotBackupError::Snapshot)
     }
-    sink.finish_local().await.map_err(|_| SnapshotBackupError::Snapshot)
+    .await;
+    if downloaded && result.is_err() {
+        let _ = std::fs::remove_dir_all(staging);
+    }
+    result
 }
 
 fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), SnapshotBackupError> {

@@ -168,6 +168,20 @@ pub struct StreamHealth {
     pub providers: Vec<(Provider, bool)>,
 }
 
+/// Removes a restore workspace even when remote I/O is cancelled by dropping
+/// the future. Restore workspaces are private ephemeral state; retaining one
+/// after cancellation would consume the stream's staging budget across
+/// restart and eventually reject healthy restores.
+struct RestoreStagingCleanup {
+    path: PathBuf,
+}
+
+impl Drop for RestoreStagingCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
 struct Stream {
     config: StreamConfig,
     health: StreamHealth,
@@ -782,6 +796,17 @@ impl NativeBackupFleet {
             return Err(FleetError::Configuration);
         }
         std::fs::create_dir_all(&config.staging).map_err(|_| FleetError::Capture)?;
+        // Reconcile crash-left ephemeral work before admission can account it
+        // against the staging budget. This also makes a reopened fleet safe
+        // before its first scheduled tick or explicit capture.
+        inventory::cleanup_interrupted(&config.staging)?;
+        let inventory_root = config.staging.join(".inventory");
+        if let Ok(metadata) = std::fs::symlink_metadata(&inventory_root) {
+            if !metadata.file_type().is_dir() {
+                return Err(FleetError::Capture);
+            }
+            inventory::cleanup_interrupted(&inventory_root)?;
+        }
         let admission_boundary =
             config.engine.engine().published_sequence().map_err(|_| FleetError::Capture)?;
         config
@@ -1366,6 +1391,7 @@ impl NativeBackupFleet {
         let staging =
             stream.config.staging.join(format!("restore-{}", crate::identity::generate()));
         std::fs::create_dir(&staging).map_err(|_| FleetError::Capture)?;
+        let _cleanup = RestoreStagingCleanup { path: staging.clone() };
         let result = async {
             for manifest in &chain {
                 let name = format!("rp-{}", manifest.identity());
@@ -1409,7 +1435,6 @@ impl NativeBackupFleet {
             .map_err(|_| FleetError::Capture)
         }
         .await;
-        let _ = std::fs::remove_dir_all(staging);
         result
     }
 
@@ -2148,6 +2173,22 @@ mod tests {
     }
 
     #[test]
+    fn restore_staging_cleanup_reclaims_crash_left_workspace() {
+        let directory = location("restore-staging-cleanup");
+        std::fs::create_dir_all(&directory).unwrap();
+        let workspace = directory.join(format!("restore-{}", crate::identity::generate()));
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::write(workspace.join("partial-member"), b"crash leftover").unwrap();
+
+        {
+            let _cleanup = RestoreStagingCleanup { path: workspace.clone() };
+        }
+
+        assert!(!workspace.exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn policy_history_binds_the_persisted_destination_identity() {
         let path = location("backup-policy-history-identity");
         std::fs::create_dir_all(&path).unwrap();
@@ -2212,6 +2253,7 @@ mod tests {
             database.clone(),
             incarnation,
             1,
+            manifest.boundary_sequence(),
             vec![BackupEnvelopeParticipant {
                 participant_id: "shard-0000000000000001".into(),
                 database_id: database.clone(),
@@ -2227,6 +2269,7 @@ mod tests {
             "another-database".into(),
             incarnation,
             1,
+            manifest.boundary_sequence(),
             vec![BackupEnvelopeParticipant {
                 participant_id: "shard-0000000000000001".into(),
                 database_id: database.clone(),

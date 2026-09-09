@@ -97,6 +97,8 @@ mod manifest;
 mod records;
 mod restore;
 pub use restore::RestoreIdentity;
+#[cfg(test)]
+mod encrypted_retry_tests;
 mod sha256;
 #[cfg(test)]
 mod tests;
@@ -1546,9 +1548,57 @@ fn seal_run(
                 .map_err(|_| BackupError::DestinationUnavailable)
         })
         .transpose()?;
+    // Encryption deliberately consumes a fresh ordinal on every attempt, so
+    // a retry after an uncertain result has different ciphertext. Resolve an
+    // already published capture by its authenticated logical facts before
+    // publishing another recovery-point identity. This preserves nonce
+    // uniqueness while keeping the recovery-point operation idempotent.
+    if let Some(existing) = find_existing_capture(destination, &manifest, encryption)? {
+        verify_members(destination, existing.identity(), existing.members())?;
+        let archive =
+            BackupArchive::new(existing.identity().to_owned(), existing.members().to_vec());
+        return Ok(BackupResult::new(existing, archive, state.skipped.clone(), state.source_reads));
+    }
     seal_point(destination, staging, &manifest, encrypted_manifest.as_deref())?;
     let archive = BackupArchive::new(identity, members);
     Ok(BackupResult::new(manifest, archive, state.skipped.clone(), state.source_reads))
+}
+
+/// Finds a previously published attempt for the same logical capture. Member
+/// ciphertext and the encrypted manifest are intentionally excluded: both
+/// may differ after a retry because the cipher must consume a new nonce
+/// ordinal.
+fn find_existing_capture(
+    destination: &Path,
+    expected: &BackupManifest,
+    encryption: Option<&Arc<Mutex<ArtifactCipher>>>,
+) -> Result<Option<BackupManifest>, BackupError> {
+    let points = match encryption {
+        Some(cipher) => {
+            let cipher = cipher.lock().map_err(|_| BackupError::DestinationUnavailable)?;
+            restore::discover_encrypted_points(destination, &*cipher)?
+        }
+        None => discover_points(destination)?,
+    };
+    Ok(points.into_iter().find(|candidate| same_capture_facts(candidate, expected)))
+}
+
+fn same_capture_facts(left: &BackupManifest, right: &BackupManifest) -> bool {
+    left.database_id() == right.database_id()
+        && left.partition_id() == right.partition_id()
+        && left.tenant_scope_digest() == right.tenant_scope_digest()
+        && left.kind() == right.kind()
+        && left.boundary_sequence() == right.boundary_sequence()
+        && left.boundary_unix_millis() == right.boundary_unix_millis()
+        && left.captured_unix_millis() == right.captured_unix_millis()
+        && left.retain_until_unix_millis() == right.retain_until_unix_millis()
+        && left.logical_checksum() == right.logical_checksum()
+        && left.logical_documents() == right.logical_documents()
+        && left.documents() == right.documents()
+        && left.family_records() == right.family_records()
+        && left.deletes() == right.deletes()
+        && left.disclosures() == right.disclosures()
+        && left.tenants() == right.tenants()
 }
 
 /// Classifies whether a collection name is the reserved family collection.
@@ -2044,7 +2094,15 @@ impl StagingDir {
     fn create(destination: &Path) -> Result<Self, BackupError> {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let index = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = destination.join(format!(".staging-{}-{index}", std::process::id()));
+        // The counter is only a readable diagnostic suffix.  A process can
+        // restart with the same PID and counter, so include a cryptographic
+        // ULID to ensure a crash-left staging directory can never block the
+        // next run by name collision.
+        let path = destination.join(format!(
+            ".staging-{}-{index}-{}",
+            std::process::id(),
+            crate::identity::generate()
+        ));
         std::fs::create_dir(&path).map_err(|_| BackupError::DestinationUnavailable)?;
         Ok(Self { path })
     }

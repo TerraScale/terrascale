@@ -7,6 +7,7 @@
 //! validate every participant before exposing the envelope as recoverable.
 
 use super::{BackupError, BackupManifest};
+use crate::types::StorageSequence;
 use aws_lc_rs::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -38,6 +39,7 @@ pub struct BackupEnvelope {
     database_id: String,
     database_incarnation: u128,
     route_generation: u64,
+    common_cut: StorageSequence,
     participants: Vec<BackupEnvelopeParticipant>,
     digest: String,
 }
@@ -49,6 +51,7 @@ struct EnvelopeWire {
     database_id: String,
     database_incarnation: String,
     route_generation: u64,
+    common_cut: u64,
     participants: Vec<ParticipantWire>,
     digest: String,
 }
@@ -70,6 +73,7 @@ impl BackupEnvelope {
         database_id: String,
         database_incarnation: u128,
         route_generation: u64,
+        common_cut: StorageSequence,
         mut participants: Vec<BackupEnvelopeParticipant>,
     ) -> Result<Self, BackupError> {
         if database_id.is_empty()
@@ -90,7 +94,8 @@ impl BackupEnvelope {
                 || participant.database_incarnation != database_incarnation
                 || participant.route_generation != route_generation
                 || participant.manifest.database_id() != participant.database_id
-                || participant.boundary != participant.manifest.boundary_sequence().get()
+                || participant.boundary != common_cut.get()
+                || participant.manifest.boundary_sequence() != common_cut
             {
                 return Err(BackupError::ManifestInvalid);
             }
@@ -99,6 +104,7 @@ impl BackupEnvelope {
             database_id,
             database_incarnation,
             route_generation,
+            common_cut,
             participants,
             digest: String::new(),
         };
@@ -122,6 +128,12 @@ impl BackupEnvelope {
     #[must_use]
     pub const fn route_generation(&self) -> u64 {
         self.route_generation
+    }
+
+    /// Returns the one storage boundary shared by every participant.
+    #[must_use]
+    pub const fn common_cut(&self) -> StorageSequence {
+        self.common_cut
     }
 
     /// Returns participants in canonical identity order.
@@ -225,6 +237,7 @@ impl BackupEnvelope {
             u128::from_str_radix(&wire.database_incarnation, 16)
                 .map_err(|_| BackupError::ManifestInvalid)?,
             wire.route_generation,
+            StorageSequence::new(wire.common_cut),
             participants,
         )?;
         if envelope.digest != wire.digest {
@@ -288,6 +301,7 @@ impl BackupEnvelope {
             database_id: self.database_id.clone(),
             database_incarnation: format!("{:032x}", self.database_incarnation),
             route_generation: self.route_generation,
+            common_cut: self.common_cut.get(),
             participants,
             digest: self.digest.clone(),
         })
@@ -304,9 +318,70 @@ impl BackupEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::manifest::{BackupTenantCount, ManifestFacts};
+    use crate::types::TenantId;
+
+    fn manifest(boundary: u64) -> BackupManifest {
+        BackupManifest::assemble(ManifestFacts {
+            database_id: "0123456789abcdef0123456789abcdef".into(),
+            partition_id: "partition-000000".into(),
+            kind: super::super::BackupKind::Full,
+            boundary: StorageSequence::new(boundary),
+            boundary_unix_millis: boundary,
+            captured_unix_millis: boundary,
+            retain_until_unix_millis: boundary + 86_400_000,
+            logical_checksum: "a".repeat(64),
+            logical_documents: 0,
+            documents: 0,
+            family_records: 0,
+            deletes: 0,
+            disclosures: 0,
+            tenants: vec![BackupTenantCount::new(
+                TenantId::try_new("tenant-a").expect("valid tenant"),
+                0,
+                0,
+            )],
+            members: Vec::new(),
+        })
+    }
 
     #[test]
     fn rejects_malformed_envelope_before_restore() {
         assert_eq!(BackupEnvelope::decode(b"{}"), Err(BackupError::ManifestInvalid));
+    }
+
+    #[test]
+    fn rejects_participants_from_different_common_cuts() {
+        let first = manifest(7);
+        let second = manifest(8);
+        let participants = vec![
+            BackupEnvelopeParticipant {
+                participant_id: "shard-0000000000000001".into(),
+                database_id: first.database_id().into(),
+                database_incarnation: 1,
+                route_generation: 1,
+                boundary: first.boundary_sequence().get(),
+                manifest: first,
+            },
+            BackupEnvelopeParticipant {
+                participant_id: "shard-0000000000000002".into(),
+                database_id: second.database_id().into(),
+                database_incarnation: 1,
+                route_generation: 1,
+                boundary: second.boundary_sequence().get(),
+                manifest: second,
+            },
+        ];
+
+        assert_eq!(
+            BackupEnvelope::assemble(
+                "logical-database".into(),
+                1,
+                1,
+                StorageSequence::new(7),
+                participants,
+            ),
+            Err(BackupError::ManifestInvalid)
+        );
     }
 }

@@ -100,6 +100,9 @@ impl std::error::Error for NativeBackupRuntimeError {}
 /// Shared production owner for all admitted database backup streams.
 pub struct NativeBackupRuntime {
     fleet: Arc<Mutex<NativeBackupFleet>>,
+    /// Queues async operations before they acquire the synchronous fleet
+    /// guard, preventing executor threads from blocking during awaits.
+    async_fleet: tokio::sync::Mutex<()>,
     databases: Mutex<BTreeMap<String, PlacementLock>>,
     incidents: Mutex<Vec<(String, FleetError)>>,
 }
@@ -120,6 +123,14 @@ impl NativeBackupRuntime {
         if cut.participants.len() != manifests.len() || cut.participants.is_empty() {
             return Err(NativeBackupRuntimeError::Envelope);
         }
+        let common_cut = cut.participants[0].snapshot.sequence();
+        if cut
+            .participants
+            .iter()
+            .any(|participant| participant.snapshot.sequence() != common_cut)
+        {
+            return Err(NativeBackupRuntimeError::Envelope);
+        }
         let participants = cut
             .participants
             .iter()
@@ -137,6 +148,7 @@ impl NativeBackupRuntime {
             cut.database_id.clone(),
             cut.database_incarnation,
             route_generation,
+            common_cut,
             participants,
         )
         .map_err(|_| NativeBackupRuntimeError::Envelope)
@@ -152,6 +164,7 @@ impl NativeBackupRuntime {
         if cut.participants.is_empty() || cut.route_generation.is_none() {
             return Err(NativeBackupRuntimeError::Envelope);
         }
+        let _async_fleet = self.async_fleet.lock().await;
         let requested = cut
             .participants
             .iter()
@@ -200,6 +213,7 @@ impl NativeBackupRuntime {
         }
         Ok(Self {
             fleet: Arc::new(Mutex::new(fleet)),
+            async_fleet: tokio::sync::Mutex::new(()),
             databases: Mutex::new(databases),
             incidents: Mutex::new(Vec::new()),
         })
@@ -213,6 +227,7 @@ impl NativeBackupRuntime {
 
     /// Executes one bounded asynchronous fleet tick.
     pub async fn tick(&self) -> Result<Vec<(String, FleetError)>, NativeBackupRuntimeError> {
+        let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         let errors = fleet.sync_once().await;
         if !errors.is_empty() {
@@ -275,6 +290,7 @@ impl NativeBackupRuntime {
         operation_id: &str,
     ) -> Result<terrabase::backup::BackupManifest, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
+        let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet.capture_snapshot(database).await.map_err(NativeBackupRuntimeError::Fleet)
     }
@@ -306,6 +322,7 @@ impl NativeBackupRuntime {
     ) -> Result<terrabase::backup::RecoveryReceipt, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
         self.validate_restore_placement(database, placement)?;
+        let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet
             .restore_from_provider(database, provider, point, target, identity)
@@ -327,6 +344,7 @@ impl NativeBackupRuntime {
         validate_operation_id(operation_id)?;
         let millis = Self::unix_seconds_to_millis(at_seconds)?;
         self.validate_restore_placement(database, placement)?;
+        let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet
             .restore_at_from_provider(database, provider, millis, target, identity)
@@ -347,6 +365,7 @@ impl NativeBackupRuntime {
     ) -> Result<terrabase::backup::RecoveryReceipt, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
         self.validate_restore_placement(database, placement)?;
+        let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet
             .restore_at_from_provider(database, provider, at_millis, target, identity)

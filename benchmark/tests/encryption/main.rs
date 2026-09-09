@@ -194,6 +194,53 @@ fn wrong_key_aad_tag_and_truncation_are_rejected() {
 }
 
 #[test]
+fn backup_envelopes_bind_nonce_and_metadata_to_the_key() {
+    let scope = typed_scope(KeyPurpose::Backup);
+    let version = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB4").unwrap();
+    let artifact = from_text("01ARZ3NDEKTSV4RRFFQ69G5FB5").unwrap();
+    let context = EncryptionContext::for_artifact(
+        &scope,
+        ArtifactKind::Backup,
+        artifact,
+        version,
+        3,
+        Compression::None,
+    )
+    .unwrap();
+    let mut writer = ArtifactCipher::new(
+        ProviderMode::LocalFile,
+        DatabaseKey::from_bytes([0x37; 32]),
+        context,
+    )
+    .unwrap();
+    let envelope = writer.seal(b"backup payload").unwrap();
+    let next = writer.seal(b"backup payload").unwrap();
+    assert_ne!(envelope, next, "each backup record must use a fresh ordinal nonce");
+    assert_eq!(writer.open(&envelope).unwrap(), b"backup payload");
+
+    let wrong_key = ArtifactCipher::new(
+        ProviderMode::LocalFile,
+        DatabaseKey::from_bytes([0x38; 32]),
+        context,
+    )
+    .unwrap();
+    assert_eq!(wrong_key.open(&envelope), Err(EncryptionError::AuthenticationFailed));
+
+    let mut altered_ordinal = envelope.clone();
+    altered_ordinal[16] ^= 1;
+    assert_eq!(writer.open(&altered_ordinal), Err(EncryptionError::AuthenticationFailed));
+
+    // The first AAD identity byte is authenticated as well as the ciphertext.
+    let mut altered_aad = envelope.clone();
+    altered_aad[29 + 7] ^= 1;
+    assert_eq!(writer.open(&altered_aad), Err(EncryptionError::AuthenticationFailed));
+
+    let mut altered_ciphertext = envelope;
+    *altered_ciphertext.last_mut().unwrap() ^= 1;
+    assert_eq!(writer.open(&altered_ciphertext), Err(EncryptionError::AuthenticationFailed));
+}
+
+#[test]
 fn replay_and_ordinal_exhaustion_are_refused() {
     let mut writer = ArtifactCipher::with_next_ordinal(
         ProviderMode::LocalFile,

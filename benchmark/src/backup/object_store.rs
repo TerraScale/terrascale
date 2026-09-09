@@ -203,7 +203,23 @@ impl ObjectDestination {
             return Err(TransferError::InvalidPoint);
         }
         let key = object_key(prefix, ENVELOPE_FILE)?;
-        self.store.put(&key, bytes.clone().into()).await.map_err(|_| TransferError::Unavailable)?;
+        match self.store.put_opts(&key, bytes.clone().into(), PutMode::Create.into()).await {
+            Ok(_) => {}
+            Err(object_store::Error::AlreadyExists { .. }) => {
+                // A retry may observe the immutable object already published;
+                // accept it only when its bytes are exactly the same.
+                self.verify_remote(
+                    &key,
+                    &Entry {
+                        name: ENVELOPE_FILE.into(),
+                        length: bytes.len() as u64,
+                        digest: blake3::hash(&bytes),
+                    },
+                )
+                .await?;
+            }
+            Err(_) => return Err(TransferError::Unavailable),
+        }
         let response = self.store.get(&key).await.map_err(|_| TransferError::Unavailable)?;
         let mut readback = Vec::new();
         let mut stream = response.into_stream();
@@ -525,7 +541,7 @@ impl ObjectDestination {
     /// # Errors
     /// Rejects unsealed points, symlinks, oversized artifacts, and partial uploads.
     pub async fn upload_point(&self, point: &Path, prefix: &str) -> Result<(), TransferError> {
-        validate_prefix(prefix)?;
+        validate_point_prefix(point, prefix)?;
         let entries = self.scan_point(point)?;
         let index = render_index(&entries);
         for entry in entries
@@ -539,11 +555,24 @@ impl ObjectDestination {
         {
             let key = object_key(prefix, &entry.name)?;
             if entry.length == 0 {
-                self.store
-                    .put(&key, Vec::<u8>::new().into())
+                match self
+                    .store
+                    .put_opts(&key, Vec::<u8>::new().into(), PutMode::Create.into())
                     .await
-                    .map_err(|_| TransferError::Unavailable)?;
+                {
+                    Ok(_) => {}
+                    Err(object_store::Error::AlreadyExists { .. }) => {
+                        self.verify_remote(&key, entry).await?;
+                    }
+                    Err(_) => return Err(TransferError::Unavailable),
+                }
                 self.verify_remote(&key, entry).await?;
+                continue;
+            }
+            // Multipart uploads have no conditional-create option in the
+            // object_store API. Check first and never replace an existing
+            // artifact; a same-content retry is already complete.
+            if self.remote_matches(&key, entry).await? {
                 continue;
             }
             let mut file =
@@ -582,10 +611,14 @@ impl ObjectDestination {
             length: index.len() as u64,
             digest: blake3::hash(index.as_bytes()),
         };
-        self.store
-            .put(&key, index.into_bytes().into())
-            .await
-            .map_err(|_| TransferError::Unavailable)?;
+        let index_bytes = index.into_bytes();
+        match self.store.put_opts(&key, index_bytes.clone().into(), PutMode::Create.into()).await {
+            Ok(_) => {}
+            Err(object_store::Error::AlreadyExists { .. }) => {
+                self.verify_remote(&key, &entry).await?;
+            }
+            Err(_) => return Err(TransferError::Unavailable),
+        }
         self.verify_remote(&key, &entry).await
     }
 
@@ -596,7 +629,7 @@ impl ObjectDestination {
     /// # Errors
     /// Refuses missing, corrupted, oversized, or malformed point artifacts.
     pub async fn verify_point(&self, point: &Path, prefix: &str) -> Result<(), TransferError> {
-        validate_prefix(prefix)?;
+        validate_point_prefix(point, prefix)?;
         let entries = self.scan_point(point)?;
         for entry in &entries {
             self.verify_remote(&object_key(prefix, &entry.name)?, entry).await?;
@@ -624,7 +657,7 @@ impl ObjectDestination {
         manifest_path: &Path,
         manifest: &super::BackupManifest,
     ) -> Result<(), TransferError> {
-        validate_prefix(prefix)?;
+        validate_manifest_prefix(prefix, manifest)?;
         let index = self.read_bounded(&object_key(prefix, INDEX)?, INDEX_LIMIT).await?;
         let entries = parse_index(&index, self.max_artifact_bytes, self.max_point_bytes)?;
         if entries.len() != manifest.members().len() + 1 {
@@ -928,6 +961,35 @@ impl ObjectDestination {
         }
         Ok(())
     }
+
+    async fn remote_matches(
+        &self,
+        key: &ObjectPath,
+        expected: &Entry,
+    ) -> Result<bool, TransferError> {
+        match self.store.get(key).await {
+            Ok(response) => {
+                let mut stream = response.into_stream();
+                let mut digest = blake3::Hasher::new();
+                let mut length = 0_u64;
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|_| TransferError::Unavailable)?;
+                    length =
+                        length.checked_add(chunk.len() as u64).ok_or(TransferError::Integrity)?;
+                    if length > expected.length {
+                        return Err(TransferError::Integrity);
+                    }
+                    digest.update(&chunk);
+                }
+                if length != expected.length || digest.finalize() != expected.digest {
+                    return Err(TransferError::Integrity);
+                }
+                Ok(true)
+            }
+            Err(object_store::Error::NotFound { .. }) => Ok(false),
+            Err(_) => Err(TransferError::Unavailable),
+        }
+    }
 }
 
 fn open_regular(path: &Path) -> std::io::Result<File> {
@@ -1000,6 +1062,32 @@ fn validate_name(name: &str) -> Result<(), TransferError> {
 }
 fn validate_prefix(prefix: &str) -> Result<(), TransferError> {
     if prefix.len() > 1024 || prefix.split('/').any(|part| validate_name(part).is_err()) {
+        return Err(TransferError::InvalidPoint);
+    }
+    Ok(())
+}
+fn validate_point_prefix(point: &Path, prefix: &str) -> Result<(), TransferError> {
+    validate_prefix(prefix)?;
+    let Some(name) = point.file_name().and_then(|name| name.to_str()) else {
+        return Ok(());
+    };
+    let Some(identity) = name.strip_prefix("rp-") else {
+        return Ok(());
+    };
+    super::manifest::validate_identity(identity).map_err(|_| TransferError::InvalidPoint)?;
+    if prefix.rsplit('/').next() != Some(name) {
+        return Err(TransferError::InvalidPoint);
+    }
+    Ok(())
+}
+fn validate_manifest_prefix(
+    prefix: &str,
+    manifest: &super::BackupManifest,
+) -> Result<(), TransferError> {
+    validate_prefix(prefix)?;
+    if prefix.rsplit('/').next()
+        != Some(super::manifest::point_directory(manifest.identity()).as_str())
+    {
         return Err(TransferError::InvalidPoint);
     }
     Ok(())
@@ -1213,6 +1301,40 @@ mod tests {
         assert!(destination.put_member("exports/job/member", b"one".to_vec()).await.is_err());
         assert!(destination.put_member("exports/job/member", b"two".to_vec()).await.is_err());
         assert_eq!(destination.get_member("exports/job/member").await.unwrap(), b"one");
+    }
+
+    #[tokio::test]
+    async fn point_upload_binds_rp_directory_and_keeps_remote_bytes_immutable() {
+        let store = Arc::new(InMemory::new());
+        let destination = destination(store.clone());
+        let root = std::env::temp_dir().join(format!("tb-object-bind-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let identity = "a".repeat(64);
+        let point = root.join(format!("rp-{identity}"));
+        fs::create_dir_all(&point).unwrap();
+        fs::write(point.join(super::manifest::ENCRYPTED_MANIFEST_FILE), b"manifest").unwrap();
+        fs::write(point.join("member.tbv3e"), b"original").unwrap();
+
+        assert_eq!(
+            destination
+                .upload_point(
+                    &point,
+                    "db/rp-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                )
+                .await,
+            Err(TransferError::InvalidPoint)
+        );
+        destination.upload_point(&point, &format!("db/rp-{identity}")).await.unwrap();
+        fs::write(point.join("member.tbv3e"), b"replacement").unwrap();
+        assert_eq!(
+            destination.upload_point(&point, &format!("db/rp-{identity}")).await,
+            Err(TransferError::Integrity)
+        );
+        assert_eq!(
+            destination.get_member(&format!("db/rp-{identity}/member.tbv3e")).await.unwrap(),
+            b"original"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

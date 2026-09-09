@@ -231,9 +231,28 @@ fn owned_ephemeral(name: &str) -> bool {
     {
         return identity.parse::<::ulid::Ulid>().is_ok();
     }
-    name.strip_prefix(".staging-")
-        .and_then(|parts| parts.split_once('-'))
-        .is_some_and(|(pid, index)| pid.parse::<u32>().is_ok() && index.parse::<u64>().is_ok())
+    name.strip_prefix(".staging-").and_then(|parts| parts.split_once('-')).is_some_and(
+        |(pid, suffix)| {
+            if pid.parse::<u32>().is_err() {
+                return false;
+            }
+            let mut fields = suffix.split('-');
+            let Some(index) = fields.next() else {
+                return false;
+            };
+            if index.parse::<u64>().is_err() {
+                return false;
+            }
+            match (fields.next(), fields.next()) {
+                // Older workers used PID plus the process-local counter.
+                (None, None) => true,
+                // Current workers add a random suffix so restart cannot
+                // collide with a crash-left directory.
+                (Some(ulid), None) => ulid.parse::<::ulid::Ulid>().is_ok(),
+                _ => false,
+            }
+        },
+    )
 }
 
 #[cfg(test)]
@@ -276,6 +295,24 @@ mod tests {
         }
         std::fs::remove_dir_all(directory).unwrap();
         std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn interrupted_cleanup_reclaims_restart_left_staging_names() {
+        let directory = crate::backup::tests::location("backup-cleanup-restart-staging");
+        std::fs::create_dir_all(&directory).unwrap();
+        let stale = directory.join(format!(
+            ".staging-{}-{}",
+            std::process::id(),
+            crate::identity::generate()
+        ));
+        std::fs::create_dir(&stale).unwrap();
+        std::fs::write(stale.join("partial-member"), b"crash leftover").unwrap();
+
+        super::cleanup_interrupted(&directory).unwrap();
+
+        assert!(!stale.exists());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

@@ -221,6 +221,23 @@ fn plaintext_integration_fixtures_are_available_only_to_in_crate_tests() {
 }
 
 #[test]
+fn retention_builder_accepts_only_supported_policy_terms() {
+    for days in [1, 7, 30, 35] {
+        assert!(
+            BackupPlan::local_test_full_plaintext().with_retention_days(days).is_ok(),
+            "supported retention term {days} was rejected"
+        );
+    }
+    for days in [0, 2, 6, 8, 29, 31, 34, 36, u8::MAX] {
+        assert_eq!(
+            BackupPlan::local_test_full_plaintext().with_retention_days(days),
+            Err(BackupError::ManifestInvalid),
+            "unsupported retention term {days} was accepted"
+        );
+    }
+}
+
+#[test]
 fn capture_artifact_identity_is_stable_per_boundary_and_unique_across_boundaries() {
     let database = crate::identity::DatabaseUlid::generate();
     let first =
