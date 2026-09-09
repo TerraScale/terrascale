@@ -1127,7 +1127,7 @@ impl NativeBackupFleet {
                 historical_destinations,
                 policy_revision,
                 retention_days,
-                staging,
+                staging: staging.clone(),
                 placement,
                 paused: stream.paused,
             },
@@ -3233,7 +3233,7 @@ mod tests {
                 historical_destinations: Vec::new(),
                 policy_revision: "provider-fallback".into(),
                 retention_days: 1,
-                staging,
+                staging: staging.clone(),
                 placement: PlacementLock::br_only(),
             })
             .unwrap();
@@ -3575,7 +3575,9 @@ mod tests {
             }
         });
         writer.join().unwrap();
-        let second = fleet.capture_snapshot(&identity).await.unwrap();
+        let second = fleet.capture_snapshot(&identity).await.unwrap_or_else(|error| {
+            panic!("second capture failed: {error:?}; staging={:?}", std::fs::read_dir(&staging).ok().map(|entries| entries.filter_map(|e| e.ok().map(|e| e.path())).collect::<Vec<_>>()))
+        });
         assert!(second.boundary_sequence() > first.boundary_sequence());
         assert!(!fleet.retained_points(&identity).unwrap().is_empty());
     }

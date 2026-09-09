@@ -1652,9 +1652,9 @@ mod tests {
     /// flush per batch.
     #[test]
     fn probe_parallel_batched_synced_shards() {
-        const SHARDS: usize = 16;
-        const BATCHES_PER_SHARD: u64 = 8;
-        const WRITES_PER_BATCH: u64 = 64;
+        const SHARDS: usize = 64;
+        const BATCHES_PER_SHARD: u64 = 4;
+        const WRITES_PER_BATCH: u64 = 128;
         let lanes: Vec<_> = (0..SHARDS)
             .map(|index| TerraBaseLane::open(&format!("parallel-batch-shard-{index}")))
             .collect();
