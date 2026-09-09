@@ -2,8 +2,8 @@
 
 Go SDK for the TerraScale public API. The package provides document CRUD,
 typed schema and SQL builders, parameterized SQL execution, reactive
-subscribe/execute with checkpoints and typed resets, region affinity, tenant
-operations, database management, durable imports and exports, and auth
+subscribe/execute with checkpoints and typed resets, region affinity,
+tenant-scoped authorization, database management, durable imports and exports, and auth
 persistence.
 
 ## Contract source

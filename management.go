@@ -14,28 +14,6 @@ import (
 	"unicode/utf8"
 )
 
-// Organization is an owning org.
-type Organization struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// Project is a data project under an organization.
-type Project struct {
-	ID             string       `json:"id"`
-	OrganizationID string       `json:"organizationId,omitempty"`
-	Name           string       `json:"name"`
-	Regions        []RegionCode `json:"regions,omitempty"`
-	BackupRegion   RegionCode   `json:"backupRegion,omitempty"`
-}
-
-// ManagedDatabase is a database under a project.
-type ManagedDatabase struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId,omitempty"`
-	Name      string `json:"name"`
-}
-
 // Region describes an admitted public region in the edge catalog.
 type Region struct {
 	Code      RegionCode `json:"code"`
@@ -124,33 +102,6 @@ func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
 type HealthResponse struct {
 	Region  RegionCode `json:"region"`
 	Healthy bool       `json:"healthy"`
-}
-
-// SavedQuery is a named saved query.
-type SavedQuery struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Query    string `json:"query"`
-	Revision string `json:"revision,omitempty"`
-}
-
-// BackupJob is a backup or restore job record.
-type BackupJob struct {
-	ID         string `json:"id"`
-	DatabaseID string `json:"databaseId,omitempty"`
-	Status     string `json:"status,omitempty"`
-}
-
-// TeamMember is a project team membership.
-type TeamMember struct {
-	UserID string `json:"userId"`
-	Role   string `json:"role"`
-}
-
-// UsageSummary is per-project usage.
-type UsageSummary struct {
-	Writes       uint64 `json:"writes"`
-	StorageBytes uint64 `json:"storageBytes"`
 }
 
 // ValidationError identifies an invalid management argument.  Management
@@ -349,106 +300,6 @@ type MeterTotal struct {
 // ReadAttribution is unbilled aggregate read attribution.
 type ReadAttribution struct {
 	TotalReads uint64 `json:"total_reads"`
-}
-
-type UsageMetric struct {
-	Name     string  `json:"name"`
-	Quantity float64 `json:"quantity"`
-	Unit     string  `json:"unit"`
-}
-
-type UsageWorkloadPoint struct {
-	Start string `json:"start"`
-	End   string `json:"end"`
-	Label string `json:"label"`
-	Value int64  `json:"value"`
-}
-
-type UsageWorkload struct {
-	ProjectID   string               `json:"projectId"`
-	Range       string               `json:"range"`
-	PeriodStart string               `json:"periodStart"`
-	PeriodEnd   string               `json:"periodEnd"`
-	BucketSize  string               `json:"bucketSize"`
-	Points      []UsageWorkloadPoint `json:"points"`
-}
-
-type UsageHistoryPoint struct {
-	ObservedAt     string `json:"observedAt"`
-	StorageBytes   int64  `json:"storageBytes"`
-	OperationUnits int64  `json:"operationUnits"`
-	EgressBytes    int64  `json:"egressBytes"`
-}
-
-type UsageHistory struct {
-	ProjectID          string              `json:"projectId"`
-	Range              string              `json:"range"`
-	RequestedStart     string              `json:"requestedStart"`
-	AccessibleStart    string              `json:"accessibleStart"`
-	End                string              `json:"end"`
-	LimitedByRetention bool                `json:"limitedByRetention"`
-	Points             []UsageHistoryPoint `json:"points"`
-}
-
-// APIKey is project API-key metadata. Secret material is never present in a
-// listing and is returned only by CreateAPIKey and RotateAPIKey.
-type APIKey struct {
-	KeyID           string   `json:"keyId"`
-	ProjectID       string   `json:"projectId"`
-	Name            string   `json:"name"`
-	Prefix          string   `json:"prefix"`
-	LastFour        string   `json:"lastFour"`
-	Scopes          []string `json:"scopes"`
-	DatabaseID      *string  `json:"databaseId,omitempty"`
-	CreatedByUserID *string  `json:"createdByUserId,omitempty"`
-	CreatedByEmail  string   `json:"createdByEmail"`
-	CreatedAt       string   `json:"createdAt"`
-	ExpiresAt       *string  `json:"expiresAt,omitempty"`
-	LastUsedAt      *string  `json:"lastUsedAt,omitempty"`
-	RevokedAt       *string  `json:"revokedAt,omitempty"`
-	IsActive        bool     `json:"isActive"`
-}
-
-// CreateAPIKeyRequest is the project API-key creation contract.
-type CreateAPIKeyRequest struct {
-	Name       string   `json:"name"`
-	Scopes     []string `json:"scopes"`
-	DatabaseID *string  `json:"databaseId,omitempty"`
-	ExpiresAt  *string  `json:"expiresAt,omitempty"`
-}
-
-type APIKeyPage struct {
-	APIKeys    []APIKey `json:"apiKeys"`
-	NextCursor string   `json:"nextCursor,omitempty"`
-}
-
-type CreatedAPIKey struct {
-	APIKey APIKey `json:"apiKey"`
-	Secret string `json:"secret"`
-}
-
-type RotatedAPIKey struct {
-	APIKey  APIKey `json:"apiKey"`
-	Secret  string `json:"secret"`
-	Rotated bool   `json:"rotated"`
-}
-
-type RevokedAPIKey struct {
-	KeyID   string `json:"keyId"`
-	Revoked bool   `json:"revoked"`
-}
-
-// AuditEvent is one audit record.
-type AuditEvent struct {
-	ID     string `json:"id"`
-	Action string `json:"action,omitempty"`
-}
-
-// Notification is one user notification.
-type Notification struct {
-	ID    string `json:"id"`
-	Read  bool   `json:"read,omitempty"`
-	Title string `json:"title,omitempty"`
 }
 
 func requireID(name, value string) error {
