@@ -4,10 +4,11 @@ TerraBase is TerraScale's Rust multi-Region database engine and public API.
 Each member serves the REST and reactive APIs directly with axum and stores
 one customer database per SQLite file. SQL is the only query language; writes
 remain document operations, with canonical JSON bytes, extracted indexes,
-causal replication and live result views. The accepted backup design is an
-internal native Rust rebuild informed by Litestream’s source, with measured
-performance and efficiency improvements; replacement of the existing external
-process adapter is required work. Backup policy selects OCI Object Storage, Tigris, or both by plan, with
+causal replication and live result views. Production backup composition uses
+the internal native Rust subsystem informed by Litestream’s source. Its
+recovery, provider, and performance qualification remains incomplete; the
+external process adapter is retained only for development fixtures. Backup
+policy selects OCI Object Storage, Tigris, or both by plan, with
 operator-managed overrides for specific users. See [ADR 0046](docs/adr/0046-native-rust-backup-subsystem.md).
 
 The workspace [GOAL.md](../GOAL.md#terrabase) defines the production target; [AGENTS.md](AGENTS.md)
@@ -30,6 +31,15 @@ TBEP is private control traffic. The member owns document storage, indexing,
 query execution, causality, CRDT merge, replication, repair, backup, restore,
 operations, reactive state, and usage facts. Cloud development uses the
 hosted branch workflow; the engine binary is not distributed for self-hosting.
+
+## Honest implementation status
+
+The Rust engine, SQLite storage, query, indexing, replication, sync, backup,
+and recovery modules are under active qualification. Source and tests describe
+implemented behavior; local tests, fixtures, and benchmark tables do not by
+themselves qualify an OCI or multi-Region production deployment. The current
+launch blockers and required evidence are tracked in the workspace
+[GOAL.md](../GOAL.md).
 
 ## Development
 

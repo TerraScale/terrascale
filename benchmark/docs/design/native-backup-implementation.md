@@ -8,14 +8,18 @@ No upstream code was copied; upstream remains Apache-2.0 licensed.
 
 ## Cleanup and replacement boundary
 
-`crates/terrabase-server/src/backup.rs` is reachable from public backup,
-branch/restore and member startup paths. Its process supervision and packaged
-Litestream executable therefore cannot be deleted independently. The replacement
-must serve those callers and pass native recovery and comparative performance
-gates first. Existing `src/backup` is active native logical backup/recovery code,
-not obsolete storage: it exports engine publication state and ordered journal
-changes into encrypted, manifest-bound recovery points. Its tests and evidence
-are retained. The unused `RestoreResult` compatibility alias had no callers across the workspace and was removed with its sole documentation reference. No active backup path was deleted.
+The production member composes `NativeBackupRuntime` from
+`crates/terrabase-server/src/native_backup_runtime.rs` and
+`production_backup.rs`. The process adapter in
+`crates/terrabase-server/src/backup.rs` remains only for development fixtures
+and tests; it is not the production backup owner. Native recovery, provider,
+and comparative performance gates still need to pass before the replacement is
+fully qualified. Existing `src/backup` is active native logical backup/recovery
+code, not obsolete storage: it exports engine publication state and ordered
+journal changes into encrypted, manifest-bound recovery points. Its tests and
+evidence are retained. The unused `RestoreResult` compatibility alias had no
+callers across the workspace and was removed with its sole documentation
+reference. No active production backup path was deleted.
 
 ## Reviewed source and recovery lessons
 
