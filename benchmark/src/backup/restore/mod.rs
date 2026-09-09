@@ -417,14 +417,8 @@ pub(super) fn discover_encrypted_points(
             return Err(BackupError::ChainIncomplete);
         }
         let manifest_path = point.join(ENCRYPTED_MANIFEST_FILE);
-        let metadata =
-            std::fs::symlink_metadata(&manifest_path).map_err(|_| BackupError::ChainIncomplete)?;
-        if !metadata.file_type().is_file() {
-            return Err(BackupError::ChainIncomplete);
-        }
         let mut envelope = Vec::new();
-        File::open(&manifest_path)
-            .map_err(|_| BackupError::ChainIncomplete)?
+        open_stable_regular(&manifest_path)?
             .take((crate::encryption::MAX_PLAINTEXT_BYTES + 4096) as u64)
             .read_to_end(&mut envelope)
             .map_err(|_| BackupError::ChainIncomplete)?;
@@ -505,30 +499,40 @@ fn chain_of_head(
 /// decoding and digesting, so replay never verifies one pathname and then
 /// reopens it later.
 fn open_member(path: &Path, expected_len: u64) -> Result<File, BackupError> {
+    let file = open_stable_regular(path)?;
+    let file_metadata = file.metadata().map_err(|_| BackupError::ChainIncomplete)?;
+    if file_metadata.len() != expected_len {
+        return Err(BackupError::ChecksumMismatch);
+    }
+    Ok(file)
+}
+
+/// Opens a regular archive member without following a symlink and confirms
+/// that the pathname still refers to the opened inode. The descriptor remains
+/// the source of bytes after this check, so a later pathname replacement cannot
+/// redirect the restore.
+fn open_stable_regular(path: &Path) -> Result<File, BackupError> {
     let path_metadata =
         std::fs::symlink_metadata(path).map_err(|_| BackupError::ChainIncomplete)?;
     if !path_metadata.file_type().is_file() {
         return Err(BackupError::ChainIncomplete);
     }
-    let file = File::open(path).map_err(|_| BackupError::ChainIncomplete)?;
+    let descriptor = rustix::fs::open(
+        path,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(|_| BackupError::ChainIncomplete)?;
+    let file = File::from(descriptor);
     let file_metadata = file.metadata().map_err(|_| BackupError::ChainIncomplete)?;
-    if !file_metadata.file_type().is_file() {
-        return Err(BackupError::ChainIncomplete);
-    }
-    // Confirm that the pathname still names the inode we opened. On Unix
-    // this closes the stat/open race even when a member is replaced between
-    // the initial symlink check and `File::open`; the replay continues to use
-    // the already-open handle in every case.
     let current_path_metadata =
         std::fs::symlink_metadata(path).map_err(|_| BackupError::ChainIncomplete)?;
-    if !current_path_metadata.file_type().is_file()
+    if !file_metadata.file_type().is_file()
+        || !current_path_metadata.file_type().is_file()
         || !same_file_identity(&path_metadata, &file_metadata)
         || !same_file_identity(&current_path_metadata, &file_metadata)
     {
         return Err(BackupError::ChainIncomplete);
-    }
-    if file_metadata.len() != expected_len {
-        return Err(BackupError::ChecksumMismatch);
     }
     Ok(file)
 }
@@ -543,6 +547,22 @@ fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bo
 #[cfg(not(unix))]
 fn same_file_identity(_left: &std::fs::Metadata, _right: &std::fs::Metadata) -> bool {
     true
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn manifest_open_rejects_symlink_without_following_it() {
+    let root = std::env::temp_dir()
+        .join(format!("terrabase-restore-manifest-symlink-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    let source = root.join("source");
+    let manifest = root.join(ENCRYPTED_MANIFEST_FILE);
+    std::fs::write(&source, b"manifest").unwrap();
+    std::os::unix::fs::symlink(&source, &manifest).unwrap();
+
+    assert!(matches!(open_stable_regular(&manifest), Err(BackupError::ChainIncomplete)));
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 // ---------------------------------------------------------------------------

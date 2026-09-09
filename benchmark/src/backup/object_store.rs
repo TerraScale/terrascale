@@ -125,6 +125,65 @@ struct Entry {
     digest: blake3::Hash,
 }
 
+/// Owns an in-flight multipart upload and aborts it if the transfer future is
+/// cancelled. S3 cannot clean up parts when the upload handle is simply
+/// dropped, so cancellation must schedule the provider-side abort explicitly.
+struct MultipartCleanup {
+    upload: Option<Box<dyn MultipartUpload>>,
+}
+
+impl MultipartCleanup {
+    fn new(upload: Box<dyn MultipartUpload>) -> Self {
+        Self { upload: Some(upload) }
+    }
+
+    async fn put_part(&mut self, data: object_store::PutPayload) -> Result<(), TransferError> {
+        self.upload
+            .as_mut()
+            .expect("multipart upload guard is armed")
+            .put_part(data)
+            .await
+            .map(|_| ())
+            .map_err(|_| TransferError::Unavailable)
+    }
+
+    async fn complete(&mut self) -> Result<(), TransferError> {
+        self.upload
+            .as_mut()
+            .expect("multipart upload guard is armed")
+            .complete()
+            .await
+            .map(|_| ())
+            .map_err(|_| TransferError::Unavailable)
+    }
+
+    async fn abort(&mut self) {
+        if let Some(mut upload) = self.upload.take() {
+            let _ = upload.abort().await;
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.upload = None;
+    }
+}
+
+impl Drop for MultipartCleanup {
+    fn drop(&mut self) {
+        let Some(mut upload) = self.upload.take() else {
+            return;
+        };
+        // Drop can run while the transfer future is being cancelled. The
+        // current runtime remains responsible for the best-effort cleanup;
+        // lifecycle rules remain the final fallback for process termination.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = upload.abort().await;
+            });
+        }
+    }
+}
+
 impl ObjectDestination {
     /// Publishes one authenticated multi-participant envelope. The envelope
     /// is written before its commit index and read back before success.
@@ -489,8 +548,9 @@ impl ObjectDestination {
             }
             let mut file =
                 open_regular(&point.join(&entry.name)).map_err(|_| TransferError::LocalIo)?;
-            let mut upload =
+            let upload =
                 self.store.put_multipart(&key).await.map_err(|_| TransferError::Unavailable)?;
+            let mut upload = MultipartCleanup::new(upload);
             let mut remaining = entry.length;
             let mut hasher = blake3::Hasher::new();
             let streamed = async {
@@ -499,17 +559,19 @@ impl ObjectDestination {
                     let mut chunk = vec![0; size];
                     file.read_exact(&mut chunk).map_err(|_| TransferError::LocalIo)?;
                     hasher.update(&chunk);
-                    upload.put_part(chunk.into()).await.map_err(|_| TransferError::Unavailable)?;
+                    upload.put_part(chunk.into()).await?;
                     remaining -= size as u64;
                 }
                 if hasher.finalize() != entry.digest {
                     return Err(TransferError::Integrity);
                 }
-                upload.complete().await.map_err(|_| TransferError::Unavailable)
+                upload.complete().await
             }
             .await;
             if streamed.is_err() {
-                let _ = upload.abort().await;
+                upload.abort().await;
+            } else {
+                upload.disarm();
             }
             streamed?;
             self.verify_remote(&key, entry).await?;
