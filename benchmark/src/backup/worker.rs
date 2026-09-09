@@ -2281,6 +2281,7 @@ mod tests {
 
     #[derive(Debug)]
     struct BlockingDownloadStore {
+        armed: std::sync::atomic::AtomicBool,
         inner: Arc<object_store::memory::InMemory>,
         started: Arc<tokio::sync::Notify>,
     }
@@ -2315,7 +2316,9 @@ mod tests {
             location: &object_store::path::Path,
             opts: object_store::GetOptions,
         ) -> object_store::Result<object_store::GetResult> {
-            if location.as_ref().ends_with("member-000001") {
+            if self.armed.load(std::sync::atomic::Ordering::SeqCst)
+                && location.as_ref().ends_with("member-000001")
+            {
                 self.started.notify_one();
                 std::future::pending().await
             }
@@ -2367,12 +2370,13 @@ mod tests {
         let staging = location("restore-cancelled-download-staging");
         let started = Arc::new(tokio::sync::Notify::new());
         let store = Arc::new(BlockingDownloadStore {
+            armed: std::sync::atomic::AtomicBool::new(false),
             inner: Arc::new(object_store::memory::InMemory::new()),
             started: started.clone(),
         });
         let destination = Arc::new(ObjectDestination::for_test(
             Provider::Oci,
-            store,
+            store.clone(),
             4 * 1024 * 1024,
             8 * 1024 * 1024,
         ));
@@ -2406,6 +2410,8 @@ mod tests {
         ));
         let point = fleet.capture_snapshot(&database).await.unwrap();
         let at = point.recoverable_through_unix_millis();
+        // Capture uploads and verifies members too; block only restore's download.
+        store.armed.store(true, std::sync::atomic::Ordering::SeqCst);
         for path in point_paths(&staging, 4).unwrap() {
             std::fs::remove_dir_all(path).unwrap();
         }
@@ -2420,10 +2426,18 @@ mod tests {
             expected_journal_boundary: point.boundary_sequence().get(),
             restore_epoch: 1,
         };
-        let task = tokio::spawn(async move {
+        let mut task = tokio::spawn(async move {
             fleet.restore_at_from_provider(&database, Provider::Oci, at, &target, &identity).await
         });
-        started.notified().await;
+        tokio::select! {
+            () = started.notified() => {}
+            result = &mut task => panic!("restore finished before blocked download: {result:?}"),
+            () = tokio::time::sleep(Duration::from_secs(10)) => {
+                task.abort();
+                let result = task.await;
+                panic!("restore did not reach blocked download within 10 seconds: {result:?}");
+            }
+        }
         assert!(
             std::fs::read_dir(&staging).unwrap().any(|entry| entry
                 .unwrap()

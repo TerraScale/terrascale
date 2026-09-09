@@ -10,11 +10,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use terrabase::backup::worker::FleetLimits;
-use terrabase::backup::workload_identity_delivery::{
-    UnixWorkloadIdentityProvider, WorkloadIdentityScope,
-};
 use terrabase::encryption::{
-    CustomerKmsDatabaseKeys, CustomerKmsKeyDelivery, DatabaseKeySource, DatabaseKeyVersion,
+    DatabaseKeySource, DatabaseKeyVersion,
     KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys, OciVaultKeyDelivery,
 };
 use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
@@ -1075,7 +1072,10 @@ impl ProductionAdmissionRuntime {
         {
             if configured.encryption_provider
                 != terrabase::encryption::KeyProviderIdentity::CustomerKms
-                || byok.key_provider != "customer-kms"
+                || !matches!(
+                    byok.key_provider.as_str(),
+                    "aws-kms" | "azure-key-vault" | "customer-kms" | "oci-vault"
+                )
             {
                 return Err("customer BYOK provider disagrees with admitted configuration".into());
             }
@@ -1100,6 +1100,10 @@ impl ProductionAdmissionRuntime {
                 region,
             )
             .map_err(|_| "customer key authorization unavailable")?;
+            let destination_policy = policy
+                .destinations
+                .first()
+                .ok_or("customer backup policy metadata unavailable")?;
             let identity =
                 terrabase::backup::workload_identity_delivery::UnixWorkloadIdentityProvider::new(
                     key_config.socket.clone(),
@@ -1109,13 +1113,13 @@ impl ProductionAdmissionRuntime {
                         endpoint: byok.backup_endpoint.clone(),
                         bucket: byok.backup_bucket.clone(),
                         region: byok.backup_region.clone(),
-                        placement_revision: policy.destinations[0].placement_revision.clone(),
+                        placement_revision: destination_policy.placement_revision.clone(),
                     },
                 )
                 .map_err(|_| "customer S3 workload identity unavailable")?;
             let destination = crate::production_backup::customer_destination_from_config(
                 byok,
-                &policy.destinations[0],
+                destination_policy,
                 region,
                 Arc::new(identity),
             )

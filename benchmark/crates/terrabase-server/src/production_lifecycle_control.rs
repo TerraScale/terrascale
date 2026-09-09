@@ -611,6 +611,12 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             terrabase::backup::object_store::Provider::Tigris => {
                 terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris
             }
+            terrabase::backup::object_store::Provider::CustomerS3 => {
+                return Err(
+                    "customer S3 restore provider is not supported by the recovery wire contract"
+                        .to_owned(),
+                );
+            }
         };
         Ok(terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointResponse {
             operation_id: request.operation_id.clone(),
