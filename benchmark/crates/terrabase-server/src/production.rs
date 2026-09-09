@@ -228,23 +228,21 @@ impl ProductionCatalogBootstrap {
                         .key_endpoint
                         .clone()
                         .ok_or(ProductionCatalogError::EncryptionUnavailable)?;
-                    let key_region = byok
-                        .key_region
-                        .parse()
-                        .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
                     let adapter = terrabase::encryption::CustomerKmsKeyDelivery::new(
                         key_config.socket.clone(),
                         key_config.orchestrator_uid,
                         key_config.socket_gid,
                         byok.key_provider.clone(),
                         byok.key_id.clone(),
-                        key_region,
+                        byok.key_region.clone(),
                         endpoint,
                     )
                     .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
                     Arc::new(
                         terrabase::encryption::CustomerKmsDatabaseKeys::new(
-                            adapter, metadata, database.region,
+                            adapter,
+                            metadata,
+                            database.region,
                         )
                         .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?,
                     )
@@ -257,7 +255,9 @@ impl ProductionCatalogBootstrap {
                     .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
                     Arc::new(
                         terrabase::encryption::OciVaultDatabaseKeys::new(
-                            provider, metadata, database.region,
+                            provider,
+                            metadata,
+                            database.region,
                         )
                         .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?,
                     )

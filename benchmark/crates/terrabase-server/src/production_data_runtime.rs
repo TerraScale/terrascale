@@ -811,8 +811,8 @@ impl ProductionAdmissionRuntime {
             local.clone(),
         );
         let replaying = Arc::new(AtomicBool::new(true));
-        let customer_configs = self.config.databases.clone();
-        let customer_keys = self.config.keys.clone().ok_or("production key delivery missing")?;
+        let customer_configs = config.databases.clone();
+        let customer_keys = config.keys.clone().ok_or("production key delivery missing")?;
         let customer_source = Arc::new(move |record: &crate::admission::AdmissionRecord| {
             let configured = customer_configs
                 .iter()
@@ -820,23 +820,35 @@ impl ProductionAdmissionRuntime {
                 .ok_or("configured database unavailable")?;
             let byok = configured.byok.as_ref().ok_or("customer KMS configuration missing")?;
             let endpoint = byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?;
-            let key_region = byok.key_region.parse().map_err(|_| "invalid customer KMS Region")?;
             let adapter = CustomerKmsKeyDelivery::new(
-                customer_keys.socket.clone(), customer_keys.orchestrator_uid, customer_keys.socket_gid,
-                byok.key_provider.clone(), byok.key_id.clone(), key_region, endpoint,
-            ).map_err(|_| "customer KMS adapter unavailable")?;
+                customer_keys.socket.clone(),
+                customer_keys.orchestrator_uid,
+                customer_keys.socket_gid,
+                byok.key_provider.clone(),
+                byok.key_id.clone(),
+                byok.key_region.clone(),
+                endpoint,
+            )
+            .map_err(|_| "customer KMS adapter unavailable")?;
             let scope = KeyScope::new_with_project(
                 &record.environment,
                 terrabase::identity::TenantUlid::from_text(&record.tenant_id).map_err(failure)?,
                 terrabase::identity::ProjectUlid::from_text(&record.project_id).map_err(failure)?,
-                terrabase::identity::DatabaseUlid::from_text(&record.database_id).map_err(failure)?,
+                terrabase::identity::DatabaseUlid::from_text(&record.database_id)
+                    .map_err(failure)?,
                 KeyPurpose::Data,
-            ).map_err(failure)?;
+            )
+            .map_err(failure)?;
             let version = DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?;
             let region = record.region.parse().map_err(|_| "invalid admitted Region")?;
-            Ok(Arc::new(CustomerKmsDatabaseKeys::new(
-                adapter, KeyVersionMetadata::new(scope, version), region,
-            ).map_err(|_| "customer key authorization unavailable")?) as Arc<dyn DatabaseKeySource>)
+            Ok(Arc::new(
+                CustomerKmsDatabaseKeys::new(
+                    adapter,
+                    KeyVersionMetadata::new(scope, version),
+                    region,
+                )
+                .map_err(|_| "customer key authorization unavailable")?,
+            ) as Arc<dyn DatabaseKeySource>)
         });
         let storage = crate::production_admission::storage_admission_with_replay_and_customer(
             member.clone(),
@@ -1107,7 +1119,6 @@ impl ProductionAdmissionRuntime {
             {
                 return Err("customer BYOK provider disagrees with admitted configuration".into());
             }
-            let key_region = byok.key_region.parse().map_err(|_| "invalid customer KMS Region")?;
             let endpoint = byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?;
             let adapter = terrabase::encryption::CustomerKmsKeyDelivery::new(
                 key_config.socket.clone(),
@@ -1115,7 +1126,7 @@ impl ProductionAdmissionRuntime {
                 key_config.socket_gid,
                 byok.key_provider.clone(),
                 byok.key_id.clone(),
-                key_region,
+                byok.key_region.clone(),
                 endpoint,
             )
             .map_err(|_| "customer KMS adapter unavailable")?;
@@ -1128,10 +1139,8 @@ impl ProductionAdmissionRuntime {
                 region,
             )
             .map_err(|_| "customer key authorization unavailable")?;
-            let destination_policy = policy
-                .destinations
-                .first()
-                .ok_or("customer backup policy metadata unavailable")?;
+            let destination_policy =
+                policy.destinations.first().ok_or("customer backup policy metadata unavailable")?;
             let identity =
                 terrabase::backup::workload_identity_delivery::UnixWorkloadIdentityProvider::new(
                     key_config.socket.clone(),

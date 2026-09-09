@@ -17,7 +17,6 @@ use crate::regions::{RegionCatalog, RegionCode};
 const MAGIC: &[u8; 5] = b"TBCK\x01";
 const TIMEOUT: Duration = Duration::from_secs(25);
 const MAX_FRAME: usize = 4096;
-const KEY_BYTES: usize = 32;
 
 /// Customer KMS adapter bound to one admitted provider configuration.
 #[derive(Clone)]
@@ -27,7 +26,7 @@ pub struct CustomerKmsKeyDelivery {
     socket_gid: u32,
     provider: String,
     key_id: String,
-    key_region: RegionCode,
+    key_region: String,
     key_endpoint: String,
 }
 
@@ -45,7 +44,7 @@ impl CustomerKmsKeyDelivery {
         socket_gid: u32,
         provider: impl Into<String>,
         key_id: impl Into<String>,
-        key_region: RegionCode,
+        key_region: impl Into<String>,
         key_endpoint: impl Into<String>,
     ) -> Result<Self, EncryptionError> {
         let source = Self {
@@ -54,10 +53,10 @@ impl CustomerKmsKeyDelivery {
             socket_gid,
             provider: provider.into(),
             key_id: key_id.into(),
-            key_region,
+            key_region: key_region.into(),
             key_endpoint: key_endpoint.into(),
         };
-        if !RegionCatalog::production().is_registered(&source.key_region)
+        if !valid_region(&source.key_region)
             || !valid_field(&source.provider)
             || !valid_field(&source.key_id)
             || !valid_field(&source.key_endpoint)
@@ -190,6 +189,25 @@ fn valid_field(value: &str) -> bool {
     !value.is_empty() && value.len() <= 128 && !value.as_bytes().contains(&0)
 }
 
+fn valid_region(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+}
+
 fn unavailable<T>(_: T) -> EncryptionError {
     EncryptionError::ProductionProviderUnavailable
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_region;
+
+    #[test]
+    fn accepts_cloud_provider_regions() {
+        assert!(valid_region("us-east-1"));
+        assert!(valid_region("eu-west-1"));
+        assert!(!valid_region("us east 1"));
+        assert!(!valid_region(""));
+    }
 }

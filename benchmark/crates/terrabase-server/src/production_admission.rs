@@ -72,7 +72,15 @@ impl terrabase::member::DatabaseRoleAuthority for Writer {
 fn register_storage(
     member: &Member,
     provider: &OciVaultKeyDelivery,
-    customer_source: Option<&dyn Fn(&AdmissionRecord) -> Result<Arc<dyn terrabase::encryption::DatabaseKeySource>, String>>,
+    customer_source: Option<
+        &(
+             dyn Fn(
+            &AdmissionRecord,
+        ) -> Result<Arc<dyn terrabase::encryption::DatabaseKeySource>, String>
+                 + Send
+                 + Sync
+         ),
+    >,
     record: &AdmissionRecord,
     per_database: usize,
 ) -> Result<(RegionCode, TenantId), String> {
@@ -92,14 +100,19 @@ fn register_storage(
         KeyPurpose::Data,
     )
     .map_err(|_| "invalid key scope")?;
-    let keys: Arc<dyn terrabase::encryption::DatabaseKeySource> = if let Some(resolve) = customer_source {
-        resolve(record)?
-    } else { Arc::new(OciVaultDatabaseKeys::new(
-            provider.clone(),
-            KeyVersionMetadata::new(key_scope, version),
-            region,
-        )
-        .map_err(|_| "key authorization unavailable")?) };
+    let keys: Arc<dyn terrabase::encryption::DatabaseKeySource> =
+        if let Some(resolve) = customer_source {
+            resolve(record)?
+        } else {
+            Arc::new(
+                OciVaultDatabaseKeys::new(
+                    provider.clone(),
+                    KeyVersionMetadata::new(key_scope, version),
+                    region,
+                )
+                .map_err(|_| "key authorization unavailable")?,
+            )
+        };
     member
         .add_production_database(
             DatabaseSpec::scoped(scope, &record.database_id),
@@ -147,6 +160,7 @@ pub fn storage_admission_with_replay(
     )
 }
 
+/// Constructs storage admission with customer key-source resolution for BYOK records.
 pub fn storage_admission_with_replay_and_customer(
     member: Member,
     registry: Arc<AdmittedDatabaseRegistry>,
@@ -155,9 +169,24 @@ pub fn storage_admission_with_replay_and_customer(
     per_database: usize,
     instance: u64,
     replaying: Arc<AtomicBool>,
-    customer_source: Arc<dyn Fn(&AdmissionRecord) -> Result<Arc<dyn terrabase::encryption::DatabaseKeySource>, String> + Send + Sync>,
+    customer_source: Arc<
+        dyn Fn(
+                &AdmissionRecord,
+            ) -> Result<Arc<dyn terrabase::encryption::DatabaseKeySource>, String>
+            + Send
+            + Sync,
+    >,
 ) -> StorageAdmission {
-    storage_admission_inner_with_customer(member, registry, provider, authority, per_database, instance, Some(replaying), Some(customer_source))
+    storage_admission_inner_with_customer(
+        member,
+        registry,
+        provider,
+        authority,
+        per_database,
+        instance,
+        Some(replaying),
+        Some(customer_source),
+    )
 }
 
 fn storage_admission_inner(
@@ -169,7 +198,16 @@ fn storage_admission_inner(
     instance: u64,
     replaying: Option<Arc<AtomicBool>>,
 ) -> StorageAdmission {
-    storage_admission_inner_with_customer(member, registry, provider, authority, per_database, instance, replaying, None)
+    storage_admission_inner_with_customer(
+        member,
+        registry,
+        provider,
+        authority,
+        per_database,
+        instance,
+        replaying,
+        None,
+    )
 }
 
 fn storage_admission_inner_with_customer(
@@ -180,10 +218,20 @@ fn storage_admission_inner_with_customer(
     per_database: usize,
     instance: u64,
     replaying: Option<Arc<AtomicBool>>,
-    customer_source: Option<Arc<dyn Fn(&AdmissionRecord) -> Result<Arc<dyn terrabase::encryption::DatabaseKeySource>, String> + Send + Sync>>,
+    customer_source: Option<
+        Arc<
+            dyn Fn(
+                    &AdmissionRecord,
+                )
+                    -> Result<Arc<dyn terrabase::encryption::DatabaseKeySource>, String>
+                + Send
+                + Sync,
+        >,
+    >,
 ) -> StorageAdmission {
     Arc::new(move |record| {
-        let (region, tenant_id) = register_storage(&member, &provider, customer_source.as_deref(), record, per_database)?;
+        let (region, tenant_id) =
+            register_storage(&member, &provider, customer_source.as_deref(), record, per_database)?;
         // Registration precedes placement proposal. A pending scope is durable but
         // remains closed and absent from public routing until an authenticated retry.
         let Some(accepted) = authority(record)? else {
