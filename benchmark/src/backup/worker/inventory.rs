@@ -320,7 +320,11 @@ mod tests {
     fn interrupted_cleanup_reclaims_restart_left_staging_names() {
         let directory = crate::backup::tests::location("backup-cleanup-restart-staging");
         std::fs::create_dir_all(&directory).unwrap();
-        let stale = directory.join(format!(".staging-{}-0-{}", std::process::id(), crate::identity::generate()));
+        let stale = directory.join(format!(
+            ".staging-{}-0-{}",
+            std::process::id(),
+            crate::identity::generate()
+        ));
         std::fs::create_dir(&stale).unwrap();
         std::fs::write(stale.join("partial-member"), b"crash leftover").unwrap();
 

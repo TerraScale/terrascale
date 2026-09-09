@@ -623,8 +623,8 @@ fn staging_copy_preserves_version_and_rejects_changed_same_provenance() {
             super::tests::operation("read-target-copy"),
         )
         .unwrap();
-    let copied = tx.read_in_collection(&collection, &id).unwrap().unwrap();
-    assert_eq!(copied, document);
+    let copied_document = tx.read_in_collection(&collection, &id).unwrap().unwrap();
+    assert_eq!(copied_document, document);
     drop(tx);
     let mut changed = Document::new(id, collection, DocumentValue::Integer(999));
     changed.set_version(2);

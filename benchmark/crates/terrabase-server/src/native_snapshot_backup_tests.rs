@@ -178,7 +178,7 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
         RegionCode::GRU,
         &lease,
         &staging,
-        "roundtrip",
+        "roundtrip-retry",
         std::slice::from_ref(&destination),
         &placement,
         8 * 1024 * 1024,
@@ -192,7 +192,7 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
             RegionCode::GRU,
             &lease,
             &staging,
-            "roundtrip",
+            "roundtrip-retry",
             std::slice::from_ref(&destination),
             &placement,
             8 * 1024 * 1024,
@@ -204,7 +204,7 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
     let target = root.join("target");
     let (_follower, receipt) = super::native_snapshot_backup::restore_snapshot(
         &destination,
-        "roundtrip",
+        "roundtrip-retry",
         &root.join("download"),
         &*lease as &dyn BackupReader,
         binding,

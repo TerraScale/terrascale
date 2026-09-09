@@ -56,7 +56,6 @@ pub(crate) mod shard_split;
 pub(crate) mod shard_supervisor;
 mod webhook_metadata;
 
-mod commit_timing_probe;
 #[cfg(test)]
 mod ingest_tests;
 

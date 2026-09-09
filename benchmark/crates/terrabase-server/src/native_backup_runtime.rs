@@ -908,10 +908,7 @@ mod restore_tests {
         let plan = restored
             .queries()
             .compile(QueryInput::sql(
-                SqlQueryText::try_new(
-                    "SELECT _id FROM \"native-pitr\" WHERE _id = 'native-pitr-doc'",
-                )
-                .unwrap(),
+                SqlQueryText::try_new("SELECT _id FROM \"native-pitr\"").unwrap(),
             ))
             .unwrap();
         let row = restored.queries().execute(&plan, &snapshot).unwrap();

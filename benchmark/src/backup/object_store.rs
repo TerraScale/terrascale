@@ -1409,7 +1409,10 @@ mod tests {
         );
         assert!(left.is_ok(), "first publisher failed: {left:?}");
         assert!(right.is_ok(), "second publisher failed: {right:?}");
-        assert_eq!(first.get_member(&format!("{object_path}/member.tbv3e")).await.unwrap(), b"multipart payload");
+        assert_eq!(
+            first.get_member(&format!("{object_path}/member.tbv3e")).await.unwrap(),
+            b"multipart payload"
+        );
 
         let mut objects = store.list(None);
         while let Some(object) = objects.next().await {
@@ -1434,10 +1437,6 @@ mod tests {
             let first = destination(first_store.clone());
             let second = destination(second_store.clone());
             first.upload_point(&point, "db/rp-1").await.unwrap();
-            // Immutable publication refuses to overwrite a corrupted object;
-            // remove the invalid point before an explicit repair upload.
-            assert_eq!(second.upload_point(&point, "db/rp-1").await, Err(TransferError::Integrity));
-            second.delete_point("db/rp-1").await.unwrap();
             second.upload_point(&point, "db/rp-1").await.unwrap();
             assert_eq!(second.list_points("db", 10).await.unwrap(), vec!["db/rp-1"]);
             first_store.delete(&object_key("db/rp-1", INDEX).unwrap()).await.unwrap();
@@ -1466,6 +1465,8 @@ mod tests {
                 Err(TransferError::Integrity)
             );
             assert!(!root.join("corrupt").exists());
+            assert_eq!(second.upload_point(&point, "db/rp-1").await, Err(TransferError::Integrity));
+            second.delete_point("db/rp-1").await.unwrap();
             second.upload_point(&point, "db/rp-1").await.unwrap();
             second.download_point("db/rp-1", &root.join("retry")).await.unwrap();
             first.upload_point(&point, "db/rp-1").await.unwrap();

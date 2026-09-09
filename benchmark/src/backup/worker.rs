@@ -1827,7 +1827,7 @@ fn capture_plan(
 ) -> Result<BackupPlan, FleetError> {
     let lease = stream.config.keys.lease().map_err(|_| FleetError::Capture)?;
     let kind = match (base, rotate) {
-        (Some(base), true) => super::BackupKind::Snapshot,
+        (Some(_base), true) => super::BackupKind::Snapshot,
         (Some(base), false) => super::BackupKind::Incremental { base },
         (None, _) => super::BackupKind::Full,
     };
@@ -3162,7 +3162,7 @@ mod tests {
             LocalDurability::Synced,
         ));
         let lease = key_provider.lease().unwrap();
-        eprintln!("verify_fleet_retention high_water={:?}", engine.journaled_high_water());
+        let reader: Arc<dyn BackupReader + Send + Sync> = key_provider.clone();
         let root = run_backup(
             engine,
             BackupPlan::full(
@@ -3172,13 +3172,11 @@ mod tests {
                     0,
                 )
                 .unwrap(),
-            ),
+            )
+            .with_reader(reader),
             staging,
         )
-        .unwrap_or_else(|error| {
-            eprintln!("verify_fleet_retention backup error={error:?} staging={:?}", std::fs::read_dir(staging).map(|entries| entries.filter_map(Result::ok).map(|entry| entry.path()).collect::<Vec<_>>()));
-            panic!("backup failed: {error:?}");
-        });
+        .unwrap();
         fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
         assert!(fleet.sync_once().await.is_empty());
         let root_name = format!("rp-{}", root.manifest().identity());

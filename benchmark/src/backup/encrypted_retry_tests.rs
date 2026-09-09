@@ -5,7 +5,6 @@ use crate::backup::{BackupEncryption, BackupPlan, run_backup};
 use crate::encryption::{
     DatabaseKey, DatabaseKeyLease, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
 };
-use crate::regions::RegionCode;
 use crate::storage::DatabaseOwner;
 use crate::types::LocalDurability;
 
@@ -18,7 +17,7 @@ fn backup_lease(owner: &DatabaseOwner) -> DatabaseKeyLease {
         KeyPurpose::Backup,
     )
     .expect("backup scope");
-    DatabaseKeyLease::new(
+    DatabaseKeyLease::test_oci_vault(
         KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()),
         DatabaseKey::from_bytes([41; 32]),
         std::time::Duration::from_secs(30),
@@ -105,7 +104,7 @@ fn encrypted_retry_uses_retained_reader_for_a_fresh_artifact_context() {
     let first = run_backup(
         &engine,
         BackupPlan::full(
-            BackupEncryption::from_database_key_lease(&lease, RegionCode::GRU, 0)
+            BackupEncryption::from_database_key_lease(&lease, owner.region(), 0)
                 .expect("first encryption"),
         )
         .with_capture_unix_millis(capture_time),
@@ -115,7 +114,7 @@ fn encrypted_retry_uses_retained_reader_for_a_fresh_artifact_context() {
     let retry = run_backup(
         &engine,
         BackupPlan::full(
-            BackupEncryption::from_database_key_lease(&lease, RegionCode::GRU, 0)
+            BackupEncryption::from_database_key_lease(&lease, owner.region(), 0)
                 .expect("fresh encryption"),
         )
         .with_capture_unix_millis(capture_time)
