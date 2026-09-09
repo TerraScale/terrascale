@@ -549,14 +549,87 @@ pub fn merge_sync_journal_pages(
             ))
     });
     candidates.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+
+    // Keep each lane's returned records as a contiguous prefix of that
+    // lane's page. A global HLC sort can otherwise select a later record
+    // while an earlier record from the same lane remains pending, and
+    // advancing the lane cursor past the gap would silently skip it.
+    let mut prefix_counts = BTreeMap::<OriginLaneId, usize>::new();
+    for (lane, page) in &pages {
+        let checkpoint = cursor.lanes.get(lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
+        let eligible_positions: Vec<_> = page
+            .records
+            .iter()
+            .filter(|record| {
+                record.provenance().kind() == JournalKind::Origin
+                    && !subscription::position_covered(
+                        checkpoint.sequence(),
+                        checkpoint.write_index(),
+                        StorageSequence::new(record.storage_sequence()),
+                        record.position().write_index().saturating_sub(1),
+                    )
+            })
+            .map(SyncJournalRecord::position)
+            .collect();
+        let mut selected_positions = Vec::new();
+        for candidate in candidates.iter().filter(|candidate| candidate.lane == *lane) {
+            selected_positions.push(candidate.record.position());
+        }
+        let prefix = eligible_positions
+            .iter()
+            .take_while(|position| selected_positions.contains(position))
+            .count();
+        prefix_counts.insert(lane.clone(), prefix);
+    }
+    candidates.retain(|candidate| {
+        let Some(page) = pages.get(&candidate.lane) else { return false };
+        let checkpoint =
+            cursor.lanes.get(&candidate.lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
+        let rank = page
+            .records
+            .iter()
+            .filter(|record| {
+                record.provenance().kind() == JournalKind::Origin
+                    && !subscription::position_covered(
+                        checkpoint.sequence(),
+                        checkpoint.write_index(),
+                        StorageSequence::new(record.storage_sequence()),
+                        record.position().write_index().saturating_sub(1),
+                    )
+            })
+            .position(|record| record.position() == candidate.record.position());
+        rank.is_some_and(|index| index < prefix_counts[&candidate.lane])
+    });
+
     let mut next = cursor.clone();
-    let mut selected_lanes = std::collections::BTreeSet::new();
+    let mut selected_counts = BTreeMap::<OriginLaneId, usize>::new();
     for candidate in &candidates {
         next.lanes.insert(candidate.lane.clone(), candidate.record.position());
-        selected_lanes.insert(candidate.lane.clone());
+        *selected_counts.entry(candidate.lane.clone()).or_default() += 1;
     }
     for (lane, page) in &pages {
-        if !selected_lanes.contains(lane) && page.next.is_some() {
+        // A lane may advance to its page continuation only when every
+        // eligible record from that page was returned (or there were no
+        // eligible records because they were covered/provenance-filtered).
+        // If the global limit truncated this lane, retaining its prior
+        // cursor is essential: advancing to `page.next` would skip the
+        // unreturned records on the next continuation call.
+        let checkpoint = cursor.lanes.get(lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
+        let eligible = page
+            .records
+            .iter()
+            .filter(|record| {
+                record.provenance().kind() == JournalKind::Origin
+                    && !subscription::position_covered(
+                        checkpoint.sequence(),
+                        checkpoint.write_index(),
+                        StorageSequence::new(record.storage_sequence()),
+                        record.position().write_index().saturating_sub(1),
+                    )
+            })
+            .count();
+        let selected = selected_counts.get(lane).copied().unwrap_or(0);
+        if selected == eligible && page.next.is_some() {
             next.lanes.insert(lane.clone(), page.next.expect("checked above"));
         }
     }
@@ -664,6 +737,29 @@ mod lane_merge_tests {
         let advanced = merged.records()[0].lane().clone();
         let retained = if advanced == first { second } else { first };
         assert_eq!(merged.cursor().lanes()[&retained], ChangeCheckpoint::after(0, 0));
+    }
+
+    #[test]
+    fn bounded_merge_continuation_returns_each_lane_record_once() {
+        let only = lane("GRU", 9);
+        let cursor = SyncJournalCursor::beginning(binding(), [only.clone()]);
+        let pages = BTreeMap::from([(
+            only.clone(),
+            SyncJournalLanePage::new(
+                vec![record(1, 1, "one"), record(2, 2, "two")],
+                Some(ChangeCheckpoint::after(2, 1)),
+                true,
+            ),
+        )]);
+        let first = merge_sync_journal_pages(&cursor, pages.clone(), 1).expect("first page");
+        assert_eq!(first.records().len(), 1);
+        assert_eq!(first.records()[0].record().document().as_str(), "one");
+        assert_eq!(first.cursor().lanes()[&only], ChangeCheckpoint::after(1, 1));
+
+        let second = merge_sync_journal_pages(first.cursor(), pages, 1).expect("second page");
+        assert_eq!(second.records().len(), 1);
+        assert_eq!(second.records()[0].record().document().as_str(), "two");
+        assert_eq!(second.cursor().lanes()[&only], ChangeCheckpoint::after(2, 1));
     }
 
     #[test]
