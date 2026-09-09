@@ -288,6 +288,14 @@ pub async fn restore_snapshot(
             .await
             .map_err(|_| SnapshotBackupError::Provider)?;
         downloaded = true;
+        eprintln!(
+            "downloaded {:?}: {:?}",
+            staging,
+            std::fs::read_dir(staging).ok().map(|entries| entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name())
+                .collect::<Vec<_>>())
+        );
         let envelope = read_bounded(&staging.join("manifest.tbv3e"), 2 * 1024 * 1024)?;
         let manifest_bytes =
             reader.open_backup_envelope(&envelope).map_err(|_| SnapshotBackupError::Encryption)?;
@@ -329,14 +337,11 @@ pub async fn restore_snapshot(
                 if next <= offset || next > length {
                     return Err(SnapshotBackupError::Snapshot);
                 }
-                sink.write_local(chunk).await.map_err(|_| SnapshotBackupError::Snapshot)?;
+                sink.write_local(chunk).await.map_err(|e| { eprintln!("write err {e:?}"); SnapshotBackupError::Snapshot })?;
                 offset = next;
             }
         }
-        sink.finish_local().await.map_err(|error| {
-            eprintln!("native snapshot finish error: {error:?}");
-            SnapshotBackupError::Snapshot
-        })
+        sink.finish_local().await.map_err(|_| SnapshotBackupError::Snapshot)
     }
     .await;
     if downloaded && result.is_err() {
