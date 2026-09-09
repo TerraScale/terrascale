@@ -859,4 +859,32 @@ mod tests {
 
         assert_eq!(parse_manifest(&text), Err(BackupError::ManifestInvalid));
     }
+
+    #[test]
+    fn member_matching_requires_both_length_and_digest() {
+        let bytes = b"member payload";
+        let member = BackupMember::new(
+            "member-000000".to_owned(),
+            bytes.len() as u64,
+            hex::encode(digest(&SHA256, bytes).as_ref()),
+        );
+
+        assert!(member.matches_bytes(bytes));
+        assert!(!member.matches_bytes(b"member payloaD"));
+        assert!(!member.matches_bytes(b"member payload with trailing bytes"));
+    }
+
+    #[test]
+    fn every_single_byte_mutation_of_a_manifest_is_rejected() {
+        let encoded = sample().encode();
+        for index in 0..encoded.len() {
+            let mut mutated = encoded.clone();
+            mutated[index] ^= 1;
+            assert_eq!(
+                BackupManifest::decode(&mutated),
+                Err(BackupError::ManifestInvalid),
+                "byte {index}"
+            );
+        }
+    }
 }

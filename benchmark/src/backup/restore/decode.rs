@@ -358,3 +358,82 @@ impl<R: Read> FrameCursor<'_, R> {
         Ok(buffer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rejects(bytes: Vec<u8>) {
+        let mut callbacks = 0;
+        let result = decode_member_bytes(bytes, &mut |_, _| {
+            callbacks += 1;
+            Ok(())
+        });
+        assert_eq!(result, Err(BackupError::ChecksumMismatch));
+        assert_eq!(callbacks, 0, "malformed frame must not reach replay");
+    }
+
+    #[test]
+    fn rejects_truncated_common_frame_header() {
+        rejects(vec![TAG_DOCUMENT; 19]);
+    }
+
+    #[test]
+    fn rejects_unknown_record_and_durability_tags() {
+        let mut unknown = vec![0xff];
+        unknown.extend_from_slice(&[0, 0, TAG_DURABILITY_SYNCED]);
+        unknown.extend_from_slice(&0_u64.to_le_bytes());
+        unknown.extend_from_slice(&0_u64.to_le_bytes());
+        rejects(unknown);
+
+        let mut invalid_durability = vec![TAG_DELETE, 0, 0, 0xff];
+        invalid_durability.extend_from_slice(&0_u64.to_le_bytes());
+        invalid_durability.extend_from_slice(&0_u64.to_le_bytes());
+        rejects(invalid_durability);
+    }
+
+    #[test]
+    fn rejects_length_prefixes_that_exceed_the_member_budget() {
+        // A document starts with a u16 tenant length. The declared 65535 bytes
+        // must be refused before any allocation or callback.
+        rejects(vec![TAG_DOCUMENT, 0xff, 0xff]);
+
+        // A string value's u32 length is similarly bounded by remaining bytes.
+        let mut bytes = vec![TAG_DOCUMENT, 0, 0, TAG_DURABILITY_SYNCED];
+        bytes.extend_from_slice(&0_u64.to_le_bytes());
+        bytes.extend_from_slice(&0_u64.to_le_bytes());
+        bytes.extend_from_slice(&0_u16.to_le_bytes()); // tenant
+        bytes.extend_from_slice(&0_u16.to_le_bytes()); // id
+        bytes.extend_from_slice(&0_u16.to_le_bytes()); // collection
+        bytes.push(VALUE_STRING);
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+        rejects(bytes);
+    }
+
+    #[test]
+    fn rejects_invalid_scalar_and_duplicate_object_fields() {
+        let mut boolean = vec![TAG_DOCUMENT, 0, 0, TAG_DURABILITY_SYNCED];
+        boolean.extend_from_slice(&0_u64.to_le_bytes());
+        boolean.extend_from_slice(&0_u64.to_le_bytes());
+        boolean.extend_from_slice(&0_u16.to_le_bytes()); // tenant
+        boolean.extend_from_slice(&0_u16.to_le_bytes()); // id
+        boolean.extend_from_slice(&0_u16.to_le_bytes()); // collection
+        boolean.extend_from_slice(&[VALUE_BOOLEAN, 2]);
+        rejects(boolean);
+
+        let mut object = vec![TAG_DOCUMENT, 0, 0, TAG_DURABILITY_SYNCED];
+        object.extend_from_slice(&0_u64.to_le_bytes());
+        object.extend_from_slice(&0_u64.to_le_bytes());
+        object.extend_from_slice(&0_u16.to_le_bytes()); // tenant
+        object.extend_from_slice(&0_u16.to_le_bytes()); // id
+        object.extend_from_slice(&0_u16.to_le_bytes()); // collection
+        object.push(VALUE_OBJECT);
+        object.extend_from_slice(&2_u64.to_le_bytes());
+        for value in [b"x".as_slice(), b"x".as_slice()] {
+            object.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            object.extend_from_slice(value);
+            object.push(VALUE_NULL);
+        }
+        rejects(object);
+    }
+}
