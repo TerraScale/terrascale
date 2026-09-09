@@ -2317,7 +2317,7 @@ mod tests {
             opts: object_store::GetOptions,
         ) -> object_store::Result<object_store::GetResult> {
             if self.armed.load(std::sync::atomic::Ordering::SeqCst)
-                && location.as_ref().ends_with("member-000001")
+                && location.as_ref().ends_with("member-000000")
             {
                 self.started.notify_one();
                 std::future::pending().await
@@ -2330,7 +2330,7 @@ mod tests {
             location: &object_store::path::Path,
         ) -> object_store::Result<object_store::GetResult> {
             if self.armed.load(std::sync::atomic::Ordering::SeqCst)
-                && location.as_ref().ends_with("member-000001")
+                && location.as_ref().ends_with("member-000000")
             {
                 self.started.notify_one();
                 std::future::pending().await

@@ -1,6 +1,12 @@
 //! Bounded local broker for customer S3 workload identity credentials.
 
 use std::fmt;
+#[cfg(unix)]
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
+#[cfg(unix)]
+use std::path::Component;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -86,6 +92,44 @@ impl UnixWorkloadIdentityProvider {
         }
         Ok(Self { socket, scope })
     }
+
+    #[cfg(unix)]
+    fn validate_path(&self) -> Result<u32, WorkloadIdentityError> {
+        if !self.socket.is_absolute() {
+            return Err(WorkloadIdentityError::Unavailable);
+        }
+        let mut path = PathBuf::new();
+        let mut parent: Option<fs::Metadata> = None;
+        for component in self.socket.components() {
+            match component {
+                Component::RootDir | Component::Normal(_) => path.push(component),
+                _ => return Err(WorkloadIdentityError::Unavailable),
+            }
+            let metadata =
+                fs::symlink_metadata(&path).map_err(|_| WorkloadIdentityError::Unavailable)?;
+            if metadata.file_type().is_symlink() {
+                return Err(WorkloadIdentityError::Unavailable);
+            }
+            if path == self.socket {
+                if !metadata.file_type().is_socket() || metadata.mode() & 0o777 != 0o660 {
+                    return Err(WorkloadIdentityError::Unavailable);
+                }
+                let parent_metadata = parent.as_ref().ok_or(WorkloadIdentityError::Unavailable)?;
+                if parent_metadata.uid() != metadata.uid()
+                    || parent_metadata.gid() != metadata.gid()
+                    || parent_metadata.mode() & 0o777 != 0o710
+                {
+                    return Err(WorkloadIdentityError::Unavailable);
+                }
+                return Ok(metadata.uid());
+            }
+            if !metadata.is_dir() || metadata.mode() & 0o022 != 0 {
+                return Err(WorkloadIdentityError::Unavailable);
+            }
+            parent = Some(metadata);
+        }
+        Err(WorkloadIdentityError::Unavailable)
+    }
 }
 
 #[cfg(unix)]
@@ -95,9 +139,15 @@ impl WorkloadIdentityProvider for UnixWorkloadIdentityProvider {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::UnixStream;
 
+        let socket_uid = self.validate_path()?;
         let mut stream = UnixStream::connect(&self.socket)
             .await
             .map_err(|_| WorkloadIdentityError::Unavailable)?;
+        let credentials = rustix::net::sockopt::socket_peercred(&stream)
+            .map_err(|_| WorkloadIdentityError::Unavailable)?;
+        if credentials.uid.as_raw() != socket_uid {
+            return Err(WorkloadIdentityError::Unavailable);
+        }
         let request = serde_json::to_vec(&CredentialRequest { version: 1, scope: &self.scope })
             .map_err(|_| WorkloadIdentityError::Invalid)?;
         if request.len() > MAX_REQUEST_BYTES {
@@ -146,5 +196,52 @@ impl WorkloadIdentityProvider for UnixWorkloadIdentityProvider {
 impl WorkloadIdentityProvider for UnixWorkloadIdentityProvider {
     async fn credentials(&self) -> Result<Credentials, WorkloadIdentityError> {
         Err(WorkloadIdentityError::Unavailable)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+
+    fn scope() -> WorkloadIdentityScope {
+        WorkloadIdentityScope {
+            role: "role".into(),
+            external_id: None,
+            endpoint: "https://example.invalid".into(),
+            bucket: "bucket".into(),
+            region: "region".into(),
+            placement_revision: "revision".into(),
+        }
+    }
+
+    fn fixture_path(name: &str) -> (PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("terrabase-workload-{}-{name}", std::process::id()));
+        let parent = root.join("protected");
+        fs::create_dir_all(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o710)).unwrap();
+        (root, parent.join("broker.sock"))
+    }
+
+    #[test]
+    fn path_validation_rejects_symlink_components() {
+        let (root, socket) = fixture_path("symlink");
+        let link = root.join("link");
+        std::os::unix::fs::symlink(socket.parent().unwrap(), &link).unwrap();
+        let provider = UnixWorkloadIdentityProvider::new(link.join("broker.sock"), scope()).unwrap();
+        assert_eq!(provider.validate_path(), Err(WorkloadIdentityError::Unavailable));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn path_validation_rejects_unprotected_socket_mode() {
+        let (root, socket) = fixture_path("mode");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o666)).unwrap();
+        let provider = UnixWorkloadIdentityProvider::new(socket, scope()).unwrap();
+        assert_eq!(provider.validate_path(), Err(WorkloadIdentityError::Unavailable));
+        fs::remove_dir_all(root).unwrap();
     }
 }

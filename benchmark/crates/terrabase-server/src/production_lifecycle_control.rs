@@ -1132,6 +1132,34 @@ mod restore_digest_tests {
             })
             .unwrap()
         );
+        let customer = RestoreToTargetRequest {
+            provider: RestoreProvider::CustomerS3 as i32,
+            source_owner: "source-owner".into(),
+            source_database: "source-database".into(),
+            recovery_point_id: "recovery-point".into(),
+            recovery_point_digest: "recovery-digest".into(),
+            target_owner: "target-owner".into(),
+            target_database: "target-database".into(),
+            journal_cut: "journal-cut".into(),
+            restore_epoch: 7,
+            ..Default::default()
+        };
+        assert_ne!(
+            restore_request_digest(&customer).unwrap(),
+            restore_request_digest(&RestoreToTargetRequest {
+                provider: RestoreProvider::Oci as i32,
+                source_owner: "source-owner".into(),
+                source_database: "source-database".into(),
+                recovery_point_id: "recovery-point".into(),
+                recovery_point_digest: "recovery-digest".into(),
+                target_owner: "target-owner".into(),
+                target_database: "target-database".into(),
+                journal_cut: "journal-cut".into(),
+                restore_epoch: 7,
+                ..Default::default()
+            })
+            .unwrap()
+        );
     }
 
     #[test]
