@@ -31,7 +31,7 @@ pub enum SnapshotBackupError {
     Provider,
 }
 
-fn validate_residency(
+pub(crate) fn validate_residency(
     source_region: RegionCode,
     destination_region: RegionCode,
     placement: &PlacementLock,

@@ -1395,19 +1395,21 @@ mod tests {
         let root = std::env::temp_dir().join(format!("tb-object-race-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        let point = root.join("rp-1");
+        let identity = "1".repeat(64);
+        let point = root.join(format!("rp-{identity}"));
         fs::create_dir_all(&point).unwrap();
         fs::write(point.join(super::super::manifest::ENCRYPTED_MANIFEST_FILE), b"manifest")
             .unwrap();
         fs::write(point.join("member.tbv3e"), b"multipart payload").unwrap();
+        let object_path = format!("db/rp-{identity}");
 
         let (left, right) = tokio::join!(
-            first.upload_point(&point, "db/rp-1"),
-            second.upload_point(&point, "db/rp-1"),
+            first.upload_point(&point, &object_path),
+            second.upload_point(&point, &object_path),
         );
         assert!(left.is_ok(), "first publisher failed: {left:?}");
         assert!(right.is_ok(), "second publisher failed: {right:?}");
-        assert_eq!(first.get_member("db/rp-1/member.tbv3e").await.unwrap(), b"multipart payload");
+        assert_eq!(first.get_member(&format!("{object_path}/member.tbv3e")).await.unwrap(), b"multipart payload");
 
         let mut objects = store.list(None);
         while let Some(object) = objects.next().await {
@@ -1432,6 +1434,10 @@ mod tests {
             let first = destination(first_store.clone());
             let second = destination(second_store.clone());
             first.upload_point(&point, "db/rp-1").await.unwrap();
+            // Immutable publication refuses to overwrite a corrupted object;
+            // remove the invalid point before an explicit repair upload.
+            assert_eq!(second.upload_point(&point, "db/rp-1").await, Err(TransferError::Integrity));
+            second.delete_point("db/rp-1").await.unwrap();
             second.upload_point(&point, "db/rp-1").await.unwrap();
             assert_eq!(second.list_points("db", 10).await.unwrap(), vec!["db/rp-1"]);
             first_store.delete(&object_key("db/rp-1", INDEX).unwrap()).await.unwrap();

@@ -2871,6 +2871,9 @@ mod tests {
         store.put(&manifest, b"corrupt".to_vec().into()).await.unwrap();
         assert_eq!(fleet.capture_snapshot(&identity).await.unwrap_err(), FleetError::Upload);
         assert!(!fleet.observe_protection(&identity).unwrap().protected);
+        // Immutable remote publication refuses to overwrite the corrupted
+        // point; lifecycle repair removes that invalid point explicitly.
+        destination.delete_point(&prefix).await.unwrap();
         fleet.capture_snapshot(&identity).await.unwrap();
         assert!(fleet.health(&identity).unwrap().protected);
     }
@@ -3159,6 +3162,7 @@ mod tests {
             LocalDurability::Synced,
         ));
         let lease = key_provider.lease().unwrap();
+        eprintln!("verify_fleet_retention high_water={:?}", engine.journaled_high_water());
         let root = run_backup(
             engine,
             BackupPlan::full(
@@ -3171,7 +3175,10 @@ mod tests {
             ),
             staging,
         )
-        .unwrap();
+        .unwrap_or_else(|error| {
+            eprintln!("verify_fleet_retention backup error={error:?} staging={:?}", std::fs::read_dir(staging).map(|entries| entries.filter_map(Result::ok).map(|entry| entry.path()).collect::<Vec<_>>()));
+            panic!("backup failed: {error:?}");
+        });
         fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
         assert!(fleet.sync_once().await.is_empty());
         let root_name = format!("rp-{}", root.manifest().identity());

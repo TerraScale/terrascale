@@ -40,7 +40,7 @@ fn encrypted_retry_consumes_a_new_ordinal_but_keeps_published_point() {
         LocalDurability::Synced,
     ));
     let lease = backup_lease(owner);
-    let encryption = BackupEncryption::from_database_key_lease(&lease, RegionCode::GRU, 0)
+    let encryption = BackupEncryption::from_database_key_lease(&lease, owner.region(), 0)
         .expect("backup encryption");
     let destination = location("encrypted-retry-destination");
     let capture_time = u64::try_from(

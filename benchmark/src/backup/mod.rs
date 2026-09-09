@@ -1714,6 +1714,7 @@ fn seal_point(
             verify_members(destination, manifest.identity(), manifest.members())?;
             return sync_directory(destination);
         }
+        eprintln!("seal_point checksum mismatch point={:?} manifest_file={:?}", point, point.join(manifest_file));
         return Err(BackupError::ChecksumMismatch);
     }
     if point.is_dir() {
