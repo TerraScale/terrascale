@@ -521,6 +521,12 @@ impl NativeBackupRuntime {
             .contains_key(database))
     }
 
+    /// Async attachment observation serialized with provider operations.
+    pub async fn attached_async(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
+        let _gate = self.async_fleet.lock().await;
+        self.attached(database)
+    }
+
     /// Reads current protection from every configured provider and the source
     /// journal frontier; cached scheduler health is never sufficient.
     pub fn is_ready(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {

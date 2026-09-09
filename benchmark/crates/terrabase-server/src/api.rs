@@ -4896,7 +4896,7 @@ async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<Strin
             Ok(value) => value,
             Err(error) => return ApiError::backup(error).into_response(),
         };
-        let streaming = match native.attached(&name) {
+        let streaming = match native.attached_async(&name).await {
             Ok(value) => value,
             Err(error) => return ApiError::backup(error).into_response(),
         };

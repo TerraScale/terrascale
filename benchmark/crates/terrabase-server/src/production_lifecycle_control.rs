@@ -490,6 +490,8 @@ pub struct RegistryLifecycleWorker {
     pub registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
     /// Optional native backup fleet retained by the production composition.
     pub backups: Option<Arc<std::sync::Mutex<terrabase::backup::worker::NativeBackupFleet>>>,
+    /// Shared async gate for every native fleet operation.
+    pub backup_gate: Option<Arc<tokio::sync::Mutex<()>>>,
     /// Durable native recovery owner.
     pub recovery: Option<Arc<crate::native_recovery::NativeRecoveryRuntime>>,
     /// Durable signed completed observations.
@@ -873,11 +875,15 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         }
         let backups =
             Arc::clone(self.backups.as_ref().ok_or("native backup fleet is not composed")?);
+        let backup_gate = Arc::clone(
+            self.backup_gate.as_ref().ok_or("native backup fleet gate is not composed")?,
+        );
         let database_id = assignment.database.clone();
         let operation = operation.to_owned();
         // The blocking owner retains fleet serialization throughout provider I/O;
         // the async request only awaits a Send join handle.
         tokio::task::spawn_blocking(move || {
+            let _gate = tokio::runtime::Handle::current().block_on(backup_gate.lock());
             let mut fleet = backups.lock().map_err(|_| "native backup fleet poisoned")?;
             tokio::runtime::Handle::current()
                 .block_on(fleet.lifecycle_delete(&database_id, &operation))

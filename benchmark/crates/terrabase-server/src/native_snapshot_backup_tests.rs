@@ -244,6 +244,24 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
         Err(super::native_snapshot_backup::SnapshotBackupError::Snapshot)
     );
     std::fs::remove_file(staging.join("chunk-extra")).unwrap();
+    let failed_download = root.join("failed-download");
+    assert!(matches!(
+        super::native_snapshot_backup::restore_snapshot(
+            &destination,
+            "roundtrip-retry",
+            &failed_download,
+            &*data_lease as &dyn BackupReader,
+            follower_binding.clone(),
+            RegionCode::GRU,
+            &placement,
+            root.join("failed-target"),
+            Arc::new(StaticKeys(Arc::clone(&data_lease))),
+            8 * 1024 * 1024,
+        )
+        .await,
+        Err(super::native_snapshot_backup::SnapshotBackupError::Encryption)
+    ));
+    assert!(!failed_download.exists());
     let target = root.join("target");
     let restore_result = super::native_snapshot_backup::restore_snapshot(
         &destination,

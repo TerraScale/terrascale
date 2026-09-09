@@ -1214,6 +1214,7 @@ impl ServerConfig {
                             // plus the authenticated envelope. Reserve 16 MiB.
                             || destination.max_artifact_bytes < 16 * 1024 * 1024
                             || destination.max_artifact_bytes > 256 * 1024 * 1024
+                            || destination.max_point_bytes > 4 * 1024 * 1024 * 1024
                             || destination.max_point_bytes < destination.max_artifact_bytes
                             || (provider == Provider::Oci
                                 && (destination.signing_region != oci_region_name(region)

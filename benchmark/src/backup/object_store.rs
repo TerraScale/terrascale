@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use futures_util::StreamExt;
-use object_store::aws::{AmazonS3Builder, AwsCredential, AwsCredentialProvider, S3CopyIfNotExists};
+use object_store::aws::{AmazonS3Builder, AwsCredential, S3CopyIfNotExists};
 use object_store::path::Path as ObjectPath;
 use object_store::{ClientOptions, MultipartUpload, ObjectStore, PutMode, RetryConfig};
 
@@ -58,6 +58,14 @@ impl Credentials {
             session_token: Some(session_token),
             expires_at: Some(expires_at),
         }
+    }
+
+    fn take_parts(&mut self) -> (String, String, Option<String>) {
+        (
+            std::mem::take(&mut self.access_key),
+            std::mem::take(&mut self.secret_key),
+            std::mem::take(&mut self.session_token),
+        )
     }
 }
 impl fmt::Debug for Credentials {
@@ -109,7 +117,7 @@ impl object_store::CredentialProvider for S3WorkloadIdentityProvider {
     type Credential = AwsCredential;
 
     async fn get_credential(&self) -> object_store::Result<Arc<Self::Credential>> {
-        let credentials = self.0.credentials().await.map_err(|error| {
+        let mut credentials = self.0.credentials().await.map_err(|error| {
             object_store::Error::Generic { store: "S3", source: Box::new(error) }
         })?;
         if credentials.access_key.is_empty()
@@ -122,11 +130,8 @@ impl object_store::CredentialProvider for S3WorkloadIdentityProvider {
                 source: Box::new(WorkloadIdentityError::Invalid),
             });
         }
-        Ok(Arc::new(AwsCredential {
-            key_id: credentials.access_key,
-            secret_key: credentials.secret_key,
-            token: credentials.session_token,
-        }))
+        let (key_id, secret_key, token) = credentials.take_parts();
+        Ok(Arc::new(AwsCredential { key_id, secret_key, token }))
     }
 }
 
@@ -1196,6 +1201,7 @@ fn validate_config(config: &DestinationConfig) -> Result<(), TransferError> {
         || !config.permitted_geographies.contains(&config.verified_geography)
         || config.max_artifact_bytes == 0
         || config.max_artifact_bytes > 256 * 1024 * 1024
+        || config.max_point_bytes > 4 * 1024 * 1024 * 1024
         || config.max_point_bytes < config.max_artifact_bytes
     {
         return Err(TransferError::Configuration);
@@ -1227,6 +1233,7 @@ fn validate_config_for_workload_identity(config: &DestinationConfig) -> Result<(
         || !config.permitted_geographies.contains(&config.verified_geography)
         || config.max_artifact_bytes == 0
         || config.max_artifact_bytes > 256 * 1024 * 1024
+        || config.max_point_bytes > 4 * 1024 * 1024 * 1024
         || config.max_point_bytes < config.max_artifact_bytes
     {
         return Err(TransferError::Configuration);
@@ -1267,6 +1274,17 @@ fn validate_point_prefix(point: &Path, prefix: &str) -> Result<(), TransferError
     let Some(name) = point.file_name().and_then(|name| name.to_str()) else {
         return Ok(());
     };
+    // A canonical recovery-point prefix is an identity boundary.  Do not
+    // allow a caller to place an arbitrary staging directory under it: the
+    // directory basename must carry the same recovery identity.  Opaque
+    // transport fixtures retain their existing prefix-only behavior.
+    let prefix_name = prefix.rsplit('/').next().ok_or(TransferError::InvalidPoint)?;
+    if let Some(prefix_identity) = prefix_name.strip_prefix("rp-")
+        && super::manifest::validate_identity(prefix_identity).is_ok()
+        && name != prefix_name
+    {
+        return Err(TransferError::InvalidPoint);
+    }
     let Some(identity) = name.strip_prefix("rp-") else {
         return Ok(());
     };
@@ -1590,6 +1608,13 @@ mod tests {
                 .await,
             Err(TransferError::InvalidPoint)
         );
+        let arbitrary = root.join("staging");
+        fs::create_dir_all(&arbitrary).unwrap();
+        assert_eq!(
+            destination.upload_point(&arbitrary, &format!("db/rp-{identity}")).await,
+            Err(TransferError::InvalidPoint),
+            "canonical prefixes must be bound to a canonical point directory"
+        );
         destination.upload_point(&point, &format!("db/rp-{identity}")).await.unwrap();
         fs::write(point.join("member.tbv3e"), b"replacement").unwrap();
         assert_eq!(
@@ -1842,6 +1867,13 @@ mod tests {
         config.verified_geography = "BR".into();
         config.endpoint = "http://fly.storage.tigris.dev".into();
         assert_eq!(validate_config(&config), Err(TransferError::Configuration));
+        config.endpoint = "https://fly.storage.tigris.dev".into();
+        config.provider = Provider::Tigris;
+        config.max_point_bytes = 4 * 1024 * 1024 * 1024 + 1;
+        assert_eq!(
+            validate_config_for_workload_identity(&config),
+            Err(TransferError::Configuration)
+        );
     }
 
     #[test]

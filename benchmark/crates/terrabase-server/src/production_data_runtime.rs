@@ -887,6 +887,7 @@ impl ProductionAdmissionRuntime {
     pub fn with_native_deletion(
         mut self,
         backups: Arc<Mutex<terrabase::backup::worker::NativeBackupFleet>>,
+        backup_gate: Arc<tokio::sync::Mutex<()>>,
     ) -> Result<Self, String> {
         let host = Arc::try_unwrap(self.host).map_err(|_| "admission host already shared")?;
         let preflight = self.registry.clone();
@@ -895,6 +896,7 @@ impl ProductionAdmissionRuntime {
         self.host = Arc::new(
             host.with_storage_stop_preflight(Arc::new(move |record, _request| {
                 let protected = preflight.stop_preflight(record)?;
+                let _gate = backup_gate.try_lock().map_err(|_| "native backup fleet busy")?;
                 let retained = backups
                     .lock()
                     .map_err(|_| "native backup fleet poisoned")?

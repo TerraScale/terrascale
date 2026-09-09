@@ -1986,6 +1986,7 @@ mod tests {
             worker: Arc::new(RegistryLifecycleWorker {
                 registry: Arc::clone(&registry),
                 backups: None,
+                backup_gate: None,
                 recovery: Some(Arc::clone(&runtime)),
                 receipts,
                 journal: None,

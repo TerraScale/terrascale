@@ -63,12 +63,9 @@ pub async fn upload_snapshot(
     {
         return Err(SnapshotBackupError::Provider);
     }
-    if !placement.allows(source_region)
-        || destinations.iter().any(|destination| {
-            destination.admitted_region() != source_region
-                || !placement.allows(destination.admitted_region())
-        })
-    {
+    if destinations.iter().any(|destination| {
+        validate_residency(source_region, destination.admitted_region(), placement).is_err()
+    }) {
         return Err(SnapshotBackupError::Provider);
     }
     let metadata = lease.metadata();
@@ -281,13 +278,13 @@ pub async fn restore_snapshot(
     max_bytes: u64,
 ) -> Result<(WalFollowerDriver, WalCheckpointMessage), SnapshotBackupError> {
     validate_residency(source_region, destination.admitted_region(), placement)?;
-    let mut downloaded = false;
+    let mut staging_cleanup = RestoreStagingCleanup::new(staging);
     let result = async {
         destination
             .download_point_with_byte_limit(prefix, staging, max_bytes)
             .await
             .map_err(|_| SnapshotBackupError::Provider)?;
-        downloaded = true;
+        staging_cleanup.mark_downloaded();
         let envelope = read_bounded(&staging.join("manifest.tbv3e"), 2 * 1024 * 1024)?;
         let manifest_bytes =
             reader.open_backup_envelope(&envelope).map_err(|_| SnapshotBackupError::Encryption)?;
@@ -336,10 +333,40 @@ pub async fn restore_snapshot(
         sink.finish_local().await.map_err(|_| SnapshotBackupError::Snapshot)
     }
     .await;
-    if downloaded && result.is_err() {
-        let _ = std::fs::remove_dir_all(staging);
+    if result.is_ok() {
+        staging_cleanup.keep();
     }
     result
+}
+
+/// Removes a downloaded restore point if any verification or installation step
+/// fails, including cancellation while the restore future is suspended.
+struct RestoreStagingCleanup {
+    path: PathBuf,
+    downloaded: bool,
+    keep: bool,
+}
+
+impl RestoreStagingCleanup {
+    fn new(path: &Path) -> Self {
+        Self { path: path.to_owned(), downloaded: false, keep: false }
+    }
+
+    fn mark_downloaded(&mut self) {
+        self.downloaded = true;
+    }
+
+    fn keep(&mut self) {
+        self.keep = true;
+    }
+}
+
+impl Drop for RestoreStagingCleanup {
+    fn drop(&mut self) {
+        if self.downloaded && !self.keep {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
 }
 
 fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), SnapshotBackupError> {

@@ -1661,9 +1661,21 @@ fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
     // a sync error cannot make generic cleanup remove the published path.
     staging.mark_published();
     if let Some(parent) = target.parent() {
-        super::sync_directory(parent)?;
+        sync_restore_parent(parent)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+static FAIL_NEXT_RESTORE_PARENT_SYNC: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn sync_restore_parent(parent: &Path) -> Result<(), BackupError> {
+    #[cfg(test)]
+    if FAIL_NEXT_RESTORE_PARENT_SYNC.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return Err(BackupError::DestinationUnavailable);
+    }
+    super::sync_directory(parent)
 }
 
 fn write_restore_metadata(
@@ -1781,7 +1793,7 @@ fn publish_with_identity(
     // it for recovery.
     staging.mark_published();
     if let Some(parent) = target.parent() {
-        super::sync_directory(parent)?;
+        sync_restore_parent(parent)?;
     }
     Ok(())
 }
@@ -2560,5 +2572,58 @@ mod digest_tests {
         drop(engine);
         assert!(matches!(verify_staging(&path, &replay), Err(BackupError::ChecksumMismatch)));
         std::fs::remove_dir_all(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    fn test_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "terrabase-restore-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ))
+    }
+
+    #[test]
+    fn exchange_sync_failure_preserves_retired_target_for_recovery() {
+        let root = test_root("exchange-sync-failure");
+        let target = root.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("state"), b"previous").unwrap();
+        let staging = StagingDir::create(&target).unwrap();
+        std::fs::write(staging.path().join("state"), b"restored").unwrap();
+
+        FAIL_NEXT_RESTORE_PARENT_SYNC.store(true, std::sync::atomic::Ordering::SeqCst);
+        let result = publish_with_identity(&staging, &target, true);
+        assert_eq!(result, Err(BackupError::DestinationUnavailable));
+        assert_eq!(std::fs::read(target.join("state")).unwrap(), b"restored");
+
+        // The caller's failure cleanup must preserve the previous target,
+        // which is now held at the exchanged staging pathname.
+        staging.discard();
+        assert_eq!(std::fs::read(staging.path().join("state")).unwrap(), b"previous");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn successful_exchange_discards_retired_target() {
+        let root = test_root("exchange-success");
+        let target = root.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("state"), b"previous").unwrap();
+        let staging = StagingDir::create(&target).unwrap();
+        std::fs::write(staging.path().join("state"), b"restored").unwrap();
+
+        publish_with_identity(&staging, &target, true).unwrap();
+        staging.discard_replaced();
+        assert_eq!(std::fs::read(target.join("state")).unwrap(), b"restored");
+        assert!(!staging.path().exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

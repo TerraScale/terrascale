@@ -215,7 +215,7 @@ fn backup_envelopes_bind_nonce_and_metadata_to_the_key() {
         DatabaseKey::from_bytes([0x37; 32]),
         context.clone(),
     )
-        .unwrap();
+    .unwrap();
     let envelope = writer.seal(b"backup payload").unwrap();
     let next = writer.seal(b"backup payload").unwrap();
     assert_ne!(envelope, next, "each backup record must use a fresh ordinal nonce");

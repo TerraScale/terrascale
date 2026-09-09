@@ -421,7 +421,7 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
         })?);
         startup_owners.native = Some(Arc::clone(&native));
         admission = admission
-            .with_native_deletion(native.fleet())
+            .with_native_deletion(native.fleet(), native.fleet_gate())
             .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
         let admission = Arc::new(admission);
         serve_admitted_production(
@@ -643,6 +643,7 @@ async fn serve_admitted_production(
     let member_for_startup_cleanup = Arc::clone(&member);
     let startup_result: Result<bool, Box<dyn Error + Send + Sync>> = async {
         let lifecycle_fleet = native.fleet();
+        let lifecycle_gate = native.fleet_gate();
         let Some(public) = public else {
             return Err(Box::new(DaemonError::ProductionConfigurationMissing)
                 as Box<dyn Error + Send + Sync>);
@@ -814,6 +815,7 @@ async fn serve_admitted_production(
             Arc::new(crate::production_lifecycle_control::RegistryLifecycleWorker {
                 registry: Arc::clone(&registry),
                 backups: Some(lifecycle_fleet),
+                backup_gate: Some(lifecycle_gate),
                 recovery: Some(Arc::clone(&recovery)),
                 receipts,
                 journal: Some(journal.clone().ok_or_else(|| {
@@ -2290,7 +2292,8 @@ mod tests {
             std::fs::remove_dir_all(root).unwrap();
             return;
         }
-        let admission = Arc::new(admission.with_native_deletion(native.fleet()).unwrap());
+        let admission =
+            Arc::new(admission.with_native_deletion(native.fleet(), native.fleet_gate()).unwrap());
         let publication_key = root.join("lifecycle-publisher.key");
         std::fs::write(&publication_key, "p".repeat(32)).unwrap();
         let outbox = root.join("lifecycle-outbox.sqlite");
