@@ -53,3 +53,14 @@ The goal remains active until each requested requirement has direct, correctly s
 
 These thresholds are intentionally proposed pending production workload calibration: p99 commit latency with backup enabled must be no more than 10% above the same workload with backup disabled; backup RSS must remain below 256 MiB per database stream; capture-to-object lag must remain below 10 seconds for 99% of intervals; a successful restore must pass SQLite integrity check and exact row/digest verification; and any failed or interrupted transfer must publish no incomplete recovery point. Thresholds must be measured over repeated runs, not inferred from the single-run timings above.
 - Hardened multipart upload error handling: any source read, digest, part upload, or completion failure now explicitly aborts the multipart session; object-store regression tests pass after the change.
+- Reproducible S3Mock script rerun after multipart abort hardening: SQLite integrity and 100,000-row verification passed; corruption, truncation, and missing-WAL rejection passed; write 1.185 s, upload 1.617 s, restore 298 ms.
+- `nice -n 10 cargo check --workspace --all-targets`: passed (warnings only) after multipart abort and SQLite recovery test changes.
+- Reproducible script rerun: 100,000-row SQLite integrity/recovery and corruption/truncation/missing-WAL checks passed; writes 1.152 s, upload 1.531 s, restore 281 ms.
+- Resource timing via `/run/current-system/sw/bin/time -p scripts/backup-s3-roundtrip.sh`: real 12.33 s, user 2.31 s, system 1.09 s; test reported writes 1.106 s, upload 1.653 s, restore 188 ms. This environment lacks `/usr/bin/time -v`, so peak RSS was not captured.
+- The S3Mock script now samples test-process RSS with `ps`; latest run passed with peak observed RSS 76,436 KiB (single run, includes test harness and compiler process behavior, not a per-stream production limit).
+- Three consecutive S3Mock runs all passed recovery and fault checks. Timings: writes 1.112–1.172 s, upload 1.674–1.743 s, restore 215–448 ms; sampled peak RSS 76,164–80,160 KiB. This remains a transport fixture, not a concurrent native-stream benchmark.
+
+## Upstream Litestream audit (pinned HEAD 4ed7a308f6271ebfd2b0a6e4b70b03011a37e4a3)
+
+The upstream source exposes configurable write-sync intervals, periodic snapshots, snapshot/L0 retention monitors, and replica clients for S3 plus GCS, Azure Blob, SFTP, WebDAV, and NATS transports. TerraBase currently implements its own encrypted native format and only OCI/Tigris provider adapters by deliberate residency policy. Therefore “all Litestream features” is not yet true: non-OCI/Tigris transports, Litestream LTX compatibility, and a native continuous SQLite VFS tailer remain gaps requiring an explicit product decision and implementation.
+- Independent MinIO run after strengthened SQLite recovery and fault checks: all passed; writes 1.088 s, multipart upload 593 ms, restore 63 ms for the 29.5 MB WAL.

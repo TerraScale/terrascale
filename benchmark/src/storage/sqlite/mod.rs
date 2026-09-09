@@ -26,7 +26,7 @@
 //! ## Durability mapping
 //!
 //! Connections: WAL mode, `foreign_keys=ON`, a 60-second busy timeout, and
-//! `synchronous=FULL` for direct durable mutations. One
+//! `synchronous=NORMAL` as the throughput-oriented baseline. One
 //! writer connection (behind a mutex, per D-28's one-writer-per-file rule)
 //! plus a read pool; `commit_intents` runs one `BEGIN IMMEDIATE`
 //! transaction per batch, so a group commit is one fsync class.
@@ -281,7 +281,9 @@ const DEFAULT_RSS_BUDGET_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The busy timeout every connection applies (the production pairing the
-/// durable configuration: WAL, `synchronous=FULL`, 60s busy timeout).
+/// throughput-oriented configuration: WAL, `synchronous=NORMAL`, 60s busy
+/// timeout). `Synced` transactions explicitly raise this to `FULL` while
+/// they commit and restore the baseline afterwards.
 #[allow(
     clippy::duration_suboptimal_units,
     reason = "60 seconds is the documented pairing; this toolchain has no from_minutes"
@@ -2347,12 +2349,15 @@ impl CommitContext {
             {
                 Err(())
             } else {
-                writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())
+                writer.execute_batch("PRAGMA synchronous = NORMAL").map_err(|_| ())
             }
             #[cfg(not(test))]
-            writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())
+            writer.execute_batch("PRAGMA synchronous = NORMAL").map_err(|_| ())
         } else {
-            Ok(())
+            // Keep the connection at the NORMAL baseline between waves. A
+            // Synced wave temporarily raises the pragma to FULL above, then
+            // drops it here once its durable commit has completed.
+            writer.execute_batch("PRAGMA synchronous = NORMAL").map_err(|_| ())
         };
         if restored.is_err() {
             return match result {
@@ -4688,7 +4693,7 @@ fn open_read_connection(
 }
 
 /// Applies the production pairing to one connection: WAL, 60s busy timeout,
-/// foreign keys, `synchronous=FULL`, and the per-file resource budget.
+/// foreign keys, `synchronous=NORMAL`, and the per-file resource budget.
 fn configure_connection(connection: &Connection) -> Result<(), StorageOpenError> {
     connection
         .query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
@@ -4699,7 +4704,7 @@ fn configure_connection(connection: &Connection) -> Result<(), StorageOpenError>
     // cache_size is KiB (rather than pages), so the budget is stable across
     // SQLite page-size choices; mmap is address space and capped separately.
     let pragmas = format!(
-        "PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;
+        "PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;
          PRAGMA wal_autocheckpoint = 0; PRAGMA temp_store = MEMORY;
          PRAGMA cache_size = -{}; PRAGMA mmap_size = {};",
         cache_kib(),

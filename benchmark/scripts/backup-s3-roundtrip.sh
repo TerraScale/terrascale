@@ -20,4 +20,16 @@ if [[ "$ready" != true ]]; then
   exit 1
 fi
 curl -fsS -X PUT "http://127.0.0.1:${port}/terrabase" >/dev/null
-TERRABASE_MINIO_ENDPOINT="http://127.0.0.1:${port}" nice -n 10 cargo test -p terrabase --lib backup::object_store::tests::minio_round_trip_100k_wal_records -- --ignored --nocapture
+log=$(mktemp)
+TERRABASE_MINIO_ENDPOINT="http://127.0.0.1:${port}" nice -n 10 cargo test -p terrabase --lib backup::object_store::tests::minio_round_trip_100k_wal_records -- --ignored --nocapture >"$log" 2>&1 &
+test_pid=$!
+peak_kib=0
+while kill -0 "$test_pid" 2>/dev/null; do
+  rss=$(ps -eo pid=,rss= | awk -v root="$test_pid" '$1 == root {print $2}')
+  if [[ -n "$rss" && "$rss" -gt "$peak_kib" ]]; then peak_kib=$rss; fi
+  sleep 0.1
+done
+wait "$test_pid"
+cat "$log"
+rm -f "$log"
+echo "peak observed test RSS: ${peak_kib} KiB"

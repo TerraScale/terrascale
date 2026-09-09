@@ -991,7 +991,7 @@ fn row_model_pragmas_and_idle_hook_are_explicit() {
     let synchronous: i64 = connection
         .query_row("PRAGMA synchronous", [], |row| row.get(0))
         .expect("synchronous pragma");
-    assert_eq!(synchronous, 2, "direct durable mutations require FULL");
+    assert_eq!(synchronous, 1, "connections use NORMAL as the write baseline");
     drop(connection);
     assert!(!storage.close_idle(Duration::from_mins(1)), "a newly opened file is not idle");
     std::thread::sleep(Duration::from_millis(2));
@@ -3092,7 +3092,7 @@ fn merge_metadata_commits_rolls_back_and_reopens_with_its_document() {
 }
 
 #[test]
-fn waves_preserve_full_baseline_for_direct_durable_mutations() {
+fn waves_restore_normal_baseline_after_durable_mutations() {
     let (dir, mut storage) = sqlite_store("synced-wave-pragma");
     storage
         .raw_writer_connection()
@@ -3127,7 +3127,7 @@ fn waves_preserve_full_baseline_for_direct_durable_mutations() {
         assert_eq!(observed, vec![expected], "durability must hold during the write transaction");
         assert_eq!(
             writer.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0)).unwrap(),
-            2
+            1
         );
     }
     storage.raw_writer_connection().execute("DELETE FROM observed_sync", []).unwrap();
@@ -3174,7 +3174,7 @@ fn waves_preserve_full_baseline_for_direct_durable_mutations() {
             .raw_writer_connection()
             .query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        1
     );
     drop(storage);
     std::fs::remove_dir_all(dir).unwrap();
