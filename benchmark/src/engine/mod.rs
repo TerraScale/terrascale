@@ -1633,13 +1633,13 @@ impl Engine {
         /// A gap of this length with no arrival ends coalescing: arrivals
         /// cluster within the writers' turnaround, and waiting past the gap
         /// would only add latency to the wave.
-        const GROUP_QUIET_GAP: std::time::Duration = std::time::Duration::from_micros(500);
+        const GROUP_QUIET_GAP: std::time::Duration = std::time::Duration::from_millis(2);
         /// The widest coalesce window: how long a narrow group keeps
         /// collecting before it commits anyway. One full writer turnaround:
         /// a wave's writers spread over their lock-contended snapshots, and
         /// cutting the window inside that spread splits the wave — two syncs
         /// where one would have answered everyone.
-        const GROUP_HARVEST_WINDOW_MAX: std::time::Duration = std::time::Duration::from_millis(3);
+        const GROUP_HARVEST_WINDOW_MAX: std::time::Duration = std::time::Duration::from_millis(10);
         // The wave width to gather toward. It starts at the harvest width
         // and grows with every committed wave, so a saturated run's next
         // wave coalesces to full width instead of splitting at the floor —
@@ -1678,6 +1678,7 @@ impl Engine {
             let (intents, senders): (Vec<storage::CommitIntent>, Vec<_>) =
                 batch.into_iter().unzip();
             wave_width = wave_width.max(batch_len.saturating_add(1));
+            let batch_started = std::time::Instant::now();
             // Submission only borrows the Engine storage mutex long enough to
             // enqueue into the storage-owned lane. Waiting for the SQLite
             // transaction happens after the guard is dropped, allowing
@@ -1690,6 +1691,14 @@ impl Engine {
             let results = completion.and_then(|handle| handle.recv().ok()).unwrap_or_else(|| {
                 vec![storage::CommitResult::Rejected(storage::CommitRejection::Storage); batch_len]
             });
+            if std::env::var_os("TERRABASE_TRACE_BATCHES").is_some() {
+                eprintln!(
+                    "terrabase commit batch intents={} elapsed_us={} wave_width={}",
+                    batch_len,
+                    batch_started.elapsed().as_micros(),
+                    wave_width
+                );
+            }
             for (sender, result) in senders.into_iter().zip(results) {
                 let _ = sender.send(result);
             }

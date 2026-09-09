@@ -493,18 +493,25 @@ impl ObjectDestination {
                 self.store.put_multipart(&key).await.map_err(|_| TransferError::Unavailable)?;
             let mut remaining = entry.length;
             let mut hasher = blake3::Hasher::new();
-            while remaining > 0 {
-                let size = remaining.min(8 * 1024 * 1024) as usize;
-                let mut chunk = vec![0; size];
-                file.read_exact(&mut chunk).map_err(|_| TransferError::LocalIo)?;
-                hasher.update(&chunk);
-                upload.put_part(chunk.into()).await.map_err(|_| TransferError::Unavailable)?;
-                remaining -= size as u64;
+            let streamed = async {
+                while remaining > 0 {
+                    let size = remaining.min(8 * 1024 * 1024) as usize;
+                    let mut chunk = vec![0; size];
+                    file.read_exact(&mut chunk).map_err(|_| TransferError::LocalIo)?;
+                    hasher.update(&chunk);
+                    upload.put_part(chunk.into()).await.map_err(|_| TransferError::Unavailable)?;
+                    remaining -= size as u64;
+                }
+                if hasher.finalize() != entry.digest {
+                    return Err(TransferError::Integrity);
+                }
+                upload.complete().await.map_err(|_| TransferError::Unavailable)
             }
-            if hasher.finalize() != entry.digest {
-                return Err(TransferError::Integrity);
+            .await;
+            if streamed.is_err() {
+                let _ = upload.abort().await;
             }
-            upload.complete().await.map_err(|_| TransferError::Unavailable)?;
+            streamed?;
             self.verify_remote(&key, entry).await?;
         }
         let key = object_key(prefix, INDEX)?;
@@ -998,35 +1005,54 @@ mod tests {
         ObjectDestination::for_test(Provider::Oci, store, 1024, 4096)
     }
 
-    /// MinIO round-trip qualification for a large WAL-like payload. Set
+    /// SQLite WAL transport/recovery qualification (not the native backup format). Set
     /// `TERRABASE_MINIO_ENDPOINT` to the emulator endpoint to run it.
     #[test]
     #[ignore = "requires a running S3 emulator"]
     fn minio_round_trip_100k_wal_records() {
         let endpoint = std::env::var("TERRABASE_MINIO_ENDPOINT")
             .expect("set TERRABASE_MINIO_ENDPOINT=http://127.0.0.1:19000");
+        let prefix = format!(
+            "qualification/100k-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        );
         let root = std::env::temp_dir().join(format!("tb-minio-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
+        let point = root.with_extension("point");
+        let _ = fs::remove_dir_all(&point);
+        fs::create_dir_all(&point).unwrap();
         let db_path = root.join("source.sqlite3");
         let connection = rusqlite::Connection::open(&db_path).unwrap();
         connection.pragma_update(None, "journal_mode", "WAL").unwrap();
         connection
             .execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT NOT NULL);")
             .unwrap();
+        connection.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        fs::copy(&db_path, point.join("snapshot.tbv3e")).unwrap();
+        let write_started = std::time::Instant::now();
         let transaction = connection.unchecked_transaction().unwrap();
         for i in 0..100_000_i64 {
             transaction
                 .execute(
                     "INSERT INTO items VALUES (?1, ?2)",
-                    rusqlite::params![i, format!("value-{i}")],
+                    rusqlite::params![i, format!("value-{i}-{}", "abcdef0123456789".repeat(16))],
                 )
                 .unwrap();
         }
         transaction.commit().unwrap();
+        let write_elapsed = write_started.elapsed();
         let payload = fs::read(root.join("source.sqlite3-wal")).unwrap();
-        fs::write(root.join("wal.tbv3e"), &payload).unwrap();
-        fs::write(root.join("manifest.tbv3e"), b"wal.tbv3e\n").unwrap();
+        assert!(payload.len() > 16 * 1024 * 1024, "exercise multiple multipart parts");
+        fs::write(point.join("wal.tbv3e"), &payload).unwrap();
+        fs::write(
+            point.join("manifest.tbv3e"),
+            b"transport fixture, not an encrypted native manifest",
+        )
+        .unwrap();
+        drop(connection);
         let config = DestinationConfig {
             admitted_region: crate::regions::RegionCode::GRU,
             provider: Provider::Oci,
@@ -1044,17 +1070,73 @@ mod tests {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let destination = ObjectDestination::new_for_test(config).unwrap();
             let upload_started = std::time::Instant::now();
-            destination.upload_point(&root, "db/100k").await.unwrap();
+            destination.upload_point(&point, &prefix).await.unwrap();
             let upload_elapsed = upload_started.elapsed();
             fs::remove_dir_all(&root).unwrap();
+            fs::remove_dir_all(&point).unwrap();
+            assert!(!db_path.exists());
             let restore_started = std::time::Instant::now();
-            destination.download_point("db/100k", &root).await.unwrap();
+            destination.download_point(&prefix, &root).await.unwrap();
             let restore_elapsed = restore_started.elapsed();
             let restored = fs::read(root.join("wal.tbv3e")).unwrap();
             assert_eq!(restored, payload);
+            fs::rename(root.join("snapshot.tbv3e"), &db_path).unwrap();
+            fs::rename(root.join("wal.tbv3e"), root.join("source.sqlite3-wal")).unwrap();
+            let recovered = rusqlite::Connection::open(&db_path).unwrap();
+            let integrity: String =
+                recovered.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
+            assert_eq!(integrity, "ok");
+            let mut statement =
+                recovered.prepare("SELECT id, value FROM items ORDER BY id").unwrap();
+            let mut rows = statement.query([]).unwrap();
+            for expected in 0..100_000_i64 {
+                let row = rows.next().unwrap().expect("all committed rows must recover");
+                assert_eq!(row.get::<_, i64>(0).unwrap(), expected);
+                assert_eq!(
+                    row.get::<_, String>(1).unwrap(),
+                    format!("value-{expected}-{}", "abcdef0123456789".repeat(16))
+                );
+            }
+            assert!(rows.next().unwrap().is_none(), "no duplicate or unexpected rows");
+            eprintln!("SQLite recovery verified 100000 exact rows; integrity_check=ok");
+            // Mutate only this fixture's remote WAL. Integrity failures must
+            // never leave a published target directory.
+            let remote_wal = object_key(&prefix, "wal.tbv3e").unwrap();
+            let rejected = root.with_extension("rejected");
+            let mut corrupt = payload.clone();
+            let middle = corrupt.len() / 2;
+            corrupt[middle] ^= 0x80;
+            destination.store.put(&remote_wal, corrupt.into()).await.unwrap();
+            assert_eq!(
+                destination.download_point(&prefix, &rejected).await,
+                Err(TransferError::Integrity)
+            );
+            assert!(!rejected.exists());
+            destination
+                .store
+                .put(&remote_wal, payload[..payload.len() / 2].to_vec().into())
+                .await
+                .unwrap();
+            assert_eq!(
+                destination.download_point(&prefix, &rejected).await,
+                Err(TransferError::Integrity)
+            );
+            assert!(!rejected.exists());
+            destination.store.delete(&remote_wal).await.unwrap();
+            assert_eq!(
+                destination.download_point(&prefix, &rejected).await,
+                Err(TransferError::Unavailable)
+            );
+            assert!(!rejected.exists());
+            destination.delete_point(&prefix).await.unwrap();
             eprintln!(
-                "minio 100k sqlite WAL: {} bytes, upload {:?}, restore {:?}",
+                "S3 corruption, truncation, and missing WAL rejected; no partial restore published"
+            );
+
+            eprintln!(
+                "sqlite 100k WAL: {} bytes, writes {:?}, upload {:?}, restore {:?}",
                 payload.len(),
+                write_elapsed,
                 upload_elapsed,
                 restore_elapsed
             );

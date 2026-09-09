@@ -70,8 +70,8 @@ current 1,000-operation API cap and durable commit still leave headroom before
 The concurrent individual-write run confirms that adding clients does not
 raise durable throughput: requests serialize during lifecycle admission and
 the single SQLite writer still performs FULL-synchronous commits. Widening the
-coalescing timer without moving that admission work would add tail latency
-without proving a gain, so it was deliberately left unchanged.
+coalescing timer without moving that admission work would add tail latency;
+after the commit wait was detached, a controlled timing trial became useful.
 
 ## Admission-cache follow-up
 
@@ -89,3 +89,13 @@ enqueued into the SQLite committer and their completion receiver is awaited
 after the mutex is released. The concurrent probe measured **192 ops/s** after
 this change, confirming correctness and removing lock occupancy, but showing
 that the dominant limit is still SQLite's single FULL-synchronous writer.
+
+Evidence-driven coalescing tuning then increased the quiet gap from 500 µs to
+2 ms and the harvest cap from 3 ms to 10 ms. The concurrent probe reached
+**218 ops/s** (about 14% above the 192-op/s baseline); traced waves averaged
+8.4 intents and 17 of 191 measured waves were single-intent. Raising the
+initial target above eight did not improve throughput (215 ops/s), so it was
+reverted to avoid unnecessary latency.
+
+A further 5 ms quiet gap / 20 ms cap trial also measured **215 ops/s**, so the
+2 ms / 10 ms setting is retained as the better latency-throughput point.
