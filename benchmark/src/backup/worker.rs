@@ -368,7 +368,7 @@ impl NativeBackupFleet {
             })
             .await
             .map_err(|_| FleetError::Capture)?
-            .map_err(|_| FleetError::Capture)?;
+            .map_err(|error| { eprintln!("native lifecycle read failed: {error:?}"); FleetError::Capture })?;
             let point = result.manifest().clone();
             let point_path = staging.join(format!("rp-{}", point.identity()));
             point.verify(&staging).map_err(|_| FleetError::Capture)?;
@@ -816,14 +816,16 @@ impl NativeBackupFleet {
             .engine
             .engine()
             .lifecycle_state(&stream.config.engine.engine().scope_for(&tenant))
-            .map_err(|_| FleetError::Capture)?;
+            .map_err(|error| { eprintln!("native lifecycle read failed: {error:?}"); FleetError::Capture })?;
         if lifecycle.paused || lifecycle.access_revoked() {
             stream.paused = lifecycle.paused;
             return Err(FleetError::Configuration);
         }
         stream.health.protected = false;
         stream.verified_at = None;
-        sync_stream(database, stream, self.limits).await?;
+        sync_stream(database, stream, self.limits)
+            .await
+            .map_err(|error| { eprintln!("native forced sync failed: {error:?}"); error })?;
         let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
         super::verify_latest_chain_encrypted(&stream.config.staging, reader.as_ref())
             .map_err(|error| { eprintln!("native final verify failed: {error:?}"); FleetError::Capture })?
@@ -1507,8 +1509,10 @@ async fn sync_stream(
         enforce_retention(identity, stream, limits).await?;
         stream.retention_due = Some(Instant::now() + Duration::from_secs(3600));
     }
-    let pending = point_paths(&stream.config.staging, limits.points_per_stream)?;
-    if !pending.is_empty() && has_pending_uploads(stream, &pending, limits)? {
+    let pending = point_paths(&stream.config.staging, limits.points_per_stream)
+        .map_err(|error| { eprintln!("native pending points failed: {error:?}"); error })?;
+    if !pending.is_empty() && has_pending_uploads(stream, &pending, limits)
+        .map_err(|error| { eprintln!("native pending journal failed: {error:?}"); error })? {
         // Drain the durable transfer queue before capturing another root. An
         // outage cannot accumulate repeated full snapshots in the reserve.
         if upload_destinations(identity, stream, &pending, limits).await? {
@@ -1533,8 +1537,10 @@ async fn sync_stream(
             evict_retired_local_chains(stream, limits)?;
         }
     }
-    let points = point_paths(&stream.config.staging, limits.points_per_stream)?;
-    let bytes = staged_bytes(&stream.config.staging)?;
+    let points = point_paths(&stream.config.staging, limits.points_per_stream)
+        .map_err(|error| { eprintln!("native points failed: {error:?}"); error })?;
+    let bytes = staged_bytes(&stream.config.staging)
+        .map_err(|error| { eprintln!("native bytes failed: {error:?}"); error })?;
     let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
     let mut chain = if points.is_empty() {
         Vec::new()
@@ -1690,12 +1696,18 @@ async fn sync_stream(
             .map_err(|_| FleetError::Capture)?;
             match result {
                 Ok(backup) => captured_boundary = backup.manifest().boundary_sequence(),
-                Err(_) => capture_refusal = Some(FleetError::Capture),
+                Err(error) => {
+                    eprintln!("native run backup failed: {error:?}");
+                    capture_refusal = Some(FleetError::Capture)
+                }
             }
         }
     }
-    let points = point_paths(&stream.config.staging, limits.points_per_stream)?;
-    let failed = upload_destinations(identity, stream, &points, limits).await?;
+    let points = point_paths(&stream.config.staging, limits.points_per_stream)
+        .map_err(|error| { eprintln!("native final points failed: {error:?}"); error })?;
+    let failed = upload_destinations(identity, stream, &points, limits)
+        .await
+        .map_err(|error| { eprintln!("native final upload failed: {error:?}"); error })?;
     if failed {
         return Err(FleetError::Upload);
     }
@@ -1713,6 +1725,9 @@ async fn sync_stream(
     }
     stream.health.protected_sequence = captured_boundary.get();
     stream.health.protected = capture_refusal.is_none();
+    if let Some(ref error) = capture_refusal {
+        eprintln!("native capture refusal: {error:?}, base={base:?}, high_water={high_water:?}, points={:?}, bytes={bytes}, active_bytes={active_bytes}", points.len());
+    }
     capture_refusal.map_or(Ok(()), Err)
 }
 

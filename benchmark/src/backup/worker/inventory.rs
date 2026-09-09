@@ -145,7 +145,7 @@ pub(super) fn evict_retired_local_chains(
         &stream.config.staging,
         stream.config.keys.as_ref(),
     )
-    .map_err(|_| FleetError::Capture)?;
+    .map_err(|error| { eprintln!("native eviction chain verify failed: {error:?}"); FleetError::Capture })?;
     // A replacement root alone has not yet archived post-base transactions.
     // Keep the old local chain until the covering incremental is verified.
     if chain.last().is_some_and(|point| point.kind() == super::super::BackupKind::Snapshot) {
