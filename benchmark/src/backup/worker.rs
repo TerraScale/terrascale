@@ -1587,12 +1587,8 @@ async fn sync_stream(
     // cannot anchor a later incremental that introduces a committed tenant.
     // Publish a replacement full root at the current high water so the root
     // scope and every subsequent link agree before chain validation/eviction.
-    let committed_tenants = stream
-        .config
-        .engine
-        .engine()
-        .committed_tenants()
-        .map_err(|_| FleetError::Capture)?;
+    let committed_tenants =
+        stream.config.engine.engine().committed_tenants().map_err(|_| FleetError::Capture)?;
     let full_root_due = chain.first().is_some_and(|root| {
         let root_tenants = root
             .tenants()
