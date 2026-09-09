@@ -5,7 +5,7 @@ reactive CDN path. It drives one configured log URL through 10,000, 100,000,
 and 1,000,000 concurrent readers while the configured origin produces exactly
 16 writes/s. It records client latency and consumes a normalized telemetry
 adapter for Cloudflare edge misses, upper-tier misses, origin fetches, cache
-bytes, `sync.api.` Worker requests, and origin-fill cost per reader-hour. It also calls a credentialed fault
+bytes, `sync.api.` Worker requests (the expected production value is zero), and origin-fill cost per reader-hour. It also calls a credentialed fault
 adapter for `cache-bypass`, `eviction`, `rule-change`, and `capability-expiry`.
 
 The command refuses to make requests without `--confirm-live`, a capability,
