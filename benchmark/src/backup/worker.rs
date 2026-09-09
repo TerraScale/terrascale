@@ -3824,8 +3824,8 @@ mod tests {
         fleet.attach(config()).unwrap();
         assert_eq!(fleet.retained_points(&identity).unwrap().len(), 4);
         // The current policy has moved to Tigris while the selected point is
-        // retained only by the retired OCI destination. Restore must follow
-        // the provider returned by discovery into historical policy state.
+        // retained only by the retired OCI destination. Restore and migration
+        // must probe the admitted historical destination as a fallback.
         fleet.streams.get_mut(&identity).unwrap().config.destinations =
             vec![(Provider::Tigris, target.clone())];
         fleet.streams.get_mut(&identity).unwrap().config.historical_destinations =
@@ -3916,6 +3916,19 @@ mod tests {
             .change_policy(&identity, "migrated", vec![(Provider::Tigris, target.clone())])
             .await
             .unwrap();
+        assert_eq!(fleet.policy(&identity).unwrap().0, "migrated");
+        assert_eq!(
+            fleet
+                .streams
+                .get(&identity)
+                .unwrap()
+                .config
+                .historical_destinations
+                .iter()
+                .map(|(provider, _)| *provider)
+                .collect::<Vec<_>>(),
+            vec![Provider::Oci, Provider::Tigris]
+        );
         assert_eq!(target.list_points(&identity, 10).await.unwrap().len(), 4);
         assert_eq!(source.list_points(&identity, 10).await.unwrap().len(), 4);
         assert!(point_paths(&staging, 2).unwrap().is_empty());

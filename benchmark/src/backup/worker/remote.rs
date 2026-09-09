@@ -52,6 +52,18 @@ pub(super) async fn migrate_points(
     if points.is_empty() {
         return Err(FleetError::Capture);
     }
+    // A policy transition may retain the only readable copy on a retired
+    // destination. Probe the admitted active and historical set, once each,
+    // before declaring migration unavailable.
+    let mut source_destinations = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (_, destination) in
+        stream.config.destinations.iter().chain(stream.config.historical_destinations.iter())
+    {
+        if seen.insert(destination.identity().to_owned()) {
+            source_destinations.push(Arc::clone(destination));
+        }
+    }
     for manifest in points {
         let name = format!("rp-{}", manifest.identity());
         let prefix = format!("{database}/{name}");
@@ -69,7 +81,7 @@ pub(super) async fn migrate_points(
                     .checked_sub(staged_bytes(&stream.config.staging)?)
                     .ok_or(FleetError::StagingFull)?;
                 let mut downloaded = false;
-                for (_, destination) in &stream.config.destinations {
+                for destination in &source_destinations {
                     if destination
                         .download_point_with_byte_limit(&prefix, &target, remaining)
                         .await

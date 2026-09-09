@@ -1131,7 +1131,7 @@ impl ServerConfig {
             if let Some(byok) = &entry.byok {
                 let valid_provider = matches!(
                     byok.key_provider.as_str(),
-                    "oci-vault" | "aws-kms" | "azure-key-vault" | "customer-kms"
+                    "aws-kms"
                 );
                 let valid_endpoint = |value: &str| {
                     let remainder = value.strip_prefix("https://");
@@ -2329,11 +2329,12 @@ historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.sto
                 "{ provider = \"customer-s3\", endpoint = \"https://s3.customer.example\", signing_region = \"us-east-1\", bucket = \"customer-backups\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"\", secret_key_file = \"\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
             );
 
-        for provider in ["oci-vault", "aws-kms", "azure-key-vault", "customer-kms"] {
+        for provider in ["oci-vault", "azure-key-vault", "customer-kms"] {
             let config = valid
                 .replace("key_provider = \"aws-kms\"", &format!("key_provider = \"{provider}\""));
-            assert!(ServerConfig::parse(&config).is_ok(), "BYOK provider {provider} rejected");
+            assert!(ServerConfig::parse(&config).is_err(), "unsupported BYOK provider {provider} accepted");
         }
+        assert!(ServerConfig::parse(&valid).is_ok(), "AWS KMS BYOK rejected");
         for invalid in [
             valid.replace("key_provider = \"aws-kms\"", "key_provider = \"unimplemented\""),
             valid.replace("provider = \"customer-s3\"", "provider = \"unimplemented\""),

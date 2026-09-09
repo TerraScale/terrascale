@@ -1803,12 +1803,13 @@ fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
 }
 
 #[cfg(test)]
-static FAIL_NEXT_RESTORE_PARENT_SYNC: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+std::thread_local! {
+    static FAIL_NEXT_RESTORE_PARENT_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 fn sync_restore_parent(parent: &Path) -> Result<(), BackupError> {
     #[cfg(test)]
-    if FAIL_NEXT_RESTORE_PARENT_SYNC.swap(false, std::sync::atomic::Ordering::SeqCst) {
+    if FAIL_NEXT_RESTORE_PARENT_SYNC.with(|fail| fail.replace(false)) {
         return Err(BackupError::DestinationUnavailable);
     }
     super::sync_directory(parent)
@@ -2732,7 +2733,7 @@ mod publication_tests {
         let staging = StagingDir::create(&target).unwrap();
         std::fs::write(staging.path().join("state"), b"restored").unwrap();
 
-        FAIL_NEXT_RESTORE_PARENT_SYNC.store(true, std::sync::atomic::Ordering::SeqCst);
+        FAIL_NEXT_RESTORE_PARENT_SYNC.with(|fail| fail.set(true));
         let result = publish_with_identity(&staging, &target, true);
         assert_eq!(result, Err(BackupError::DestinationUnavailable));
         assert_eq!(std::fs::read(target.join("state")).unwrap(), b"restored");

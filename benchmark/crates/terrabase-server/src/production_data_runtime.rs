@@ -821,6 +821,11 @@ impl ProductionAdmissionRuntime {
                 .find(|entry| entry.database.to_text() == record.database_id)
                 .ok_or("configured database unavailable")?;
             let byok = configured.byok.as_ref().ok_or("customer KMS configuration missing")?;
+            if configured.encryption_provider != terrabase::encryption::KeyProviderIdentity::CustomerKms
+                || byok.key_provider != "aws-kms"
+            {
+                return Err("customer KMS provider disagrees with configuration".into());
+            }
             let endpoint = byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?;
             let adapter = CustomerKmsKeyDelivery::new(
                 customer_keys.socket.clone(),
@@ -1116,7 +1121,7 @@ impl ProductionAdmissionRuntime {
                 != terrabase::encryption::KeyProviderIdentity::CustomerKms
                 || !matches!(
                     byok.key_provider.as_str(),
-                    "aws-kms" | "azure-key-vault" | "customer-kms" | "oci-vault"
+                    "aws-kms"
                 )
             {
                 return Err("customer BYOK provider disagrees with admitted configuration".into());
