@@ -780,7 +780,9 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             ) {
                 Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::Oci) => "oci",
                 Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris) => "tigris",
-                Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::CustomerS3) => "customer-s3",
+                Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::CustomerS3) => {
+                    "customer-s3"
+                }
                 _ => return Err("restore provider is not approved".into()),
             }
             .into(),
