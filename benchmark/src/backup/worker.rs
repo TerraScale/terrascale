@@ -2021,6 +2021,18 @@ async fn enforce_retention_at(
     let manifest_path =
         inventory_path(stream).join(&root_name).join(super::manifest::ENCRYPTED_MANIFEST_FILE);
     for (_, destination) in &stream.config.destinations {
+        // Reconcile completed multipart staging objects left by a crashed
+        // upload before using the destination for retention decisions. The
+        // one-hour floor leaves recently written objects alone; active
+        // provider-side multipart sessions are not listed and remain intact.
+        // A malformed candidate fails closed rather than broadening cleanup.
+        for point in &points {
+            let point_prefix = format!("{identity}/rp-{}", point.identity());
+            destination
+                .cleanup_multipart(&point_prefix, 4096, Duration::from_secs(3600))
+                .await
+                .map_err(|_| FleetError::Upload)?;
+        }
         destination
             .verify_manifest(&format!("{identity}/{root_name}"), &manifest_path, root)
             .await
@@ -3171,6 +3183,72 @@ mod tests {
         fleet.resume(&owner.database().to_string()).unwrap();
     }
 
+    #[tokio::test]
+    async fn customer_s3_restore_uses_canonical_provider_identity() {
+        let (_, engine) = open_engine("fleet-customer-s3-restore");
+        let engine = Arc::new(engine);
+        let staging = location("fleet-customer-s3-restore-staging");
+        let destination = Arc::new(ObjectDestination::for_test(
+            Provider::CustomerS3,
+            Arc::new(object_store::memory::InMemory::new()),
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let config = StreamConfig {
+            engine: engine.clone(),
+            keys: keys(&engine),
+            destinations: vec![(Provider::CustomerS3, destination)],
+            historical_destinations: Vec::new(),
+            policy_revision: "policy-customer-s3".into(),
+            retention_days: 1,
+            staging: staging.clone(),
+            placement: PlacementLock::br_only(),
+        };
+        let mut fleet = NativeBackupFleet::new(FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
+            inventory_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 8,
+        })
+        .unwrap();
+        fleet.attach(config).unwrap();
+        committed(put(
+            &engine,
+            engine.database_owner().tenant().to_text().as_str(),
+            "customer-s3-restore-op",
+            "customer-s3-restore-doc",
+            "users",
+            text("customer destination"),
+            LocalDurability::Synced,
+        ));
+        assert!(fleet.sync_once().await.is_empty());
+        let source = engine.database_id().to_string();
+        let (target_owner, target) =
+            restore_config("fleet-customer-s3-target", engine.database_owner());
+        let point = fleet.retained_points(&source).unwrap().pop().unwrap();
+        let receipt = fleet
+            .restore_from_provider(
+                &source,
+                Provider::CustomerS3,
+                None,
+                &target,
+                &crate::backup::restore::RestoreIdentity {
+                    operation_id: "customer-s3-restore-op".into(),
+                    source_database_id: source.clone(),
+                    target_database_id: target_owner.database().to_string(),
+                    provider: Provider::CustomerS3.as_str().into(),
+                    selection: "latest".into(),
+                    expected_manifest_digest: point.identity().into(),
+                    expected_journal_boundary: point.boundary_sequence().get(),
+                    restore_epoch: 1,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt.restored_documents(), 1);
+        assert_eq!(receipt.chain_depth(), 1);
+    }
+
     fn restore_config(
         label: &str,
         owner: &crate::storage::DatabaseOwner,
@@ -3745,6 +3823,13 @@ mod tests {
         let mut fleet = NativeBackupFleet::new(limits).unwrap();
         fleet.attach(config()).unwrap();
         assert_eq!(fleet.retained_points(&identity).unwrap().len(), 4);
+        // The current policy has moved to Tigris while the selected point is
+        // retained only by the retired OCI destination. Restore must follow
+        // the provider returned by discovery into historical policy state.
+        fleet.streams.get_mut(&identity).unwrap().config.destinations =
+            vec![(Provider::Tigris, target.clone())];
+        fleet.streams.get_mut(&identity).unwrap().config.historical_destinations =
+            vec![(Provider::Oci, source.clone()), (Provider::Tigris, target.clone())];
         let selected = &history[0];
         let (owner, restore) = restore_config("remote-selected-restore", engine.database_owner());
         let foreign_owner = crate::storage::DatabaseOwner::try_new(

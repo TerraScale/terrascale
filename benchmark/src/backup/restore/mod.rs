@@ -1425,6 +1425,7 @@ fn execute_restore(
 ) -> Result<RecoveryReceipt, BackupError> {
     let chain = resolve_chain(destination, selection)?;
     admit_target(target)?;
+    reconcile_staging(target)?;
     let staging = StagingDir::create(target)?;
     let outcome = build_and_verify(&staging, destination, &chain)
         .and_then(|run| publish(&staging, target).map(|()| run));
@@ -1447,6 +1448,7 @@ fn execute_restore_encrypted(
 ) -> Result<RecoveryReceipt, BackupError> {
     let chain = resolve_encrypted_chain(destination, cipher, selection)?;
     admit_target(target)?;
+    reconcile_staging(target)?;
     let staging = StagingDir::create(target)?;
     let outcome = build_and_verify_encrypted(&staging, destination, &chain, cipher, None)
         .and_then(|run| publish(&staging, target).map(|()| run));
@@ -1507,6 +1509,7 @@ fn execute_configured_restore(
             std::fs::remove_dir(path).map_err(|_| BackupError::TargetNotEmpty)?;
         }
     }
+    reconcile_staging(path)?;
     let staging = StagingDir::create(path)?;
     let config = target.clone().at_location(staging.path());
     let outcome = (|| {
@@ -1588,6 +1591,8 @@ fn admit_target(target: &Path) -> Result<(), BackupError> {
 /// recovery-point name, removed when the run ends without publishing.
 struct StagingDir {
     path: PathBuf,
+    #[cfg(unix)]
+    lock: std::fs::File,
     /// Set once the staging path has been renamed into the target slot. For
     /// an exchange this path is then the retired target, so generic failure
     /// cleanup must not remove it.
@@ -1607,8 +1612,59 @@ impl StagingDir {
         let parent = target.parent().unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(parent).map_err(|_| BackupError::DestinationUnavailable)?;
         let path = parent.join(format!(".restore-staging-{}-{index}", std::process::id()));
-        std::fs::create_dir(&path).map_err(|_| BackupError::DestinationUnavailable)?;
-        Ok(Self { path, published: std::cell::Cell::new(false) })
+        #[cfg(unix)]
+        let lock = {
+            use std::os::unix::fs::OpenOptionsExt;
+            let lock_path = restore_lock_path(&path);
+            let file = match std::fs::OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .mode(0o600)
+                .open(&lock_path)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // A previous process may have died after creating the
+                    // reservation. Reclaim it only when no process still
+                    // holds its flock; an active creator remains protected.
+                    let old = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&lock_path)
+                        .map_err(|_| BackupError::DestinationUnavailable)?;
+                    if rustix::fs::flock(&old, rustix::fs::FlockOperation::NonBlockingLockExclusive)
+                        .is_err()
+                    {
+                        return Err(BackupError::DestinationUnavailable);
+                    }
+                    std::fs::remove_file(&lock_path)
+                        .map_err(|_| BackupError::DestinationUnavailable)?;
+                    std::fs::OpenOptions::new()
+                        .create_new(true)
+                        .read(true)
+                        .write(true)
+                        .mode(0o600)
+                        .open(&lock_path)
+                        .map_err(|_| BackupError::DestinationUnavailable)?
+                }
+                Err(_) => return Err(BackupError::DestinationUnavailable),
+            };
+            rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
+                .map_err(|_| BackupError::DestinationUnavailable)?;
+            file
+        };
+        if std::fs::create_dir(&path).is_err() {
+            #[cfg(unix)]
+            let _ = std::fs::remove_file(restore_lock_path(&path));
+            return Err(BackupError::DestinationUnavailable);
+        }
+        Ok(Self {
+            path,
+            #[cfg(unix)]
+            lock,
+            published: std::cell::Cell::new(false),
+        })
     }
 
     /// Returns the staging engine location.
@@ -1638,6 +1694,73 @@ impl StagingDir {
     }
 }
 
+fn restore_lock_path(staging: &Path) -> PathBuf {
+    let mut path = staging.to_owned();
+    let name = staging.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    path.set_file_name(format!("{name}.lock"));
+    path
+}
+
+fn restore_staging_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(".restore-staging-") else { return false };
+    let Some((pid, counter)) = rest.split_once('-') else { return false };
+    pid.parse::<u32>().is_ok() && counter.parse::<u64>().is_ok()
+}
+
+/// Reclaims only crash-left restore staging. A lock held by another process
+/// makes a candidate ambiguous and therefore preserves it.
+fn reconcile_staging(target: &Path) -> Result<(), BackupError> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(BackupError::DestinationUnavailable),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|_| BackupError::DestinationUnavailable)?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !restore_staging_name(name) {
+            continue;
+        }
+        let path = entry.path();
+        let metadata =
+            std::fs::symlink_metadata(&path).map_err(|_| BackupError::DestinationUnavailable)?;
+        if !metadata.file_type().is_dir() {
+            return Err(BackupError::DestinationUnavailable);
+        }
+        #[cfg(unix)]
+        {
+            let lock_path = restore_lock_path(&path);
+            let lock_metadata = std::fs::symlink_metadata(&lock_path);
+            let Ok(lock_metadata) = lock_metadata else {
+                // A missing reservation is ambiguous: a creator may be
+                // between mkdir and lock creation. Preserve the candidate.
+                continue;
+            };
+            if !lock_metadata.file_type().is_file() {
+                return Err(BackupError::DestinationUnavailable);
+            }
+            let lock = std::fs::OpenOptions::new().read(true).write(true).open(&lock_path);
+            let Ok(lock) = lock else { continue };
+            if rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive)
+                .is_err()
+            {
+                continue;
+            }
+            let tombstone = parent.join(format!(".restore-gc-{name}"));
+            std::fs::rename(&path, &tombstone).map_err(|_| BackupError::DestinationUnavailable)?;
+            std::fs::remove_dir_all(&tombstone).map_err(|_| BackupError::DestinationUnavailable)?;
+            let _ = std::fs::remove_file(lock_path);
+        }
+        #[cfg(not(unix))]
+        {
+            return Err(BackupError::DestinationUnavailable);
+        }
+    }
+    Ok(())
+}
+
 impl Drop for StagingDir {
     fn drop(&mut self) {
         // Restore may be cancelled while awaiting provider I/O. Ensure the
@@ -1646,6 +1769,8 @@ impl Drop for StagingDir {
         if !self.published.get() {
             let _ = std::fs::remove_dir_all(&self.path);
         }
+        #[cfg(unix)]
+        let _ = std::fs::remove_file(restore_lock_path(&self.path));
     }
 }
 
@@ -2646,6 +2771,31 @@ mod publication_tests {
             staging.path().to_owned()
         };
         assert!(!staging_path.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reconciliation_removes_stale_restore_staging_but_preserves_active() {
+        let root = test_root("reconcile-staging");
+        let target = root.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+
+        let stale = root.join(format!(".restore-staging-{}-91", std::process::id()));
+        std::fs::create_dir(&stale).unwrap();
+        std::fs::File::create(restore_lock_path(&stale)).unwrap();
+        std::fs::write(stale.join("partial"), b"crashed").unwrap();
+        reconcile_staging(&target).unwrap();
+        assert!(!stale.exists());
+        assert!(!restore_lock_path(&stale).exists());
+
+        let active = StagingDir::create(&target).unwrap();
+        let active_path = active.path().to_owned();
+        std::fs::write(active.path().join("live"), b"in progress").unwrap();
+        reconcile_staging(&target).unwrap();
+        assert!(active_path.exists());
+        drop(active);
+        assert!(!active_path.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

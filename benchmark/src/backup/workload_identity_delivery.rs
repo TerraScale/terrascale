@@ -73,11 +73,6 @@ impl UnixWorkloadIdentityProvider {
         scope: WorkloadIdentityScope,
     ) -> Result<Self, WorkloadIdentityError> {
         if !socket.is_absolute()
-            || scope.role.is_empty()
-            || scope.endpoint.is_empty()
-            || scope.bucket.is_empty()
-            || scope.region.is_empty()
-            || scope.placement_revision.is_empty()
             || [
                 scope.role.as_str(),
                 scope.endpoint.as_str(),
@@ -86,7 +81,8 @@ impl UnixWorkloadIdentityProvider {
                 scope.placement_revision.as_str(),
             ]
             .into_iter()
-            .any(|value| value.chars().any(char::is_control))
+            .any(|value| !valid_scope_field(value))
+            || scope.external_id.as_deref().is_some_and(|value| !valid_scope_field(value))
         {
             return Err(WorkloadIdentityError::Invalid);
         }
@@ -130,6 +126,10 @@ impl UnixWorkloadIdentityProvider {
         }
         Err(WorkloadIdentityError::Unavailable)
     }
+}
+
+fn valid_scope_field(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control)
 }
 
 #[cfg(unix)]
@@ -245,5 +245,17 @@ mod tests {
         let provider = UnixWorkloadIdentityProvider::new(socket, scope()).unwrap();
         assert_eq!(provider.validate_path(), Err(WorkloadIdentityError::Unavailable));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn constructor_rejects_unbounded_or_controlled_external_id() {
+        for external_id in [Some("bad\nexternal".into()), Some("x".repeat(129))] {
+            let mut candidate = scope();
+            candidate.external_id = external_id;
+            assert!(matches!(
+                UnixWorkloadIdentityProvider::new(PathBuf::from("/run/broker.sock"), candidate),
+                Err(WorkloadIdentityError::Invalid)
+            ));
+        }
     }
 }

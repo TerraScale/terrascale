@@ -895,6 +895,52 @@ impl ObjectDestination {
         Ok(())
     }
 
+    /// Removes completed multipart staging objects left by an interrupted
+    /// upload. Active multipart sessions are provider-side state and do not
+    /// appear in this listing, so they are left untouched. Every candidate is
+    /// validated before any deletion; malformed or unexpectedly nested keys
+    /// fail closed.
+    pub async fn cleanup_multipart(
+        &self,
+        prefix: &str,
+        max: usize,
+        minimum_age: Duration,
+    ) -> Result<usize, TransferError> {
+        validate_prefix(prefix)?;
+        if max == 0 || max > MAX_FILES {
+            return Err(TransferError::Configuration);
+        }
+        let list_prefix = ObjectPath::parse(format!(".multipart/{prefix}/"))
+            .map_err(|_| TransferError::InvalidPoint)?;
+        let expected_prefix = format!(".multipart/{prefix}/");
+        let mut stream = self.store.list(Some(&list_prefix));
+        let mut candidates = Vec::new();
+        while let Some(result) = stream.next().await {
+            let object = result.map_err(|_| TransferError::Unavailable)?;
+            if candidates.len() >= max {
+                return Err(TransferError::InvalidPoint);
+            }
+            let name = object
+                .location
+                .as_ref()
+                .strip_prefix(&expected_prefix)
+                .ok_or(TransferError::InvalidPoint)?;
+            let (artifact, token) = name.rsplit_once('-').ok_or(TransferError::InvalidPoint)?;
+            validate_name(artifact)?;
+            if crate::identity::from_text(token).is_err() {
+                return Err(TransferError::InvalidPoint);
+            }
+            let modified: SystemTime = object.last_modified.into();
+            if SystemTime::now().duration_since(modified).unwrap_or_default() >= minimum_age {
+                candidates.push(object.location);
+            }
+        }
+        for key in &candidates {
+            self.store.delete(key).await.map_err(|_| TransferError::Unavailable)?;
+        }
+        Ok(candidates.len())
+    }
+
     /// Deletes one retired recovery point after the caller validates retention.
     ///
     /// Invalidates its publication index and encrypted manifest before deleting
@@ -1679,6 +1725,26 @@ mod tests {
             assert!(!object.unwrap().location.as_ref().starts_with(".multipart/"));
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn multipart_cleanup_is_bounded_and_fails_closed_on_malformed_keys() {
+        let store = Arc::new(InMemory::new());
+        let destination = destination(store.clone());
+        let valid = ObjectPath::parse(".multipart/db/rp-1/member.tbv3e-01ARZ3NDEKTSV4RRFFQ69G5FAV")
+            .unwrap();
+        let malformed = ObjectPath::parse(".multipart/db/rp-1/member.tbv3e-nested/part").unwrap();
+        store.put(&valid, b"stale".to_vec().into()).await.unwrap();
+        store.put(&malformed, b"keep".to_vec().into()).await.unwrap();
+
+        assert_eq!(
+            destination.cleanup_multipart("db/rp-1", 10, Duration::ZERO).await,
+            Err(TransferError::InvalidPoint)
+        );
+        assert!(store.get(&valid).await.is_ok(), "validation must precede deletion");
+        store.delete(&malformed).await.unwrap();
+        assert_eq!(destination.cleanup_multipart("db/rp-1", 10, Duration::ZERO).await, Ok(1));
+        assert!(store.get(&valid).await.is_err());
     }
 
     #[test]
