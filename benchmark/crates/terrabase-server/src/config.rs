@@ -1134,7 +1134,13 @@ impl ServerConfig {
                     "oci-vault" | "aws-kms" | "azure-key-vault" | "customer-kms"
                 );
                 let valid_endpoint = |value: &str| {
-                    value.starts_with("https://")
+                    let remainder = value.strip_prefix("https://");
+                    let Some(remainder) = remainder else { return false };
+                    let host = remainder.split('/').next().unwrap_or_default();
+                    !host.is_empty()
+                        && !host.contains('@')
+                        && !value.contains('?')
+                        && !value.contains('#')
                         && value.len() <= 2048
                         && !value.chars().any(char::is_control)
                 };
@@ -1204,6 +1210,7 @@ impl ServerConfig {
                         let provider = match destination.provider.as_str() {
                             "oci" => Provider::Oci,
                             "tigris" => Provider::Tigris,
+                            "customer-s3" => Provider::CustomerS3,
                             _ => return Err(ConfigError::InvalidProductionBoundary),
                         };
                         let current = index < current_count;
@@ -1232,9 +1239,20 @@ impl ServerConfig {
                         {
                             return Err(ConfigError::InvalidProductionBoundary);
                         }
-                        let access_key_file = production_path(&destination.access_key_file)?;
-                        let secret_key_file = production_path(&destination.secret_key_file)?;
-                        paths.extend([access_key_file.clone(), secret_key_file.clone()]);
+                        let (access_key_file, secret_key_file) = if provider == Provider::CustomerS3
+                        {
+                            if !destination.access_key_file.as_os_str().is_empty()
+                                || !destination.secret_key_file.as_os_str().is_empty()
+                            {
+                                return Err(ConfigError::InvalidProductionBoundary);
+                            }
+                            (PathBuf::new(), PathBuf::new())
+                        } else {
+                            let access = production_path(&destination.access_key_file)?;
+                            let secret = production_path(&destination.secret_key_file)?;
+                            paths.extend([access.clone(), secret.clone()]);
+                            (access, secret)
+                        };
                         let parsed = ProductionBackupDestination {
                             provider,
                             endpoint: destination.endpoint,

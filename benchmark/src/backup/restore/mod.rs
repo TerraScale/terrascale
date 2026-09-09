@@ -1638,6 +1638,17 @@ impl StagingDir {
     }
 }
 
+impl Drop for StagingDir {
+    fn drop(&mut self) {
+        // Restore may be cancelled while awaiting provider I/O. Ensure the
+        // private staging tree is reclaimed even when normal error handling
+        // is bypassed by task cancellation or unwinding.
+        if !self.published.get() {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
 /// Publishes the staged engine location as the target by one atomic
 /// directory rename, then syncs the parent directory.
 ///
@@ -2621,6 +2632,20 @@ mod publication_tests {
         staging.discard_replaced();
         assert_eq!(std::fs::read(target.join("state")).unwrap(), b"restored");
         assert!(!staging.path().exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn dropped_staging_removes_unpublished_tree() {
+        let root = test_root("drop-cleanup");
+        let target = root.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let staging_path = {
+            let staging = StagingDir::create(&target).unwrap();
+            std::fs::write(staging.path().join("partial"), b"incomplete").unwrap();
+            staging.path().to_owned()
+        };
+        assert!(!staging_path.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
