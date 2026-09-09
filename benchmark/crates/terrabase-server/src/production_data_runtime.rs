@@ -577,6 +577,7 @@ fn native_restore_request_digest(
     let provider = match request.provider.as_str() {
         "oci" => 1,
         "tigris" => 2,
+        "customer-s3" => 3,
         _ => return Err("restore provider is not approved".into()),
     };
     crate::production_lifecycle_control::restore_request_digest(
@@ -671,6 +672,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
             let provider = match request.provider.as_str() {
                 "oci" => terrabase::backup::object_store::Provider::Oci,
                 "tigris" => terrabase::backup::object_store::Provider::Tigris,
+                "customer-s3" => terrabase::backup::object_store::Provider::CustomerS3,
                 _ => return Err("restore provider is not approved".into()),
             };
             let (point, timestamp) = match &request.selection {

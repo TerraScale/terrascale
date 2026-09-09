@@ -107,7 +107,7 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
             || !valid_owner(&request.target_owner)
             || request.target_database.is_empty()
             || request.journal_cut.is_empty()
-            || !matches!(request.provider, 1 | 2)
+            || !matches!(request.provider, 1 | 2 | 3)
         {
             return Err(Status::invalid_argument("restore request is incomplete"));
         }

@@ -709,7 +709,7 @@ impl NativeRecoveryRuntime {
             || request.authority_lease.is_empty()
             || request.accepted_proof_digest.len() != 64
             || request.operation_grant.is_empty()
-            || !matches!(request.provider.as_str(), "oci" | "tigris")
+            || !matches!(request.provider.as_str(), "oci" | "tigris" | "customer-s3")
             || request.residency.is_empty()
             || request.placement.is_empty()
             || request

@@ -2325,6 +2325,19 @@ mod tests {
             self.inner.get_opts(location, opts).await
         }
 
+        async fn get(
+            &self,
+            location: &object_store::path::Path,
+        ) -> object_store::Result<object_store::GetResult> {
+            if self.armed.load(std::sync::atomic::Ordering::SeqCst)
+                && location.as_ref().ends_with("member-000001")
+            {
+                self.started.notify_one();
+                std::future::pending().await
+            }
+            self.inner.get(location).await
+        }
+
         async fn delete(&self, location: &object_store::path::Path) -> object_store::Result<()> {
             self.inner.delete(location).await
         }
