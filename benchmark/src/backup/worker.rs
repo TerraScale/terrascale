@@ -368,7 +368,7 @@ impl NativeBackupFleet {
             })
             .await
             .map_err(|_| FleetError::Capture)?
-            .map_err(|error| { eprintln!("native lifecycle read failed: {error:?}"); FleetError::Capture })?;
+            .map_err(|_| FleetError::Capture)?;
             let point = result.manifest().clone();
             let point_path = staging.join(format!("rp-{}", point.identity()));
             point.verify(&staging).map_err(|_| FleetError::Capture)?;
@@ -816,19 +816,17 @@ impl NativeBackupFleet {
             .engine
             .engine()
             .lifecycle_state(&stream.config.engine.engine().scope_for(&tenant))
-            .map_err(|error| { eprintln!("native lifecycle read failed: {error:?}"); FleetError::Capture })?;
+            .map_err(|_| FleetError::Capture)?;
         if lifecycle.paused || lifecycle.access_revoked() {
             stream.paused = lifecycle.paused;
             return Err(FleetError::Configuration);
         }
         stream.health.protected = false;
         stream.verified_at = None;
-        sync_stream(database, stream, self.limits)
-            .await
-            .map_err(|error| { eprintln!("native forced sync failed: {error:?}"); error })?;
+        sync_stream(database, stream, self.limits).await?;
         let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
         super::verify_latest_chain_encrypted(&stream.config.staging, reader.as_ref())
-            .map_err(|error| { eprintln!("native final verify failed: {error:?}"); FleetError::Capture })?
+            .map_err(|_| FleetError::Capture)?
             .pop()
             .ok_or(FleetError::Capture)
     }
@@ -943,7 +941,7 @@ impl NativeBackupFleet {
             &points,
             &super::restore::Selection::Latest,
         )
-        .map_err(|error| { eprintln!("native rotation discovery failed: {error:?}"); FleetError::Capture })?;
+        .map_err(|_| FleetError::Capture)?;
         let names = destinations
             .iter()
             .map(|(provider, destination)| destination_history_key(*provider, destination))
@@ -1256,9 +1254,6 @@ impl NativeBackupFleet {
             } else if let Some(verified_at) = stream.verified_at {
                 metrics.set_backup_last_success_age(BackupMode::Continuous, verified_at.elapsed());
             }
-            if let Err(ref error) = result {
-                eprintln!("native backup capture failed: {error:?}");
-            }
             match result {
                 Ok(()) => {
                     stream.health.failures = 0;
@@ -1504,15 +1499,13 @@ async fn sync_stream(
     stream: &mut Stream,
     limits: FleetLimits,
 ) -> Result<(), FleetError> {
-    persist_inventory(stream, limits).map_err(|error| { eprintln!("native initial inventory failed: {error:?}"); error })?;
+    persist_inventory(stream, limits)?;
     if stream.retention_due.is_none_or(|due| due <= Instant::now()) {
         enforce_retention(identity, stream, limits).await?;
         stream.retention_due = Some(Instant::now() + Duration::from_secs(3600));
     }
-    let pending = point_paths(&stream.config.staging, limits.points_per_stream)
-        .map_err(|error| { eprintln!("native pending points failed: {error:?}"); error })?;
-    if !pending.is_empty() && has_pending_uploads(stream, &pending, limits)
-        .map_err(|error| { eprintln!("native pending journal failed: {error:?}"); error })? {
+    let pending = point_paths(&stream.config.staging, limits.points_per_stream)?;
+    if !pending.is_empty() && has_pending_uploads(stream, &pending, limits)? {
         // Drain the durable transfer queue before capturing another root. An
         // outage cannot accumulate repeated full snapshots in the reserve.
         if upload_destinations(identity, stream, &pending, limits).await? {
@@ -1537,22 +1530,20 @@ async fn sync_stream(
             evict_retired_local_chains(stream, limits)?;
         }
     }
-    let points = point_paths(&stream.config.staging, limits.points_per_stream)
-        .map_err(|error| { eprintln!("native points failed: {error:?}"); error })?;
-    let bytes = staged_bytes(&stream.config.staging)
-        .map_err(|error| { eprintln!("native bytes failed: {error:?}"); error })?;
+    let points = point_paths(&stream.config.staging, limits.points_per_stream)?;
+    let bytes = staged_bytes(&stream.config.staging)?;
     let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
     let mut chain = if points.is_empty() {
         Vec::new()
     } else {
         super::verify_latest_chain_encrypted(&stream.config.staging, reader.as_ref())
-            .map_err(|error| { eprintln!("native chain verify failed: {error:?}"); FleetError::Capture })?
+            .map_err(|_| FleetError::Capture)?
     };
     let rotation = rotation::read(stream)?;
     if let Some((base, clock)) = rotation {
         let snapshots =
             super::restore::discover_encrypted_points(&stream.config.staging, reader.as_ref())
-                .map_err(|error| { eprintln!("native snapshot discovery failed: {error:?}"); FleetError::Capture })?;
+                .map_err(|_| FleetError::Capture)?;
         if let Some(snapshot) = snapshots.into_iter().find(|point| {
             point.kind() == super::BackupKind::Snapshot
                 && point.boundary_sequence() == base
@@ -1573,11 +1564,11 @@ async fn sync_stream(
         .engine
         .engine()
         .journaled_high_water()
-        .map_err(|error| { eprintln!("native staged discovery failed: {error:?}"); FleetError::Capture })?
+        .map_err(|_| FleetError::Capture)?
         .unwrap_or_default();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| { eprintln!("native chain verify failed: {error:?}"); FleetError::Capture })?
+        .map_err(|_| FleetError::Capture)?
         .as_millis();
     let now = u64::try_from(now).map_err(|_| FleetError::Capture)?;
     // Reserve space for a replacement root before the bounded active chain
@@ -1662,7 +1653,7 @@ async fn sync_stream(
                     tokio::time::sleep(Duration::from_millis(1)).await;
                     let captured = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| { eprintln!("native rotation discovery failed: {error:?}"); FleetError::Capture })?
+                .map_err(|_| FleetError::Capture)?
                         .as_millis();
                     let captured = u64::try_from(captured).map_err(|_| FleetError::Capture)?;
                     if captured > clock {
@@ -1696,18 +1687,12 @@ async fn sync_stream(
             .map_err(|_| FleetError::Capture)?;
             match result {
                 Ok(backup) => captured_boundary = backup.manifest().boundary_sequence(),
-                Err(error) => {
-                    eprintln!("native run backup failed: {error:?}");
-                    capture_refusal = Some(FleetError::Capture)
-                }
+                Err(_) => capture_refusal = Some(FleetError::Capture),
             }
         }
     }
-    let points = point_paths(&stream.config.staging, limits.points_per_stream)
-        .map_err(|error| { eprintln!("native final points failed: {error:?}"); error })?;
-    let failed = upload_destinations(identity, stream, &points, limits)
-        .await
-        .map_err(|error| { eprintln!("native final upload failed: {error:?}"); error })?;
+    let points = point_paths(&stream.config.staging, limits.points_per_stream)?;
+    let failed = upload_destinations(identity, stream, &points, limits).await?;
     if failed {
         return Err(FleetError::Upload);
     }
@@ -1717,17 +1702,14 @@ async fn sync_stream(
         .engine
         .engine()
         .advance_backup_frontier(captured_boundary)
-        .map_err(|error| { eprintln!("native frontier advance failed: {error:?}"); FleetError::Capture })?;
-    persist_inventory(stream, limits).map_err(|error| { eprintln!("native final inventory failed: {error:?}"); error })?;
+        .map_err(|_| FleetError::Capture)?;
+    persist_inventory(stream, limits)?;
     if capture_refusal.is_none() {
         rotation::finish(stream)?;
         evict_retired_local_chains(stream, limits)?;
     }
     stream.health.protected_sequence = captured_boundary.get();
     stream.health.protected = capture_refusal.is_none();
-    if let Some(ref error) = capture_refusal {
-        eprintln!("native capture refusal: {error:?}, base={base:?}, high_water={high_water:?}, points={:?}, bytes={bytes}, active_bytes={active_bytes}", points.len());
-    }
     capture_refusal.map_or(Ok(()), Err)
 }
 
@@ -3540,7 +3522,6 @@ mod tests {
         assert!(!staging.exists());
     }
     #[tokio::test]
-    #[ignore = "native second capture currently returns Capture; tracked qualification gap"]
     async fn capture_snapshot_is_safe_while_writes_continue() {
         let (_, engine) = open_engine("fleet-concurrent-capture");
         let engine = Arc::new(engine);
