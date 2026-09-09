@@ -5,7 +5,7 @@ This is engineering evidence from the current source cohort. It is not a served-
 The document batch bound is now 8,192 operations so a durable request can
 amortize one FULL WAL flush while remaining bounded. On the rebuilt debug
 member, 8,192-operation batches completed at **2,290–2,679 logical ops/s**;
-larger batches alone do not reach 10k because row/index/accounting work grows
+larger batches alone do not reach 5k because row/index/accounting work grows
 with the batch. Parallel shard lanes remain required for the target.
 
 The durability attribution probe confirms the tradeoff: on the current debug

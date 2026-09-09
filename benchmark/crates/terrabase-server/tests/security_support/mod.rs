@@ -206,7 +206,7 @@ pub fn admitted_fixture() -> AdmittedFixture {
             )
             .unwrap();
             (
-                terrabase::member::DatabaseId::try_new(database).unwrap(),
+                (*database).into(),
                 Arc::new(StaticKey(KeyVersionMetadata::new(scope, version)))
                     as Arc<dyn DatabaseKeySource>,
             )
@@ -215,12 +215,7 @@ pub fn admitted_fixture() -> AdmittedFixture {
     let member = Member::open_production(&root, specs, AdmissionLimits::new(8, 4), keys)
         .expect("production member opens");
     for (_, _, database) in &owners {
-        member
-            .accept_database_role(
-                &terrabase::member::DatabaseId::try_new(database).unwrap(),
-                &Writer,
-            )
-            .expect("database role accepted");
+        member.accept_database_role(&(*database).into(), &Writer).expect("database role accepted");
     }
     let records: Vec<_> = owners
         .iter()

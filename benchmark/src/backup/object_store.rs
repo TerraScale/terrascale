@@ -982,6 +982,45 @@ mod tests {
         ObjectDestination::for_test(Provider::Oci, store, 1024, 4096)
     }
 
+    /// MinIO round-trip qualification for a large WAL-like payload. Set
+    /// `TERRABASE_MINIO_ENDPOINT` to the emulator endpoint to run it.
+    #[test]
+    #[ignore = "requires a running S3 emulator"]
+    fn minio_round_trip_100k_wal_records() {
+        let endpoint = std::env::var("TERRABASE_MINIO_ENDPOINT")
+            .expect("set TERRABASE_MINIO_ENDPOINT=http://127.0.0.1:19000");
+        let root = std::env::temp_dir().join(format!("tb-minio-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let payload: String = (0..100_000).map(|i| format!("{i}:value-{i}\n")).collect();
+        fs::write(root.join("wal.tbv3e"), payload.as_bytes()).unwrap();
+        fs::write(root.join("manifest.tbv3e"), b"wal.tbv3e\n").unwrap();
+        let config = DestinationConfig {
+            admitted_region: crate::regions::RegionCode::GRU,
+            provider: Provider::Oci,
+            endpoint,
+            signing_region: "us-east-1".into(),
+            database_region: "GRU".into(),
+            bucket: "terrabase".into(),
+            verified_geography: "GRU".into(),
+            permitted_geographies: vec!["GRU".into()],
+            placement_revision: "test".into(),
+            credentials: Credentials::new("minioadmin".into(), "minioadmin".into()),
+            max_artifact_bytes: 32 * 1024 * 1024,
+            max_point_bytes: 64 * 1024 * 1024,
+        };
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let destination = ObjectDestination::new_for_test(config).unwrap();
+            destination.upload_point(&root, "db/100k").await.unwrap();
+            fs::remove_dir_all(&root).unwrap();
+            destination.download_point("db/100k", &root).await.unwrap();
+            let restored = fs::read(root.join("wal.tbv3e")).unwrap();
+            assert_eq!(restored, payload.as_bytes());
+            assert_eq!(restored.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).count(), 100_000);
+        });
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn member_create_is_atomic_and_never_overwrites() {
         let destination = destination(Arc::new(InMemory::new()));

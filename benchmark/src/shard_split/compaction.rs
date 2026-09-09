@@ -66,13 +66,16 @@ impl CompactionManifest {
 }
 
 /// Errors returned by SQLite consolidation.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum CompactionError {
     /// Inputs are empty, missing, or contain the destination.
+    #[error("invalid compaction input")]
     InvalidInput,
     /// Filesystem operation failed.
+    #[error("compaction I/O failed: {0}")]
     Io(std::io::Error),
     /// SQLite operation failed.
+    #[error("compaction SQLite operation failed: {0}")]
     Sqlite(rusqlite::Error),
 }
 
