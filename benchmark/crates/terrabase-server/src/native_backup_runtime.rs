@@ -722,9 +722,9 @@ mod restore_tests {
             [NativeBackupInput {
                 engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&target.database.host))),
                 keys: Arc::new(
-                    terrabase::backup::worker::OciBackupKeys::new(crate::test_keys::backup_keys(
-                        &scope,
-                    ))
+                    terrabase::backup::worker::CustomerKmsBackupKeys::new(
+                        crate::test_keys::backup_keys(&scope),
+                    )
                     .unwrap(),
                 ),
                 destinations: vec![(
@@ -829,9 +829,9 @@ mod restore_tests {
             inputs.push(NativeBackupInput {
                 engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&snapshot.database.host))),
                 keys: Arc::new(
-                    terrabase::backup::worker::OciBackupKeys::new(crate::test_keys::backup_keys(
-                        &scope,
-                    ))
+                    terrabase::backup::worker::CustomerKmsBackupKeys::new(
+                        crate::test_keys::backup_keys(&scope),
+                    )
                     .unwrap(),
                 ),
                 destinations: vec![(
@@ -1005,9 +1005,9 @@ mod restore_tests {
             [NativeBackupInput {
                 engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&target.database.host))),
                 keys: Arc::new(
-                    terrabase::backup::worker::OciBackupKeys::new(crate::test_keys::backup_keys(
-                        &scope,
-                    ))
+                    terrabase::backup::worker::CustomerKmsBackupKeys::new(
+                        crate::test_keys::backup_keys(&scope),
+                    )
                     .unwrap(),
                 ),
                 destinations: vec![(

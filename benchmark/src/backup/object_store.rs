@@ -8,10 +8,10 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use futures_util::StreamExt;
-use object_store::aws::{AmazonS3Builder, S3CopyIfNotExists};
+use object_store::aws::{AmazonS3Builder, AwsCredential, AwsCredentialProvider, S3CopyIfNotExists};
 use object_store::path::Path as ObjectPath;
 use object_store::{ClientOptions, MultipartUpload, ObjectStore, PutMode, RetryConfig};
 
@@ -34,12 +34,30 @@ pub enum Provider {
 pub struct Credentials {
     access_key: String,
     secret_key: String,
+    session_token: Option<String>,
+    expires_at: Option<SystemTime>,
 }
 impl Credentials {
     /// Takes ownership of the provider's access and secret keys.
     #[must_use]
     pub fn new(access_key: String, secret_key: String) -> Self {
-        Self { access_key, secret_key }
+        Self { access_key, secret_key, session_token: None, expires_at: None }
+    }
+
+    /// Creates short-lived credentials issued by an explicit workload identity.
+    #[must_use]
+    pub fn temporary(
+        access_key: String,
+        secret_key: String,
+        session_token: String,
+        expires_at: SystemTime,
+    ) -> Self {
+        Self {
+            access_key,
+            secret_key,
+            session_token: Some(session_token),
+            expires_at: Some(expires_at),
+        }
     }
 }
 impl fmt::Debug for Credentials {
@@ -52,6 +70,68 @@ impl Drop for Credentials {
         use zeroize::Zeroize;
         self.access_key.zeroize();
         self.secret_key.zeroize();
+        self.session_token.zeroize();
+    }
+}
+
+/// Redacted failure from a customer workload-identity authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkloadIdentityError {
+    /// The authority could not issue a currently usable credential.
+    Unavailable,
+    /// The issued credential was already expired or malformed.
+    Invalid,
+}
+
+impl fmt::Display for WorkloadIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("workload identity credential unavailable")
+    }
+}
+impl std::error::Error for WorkloadIdentityError {}
+
+/// Explicit customer workload-identity seam for S3 credentials.
+///
+/// Implementations must obtain short-lived credentials from the customer
+/// authority. The object store invokes this for each request, so expiry and
+/// revocation are observed without ambient environment or static fallback.
+#[async_trait::async_trait]
+pub trait WorkloadIdentityProvider: fmt::Debug + Send + Sync {
+    /// Resolve one currently valid credential.
+    async fn credentials(&self) -> Result<Credentials, WorkloadIdentityError>;
+}
+
+#[derive(Debug)]
+struct S3WorkloadIdentityProvider(Arc<dyn WorkloadIdentityProvider>);
+
+#[async_trait::async_trait]
+impl object_store::CredentialProvider for S3WorkloadIdentityProvider {
+    type Credential = AwsCredential;
+
+    async fn get_credential(
+        &self,
+    ) -> object_store::Result<Arc<Self::Credential>> {
+        let credentials = self.0.credentials().await.map_err(|error| {
+            object_store::Error::Generic {
+                store: "S3",
+                source: Box::new(error),
+            }
+        })?;
+        if credentials.access_key.is_empty()
+            || credentials.secret_key.is_empty()
+            || credentials.session_token.as_deref().is_some_and(str::is_empty)
+            || credentials.expires_at.is_some_and(|expiry| expiry <= SystemTime::now())
+        {
+            return Err(object_store::Error::Generic {
+                store: "S3",
+                source: Box::new(WorkloadIdentityError::Invalid),
+            });
+        }
+        Ok(Arc::new(AwsCredential {
+            key_id: credentials.access_key,
+            secret_key: credentials.secret_key,
+            token: credentials.session_token,
+        }))
     }
 }
 

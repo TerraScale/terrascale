@@ -52,6 +52,7 @@ path = "tests/recovery/main.rs"
 required-features = ["test-support"]
 
 [dependencies]
+async-trait = "0.1"
 # Standard codecs and error derives replace repository-owned implementations.
 hex = "0.4"
 base64 = "0.22"

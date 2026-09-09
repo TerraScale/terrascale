@@ -13,7 +13,7 @@ choices, not release authorization.
 - [0025 — Private protobuf and gRPC protocol](0025-private-protobuf-grpc.md)
 - [0027 — ULID object identities](0027-ulid-object-identities.md)
 - [0028 — Durable long-running operation progress](0028-durable-long-running-operation-progress.md)
-- [0030 — Service-managed encryption and key lifecycle](0030-service-managed-encryption-and-key-lifecycle.md)
+- [0030 — Service-managed encryption and key lifecycle](0030-service-managed-encryption-and-key-lifecycle.md) (customer-key restriction superseded by 0049)
 - [0032 — Public contract limits and compatibility](0032-public-contract-limits-and-compatibility.md)
 - [0033 — Production SLOs, OCI placement, and operability](0033-production-slos-oci-placement-and-operability.md)
 - [0035 — `GlobalDurable` requires multiple Regions](0035-one-region-global-durable-semantics.md)
@@ -27,6 +27,7 @@ choices, not release authorization.
 - [0044 — The two engines: replication and sync, on a research base](0044-sync-and-replication-engines.md)
 - [0045 — The auto-indexing engine, on a research base](0045-auto-indexing-engine.md)
 - [0046 — Native Rust backup subsystem informed by Litestream](0046-native-rust-backup-subsystem.md)
+- [0049 — Customer key policy and production security boundary](0049-customer-key-policy-and-production-security.md)
 
 ## Authoring
 

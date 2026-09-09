@@ -4980,7 +4980,14 @@ async fn restore_backup(
             Err(error) => provisioning_error(error).into_response(),
         };
     }
-    ApiError::backup("native restore provisioning authority is unavailable").into_response()
+    // Local/development members use the Litestream adapter. A production
+    // composition has native backup state but no provisioning authority and
+    // must fail closed rather than silently crossing into the local path.
+    if state.native_backups.is_some() || state.native_recovery.is_some() {
+        return ApiError::backup("native restore provisioning authority is unavailable")
+            .into_response();
+    }
+    restore_or_branch(state, name, body, RestoreFlavor::Restore).await
 }
 
 /// `POST /databases/{name}/branches` — restore plus register with parent

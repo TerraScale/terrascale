@@ -2106,7 +2106,7 @@ mod tests {
         use terrabase::backup::object_store::{ObjectDestination, Provider};
         use terrabase::backup::{
             PlacementLock,
-            worker::{FleetLimits, OciBackupKeys},
+            worker::{CustomerKmsBackupKeys, FleetLimits},
         };
         use terrabase::identity::{ClusterUlid, MemberUlid};
         use terrabase::member::DatabaseScope;
@@ -2251,7 +2251,7 @@ mod tests {
                 [NativeBackupInput {
                     engine: Arc::new(AdmittedBackupEngine::new(target.database.host.clone())),
                     keys: Arc::new(
-                        OciBackupKeys::new(crate::test_keys::backup_keys(&scope)).unwrap(),
+                        CustomerKmsBackupKeys::new(crate::test_keys::backup_keys(&scope)).unwrap(),
                     ),
                     destinations: vec![(
                         Provider::Oci,

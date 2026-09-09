@@ -1,9 +1,12 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use terrabase::encryption::{
-    ArtifactCipher, ArtifactKind, Compression, DatabaseKey, DatabaseKeyLease, DatabaseKeyVersion,
-    EncryptionContext, EncryptionError, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope,
-    KeyVersionMetadata, KeyWrappingProvider, LocalFileKeyProvider, MAX_PLAINTEXT_BYTES,
-    ProductionCapabilityStatus, ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider,
-    WrappedDatabaseKey, production_capability_status,
+    ArtifactCipher, ArtifactKind, Compression, CustomerKmsAdapter, CustomerKmsDatabaseKeys,
+    DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionContext,
+    EncryptionError, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
+    KeyWrappingProvider, LocalFileKeyProvider, MAX_PLAINTEXT_BYTES, ProductionCapabilityStatus,
+    ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider, WrappedDatabaseKey,
+    production_capability_status,
 };
 use terrabase::identity::{DatabaseUlid, TenantUlid, from_text};
 use terrabase::regions::RegionCode;
@@ -208,16 +211,23 @@ fn backup_envelopes_bind_nonce_and_metadata_to_the_key() {
     )
     .unwrap();
     let mut writer =
-        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([0x37; 32]), context)
-            .unwrap();
+        ArtifactCipher::new(
+            ProviderMode::LocalFile,
+            DatabaseKey::from_bytes([0x37; 32]),
+            context.clone(),
+        )
+        .unwrap();
     let envelope = writer.seal(b"backup payload").unwrap();
     let next = writer.seal(b"backup payload").unwrap();
     assert_ne!(envelope, next, "each backup record must use a fresh ordinal nonce");
     assert_eq!(writer.open(&envelope).unwrap(), b"backup payload");
 
-    let wrong_key =
-        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([0x38; 32]), context)
-            .unwrap();
+    let wrong_key = ArtifactCipher::new(
+        ProviderMode::LocalFile,
+        DatabaseKey::from_bytes([0x38; 32]),
+        context.clone(),
+    )
+    .unwrap();
     assert_eq!(wrong_key.open(&envelope), Err(EncryptionError::AuthenticationFailed));
 
     let mut altered_ordinal = envelope.clone();
@@ -495,6 +505,95 @@ fn local_file_key_rejects_symlink() {
     symlink(&target, provider.path()).unwrap();
     assert!(matches!(provider.load_or_create(), Err(EncryptionError::UnsafeLocalKeyFile)));
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug)]
+struct CountingByokAdapter {
+    calls: Arc<AtomicUsize>,
+}
+
+#[cfg(feature = "test-support")]
+impl CustomerKmsAdapter for CountingByokAdapter {
+    fn lease(
+        &self,
+        metadata: &KeyVersionMetadata,
+        _region: RegionCode,
+    ) -> Result<DatabaseKeyLease, EncryptionError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        DatabaseKeyLease::test_oci_vault(
+            metadata.clone(),
+            DatabaseKey::from_bytes([0x71; 32]),
+            std::time::Duration::from_secs(60),
+        )
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug)]
+struct MismatchedByokAdapter;
+
+#[cfg(feature = "test-support")]
+impl CustomerKmsAdapter for MismatchedByokAdapter {
+    fn lease(
+        &self,
+        metadata: &KeyVersionMetadata,
+        _region: RegionCode,
+    ) -> Result<DatabaseKeyLease, EncryptionError> {
+        let wrong_scope = typed_scope(KeyPurpose::Data);
+        DatabaseKeyLease::test_oci_vault(
+            KeyVersionMetadata::new(wrong_scope, metadata.version()),
+            DatabaseKey::from_bytes([0x72; 32]),
+            std::time::Duration::from_secs(60),
+        )
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn customer_kms_source_caches_current_lease_and_requests_explicit_history() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let source = CustomerKmsDatabaseKeys::new(
+        CountingByokAdapter { calls: Arc::clone(&calls) },
+        KeyVersionMetadata::new(
+            typed_scope(KeyPurpose::Data),
+            DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
+        ),
+        RegionCode::from_text("GRU").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    let first = source.current_lease().unwrap();
+    let second = source.current_lease().unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    let historical = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB1").unwrap();
+    let historical_lease = source.lease(historical).unwrap();
+    assert_eq!(historical_lease.metadata().version(), historical);
+    assert_eq!(historical_lease.metadata().scope().purpose(), KeyPurpose::Data);
+    assert_eq!(historical_lease.provider(), KeyProviderIdentity::OciVault);
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn customer_kms_source_rejects_adapter_scope_mismatch() {
+    let metadata = KeyVersionMetadata::new(
+        typed_scope(KeyPurpose::Data),
+        DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
+    );
+    assert_eq!(
+        CustomerKmsDatabaseKeys::new(
+            MismatchedByokAdapter,
+            metadata,
+            RegionCode::from_text("GRU").unwrap(),
+        )
+        .unwrap_err()
+        .to_string(),
+        "invalid database-key metadata"
+    );
 }
 
 fn unique_directory(label: &str) -> std::path::PathBuf {

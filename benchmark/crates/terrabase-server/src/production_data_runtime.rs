@@ -986,7 +986,7 @@ impl ProductionAdmissionRuntime {
         limits: FleetLimits,
     ) -> Result<crate::native_backup_runtime::NativeBackupRuntime, String> {
         use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
-        use terrabase::backup::{PlacementLock, worker::OciBackupKeys};
+        use terrabase::backup::{PlacementLock, worker::CustomerKmsBackupKeys};
         use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
         let key_config = self.config.keys.as_ref().ok_or("production key delivery missing")?;
         let provider = OciVaultKeyDelivery::new(
@@ -1058,7 +1058,7 @@ impl ProductionAdmissionRuntime {
             inputs.push(NativeBackupInput {
                 engine: Arc::new(AdmittedBackupEngine::new(snapshot.database.host.clone())),
                 keys: Arc::new(
-                    OciBackupKeys::new(Arc::new(source))
+                    CustomerKmsBackupKeys::new(Arc::new(source))
                         .map_err(|_| "backup key authorization unavailable")?,
                 ),
                 destinations,
@@ -1088,7 +1088,7 @@ impl ProductionAdmissionRuntime {
         database: &str,
     ) -> Result<crate::native_backup_runtime::NativeBackupInput, String> {
         use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
-        use terrabase::backup::{PlacementLock, worker::OciBackupKeys};
+        use terrabase::backup::{PlacementLock, worker::CustomerKmsBackupKeys};
         use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
         let snapshot = self
             .registry
@@ -1176,7 +1176,7 @@ impl ProductionAdmissionRuntime {
         Ok(NativeBackupInput {
             engine: Arc::new(AdmittedBackupEngine::new(snapshot.database.host.clone())),
             keys: Arc::new(
-                OciBackupKeys::new(Arc::new(source))
+                CustomerKmsBackupKeys::new(Arc::new(source))
                     .map_err(|_| "backup key authorization unavailable")?,
             ),
             destinations,

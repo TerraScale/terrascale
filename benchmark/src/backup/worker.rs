@@ -72,49 +72,53 @@ pub trait BackupKeys: BackupReader + Send + Sync {
     fn lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError>;
 }
 
-/// OCI-authorized backup hierarchy, including explicitly retained versions.
+/// Customer-KMS-authorized backup hierarchy, including explicitly retained versions.
 ///
 /// The source must be constructed for the database's separate backup key
-/// purpose and durable active backup version; data-purpose leases are refused.
+/// purpose and durable active backup version; data-purpose and local-file
+/// leases are refused.
 #[derive(Debug)]
-pub struct OciBackupKeys {
+pub struct CustomerKmsBackupKeys {
     source: Arc<dyn crate::encryption::DatabaseKeySource>,
     scope: crate::encryption::KeyScope,
+    provider: crate::encryption::KeyProviderIdentity,
 }
 
-impl OciBackupKeys {
+impl CustomerKmsBackupKeys {
     /// Validates the backup hierarchy before a stream can be registered.
     ///
     /// # Errors
-    /// Fails closed on unavailable keys, wrong purpose or non-OCI authorization.
+    /// Fails closed on unavailable keys, wrong purpose or local-file authorization.
     pub fn new(
         source: Arc<dyn crate::encryption::DatabaseKeySource>,
     ) -> Result<Self, EncryptionError> {
         let lease = source.current_lease()?;
-        if lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+        if lease.provider() == crate::encryption::KeyProviderIdentity::LocalFile
             || lease.metadata().scope().purpose() != crate::encryption::KeyPurpose::Backup
-            || lease.is_expired()
         {
             return Err(EncryptionError::InvalidKeyMetadata);
         }
-        Ok(Self { scope: lease.metadata().scope().clone(), source })
+        if lease.is_expired() {
+            return Err(EncryptionError::KeyLeaseExpired);
+        }
+        Ok(Self { scope: lease.metadata().scope().clone(), provider: lease.provider(), source })
     }
 }
 
-impl BackupKeys for OciBackupKeys {
+impl BackupKeys for CustomerKmsBackupKeys {
     fn lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
         let lease = self.source.current_lease()?;
-        if lease.metadata().scope() != &self.scope
-            || lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
-            || lease.is_expired()
-        {
+        if lease.metadata().scope() != &self.scope || lease.provider() != self.provider {
             return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        if lease.is_expired() {
+            return Err(EncryptionError::KeyLeaseExpired);
         }
         Ok(lease)
     }
 }
 
-impl BackupReader for OciBackupKeys {
+impl BackupReader for CustomerKmsBackupKeys {
     fn open_backup_envelope(&self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         let version = crate::encryption::ArtifactCipher::envelope_key_version(
             &self.scope,
@@ -123,8 +127,14 @@ impl BackupReader for OciBackupKeys {
             envelope,
         )?;
         let lease = self.source.lease(version)?;
-        if lease.metadata().scope() != &self.scope || lease.metadata().version() != version {
+        if lease.metadata().scope() != &self.scope
+            || lease.metadata().version() != version
+            || lease.provider() != self.provider
+        {
             return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        if lease.is_expired() {
+            return Err(EncryptionError::KeyLeaseExpired);
         }
         crate::encryption::ArtifactCipher::open_envelope_from_database_key_lease(
             &lease,
@@ -2165,7 +2175,8 @@ mod tests {
     use crate::backup::BackupEnvelopeParticipant;
     use crate::backup::tests::{committed, location, open_engine, put, text};
     use crate::encryption::{
-        DatabaseKey, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
+        DatabaseKey, DatabaseKeySource, DatabaseKeyVersion, KeyPurpose, KeyScope,
+        KeyVersionMetadata,
     };
     use crate::types::LocalDurability;
     use object_store::ObjectStore;
@@ -2202,6 +2213,46 @@ mod tests {
             )
             .unwrap(),
         )))
+    }
+
+    #[derive(Debug)]
+    struct Source(Arc<DatabaseKeyLease>);
+
+    impl DatabaseKeySource for Source {
+        fn current_lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+            Ok(Arc::clone(&self.0))
+        }
+
+        fn lease(
+            &self,
+            _version: DatabaseKeyVersion,
+        ) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+            Ok(Arc::clone(&self.0))
+        }
+    }
+
+    #[test]
+    fn customer_kms_backup_keys_rejects_expired_authorization() {
+        let scope = KeyScope::new_with_project(
+            "production",
+            crate::identity::TenantUlid::generate(),
+            crate::identity::ProjectUlid::generate(),
+            crate::identity::DatabaseUlid::generate(),
+            KeyPurpose::Backup,
+        )
+        .unwrap();
+        let lease = DatabaseKeyLease::test_oci_vault(
+            KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()),
+            DatabaseKey::from_bytes([91; 32]),
+            Duration::from_nanos(1),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(1));
+
+        assert!(matches!(
+            CustomerKmsBackupKeys::new(Arc::new(Source(Arc::new(lease)))),
+            Err(EncryptionError::KeyLeaseExpired)
+        ));
     }
 
     #[cfg(unix)]

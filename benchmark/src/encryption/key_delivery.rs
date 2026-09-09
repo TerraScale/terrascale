@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::{
-    DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionError,
-    CustomerKmsAdapter, KeyVersionMetadata, MAX_DATABASE_KEY_LEASE,
+    CustomerKmsAdapter, DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion,
+    EncryptionError, KeyProviderIdentity, KeyVersionMetadata, MAX_DATABASE_KEY_LEASE,
 };
 use crate::regions::{RegionCatalog, RegionCode};
 
@@ -205,7 +205,7 @@ impl<A: CustomerKmsAdapter> DatabaseKeySource for CustomerKmsDatabaseKeys<A> {
         }
         let metadata = KeyVersionMetadata::new(self.metadata.scope().clone(), version);
         let lease = Arc::new(self.provider.lease(&metadata, self.region)?);
-        if lease.metadata() != &metadata {
+        if lease.metadata() != &metadata || lease.provider() != KeyProviderIdentity::OciVault {
             return Err(EncryptionError::InvalidKeyMetadata);
         }
         let now = Instant::now();
@@ -270,6 +270,23 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Debug)]
+    struct InjectedAdapter;
+
+    impl CustomerKmsAdapter for InjectedAdapter {
+        fn lease(
+            &self,
+            metadata: &KeyVersionMetadata,
+            _region: RegionCode,
+        ) -> Result<DatabaseKeyLease, EncryptionError> {
+            DatabaseKeyLease::test_oci_vault(
+                metadata.clone(),
+                DatabaseKey::from_bytes([7; 32]),
+                Duration::from_secs(60),
+            )
+        }
+    }
 
     struct SocketFixture {
         directory: PathBuf,
@@ -576,5 +593,20 @@ mod tests {
                 .is_err()
         );
         assert!(source.current_lease().is_ok());
+    }
+
+    #[test]
+    fn customer_kms_source_uses_injected_adapter_and_preserves_scope() {
+        let metadata = metadata("01ARZ3NDEKTSV4RRFFQ69G5FB0");
+        let source = CustomerKmsDatabaseKeys::new(
+            InjectedAdapter,
+            metadata.clone(),
+            RegionCode::from_text("GRU").unwrap(),
+        )
+        .unwrap();
+        let lease = source.current_lease().unwrap();
+        assert_eq!(lease.metadata(), &metadata);
+        assert_eq!(lease.metadata().scope().purpose(), KeyPurpose::Data);
+        assert_eq!(lease.provider(), KeyProviderIdentity::OciVault);
     }
 }

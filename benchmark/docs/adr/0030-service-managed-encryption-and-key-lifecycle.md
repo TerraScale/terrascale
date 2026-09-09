@@ -5,11 +5,16 @@ authority: ../../../GOAL.md
 
 # Service-managed encryption and key lifecycle
 
+> **Superseded for customer key policy.** ADR 0049 replaces the first-release
+> restriction on customer-managed keys. The cryptographic format, lease
+> limits, and deletion caveats below remain applicable unless ADR 0049 says
+> otherwise.
+
 ## Decision
 
-The first release uses TerraScale-managed encryption only. It does not expose
-customer-managed keys, imported keys, arbitrary KMS endpoints, or customer
-cipher selection. OCI Vault supplies a regional key-encryption key; the
+The original first-release decision used TerraScale-managed encryption only.
+Customer-managed key policy is now defined by ADR 0049. OCI Vault supplies a
+regional key-encryption key for the currently qualified service-managed path;
 Orchestrator resolves the canonical airport `RegionCode` to provider
 configuration through workload identity and least-privilege IAM. OCI names
 and credentials remain inside that adapter.
