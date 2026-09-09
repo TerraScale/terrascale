@@ -233,14 +233,16 @@ async fn cancellation_does_not_admit_mutations() {
 #[tokio::test]
 async fn branch_and_backup_restore_use_restore_request() {
     let record = json!({"name":"copy","placement":"GRU","residency":"br-only","deleted":false,"created_at":1,"parent":"db"});
+    let operation = json!({"environment":"production","tenant_id":"tenant","project_id":"project","operation_id":"restore-op","database_id":"restored-db","parent_database_id":null,"key_version":"key-1","name":"copy","regions":["GRU"],"residency":"br-only","state":"pending"});
     let mock = Mock::new(vec![
         Response::json(201, &record),
-        Response::json(201, &record),
+        Response::json(202, &operation),
     ]);
     let sdk = client(Arc::clone(&mock));
     let body = RestoreRequest {
         name: "copy".into(),
         at: Some(10),
+        operation_id: "restore-op".into(),
     };
     sdk.management()
         .branches()
@@ -260,6 +262,55 @@ async fn branch_and_backup_restore_use_restore_request() {
         mock.last().url,
         "https://api.terrascale.tech/api/v1/databases/db/backups/restore"
     );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mock.last().body.expect("body"))
+            .expect("json"),
+        json!({"name":"copy","at":10,"operation_id":"restore-op"})
+    );
+}
+
+#[tokio::test]
+async fn backup_restore_rejects_non_accepted_status() {
+    let record = json!({"name":"copy","placement":"GRU","residency":"br-only","deleted":false,"created_at":1,"parent":"db"});
+    let mock = Mock::new(vec![Response::json(201, &record)]);
+    let error = client(mock)
+        .management()
+        .backups()
+        .restore(
+            "db",
+            RestoreRequest {
+                name: "copy".into(),
+                at: None,
+                operation_id: "restore-op".into(),
+            },
+            None,
+            OperationOptions::default(),
+        )
+        .await
+        .expect_err("restore must require HTTP 202");
+    assert_eq!(error.code, "invalid_response");
+}
+
+#[tokio::test]
+async fn backup_restore_rejects_mismatched_operation_identity() {
+    let operation = json!({"environment":"production","tenant_id":"tenant","project_id":"project","operation_id":"other-op","database_id":"restored-db","parent_database_id":null,"key_version":"key-1","name":"copy","regions":["GRU"],"residency":"br-only","state":"pending"});
+    let mock = Mock::new(vec![Response::json(202, &operation)]);
+    let error = client(mock)
+        .management()
+        .backups()
+        .restore(
+            "db",
+            RestoreRequest {
+                name: "copy".into(),
+                at: None,
+                operation_id: "restore-op".into(),
+            },
+            None,
+            OperationOptions::default(),
+        )
+        .await
+        .expect_err("restore must preserve operation identity");
+    assert_eq!(error.code, "invalid_response");
 }
 
 #[test]

@@ -787,6 +787,7 @@ pub struct RestoreRequest {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<i64>,
+    pub operation_id: String,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BranchListResponse {
@@ -844,6 +845,7 @@ impl Branches {
 }
 fn validate_restore(request: &RestoreRequest) -> Result<()> {
     validate_non_empty(&request.name, "database_name")?;
+    validate_bounded(&request.operation_id, "operation_id", 128)?;
     if request.at.is_some_and(|at| at < 0) {
         return Err(Error::new(
             ErrorKind::Validation,
@@ -1113,8 +1115,9 @@ impl Backups {
         request: RestoreRequest,
         _project_id: Option<&str>,
         options: OperationOptions,
-    ) -> Result<DatabaseRecord> {
+    ) -> Result<ProvisioningOperation> {
         validate_restore(&request)?;
+        let operation_id = request.operation_id.clone();
         let request = request_with_options(
             "backups.restore",
             Method::Post,
@@ -1125,7 +1128,26 @@ impl Backups {
             &request,
             &options,
         )?;
-        send_with_options(&self.shared, request, &options).await
+        let response = if let Some(token) = options.cancellation.clone() {
+            tokio::select! {
+                response = self.shared.send_response(request) => response?,
+                () = wait_cancelled(token) => return Err(Error::new(ErrorKind::Transport, "cancelled", "The management operation was cancelled.")),
+            }
+        } else {
+            self.shared.send_response(request).await?
+        };
+        if response.status != 202 {
+            return Err(Error::invalid_response(
+                "backup restore returned an unsupported success status",
+            ));
+        }
+        let operation: ProvisioningOperation = response.json_body()?;
+        if operation.operation_id != operation_id {
+            return Err(Error::invalid_response(
+                "backup restore response does not match the requested operation",
+            ));
+        }
+        Ok(operation)
     }
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
