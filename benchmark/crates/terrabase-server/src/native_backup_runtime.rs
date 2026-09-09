@@ -429,6 +429,7 @@ impl NativeBackupRuntime {
             .map_err(NativeBackupRuntimeError::Fleet)
     }
 
+    /// Suspends a stream while coordinating with active fleet work.
     pub async fn suspend_for_restore_async(
         &self,
         database: &str,
@@ -455,6 +456,7 @@ impl NativeBackupRuntime {
             .map_err(NativeBackupRuntimeError::Fleet)
     }
 
+    /// Rebinds a restored host while coordinating with active fleet work.
     pub async fn resume_after_restore_async(
         &self,
         database: &str,
@@ -473,6 +475,7 @@ impl NativeBackupRuntime {
         Ok(())
     }
 
+    /// Detaches a stream without blocking an executor thread on the fleet lock.
     pub async fn detach_async(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
         let _gate = self.async_fleet.lock().await;
         self.detach(database)
@@ -493,6 +496,7 @@ impl NativeBackupRuntime {
         Ok(())
     }
 
+    /// Fences and detaches every stream without blocking an executor thread.
     pub async fn drain_async(&self) -> Result<(), NativeBackupRuntimeError> {
         let _gate = self.async_fleet.lock().await;
         self.drain()

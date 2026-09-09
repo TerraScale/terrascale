@@ -288,14 +288,6 @@ pub async fn restore_snapshot(
             .await
             .map_err(|_| SnapshotBackupError::Provider)?;
         downloaded = true;
-        eprintln!(
-            "downloaded {:?}: {:?}",
-            staging,
-            std::fs::read_dir(staging).ok().map(|entries| entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.file_name())
-                .collect::<Vec<_>>())
-        );
         let envelope = read_bounded(&staging.join("manifest.tbv3e"), 2 * 1024 * 1024)?;
         let manifest_bytes =
             reader.open_backup_envelope(&envelope).map_err(|_| SnapshotBackupError::Encryption)?;
