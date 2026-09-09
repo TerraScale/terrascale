@@ -35,6 +35,17 @@ pub(crate) use intent::{
     CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite,
     SupersededReplication, TtlGuard, UnknownCause,
 };
+
+/// Completion handle for a batch submitted to a storage-owned commit lane.
+/// The receiver is detached from the storage mutex so callers can await a
+/// durable result without blocking unrelated storage metadata operations.
+pub(crate) struct CommitBatchHandle(pub(crate) std::sync::mpsc::Receiver<Vec<CommitResult>>);
+
+impl CommitBatchHandle {
+    pub(crate) fn recv(self) -> Result<Vec<CommitResult>, ()> {
+        self.0.recv().map_err(|_| ())
+    }
+}
 pub(crate) use ownership::validate_local_restore_source;
 pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
 pub(crate) use ownership::{OwnershipMode, load_existing, load_or_create};
@@ -801,6 +812,20 @@ pub(crate) trait StoragePort: Send {
     fn commit_batch(&mut self, intents: Vec<CommitIntent>, defer_flips: bool) -> Vec<CommitResult> {
         let _ = defer_flips;
         intents.into_iter().map(|intent| self.commit(intent)).collect()
+    }
+
+    /// Enqueues a commit batch and returns before the storage lane completes.
+    /// Implementations that do not have an asynchronous lane use an already
+    /// completed handle, preserving the trait's serial fallback semantics.
+    fn enqueue_commit_batch(
+        &mut self,
+        intents: Vec<CommitIntent>,
+        defer_flips: bool,
+    ) -> Result<CommitBatchHandle, ()> {
+        let results = self.commit_batch(intents, defer_flips);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender.send(results).map_err(|_| ())?;
+        Ok(CommitBatchHandle(receiver))
     }
 
     /// Durable-side flush of any records a deferred batch left unsynced.

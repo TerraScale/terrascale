@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as ObjectPath;
-use object_store::{ClientOptions, ObjectStore, PutMode, RetryConfig};
+use object_store::{ClientOptions, MultipartUpload, ObjectStore, PutMode, RetryConfig};
 
 const INDEX: &str = "transfer-v1.index";
 const INDEX_LIMIT: u64 = 1024 * 1024;
@@ -478,17 +478,25 @@ impl ObjectDestination {
                     .filter(|entry| entry.name == super::manifest::ENCRYPTED_MANIFEST_FILE),
             )
         {
-            let mut bytes = Vec::new();
-            open_regular(&point.join(&entry.name))
-                .map_err(|_| TransferError::LocalIo)?
-                .take(self.max_artifact_bytes + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|_| TransferError::LocalIo)?;
-            if bytes.len() as u64 != entry.length || blake3::hash(&bytes) != entry.digest {
+            let key = object_key(prefix, &entry.name)?;
+            let mut file =
+                open_regular(&point.join(&entry.name)).map_err(|_| TransferError::LocalIo)?;
+            let mut upload =
+                self.store.put_multipart(&key).await.map_err(|_| TransferError::Unavailable)?;
+            let mut remaining = entry.length;
+            let mut hasher = blake3::Hasher::new();
+            while remaining > 0 {
+                let size = remaining.min(8 * 1024 * 1024) as usize;
+                let mut chunk = vec![0; size];
+                file.read_exact(&mut chunk).map_err(|_| TransferError::LocalIo)?;
+                hasher.update(&chunk);
+                upload.put_part(chunk.into()).await.map_err(|_| TransferError::Unavailable)?;
+                remaining -= size as u64;
+            }
+            if hasher.finalize() != entry.digest {
                 return Err(TransferError::Integrity);
             }
-            let key = object_key(prefix, &entry.name)?;
-            self.store.put(&key, bytes.into()).await.map_err(|_| TransferError::Unavailable)?;
+            upload.complete().await.map_err(|_| TransferError::Unavailable)?;
             self.verify_remote(&key, entry).await?;
         }
         let key = object_key(prefix, INDEX)?;
@@ -1016,7 +1024,10 @@ mod tests {
             destination.download_point("db/100k", &root).await.unwrap();
             let restored = fs::read(root.join("wal.tbv3e")).unwrap();
             assert_eq!(restored, payload.as_bytes());
-            assert_eq!(restored.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).count(), 100_000);
+            assert_eq!(
+                restored.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).count(),
+                100_000
+            );
         });
         let _ = fs::remove_dir_all(root);
     }

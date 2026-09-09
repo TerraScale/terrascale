@@ -5223,6 +5223,22 @@ impl StoragePort for SqliteStorage {
         }
     }
 
+    fn enqueue_commit_batch(
+        &mut self,
+        intents: Vec<CommitIntent>,
+        _defer_flips: bool,
+    ) -> Result<crate::storage::CommitBatchHandle, ()> {
+        self.touch();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        self.committer
+            .sender
+            .as_ref()
+            .ok_or(())?
+            .send(CommitRequest { intents, response: sender })
+            .map_err(|_| ())?;
+        Ok(crate::storage::CommitBatchHandle(receiver))
+    }
+
     fn replication_fingerprint(
         &self,
         tenant: &TenantId,

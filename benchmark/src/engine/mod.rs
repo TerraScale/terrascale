@@ -1678,13 +1678,18 @@ impl Engine {
             let (intents, senders): (Vec<storage::CommitIntent>, Vec<_>) =
                 batch.into_iter().unzip();
             wave_width = wave_width.max(batch_len.saturating_add(1));
-            let results = match self.lock_storage() {
-                Ok(mut storage) => storage.port.commit_batch(intents, false),
-                Err(_) => vec![
-                    storage::CommitResult::Rejected(storage::CommitRejection::Storage);
-                    batch_len
-                ],
+            // Submission only borrows the Engine storage mutex long enough to
+            // enqueue into the storage-owned lane. Waiting for the SQLite
+            // transaction happens after the guard is dropped, allowing
+            // lifecycle/admission metadata and unrelated callers to proceed
+            // while the durable commit is in flight.
+            let completion = match self.lock_storage() {
+                Ok(mut storage) => storage.port.enqueue_commit_batch(intents, false).ok(),
+                Err(_) => None,
             };
+            let results = completion.and_then(|handle| handle.recv().ok()).unwrap_or_else(|| {
+                vec![storage::CommitResult::Rejected(storage::CommitRejection::Storage); batch_len]
+            });
             for (sender, result) in senders.into_iter().zip(results) {
                 let _ = sender.send(result);
             }
