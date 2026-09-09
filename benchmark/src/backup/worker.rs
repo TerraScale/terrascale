@@ -1406,28 +1406,54 @@ impl NativeBackupFleet {
             || !stream.config.placement.allows(owner.region())
             || identity.source_database_id != database
             || identity.target_database_id != owner.database().to_text()
-            || identity.provider != format!("{provider:?}").to_lowercase()
+            || identity.provider != provider.as_str()
             || identity.selection != expected_selection
         {
             return Err(FleetError::Configuration);
         }
-        let destination = stream
-            .config
-            .destinations
-            .iter()
-            .find(|(kind, _)| *kind == provider)
-            .map(|(_, destination)| destination)
-            .ok_or(FleetError::Configuration)?;
-        let points = remote::remote_points(database, stream, destination).await?;
-        let chain = if let Some(at) = at {
-            super::restore::resolve_timestamp_points_chain(&points, at)
-        } else {
-            let selection = point.map_or(super::restore::Selection::Latest, |identity| {
-                super::restore::Selection::Point { identity: identity.to_owned() }
-            });
-            super::restore::resolve_encrypted_points_chain(&points, &selection)
+        // A recovery point may have been written under a retired policy
+        // destination. Discovery deliberately includes that history, so the
+        // restore download must use the same retained destination set rather
+        // than only the current policy. Keep provider matching strict and
+        // deduplicate identities because current destinations are also copied
+        // into historical_destinations at admission.
+        let mut destinations = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (kind, candidate) in
+            stream.config.destinations.iter().chain(stream.config.historical_destinations.iter())
+        {
+            if *kind == provider && seen.insert(candidate.identity().to_owned()) {
+                destinations.push(candidate);
+            }
         }
-        .map_err(|_| FleetError::Capture)?;
+        if destinations.is_empty() {
+            return Err(FleetError::Configuration);
+        }
+        let mut selected = None;
+        for destination in destinations {
+            let points = match remote::remote_points(database, stream, destination).await {
+                Ok(points) => points,
+                Err(error) => {
+                    if matches!(error, FleetError::Capture | FleetError::Upload) {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            };
+            let chain = if let Some(at) = at {
+                super::restore::resolve_timestamp_points_chain(&points, at)
+            } else {
+                let selection = point.map_or(super::restore::Selection::Latest, |identity| {
+                    super::restore::Selection::Point { identity: identity.to_owned() }
+                });
+                super::restore::resolve_encrypted_points_chain(&points, &selection)
+            };
+            if let Ok(chain) = chain {
+                selected = Some((destination, chain));
+                break;
+            }
+        }
+        let (destination, chain) = selected.ok_or(FleetError::Capture)?;
         let staging =
             stream.config.staging.join(format!("restore-{}", crate::identity::generate()));
         std::fs::create_dir(&staging).map_err(|_| FleetError::Capture)?;
@@ -3184,7 +3210,7 @@ mod tests {
             operation_id,
             source_database_id: identity.to_owned(),
             target_database_id: target_owner.database().to_string(),
-            provider: format!("{provider:?}").to_lowercase(),
+            provider: provider.as_str().to_owned(),
             selection: "latest".into(),
             expected_manifest_digest: point.identity().to_owned(),
             expected_journal_boundary: point.boundary_sequence().get(),
@@ -3450,7 +3476,7 @@ mod tests {
                         operation_id: format!("retained-root-restore-{provider:?}"),
                         source_database_id: identity.clone(),
                         target_database_id: target_owner.database().to_string(),
-                        provider: format!("{provider:?}").to_lowercase(),
+                        provider: provider.as_str().to_owned(),
                         selection: "latest".into(),
                         expected_manifest_digest: root.manifest().identity().into(),
                         expected_journal_boundary: root.manifest().boundary_sequence().get(),

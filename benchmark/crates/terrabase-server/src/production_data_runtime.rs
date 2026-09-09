@@ -1543,7 +1543,7 @@ impl ProductionAdmissionRuntime {
             operation_id: operation_id.to_owned(),
             source_database_id: source.to_owned(),
             target_database_id: target.to_owned(),
-            provider: format!("{provider:?}").to_lowercase(),
+            provider: provider.as_str().to_owned(),
             selection,
             expected_manifest_digest: expected_manifest_digest.to_owned(),
             expected_journal_boundary,

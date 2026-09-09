@@ -32,6 +32,18 @@ pub enum Provider {
     CustomerS3,
 }
 
+impl Provider {
+    /// Returns the canonical wire identity used in durable restore records.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Oci => "oci",
+            Self::Tigris => "tigris",
+            Self::CustomerS3 => "customer-s3",
+        }
+    }
+}
+
 /// S3 credentials whose formatting never reveals key material.
 pub struct Credentials {
     access_key: String,
