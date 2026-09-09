@@ -1,4 +1,4 @@
-# TerraScale.TypeScript ADR index
+# TerraScale TypeScript ADR index
 
 These records define the public TypeScript SDK boundary, reactive protocol,
 and package release gates. The workspace

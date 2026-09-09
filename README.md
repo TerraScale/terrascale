@@ -7,11 +7,14 @@ implemented checks from production evidence still required.
 
 ## Service boundary
 
-The Rust TerraBase member serves the public database, SQL, placement, backup,
-usage, and reactive APIs. Dashboard owns identity, organizations, projects,
-users, payments, and MCP. The SDK uses their versioned public contracts.
-Private TBEP, native replication, NATS, and direct storage access are internal.
-Dashboard uses the same SDK and authorization as customer applications.
+Dashboard is the full-stack Vinext application and owns Better Auth,
+organizations, projects, users, payments, MCP, and those public product routes.
+The separate TerraScale.Database service owns the public database, SQL,
+placement, backup, usage, and reactive routes and is the sole TBEP gateway.
+The SDK uses the owning services' versioned public contracts. Dashboard uses
+this SDK with the same public authorization boundary as customer applications;
+it receives no private entrypoint, header, identity bypass, or direct database
+access.
 
 Create clients with `createTerraScaleClient(config)`. Authentication uses
 `accessToken`, which accepts a token or token provider. The default API origin
@@ -52,7 +55,7 @@ explicit joins, atomic token consumption and serialized transaction callbacks.
 Producer deployment, schema migration and real multi-Region qualification are
 still required; this integration does not establish production readiness.
 
-The temporary local SQLite runtime is separate from TerraBase's production
+The temporary local SQLite runtime is separate from the production Database
 SQLite engine. It cannot qualify production behavior and is forbidden in
 production, staging, deployment, and CI qualification. See
 [ADR 0004](docs/adr/0004-sqlite-local-development-only.md).
@@ -66,7 +69,7 @@ floating-point literals, and safe integers retain their JSON representations.
 These reads require JSON reviver source support for large integers and return
 `invalid_response` if the runtime cannot preserve them. Write inputs remain
 `JsonValue`; `bigint` is not a supported request value.
-`TerraScaleSyncV1Client` implements the reactive state machine with CDN-backed
+`TerraScaleSyncV1Client` implements the reactive state machine with bounded
 HTTP delivery by default and explicit WebSocket opt-in. It applies bounded
 snapshots, ordered result changes, checkpoints, and typed resets. Online
 optimism is reversible presentation; there is no durable offline write queue.
@@ -111,9 +114,11 @@ npm run test:browser
 ```
 
 `make contracts` regenerates route and OpenAPI metadata from the pinned
-TerraBase bundle. Supply explicit development `CONTRACT_SOURCE`, or immutable
+producer bundle. Supply explicit development `CONTRACT_SOURCE`, or immutable
 `CONTRACT_URL` and `CONTRACT_ARCHIVE_SHA256`; there is no Dashboard fallback.
-Review generated changes against the producer contract before updating a pin.
+Review generated changes against the owning service contract before updating a
+pin. Product routes remain typed clients in the root entrypoint and are not
+part of the generated database/reactive route manifest.
 
 Unavailable live test configuration is reported as skipped. Unit, browser,
 package, and real-service evidence are separate release requirements. See the

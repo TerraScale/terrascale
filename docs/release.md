@@ -69,7 +69,7 @@ records are inspected.
 ## Evidence required before public release
 
 - Contract generation, hostile decoding, and shared semantic/byte conformance
-  against the pinned Rust producer, including all four customer SDKs.
+  against the pinned producer contract, including all four customer SDKs.
 - Node 22/24, browser, clean-consumer, public export, and server-only boundary
   checks on the exact package. Record actual browser engines and versions;
   a Playwright project name alone does not establish branded browser coverage.

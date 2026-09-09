@@ -10,7 +10,7 @@ Date: 2026-08-29
 Better Auth needs uniqueness, conditional updates, one-time consumption,
 pagination, transactions, and migrations. Those operations must use the public
 TerraScale API contract and preserve Better Auth error and retry semantics. A
-raw HTTP callback, generic SDK request, direct `terrabase` engine connection,
+raw HTTP callback, generic SDK request, direct Database engine connection,
 private TBEP connection, or Dashboard private route would bypass the service
 boundary.
 
@@ -23,11 +23,11 @@ Better Auth database adapter contract. Mutations receive stable idempotency
 keys. The adapter does not expose credentials to browser bundles and does not
 provide a generic transport escape hatch.
 
-The Rust `terrabase` member owns the versioned operation implementation and
-serves it from the public API. There is no separate database service or API
-gateway, and TBEP remains private control traffic for the orchestrator and
-CLI. This repository does not invent routes or claim that the current
-structural port is a generated service binding.
+TerraScale.Database owns the versioned operation implementation and serves it
+from the public API. It is the sole TBEP gateway; TBEP remains private control
+traffic and is not a customer transport. This repository does not invent
+routes or claim that the current structural port is a generated service
+binding.
 
 ## Consequences
 
@@ -94,16 +94,10 @@ Better Auth tag `v1.7.2`, commit
 integrity are recorded in `package-lock.json`. Database-generated numeric IDs
 are unsupported, so that suite is outside the selected contract.
 
-Build this SDK with `npm run build`. From the sibling `terrabase` repository,
-run the following with absolute paths to Node and the consumer script:
-
-```sh
-TERRASCALE_AUTH_CONSUMER_EXECUTABLE=/absolute/path/to/node \
-TERRASCALE_AUTH_CONSUMER_SCRIPT=/absolute/path/to/ts-typescript/scripts/qualify-auth-authority.ts \
-nice -n 19 cargo test --locked -p terrabase-server --lib \
-  auth_runtime::tests::admitted_http_router_serves_external_node_consumer \
-  -- --ignored --exact --nocapture
-```
+Build this SDK with `npm run build`. Run the owning Database service's
+published external-consumer fixture with absolute paths to Node and the
+consumer script; the service repository owns the fixture command and its
+daemon setup.
 
 The producer creates a disposable two-voter encrypted SQLite authority with
 QUIC and member certificates, serves the public auth router on loopback, and

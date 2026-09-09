@@ -4,12 +4,12 @@ Status: Accepted. Producer/consumer parity is a release gate.
 
 ## Ownership
 
-TerraBase publishes the public reactive contract. The SDK keeps its pinned
+TerraScale.Database publishes the public reactive contract. The SDK keeps its pinned
 language-neutral manifest at
 `src/msgpack/manifest/terrascale.sync.v1.msgpack.json` and generates codecs with
 `scripts/generate-msgpack-protocol.ts`. The local generator reads that manifest;
 it does not establish producer parity by itself. Compare the manifest and
-shared vectors with the published TerraBase pin before release.
+shared vectors with the published producer pin before release.
 
 ## Wire contract
 
