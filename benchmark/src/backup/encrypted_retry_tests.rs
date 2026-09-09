@@ -79,3 +79,60 @@ fn encrypted_retry_consumes_a_new_ordinal_but_keeps_published_point() {
         1
     );
 }
+
+#[test]
+fn encrypted_retry_uses_retained_reader_for_a_fresh_artifact_context() {
+    let (_source_dir, engine) = open_engine("encrypted-retry-fresh-context");
+    let owner = engine.database_owner();
+    committed(put(
+        &engine,
+        "alpha",
+        "encrypted-retry-fresh-put",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    let lease = Arc::new(backup_lease(owner));
+    let destination = location("encrypted-retry-fresh-context-destination");
+    let capture_time = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("wall clock")
+            .as_millis(),
+    )
+    .expect("timestamp");
+    let first = run_backup(
+        &engine,
+        BackupPlan::full(
+            BackupEncryption::from_database_key_lease(&lease, RegionCode::GRU, 0)
+                .expect("first encryption"),
+        )
+        .with_capture_unix_millis(capture_time),
+        &destination,
+    )
+    .expect("first backup");
+    let retry = run_backup(
+        &engine,
+        BackupPlan::full(
+            BackupEncryption::from_database_key_lease(&lease, RegionCode::GRU, 0)
+                .expect("fresh encryption"),
+        )
+        .with_capture_unix_millis(capture_time)
+        .with_reader(lease),
+        &destination,
+    )
+    .expect("fresh-context retry");
+    assert_eq!(retry.manifest().identity(), first.manifest().identity());
+    assert_eq!(
+        destination
+            .read_dir()
+            .expect("destination")
+            .filter(|entry| entry
+                .as_ref()
+                .is_ok_and(|entry| entry.file_name().to_string_lossy().starts_with("rp-")))
+            .count(),
+        1
+    );
+}
+use std::sync::Arc;

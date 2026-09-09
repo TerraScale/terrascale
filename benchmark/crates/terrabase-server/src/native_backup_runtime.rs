@@ -280,7 +280,9 @@ impl NativeBackupRuntime {
             .map_err(|_| NativeBackupRuntimeError::Poisoned)
     }
 
-    /// Captures one operation-bound point and verifies its complete chain.
+    /// Captures one point after validating the caller's operation identity and
+    /// verifies its complete chain. Operation lifecycle persistence belongs to
+    /// `NativeRecoveryRuntime`; this low-level seam does not retain the ID.
     pub async fn capture(
         &self,
         database: &str,

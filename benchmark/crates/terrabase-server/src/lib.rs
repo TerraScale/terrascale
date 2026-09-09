@@ -69,6 +69,8 @@ pub mod replication_peers;
 
 /// Encrypted native backup bridge for complete physical bootstrap snapshots.
 pub mod native_snapshot_backup;
+#[cfg(test)]
+mod native_snapshot_backup_tests;
 pub mod production_lifecycle_control;
 
 pub(crate) mod export_artifact_crypto;

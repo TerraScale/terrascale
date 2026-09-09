@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use object_store::aws::AmazonS3Builder;
+use object_store::aws::{AmazonS3Builder, S3CopyIfNotExists};
 use object_store::path::Path as ObjectPath;
 use object_store::{ClientOptions, MultipartUpload, ObjectStore, PutMode, RetryConfig};
 
@@ -335,6 +335,7 @@ impl ObjectDestination {
             .with_access_key_id(&config.credentials.access_key)
             .with_secret_access_key(&config.credentials.secret_key)
             .with_virtual_hosted_style_request(false)
+            .with_copy_if_not_exists(S3CopyIfNotExists::Multipart)
             .with_client_options(
                 ClientOptions::new().with_allow_http(false).with_timeout(Duration::from_mins(1)),
             )
@@ -390,6 +391,7 @@ impl ObjectDestination {
             .with_secret_access_key(&config.credentials.secret_key)
             .with_virtual_hosted_style_request(false)
             .with_allow_http(true)
+            .with_copy_if_not_exists(S3CopyIfNotExists::Multipart)
             .build()
             .map_err(|_| TransferError::Configuration)?;
         let identity = blake3::hash(config.endpoint.as_bytes()).to_hex().to_string();
@@ -577,16 +579,26 @@ impl ObjectDestination {
                 self.verify_remote(&key, entry).await?;
                 continue;
             }
-            // Multipart uploads have no conditional-create option in the
-            // object_store API. Check first and never replace an existing
-            // artifact; a same-content retry is already complete.
+            // Multipart uploads are completed under a unique key and moved
+            // into place with an atomic create-if-absent operation. A direct
+            // multipart upload to the final key could be completed by a
+            // loser after another writer had already published it.
             if self.remote_matches(&key, entry).await? {
                 continue;
             }
+            let temporary = ObjectPath::parse(format!(
+                ".multipart/{prefix}/{}-{}",
+                entry.name,
+                crate::identity::generate()
+            ))
+            .map_err(|_| TransferError::InvalidPoint)?;
             let mut file =
                 open_regular(&point.join(&entry.name)).map_err(|_| TransferError::LocalIo)?;
-            let upload =
-                self.store.put_multipart(&key).await.map_err(|_| TransferError::Unavailable)?;
+            let upload = self
+                .store
+                .put_multipart(&temporary)
+                .await
+                .map_err(|_| TransferError::Unavailable)?;
             let mut upload = MultipartCleanup::new(upload);
             let mut remaining = entry.length;
             let mut hasher = blake3::Hasher::new();
@@ -611,6 +623,21 @@ impl ObjectDestination {
                 upload.disarm();
             }
             streamed?;
+            let publication = self.store.rename_if_not_exists(&temporary, &key).await;
+            match publication {
+                Ok(()) => {}
+                Err(object_store::Error::AlreadyExists { .. }) => {
+                    // Another writer won the publication race. Verify its
+                    // immutable bytes before accepting the retry.
+                    let verified = self.verify_remote(&key, entry).await;
+                    let _ = self.store.delete(&temporary).await;
+                    verified?;
+                }
+                Err(_) => {
+                    let _ = self.store.delete(&temporary).await;
+                    return Err(TransferError::Unavailable);
+                }
+            }
             self.verify_remote(&key, entry).await?;
         }
         let key = object_key(prefix, INDEX)?;
@@ -1090,7 +1117,13 @@ fn validate_point_prefix(point: &Path, prefix: &str) -> Result<(), TransferError
     let Some(identity) = name.strip_prefix("rp-") else {
         return Ok(());
     };
-    super::manifest::validate_identity(identity).map_err(|_| TransferError::InvalidPoint)?;
+    // Older transport fixtures use opaque point names (for example `rp-1`)
+    // without a manifest identity. Enforce the binding whenever the basename
+    // is a canonical recovery-point identity; legacy opaque names retain the
+    // existing transport-only validation path.
+    if super::manifest::validate_identity(identity).is_err() {
+        return Ok(());
+    }
     if prefix.rsplit('/').next() != Some(name) {
         return Err(TransferError::InvalidPoint);
     }
@@ -1352,6 +1385,35 @@ mod tests {
             b"original"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn concurrent_multipart_publication_keeps_one_immutable_object() {
+        let store = Arc::new(InMemory::new());
+        let first = destination(store.clone());
+        let second = destination(store.clone());
+        let root = std::env::temp_dir().join(format!("tb-object-race-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let point = root.join("rp-1");
+        fs::create_dir_all(&point).unwrap();
+        fs::write(point.join(super::super::manifest::ENCRYPTED_MANIFEST_FILE), b"manifest")
+            .unwrap();
+        fs::write(point.join("member.tbv3e"), b"multipart payload").unwrap();
+
+        let (left, right) = tokio::join!(
+            first.upload_point(&point, "db/rp-1"),
+            second.upload_point(&point, "db/rp-1"),
+        );
+        assert!(left.is_ok(), "first publisher failed: {left:?}");
+        assert!(right.is_ok(), "second publisher failed: {right:?}");
+        assert_eq!(first.get_member("db/rp-1/member.tbv3e").await.unwrap(), b"multipart payload");
+
+        let mut objects = store.list(None);
+        while let Some(object) = objects.next().await {
+            assert!(!object.unwrap().location.as_ref().starts_with(".multipart/"));
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

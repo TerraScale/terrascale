@@ -1244,6 +1244,7 @@ fn execute(
         destination,
         staging,
         encryption.as_ref(),
+        plan.reader.as_ref().map(|reader| reader.as_ref() as &dyn BackupReader),
     )
 }
 
@@ -1504,6 +1505,7 @@ fn seal_run(
     destination: &Path,
     staging: &StagingDir,
     encryption: Option<&Arc<Mutex<ArtifactCipher>>>,
+    reader: Option<&dyn BackupReader>,
 ) -> Result<BackupResult, BackupError> {
     state.observe(BackupStep::WritingArchive)?;
     let sealed = writer.finish().map_err(|_| BackupError::DestinationUnavailable)?;
@@ -1553,7 +1555,7 @@ fn seal_run(
     // already published capture by its authenticated logical facts before
     // publishing another recovery-point identity. This preserves nonce
     // uniqueness while keeping the recovery-point operation idempotent.
-    if let Some(existing) = find_existing_capture(destination, &manifest, encryption)? {
+    if let Some(existing) = find_existing_capture(destination, &manifest, encryption, reader)? {
         verify_members(destination, existing.identity(), existing.members())?;
         let archive =
             BackupArchive::new(existing.identity().to_owned(), existing.members().to_vec());
@@ -1572,11 +1574,16 @@ fn find_existing_capture(
     destination: &Path,
     expected: &BackupManifest,
     encryption: Option<&Arc<Mutex<ArtifactCipher>>>,
+    reader: Option<&dyn BackupReader>,
 ) -> Result<Option<BackupManifest>, BackupError> {
     let points = match encryption {
         Some(cipher) => {
-            let cipher = cipher.lock().map_err(|_| BackupError::DestinationUnavailable)?;
-            restore::discover_encrypted_points(destination, &*cipher)?
+            if let Some(reader) = reader {
+                restore::discover_encrypted_points(destination, reader)?
+            } else {
+                let cipher = cipher.lock().map_err(|_| BackupError::DestinationUnavailable)?;
+                restore::discover_encrypted_points(destination, &*cipher)?
+            }
         }
         None => discover_points(destination)?,
     };
