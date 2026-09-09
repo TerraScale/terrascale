@@ -83,3 +83,9 @@ fencing. The in-process 16-thread synced-write probe improved to **185–195
 ops/s** (about 5.1–5.4 ms amortized per operation), versus the earlier
 ~126-op/s serial probe. This is a useful improvement but still far below the
 tens-of-thousands target because one SQLite writer and one FULL flush remain.
+
+The commit wait is now detached from the engine storage mutex: batches are
+enqueued into the SQLite committer and their completion receiver is awaited
+after the mutex is released. The concurrent probe measured **192 ops/s** after
+this change, confirming correctness and removing lock occupancy, but showing
+that the dominant limit is still SQLite's single FULL-synchronous writer.

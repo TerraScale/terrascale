@@ -479,6 +479,14 @@ impl ObjectDestination {
             )
         {
             let key = object_key(prefix, &entry.name)?;
+            if entry.length == 0 {
+                self.store
+                    .put(&key, Vec::<u8>::new().into())
+                    .await
+                    .map_err(|_| TransferError::Unavailable)?;
+                self.verify_remote(&key, entry).await?;
+                continue;
+            }
             let mut file =
                 open_regular(&point.join(&entry.name)).map_err(|_| TransferError::LocalIo)?;
             let mut upload =
@@ -1000,8 +1008,24 @@ mod tests {
         let root = std::env::temp_dir().join(format!("tb-minio-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        let payload: String = (0..100_000).map(|i| format!("{i}:value-{i}\n")).collect();
-        fs::write(root.join("wal.tbv3e"), payload.as_bytes()).unwrap();
+        let db_path = root.join("source.sqlite3");
+        let connection = rusqlite::Connection::open(&db_path).unwrap();
+        connection.pragma_update(None, "journal_mode", "WAL").unwrap();
+        connection
+            .execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT NOT NULL);")
+            .unwrap();
+        let transaction = connection.unchecked_transaction().unwrap();
+        for i in 0..100_000_i64 {
+            transaction
+                .execute(
+                    "INSERT INTO items VALUES (?1, ?2)",
+                    rusqlite::params![i, format!("value-{i}")],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        let payload = fs::read(root.join("source.sqlite3-wal")).unwrap();
+        fs::write(root.join("wal.tbv3e"), &payload).unwrap();
         fs::write(root.join("manifest.tbv3e"), b"wal.tbv3e\n").unwrap();
         let config = DestinationConfig {
             admitted_region: crate::regions::RegionCode::GRU,
@@ -1019,14 +1043,20 @@ mod tests {
         };
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let destination = ObjectDestination::new_for_test(config).unwrap();
+            let upload_started = std::time::Instant::now();
             destination.upload_point(&root, "db/100k").await.unwrap();
+            let upload_elapsed = upload_started.elapsed();
             fs::remove_dir_all(&root).unwrap();
+            let restore_started = std::time::Instant::now();
             destination.download_point("db/100k", &root).await.unwrap();
+            let restore_elapsed = restore_started.elapsed();
             let restored = fs::read(root.join("wal.tbv3e")).unwrap();
-            assert_eq!(restored, payload.as_bytes());
-            assert_eq!(
-                restored.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).count(),
-                100_000
+            assert_eq!(restored, payload);
+            eprintln!(
+                "minio 100k sqlite WAL: {} bytes, upload {:?}, restore {:?}",
+                payload.len(),
+                upload_elapsed,
+                restore_elapsed
             );
         });
         let _ = fs::remove_dir_all(root);
