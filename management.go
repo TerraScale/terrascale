@@ -1,8 +1,6 @@
 // Management clients for the published TerraBase /api/v1 contract. The
 // direct database, region-status, backup, branch, and index routes below are
-// contract-backed. Compatibility clients for dashboard/project operations
-// remain typed but fail closed with ContractGapError until those routes are
-// published; they never send invented requests.
+// contract-backed and never send invented requests.
 package sdk
 
 import (
@@ -208,53 +206,6 @@ func (e *DeleteConfirmationError) Error() string {
 // specific destructive-operation error through errors.As.
 func (e *DeleteConfirmationError) Unwrap() error {
 	return &ValidationError{Field: "delete confirmation", Message: "must match the resource identity"}
-}
-
-// ContractGapError identifies an SDK operation whose route is not usable in
-// the pinned TerraBase contract.  Method and Path are contract metadata, not
-// a best-effort URL: a gap is returned before any HTTP request is attempted.
-type ContractGapError struct {
-	Operation string
-	Method    string
-	Path      string
-	Code      string
-	Reason    string
-	Fix       string
-}
-
-func (e *ContractGapError) Error() string {
-	if e == nil {
-		return "sdk: contract gap"
-	}
-	route := e.Operation
-	if e.Method != "" || e.Path != "" {
-		route = fmt.Sprintf("%s %s", e.Method, e.Path)
-		if e.Operation != "" {
-			route += " (" + e.Operation + ")"
-		}
-	}
-	message := fmt.Sprintf("sdk: contract gap: %s", route)
-	if e.Reason != "" {
-		message += ": " + e.Reason
-	}
-	if e.Fix != "" {
-		message += "; fix: " + e.Fix
-	}
-	return message
-}
-
-func contractGap(ctx context.Context, operation, method, path, reason, fix string) error {
-	if err := managementContext(ctx); err != nil {
-		return err
-	}
-	return &ContractGapError{
-		Operation: operation,
-		Method:    method,
-		Path:      path,
-		Code:      "contract_gap",
-		Reason:    reason,
-		Fix:       fix,
-	}
 }
 
 // PlacementLock is the residency constraint attached to a database. It is
@@ -679,75 +630,6 @@ func collectionPath(database, collection string) (string, error) {
 	return base + "/collections/" + url.PathEscape(collection), nil
 }
 
-// OnboardingClient mirrors onboarding.* routes.
-type OnboardingClient struct{ c *Client }
-
-// GetState returns onboarding state.
-func (o *OnboardingClient) GetState(ctx context.Context, opts ...RequestOption) (map[string]any, error) {
-	return nil, contractGap(ctx, "onboarding.getState", "GET", "/api/v1/onboarding",
-		"the TerraBase public contract does not publish onboarding routes",
-		"create databases through the published /api/v1/databases route")
-}
-
-// CreateOrganization creates the onboarding organization.
-func (o *OnboardingClient) CreateOrganization(ctx context.Context, name string, opts ...RequestOption) (map[string]any, error) {
-	_ = name
-	return nil, contractGap(ctx, "onboarding.organization.create", "POST", "/api/v1/onboarding/organization",
-		"the TerraBase public contract does not publish onboarding routes", "use the dashboard control plane")
-}
-
-// CreateProject creates the onboarding project.
-func (o *OnboardingClient) CreateProject(ctx context.Context, name string, regions []RegionCode, backupRegion RegionCode, opts ...RequestOption) (map[string]any, error) {
-	_, _, _ = name, regions, backupRegion
-	return nil, contractGap(ctx, "onboarding.project.create", "POST", "/api/v1/onboarding/project",
-		"the TerraBase public contract does not publish onboarding routes", "use the dashboard control plane")
-}
-
-// OrganizationsClient mirrors organizations.* routes.
-type OrganizationsClient struct{ c *Client }
-
-// List pages organizations.
-func (o *OrganizationsClient) List(ctx context.Context, skip, take int, opts ...RequestOption) ([]Organization, error) {
-	_, _ = skip, take
-	return nil, contractGap(ctx, "organizations.list", "GET", "/api/v1/organizations",
-		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
-}
-
-// Create creates an organization.
-func (o *OrganizationsClient) Create(ctx context.Context, name string, opts ...RequestOption) (*Organization, error) {
-	_ = name
-	return nil, contractGap(ctx, "organizations.create", "POST", "/api/v1/organizations",
-		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
-}
-
-// Get fetches an organization.
-func (o *OrganizationsClient) Get(ctx context.Context, organizationID string, opts ...RequestOption) (*Organization, error) {
-	_ = organizationID
-	return nil, contractGap(ctx, "organizations.get", "GET", "/api/v1/organizations/{organizationId}",
-		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
-}
-
-// Update renames an organization.
-func (o *OrganizationsClient) Update(ctx context.Context, organizationID, name string, opts ...RequestOption) (*Organization, error) {
-	_, _ = organizationID, name
-	return nil, contractGap(ctx, "organizations.update", "PATCH", "/api/v1/organizations/{organizationId}",
-		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
-}
-
-// Leave leaves an organization.
-func (o *OrganizationsClient) Leave(ctx context.Context, organizationID string, opts ...RequestOption) error {
-	_ = organizationID
-	return contractGap(ctx, "organizations.leave", "POST", "/api/v1/organizations/{organizationId}:leave",
-		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
-}
-
-// ListProjects pages an organization's projects.
-func (o *OrganizationsClient) ListProjects(ctx context.Context, organizationID string, skip, take int, opts ...RequestOption) ([]Project, error) {
-	_, _, _ = organizationID, skip, take
-	return nil, contractGap(ctx, "organizations.projects.list", "GET", "/api/v1/organizations/{organizationId}/projects",
-		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
-}
-
 // RegionsClient mirrors regions.* routes.
 type RegionsClient struct{ c *Client }
 
@@ -799,104 +681,8 @@ func parseCatalogRegionCode(value string) (RegionCode, error) {
 	return RegionCode(value), nil
 }
 
-// Get returns one region.
-func (r *RegionsClient) Get(ctx context.Context, code RegionCode, opts ...RequestOption) (*Region, error) {
-	parsed, err := ParseRegionCode(string(code))
-	if err != nil {
-		return nil, err
-	}
-	_ = parsed
-	return nil, contractGap(ctx, "regions.get", "GET", "/api/v1/regions/{code}",
-		"TerraBase publishes member region status only; it does not publish a per-region route",
-		"use Regions.List and inspect the returned member status")
-}
-
-// SavedQueriesClient mirrors savedQueries.* routes.
-type SavedQueriesClient struct{ c *Client }
-
-func savedQueryBase(projectID string) (string, error) {
-	if err := requireID("project id", projectID); err != nil {
-		return "", err
-	}
-	return "/api/v1/projects/" + url.PathEscape(projectID) + "/saved-queries", nil
-}
-
-// List pages saved queries.
-func (s *SavedQueriesClient) List(ctx context.Context, projectID string, skip, take int, opts ...RequestOption) ([]SavedQuery, error) {
-	_, _, _ = projectID, skip, take
-	return nil, contractGap(ctx, "savedQueries.list", "GET", "/api/v1/projects/{projectId}/saved-queries",
-		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
-}
-
-// Create saves a query.
-func (s *SavedQueriesClient) Create(ctx context.Context, projectID, name, query string, opts ...RequestOption) (*SavedQuery, error) {
-	_, _, _ = projectID, name, query
-	return nil, contractGap(ctx, "savedQueries.create", "POST", "/api/v1/projects/{projectId}/saved-queries",
-		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
-}
-
-// Get fetches a saved query.
-func (s *SavedQueriesClient) Get(ctx context.Context, projectID, queryID string, opts ...RequestOption) (*SavedQuery, error) {
-	_, _ = projectID, queryID
-	return nil, contractGap(ctx, "savedQueries.get", "GET", "/api/v1/projects/{projectId}/saved-queries/{queryId}",
-		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
-}
-
-// Update replaces a saved query.
-func (s *SavedQueriesClient) Update(ctx context.Context, projectID, queryID, name, query, revision string, opts ...RequestOption) (*SavedQuery, error) {
-	_, _, _, _, _ = projectID, queryID, name, query, revision
-	return nil, contractGap(ctx, "savedQueries.update", "PUT", "/api/v1/projects/{projectId}/saved-queries/{queryId}",
-		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
-}
-
-// Delete removes a saved query.
-func (s *SavedQueriesClient) Delete(ctx context.Context, projectID, queryID string, opts ...RequestOption) error {
-	_, _ = projectID, queryID
-	return contractGap(ctx, "savedQueries.delete", "DELETE", "/api/v1/projects/{projectId}/saved-queries/{queryId}",
-		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
-}
-
 // DatabasesClient mirrors databases.* routes.
 type DatabasesClient struct{ c *Client }
-
-func databaseBase(projectID string) (string, error) {
-	if err := requireID("project id", projectID); err != nil {
-		return "", err
-	}
-	return "/api/v1/projects/" + url.PathEscape(projectID) + "/databases", nil
-}
-
-// List pages databases.
-func (d *DatabasesClient) List(ctx context.Context, projectID string, skip, take int, opts ...RequestOption) ([]ManagedDatabase, error) {
-	_, _, _ = projectID, skip, take
-	return nil, contractGap(ctx, "databases.list", "GET", "/api/v1/projects/{projectId}/databases",
-		"the TerraBase public contract publishes databases by name, not project-management routes",
-		"use Databases.ListDatabases")
-}
-
-// Create creates a database.
-func (d *DatabasesClient) Create(ctx context.Context, projectID, name string, opts ...RequestOption) (*ManagedDatabase, error) {
-	_, _ = projectID, name
-	return nil, contractGap(ctx, "databases.create", "POST", "/api/v1/projects/{projectId}/databases",
-		"the TerraBase public contract publishes databases by name, not project-management routes",
-		"use CreateDatabase with explicit placement")
-}
-
-// Get fetches a database.
-func (d *DatabasesClient) Get(ctx context.Context, projectID, databaseID string, opts ...RequestOption) (*ManagedDatabase, error) {
-	_, _ = projectID, databaseID
-	return nil, contractGap(ctx, "databases.get", "GET", "/api/v1/projects/{projectId}/databases/{databaseId}",
-		"the TerraBase public contract publishes databases by name, not project-management routes",
-		"use GetDatabase")
-}
-
-// Delete removes a database; confirmation carries the delete identity header.
-func (d *DatabasesClient) Delete(ctx context.Context, projectID, databaseID, confirmation string, opts ...RequestOption) error {
-	_, _, _ = projectID, databaseID, confirmation
-	return contractGap(ctx, "databases.delete", "DELETE", "/api/v1/projects/{projectId}/databases/{databaseId}",
-		"the TerraBase public contract publishes databases by name, not project-management routes",
-		"use DeleteDatabase with explicit confirmation")
-}
 
 // ListDatabases lists direct TerraBase database records, including
 // soft-deleted records. The published route returns the complete bounded
@@ -1164,20 +950,6 @@ func (d *DatabasesClient) PutCollectionSchema(ctx context.Context, database, col
 // DatabaseBranchesClient mirrors databaseBranches.* routes.
 type DatabaseBranchesClient struct{ c *Client }
 
-// GetCapability returns branch capability for a project.
-func (b *DatabaseBranchesClient) GetCapability(ctx context.Context, projectID string, opts ...RequestOption) (map[string]any, error) {
-	_ = projectID
-	return nil, contractGap(ctx, "databaseBranches.getCapability", "GET", "/api/v1/projects/{projectId}/database-branches/capability",
-		"the TerraBase public contract does not publish project branch routes", "use ListBranches and CreateBranch")
-}
-
-// RequestClone requests a branch clone of a database.
-func (b *DatabaseBranchesClient) RequestClone(ctx context.Context, projectID, sourceDatabaseID string, opts ...RequestOption) error {
-	_, _ = projectID, sourceDatabaseID
-	return contractGap(ctx, "databaseBranches.requestClone", "POST", "/api/v1/projects/{projectId}/database-branches",
-		"the TerraBase public contract does not publish project branch routes", "use CreateBranch")
-}
-
 // ListBranches lists the branch records whose parent is database.
 func (b *DatabaseBranchesClient) ListBranches(ctx context.Context, database string, page PageRequest, opts ...RequestOption) (*BranchPage, error) {
 	if err := managementContext(ctx); err != nil {
@@ -1234,35 +1006,6 @@ func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database stri
 // BackupsClient mirrors backups.* routes.
 type BackupsClient struct{ c *Client }
 
-// ListBackups pages backup jobs.
-func (b *BackupsClient) ListBackups(ctx context.Context, projectID, databaseID string, skip, take int, opts ...RequestOption) ([]BackupJob, error) {
-	_, _, _ = projectID, databaseID, skip
-	_ = take
-	return nil, contractGap(ctx, "backups.list", "GET", "/api/v1/projects/{projectId}/databases/{databaseId}/backups",
-		"the TerraBase public contract exposes backup readiness by database name only", "use ListDatabaseBackups")
-}
-
-// GetBackup fetches one backup job.
-func (b *BackupsClient) GetBackup(ctx context.Context, projectID, databaseID, backupID string, opts ...RequestOption) (*BackupJob, error) {
-	_, _, _ = projectID, databaseID, backupID
-	return nil, contractGap(ctx, "backups.get", "GET", "/api/v1/projects/{projectId}/databases/{databaseId}/backups/{backupId}",
-		"the TerraBase public contract exposes backup readiness by database name only", "use ListDatabaseBackups")
-}
-
-// StartRestore starts a restore job.
-func (b *BackupsClient) StartRestore(ctx context.Context, projectID, databaseID, backupID, idempotencyKey string, opts ...RequestOption) (*BackupJob, error) {
-	_, _, _, _ = projectID, databaseID, backupID, idempotencyKey
-	return nil, contractGap(ctx, "backups.restores.start", "POST", "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
-		"the TerraBase public contract exposes restore-to-new-database by database name only", "use RestoreBackup")
-}
-
-// ListRestorePoints returns restore points.
-func (b *BackupsClient) ListRestorePoints(ctx context.Context, projectID, databaseID string, opts ...RequestOption) ([]map[string]any, error) {
-	_, _ = projectID, databaseID
-	return nil, contractGap(ctx, "backups.restorePoints.list", "GET", "/api/v1/projects/{projectId}/databases/{databaseId}/restore-points",
-		"the TerraBase public contract does not publish project restore-point routes", "use RestoreBackup with an optional Unix-millisecond at value")
-}
-
 // ListDatabaseBackups returns the direct TerraBase backup readiness fact.
 func (b *BackupsClient) ListDatabaseBackups(ctx context.Context, database string, opts ...RequestOption) (*BackupReadiness, error) {
 	if err := managementContext(ctx); err != nil {
@@ -1315,93 +1058,9 @@ func (b *BackupsClient) RestoreBackup(ctx context.Context, database string, requ
 	return &response.ProvisioningOperation, nil
 }
 
-// AccessClient mirrors access.* team-member routes.
-type AccessClient struct{ c *Client }
-
-// ListTeamMembers pages project team members.
-func (a *AccessClient) ListTeamMembers(ctx context.Context, projectID string, skip, take int, opts ...RequestOption) ([]TeamMember, error) {
-	_, _, _ = projectID, skip, take
-	return nil, contractGap(ctx, "access.teamMembers.list", "GET", "/api/v1/projects/{projectId}/access/team-members",
-		"the TerraBase public contract does not publish project access routes", "use the dashboard control plane")
-}
-
-// AddTeamMember adds a member.
-func (a *AccessClient) AddTeamMember(ctx context.Context, projectID, userID, role string, opts ...RequestOption) (*TeamMember, error) {
-	_, _, _ = projectID, userID, role
-	return nil, contractGap(ctx, "access.teamMembers.add", "POST", "/api/v1/projects/{projectId}/access/team-members",
-		"the TerraBase public contract does not publish project access routes", "use the dashboard control plane")
-}
-
-// RemoveTeamMember removes a member.
-func (a *AccessClient) RemoveTeamMember(ctx context.Context, projectID, userID string, opts ...RequestOption) error {
-	_, _ = projectID, userID
-	return contractGap(ctx, "access.teamMembers.remove", "DELETE", "/api/v1/projects/{projectId}/access/team-members/{userId}",
-		"the TerraBase public contract does not publish project access routes", "use the dashboard control plane")
-}
-
-// ListAPIKeys lists project API-key metadata using cursor pagination. The
-// route's cursor is opaque and is therefore not decoded or synthesized by
-// the SDK.
-func (a *AccessClient) ListAPIKeys(ctx context.Context, projectID, cursor string, take int, opts ...RequestOption) (*APIKeyPage, error) {
-	_, _, _ = projectID, cursor, take
-	return nil, contractGap(ctx, "apiKeys.list", "GET", "/api/v1/projects/{projectId}/auth/api-keys",
-		"the TerraBase public contract does not publish project API-key routes", "use a key issued by the control plane")
-}
-
-// CreateAPIKey creates a project API key. The secret is returned once.
-func (a *AccessClient) CreateAPIKey(ctx context.Context, projectID string, request CreateAPIKeyRequest, opts ...RequestOption) (*CreatedAPIKey, error) {
-	_ = projectID
-	return nil, contractGap(ctx, "apiKeys.create", "POST", "/api/v1/projects/{projectId}/auth/api-keys",
-		"the TerraBase public contract does not publish project API-key routes", "use a key issued by the control plane")
-}
-
-// RotateAPIKey rotates a project API key. The replacement secret is returned
-// once and the old key is invalidated by the service.
-func (a *AccessClient) RotateAPIKey(ctx context.Context, projectID, keyID string, opts ...RequestOption) (*RotatedAPIKey, error) {
-	_, _ = projectID, keyID
-	return nil, contractGap(ctx, "apiKeys.rotate", "POST", "/api/v1/projects/{projectId}/auth/api-keys/{keyId}/rotate",
-		"the TerraBase public contract does not publish project API-key routes", "use a key issued by the control plane")
-}
-
-// RevokeAPIKey revokes a project API key.
-func (a *AccessClient) RevokeAPIKey(ctx context.Context, projectID, keyID string, opts ...RequestOption) (*RevokedAPIKey, error) {
-	_, _ = projectID, keyID
-	return nil, contractGap(ctx, "apiKeys.revoke", "DELETE", "/api/v1/projects/{projectId}/auth/api-keys/{keyId}",
-		"the TerraBase public contract does not publish project API-key routes", "use a key issued by the control plane")
-}
-
-// UsageClient mirrors usage.* routes.
+// GetDatabaseUsage fetches usage for one direct TerraBase database.
 type UsageClient struct{ c *Client }
 
-// GetProjectUsage returns project usage.
-func (u *UsageClient) GetProjectUsage(ctx context.Context, projectID string, opts ...RequestOption) (*UsageSummary, error) {
-	_ = projectID
-	return nil, contractGap(ctx, "usage.project.get", "GET", "/api/v1/projects/{projectId}/usage",
-		"the TerraBase public contract does not publish project usage routes", "retry after usage export is published")
-}
-
-// GetProjectUsageWorkload returns bounded workload buckets for a project.
-func (u *UsageClient) GetProjectUsageWorkload(ctx context.Context, projectID, period string, opts ...RequestOption) (*UsageWorkload, error) {
-	_, _ = projectID, period
-	return nil, contractGap(ctx, "usage.project.workload", "GET", "/api/v1/projects/{projectId}/usage/workload",
-		"the TerraBase public contract does not publish project usage routes", "retry after usage export is published")
-}
-
-// GetProjectUsageHistory returns retained usage history for a project.
-func (u *UsageClient) GetProjectUsageHistory(ctx context.Context, projectID, period string, opts ...RequestOption) (*UsageHistory, error) {
-	_, _ = projectID, period
-	return nil, contractGap(ctx, "usage.project.history", "GET", "/api/v1/projects/{projectId}/usage/history",
-		"the TerraBase public contract does not publish project usage routes", "retry after usage export is published")
-}
-
-// GetOrganizationUsage returns organization usage.
-func (u *UsageClient) GetOrganizationUsage(ctx context.Context, organizationID string, opts ...RequestOption) (map[string]any, error) {
-	_ = organizationID
-	return nil, contractGap(ctx, "usage.organization.get", "GET", "/api/v1/organizations/{organizationId}/usage",
-		"the TerraBase public contract does not publish organization usage routes", "retry after usage export is published")
-}
-
-// GetDatabaseUsage fetches usage for one direct TerraBase database.
 func (u *UsageClient) GetDatabaseUsage(ctx context.Context, database string, opts ...RequestOption) (*DatabaseUsage, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
@@ -1415,37 +1074,4 @@ func (u *UsageClient) GetDatabaseUsage(ctx context.Context, database string, opt
 		return nil, err
 	}
 	return &out, nil
-}
-
-// AuditClient mirrors audit.* routes.
-type AuditClient struct{ c *Client }
-
-// List pages audit events.
-func (a *AuditClient) List(ctx context.Context, projectID string, skip, take int, opts ...RequestOption) ([]AuditEvent, error) {
-	_, _, _ = projectID, skip, take
-	return nil, contractGap(ctx, "audit.list", "GET", "/api/v1/projects/{projectId}/audit",
-		"the TerraBase public contract does not publish project audit routes", "use the control-plane audit surface")
-}
-
-// Get fetches one audit event.
-func (a *AuditClient) Get(ctx context.Context, projectID, eventID string, opts ...RequestOption) (*AuditEvent, error) {
-	_, _ = projectID, eventID
-	return nil, contractGap(ctx, "audit.get", "GET", "/api/v1/projects/{projectId}/audit/{eventId}",
-		"the TerraBase public contract does not publish project audit routes", "use the control-plane audit surface")
-}
-
-// NotificationsClient mirrors notifications.* routes.
-type NotificationsClient struct{ c *Client }
-
-// List pages notifications.
-func (n *NotificationsClient) List(ctx context.Context, opts ...RequestOption) ([]Notification, error) {
-	return nil, contractGap(ctx, "notifications.list", "GET", "/api/v1/users/me/notifications",
-		"the TerraBase public contract does not publish notification routes", "use the dashboard control plane")
-}
-
-// MarkRead marks one notification read.
-func (n *NotificationsClient) MarkRead(ctx context.Context, notificationID string, opts ...RequestOption) (*Notification, error) {
-	_ = notificationID
-	return nil, contractGap(ctx, "notifications.markRead", "POST", "/api/v1/users/me/notifications/{notificationId}:mark-read",
-		"the TerraBase public contract does not publish notification routes", "use the dashboard control plane")
 }

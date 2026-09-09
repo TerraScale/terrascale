@@ -3,7 +3,6 @@
 package sdk_test
 
 import (
-	"context"
 	"testing"
 
 	sdk "terrascale.tech/sdk"
@@ -28,8 +27,5 @@ func TestP2BConformanceCoreSurfaceHasNoSyntheticTransport(t *testing.T) {
 	}
 	if _, _, err := sdk.Select("users", "id").Limit(-1).Build(); err == nil {
 		t.Fatal("negative SQL limit must fail closed")
-	}
-	if _, err := sdk.NewSchemaBuilder().Apply(context.Background(), nil, "db"); err == nil {
-		t.Fatal("schema application without a client must fail closed")
 	}
 }

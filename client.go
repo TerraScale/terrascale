@@ -130,18 +130,11 @@ type Client struct {
 	AuthPersistence  *AuthPersistenceClient
 	Operations       *OperationsClient
 	Documents        *DocumentsClient
-	Tenants          *TenantsClient
-	Onboarding       *OnboardingClient
-	Organizations    *OrganizationsClient
 	Regions          *RegionsClient
-	SavedQueries     *SavedQueriesClient
 	Databases        *DatabasesClient
 	DatabaseBranches *DatabaseBranchesClient
 	Backups          *BackupsClient
-	Access           *AccessClient
 	Usage            *UsageClient
-	Audit            *AuditClient
-	Notifications    *NotificationsClient
 }
 
 // NewClient validates cfg and returns a ready Client.
@@ -258,18 +251,11 @@ func NewClient(cfg Config) (*Client, error) {
 	c.AuthPersistence = &AuthPersistenceClient{c: c}
 	c.Operations = &OperationsClient{c: c}
 	c.Documents = &DocumentsClient{c: c}
-	c.Tenants = &TenantsClient{c: c}
-	c.Onboarding = &OnboardingClient{c: c}
-	c.Organizations = &OrganizationsClient{c: c}
 	c.Regions = &RegionsClient{c: c}
-	c.SavedQueries = &SavedQueriesClient{c: c}
 	c.Databases = &DatabasesClient{c: c}
 	c.DatabaseBranches = &DatabaseBranchesClient{c: c}
 	c.Backups = &BackupsClient{c: c}
-	c.Access = &AccessClient{c: c}
 	c.Usage = &UsageClient{c: c}
-	c.Audit = &AuditClient{c: c}
-	c.Notifications = &NotificationsClient{c: c}
 	return c, nil
 }
 

@@ -7,7 +7,6 @@
 package sdk
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -637,34 +636,6 @@ func (b *SchemaBuilder) ToJSON() (string, error) {
 
 // JSON is an alias for ToJSON.
 func (b *SchemaBuilder) JSON() (string, error) { return b.ToJSON() }
-
-// Apply pushes the built schema to a database branch.
-func (b *SchemaBuilder) Apply(ctx context.Context, c *Client, databaseID string, opts ...RequestOption) (*Schema, error) {
-	s, err := b.TryBuild()
-	if err != nil {
-		return nil, err
-	}
-	return s.Apply(ctx, c, databaseID, opts...)
-}
-
-// Apply validates schema s but fails closed because TerraBase does not publish
-// a database-level schema operation. The published contract has only
-// collection-scoped GET/PUT schema routes, and those handlers are pending
-// until the schema-first push lane lands (D-48/S-09/S-10).
-func (s Schema) Apply(ctx context.Context, c *Client, databaseID string, opts ...RequestOption) (*Schema, error) {
-	if c == nil {
-		return nil, fmt.Errorf("sdk: client cannot be nil")
-	}
-	if strings.TrimSpace(databaseID) == "" {
-		return nil, fmt.Errorf("sdk: database id cannot be empty")
-	}
-	if err := s.Validate(); err != nil {
-		return nil, err
-	}
-	return nil, contractGap(ctx, "schema.apply", "PUT", "/api/v1/databases/{name}/schema",
-		"TerraBase publishes only collection-scoped schema routes, and those routes are pending",
-		"wait for the schema-first push lane (S-09/S-10), then apply each collection through its published route")
-}
 
 const (
 	DefaultHistoryRetentionDays = 7

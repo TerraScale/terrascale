@@ -1,11 +1,7 @@
 package sdk
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -162,33 +158,5 @@ func TestSchemaJSONCanonicalizesBTreeAndFTSIndexes(t *testing.T) {
 	}
 	if !strings.Contains(got, `"kind":"btree"`) || !strings.Contains(got, `"kind":"fts"`) {
 		t.Fatalf("index kinds were not canonicalized: %s", got)
-	}
-}
-
-func TestSchemaApplyFailsClosedWithoutRequest(t *testing.T) {
-	var requests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		http.Error(w, "unexpected schema request", http.StatusInternalServerError)
-	}))
-	defer server.Close()
-	client, err := NewClient(Config{APIBaseURL: server.URL})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	schema, err := NewCollection("users").Field("name", FieldString).Build()
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	var gap *ContractGapError
-	_, err = Schema{Collections: []CollectionSchema{schema}}.Apply(context.Background(), client, "db1")
-	if !errors.As(err, &gap) {
-		t.Fatalf("Apply error = %T: %v, want ContractGapError", err, err)
-	}
-	if gap.Operation != "schema.apply" || gap.Method != http.MethodPut || gap.Path != "/api/v1/databases/{name}/schema" {
-		t.Fatalf("Apply gap metadata = %+v", gap)
-	}
-	if requests != 0 {
-		t.Fatalf("Apply issued %d request(s) for an unpublished operation", requests)
 	}
 }

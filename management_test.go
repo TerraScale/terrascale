@@ -58,16 +58,6 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 			_, _ = w.Write([]byte(`{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"management-test","database_id":"db-restore","parent_database_id":"prod","key_version":"key-1","name":"restore","regions":["GRU"],"residency":"","state":"pending"}`))
 		case "/api/v1/databases/prod/usage":
 			_ = json.NewEncoder(w).Encode(DatabaseUsage{DatabaseID: "prod", Meters: []MeterTotal{{Meter: MeterDocumentWriteUnits, Units: "3"}, {Meter: MeterStorageByteSeconds, Units: "42"}}})
-		case "/api/v1/projects/p1/auth/api-keys":
-			if r.Method == http.MethodGet {
-				_ = json.NewEncoder(w).Encode(APIKeyPage{APIKeys: []APIKey{{KeyID: "key-1", Name: "deploy"}}})
-			} else {
-				_ = json.NewEncoder(w).Encode(CreatedAPIKey{APIKey: APIKey{KeyID: "key-1"}, Secret: "secret"})
-			}
-		case "/api/v1/projects/p1/auth/api-keys/key-1/rotate":
-			_ = json.NewEncoder(w).Encode(RotatedAPIKey{APIKey: APIKey{KeyID: "key-1"}, Secret: "secret", Rotated: true})
-		case "/api/v1/projects/p1/auth/api-keys/key-1":
-			_ = json.NewEncoder(w).Encode(RevokedAPIKey{KeyID: "key-1", Revoked: true})
 		default:
 			http.NotFound(w, r)
 		}
@@ -123,10 +113,6 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 	if usage, err := c.Usage.GetDatabaseUsage(context.Background(), "prod"); err != nil || usage.DatabaseID != "prod" || usage.Meters[0].Units != "3" {
 		t.Fatalf("GetDatabaseUsage: result=%+v err=%v", usage, err)
 	}
-	if _, err := c.Access.ListAPIKeys(context.Background(), "p1", "cursor-1", 25); err == nil {
-		t.Fatal("ListAPIKeys unexpectedly succeeded")
-	}
-
 	if !reflect.DeepEqual(got[0], "GET /api/v1/databases") {
 		t.Fatalf("pagination route = %q", got[0])
 	}
@@ -254,10 +240,6 @@ func TestTerraBaseManagementValidationCancellationAndIdempotency(t *testing.T) {
 	}
 	if err := validatePlacement([]RegionCode{RegionGRU, RegionGRU}, ""); err == nil {
 		t.Fatal("duplicate placement should be rejected")
-	}
-	var gap *ContractGapError
-	if _, err := c.Organizations.List(context.Background(), 0, 10); !errors.As(err, &gap) || gap.Path != "/api/v1/organizations" {
-		t.Fatalf("unpublished organization route should return ContractGapError, got %T: %v", err, err)
 	}
 }
 
