@@ -914,6 +914,7 @@ mod restore_tests {
         let row = restored.queries().execute(&plan, &snapshot).unwrap();
         assert_eq!(row.rows().len(), 1);
         drop(restored);
+        drop(snapshots);
         runtime.drain().unwrap();
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();

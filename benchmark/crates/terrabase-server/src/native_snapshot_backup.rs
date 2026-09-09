@@ -333,7 +333,10 @@ pub async fn restore_snapshot(
                 offset = next;
             }
         }
-        sink.finish_local().await.map_err(|_| SnapshotBackupError::Snapshot)
+        sink.finish_local().await.map_err(|error| {
+            eprintln!("native snapshot finish error: {error:?}");
+            SnapshotBackupError::Snapshot
+        })
     }
     .await;
     if downloaded && result.is_err() {

@@ -33,8 +33,13 @@ impl DatabaseKeySource for StaticKeys {
     }
 }
 
-async fn fixture()
--> (WalSnapshotSource, WalReplicaBinding, Arc<DatabaseKeyLease>, std::path::PathBuf) {
+async fn fixture() -> (
+    WalSnapshotSource,
+    WalReplicaBinding,
+    Arc<DatabaseKeyLease>,
+    Arc<DatabaseKeyLease>,
+    std::path::PathBuf,
+) {
     let writer = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     let follower = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
     let scope = DatabaseRouteScope::try_new(writer, writer, writer).unwrap();
@@ -92,7 +97,7 @@ async fn fixture()
     )
     .unwrap();
     let metadata = KeyVersionMetadata::new(
-        key_scope,
+        key_scope.clone(),
         DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
     );
     let lease = Arc::new(
@@ -103,14 +108,33 @@ async fn fixture()
         )
         .unwrap(),
     );
+    let data_scope = KeyScope::new_with_project(
+        "prod",
+        terrabase::identity::TenantUlid::from_text(writer).unwrap(),
+        terrabase::identity::ProjectUlid::from_text(writer).unwrap(),
+        terrabase::identity::DatabaseUlid::from_text(writer).unwrap(),
+        KeyPurpose::Data,
+    )
+    .unwrap();
+    let data_lease = Arc::new(
+        DatabaseKeyLease::test_oci_vault(
+            KeyVersionMetadata::new(
+                data_scope,
+                DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB1").unwrap(),
+            ),
+            DatabaseKey::from_bytes([47; 32]),
+            Duration::from_secs(60),
+        )
+        .unwrap(),
+    );
     let source =
         WalSnapshotSource::capture(binding.clone(), engine, root.join("source")).await.unwrap();
-    (source, binding, lease, root)
+    (source, binding, lease, data_lease, root)
 }
 
 #[tokio::test]
 async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
-    let (source, binding, lease, root) = fixture().await;
+    let (source, binding, lease, data_lease, root) = fixture().await;
     let store = Arc::new(object_store::memory::InMemory::new());
     let destination = Arc::new(terrabase::backup::object_store::ObjectDestination::for_test(
         terrabase::backup::object_store::Provider::Oci,
@@ -120,7 +144,7 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
     ));
     let staging = root.join("backup");
     let placement = PlacementLock::explicit([RegionCode::GRU]).unwrap();
-    let keys = Arc::new(StaticKeys(Arc::clone(&lease)));
+    let keys = Arc::new(StaticKeys(Arc::clone(&data_lease)));
     super::native_snapshot_backup::upload_snapshot(
         &source,
         RegionCode::GRU,
@@ -202,7 +226,7 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
     );
     std::fs::remove_file(staging.join("chunk-extra")).unwrap();
     let target = root.join("target");
-    let (_follower, receipt) = super::native_snapshot_backup::restore_snapshot(
+    let restore_result = super::native_snapshot_backup::restore_snapshot(
         &destination,
         "roundtrip-retry",
         &root.join("download"),
@@ -214,8 +238,11 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
         keys,
         8 * 1024 * 1024,
     )
-    .await
-    .unwrap();
+    .await;
+    if let Err(error) = &restore_result {
+        println!("restore error: {error:?}");
+    }
+    let (_follower, receipt) = restore_result.unwrap();
     assert!(receipt.checkpoint.is_some());
 }
 
