@@ -548,58 +548,63 @@ pub fn merge_sync_journal_pages(
                 right.record.position().write_index(),
             ))
     });
-    candidates.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+    let truncated = candidates.len() > limit;
+    candidates.truncate(limit);
 
     // Keep each lane's returned records as a contiguous prefix of that
     // lane's page. A global HLC sort can otherwise select a later record
     // while an earlier record from the same lane remains pending, and
     // advancing the lane cursor past the gap would silently skip it.
     let mut prefix_counts = BTreeMap::<OriginLaneId, usize>::new();
-    for (lane, page) in &pages {
-        let checkpoint = cursor.lanes.get(lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
-        let eligible_positions: Vec<_> = page
-            .records
-            .iter()
-            .filter(|record| {
-                record.provenance().kind() == JournalKind::Origin
-                    && !subscription::position_covered(
-                        checkpoint.sequence(),
-                        checkpoint.write_index(),
-                        StorageSequence::new(record.storage_sequence()),
-                        record.position().write_index().saturating_sub(1),
-                    )
-            })
-            .map(SyncJournalRecord::position)
-            .collect();
-        let mut selected_positions = Vec::new();
-        for candidate in candidates.iter().filter(|candidate| candidate.lane == *lane) {
-            selected_positions.push(candidate.record.position());
+    let mut eligible_ranks =
+        BTreeMap::<OriginLaneId, std::collections::HashMap<(u64, u32), usize>>::new();
+    if truncated {
+        for (lane, page) in &pages {
+            let checkpoint =
+                cursor.lanes.get(lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
+            let eligible_positions: Vec<_> = page
+                .records
+                .iter()
+                .filter(|record| {
+                    record.provenance().kind() == JournalKind::Origin
+                        && !subscription::position_covered(
+                            checkpoint.sequence(),
+                            checkpoint.write_index(),
+                            StorageSequence::new(record.storage_sequence()),
+                            record.position().write_index().saturating_sub(1),
+                        )
+                })
+                .map(SyncJournalRecord::position)
+                .collect();
+            let mut selected_positions = std::collections::HashSet::new();
+            for candidate in candidates.iter().filter(|candidate| candidate.lane == *lane) {
+                let position = candidate.record.position();
+                selected_positions.insert((position.sequence(), position.write_index()));
+            }
+            let prefix = eligible_positions
+                .iter()
+                .take_while(|position| {
+                    selected_positions.contains(&(position.sequence(), position.write_index()))
+                })
+                .count();
+            prefix_counts.insert(lane.clone(), prefix);
+            eligible_ranks.insert(
+                lane.clone(),
+                eligible_positions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, position)| ((position.sequence(), position.write_index()), index))
+                    .collect(),
+            );
         }
-        let prefix = eligible_positions
-            .iter()
-            .take_while(|position| selected_positions.contains(position))
-            .count();
-        prefix_counts.insert(lane.clone(), prefix);
+        candidates.retain(|candidate| {
+            let position = candidate.record.position();
+            eligible_ranks[&candidate.lane]
+                .get(&(position.sequence(), position.write_index()))
+                .is_some_and(|index| *index < prefix_counts[&candidate.lane])
+        });
     }
-    candidates.retain(|candidate| {
-        let Some(page) = pages.get(&candidate.lane) else { return false };
-        let checkpoint =
-            cursor.lanes.get(&candidate.lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
-        let rank = page
-            .records
-            .iter()
-            .filter(|record| {
-                record.provenance().kind() == JournalKind::Origin
-                    && !subscription::position_covered(
-                        checkpoint.sequence(),
-                        checkpoint.write_index(),
-                        StorageSequence::new(record.storage_sequence()),
-                        record.position().write_index().saturating_sub(1),
-                    )
-            })
-            .position(|record| record.position() == candidate.record.position());
-        rank.is_some_and(|index| index < prefix_counts[&candidate.lane])
-    });
 
     let mut next = cursor.clone();
     let mut selected_counts = BTreeMap::<OriginLaneId, usize>::new();
