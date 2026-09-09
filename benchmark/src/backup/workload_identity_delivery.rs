@@ -218,7 +218,8 @@ mod tests {
     }
 
     fn fixture_path(name: &str) -> (PathBuf, PathBuf) {
-        let root = std::env::temp_dir().join(format!("terrabase-workload-{}-{name}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("terrabase-workload-{}-{name}", std::process::id()));
         let parent = root.join("protected");
         fs::create_dir_all(&parent).unwrap();
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o710)).unwrap();
@@ -230,7 +231,8 @@ mod tests {
         let (root, socket) = fixture_path("symlink");
         let link = root.join("link");
         std::os::unix::fs::symlink(socket.parent().unwrap(), &link).unwrap();
-        let provider = UnixWorkloadIdentityProvider::new(link.join("broker.sock"), scope()).unwrap();
+        let provider =
+            UnixWorkloadIdentityProvider::new(link.join("broker.sock"), scope()).unwrap();
         assert_eq!(provider.validate_path(), Err(WorkloadIdentityError::Unavailable));
         fs::remove_dir_all(root).unwrap();
     }

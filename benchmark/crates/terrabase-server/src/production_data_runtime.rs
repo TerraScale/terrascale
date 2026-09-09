@@ -1143,7 +1143,8 @@ impl ProductionAdmissionRuntime {
             .map_err(|_| "customer key authorization unavailable")?;
             let destination_policy =
                 policy.destinations.first().ok_or("customer backup policy metadata unavailable")?;
-            if destination_policy.provider != terrabase::backup::object_store::Provider::CustomerS3 {
+            if destination_policy.provider != terrabase::backup::object_store::Provider::CustomerS3
+            {
                 return Err("customer backup policy provider unavailable".into());
             }
             let identity =
