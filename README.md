@@ -1,7 +1,9 @@
 # TerraScale.DotNet
 
 The C#/.NET 10 client SDK for TerraScale. The workspace
-[workspace goal](../GOAL.md#ts-dotnet) defines the product and SDK responsibilities. Generated models and route metadata consume the pinned contract published by terrabase; named clients implement customer operations against that contract.
+[goal](../GOAL.md) defines the product and SDK responsibilities. Generated
+models and route metadata consume the pinned public contract published by
+terrabase; named clients implement customer operations against that contract.
 
 ## What is here
 
@@ -16,11 +18,12 @@ The C#/.NET 10 client SDK for TerraScale. The workspace
   `Operations.GetAsync` to observe authoritative progress.
 - `TerraScaleSyncV1ViewEngine`: the transport-independent result-view state
   machine (bounded snapshots, atomic deltas, opaque checkpoints, typed resets,
-  reversible optimistic presentation). `TerraScaleReactiveHttpClient` supplies
-  MessagePack snapshot bootstrap, HTTP log delivery, and WebSocket delivery.
+  reversible optimistic presentation). `TerraScaleReactiveHttpClient` is the
+  public reactive binding and supplies MessagePack snapshot bootstrap, HTTP log
+  delivery, and WebSocket delivery.
 
 Retired product concepts are deleted per the workspace decisions, not
-deprecated: this SDK ships only the launch surface above.
+deprecated: this SDK documents only the current public SDK surface above.
 
 ## Create a client
 

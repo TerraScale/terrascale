@@ -1,5 +1,10 @@
 # ADR 0002: keep the v1 result engine separate from transport
 
+> Historical status: this record describes the pre-binding state of the
+> repository. The current SDK also exposes `TerraScaleReactiveHttpClient`, a
+> public HTTP/WebSocket binding over the same transport-independent engine. The
+> original decision text below is retained for its historical context.
+
 - Status: Accepted for the current repository boundary
 - Date: 2026-08-29
 - Scope: `TerraScale.DotNet` reactive client
