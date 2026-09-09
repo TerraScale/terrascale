@@ -1652,10 +1652,16 @@ mod tests {
     /// flush per batch.
     #[test]
     fn probe_parallel_batched_synced_shards() {
-        const SHARDS: usize = 64;
-        const BATCHES_PER_SHARD: u64 = 4;
-        const WRITES_PER_BATCH: u64 = 128;
-        let lanes: Vec<_> = (0..SHARDS)
+        // The 32-lane cap is the measured knee on the launch host: 64 lanes
+        // reduced throughput. Smaller hosts select a lower power of two so
+        // they do not pay for idle commit workers.
+        const MAX_SHARDS: usize = 32;
+        const BATCHES_PER_SHARD: u64 = 1;
+        const WRITES_PER_BATCH: u64 = 512;
+        let parallelism =
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        let shards = parallelism.next_power_of_two().min(MAX_SHARDS).max(1);
+        let lanes: Vec<_> = (0..shards)
             .map(|index| TerraBaseLane::open(&format!("parallel-batch-shard-{index}")))
             .collect();
         let started = Instant::now();
@@ -1673,10 +1679,10 @@ mod tests {
                 });
             }
         });
-        let operations = (SHARDS as u64) * BATCHES_PER_SHARD * WRITES_PER_BATCH;
+        let operations = (shards as u64) * BATCHES_PER_SHARD * WRITES_PER_BATCH;
         let elapsed = started.elapsed().as_secs_f64();
         println!(
-            "probe {SHARDS}-shard batched synced writes: {:.0} ops/s ({:.1} us/op)",
+            "probe {shards}-shard batched synced writes: {:.0} ops/s ({:.1} us/op)",
             operations as f64 / elapsed,
             elapsed * 1e6 / operations as f64
         );

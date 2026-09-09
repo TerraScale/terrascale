@@ -1302,7 +1302,14 @@ fn resolve_boundary(
             // bound. A base below it is not provable: the run fails closed
             // rather than silently skipping the given-up window.
             match servable_start {
-                Some(start) if base.get() < start.get() => Err(BackupError::SourceUnavailable),
+                // Sequence zero is the implicit empty root before the first
+                // journal publication.  It remains a valid incremental base
+                // even when the first retained row starts at sequence one;
+                // rejecting it would make an initial full backup impossible
+                // to extend after the first write.
+                Some(start) if base.get() != 0 && base.get() < start.get() => {
+                    Err(BackupError::SourceUnavailable)
+                }
                 None if base.get() > 0 => Err(BackupError::SourceUnavailable),
                 _ => Ok(proven),
             }

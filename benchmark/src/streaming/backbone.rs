@@ -665,6 +665,44 @@ mod lane_merge_tests {
         let retained = if advanced == first { second } else { first };
         assert_eq!(merged.cursor().lanes()[&retained], ChangeCheckpoint::after(0, 0));
     }
+
+    #[test]
+    fn sync_merge_throughput_probe() {
+        const LANES: usize = 8;
+        const RECORDS_PER_LANE: u64 = 1_024;
+        let lanes: Vec<_> = (0..LANES)
+            .map(|index| lane(if index % 2 == 0 { "GRU" } else { "SFO" }, index as u128 + 1))
+            .collect();
+        let cursor = SyncJournalCursor::beginning(binding(), lanes.clone());
+        let pages = lanes
+            .iter()
+            .enumerate()
+            .map(|(lane_index, lane_id)| {
+                let records = (0..RECORDS_PER_LANE)
+                    .map(|index| {
+                        record(
+                            index + 1,
+                            index + (lane_index as u64 * RECORDS_PER_LANE),
+                            &format!("probe-{lane_index}-{index}"),
+                        )
+                    })
+                    .collect();
+                (lane_id.clone(), SyncJournalLanePage::new(records, None, true))
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let merged =
+            merge_sync_journal_pages(&cursor, pages, (LANES as u32) * (RECORDS_PER_LANE as u32))
+                .expect("merge succeeds");
+        let elapsed = started.elapsed().as_secs_f64();
+        let records = (LANES as u64) * RECORDS_PER_LANE;
+        assert_eq!(merged.records().len(), records as usize);
+        println!(
+            "sync merge probe: {:.0} records/s ({:.1} us/record)",
+            records as f64 / elapsed,
+            elapsed * 1e6 / records as f64
+        );
+    }
 }
 
 impl SyncJournalBatch {

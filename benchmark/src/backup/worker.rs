@@ -3522,7 +3522,6 @@ mod tests {
         assert!(!staging.exists());
     }
     #[tokio::test]
-    #[ignore = "native second capture currently returns Capture; tracked qualification gap"]
     async fn capture_snapshot_is_safe_while_writes_continue() {
         let (_, engine) = open_engine("fleet-concurrent-capture");
         let engine = Arc::new(engine);
@@ -3552,7 +3551,7 @@ mod tests {
                 historical_destinations: Vec::new(),
                 policy_revision: "concurrent".into(),
                 retention_days: 1,
-                staging,
+                staging: staging.clone(),
                 placement: PlacementLock::br_only(),
             })
             .unwrap();
