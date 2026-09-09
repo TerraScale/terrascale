@@ -735,6 +735,24 @@ struct FileProductionDatabase {
     enabled: Option<bool>,
     #[serde(default)]
     backup: Option<FileProductionBackup>,
+    #[serde(default)]
+    byok: Option<FileProductionByok>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionByok {
+    backup_endpoint: String,
+    backup_bucket: String,
+    backup_region: String,
+    backup_role_arn: String,
+    #[serde(default)]
+    backup_external_id: Option<String>,
+    key_provider: String,
+    key_id: String,
+    key_region: String,
+    #[serde(default)]
+    key_endpoint: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1078,6 +1096,37 @@ impl ServerConfig {
                 "local-file" => return Err(ConfigError::LocalProviderInProduction),
                 _ => return Err(ConfigError::InvalidProductionBoundary),
             };
+            if let Some(byok) = &entry.byok {
+                let valid_provider = matches!(
+                    byok.key_provider.as_str(),
+                    "oci-vault" | "aws-kms" | "azure-key-vault" | "customer-kms"
+                );
+                let valid_endpoint = |value: &str| {
+                    value.starts_with("https://")
+                        && value.len() <= 2048
+                        && !value.chars().any(char::is_control)
+                };
+                if !valid_endpoint(&byok.backup_endpoint)
+                    || byok.backup_bucket.is_empty()
+                    || byok.backup_bucket.len() > 63
+                    || byok.backup_region.is_empty()
+                    || byok.backup_region.len() > 64
+                    || !byok.backup_role_arn.starts_with("arn:")
+                    || byok.backup_role_arn.len() > 512
+                    || !valid_provider
+                    || byok.key_id.is_empty()
+                    || byok.key_id.len() > 512
+                    || byok.key_region.is_empty()
+                    || byok.key_region.len() > 64
+                    || byok.key_endpoint.as_deref().is_some_and(|value| !valid_endpoint(value))
+                    || byok
+                        .backup_external_id
+                        .as_deref()
+                        .is_some_and(|value| value.is_empty() || value.len() > 128)
+                {
+                    return Err(ConfigError::InvalidProductionBoundary);
+                }
+            }
             let encryption_key = DatabaseKeyVersion::from_text(&entry.encryption_key)
                 .map_err(|_| ConfigError::InvalidProductionBoundary)?;
             let quotas = DatabaseQuotas {
