@@ -1254,6 +1254,9 @@ impl NativeBackupFleet {
             } else if let Some(verified_at) = stream.verified_at {
                 metrics.set_backup_last_success_age(BackupMode::Continuous, verified_at.elapsed());
             }
+            if let Err(ref error) = result {
+                eprintln!("native backup capture failed: {error:?}");
+            }
             match result {
                 Ok(()) => {
                     stream.health.failures = 0;

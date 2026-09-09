@@ -4615,6 +4615,33 @@ fn conflict_between(
         };
         return Ok(!ttl_matches(snapshot_sequence)? || !ttl_matches(published_sequence)?);
     }
+    // The common benchmark and API path uses an unconstrained (`Any`) put.
+    // For this expectation only the conflict question is whether any row for
+    // this key was published after the caller's snapshot.  A single indexed
+    // commit-sequence probe replaces two full version lookups while retaining
+    // tombstone and delete/recreate detection. Exact-version and create-only
+    // writes continue through the version-aware path below.
+    if matches!(expected, ExpectedVersion::Any) {
+        let changed = transaction
+            .query_row(
+                "SELECT 1 FROM documents
+                 WHERE tenant = ?1 AND collection = ?2 AND id = ?3
+                   AND commit_seq > ?4 AND commit_seq <= ?5
+                 ORDER BY commit_seq DESC LIMIT 1",
+                rusqlite::params![
+                    tenant.as_str(),
+                    collection.as_str(),
+                    id.as_str(),
+                    snapshot_sequence as i64,
+                    published_sequence as i64,
+                ],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|_| ())?
+            .is_some();
+        return Ok(changed);
+    }
     let snapshot_version = version_at(transaction, tenant, collection, id, snapshot_sequence)?;
     let published_version = version_at(transaction, tenant, collection, id, published_sequence)?;
     Ok(snapshot_version != published_version
