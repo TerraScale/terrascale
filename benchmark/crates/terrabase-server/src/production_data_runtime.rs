@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use terrabase::backup::worker::FleetLimits;
 use terrabase::encryption::{
-    DatabaseKeySource, DatabaseKeyVersion,
+    CustomerKmsDatabaseKeys, CustomerKmsKeyDelivery, DatabaseKeySource, DatabaseKeyVersion,
     KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys, OciVaultKeyDelivery,
 };
 use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
@@ -811,7 +811,34 @@ impl ProductionAdmissionRuntime {
             local.clone(),
         );
         let replaying = Arc::new(AtomicBool::new(true));
-        let storage = crate::production_admission::storage_admission_with_replay(
+        let customer_configs = self.config.databases.clone();
+        let customer_keys = self.config.keys.clone().ok_or("production key delivery missing")?;
+        let customer_source = Arc::new(move |record: &crate::admission::AdmissionRecord| {
+            let configured = customer_configs
+                .iter()
+                .find(|entry| entry.database.to_text() == record.database_id)
+                .ok_or("configured database unavailable")?;
+            let byok = configured.byok.as_ref().ok_or("customer KMS configuration missing")?;
+            let endpoint = byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?;
+            let key_region = byok.key_region.parse().map_err(|_| "invalid customer KMS Region")?;
+            let adapter = CustomerKmsKeyDelivery::new(
+                customer_keys.socket.clone(), customer_keys.orchestrator_uid, customer_keys.socket_gid,
+                byok.key_provider.clone(), byok.key_id.clone(), key_region, endpoint,
+            ).map_err(|_| "customer KMS adapter unavailable")?;
+            let scope = KeyScope::new_with_project(
+                &record.environment,
+                terrabase::identity::TenantUlid::from_text(&record.tenant_id).map_err(failure)?,
+                terrabase::identity::ProjectUlid::from_text(&record.project_id).map_err(failure)?,
+                terrabase::identity::DatabaseUlid::from_text(&record.database_id).map_err(failure)?,
+                KeyPurpose::Data,
+            ).map_err(failure)?;
+            let version = DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?;
+            let region = record.region.parse().map_err(|_| "invalid admitted Region")?;
+            Ok(Arc::new(CustomerKmsDatabaseKeys::new(
+                adapter, KeyVersionMetadata::new(scope, version), region,
+            ).map_err(|_| "customer key authorization unavailable")?) as Arc<dyn DatabaseKeySource>)
+        });
+        let storage = crate::production_admission::storage_admission_with_replay_and_customer(
             member.clone(),
             registry.clone(),
             provider,
@@ -819,6 +846,7 @@ impl ProductionAdmissionRuntime {
             per_database,
             instance,
             Arc::clone(&replaying),
+            customer_source,
         );
         let callback: crate::admission::StorageAdmission = Arc::new(move |record| {
             storage(record)?;

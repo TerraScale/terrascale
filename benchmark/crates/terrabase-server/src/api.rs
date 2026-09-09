@@ -4959,7 +4959,18 @@ async fn restore_backup(
             return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
                 .into_response();
         };
-        let selection = match value.get("at").and_then(serde_json::Value::as_u64) {
+        if target.is_empty() || !valid_restore_operation_id(operation) {
+            return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
+                .into_response();
+        }
+        let at = match restore_at_millis(value.get("at")) {
+            Ok(at) => at,
+            Err(()) => {
+                return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
+                    .into_response();
+            }
+        };
+        let selection = match at {
             Some(unix_millis) => {
                 serde_json::json!({"kind":"unix_millis","unix_millis":unix_millis})
             }
@@ -5061,6 +5072,21 @@ enum RestoreFlavor {
     Branch,
 }
 
+/// Parses the optional restore point without allowing malformed values to
+/// silently select the latest backup. `null` has the same meaning as omission.
+fn restore_at_millis(value: Option<&serde_json::Value>) -> Result<Option<i64>, ()> {
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value.as_i64().filter(|millis| *millis >= 0).map(Some).ok_or(()),
+    }
+}
+
+fn valid_restore_operation_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+}
+
 /// The shared restore-to-new-database path: register the target record,
 /// restore the file into the target's catalog location, and answer the
 /// record. A failed restore soft-deletes the record it just made so no
@@ -5104,7 +5130,23 @@ async fn restore_or_branch(
         }
         .into_response();
     };
-    let at = request.get("at").and_then(serde_json::Value::as_i64);
+    if let Some(operation) = request.get("operation_id") {
+        if operation.as_str().is_none_or(|operation| !valid_restore_operation_id(operation)) {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_operation_id",
+                message: "the operation_id must be printable ASCII text of at most 128 bytes"
+                    .into(),
+                fix: "send a stable non-empty operation_id, or omit it on a local member".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+    }
+    let at = match restore_at_millis(request.get("at")) {
+        Ok(at) => at,
+        Err(()) => return invalid_at("it must be a non-negative integer or null"),
+    };
     let placement = [state.region];
     let registered = match flavor {
         // D-52: a restore is bytes at rest in a new place — the target
@@ -5128,7 +5170,7 @@ async fn restore_or_branch(
     // A resident host for the target must not hold the file the restore
     // swaps (S-06: restore never writes under a live engine).
     catalog.close_database(&state.scope.0, &state.scope.1, target);
-    let at_seconds = at.map(|millis| u64::try_from(millis.div_euclid(1000)).unwrap_or(0));
+    let at_seconds = at.map(|millis| u64::try_from(millis / 1000).unwrap_or(0));
     let Some(backups) = state.backups.as_ref() else {
         return ApiError::backup("native backup restore authority is unavailable").into_response();
     };
@@ -7931,6 +7973,16 @@ mod tests {
         assert!(body.contains("malformed_credential"), "{body}");
         assert!(body.contains("fix"), "{body}");
         let _ = header::AUTHORIZATION;
+    }
+
+    #[test]
+    fn restore_at_rejects_malformed_values_and_preserves_latest() {
+        for value in [serde_json::json!(-1), serde_json::json!("1000"), serde_json::json!(1.5)] {
+            assert_eq!(super::restore_at_millis(Some(&value)), Err(()));
+        }
+        assert_eq!(super::restore_at_millis(None), Ok(None));
+        assert_eq!(super::restore_at_millis(Some(&serde_json::Value::Null)), Ok(None));
+        assert_eq!(super::restore_at_millis(Some(&serde_json::json!(1_000))), Ok(Some(1_000)));
     }
 }
 

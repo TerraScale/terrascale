@@ -207,12 +207,6 @@ impl ProductionCatalogBootstrap {
 
         let key_config =
             config.keys.as_ref().ok_or(ProductionCatalogError::EncryptionUnavailable)?;
-        let provider = terrabase::encryption::OciVaultKeyDelivery::new(
-            key_config.socket.clone(),
-            key_config.orchestrator_uid,
-            key_config.socket_gid,
-        )
-        .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
         let mut keys: BTreeMap<
             terrabase::member::DatabaseId,
             Arc<dyn terrabase::encryption::DatabaseKeySource>,
@@ -228,13 +222,47 @@ impl ProductionCatalogBootstrap {
             .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
             let metadata =
                 terrabase::encryption::KeyVersionMetadata::new(scope, database.encryption_key);
-            let source = terrabase::encryption::OciVaultDatabaseKeys::new(
-                provider.clone(),
-                metadata,
-                database.region,
-            )
-            .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
-            keys.insert(database.database.into(), Arc::new(source));
+            let source: Arc<dyn terrabase::encryption::DatabaseKeySource> =
+                if let Some(byok) = &database.byok {
+                    let endpoint = byok
+                        .key_endpoint
+                        .clone()
+                        .ok_or(ProductionCatalogError::EncryptionUnavailable)?;
+                    let key_region = byok
+                        .key_region
+                        .parse()
+                        .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
+                    let adapter = terrabase::encryption::CustomerKmsKeyDelivery::new(
+                        key_config.socket.clone(),
+                        key_config.orchestrator_uid,
+                        key_config.socket_gid,
+                        byok.key_provider.clone(),
+                        byok.key_id.clone(),
+                        key_region,
+                        endpoint,
+                    )
+                    .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
+                    Arc::new(
+                        terrabase::encryption::CustomerKmsDatabaseKeys::new(
+                            adapter, metadata, database.region,
+                        )
+                        .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?,
+                    )
+                } else {
+                    let provider = terrabase::encryption::OciVaultKeyDelivery::new(
+                        key_config.socket.clone(),
+                        key_config.orchestrator_uid,
+                        key_config.socket_gid,
+                    )
+                    .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
+                    Arc::new(
+                        terrabase::encryption::OciVaultDatabaseKeys::new(
+                            provider, metadata, database.region,
+                        )
+                        .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?,
+                    )
+                };
+            keys.insert(database.database.into(), source);
         }
         let member = Member::open_production(&root, specs.clone(), limits, keys)
             .map_err(ProductionCatalogError::MemberOpen)?;
