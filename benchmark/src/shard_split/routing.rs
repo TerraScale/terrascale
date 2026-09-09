@@ -2,6 +2,22 @@
 
 use super::{CutoverPermit, WriterFence};
 
+/// Highest shard fan-out selected automatically for one host. Beyond this
+/// point the measured durable-write probe showed diminishing returns from
+/// extra SQLite writers.
+pub const MAX_RECOMMENDED_SHARDS: usize = 32;
+
+/// Selects a power-of-two shard fan-out from host parallelism.
+///
+/// The cap is deliberately conservative: it prevents a large host from
+/// creating more SQLite commit lanes after the measured throughput knee,
+/// while smaller hosts avoid idle lanes and excess file overhead.
+#[must_use]
+pub fn recommended_shard_count() -> usize {
+    let parallelism = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    parallelism.next_power_of_two().min(MAX_RECOMMENDED_SHARDS).max(1)
+}
+
 /// One shard's inclusive-lower/exclusive-upper key range.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShardRoute {
@@ -199,6 +215,13 @@ impl RouteTable {
 mod tests {
     use super::*;
     use crate::shard_split::WriterFence;
+
+    #[test]
+    fn recommended_shards_are_bounded_power_of_two() {
+        let shards = recommended_shard_count();
+        assert!(shards >= 1 && shards <= MAX_RECOMMENDED_SHARDS);
+        assert!(shards.is_power_of_two());
+    }
 
     #[test]
     fn route_table_rejects_duplicate_shard_owners() {

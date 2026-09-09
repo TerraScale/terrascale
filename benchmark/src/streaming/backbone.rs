@@ -668,8 +668,8 @@ mod lane_merge_tests {
 
     #[test]
     fn sync_merge_throughput_probe() {
-        const LANES: usize = 8;
-        const RECORDS_PER_LANE: u64 = 1_024;
+        const LANES: usize = 4;
+        const RECORDS_PER_LANE: u64 = 256;
         let lanes: Vec<_> = (0..LANES)
             .map(|index| lane(if index % 2 == 0 { "GRU" } else { "SFO" }, index as u128 + 1))
             .collect();

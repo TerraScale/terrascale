@@ -1652,15 +1652,9 @@ mod tests {
     /// flush per batch.
     #[test]
     fn probe_parallel_batched_synced_shards() {
-        // The 32-lane cap is the measured knee on the launch host: 64 lanes
-        // reduced throughput. Smaller hosts select a lower power of two so
-        // they do not pay for idle commit workers.
-        const MAX_SHARDS: usize = 32;
         const BATCHES_PER_SHARD: u64 = 1;
         const WRITES_PER_BATCH: u64 = 512;
-        let parallelism =
-            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-        let shards = parallelism.next_power_of_two().min(MAX_SHARDS).max(1);
+        let shards = crate::shard_split::recommended_shard_count();
         let lanes: Vec<_> = (0..shards)
             .map(|index| TerraBaseLane::open(&format!("parallel-batch-shard-{index}")))
             .collect();

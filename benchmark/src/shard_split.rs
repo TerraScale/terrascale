@@ -30,7 +30,10 @@ pub use range_copy::{
     CopyBatch, CopyCheckpoint, CopyEntry, CopyError, RangeCopier, RangeCopySource, RangeCopyTarget,
 };
 pub use recovery::{RecoveryAction, RecoveryDecision, RecoveryError, RecoveryPlan};
-pub use routing::{RouteError, RouteTable, ShardRoute, ShardRouter};
+pub use routing::{
+    MAX_RECOMMENDED_SHARDS, RouteError, RouteTable, ShardRoute, ShardRouter,
+    recommended_shard_count,
+};
 pub use runtime::{SplitRuntime, SplitRuntimeError};
 pub use state::{
     DurableSplitState, SPLIT_STATE_VERSION, SplitContext, SplitStateError, SplitStateStore,
