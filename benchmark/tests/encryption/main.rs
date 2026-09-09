@@ -539,7 +539,7 @@ impl CustomerKmsAdapter for MismatchedByokAdapter {
         metadata: &KeyVersionMetadata,
         _region: RegionCode,
     ) -> Result<DatabaseKeyLease, EncryptionError> {
-        let wrong_scope = typed_scope(KeyPurpose::Data);
+        let wrong_scope = typed_scope(KeyPurpose::Backup);
         DatabaseKeyLease::test_oci_vault(
             KeyVersionMetadata::new(wrong_scope, metadata.version()),
             DatabaseKey::from_bytes([0x72; 32]),
