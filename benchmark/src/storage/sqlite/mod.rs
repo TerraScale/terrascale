@@ -2327,9 +2327,8 @@ impl CommitContext {
         writer: &mut Connection,
         intents: &[CommitIntent],
     ) -> Result<Vec<CommitResult>, ()> {
-        // Direct metadata mutations require local sync too, so FULL is the
-        // baseline. Explicitly restore it before every Synced wave in case a
-        // prior Written wave failed while restoring its connection setting.
+        // NORMAL is the connection baseline for throughput. Explicitly set it
+        // for non-Synced waves, and raise to FULL only for a Synced wave.
         let written_only =
             !intents.iter().any(|intent| intent.durability == LocalDurability::Synced);
         if written_only {
@@ -4971,6 +4970,10 @@ impl StoragePort for SqliteStorage {
             return Err(());
         }
         transaction.commit().map_err(|_| ())?;
+        // Keep the shared writer at the NORMAL baseline between participant
+        // records. The prepare itself is FULL-synchronous, but subsequent
+        // queue traffic should not inherit that slower mode.
+        connection.execute_batch("PRAGMA synchronous = NORMAL").map_err(|_| ())?;
         Ok(crate::storage::ParticipantPrepareReceipt {
             identity: identity.clone(),
             writes: prepare.writes.clone(),

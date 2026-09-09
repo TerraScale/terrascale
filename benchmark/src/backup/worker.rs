@@ -3515,4 +3515,58 @@ mod tests {
         assert!(fleet.configured_providers(&identity).is_err());
         assert!(!staging.exists());
     }
+    #[tokio::test]
+    async fn capture_snapshot_is_safe_while_writes_continue() {
+        let (_, engine) = open_engine("fleet-concurrent-capture");
+        let engine = Arc::new(engine);
+        let owner = engine.database_owner().clone();
+        let key_provider = keys(&engine);
+        let destination = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            Arc::new(object_store::memory::InMemory::new()),
+            8 * 1024 * 1024,
+            32 * 1024 * 1024,
+        ));
+        let staging = location("fleet-concurrent-staging");
+        let identity = engine.database_id().to_string();
+        let mut fleet = NativeBackupFleet::new(FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 64 * 1024 * 1024,
+            inventory_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 4,
+        })
+        .unwrap();
+        fleet
+            .attach(StreamConfig {
+                engine: engine.clone(),
+                keys: key_provider,
+                destinations: vec![(Provider::Oci, destination)],
+                historical_destinations: Vec::new(),
+                policy_revision: "concurrent".into(),
+                retention_days: 1,
+                staging,
+                placement: PlacementLock::br_only(),
+            })
+            .unwrap();
+        let writer = std::thread::spawn({
+            let engine = engine.clone();
+            let tenant = owner.tenant().to_text();
+            move || {
+                for i in 0..1000 {
+                    committed(put(
+                        &engine,
+                        &tenant,
+                        &format!("concurrent-{i}"),
+                        &format!("doc-{i}"),
+                        "users",
+                        text(&format!("value-{i}")),
+                        LocalDurability::Synced,
+                    ));
+                }
+            }
+        });
+        let _ = fleet.capture_snapshot(&identity).await.unwrap();
+        writer.join().unwrap();
+        assert!(!fleet.retained_points(&identity).unwrap().is_empty());
+    }
 }
