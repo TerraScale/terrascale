@@ -1129,10 +1129,7 @@ impl ServerConfig {
                 return Err(ConfigError::InvalidProductionBoundary);
             }
             if let Some(byok) = &entry.byok {
-                let valid_provider = matches!(
-                    byok.key_provider.as_str(),
-                    "aws-kms"
-                );
+                let valid_provider = matches!(byok.key_provider.as_str(), "aws-kms");
                 let valid_endpoint = |value: &str| {
                     let remainder = value.strip_prefix("https://");
                     let Some(remainder) = remainder else { return false };
@@ -2332,7 +2329,10 @@ historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.sto
         for provider in ["oci-vault", "azure-key-vault", "customer-kms"] {
             let config = valid
                 .replace("key_provider = \"aws-kms\"", &format!("key_provider = \"{provider}\""));
-            assert!(ServerConfig::parse(&config).is_err(), "unsupported BYOK provider {provider} accepted");
+            assert!(
+                ServerConfig::parse(&config).is_err(),
+                "unsupported BYOK provider {provider} accepted"
+            );
         }
         assert!(ServerConfig::parse(&valid).is_ok(), "AWS KMS BYOK rejected");
         for invalid in [
