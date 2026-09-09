@@ -228,6 +228,7 @@ pub(crate) mod admitted_fixture {
                 },
                 enabled: true,
                 backup: None,
+                byok: None,
             }],
             placement: ProductionPlacement {
                 generation: 1,

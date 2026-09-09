@@ -2,12 +2,11 @@
 //!
 //! A database with admitted shard participants cannot publish independent
 //! recovery points and call them one point.  This module binds the logical
-//! database incarnation, route generation, common storage cut, and the
+//! database incarnation, route generation, and
 //! ordered per-participant manifest identities into one digest.  Callers must
 //! validate every participant before exposing the envelope as recoverable.
 
 use super::{BackupError, BackupManifest};
-use crate::types::StorageSequence;
 use aws_lc_rs::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -29,7 +28,7 @@ pub struct BackupEnvelopeParticipant {
     pub route_generation: u64,
     /// Local journal boundary captured for this participant.
     pub boundary: u64,
-    /// Recovery-point manifest bound to the common cut.
+    /// Recovery-point manifest bound to this participant's local boundary.
     pub manifest: BackupManifest,
 }
 
@@ -39,7 +38,6 @@ pub struct BackupEnvelope {
     database_id: String,
     database_incarnation: u128,
     route_generation: u64,
-    common_cut: StorageSequence,
     participants: Vec<BackupEnvelopeParticipant>,
     digest: String,
 }
@@ -51,7 +49,6 @@ struct EnvelopeWire {
     database_id: String,
     database_incarnation: String,
     route_generation: u64,
-    common_cut: u64,
     participants: Vec<ParticipantWire>,
     digest: String,
 }
@@ -73,7 +70,6 @@ impl BackupEnvelope {
         database_id: String,
         database_incarnation: u128,
         route_generation: u64,
-        common_cut: StorageSequence,
         mut participants: Vec<BackupEnvelopeParticipant>,
     ) -> Result<Self, BackupError> {
         if database_id.is_empty()
@@ -94,8 +90,7 @@ impl BackupEnvelope {
                 || participant.database_incarnation != database_incarnation
                 || participant.route_generation != route_generation
                 || participant.manifest.database_id() != participant.database_id
-                || participant.boundary != common_cut.get()
-                || participant.manifest.boundary_sequence() != common_cut
+                || participant.manifest.boundary_sequence().get() != participant.boundary
             {
                 return Err(BackupError::ManifestInvalid);
             }
@@ -104,7 +99,6 @@ impl BackupEnvelope {
             database_id,
             database_incarnation,
             route_generation,
-            common_cut,
             participants,
             digest: String::new(),
         };
@@ -128,12 +122,6 @@ impl BackupEnvelope {
     #[must_use]
     pub const fn route_generation(&self) -> u64 {
         self.route_generation
-    }
-
-    /// Returns the one storage boundary shared by every participant.
-    #[must_use]
-    pub const fn common_cut(&self) -> StorageSequence {
-        self.common_cut
     }
 
     /// Returns participants in canonical identity order.
@@ -237,7 +225,6 @@ impl BackupEnvelope {
             u128::from_str_radix(&wire.database_incarnation, 16)
                 .map_err(|_| BackupError::ManifestInvalid)?,
             wire.route_generation,
-            StorageSequence::new(wire.common_cut),
             participants,
         )?;
         if envelope.digest != wire.digest {
@@ -301,7 +288,6 @@ impl BackupEnvelope {
             database_id: self.database_id.clone(),
             database_incarnation: format!("{:032x}", self.database_incarnation),
             route_generation: self.route_generation,
-            common_cut: self.common_cut.get(),
             participants,
             digest: self.digest.clone(),
         })
@@ -319,7 +305,7 @@ impl BackupEnvelope {
 mod tests {
     use super::*;
     use crate::backup::manifest::{BackupTenantCount, ManifestFacts};
-    use crate::types::TenantId;
+    use crate::types::{StorageSequence, TenantId};
 
     fn manifest(boundary: u64) -> BackupManifest {
         BackupManifest::assemble(ManifestFacts {
@@ -351,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_participants_from_different_common_cuts() {
+    fn accepts_participants_with_independent_local_boundaries() {
         let first = manifest(7);
         let second = manifest(8);
         let participants = vec![
@@ -373,14 +359,23 @@ mod tests {
             },
         ];
 
+        assert!(BackupEnvelope::assemble("logical-database".into(), 1, 1, participants).is_ok());
+    }
+
+    #[test]
+    fn rejects_participant_boundary_mismatch() {
+        let point = manifest(7);
+        let participant = BackupEnvelopeParticipant {
+            participant_id: "shard-0000000000000001".into(),
+            database_id: point.database_id().into(),
+            database_incarnation: 1,
+            route_generation: 1,
+            boundary: 8,
+            manifest: point,
+        };
+
         assert_eq!(
-            BackupEnvelope::assemble(
-                "logical-database".into(),
-                1,
-                1,
-                StorageSequence::new(7),
-                participants,
-            ),
+            BackupEnvelope::assemble("logical-database".into(), 1, 1, vec![participant]),
             Err(BackupError::ManifestInvalid)
         );
     }

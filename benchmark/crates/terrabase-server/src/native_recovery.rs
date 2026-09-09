@@ -319,6 +319,7 @@ pub enum NativeRecoveryError {
 /// The constructor never creates a mock fleet, local key, or reduced-security fallback.
 pub struct NativeRecoveryRuntime {
     fleet: Arc<Mutex<NativeBackupFleet>>,
+    fleet_gate: Option<Arc<tokio::sync::Mutex<()>>>,
     operations: Mutex<Connection>,
     registry: Arc<AdmittedDatabaseRegistry>,
     limits: NativeRecoveryLimits,
@@ -343,6 +344,10 @@ impl NativeRecoveryRuntime {
         Option<(terrabase::backup::BackupEnvelope, terrabase::backup::object_store::Provider)>,
         NativeRecoveryError,
     > {
+        let _fleet_gate = match self.fleet_gate.as_ref() {
+            Some(gate) => Some(gate.lock().await),
+            None => None,
+        };
         let database = self
             .registry
             .resolve(source)
@@ -421,6 +426,10 @@ impl NativeRecoveryRuntime {
         (terrabase::backup::BackupManifest, terrabase::backup::object_store::Provider),
         NativeRecoveryError,
     > {
+        let _fleet_gate = match self.fleet_gate.as_ref() {
+            Some(gate) => Some(gate.lock().await),
+            None => None,
+        };
         let database = self
             .registry
             .resolve(source)
@@ -504,6 +513,18 @@ impl NativeRecoveryRuntime {
         limits: NativeRecoveryLimits,
         restore_executor: Arc<dyn RestoreExecutor>,
     ) -> Result<(Arc<Self>, NativeRecoveryWorker), NativeRecoveryError> {
+        Self::new_with_fleet_gate(root, fleet, registry, limits, restore_executor, None)
+    }
+
+    /// Opens recovery while sharing the backup owner's async fleet gate.
+    pub fn new_with_fleet_gate(
+        root: &Path,
+        fleet: Arc<Mutex<NativeBackupFleet>>,
+        registry: Arc<AdmittedDatabaseRegistry>,
+        limits: NativeRecoveryLimits,
+        restore_executor: Arc<dyn RestoreExecutor>,
+        fleet_gate: Option<Arc<tokio::sync::Mutex<()>>>,
+    ) -> Result<(Arc<Self>, NativeRecoveryWorker), NativeRecoveryError> {
         let limits = limits.validate()?;
         let executor =
             tokio::runtime::Handle::try_current().map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -549,6 +570,7 @@ impl NativeRecoveryRuntime {
         worker_lease.try_lock().map_err(|_| NativeRecoveryError::Unavailable)?;
         let runtime = Arc::new(Self {
             fleet,
+            fleet_gate,
             operations: Mutex::new(connection),
             registry,
             limits,
@@ -1203,6 +1225,11 @@ impl NativeRecoveryRuntime {
         }
         let checkpoint = self.load_checkpoint(source, operation)?;
         let capture = || {
+            let _fleet_gate = self.fleet_gate.as_ref().map(|gate| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(gate.lock())
+                })
+            });
             let manifest = {
                 let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
                 tokio::task::block_in_place(|| {
@@ -1215,6 +1242,11 @@ impl NativeRecoveryRuntime {
         let persist =
             |operation: &NativeRecoveryOperation, cp: Option<&Checkpoint>| self.save(operation, cp);
         let measure = |point: &Checkpoint| {
+            let _fleet_gate = self.fleet_gate.as_ref().map(|gate| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(gate.lock())
+                })
+            });
             let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
             fleet
                 .retained_points(source)

@@ -89,6 +89,22 @@ pub struct ProductionDatabase {
     /// Optional native backup policy. Production composition refuses an
     /// enabled database without this policy before publishing readiness.
     pub backup: Option<ProductionBackupConfig>,
+    /// Customer-managed backup and encryption references, when configured.
+    pub byok: Option<ProductionByokConfig>,
+}
+
+/// Nonsecret customer provider references carried through production admission.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionByokConfig {
+    pub backup_endpoint: String,
+    pub backup_bucket: String,
+    pub backup_region: String,
+    pub backup_role_arn: String,
+    pub backup_external_id: Option<String>,
+    pub key_provider: String,
+    pub key_id: String,
+    pub key_region: String,
+    pub key_endpoint: Option<String>,
 }
 
 /// Provider credentials and placement facts for one native backup copy.
@@ -1256,6 +1272,17 @@ impl ServerConfig {
                 quotas,
                 enabled: entry.enabled.unwrap_or(false),
                 backup,
+                byok: entry.byok.map(|byok| ProductionByokConfig {
+                    backup_endpoint: byok.backup_endpoint,
+                    backup_bucket: byok.backup_bucket,
+                    backup_region: byok.backup_region,
+                    backup_role_arn: byok.backup_role_arn,
+                    backup_external_id: byok.backup_external_id,
+                    key_provider: byok.key_provider,
+                    key_id: byok.key_id,
+                    key_region: byok.key_region,
+                    key_endpoint: byok.key_endpoint,
+                }),
             });
         }
         if !databases.iter().any(|database| database.enabled) && file.member_admission.is_none() {

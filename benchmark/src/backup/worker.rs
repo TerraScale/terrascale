@@ -2304,7 +2304,6 @@ mod tests {
             database.clone(),
             incarnation,
             1,
-            manifest.boundary_sequence(),
             vec![BackupEnvelopeParticipant {
                 participant_id: "shard-0000000000000001".into(),
                 database_id: database.clone(),
@@ -2320,7 +2319,6 @@ mod tests {
             "another-database".into(),
             incarnation,
             1,
-            manifest.boundary_sequence(),
             vec![BackupEnvelopeParticipant {
                 participant_id: "shard-0000000000000001".into(),
                 database_id: database.clone(),

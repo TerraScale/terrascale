@@ -337,7 +337,7 @@ pub async fn restore_snapshot(
                 if next <= offset || next > length {
                     return Err(SnapshotBackupError::Snapshot);
                 }
-                sink.write_local(chunk).await.map_err(|e| { eprintln!("write err {e:?}"); SnapshotBackupError::Snapshot })?;
+                sink.write_local(chunk).await.map_err(|_| SnapshotBackupError::Snapshot)?;
                 offset = next;
             }
         }

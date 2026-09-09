@@ -36,6 +36,7 @@ impl DatabaseKeySource for StaticKeys {
 async fn fixture() -> (
     WalSnapshotSource,
     WalReplicaBinding,
+    WalReplicaBinding,
     Arc<DatabaseKeyLease>,
     Arc<DatabaseKeyLease>,
     std::path::PathBuf,
@@ -129,12 +130,30 @@ async fn fixture() -> (
     );
     let source =
         WalSnapshotSource::capture(binding.clone(), engine, root.join("source")).await.unwrap();
-    (source, binding, lease, data_lease, root)
+    let follower_placement = ProductionPlacement::try_new(
+        MemberUlid::from_text(follower).unwrap(),
+        1,
+        7,
+        [ProductionRegionSeats::try_new(
+            RegionCode::GRU,
+            [MemberUlid::from_text(writer).unwrap(), MemberUlid::from_text(follower).unwrap()],
+        )
+        .unwrap()],
+    )
+    .unwrap();
+    let follower_binding = WalReplicaBinding::new(
+        scope.clone(),
+        &follower_placement,
+        MemberWorkloadIdentity::try_new("prod", "cluster", writer).unwrap(),
+        MemberWorkloadIdentity::try_new("prod", "cluster", follower).unwrap(),
+    )
+    .unwrap();
+    (source, binding, follower_binding, lease, data_lease, root)
 }
 
 #[tokio::test]
 async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
-    let (source, binding, lease, data_lease, root) = fixture().await;
+    let (source, _binding, follower_binding, lease, data_lease, root) = fixture().await;
     let store = Arc::new(object_store::memory::InMemory::new());
     let destination = Arc::new(terrabase::backup::object_store::ObjectDestination::for_test(
         terrabase::backup::object_store::Provider::Oci,
@@ -231,7 +250,7 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
         "roundtrip-retry",
         &root.join("download"),
         &*lease as &dyn BackupReader,
-        binding,
+        follower_binding,
         RegionCode::GRU,
         &placement,
         target,
@@ -239,9 +258,6 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
         8 * 1024 * 1024,
     )
     .await;
-    if let Err(error) = &restore_result {
-        println!("restore error: {error:?}");
-    }
     let (_follower, receipt) = restore_result.unwrap();
     assert!(receipt.checkpoint.is_some());
 }

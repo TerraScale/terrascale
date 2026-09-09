@@ -1310,7 +1310,7 @@ impl ProductionAdmissionRuntime {
         let scope = record_scope(&record)?;
         let data = self.lifecycle.get().ok_or("replication lifecycle unavailable")?;
         let _suspension = data.peers.suspend_database(scope).await?;
-        let result = match backups.suspend_for_restore(target) {
+        let result = match backups.suspend_for_restore_async(target).await {
             Ok(()) => {
                 self.restore_native_to_target(
                     backups,
@@ -1373,11 +1373,12 @@ impl ProductionAdmissionRuntime {
             .find(|entry| entry.database.record.database_id == target)
             .ok_or("restore target host unavailable")?;
         backups
-            .resume_after_restore(
+            .resume_after_restore_async(
                 &record.database_id,
                 Arc::clone(&target.database.host),
                 resume_capture,
             )
+            .await
             .map_err(|_| "native backup restore rebind unavailable".to_owned())
     }
 

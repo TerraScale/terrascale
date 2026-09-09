@@ -464,7 +464,7 @@ impl ProductionStartupOwners {
             auth.shutdown().await;
         }
         if let Some(native) = &self.native {
-            let _ = native.drain();
+            let _ = native.drain_async().await;
         }
         let _ = self.member.drain().await;
     }
@@ -609,27 +609,29 @@ async fn serve_admitted_production(
     let auth_for_cleanup = auth.clone();
     let native_shutdown = Arc::clone(&native);
     let recovery_root = parts_root_for_recovery(production);
-    let (recovery, recovery_worker) = crate::native_recovery::NativeRecoveryRuntime::new(
-        &recovery_root,
-        native.fleet(),
-        Arc::clone(&registry),
-        crate::native_recovery::NativeRecoveryLimits {
-            pending_operations: 128,
-            retained_operations: 512,
-        },
-        Arc::new(crate::production_data_runtime::ProductionRestoreExecutor::new(
-            Arc::clone(&admission),
-            Arc::clone(&native),
-        )),
-    )
-    .map_err(|_| {
-        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
-            crate::production::ProductionComponentError {
-                component: crate::production::ProductionComponent::Backup,
-                detail: "native recovery could not be composed",
+    let (recovery, recovery_worker) =
+        crate::native_recovery::NativeRecoveryRuntime::new_with_fleet_gate(
+            &recovery_root,
+            native.fleet(),
+            Arc::clone(&registry),
+            crate::native_recovery::NativeRecoveryLimits {
+                pending_operations: 128,
+                retained_operations: 512,
             },
-        ))) as Box<dyn Error + Send + Sync>
-    })?;
+            Arc::new(crate::production_data_runtime::ProductionRestoreExecutor::new(
+                Arc::clone(&admission),
+                Arc::clone(&native),
+            )),
+            Some(native.fleet_gate()),
+        )
+        .map_err(|_| {
+            Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                crate::production::ProductionComponentError {
+                    component: crate::production::ProductionComponent::Backup,
+                    detail: "native recovery could not be composed",
+                },
+            ))) as Box<dyn Error + Send + Sync>
+        })?;
     let mut recovery_worker = Some(recovery_worker);
     let (native_stop, native_signal) = tokio::sync::watch::channel(false);
     let native_supervisor = Arc::clone(&native);
@@ -1024,7 +1026,7 @@ async fn serve_admitted_production(
         if let Some(auth) = &auth_for_cleanup {
             auth.shutdown().await;
         }
-        native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
+        native_shutdown.drain_async().await.map_err(|_| DaemonError::ShutdownTimeout)?;
         let report = member.drain().await;
         report.storage.map_err(|error| {
             Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
@@ -1075,7 +1077,7 @@ async fn cleanup_failed_production_startup(
     if let Some(auth) = auth {
         auth.shutdown().await;
     }
-    let _ = native.drain();
+    let _ = native.drain_async().await;
     let _ = member.drain().await;
 }
 

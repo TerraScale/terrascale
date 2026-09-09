@@ -102,7 +102,7 @@ pub struct NativeBackupRuntime {
     fleet: Arc<Mutex<NativeBackupFleet>>,
     /// Queues async operations before they acquire the synchronous fleet
     /// guard, preventing executor threads from blocking during awaits.
-    async_fleet: tokio::sync::Mutex<()>,
+    async_fleet: Arc<tokio::sync::Mutex<()>>,
     databases: Mutex<BTreeMap<String, PlacementLock>>,
     incidents: Mutex<Vec<(String, FleetError)>>,
 }
@@ -110,8 +110,8 @@ pub struct NativeBackupRuntime {
 impl NativeBackupRuntime {
     /// Binds ordered participant manifests to one admitted shard read cut.
     ///
-    /// The caller must capture every manifest at the same common cut before
-    /// calling this method. This seam performs no publication: the caller
+    /// Each participant's local snapshot boundary is authenticated independently.
+    /// This seam performs no publication: the caller
     /// must invoke [`BackupEnvelope::verify_staged`] for every participant and
     /// atomically publish the envelope only after all staged files verify.
     pub fn assemble_shard_envelope(
@@ -121,11 +121,6 @@ impl NativeBackupRuntime {
     ) -> Result<BackupEnvelope, NativeBackupRuntimeError> {
         let route_generation = cut.route_generation.ok_or(NativeBackupRuntimeError::Envelope)?;
         if cut.participants.len() != manifests.len() || cut.participants.is_empty() {
-            return Err(NativeBackupRuntimeError::Envelope);
-        }
-        let common_cut = cut.participants[0].snapshot.sequence();
-        if cut.participants.iter().any(|participant| participant.snapshot.sequence() != common_cut)
-        {
             return Err(NativeBackupRuntimeError::Envelope);
         }
         let participants = cut
@@ -145,7 +140,6 @@ impl NativeBackupRuntime {
             cut.database_id.clone(),
             cut.database_incarnation,
             route_generation,
-            common_cut,
             participants,
         )
         .map_err(|_| NativeBackupRuntimeError::Envelope)
@@ -210,7 +204,7 @@ impl NativeBackupRuntime {
         }
         Ok(Self {
             fleet: Arc::new(Mutex::new(fleet)),
-            async_fleet: tokio::sync::Mutex::new(()),
+            async_fleet: Arc::new(tokio::sync::Mutex::new(())),
             databases: Mutex::new(databases),
             incidents: Mutex::new(Vec::new()),
         })
@@ -220,6 +214,12 @@ impl NativeBackupRuntime {
     #[must_use]
     pub fn fleet(&self) -> Arc<Mutex<NativeBackupFleet>> {
         Arc::clone(&self.fleet)
+    }
+
+    /// Returns the async admission gate shared with native recovery callers.
+    #[must_use]
+    pub fn fleet_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
+        Arc::clone(&self.async_fleet)
     }
 
     /// Executes one bounded asynchronous fleet tick.
@@ -301,6 +301,21 @@ impl NativeBackupRuntime {
     ) -> Result<Vec<terrabase::backup::BackupManifest>, NativeBackupRuntimeError> {
         let fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet.retained_points(database).map_err(NativeBackupRuntimeError::Fleet)
+    }
+
+    /// Async retained-chain observation serialized with provider operations.
+    pub async fn retained_points_async(
+        &self,
+        database: &str,
+    ) -> Result<Vec<terrabase::backup::BackupManifest>, NativeBackupRuntimeError> {
+        let _gate = self.async_fleet.lock().await;
+        self.retained_points(database)
+    }
+
+    /// Async readiness observation serialized with provider operations.
+    pub async fn is_ready_async(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
+        let _gate = self.async_fleet.lock().await;
+        self.is_ready(database)
     }
 
     /// Converts a public Unix-second timestamp to the native millisecond unit.
@@ -396,6 +411,15 @@ impl NativeBackupRuntime {
         Ok(())
     }
 
+    /// Async admission path coordinated with captures and synchronization.
+    pub async fn attach_async(
+        &self,
+        input: NativeBackupInput,
+    ) -> Result<(), NativeBackupRuntimeError> {
+        let _gate = self.async_fleet.lock().await;
+        self.attach(input)
+    }
+
     /// Releases target engine references under the serialized native fleet lock.
     pub fn suspend_for_restore(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
         self.fleet
@@ -403,6 +427,14 @@ impl NativeBackupRuntime {
             .map_err(|_| NativeBackupRuntimeError::Poisoned)?
             .suspend_for_restore(database)
             .map_err(NativeBackupRuntimeError::Fleet)
+    }
+
+    pub async fn suspend_for_restore_async(
+        &self,
+        database: &str,
+    ) -> Result<(), NativeBackupRuntimeError> {
+        let _gate = self.async_fleet.lock().await;
+        self.suspend_for_restore(database)
     }
 
     /// Restores the same backup policy with the reopened admitted target engine.
@@ -423,12 +455,27 @@ impl NativeBackupRuntime {
             .map_err(NativeBackupRuntimeError::Fleet)
     }
 
+    pub async fn resume_after_restore_async(
+        &self,
+        database: &str,
+        host: Arc<MemberHost>,
+        resume_capture: bool,
+    ) -> Result<(), NativeBackupRuntimeError> {
+        let _gate = self.async_fleet.lock().await;
+        self.resume_after_restore(database, host, resume_capture)
+    }
+
     /// Detaches one stream while retaining its staged and remote artifacts.
     pub fn detach(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet.detach(database);
         self.databases.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?.remove(database);
         Ok(())
+    }
+
+    pub async fn detach_async(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
+        let _gate = self.async_fleet.lock().await;
+        self.detach(database)
     }
 
     /// Fences all admitted streams and releases their scheduler registrations.
@@ -444,6 +491,11 @@ impl NativeBackupRuntime {
         }
         self.databases.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?.clear();
         Ok(())
+    }
+
+    pub async fn drain_async(&self) -> Result<(), NativeBackupRuntimeError> {
+        let _gate = self.async_fleet.lock().await;
+        self.drain()
     }
 
     /// Returns whether this owner still has an admitted stream.
