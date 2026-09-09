@@ -677,6 +677,14 @@ impl NativeBackupFleet {
         } else {
             return Err(FleetError::Configuration);
         };
+        if let Some(stream) = self.streams.get(database) {
+            stream
+                .config
+                .engine
+                .engine()
+                .retire_retention_consumer("native-backup")
+                .map_err(|_| FleetError::Capture)?;
+        }
         self.streams.remove(database);
         Ok(LifecycleReceipt {
             operation_id: operation_id.to_owned(),
@@ -774,10 +782,12 @@ impl NativeBackupFleet {
             return Err(FleetError::Configuration);
         }
         std::fs::create_dir_all(&config.staging).map_err(|_| FleetError::Capture)?;
+        let admission_boundary =
+            config.engine.engine().published_sequence().map_err(|_| FleetError::Capture)?;
         config
             .engine
             .engine()
-            .advance_backup_frontier(StorageSequence::default())
+            .register_retention_consumer("native-backup", admission_boundary)
             .map_err(|_| FleetError::Capture)?;
         self.streams.insert(
             identity,
@@ -1056,6 +1066,7 @@ impl NativeBackupFleet {
     /// A running tick must finish before this exclusive operation can execute.
     pub fn detach(&mut self, database: &str) {
         if let Some(mut stream) = self.streams.remove(database) {
+            let _ = stream.config.engine.engine().retire_retention_consumer("native-backup");
             stream.closing = true;
             stream.paused = true;
             let StreamConfig {
@@ -1108,6 +1119,12 @@ impl NativeBackupFleet {
             return Err(FleetError::Configuration);
         }
         let stream = self.streams.remove(database).ok_or(FleetError::Configuration)?;
+        stream
+            .config
+            .engine
+            .engine()
+            .retire_retention_consumer("native-backup")
+            .map_err(|_| FleetError::Capture)?;
         let StreamConfig {
             engine,
             keys,
@@ -1566,6 +1583,24 @@ async fn sync_stream(
         .journaled_high_water()
         .map_err(|_| FleetError::Capture)?
         .unwrap_or_default();
+    // An empty boundary-0 root is valid before the first publication, but it
+    // cannot anchor a later incremental that introduces a committed tenant.
+    // Publish a replacement full root at the current high water so the root
+    // scope and every subsequent link agree before chain validation/eviction.
+    let committed_tenants = stream
+        .config
+        .engine
+        .engine()
+        .committed_tenants()
+        .map_err(|_| FleetError::Capture)?;
+    let full_root_due = chain.first().is_some_and(|root| {
+        let root_tenants = root
+            .tenants()
+            .iter()
+            .map(super::manifest::BackupTenantCount::tenant)
+            .collect::<std::collections::BTreeSet<_>>();
+        committed_tenants.iter().any(|tenant| !root_tenants.contains(tenant))
+    });
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| FleetError::Capture)?
@@ -1584,8 +1619,8 @@ async fn sync_stream(
     let heartbeat_due = chain
         .last()
         .is_some_and(|point| now.saturating_sub(point.recoverable_through_unix_millis()) >= 10_000);
-    let additional = if root_due && base.is_some() { 2 } else { 1 };
-    if (base != Some(high_water) || root_due || pending_snapshot || heartbeat_due)
+    let additional = if (root_due && base.is_some()) || full_root_due { 2 } else { 1 };
+    if (base != Some(high_water) || root_due || full_root_due || pending_snapshot || heartbeat_due)
         && !inventory::has_capacity(stream, limits, additional)?
     {
         // At capacity retention still reads an admissible inventory and can
@@ -1597,7 +1632,7 @@ async fn sync_stream(
     }
     let mut captured_boundary = base.unwrap_or_default();
     let mut capture_refusal = None;
-    if base != Some(high_water) || root_due || pending_snapshot || heartbeat_due {
+    if base != Some(high_water) || root_due || full_root_due || pending_snapshot || heartbeat_due {
         if points.len() >= limits.points_per_stream
             || bytes.saturating_add(2 * 1024 * 1024) >= limits.staging_bytes_per_stream
         {
@@ -1607,7 +1642,10 @@ async fn sync_stream(
             // Rotate at the last archived boundary, then extend it. Taking a
             // full root at the current high-water would omit intervening
             // journal transactions from timestamp recovery.
-            if root_due && let Some(base) = base {
+            if root_due
+                && !full_root_due
+                && let Some(base) = base
+            {
                 let clock = rotation.map_or_else(
                     || now.max(chain.last().map_or(0, super::BackupManifest::captured_unix_millis)),
                     |(_, clock)| clock,
@@ -1653,7 +1691,7 @@ async fn sync_stream(
                     tokio::time::sleep(Duration::from_millis(1)).await;
                     let captured = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| FleetError::Capture)?
+                        .map_err(|_| FleetError::Capture)?
                         .as_millis();
                     let captured = u64::try_from(captured).map_err(|_| FleetError::Capture)?;
                     if captured > clock {
@@ -1664,16 +1702,29 @@ async fn sync_stream(
             } else {
                 None
             };
-            let mut plan = capture_plan(
-                stream,
-                limits,
-                current_bytes,
-                staged_bytes(&stream.config.staging)?,
-                base,
-                false,
-                high_water,
-                reader.clone(),
-            )?;
+            let mut plan = if full_root_due {
+                capture_plan(
+                    stream,
+                    limits,
+                    current_bytes,
+                    staged_bytes(&stream.config.staging)?,
+                    None,
+                    false,
+                    high_water,
+                    reader.clone(),
+                )?
+            } else {
+                capture_plan(
+                    stream,
+                    limits,
+                    current_bytes,
+                    staged_bytes(&stream.config.staging)?,
+                    base,
+                    false,
+                    high_water,
+                    reader.clone(),
+                )?
+            };
             if let Some(clock) = bridge_clock {
                 plan = plan.with_capture_unix_millis(clock);
             }
@@ -3575,7 +3626,12 @@ mod tests {
         });
         writer.join().unwrap();
         let second = fleet.capture_snapshot(&identity).await.unwrap_or_else(|error| {
-            panic!("second capture failed: {error:?}; staging={:?}", std::fs::read_dir(&staging).ok().map(|entries| entries.filter_map(|e| e.ok().map(|e| e.path())).collect::<Vec<_>>()))
+            panic!(
+                "second capture failed: {error:?}; staging={:?}",
+                std::fs::read_dir(&staging).ok().map(|entries| entries
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .collect::<Vec<_>>())
+            )
         });
         assert!(second.boundary_sequence() > first.boundary_sequence());
         assert!(!fleet.retained_points(&identity).unwrap().is_empty());

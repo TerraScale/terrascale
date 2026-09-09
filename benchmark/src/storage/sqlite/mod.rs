@@ -256,8 +256,8 @@ const READ_POOL_WIDTH: usize = 4;
 
 /// Every admitted database starts with all durable consumers at sequence zero.
 /// A missing acknowledgement must therefore hold the pruning floor back.
-const REQUIRED_CONSUMER_FRONTIERS: &[&str] = &["replication", "metering", "native-backup"];
-const OPTIONAL_CONSUMER_FRONTIERS: &[&str] = &["sync"];
+const REQUIRED_CONSUMER_FRONTIERS: &[&str] = &["replication", "metering"];
+const OPTIONAL_CONSUMER_FRONTIERS: &[&str] = &["sync", "native-backup"];
 
 /// Idle checkpoint workers periodically recheck their stop signal.
 const CHECKPOINT_IDLE_WAIT: Duration = Duration::from_secs(1);
@@ -1945,6 +1945,12 @@ impl SqliteStorage {
                 [], |row| row.get(0),
             ).map_err(|_| StorageOpenError::Unavailable)?;
             transaction.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
+            // Native backup is process owned. A previous member process may
+            // have exited without retiring its stream, so never let its
+            // durable lease pin pruning for a newly opened database.
+            transaction
+                .execute("DELETE FROM consumer_frontiers WHERE name = 'native-backup'", [])
+                .map_err(|_| StorageOpenError::Unavailable)?;
             for name in REQUIRED_CONSUMER_FRONTIERS {
                 transaction
                     .execute(

@@ -1824,6 +1824,35 @@ fn reopened_location_does_not_retain_process_owned_sync_lease() {
     assert_eq!(sync_rows, 0, "a process-owned sync lease cannot survive restart");
 }
 
+#[test]
+fn native_backup_lease_is_absent_until_a_stream_is_admitted() {
+    let (dir, mut storage) = sqlite_store("native-backup-lease");
+    let initial_rows: i64 = storage
+        .raw_writer_connection()
+        .query_row(
+            "SELECT COUNT(*) FROM consumer_frontiers WHERE name = 'native-backup'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("reads native backup lease");
+    assert_eq!(initial_rows, 0, "an unadmitted backup must not pin at sequence zero");
+
+    // Simulate a process that admitted a stream and died before retiring it.
+    storage.register_consumer_frontier("native-backup", 0).expect("registers backup lease");
+    drop(storage);
+
+    let reopened = SqliteStorage::open(&dir).expect("reopens location");
+    let rows: i64 = reopened
+        .raw_writer_connection()
+        .query_row(
+            "SELECT COUNT(*) FROM consumer_frontiers WHERE name = 'native-backup'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("reads native backup lease after restart");
+    assert_eq!(rows, 0, "stale process-owned backup lease cannot pin pruning");
+}
+
 // ---- SQLite-focused: crash atomicity against the file --------------------
 
 /// Asserts the folded row model's crash invariant directly against the
