@@ -167,7 +167,10 @@ function matches(row: Row, where: readonly BetterAuthWhere[]): boolean {
 function test(row: Row, where: BetterAuthWhere): boolean {
   const left = row[where.field];
   const right = where.value;
-  const normalize = (value: unknown) => value instanceof Date ? value.toISOString() : value;
+  // SQL treats a missing column as NULL, so an absent field must compare equal
+  // to an explicit null predicate (e.g. Better Auth's conditional organization
+  // customer binding).
+  const normalize = (value: unknown) => value === undefined ? null : value instanceof Date ? value.toISOString() : value;
   const a = normalize(left);
   const b = normalize(right);
   switch (where.operator ?? "eq") {
