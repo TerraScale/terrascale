@@ -242,18 +242,22 @@ func (a *attachResponse) UnmarshalJSON(data []byte) error {
 			}
 			for _, item := range inline.Items {
 				doc := Document{ID: item.Identity}
+				fields := make(map[string]json.RawMessage, len(item.Fields))
 				for _, field := range item.Fields {
-					if field.Path != "body" {
-						continue
-					}
+					fields[field.Path] = field.Value
+				}
+				if raw, ok := fields["body"]; ok {
 					var encoded string
-					if json.Unmarshal(field.Value, &encoded) == nil {
+					if json.Unmarshal(raw, &encoded) == nil {
 						if decoded, errDecode := base64.StdEncoding.DecodeString(encoded); errDecode == nil {
 							doc.Body = cloneRaw(decoded)
-							continue
 						}
 					}
-					doc.Body = cloneRaw(field.Value)
+					if doc.Body == nil {
+						doc.Body = cloneRaw(raw)
+					}
+				} else {
+					doc.Body = assembleProjectedBody(fields)
 				}
 				a.Snapshot = append(a.Snapshot, doc)
 			}
@@ -726,8 +730,12 @@ func (c *Client) attach(ctx context.Context, databaseID, statement string, param
 	if strings.TrimSpace(databaseID) == "" {
 		return nil, fmt.Errorf("sdk: database id cannot be empty")
 	}
-	if !isReadOnlyStatement(statement) {
-		return nil, fmt.Errorf("sdk: only live-subset read-only statements are subscribable")
+	parameterMap, err := canonicalSQLParameters(params)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateSQL(statement, parameterMap); err != nil {
+		return nil, fmt.Errorf("sdk: only live-subset read-only statements are subscribable: %w", err)
 	}
 	transport := sub.Transport
 	if transport == "" {
@@ -743,10 +751,6 @@ func (c *Client) attach(ctx context.Context, databaseID, statement string, param
 	req := attachRequest{
 		DatabaseID: databaseID,
 		Statement:  statement,
-	}
-	parameterMap, err := canonicalSQLParameters(params)
-	if err != nil {
-		return nil, err
 	}
 	parameterBytes, err := json.Marshal(parameterMap)
 	if err != nil {
@@ -891,7 +895,9 @@ func canonicalSnapshotURL(c *Client, advertised, view string, generation uint64,
 		}
 	}
 	if u != nil && (u.Path == "" || strings.HasSuffix(u.Path, "/snapshot/"+strconv.Itoa(index))) {
-		return origin + u.EscapedPath(), nil
+		// The immutable cut is part of the snapshot's identity; keep the
+		// advertised query, not just the path.
+		return origin + u.RequestURI(), nil
 	}
 	return origin + canonicalReactivePath(view, generation, "snapshot/"+strconv.Itoa(index)), nil
 }
@@ -1983,7 +1989,30 @@ func decodeMPFields(r *reactiveMPReader) (json.RawMessage, map[string]json.RawMe
 			body = cloneRaw(value)
 		}
 	}
+	if body == nil && len(fields) > 0 {
+		body = assembleProjectedBody(fields)
+	}
 	return body, fields, nil
+}
+
+// assembleProjectedBody rebuilds one JSON object from the projected field
+// map. A `body` field carries the whole document; every other projection
+// carries per-field canonical JSON bytes, so the row body is the object of
+// those fields.
+func assembleProjectedBody(fields map[string]json.RawMessage) json.RawMessage {
+	object := make(map[string]any, len(fields))
+	for path, raw := range fields {
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return nil
+		}
+		object[path] = value
+	}
+	assembled, err := json.Marshal(object)
+	if err != nil {
+		return nil
+	}
+	return assembled
 }
 
 func cloneProjectedFields(in map[string]json.RawMessage) map[string]json.RawMessage {

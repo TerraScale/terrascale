@@ -283,10 +283,6 @@ func ValidateSQL(statement string, params any) error {
 	return validateBindings(tokens, params)
 }
 
-// isReadOnlyStatement is retained for source compatibility with older SDK
-// code. New callers should use ValidateSQL, which also checks bindings.
-func isReadOnlyStatement(statement string) bool { return ValidateSQL(statement, nil) == nil }
-
 func sqlError(message string) error { return fmt.Errorf("sdk: invalid SQL: %s", message) }
 
 func forbiddenSQLKeyword(value string) bool {
