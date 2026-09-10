@@ -121,11 +121,12 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
     }
     const projectId = (await store.nextUlid()) as ProjectId;
     const slug = nonBlank(body.slug);
+    const actor = localActor(context);
     const project: Models.Project = {
       projectId,
       organizationId: match.organizationId! as OrganizationId,
       name,
-      ownerUserIds: [LOCAL_USER_ID],
+      ownerUserIds: [actor.userId],
       regions: selectedRegions,
       backupRegion: selectedBackupRegion,
       placementStatus: "Ready",

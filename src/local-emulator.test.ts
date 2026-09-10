@@ -395,6 +395,16 @@ test("organization creation assigns the authenticated Better Auth user as owner"
       const client = runtime.createClient({ accessToken: `${token}.signed-signature` });
       const organization = expectOk(await client.organizations.create({ name: "Owner org" }));
       assert.deepEqual(organization.ownerUserIds, [userId]);
+
+      const project = expectOk(
+        await client.organizations.createProject(organization.organizationId, {
+          name: "Owner project",
+          regions: ["GRU"],
+          backupRegion: "GRU",
+        }),
+      );
+      assert.deepEqual(project.ownerUserIds, [userId]);
+      assert.equal(project.organizationId, organization.organizationId);
     } finally {
       await runtime.stop();
     }
