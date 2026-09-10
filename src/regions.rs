@@ -88,6 +88,9 @@ pub enum RegionAffinity {
 /// Global REST entry point (GOAL D-24).
 pub const GLOBAL_API_BASE_URL: &str = "https://api.terrascale.tech";
 
+/// Default reactive delivery origin.
+pub const GLOBAL_SYNC_BASE_URL: &str = "https://sync.api.terrascale.tech";
+
 /// Regional hostname for pinned REST traffic.
 #[must_use]
 pub fn regional_host(region: RegionCode) -> String {

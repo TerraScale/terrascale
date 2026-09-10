@@ -7,6 +7,7 @@ use crate::regions::{normalize_base_url, RegionAffinity, RegionCode, GLOBAL_API_
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
     api_base_url: String,
+    sync_base_url: String,
     api_key: Option<String>,
     project_id: Option<String>,
     tenant_id: Option<String>,
@@ -27,6 +28,12 @@ impl ClientConfig {
     #[must_use]
     pub fn api_base_url(&self) -> &str {
         &self.api_base_url
+    }
+
+    /// Origin of the reactive view delivery (log/snapshot) endpoints.
+    #[must_use]
+    pub fn sync_base_url(&self) -> &str {
+        &self.sync_base_url
     }
 
     /// Configured project scope, if any.
@@ -74,6 +81,7 @@ impl ClientConfig {
 #[derive(Debug, Default)]
 pub struct ClientConfigBuilder {
     api_base_url: Option<String>,
+    sync_base_url: Option<String>,
     api_key: Option<String>,
     project_id: Option<String>,
     tenant_id: Option<String>,
@@ -88,6 +96,14 @@ impl ClientConfigBuilder {
     #[must_use]
     pub fn api_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.api_base_url = Some(base_url.into());
+        self
+    }
+
+    /// Override the reactive delivery origin (default
+    /// `https://sync.api.terrascale.tech`).
+    #[must_use]
+    pub fn sync_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.sync_base_url = Some(base_url.into());
         self
     }
 
@@ -180,8 +196,14 @@ impl ClientConfigBuilder {
         }
         let api_base_url =
             normalize_base_url(self.api_base_url.as_deref().unwrap_or(GLOBAL_API_BASE_URL))?;
+        let sync_base_url = normalize_base_url(
+            self.sync_base_url
+                .as_deref()
+                .unwrap_or(crate::regions::GLOBAL_SYNC_BASE_URL),
+        )?;
         Ok(ClientConfig {
             api_base_url,
+            sync_base_url,
             api_key: self.api_key,
             project_id: self.project_id,
             tenant_id: self.tenant_id,

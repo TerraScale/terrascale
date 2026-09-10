@@ -49,7 +49,6 @@ pub struct Checkpoint {
 
 const MAX_CHECKPOINT_BYTES: usize = 4096;
 const MAX_POLL_WINDOW: Duration = Duration::from_secs(25);
-const SYNC_ORIGIN: &str = "https://sync.api.terrascale.tech";
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -800,7 +799,7 @@ impl ReactiveClient {
 
         let attempts = options.max_attempts.max(1);
         let advertised_log_url = if view.log_url.trim().is_empty() {
-            canonical_log_url(&view.view_id, view.generation)
+            canonical_log_path(&view.view_id, view.generation)
         } else {
             view.log_url.as_str().to_owned()
         };
@@ -811,6 +810,7 @@ impl ReactiveClient {
         .map_err(|message| {
             Error::new(ErrorKind::Validation, "invalid_reactive_endpoint", message)
         })?;
+        let log_url = resolve_delivery(self.shared.config().sync_base_url(), &log_url);
         let url = append_offset(&log_url, offset);
         let mut last_error = None;
         let deadline = options.deadline.min(MAX_POLL_WINDOW);
@@ -939,11 +939,11 @@ impl ReactiveClient {
             ));
         }
         let mut assembled: Option<ViewSnapshot> = None;
-        for url in &view.snapshot_urls {
+        for advertised in &view.snapshot_urls {
             let mut request = Request {
                 route_name: "reactive.snapshot".to_owned(),
                 method: Method::Get,
-                url: url.clone(),
+                url: resolve_delivery(self.shared.config().sync_base_url(), advertised),
                 headers: vec![("accept".to_owned(), "application/msgpack".to_owned())],
                 body: None,
             };
@@ -2142,8 +2142,14 @@ fn append_offset(base: &str, offset: &str) -> String {
     result
 }
 
-fn canonical_log_url(view: &str, generation: u64) -> String {
-    format!("{SYNC_ORIGIN}{}", canonical_log_path(view, generation))
+/// Resolves one delivery URL against the configured sync origin. Relative
+/// canonical paths resolve against it; absolute member-issued URLs pass.
+fn resolve_delivery(origin: &str, url: &str) -> String {
+    if url.starts_with('/') {
+        format!("{origin}{url}")
+    } else {
+        url.to_owned()
+    }
 }
 
 fn canonical_log_path(view: &str, generation: u64) -> String {
@@ -2160,16 +2166,17 @@ fn canonical_snapshot_path(view: &str, generation: u64, index: usize) -> String 
     )
 }
 
-/// Accept only member-issued sync URLs. Relative canonical paths are resolved
-/// against the production sync origin; query parameters are intentionally
-/// retained because snapshot cuts are part of immutable URL identity.
+/// Accept only member-issued sync URLs. Relative canonical paths are kept
+/// relative and resolved against the configured sync origin at delivery;
+/// query parameters are intentionally retained because snapshot cuts are
+/// part of immutable URL identity.
 fn advertised_url(advertised: &str, expected_path: &str) -> std::result::Result<String, String> {
     let advertised = advertised.trim();
     let url = if advertised.starts_with('/') {
         if advertised.starts_with("//") {
             return Err("reactive URL must not contain an alternate origin".to_owned());
         }
-        format!("{SYNC_ORIGIN}{advertised}")
+        advertised.to_owned()
     } else {
         let (scheme, remainder) = advertised
             .split_once("://")
@@ -2184,10 +2191,13 @@ fn advertised_url(advertised: &str, expected_path: &str) -> std::result::Result<
         }
         advertised.to_owned()
     };
-    let path = url
-        .split_once("//")
-        .and_then(|(_, remainder)| remainder.find('/').map(|index| &remainder[index..]))
-        .unwrap_or("/");
+    let path = if url.starts_with('/') {
+        url.as_str()
+    } else {
+        url.split_once("//")
+            .and_then(|(_, remainder)| remainder.find('/').map(|index| &remainder[index..]))
+            .unwrap_or("/")
+    };
     let path = path.split(['?', '#']).next().unwrap_or(path);
     if path != expected_path {
         return Err("reactive URL path does not match its attached view".to_owned());

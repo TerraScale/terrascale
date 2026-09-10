@@ -67,6 +67,11 @@ impl Shared {
         }
     }
 
+    /// Runtime configuration, including the reactive delivery origin.
+    pub(crate) fn config(&self) -> &ClientConfig {
+        &self.config
+    }
+
     /// Global (unpinned) base URL for first contact and global routes.
     pub fn global_base_url(&self) -> String {
         format!("{}{API_ROOT}", self.config.api_base_url())
