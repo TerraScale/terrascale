@@ -1,0 +1,92 @@
+{
+  "status": "complete",
+  "target": "turso",
+  "workload": "query",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0
+  },
+  "environment": {
+    "observed_identity": "Turso (Rust SQLite rewrite), SQL compatibility 3.50.4; journal_mode=wal; synchronous=FULL; busy_timeout=5000ms",
+    "endpoint": "file://bench/target/turso-reference.db",
+    "client_transport": "turso crate, one embedded async connection per concurrency slot driven through a current-thread runtime, connection-cached statement per operation, autocommit per statement",
+    "unix_seconds": 1789002423,
+    "kernel": "Linux 7.2.3",
+    "logical_cpus": 2
+  },
+  "comparability": {
+    "run_digest": "unassigned",
+    "candidate_digest": "unassigned",
+    "workload_digest": "unassigned",
+    "topology_digest": "unassigned",
+    "run_group": "unassigned",
+    "config_digest": "bdfe342f5a3e96300b3e54f43585ee347bdb8b213b803ea0dac000ef8eb60d80",
+    "controlled_host_identity": "Linux 7.2.3;logical-cpus=2",
+    "time_window": "496945",
+    "window_start_unix_seconds": 1789002423,
+    "window_end_unix_seconds": 1789002480,
+    "workload_version": "terrabase-se15-workload-v1",
+    "boundary_class": "embedded-reference",
+    "concurrency": 16,
+    "samples": 5,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0,
+    "seed_policy": "seed-{index}, tenant benchmark-tenant, index modulo seed count",
+    "document_policy": "seed documents have id seed-{index}, name user-{index}, group index modulo 100, 256-byte payload",
+    "operation_policy": "mixed uses index modulo 10: 0..4 read, 5..7 write, 8..9 query; read/query address index modulo seed count",
+    "write_id_policy": "measured writes use measured-{global operation index}",
+    "durability_semantics": "WAL journal with synchronous=FULL and a five-second busy timeout; autocommit statement acknowledgement",
+    "server_configuration_provenance": "turso crate at shipped defaults plus WAL, synchronous=FULL, busy_timeout=5000ms"
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 10.980521185,
+      "throughput_ops_per_s": 910.7035842397493,
+      "p50_us": 22040.802000000003,
+      "p95_us": 23071.505999999998,
+      "p99_us": 25673.045
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 10.944125196,
+      "throughput_ops_per_s": 913.7322372422174,
+      "p50_us": 22047.063,
+      "p95_us": 22879.613,
+      "p99_us": 24878.113
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 11.106424875,
+      "throughput_ops_per_s": 900.3797452868469,
+      "p50_us": 22059.578999999998,
+      "p95_us": 23232.642,
+      "p99_us": 25306.911
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 11.043417758,
+      "throughput_ops_per_s": 905.5167719935131,
+      "p50_us": 22043.342,
+      "p95_us": 23043.012000000002,
+      "p99_us": 25226.504
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 11.11783646,
+      "throughput_ops_per_s": 899.4555762695578,
+      "p50_us": 22070.486,
+      "p95_us": 22836.442,
+      "p99_us": 25016.374
+    }
+  ],
+  "limits": [
+    "embedded reference: the measured member is this driver's own process, so the load generator and the database share one resource envelope",
+    "the engine's native Rust API is async: each slot drives its connection through its own current-thread runtime with block_on per operation, so per-operation latencies include that boundary",
+    "sixteen per-slot writers contend through turso's MVCC: stale-snapshot and busy conflicts are retried per turso's documented pattern, bounded by a 30-second per-operation deadline, and every retry's wait is part of the measured latency"
+  ]
+}

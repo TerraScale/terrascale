@@ -6,6 +6,9 @@ impl Engine {
     /// Persists the schema-declared history window used by the retention
     /// worker. This is deliberately a narrow storage seam so schema runtime
     /// cannot mutate SQLite tables directly.
+    ///
+    /// # Errors
+    /// Returns a storage failure when the durable retention update fails.
     pub fn set_collection_history_retention(
         &self,
         collection: &crate::types::CollectionName,

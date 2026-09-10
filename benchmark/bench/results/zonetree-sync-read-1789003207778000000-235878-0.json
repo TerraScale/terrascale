@@ -1,0 +1,68 @@
+{
+  "status": "complete",
+  "target": "zonetree-sync",
+  "workload": "read",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000
+  },
+  "environment": {
+    "observed_identity": "ZoneTree 1.9.7.0; WAL=Sync; mutable segment default 1,000,000 items",
+    "endpoint": "file:///home/mariogk/Projects/TerraScale/terrabase/bench/target/zonetree-sync",
+    "client_transport": "embedded ZoneTree 1.9.7.0, one shared LSM per tree, Sync write-ahead log",
+    "unix_seconds": 1789003207,
+    "kernel": "Linux 7.2.3",
+    "logical_cpus": 2
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 0.017629174,
+      "throughput_ops_per_s": 567241.5508520138,
+      "p50_us": 2.163,
+      "p95_us": 2.718,
+      "p99_us": 12.581
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.024267628,
+      "throughput_ops_per_s": 412071.58771347575,
+      "p50_us": 2.185,
+      "p95_us": 2.645,
+      "p99_us": 5.24
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.013690805,
+      "throughput_ops_per_s": 730417.2398920297,
+      "p50_us": 2.198,
+      "p95_us": 2.756,
+      "p99_us": 5.038
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.009140995,
+      "throughput_ops_per_s": 1093972.811493716,
+      "p50_us": 2.158,
+      "p95_us": 2.607,
+      "p99_us": 5.201
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.003384438,
+      "throughput_ops_per_s": 2954700.30770249,
+      "p50_us": 2.108,
+      "p95_us": 2.566,
+      "p99_us": 4.884
+    }
+  ],
+  "limits": [
+    "embedded reference: the measured member is this driver\u0027s own process, so the load generator and the database share one resource envelope",
+    "LSM with the default 1,000,000-item mutable segment: the whole working set stays in the mutable segment, writes are Sync WAL appends, and no disk segment forms during measurement",
+    "the write lane maintains the primary zone and the secondary (tenant, name) zone explicitly \u2014 the KV-store analogue of SQLite\u0027s two B-trees per indexed upsert",
+    "sync mode: the caller waits for each record in the plain WAL stream; full power-loss durability still depends on OS, filesystem, and device"
+  ]
+}

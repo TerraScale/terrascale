@@ -61,7 +61,7 @@ impl LiveQueryPlan {
     pub fn dependency_value<'a>(
         document: &'a Document,
         field: &str,
-    ) -> Option<&'a crate::types::DocumentValue> {
+    ) -> Option<std::borrow::Cow<'a, crate::types::DocumentValue>> {
         model::field_of(document, field)
     }
 

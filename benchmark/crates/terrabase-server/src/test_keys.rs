@@ -105,6 +105,7 @@ pub(crate) struct KeyDeliveryFixture {
     pub(crate) socket: std::path::PathBuf,
     pub(crate) uid: u32,
     pub(crate) gid: u32,
+    pub(crate) protocols: Arc<std::sync::Mutex<Vec<[u8; 5]>>>,
     directory: std::path::PathBuf,
     stop: Arc<AtomicBool>,
     server: Option<std::thread::JoinHandle<()>>,
@@ -140,6 +141,8 @@ pub(crate) fn key_delivery() -> KeyDeliveryFixture {
     let provider = OciVaultKeyDelivery::new(socket.clone(), stat.uid(), stat.gid()).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let server_stop = stop.clone();
+    let protocols = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let server_protocols = protocols.clone();
     let server = std::thread::spawn(move || {
         while !server_stop.load(Ordering::Acquire) {
             let Ok((mut stream, _)) = listener.accept() else {
@@ -157,12 +160,14 @@ pub(crate) fn key_delivery() -> KeyDeliveryFixture {
             }
             let mut request = vec![0; size];
             if stream.read_exact(&mut request).is_err()
-                || request.get(..5) != Some(&b"TBKL\x01"[..])
+                || !matches!(request.get(..5), Some(b"TBKL\x01" | b"TBCK\x01"))
             {
                 continue;
             }
             let mut response = 68u32.to_be_bytes().to_vec();
-            response.extend_from_slice(b"TBKL\x01\x00");
+            server_protocols.lock().unwrap().push(request[..5].try_into().unwrap());
+            response.extend_from_slice(&request[..5]);
+            response.push(0);
             response.extend_from_slice(&1800u32.to_be_bytes());
             response.extend_from_slice(b"01ARZ3NDEKTSV4RRFFQ69G5FB0");
             response.extend_from_slice(&[31; 32]);
@@ -174,6 +179,7 @@ pub(crate) fn key_delivery() -> KeyDeliveryFixture {
         socket,
         uid: stat.uid(),
         gid: stat.gid(),
+        protocols,
         directory,
         stop,
         server: Some(server),

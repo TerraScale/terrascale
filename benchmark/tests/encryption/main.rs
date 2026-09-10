@@ -1,15 +1,20 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use terrabase::encryption::{
-    ArtifactCipher, ArtifactKind, Compression, CustomerKmsAdapter, CustomerKmsDatabaseKeys,
-    DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionContext,
-    EncryptionError, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
-    KeyWrappingProvider, LocalFileKeyProvider, MAX_PLAINTEXT_BYTES, ProductionCapabilityStatus,
-    ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider, WrappedDatabaseKey,
-    production_capability_status,
+    ArtifactCipher, ArtifactKind, Compression, DatabaseKey, DatabaseKeyLease, DatabaseKeyVersion,
+    EncryptionContext, EncryptionError, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope,
+    KeyVersionMetadata, KeyWrappingProvider, LocalFileKeyProvider, MAX_PLAINTEXT_BYTES,
+    ProductionCapabilityStatus, ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider,
+    WrappedDatabaseKey, production_capability_status,
 };
 use terrabase::identity::{DatabaseUlid, TenantUlid, from_text};
 use terrabase::regions::RegionCode;
+
+#[cfg(feature = "test-support")]
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+#[cfg(feature = "test-support")]
+use terrabase::encryption::{CustomerKmsAdapter, CustomerKmsDatabaseKeys, DatabaseKeySource};
 
 #[test]
 fn aws_lc_aes_256_gcm_known_answer() {

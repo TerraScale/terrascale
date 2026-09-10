@@ -202,11 +202,17 @@ mod tests {
         );
         assert_eq!(fs::read_dir(&refused).expect("target").count(), 0);
 
+        assert_invalid_lifecycle_backup_is_not_published(&root, &source, &backup);
+        assert_eq!(fs::read(&backup).expect("backup"), original, "source backup is immutable");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    fn assert_invalid_lifecycle_backup_is_not_published(root: &Path, source: &Path, backup: &Path) {
         // A backup can pass SQLite integrity and the importer's provenance
         // rewrite while still containing state rejected by Engine admission.
         // Such a target must never be atomically published.
         let invalid_backup = root.join("invalid-lifecycle.sqlite3");
-        fs::copy(&backup, &invalid_backup).expect("invalid backup");
+        fs::copy(backup, &invalid_backup).expect("invalid backup");
         let connection = rusqlite::Connection::open(&invalid_backup).expect("open backup");
         connection
             .execute(
@@ -219,14 +225,12 @@ mod tests {
         let rejected = root.join("rejected");
         assert_eq!(
             Engine::restore_local_sqlite_backup(
-                &source,
+                source,
                 &invalid_backup,
                 EngineConfig::durable(&rejected).expect("config"),
             ),
             Err(EngineOpenError::FormatMismatch)
         );
         assert_eq!(fs::read_dir(&rejected).expect("target").count(), 0);
-        assert_eq!(fs::read(&backup).expect("backup"), original, "source backup is immutable");
-        fs::remove_dir_all(root).expect("cleanup");
     }
 }

@@ -28,7 +28,7 @@ pub struct WorkloadIdentityScope {
     pub endpoint: String,
     /// Destination bucket.
     pub bucket: String,
-    /// SigV4 signing region.
+    /// `SigV4` signing region.
     pub region: String,
     /// Control-plane placement revision.
     pub placement_revision: String,
@@ -68,6 +68,10 @@ impl fmt::Debug for UnixWorkloadIdentityProvider {
 impl UnixWorkloadIdentityProvider {
     /// Creates a broker provider. The socket path must be absolute and the
     /// scope must contain no control characters or empty required fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkloadIdentityError::Invalid`] for an invalid socket or scope.
     pub fn new(
         socket: PathBuf,
         scope: WorkloadIdentityScope,
@@ -154,7 +158,7 @@ impl WorkloadIdentityProvider for UnixWorkloadIdentityProvider {
             return Err(WorkloadIdentityError::Invalid);
         }
         stream
-            .write_u32(request.len() as u32)
+            .write_u32(u32::try_from(request.len()).map_err(|_| WorkloadIdentityError::Invalid)?)
             .await
             .map_err(|_| WorkloadIdentityError::Unavailable)?;
         stream.write_all(&request).await.map_err(|_| WorkloadIdentityError::Unavailable)?;

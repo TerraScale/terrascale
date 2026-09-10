@@ -574,6 +574,92 @@ mod tests {
             .is_err()
         );
     }
+
+    #[test]
+    fn customer_kms_lease_is_accepted_but_wrong_context_and_expiry_fail() {
+        use crate::encryption::{ArtifactCipher, ArtifactKind, Compression, EncryptionContext};
+        let metadata = metadata("01ARZ3NDEKTSV4RRFFQ69G5FB0");
+        let lease = DatabaseKeyLease::test_customer_kms(
+            metadata.clone(),
+            DatabaseKey::from_bytes([92; 32]),
+            Duration::from_mins(1),
+        )
+        .unwrap();
+        let context = EncryptionContext::for_artifact(
+            metadata.scope(),
+            ArtifactKind::Database,
+            crate::identity::generate(),
+            metadata.version(),
+            1,
+            Compression::None,
+        )
+        .unwrap();
+        assert!(ArtifactCipher::from_database_key_lease(&lease, context, 0).is_ok());
+
+        let local = DatabaseKeyLease::new(
+            metadata.clone(),
+            DatabaseKey::from_bytes([92; 32]),
+            Duration::from_mins(1),
+        )
+        .unwrap();
+        let local_context = EncryptionContext::for_artifact(
+            metadata.scope(),
+            ArtifactKind::Database,
+            crate::identity::generate(),
+            metadata.version(),
+            1,
+            Compression::None,
+        )
+        .unwrap();
+        assert!(matches!(
+            ArtifactCipher::from_database_key_lease(&local, local_context, 0),
+            Err(EncryptionError::ProductionProviderUnavailable)
+        ));
+
+        let wrong_scope = EncryptionContext::new_with_project(
+            metadata.scope().environment(),
+            "other-tenant",
+            metadata.scope().project().unwrap().to_text(),
+            metadata.scope().database().to_text(),
+            "database",
+            crate::identity::generate(),
+            metadata.version().to_text(),
+            1,
+            Compression::None,
+        )
+        .unwrap();
+        assert!(matches!(
+            ArtifactCipher::from_database_key_lease(&lease, wrong_scope, 0),
+            Err(EncryptionError::InvalidKeyMetadata)
+        ));
+
+        let wrong_purpose = EncryptionContext::new(
+            metadata.scope().environment(),
+            metadata.scope().tenant().to_text(),
+            metadata.scope().database().to_text(),
+            "backup",
+            crate::identity::generate(),
+            metadata.version().to_text(),
+            1,
+            Compression::None,
+        )
+        .unwrap();
+        assert!(matches!(
+            ArtifactCipher::from_database_key_lease(&lease, wrong_purpose, 0),
+            Err(EncryptionError::InvalidKeyMetadata)
+        ));
+
+        let expired = DatabaseKeyLease::from_adapter_until(
+            metadata,
+            DatabaseKey::from_bytes([92; 32]),
+            Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .expect("test instant is representable"),
+            KeyProviderIdentity::CustomerKms,
+        )
+        .unwrap_err();
+        assert_eq!(expired, EncryptionError::KeyLeaseExpired);
+    }
     #[test]
     fn bound_source_caches_io_and_renews_the_same_explicit_version() {
         let fixture = SocketFixture::new();

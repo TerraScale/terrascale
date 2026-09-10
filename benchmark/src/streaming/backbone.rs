@@ -410,16 +410,6 @@ impl SyncJournalCursor {
     pub const fn lanes(&self) -> &BTreeMap<OriginLaneId, ChangeCheckpoint> {
         &self.lanes
     }
-
-    /// Validates this cursor against the currently admitted view binding.
-    /// Route changes and any scope/selector mismatch require a fresh snapshot
-    /// rather than silently migrating independent lane positions.
-    pub(crate) fn validate_binding(
-        &self,
-        expected: &SyncJournalBinding,
-    ) -> Result<(), StreamError> {
-        (self.binding == *expected).then_some(()).ok_or(StreamError::InvalidCursor)
-    }
 }
 
 /// One record tagged with the physical lane that supplied it.
@@ -504,34 +494,20 @@ impl SyncJournalLaneBatch {
 /// deliberately not presented as a global chronology across records that may
 /// arrive from later lane reads. Replicated staging rows are excluded; their
 /// original provenance remains eligible on the originating lane exactly once.
+///
+/// # Errors
+///
+/// Returns [`StreamError::InvalidSource`] when `limit` is zero or exceeds the
+/// stream batch bound.
 pub fn merge_sync_journal_pages(
     cursor: &SyncJournalCursor,
-    pages: BTreeMap<OriginLaneId, SyncJournalLanePage>,
+    pages: &BTreeMap<OriginLaneId, SyncJournalLanePage>,
     limit: u32,
 ) -> Result<SyncJournalLaneBatch, StreamError> {
     if limit == 0 || limit > super::MAX_STREAM_BATCH_ITEMS {
         return Err(StreamError::InvalidSource);
     }
-    let mut candidates: Vec<SyncJournalLaneRecord> = pages
-        .iter()
-        .flat_map(|(lane, page)| {
-            let checkpoint =
-                cursor.lanes.get(&lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
-            page.records.iter().filter_map(move |record| {
-                if record.provenance().kind() != JournalKind::Origin
-                    || subscription::position_covered(
-                        checkpoint.sequence(),
-                        checkpoint.write_index(),
-                        StorageSequence::new(record.storage_sequence()),
-                        record.position().write_index().saturating_sub(1),
-                    )
-                {
-                    return None;
-                }
-                Some(SyncJournalLaneRecord::new(lane.clone(), record.clone()))
-            })
-        })
-        .collect();
+    let mut candidates = collect_merge_candidates(cursor, pages);
     candidates.sort_by(|left, right| {
         (
             left.record.provenance().hlc(),
@@ -556,54 +532,8 @@ pub fn merge_sync_journal_pages(
     // lane's page. A global HLC sort can otherwise select a later record
     // while an earlier record from the same lane remains pending, and
     // advancing the lane cursor past the gap would silently skip it.
-    let mut prefix_counts = BTreeMap::<OriginLaneId, usize>::new();
-    let mut eligible_ranks =
-        BTreeMap::<OriginLaneId, std::collections::HashMap<(u64, u32), usize>>::new();
     if truncated {
-        for (lane, page) in &pages {
-            let checkpoint =
-                cursor.lanes.get(lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
-            let eligible_positions: Vec<_> = page
-                .records
-                .iter()
-                .filter(|record| {
-                    record.provenance().kind() == JournalKind::Origin
-                        && !subscription::position_covered(
-                            checkpoint.sequence(),
-                            checkpoint.write_index(),
-                            StorageSequence::new(record.storage_sequence()),
-                            record.position().write_index().saturating_sub(1),
-                        )
-                })
-                .map(SyncJournalRecord::position)
-                .collect();
-            let mut selected_positions = std::collections::HashSet::new();
-            for candidate in candidates.iter().filter(|candidate| candidate.lane == *lane) {
-                let position = candidate.record.position();
-                selected_positions.insert((position.sequence(), position.write_index()));
-            }
-            let prefix = eligible_positions
-                .iter()
-                .take_while(|position| {
-                    selected_positions.contains(&(position.sequence(), position.write_index()))
-                })
-                .count();
-            prefix_counts.insert(lane.clone(), prefix);
-            eligible_ranks.insert(
-                lane.clone(),
-                eligible_positions
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, position)| ((position.sequence(), position.write_index()), index))
-                    .collect(),
-            );
-        }
-        candidates.retain(|candidate| {
-            let position = candidate.record.position();
-            eligible_ranks[&candidate.lane]
-                .get(&(position.sequence(), position.write_index()))
-                .is_some_and(|index| *index < prefix_counts[&candidate.lane])
-        });
+        retain_lane_prefixes(cursor, pages, &mut candidates);
     }
 
     let mut next = cursor.clone();
@@ -612,34 +542,104 @@ pub fn merge_sync_journal_pages(
         next.lanes.insert(candidate.lane.clone(), candidate.record.position());
         *selected_counts.entry(candidate.lane.clone()).or_default() += 1;
     }
-    for (lane, page) in &pages {
-        // A lane may advance to its page continuation only when every
-        // eligible record from that page was returned (or there were no
-        // eligible records because they were covered/provenance-filtered).
-        // If the global limit truncated this lane, retaining its prior
-        // cursor is essential: advancing to `page.next` would skip the
-        // unreturned records on the next continuation call.
-        let checkpoint = cursor.lanes.get(lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
-        let eligible = page
-            .records
-            .iter()
-            .filter(|record| {
-                record.provenance().kind() == JournalKind::Origin
-                    && !subscription::position_covered(
-                        checkpoint.sequence(),
-                        checkpoint.write_index(),
-                        StorageSequence::new(record.storage_sequence()),
-                        record.position().write_index().saturating_sub(1),
-                    )
-            })
-            .count();
-        let selected = selected_counts.get(lane).copied().unwrap_or(0);
-        if selected == eligible && page.next.is_some() {
-            next.lanes.insert(lane.clone(), page.next.expect("checked above"));
-        }
-    }
+    advance_complete_lanes(cursor, pages, &selected_counts, &mut next);
     let drained = pages.values().all(|page| page.drained);
     Ok(SyncJournalLaneBatch { records: candidates, cursor: next, drained })
+}
+
+fn record_is_eligible(checkpoint: ChangeCheckpoint, record: &SyncJournalRecord) -> bool {
+    record.provenance().kind() == JournalKind::Origin
+        && !subscription::position_covered(
+            checkpoint.sequence(),
+            checkpoint.write_index(),
+            StorageSequence::new(record.storage_sequence()),
+            record.position().write_index().saturating_sub(1),
+        )
+}
+
+fn collect_merge_candidates(
+    cursor: &SyncJournalCursor,
+    pages: &BTreeMap<OriginLaneId, SyncJournalLanePage>,
+) -> Vec<SyncJournalLaneRecord> {
+    pages
+        .iter()
+        .flat_map(|(lane, page)| {
+            let checkpoint =
+                cursor.lanes.get(lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
+            page.records.iter().filter_map(move |record| {
+                if record_is_eligible(checkpoint, record) {
+                    Some(SyncJournalLaneRecord::new(lane.clone(), record.clone()))
+                } else {
+                    None
+                }
+            })
+        })
+        .collect()
+}
+
+fn retain_lane_prefixes(
+    cursor: &SyncJournalCursor,
+    pages: &BTreeMap<OriginLaneId, SyncJournalLanePage>,
+    candidates: &mut Vec<SyncJournalLaneRecord>,
+) {
+    let mut prefixes = BTreeMap::new();
+    let mut ranks = BTreeMap::new();
+    for (lane, page) in pages {
+        let checkpoint = cursor.lanes.get(lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
+        let positions: Vec<_> = page
+            .records
+            .iter()
+            .filter(|record| record_is_eligible(checkpoint, record))
+            .map(SyncJournalRecord::position)
+            .collect();
+        let selected: std::collections::HashSet<_> = candidates
+            .iter()
+            .filter(|candidate| candidate.lane == *lane)
+            .map(|candidate| {
+                let position = candidate.record.position();
+                (position.sequence(), position.write_index())
+            })
+            .collect();
+        let prefix = positions
+            .iter()
+            .take_while(|position| {
+                selected.contains(&(position.sequence(), position.write_index()))
+            })
+            .count();
+        prefixes.insert(lane.clone(), prefix);
+        ranks.insert(
+            lane.clone(),
+            positions
+                .into_iter()
+                .enumerate()
+                .map(|(index, position)| ((position.sequence(), position.write_index()), index))
+                .collect::<std::collections::HashMap<_, _>>(),
+        );
+    }
+    candidates.retain(|candidate| {
+        let position = candidate.record.position();
+        ranks[&candidate.lane]
+            .get(&(position.sequence(), position.write_index()))
+            .is_some_and(|index| *index < prefixes[&candidate.lane])
+    });
+}
+
+fn advance_complete_lanes(
+    cursor: &SyncJournalCursor,
+    pages: &BTreeMap<OriginLaneId, SyncJournalLanePage>,
+    selected_counts: &BTreeMap<OriginLaneId, usize>,
+    next: &mut SyncJournalCursor,
+) {
+    for (lane, page) in pages {
+        let checkpoint = cursor.lanes.get(lane).copied().unwrap_or(ChangeCheckpoint::after(0, 0));
+        let eligible =
+            page.records.iter().filter(|record| record_is_eligible(checkpoint, record)).count();
+        if selected_counts.get(lane).copied().unwrap_or(0) == eligible
+            && let Some(checkpoint) = page.next
+        {
+            next.lanes.insert(lane.clone(), checkpoint);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -708,7 +708,7 @@ mod lane_merge_tests {
                 ),
             ),
         ]);
-        let merged = merge_sync_journal_pages(&cursor, pages, 2).expect("merge succeeds");
+        let merged = merge_sync_journal_pages(&cursor, &pages, 2).expect("merge succeeds");
         assert_eq!(merged.records().len(), 2);
         assert_eq!(merged.cursor().lanes()[&first], ChangeCheckpoint::after(1, 1));
         assert_eq!(merged.cursor().lanes()[&second], ChangeCheckpoint::after(1, 1));
@@ -737,7 +737,7 @@ mod lane_merge_tests {
                 ),
             ),
         ]);
-        let merged = merge_sync_journal_pages(&cursor, pages, 1).expect("merge succeeds");
+        let merged = merge_sync_journal_pages(&cursor, &pages, 1).expect("merge succeeds");
         assert_eq!(merged.records().len(), 1);
         let advanced = merged.records()[0].lane().clone();
         let retained = if advanced == first { second } else { first };
@@ -756,12 +756,12 @@ mod lane_merge_tests {
                 true,
             ),
         )]);
-        let first = merge_sync_journal_pages(&cursor, pages.clone(), 1).expect("first page");
+        let first = merge_sync_journal_pages(&cursor, &pages, 1).expect("first page");
         assert_eq!(first.records().len(), 1);
         assert_eq!(first.records()[0].record().document().as_str(), "one");
         assert_eq!(first.cursor().lanes()[&only], ChangeCheckpoint::after(1, 1));
 
-        let second = merge_sync_journal_pages(first.cursor(), pages, 1).expect("second page");
+        let second = merge_sync_journal_pages(first.cursor(), &pages, 1).expect("second page");
         assert_eq!(second.records().len(), 1);
         assert_eq!(second.records()[0].record().document().as_str(), "two");
         assert_eq!(second.cursor().lanes()[&only], ChangeCheckpoint::after(2, 1));
@@ -792,16 +792,17 @@ mod lane_merge_tests {
             })
             .collect();
         let started = std::time::Instant::now();
+        let batch_limit = u32::try_from(LANES).expect("fixed probe lane count fits u32")
+            * u32::try_from(RECORDS_PER_LANE).expect("fixed probe record count fits u32");
         let merged =
-            merge_sync_journal_pages(&cursor, pages, (LANES as u32) * (RECORDS_PER_LANE as u32))
-                .expect("merge succeeds");
+            merge_sync_journal_pages(&cursor, &pages, batch_limit).expect("merge succeeds");
         let elapsed = started.elapsed().as_secs_f64();
-        let records = (LANES as u64) * RECORDS_PER_LANE;
-        assert_eq!(merged.records().len(), records as usize);
+        let records = batch_limit;
+        assert_eq!(merged.records().len(), usize::try_from(records).expect("fits usize"));
         println!(
             "sync merge probe: {:.0} records/s ({:.1} us/record)",
-            records as f64 / elapsed,
-            elapsed * 1e6 / records as f64
+            f64::from(records) / elapsed,
+            elapsed * 1e6 / f64::from(records)
         );
     }
 }

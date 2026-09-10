@@ -1,0 +1,11 @@
+subject=terrabase-member
+pid=2147902
+envelope_spec=2ocpu/12GiB
+cgroup=/system.slice/run-p2147902-i2112054.scope
+cpu_max=200000 100000
+cpuset=2-3
+memory_max=12884901888
+memory_current=13402112
+memory_peak=13402112
+rss_kib=31340
+io_stat=8:0 rbytes=16384 wbytes=31514624 rios=1 wios=2028 dbytes=0 dios=0;

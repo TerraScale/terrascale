@@ -1,0 +1,230 @@
+//! Private lifecycle control RPCs.
+//!
+//! The service is wired into the real TBEP listener so callers cannot stop at
+//! an unused adapter. Native lifecycle composition is explicit and invoked by
+//! the production listener when supplied.
+
+use tonic::{Code, Request, Response, Status};
+
+use super::{TbepGrpcServer, authenticate_gateway_certificate, metadata_value};
+use crate::lifecycle;
+use crate::proto::terrabase::v1 as pb;
+use pb::lifecycle_control_service_server::{
+    LifecycleControlService, LifecycleControlServiceServer,
+};
+
+impl TbepGrpcServer {
+    fn authenticate_lifecycle<T>(&self, request: &Request<T>) -> Result<(), Status> {
+        let principal = metadata_value(
+            request.metadata(),
+            super::PRINCIPAL_METADATA,
+            super::MAX_PRINCIPAL_BYTES,
+        )?;
+        if !self.config.gateway_principals.contains(&principal) {
+            return Err(Status::new(
+                Code::PermissionDenied,
+                "principal is not an admitted orchestrator",
+            ));
+        }
+        let certificates = request
+            .peer_certs()
+            .ok_or_else(|| Status::new(Code::Unauthenticated, "lifecycle control requires mTLS"))?;
+        let leaf = certificates
+            .first()
+            .ok_or_else(|| Status::new(Code::Unauthenticated, "lifecycle control requires mTLS"))?;
+        authenticate_gateway_certificate(&principal, leaf)
+    }
+}
+
+#[tonic::async_trait]
+impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
+    async fn resolve_recovery_point(
+        &self,
+        request: Request<pb::ResolveRecoveryPointRequest>,
+    ) -> Result<Response<pb::ResolveRecoveryPointResponse>, Status> {
+        self.authenticate_lifecycle(&request)?;
+        let request = request.into_inner();
+        if request.operation_id.is_empty()
+            || request.operation_id.len() > 128
+            || request.point_id.len() > 64
+            || request.unix_millis != 0
+            || !(request.selection_kind == "latest" && request.point_id.is_empty()
+                || request.selection_kind == "point_id" && request.point_id.len() == 64)
+        {
+            return Err(Status::invalid_argument("unsupported recovery point selection"));
+        }
+        let owner = self
+            .lifecycle
+            .as_ref()
+            .ok_or_else(|| Status::unavailable("native recovery point resolver is not composed"))?;
+        let response = owner.resolve_recovery_point(&request).await.map_err(Status::unavailable)?;
+        Ok(Response::new(response))
+    }
+
+    async fn restore_stats(
+        &self,
+        request: Request<pb::RestoreStatsRequest>,
+    ) -> Result<Response<pb::RestoreStatsResponse>, Status> {
+        self.authenticate_lifecycle(&request)?;
+        let request = request.into_inner();
+        if request.operation_id.is_empty()
+            || request.target_owner.is_empty()
+            || request.target_database.is_empty()
+            || request.journal_cut.is_empty()
+            || request.restore_epoch == 0
+        {
+            return Err(Status::invalid_argument("restore stats request is incomplete"));
+        }
+        let Some(owner) = self.lifecycle.as_ref() else {
+            return Err(Status::unavailable("native restore stats owner is not composed"));
+        };
+        let response = owner.restore_stats(&request).await.map_err(Status::unavailable)?;
+        Ok(Response::new(pb::RestoreStatsResponse {
+            operation_id: response.operation_id,
+            target_owner: response.target_owner,
+            target_database: response.target_database,
+            checksum: response.checksum,
+            row_count: response.row_count,
+            journal_cut: response.journal_cut,
+            placement: response.placement,
+            signed_completed_receipt: response.signed_completed_receipt,
+            envelope: response.envelope,
+        }))
+    }
+
+    async fn restore_to_target(
+        &self,
+        request: Request<pb::RestoreToTargetRequest>,
+    ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
+        self.authenticate_lifecycle(&request)?;
+        let request = request.into_inner();
+        if request.operation_id.is_empty()
+            || request.restore_epoch == 0
+            || !valid_owner(&request.source_owner)
+            || request.source_database.is_empty()
+            || request.recovery_point_id.is_empty()
+            || request.recovery_point_digest.len() != 64
+            || !valid_owner(&request.target_owner)
+            || request.target_database.is_empty()
+            || request.journal_cut.is_empty()
+            || !matches!(request.provider, 1 | 2 | 3)
+        {
+            return Err(Status::invalid_argument("restore request is incomplete"));
+        }
+        let Some(owner) = self.lifecycle.as_ref() else {
+            return Ok(Response::new(lifecycle::unavailable(&request.operation_id)));
+        };
+        let response =
+            owner.restore_to_target(&request).await.map_err(|error| Status::unavailable(error))?;
+        Ok(Response::new(response))
+    }
+
+    async fn ensure_snapshot(
+        &self,
+        request: Request<pb::LifecycleControlRequest>,
+    ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
+        self.dispatch(request, |owner, context, operation| {
+            owner.ensure_snapshot(context, operation)
+        })
+        .await
+    }
+
+    async fn verify_snapshot_placement(
+        &self,
+        request: Request<pb::LifecycleControlRequest>,
+    ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
+        self.dispatch(request, |owner, context, operation| {
+            owner.verify_snapshot_placement(context, operation)
+        })
+        .await
+    }
+
+    async fn close_database(
+        &self,
+        request: Request<pb::LifecycleControlRequest>,
+    ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
+        self.dispatch(request, |owner, context, operation| owner.close_database(context, operation))
+            .await
+    }
+
+    async fn stop_native_backup(
+        &self,
+        request: Request<pb::LifecycleControlRequest>,
+    ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
+        self.dispatch(request, |owner, context, operation| {
+            owner.stop_native_backup(context, operation)
+        })
+        .await
+    }
+
+    async fn reactivate(
+        &self,
+        request: Request<pb::LifecycleReactivateRequest>,
+    ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
+        self.authenticate_lifecycle(&request)?;
+        let request = request.into_inner();
+        let operation = lifecycle::validate_reactivate(&request).map_err(|_| {
+            Status::new(Code::InvalidArgument, "lifecycle restore target is invalid")
+        })?;
+        let inner = request.request.as_ref().expect("validated reactivation request");
+        let Some(owner) = self.lifecycle.as_ref() else {
+            return Ok(Response::new(lifecycle::unavailable(operation)));
+        };
+        let response = owner
+            .reactivate(inner.context.as_ref().expect("validated lifecycle context"), operation)
+            .await
+            .map_err(|error| Status::new(Code::Unavailable, error))?;
+        Ok(Response::new(response))
+    }
+
+    async fn delete_owned_data(
+        &self,
+        request: Request<pb::LifecycleControlRequest>,
+    ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
+        self.dispatch(request, |owner, context, operation| {
+            owner.delete_owned_data(context, operation)
+        })
+        .await
+    }
+}
+
+fn valid_owner(value: &str) -> bool {
+    let Some((tenant, project)) = value.split_once('/') else { return false };
+    !tenant.is_empty()
+        && !project.is_empty()
+        && !project.contains('/')
+        && tenant.len() <= 64
+        && project.len() <= 255
+}
+
+impl TbepGrpcServer {
+    async fn dispatch(
+        &self,
+        request: Request<pb::LifecycleControlRequest>,
+        invoke: impl for<'a> FnOnce(
+            &'a dyn lifecycle::LifecycleControl,
+            &'a pb::LifecycleControlContext,
+            &'a str,
+        ) -> lifecycle::LifecycleFuture<'a>,
+    ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
+        self.authenticate_lifecycle(&request)?;
+        let request = request.into_inner();
+        let operation_id = lifecycle::validate_request(&request)
+            .map_err(|_| Status::new(Code::InvalidArgument, "lifecycle identity is invalid"))?;
+        let Some(owner) = self.lifecycle.as_ref() else {
+            return Ok(Response::new(lifecycle::unavailable(operation_id)));
+        };
+        let context = request.context.as_ref().expect("validated lifecycle context");
+        let response = invoke(owner.as_ref(), context, operation_id)
+            .await
+            .map_err(|error| Status::new(Code::Unavailable, error))?;
+        Ok(Response::new(response))
+    }
+}
+
+/// Registers the lifecycle service on a TBEP router.
+pub fn server(
+    server: std::sync::Arc<TbepGrpcServer>,
+) -> LifecycleControlServiceServer<std::sync::Arc<TbepGrpcServer>> {
+    LifecycleControlServiceServer::new(server)
+}

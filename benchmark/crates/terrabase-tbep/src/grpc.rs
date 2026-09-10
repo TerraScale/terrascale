@@ -733,8 +733,7 @@ impl TbepGrpcServer {
             .name("tbep-grpc-uds".into())
             .spawn(move || {
                 let result = runtime.block_on(async move {
-                    let routes =
-                        serve_routes(Arc::clone(&server), None).map_err(std::io::Error::other)?;
+                    let routes = serve_routes(&server, None).map_err(std::io::Error::other)?;
                     server.serving.store(true, Ordering::Release);
                     let result = routes
                         .serve_with_incoming_shutdown(incoming, async {
@@ -841,7 +840,7 @@ impl TbepGrpcServer {
                             return Err(error);
                         }
                     };
-                    let routes = match serve_routes(Arc::clone(&server), None) {
+                    let routes = match serve_routes(&server, None) {
                         Ok(routes) => routes,
                         Err(error) => {
                             let error = std::io::Error::other(error);
@@ -968,7 +967,7 @@ fn tls_server_config(
 }
 
 fn serve_routes(
-    server: Arc<TbepGrpcServer>,
+    server: &Arc<TbepGrpcServer>,
     tls: Option<ServerTlsConfig>,
 ) -> Result<tonic::transport::server::Router, tonic::transport::Error> {
     let message_bytes = server.config.max_message_bytes();
@@ -999,37 +998,37 @@ fn serve_routes(
             .max_encoding_message_size(message_bytes)
         }))
         .add_service(
-            ChannelServiceServer::new(Arc::clone(&server))
+            ChannelServiceServer::new(Arc::clone(server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            BackboneServiceServer::new(Arc::clone(&server))
+            BackboneServiceServer::new(Arc::clone(server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            SchemaServiceServer::new(Arc::clone(&server))
+            SchemaServiceServer::new(Arc::clone(server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            ReplicationServiceServer::new(Arc::clone(&server))
+            ReplicationServiceServer::new(Arc::clone(server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            MaintenanceServiceServer::new(Arc::clone(&server))
+            MaintenanceServiceServer::new(Arc::clone(server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            UsageServiceServer::new(Arc::clone(&server))
+            UsageServiceServer::new(Arc::clone(server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            lifecycle_control::server(Arc::clone(&server))
+            lifecycle_control::server(Arc::clone(server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         ))

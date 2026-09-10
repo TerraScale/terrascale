@@ -1065,6 +1065,18 @@ struct ReplayHeader {
     digest: [u8; 32],
 }
 
+struct ReplayAudit {
+    sequence: u64,
+    kind: u8,
+    generation: u64,
+    tenant: String,
+    collection: String,
+    id: String,
+    at_millis: u64,
+    digest: [u8; 32],
+}
+
+#[derive(Clone, Copy)]
 struct LifecycleFrame<'a> {
     sequence: u64,
     kind: u8,
@@ -1120,6 +1132,7 @@ impl LifecycleStore {
     fn replay(&mut self, payload: &[u8]) -> Result<(), ()> {
         let mut cursor = ByteCursor::new(payload);
         let header = self.decode_replay_header(&mut cursor)?;
+        self.replay_detail(&mut cursor, &header)?;
         let ReplayHeader {
             sequence,
             kind,
@@ -1127,22 +1140,11 @@ impl LifecycleStore {
             tenant,
             id,
             collection,
-            fields,
+            fields: _,
             at_millis,
             digest,
         } = header;
         let key = (tenant.clone(), id.clone());
-        self.replay_detail(
-            &mut cursor,
-            kind,
-            generation,
-            &tenant,
-            &id,
-            &collection,
-            &fields,
-            digest,
-            &key,
-        )?;
         self.next_sequence = sequence.checked_add(1).ok_or(())?;
         if cursor.offset != payload.len() {
             return Err(());
@@ -1150,9 +1152,16 @@ impl LifecycleStore {
         if kind != 4 && kind != 5 {
             self.invalidate_evidence(&key.0, &key.1);
         }
-        self.record_replay_audit(
-            sequence, kind, generation, tenant, collection, id, at_millis, digest,
-        )
+        self.record_replay_audit(ReplayAudit {
+            sequence,
+            kind,
+            generation,
+            tenant,
+            collection,
+            id,
+            at_millis,
+            digest,
+        })
     }
 
     fn decode_replay_header(&self, cursor: &mut ByteCursor<'_>) -> Result<ReplayHeader, ()> {
@@ -1192,24 +1201,19 @@ impl LifecycleStore {
     fn replay_detail(
         &mut self,
         cursor: &mut ByteCursor<'_>,
-        kind: u8,
-        generation: u64,
-        tenant: &str,
-        id: &str,
-        collection: &str,
-        fields: &[String],
-        digest: [u8; 32],
-        key: &(String, String),
+        header: &ReplayHeader,
     ) -> Result<(), ()> {
-        self.generations.insert(tenant.to_owned(), generation);
-        match kind {
+        let ReplayHeader { kind, generation, tenant, id, collection, fields, digest, .. } = header;
+        let key = (tenant.clone(), id.clone());
+        self.generations.insert(tenant.clone(), *generation);
+        match *kind {
             1 => {
                 self.indexes.insert(
                     key.clone(),
                     cursor.lifecycle_view(
-                        (tenant.to_owned(), id.to_owned(), collection.to_owned()),
-                        fields.to_owned(),
-                        generation,
+                        (tenant.clone(), id.clone(), collection.clone()),
+                        fields.clone(),
+                        *generation,
                     )?,
                 );
             }
@@ -1217,32 +1221,41 @@ impl LifecycleStore {
                 self.forbidden.insert(key.clone());
                 if let Some(view) = self.indexes.get_mut(&key) {
                     view.forbidden = true;
-                    view.generation = generation;
+                    view.generation = *generation;
                 }
             }
             3 => {
                 let view = self.indexes.get_mut(&key).ok_or(())?;
                 view.phase = LifecyclePhase::Abandoned;
                 view.visible = false;
-                view.generation = generation;
+                view.generation = *generation;
             }
             4 => {
                 let template_digest = cursor.array32()?;
                 let baseline = cursor.samples()?;
                 let candidate = cursor.samples()?;
                 let view = self.indexes.get(&key).ok_or(())?;
-                if view.collection != collection || view.fields != fields {
+                if view.collection != collection.as_str()
+                    || view.fields.as_slice() != fields.as_slice()
+                {
                     return Err(());
                 }
                 validate_evidence_view(view)?;
-                let evidence =
-                    make_evidence(&tenant, &id, generation, template_digest, baseline, candidate)?;
-                if evidence.digest != digest {
+                let evidence = make_evidence(
+                    tenant.as_str(),
+                    id.as_str(),
+                    *generation,
+                    template_digest,
+                    baseline,
+                    candidate,
+                )?;
+                if evidence.digest != *digest {
                     return Err(());
                 }
-                let evidence_key = self.evidence_key(tenant, id, template_digest)?;
+                let evidence_key =
+                    self.evidence_key(tenant.as_str(), id.as_str(), template_digest)?;
                 self.evidence.insert(evidence_key, evidence);
-                self.indexes.get_mut(&key).ok_or(())?.generation = generation;
+                self.indexes.get_mut(&key).ok_or(())?.generation = *generation;
             }
             5 => {
                 let template_digest = cursor.array32()?;
@@ -1251,25 +1264,17 @@ impl LifecycleStore {
                     return Err(());
                 }
                 view.pinned = true;
-                view.generation = generation;
-                self.pins.insert((tenant.to_owned(), id.to_owned(), template_digest));
+                view.generation = *generation;
+                self.pins.insert((tenant.clone(), id.clone(), template_digest));
             }
             _ => return Err(()),
         }
         Ok(())
     }
 
-    fn record_replay_audit(
-        &mut self,
-        sequence: u64,
-        kind: u8,
-        generation: u64,
-        tenant: String,
-        collection: String,
-        id: String,
-        at_millis: u64,
-        digest: [u8; 32],
-    ) -> Result<(), ()> {
+    fn record_replay_audit(&mut self, audit: ReplayAudit) -> Result<(), ()> {
+        let ReplayAudit { sequence, kind, generation, tenant, collection, id, at_millis, digest } =
+            audit;
         self.audits.push_back((
             tenant,
             collection,
@@ -1331,7 +1336,7 @@ impl LifecycleStore {
         );
         let payload = encode_lifecycle_payload(
             detail,
-            LifecycleFrame {
+            &LifecycleFrame {
                 sequence,
                 kind,
                 generation,
@@ -1751,7 +1756,7 @@ fn make_evidence(
 
 fn encode_lifecycle_payload(
     detail: LifecycleDetail<'_>,
-    frame: LifecycleFrame<'_>,
+    frame: &LifecycleFrame<'_>,
 ) -> Result<Vec<u8>, ()> {
     let LifecycleFrame {
         sequence,
@@ -1768,7 +1773,7 @@ fn encode_lifecycle_payload(
         forbidden,
         at_millis,
         digest,
-    } = frame;
+    } = *frame;
     let mut payload = Vec::new();
     payload.extend_from_slice(&sequence.to_le_bytes());
     payload.push(kind);

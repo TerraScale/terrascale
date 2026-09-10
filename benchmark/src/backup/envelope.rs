@@ -13,11 +13,17 @@ use std::path::Path;
 
 const MAX_PARTICIPANTS: usize = 64;
 const MAX_ENVELOPE_BYTES: usize = 256 * 1024;
-const HEADER: &str = "terrabase-backup-envelope 1";
+const HEADER: &str = "terrabase-backup-envelope 2";
 
 /// One participant's immutable recovery point inside an envelope.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackupEnvelopeParticipant {
+    /// Exact physical identity captured with the admitted route catalog.
+    pub file_identity: crate::shard_split::FileShardIdentity,
+    /// Identifies the logical database root, independently of shard ordering.
+    pub is_root: bool,
+    /// Canonical admitted ranges owned by this file.
+    pub routes: Vec<crate::shard_split::ShardRoute>,
     /// Stable physical participant identity, ordered lexicographically.
     pub participant_id: String,
     /// Physical database identity that owns the participant file.
@@ -56,6 +62,11 @@ struct EnvelopeWire {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ParticipantWire {
+    shard_id: u64,
+    region: String,
+    origin_lane_incarnation: String,
+    is_root: bool,
+    routes: Vec<RouteWire>,
     participant_id: String,
     database_id: String,
     database_incarnation: String,
@@ -64,15 +75,66 @@ struct ParticipantWire {
     manifest: String,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RouteWire {
+    lower: Option<Vec<u8>>,
+    upper: Option<Vec<u8>>,
+}
+
 impl BackupEnvelope {
+    /// Authenticates the complete routing inventory captured under admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ChainIncomplete`] when the cut and manifest
+    /// participant counts differ, or [`BackupError::ManifestInvalid`] when
+    /// the admitted identities or routes are inconsistent.
+    pub fn from_read_cut(
+        cut: &crate::member::AdmittedShardReadCut,
+        manifests: Vec<BackupManifest>,
+    ) -> Result<Self, BackupError> {
+        let generation = cut.route_generation.ok_or(BackupError::ManifestInvalid)?;
+        if manifests.len() != cut.participants.len() {
+            return Err(BackupError::ChainIncomplete);
+        }
+        Self::assemble(
+            cut.database_id.clone(),
+            cut.database_incarnation,
+            generation,
+            cut.participants
+                .iter()
+                .zip(manifests)
+                .map(|(participant, manifest)| BackupEnvelopeParticipant {
+                    file_identity: participant.identity,
+                    is_root: participant.identity.shard_id == cut.root_shard_id,
+                    routes: participant.routes.clone(),
+                    participant_id: format!("shard-{:016x}", participant.identity.shard_id),
+                    database_id: cut.database_id.clone(),
+                    database_incarnation: cut.database_incarnation,
+                    route_generation: generation,
+                    boundary: participant.snapshot.sequence().get(),
+                    manifest,
+                })
+                .collect(),
+        )
+    }
+
     /// Assembles and validates an envelope from ordered participant manifests.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ManifestInvalid`] when any envelope identity,
+    /// route, participant, or manifest invariant is violated.
     pub fn assemble(
         database_id: String,
         database_incarnation: u128,
         route_generation: u64,
         mut participants: Vec<BackupEnvelopeParticipant>,
     ) -> Result<Self, BackupError> {
-        if database_id.is_empty()
+        if database_id
+            != crate::identity::DatabaseUlid::from_wire_bytes(database_incarnation.to_be_bytes())
+                .to_text()
             || database_incarnation == 0
             || route_generation == u64::MAX
             || participants.is_empty()
@@ -84,9 +146,27 @@ impl BackupEnvelope {
         if participants.windows(2).any(|pair| pair[0].participant_id == pair[1].participant_id) {
             return Err(BackupError::ManifestInvalid);
         }
+        if participants.iter().filter(|participant| participant.is_root).count() != 1 {
+            return Err(BackupError::ManifestInvalid);
+        }
+        let mut lanes = std::collections::BTreeSet::new();
+        let region = participants[0].file_identity.region;
         for participant in &participants {
-            if participant.participant_id.is_empty()
+            if participant.file_identity.database_incarnation != database_incarnation
+                || participant.file_identity.region != region
+                || !lanes.insert(participant.file_identity.origin_lane_incarnation)
+                || participant.file_identity.shard_id == 0
+                || participant.file_identity.origin_lane_incarnation == 0
+                || participant.participant_id
+                    != format!("shard-{:016x}", participant.file_identity.shard_id)
+                || participant.routes.is_empty()
+                || participant
+                    .routes
+                    .iter()
+                    .any(|route| route.shard_id() != participant.file_identity.shard_id)
+                || participant.participant_id.is_empty()
                 || participant.database_id.is_empty()
+                || participant.database_id != database_id
                 || participant.database_incarnation != database_incarnation
                 || participant.route_generation != route_generation
                 || participant.manifest.database_id() != participant.database_id
@@ -95,6 +175,13 @@ impl BackupEnvelope {
                 return Err(BackupError::ManifestInvalid);
             }
         }
+        crate::shard_split::RouteTable::new(
+            participants
+                .iter()
+                .flat_map(|participant| participant.routes.iter().cloned())
+                .collect(),
+        )
+        .map_err(|_| BackupError::ManifestInvalid)?;
         let mut envelope = Self {
             database_id,
             database_incarnation,
@@ -187,6 +274,11 @@ impl BackupEnvelope {
     }
 
     /// Encodes the envelope with its digest and strict framing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ManifestInvalid`] when the envelope cannot be
+    /// serialized or exceeds the bounded wire size.
     pub fn encode(&self) -> Result<Vec<u8>, BackupError> {
         let wire = self.wire()?;
         let bytes = serde_json::to_vec(&wire).map_err(|_| BackupError::ManifestInvalid)?;
@@ -197,6 +289,11 @@ impl BackupEnvelope {
     }
 
     /// Decodes and validates an untrusted envelope before restore staging.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ManifestInvalid`] for malformed or invalid
+    /// envelope data, and [`BackupError::ChecksumMismatch`] for a bad digest.
     pub fn decode(bytes: &[u8]) -> Result<Self, BackupError> {
         if bytes.is_empty() || bytes.len() > MAX_ENVELOPE_BYTES {
             return Err(BackupError::ManifestInvalid);
@@ -212,6 +309,29 @@ impl BackupEnvelope {
             let database_incarnation = u128::from_str_radix(&participant.database_incarnation, 16)
                 .map_err(|_| BackupError::ManifestInvalid)?;
             participants.push(BackupEnvelopeParticipant {
+                file_identity: crate::shard_split::FileShardIdentity {
+                    database_incarnation,
+                    shard_id: participant.shard_id,
+                    region: participant.region.parse().map_err(|_| BackupError::ManifestInvalid)?,
+                    origin_lane_incarnation: u128::from_str_radix(
+                        &participant.origin_lane_incarnation,
+                        16,
+                    )
+                    .map_err(|_| BackupError::ManifestInvalid)?,
+                },
+                is_root: participant.is_root,
+                routes: participant
+                    .routes
+                    .into_iter()
+                    .map(|route| {
+                        crate::shard_split::ShardRoute::new(
+                            participant.shard_id,
+                            route.lower,
+                            route.upper,
+                        )
+                        .map_err(|_| BackupError::ManifestInvalid)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
                 participant_id: participant.participant_id,
                 database_id: participant.database_id,
                 database_incarnation,
@@ -234,6 +354,11 @@ impl BackupEnvelope {
     }
 
     /// Verifies supplied manifests match every participant before publication.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ChainIncomplete`] for incomplete input and
+    /// [`BackupError::ChecksumMismatch`] for mismatched participant facts.
     pub fn verify_manifests(
         &self,
         manifests: &[(String, BackupManifest)],
@@ -254,6 +379,12 @@ impl BackupEnvelope {
 
     /// Verifies every staged participant archive before a caller publishes the
     /// envelope directory or switches a restore target into serving state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ChainIncomplete`] for incomplete input,
+    /// [`BackupError::ManifestInvalid`] for a mismatched participant, or the
+    /// member verification error returned by the manifest.
     pub fn verify_staged(&self, roots: &[(String, &Path)]) -> Result<(), BackupError> {
         if roots.len() != self.participants.len() {
             return Err(BackupError::ChainIncomplete);
@@ -273,6 +404,21 @@ impl BackupEnvelope {
             .iter()
             .map(|participant| {
                 Ok(ParticipantWire {
+                    shard_id: participant.file_identity.shard_id,
+                    region: participant.file_identity.region.to_string(),
+                    origin_lane_incarnation: format!(
+                        "{:032x}",
+                        participant.file_identity.origin_lane_incarnation
+                    ),
+                    is_root: participant.is_root,
+                    routes: participant
+                        .routes
+                        .iter()
+                        .map(|route| RouteWire {
+                            lower: route.lower().map(<[u8]>::to_vec),
+                            upper: route.upper().map(<[u8]>::to_vec),
+                        })
+                        .collect(),
                     participant_id: participant.participant_id.clone(),
                     database_id: participant.database_id.clone(),
                     database_incarnation: format!("{:032x}", participant.database_incarnation),
@@ -307,9 +453,22 @@ mod tests {
     use crate::backup::manifest::{BackupTenantCount, ManifestFacts};
     use crate::types::{StorageSequence, TenantId};
 
+    fn database() -> String {
+        crate::identity::DatabaseUlid::from_wire_bytes(1_u128.to_be_bytes()).to_text()
+    }
+
+    fn identity(shard_id: u64) -> crate::shard_split::FileShardIdentity {
+        crate::shard_split::FileShardIdentity {
+            database_incarnation: 1,
+            shard_id,
+            region: crate::regions::RegionCode::GRU,
+            origin_lane_incarnation: u128::from(shard_id),
+        }
+    }
+
     fn manifest(boundary: u64) -> BackupManifest {
         BackupManifest::assemble(ManifestFacts {
-            database_id: "0123456789abcdef0123456789abcdef".into(),
+            database_id: database(),
             partition_id: "partition-000000".into(),
             kind: super::super::BackupKind::Full,
             boundary: StorageSequence::new(boundary),
@@ -342,6 +501,9 @@ mod tests {
         let second = manifest(8);
         let participants = vec![
             BackupEnvelopeParticipant {
+                file_identity: identity(1),
+                is_root: true,
+                routes: vec![crate::shard_split::ShardRoute::new(1, None, Some(vec![7])).unwrap()],
                 participant_id: "shard-0000000000000001".into(),
                 database_id: first.database_id().into(),
                 database_incarnation: 1,
@@ -350,6 +512,9 @@ mod tests {
                 manifest: first,
             },
             BackupEnvelopeParticipant {
+                file_identity: identity(2),
+                is_root: false,
+                routes: vec![crate::shard_split::ShardRoute::new(2, Some(vec![7]), None).unwrap()],
                 participant_id: "shard-0000000000000002".into(),
                 database_id: second.database_id().into(),
                 database_incarnation: 1,
@@ -359,13 +524,38 @@ mod tests {
             },
         ];
 
-        assert!(BackupEnvelope::assemble("logical-database".into(), 1, 1, participants).is_ok());
+        let envelope = BackupEnvelope::assemble(database(), 1, 1, participants).unwrap();
+        assert_eq!(BackupEnvelope::decode(&envelope.encode().unwrap()).unwrap(), envelope);
+        let mut wire: serde_json::Value =
+            serde_json::from_slice(&envelope.encode().unwrap()).unwrap();
+        wire["participants"][0]["origin_lane_incarnation"] =
+            serde_json::json!("00000000000000000000000000000009");
+        assert_eq!(
+            BackupEnvelope::decode(&serde_json::to_vec(&wire).unwrap()),
+            Err(BackupError::ChecksumMismatch)
+        );
+        let mut missing_root = envelope.participants().to_vec();
+        missing_root[0].is_root = false;
+        assert_eq!(
+            BackupEnvelope::assemble(database(), 1, 1, missing_root),
+            Err(BackupError::ManifestInvalid)
+        );
+        let mut overlap = envelope.participants().to_vec();
+        overlap[1].routes =
+            vec![crate::shard_split::ShardRoute::new(2, Some(vec![6]), None).unwrap()];
+        assert_eq!(
+            BackupEnvelope::assemble(database(), 1, 1, overlap),
+            Err(BackupError::ManifestInvalid)
+        );
     }
 
     #[test]
     fn rejects_participant_boundary_mismatch() {
         let point = manifest(7);
         let participant = BackupEnvelopeParticipant {
+            file_identity: identity(1),
+            is_root: true,
+            routes: vec![crate::shard_split::ShardRoute::new(1, None, None).unwrap()],
             participant_id: "shard-0000000000000001".into(),
             database_id: point.database_id().into(),
             database_incarnation: 1,
@@ -375,7 +565,7 @@ mod tests {
         };
 
         assert_eq!(
-            BackupEnvelope::assemble("logical-database".into(), 1, 1, vec![participant]),
+            BackupEnvelope::assemble(database(), 1, 1, vec![participant]),
             Err(BackupError::ManifestInvalid)
         );
     }

@@ -64,6 +64,7 @@ pub mod engine_host;
 pub mod grpc;
 pub mod host;
 pub mod lifecycle;
+pub mod local_lanes;
 pub mod member_host;
 pub mod placement;
 pub mod production_causal;

@@ -34,6 +34,59 @@ pub(crate) enum ParticipantWrite {
     },
 }
 
+impl ParticipantWrite {
+    pub(crate) fn from_staged(write: &crate::storage::StagedWrite) -> Option<Self> {
+        match write {
+            crate::storage::StagedWrite::Put { document, expected } => {
+                Some(Self::Put { document: document.clone(), expected: *expected })
+            }
+            crate::storage::StagedWrite::Delete {
+                collection: Some(collection),
+                id,
+                expected,
+                ..
+            } => Some(Self::Delete {
+                collection: Some(collection.clone()),
+                id: id.clone(),
+                expected: *expected,
+            }),
+            crate::storage::StagedWrite::ReplicatedPut {
+                document,
+                commit_ulid,
+                hlc,
+                origin,
+                origin_sequence,
+                context,
+            } => Some(Self::ReplicatedPut {
+                document: document.clone(),
+                commit_ulid: commit_ulid.clone(),
+                hlc: *hlc,
+                origin: origin.clone(),
+                origin_sequence: *origin_sequence,
+                context: context.clone(),
+            }),
+            crate::storage::StagedWrite::ReplicatedDelete {
+                collection,
+                id,
+                commit_ulid,
+                hlc,
+                origin,
+                origin_sequence,
+                context,
+            } => Some(Self::ReplicatedDelete {
+                collection: collection.clone(),
+                id: id.clone(),
+                commit_ulid: commit_ulid.clone(),
+                hlc: *hlc,
+                origin: origin.clone(),
+                origin_sequence: *origin_sequence,
+                context: context.clone(),
+            }),
+            crate::storage::StagedWrite::Delete { collection: None, .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ParticipantIdentity {
     pub(crate) tenant: TenantId,
@@ -46,6 +99,7 @@ pub(crate) struct ParticipantIdentity {
     pub(crate) snapshot: StorageSequence,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub(crate) struct ParticipantPrepare {
     pub(crate) identity: ParticipantIdentity,
@@ -55,13 +109,15 @@ pub(crate) struct ParticipantPrepare {
     pub(crate) replication_publication: Option<ParticipantReplicationPublication>,
 }
 
+/// The exact full logical intent retained by a cross-file participant.
+///
+/// `None` is intentional: route participants which have no customer mutation
+/// still reserve their identity and admission slot, but must not manufacture
+/// an ordinary commit receipt or publication at install time.
 #[derive(Clone, Debug)]
-pub(crate) struct ParticipantPrepareReceipt {
+pub(crate) struct PreparedCrossFileIntent {
     pub(crate) identity: ParticipantIdentity,
-    pub(crate) writes: Vec<ParticipantWrite>,
-    pub(crate) metadata: Vec<PrivateMetadataWrite>,
-    pub(crate) schema_envelopes: Vec<SchemaEnvelopeWrite>,
-    pub(crate) replication_publication: Option<ParticipantReplicationPublication>,
+    pub(crate) intent: Option<crate::storage::CommitIntent>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -299,7 +355,7 @@ mod tests {
     #[test]
     fn rejects_oversized_encoded_payload() {
         let mut bytes = vec![1, 4];
-        bytes.extend_from_slice(&[0; (1 << 20)]);
+        bytes.extend(std::iter::repeat_n(0, 1 << 20));
         assert!(decode_write(&bytes).is_err());
     }
 }
@@ -379,11 +435,11 @@ pub(crate) fn encode_prepare_payload(
     if writes.len() > 1024 {
         return Err(());
     }
-    let mut out = vec![2u8];
-    out.extend_from_slice(&u32::try_from(writes.len()).map_err(|_| ())?.to_be_bytes());
+    let mut out = vec![3u8];
+    out.extend_from_slice(&u32::try_from(writes.len()).map_err(|_| ())?.to_le_bytes());
     for write in writes {
         let encoded = encode_write(write)?;
-        out.extend_from_slice(&u32::try_from(encoded.len()).map_err(|_| ())?.to_be_bytes());
+        out.extend_from_slice(&u32::try_from(encoded.len()).map_err(|_| ())?.to_le_bytes());
         out.extend_from_slice(&encoded);
     }
     encode_metadata(&mut out, metadata)?;
@@ -464,13 +520,13 @@ pub(crate) fn encode_prepare_payload(
 }
 
 fn encode_metadata(out: &mut Vec<u8>, metadata: &[PrivateMetadataWrite]) -> Result<(), ()> {
-    out.extend_from_slice(&u32::try_from(metadata.len()).map_err(|_| ())?.to_be_bytes());
+    out.extend_from_slice(&u32::try_from(metadata.len()).map_err(|_| ())?.to_le_bytes());
     for change in metadata {
         crate::storage::codec::push_str(out, &change.key);
         out.push(u8::from(change.value.is_some()));
         if let Some(value) = &change.value {
             let encoded = crate::storage::codec::encode_private_value(value).ok_or(())?;
-            out.extend_from_slice(&u32::try_from(encoded.len()).map_err(|_| ())?.to_be_bytes());
+            out.extend_from_slice(&u32::try_from(encoded.len()).map_err(|_| ())?.to_le_bytes());
             out.extend_from_slice(&encoded);
         }
     }
@@ -478,18 +534,18 @@ fn encode_metadata(out: &mut Vec<u8>, metadata: &[PrivateMetadataWrite]) -> Resu
 }
 
 fn encode_schemas(out: &mut Vec<u8>, schemas: &[SchemaEnvelopeWrite]) -> Result<(), ()> {
-    out.extend_from_slice(&u32::try_from(schemas.len()).map_err(|_| ())?.to_be_bytes());
+    out.extend_from_slice(&u32::try_from(schemas.len()).map_err(|_| ())?.to_le_bytes());
     for schema in schemas {
         crate::storage::codec::push_str(out, &schema.database);
         crate::storage::codec::push_str(out, &schema.branch);
         crate::storage::codec::push_str(out, &schema.collection);
         out.push(u8::from(schema.expected.is_some()));
         if let Some(expected) = &schema.expected {
-            out.extend_from_slice(&u32::try_from(expected.len()).map_err(|_| ())?.to_be_bytes());
+            out.extend_from_slice(&u32::try_from(expected.len()).map_err(|_| ())?.to_le_bytes());
             out.extend_from_slice(expected);
         }
         out.extend_from_slice(
-            &u32::try_from(schema.replacement.len()).map_err(|_| ())?.to_be_bytes(),
+            &u32::try_from(schema.replacement.len()).map_err(|_| ())?.to_le_bytes(),
         );
         out.extend_from_slice(&schema.replacement);
     }
@@ -498,14 +554,14 @@ fn encode_schemas(out: &mut Vec<u8>, schemas: &[SchemaEnvelopeWrite]) -> Result<
 
 /// Decodes a complete framed participant payload.
 pub(crate) fn decode_prepare_payload(bytes: &[u8]) -> Result<DecodedPreparePayload, ()> {
-    if bytes.len() > 64 * 1024 * 1024 || bytes.first() != Some(&2) {
+    if bytes.len() > 64 * 1024 * 1024 || bytes.first() != Some(&3) {
         return Err(());
     }
     let mut pos = 1usize;
     if bytes.len() < pos + 4 {
         return Err(());
     }
-    let count = u32::from_be_bytes(bytes[pos..pos + 4].try_into().map_err(|_| ())?) as usize;
+    let count = u32::from_le_bytes(bytes[pos..pos + 4].try_into().map_err(|_| ())?) as usize;
     pos += 4;
     if count > 1024 {
         return Err(());
@@ -515,7 +571,7 @@ pub(crate) fn decode_prepare_payload(bytes: &[u8]) -> Result<DecodedPreparePaylo
         if bytes.len() < pos + 4 {
             return Err(());
         }
-        let n = u32::from_be_bytes(bytes[pos..pos + 4].try_into().map_err(|_| ())?) as usize;
+        let n = u32::from_le_bytes(bytes[pos..pos + 4].try_into().map_err(|_| ())?) as usize;
         pos += 4;
         let end = pos.checked_add(n).ok_or(())?;
         if end > bytes.len() {

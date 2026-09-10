@@ -107,15 +107,14 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
             || !valid_owner(&request.target_owner)
             || request.target_database.is_empty()
             || request.journal_cut.is_empty()
-            || !matches!(request.provider, 1 | 2 | 3)
+            || !matches!(request.provider, 1..=3)
         {
             return Err(Status::invalid_argument("restore request is incomplete"));
         }
         let Some(owner) = self.lifecycle.as_ref() else {
             return Ok(Response::new(lifecycle::unavailable(&request.operation_id)));
         };
-        let response =
-            owner.restore_to_target(&request).await.map_err(|error| Status::unavailable(error))?;
+        let response = owner.restore_to_target(&request).await.map_err(Status::unavailable)?;
         Ok(Response::new(response))
     }
 

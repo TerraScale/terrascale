@@ -57,6 +57,10 @@ type SubscriptionSeed = (crate::reactive::ProjectedMembers, Vec<(String, Vec<u8>
 
 impl MemberHost {
     /// Consumes an admitted host and transfers its exclusive Member lease.
+    ///
+    /// # Errors
+    /// Returns the typed hosting error when the underlying host cannot transfer
+    /// its admission lease.
     pub fn into_admitted_lease(self) -> Result<terrabase::member::DatabaseLease, HostingError> {
         self.engine.into_admitted_lease()
     }
@@ -127,6 +131,9 @@ impl MemberHost {
     }
 
     /// Refreshes document routing while retaining existing reactive delivery and admission.
+    ///
+    /// # Errors
+    /// Returns the engine error when the refreshed serving host cannot be opened.
     pub fn refreshed_serving_host(&self) -> Result<Option<Self>, terrabase::EngineError> {
         Ok(self.engine.refreshed_serving_host()?.map(|engine| Self {
             engine,
@@ -461,7 +468,7 @@ impl MemberHost {
             }
             let merged = terrabase::streaming::merge_sync_journal_pages(
                 &before,
-                pages,
+                &pages,
                 terrabase::streaming::MAX_STREAM_BATCH_ITEMS,
             )
             .map_err(|error| {

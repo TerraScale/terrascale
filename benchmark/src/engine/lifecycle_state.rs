@@ -337,4 +337,50 @@ mod tests {
         engine.shutdown().unwrap();
         std::fs::remove_dir_all(path).unwrap();
     }
+
+    #[test]
+    fn lifecycle_noop_operations_keep_receipts_across_restart_and_replay() {
+        let path = std::env::temp_dir().join(format!(
+            "terrabase-lifecycle-noop-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let scope = engine.scope_for(&tenant);
+
+        let resumed = engine.lifecycle_resume(&scope, "resume-initial").unwrap();
+        assert!(!resumed.state.paused);
+        assert_eq!(resumed.state.generation, 0);
+        assert_eq!(resumed.receipt.generation, 0);
+        assert_eq!(resumed.receipt.action, "resume");
+
+        let paused = engine.lifecycle_pause(&scope, "pause-first").unwrap();
+        assert_eq!(paused.state.generation, 1);
+        let noop_pause = engine.lifecycle_pause(&scope, "pause-second").unwrap();
+        assert!(noop_pause.state.paused);
+        assert_eq!(noop_pause.state.generation, 1);
+        assert_eq!(noop_pause.receipt.generation, 1);
+        assert_ne!(paused.receipt.operation_id, noop_pause.receipt.operation_id);
+
+        engine.shutdown().unwrap();
+        let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
+        let scope = engine.scope_for(&tenant);
+        let resumed = engine.lifecycle_resume(&scope, "resume-after-restart").unwrap();
+        assert!(!resumed.state.paused);
+        assert_eq!(resumed.state.generation, 2);
+
+        let replay = engine.lifecycle_pause(&scope, "pause-second").unwrap();
+        assert!(!replay.state.paused);
+        assert_eq!(replay.receipt, noop_pause.receipt);
+        assert_eq!(engine.lifecycle_resume(&scope, "pause-second"), Err(LifecycleError::Conflict));
+
+        engine.lifecycle_prepare_deletion(&scope, "delete-1").unwrap();
+        assert_eq!(
+            engine.lifecycle_pause(&scope, "pause-after-revoke"),
+            Err(LifecycleError::Revoked)
+        );
+        engine.shutdown().unwrap();
+        std::fs::remove_dir_all(path).unwrap();
+    }
 }

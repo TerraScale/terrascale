@@ -13,6 +13,7 @@ fn open(tag: &str) -> (std::path::PathBuf, Engine) {
 fn identity(engine: &Engine, operation: &str) -> CrossFileIdentity {
     CrossFileIdentity {
         tenant: "tenant".into(),
+        coordinator_origin: engine.replication_origin().unwrap(),
         incarnation: u128::from_be_bytes(engine.database_id().as_bytes().to_owned()),
         authority_epoch: 1,
         route_generation: 0,
@@ -31,15 +32,20 @@ fn decisions_are_independent_terminal_and_restart_safe() {
     let first = identity(&engine, "logical-first");
     let second = identity(&engine, "logical-second");
     engine.prepare_cross_file(&scope, first.clone()).unwrap();
-    engine.prepare_cross_file(&scope, second.clone()).unwrap();
+    assert_eq!(engine.prepare_cross_file(&scope, second.clone()), Err(EngineError::Conflict));
     assert_eq!(
         engine.decide_cross_file(&scope, &first, CrossFileDecision::Committed).unwrap().0.decision,
         Some(CrossFileDecision::Committed)
     );
+    assert_eq!(engine.read_snapshot(&scope), Err(EngineError::Conflict));
+    engine.advance_cross_file_visible(&scope, &first, first.participants.clone()).unwrap();
+    engine.prepare_cross_file(&scope, second.clone()).unwrap();
     assert_eq!(
         engine.decide_cross_file(&scope, &second, CrossFileDecision::Aborted).unwrap().0.decision,
         Some(CrossFileDecision::Aborted)
     );
+    assert!(engine.read_cross_file_active(&scope).unwrap().is_none());
+    assert!(engine.read_snapshot(&scope).is_ok());
     assert_eq!(
         engine.decide_cross_file(&scope, &first, CrossFileDecision::Committed).unwrap().0.decision,
         Some(CrossFileDecision::Committed)
@@ -71,6 +77,9 @@ fn decisions_are_independent_terminal_and_restart_safe() {
 fn invalid_identity_and_foreign_owner_are_rejected() {
     let (_path, engine) = open("invalid");
     let scope = engine.scope_for(&TenantId::try_new("tenant").unwrap());
+    let mut foreign_origin = identity(&engine, "foreign-origin");
+    foreign_origin.coordinator_origin = "another-root-origin".into();
+    assert_eq!(engine.prepare_cross_file(&scope, foreign_origin), Err(EngineError::Conflict));
     let mut invalid = identity(&engine, "invalid");
     invalid.participants.insert(String::from("overflow"), u64::MAX);
     assert_eq!(
@@ -102,6 +111,98 @@ fn terminal_record_preserves_identity_and_decision() {
     };
     assert_eq!(value.identity.decision_epoch, 1);
     engine.shutdown().unwrap();
+}
+
+#[test]
+fn active_fence_blocks_new_cuts_but_preserves_pinned_reads_and_later_writes() {
+    use crate::types::{
+        CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
+    };
+    let (_path, engine) = open("read-fence");
+    let scope = engine.scope_for(&TenantId::try_new("tenant").unwrap());
+    let collection = CollectionName::try_new("items").unwrap();
+    let id = DocumentId::try_new("item").unwrap();
+    let mut write = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            OperationId::try_new("before").unwrap(),
+        )
+        .unwrap();
+    write
+        .put(
+            Document::new(id.clone(), collection.clone(), DocumentValue::Integer(1)),
+            ExpectedVersion::Any,
+        )
+        .unwrap();
+    assert!(matches!(write.commit(LocalDurability::Synced), super::CommitOutcome::Committed(_)));
+    let pinned = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            OperationId::try_new("pinned").unwrap(),
+        )
+        .unwrap();
+    let mut pending = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            OperationId::try_new("racing-write").unwrap(),
+        )
+        .unwrap();
+    pending
+        .put(
+            Document::new(id.clone(), collection.clone(), DocumentValue::Integer(2)),
+            ExpectedVersion::Any,
+        )
+        .unwrap();
+    let identity = identity(&engine, "fenced-batch");
+    engine.prepare_cross_file(&scope, identity.clone()).unwrap();
+    assert_eq!(engine.read_snapshot(&scope), Err(EngineError::Conflict));
+    assert_eq!(
+        pinned.read_in_collection(&collection, &id).unwrap().unwrap().value(),
+        &DocumentValue::Integer(1)
+    );
+    assert!(matches!(
+        pending.commit(LocalDurability::Synced),
+        super::CommitOutcome::Rejected(super::CommitError::Conflict)
+    ));
+    engine.decide_cross_file(&scope, &identity, CrossFileDecision::Committed).unwrap();
+    assert_eq!(
+        engine.read_cross_file_active(&scope).unwrap().unwrap().decision,
+        Some(CrossFileDecision::Committed)
+    );
+    let installed = BTreeMap::from([(String::from("source"), 9)]);
+    engine.advance_cross_file_visible(&scope, &identity, installed).unwrap();
+    let mut later = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            OperationId::try_new("later").unwrap(),
+        )
+        .unwrap();
+    later
+        .put(
+            Document::new(id.clone(), collection.clone(), DocumentValue::Integer(3)),
+            ExpectedVersion::Any,
+        )
+        .unwrap();
+    assert!(matches!(later.commit(LocalDurability::Synced), super::CommitOutcome::Committed(_)));
+    let current = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            OperationId::try_new("current").unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        current.read_in_collection(&collection, &id).unwrap().unwrap().value(),
+        &DocumentValue::Integer(3)
+    );
+    assert_eq!(
+        pinned.read_in_collection(&collection, &id).unwrap().unwrap().value(),
+        &DocumentValue::Integer(1)
+    );
 }
 
 #[test]

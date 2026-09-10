@@ -822,9 +822,15 @@ pub(crate) mod tests {
     pub(crate) fn transport_pair(
         placement: &ProductionPlacement,
     ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
+        transport_pair_in_cluster(placement, ClusterUlid::generate())
+    }
+
+    pub(crate) fn transport_pair_in_cluster(
+        placement: &ProductionPlacement,
+        cluster: ClusterUlid,
+    ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
         let local = placement.local_member();
         let peer = placement.remote_members()[0];
-        let cluster = ClusterUlid::generate();
         let local_identity =
             MemberWorkloadIdentity::try_new("production", &cluster.to_text(), &local.to_text())
                 .expect("local identity");

@@ -1,7 +1,8 @@
 use super::*;
 use crate::placement::tests::Fixture;
 use pb::placement_control_service_client::PlacementControlServiceClient;
-use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
+use std::fmt::Write as _;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 const PRINCIPAL: &str = "spiffe://terrascale.tech/production/orchestrator/gru-1";
 
@@ -60,11 +61,84 @@ async fn assert_auth_bootstrap(fixture: &Fixture, channel: tonic::transport::Cha
     );
 }
 
-#[tokio::test]
-async fn real_mtls_stage_get_retry_and_scope_isolation() {
+async fn exercise_authenticated_placement(
+    client: &mut PlacementControlServiceClient<Channel>,
+    fixture: &Fixture,
+    identity: &str,
+    signing_key: &ring::signature::Ed25519KeyPair,
+) {
     use base64::Engine as _;
     use prost::Message as _;
     use ring::signature::KeyPair as _;
+    let response = client
+        .stage(request(fixture.request.clone(), Some("operation-one")))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(response.status, pb::PlacementProposalStatus::Pending as i32);
+    assert_eq!(response.revision, 1);
+    let signed_challenge: serde_json::Value =
+        serde_json::from_slice(&response.join_challenge).unwrap();
+    assert_eq!(signed_challenge["key_id"], identity);
+    let payload = base64::engine::general_purpose::STANDARD
+        .decode(signed_challenge["payload"].as_str().unwrap())
+        .unwrap();
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(signed_challenge["signature"].as_str().unwrap())
+        .unwrap();
+    let mut input = b"terrabase-placement-transition-v1\0".to_vec();
+    input.extend_from_slice(&payload);
+    ring::signature::UnparsedPublicKey::new(
+        &ring::signature::ED25519,
+        signing_key.public_key().as_ref(),
+    )
+    .verify(&input, &signature)
+    .unwrap();
+    let challenge: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    assert_eq!(challenge["kind"], "placement_join_challenge");
+    assert_eq!(challenge["member_identity"], identity);
+    assert_eq!(challenge["proposal_revision"], 1);
+    assert_eq!(challenge["bootstrap_nonce"].as_str().unwrap().len(), 64);
+    let digest_bytes = ring::digest::digest(
+        &ring::digest::SHA256,
+        &response.proposal.as_ref().unwrap().encode_to_vec(),
+    );
+    let mut digest = String::with_capacity(digest_bytes.as_ref().len() * 2);
+    for byte in digest_bytes.as_ref() {
+        let _ = write!(&mut digest, "{byte:02x}");
+    }
+    assert_eq!(challenge["stage_proposal_digest"], digest);
+    let fetched = client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap().into_inner();
+    assert_eq!(fetched.join_challenge, response.join_challenge);
+    assert_eq!(fetched.revision, response.revision);
+    assert_eq!(fetched.proposal, response.proposal);
+    assert_eq!(fetched.status, response.status);
+    assert_eq!(
+        client
+            .stage(request(fixture.request.clone(), Some("operation-one")))
+            .await
+            .unwrap()
+            .into_inner(),
+        response
+    );
+
+    let mut forbidden = request(fixture.request.clone(), Some("other"));
+    forbidden.metadata_mut().insert(super::super::DATABASE_METADATA, "arbitrary".parse().unwrap());
+    assert_eq!(client.stage(forbidden).await.unwrap_err().code(), Code::InvalidArgument);
+    let mut forged = request(fixture.request.clone(), Some("other"));
+    forged.metadata_mut().insert(
+        super::super::PRINCIPAL_METADATA,
+        "spiffe://terrascale.tech/production/orchestrator/other".parse().unwrap(),
+    );
+    assert_eq!(client.stage(forged).await.unwrap_err().code(), Code::PermissionDenied);
+    assert_eq!(
+        client.stage(Request::new(fixture.request.clone())).await.unwrap_err().code(),
+        Code::Unauthenticated
+    );
+}
+
+#[tokio::test]
+async fn real_mtls_stage_get_retry_and_scope_isolation() {
     let fixture = Fixture::new();
     let journal = Arc::new(fixture.open());
     let proposal = fixture.request.proposal.as_ref().unwrap();
@@ -125,70 +199,7 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
         client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap_err().code(),
         Code::NotFound
     );
-    let response = client
-        .stage(request(fixture.request.clone(), Some("operation-one")))
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(response.status, pb::PlacementProposalStatus::Pending as i32);
-    assert_eq!(response.revision, 1);
-    let signed: serde_json::Value = serde_json::from_slice(&response.join_challenge).unwrap();
-    assert_eq!(signed["key_id"], identity);
-    let payload = base64::engine::general_purpose::STANDARD
-        .decode(signed["payload"].as_str().unwrap())
-        .unwrap();
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(signed["signature"].as_str().unwrap())
-        .unwrap();
-    let mut input = b"terrabase-placement-transition-v1\0".to_vec();
-    input.extend_from_slice(&payload);
-    ring::signature::UnparsedPublicKey::new(
-        &ring::signature::ED25519,
-        signing_key.public_key().as_ref(),
-    )
-    .verify(&input, &signature)
-    .unwrap();
-    let challenge: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-    assert_eq!(challenge["kind"], "placement_join_challenge");
-    assert_eq!(challenge["member_identity"], identity);
-    assert_eq!(challenge["proposal_revision"], 1);
-    assert_eq!(challenge["bootstrap_nonce"].as_str().unwrap().len(), 64);
-    let digest = ring::digest::digest(
-        &ring::digest::SHA256,
-        &response.proposal.as_ref().unwrap().encode_to_vec(),
-    )
-    .as_ref()
-    .iter()
-    .map(|byte| format!("{byte:02x}"))
-    .collect::<String>();
-    assert_eq!(challenge["stage_proposal_digest"], digest);
-    let fetched = client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap().into_inner();
-    assert_eq!(fetched.join_challenge, response.join_challenge);
-    assert_eq!(fetched.revision, response.revision);
-    assert_eq!(fetched.proposal, response.proposal);
-    assert_eq!(fetched.status, response.status);
-    assert_eq!(
-        client
-            .stage(request(fixture.request.clone(), Some("operation-one")))
-            .await
-            .unwrap()
-            .into_inner(),
-        response
-    );
-
-    let mut forbidden = request(fixture.request.clone(), Some("other"));
-    forbidden.metadata_mut().insert(super::super::DATABASE_METADATA, "arbitrary".parse().unwrap());
-    assert_eq!(client.stage(forbidden).await.unwrap_err().code(), Code::InvalidArgument);
-    let mut forged = request(fixture.request.clone(), Some("other"));
-    forged.metadata_mut().insert(
-        super::super::PRINCIPAL_METADATA,
-        "spiffe://terrascale.tech/production/orchestrator/other".parse().unwrap(),
-    );
-    assert_eq!(client.stage(forged).await.unwrap_err().code(), Code::PermissionDenied);
-    assert_eq!(
-        client.stage(Request::new(fixture.request.clone())).await.unwrap_err().code(),
-        Code::Unauthenticated
-    );
+    exercise_authenticated_placement(&mut client, &fixture, &identity, &signing_key).await;
     let mut data = pb::maintenance_service_client::MaintenanceServiceClient::new(channel);
     assert_eq!(
         data.admin_status(request(pb::MaintenanceServiceAdminStatusRequest {}, None))

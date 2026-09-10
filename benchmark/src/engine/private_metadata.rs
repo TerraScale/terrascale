@@ -7,11 +7,13 @@ impl Transaction<'_> {
     /// Binds the primary file to its durable lane before its first origin write.
     /// The metadata is staged in the same transaction as that write, so a
     /// failed commit cannot leave an identity without its source publication.
-    pub(crate) fn ensure_primary_file_shard_identity(&mut self) -> Result<(), EngineError> {
+    pub(crate) fn ensure_primary_file_shard_identity(
+        &mut self,
+    ) -> Result<Option<String>, EngineError> {
         let incarnation = u128::from_be_bytes(self.engine.database_id().as_bytes());
         let key = crate::engine::shard_split::file_shard_key(incarnation);
         if self.read_private_metadata(&key)?.is_some() {
-            return Ok(());
+            return Ok(None);
         }
         let identity = crate::shard_split::FileShardIdentity {
             database_incarnation: incarnation,
@@ -24,7 +26,8 @@ impl Transaction<'_> {
             DocumentValue::String(hex::encode(crate::engine::shard_split::encode_file_identity(
                 identity,
             ))),
-        )
+        )?;
+        Ok(Some(key))
     }
 
     pub(crate) fn read_private_metadata(

@@ -1,0 +1,15 @@
+--- a/src/storage/sqlite/mod.rs
++++ b/src/storage/sqlite/mod.rs
+@@ -2425,10 +2425,10 @@ fn stage_intent(
+         let next = transaction
+             .query_row(
+-                "SELECT COALESCE(MAX(seq), 0) + 1 FROM (
+-                    SELECT origin_seq AS seq FROM documents WHERE origin = ?1 AND tenant = ?2
+-                    UNION ALL SELECT seq FROM origin_prefixes WHERE origin = ?1 AND tenant = ?2
+-                    UNION ALL SELECT origin_seq FROM replication_publications WHERE origin = ?1 AND tenant = ?2)",
++                "SELECT COALESCE(MAX(seq), 0) + 1 FROM (
++                    SELECT MAX(origin_seq) AS seq FROM documents WHERE origin = ?1 AND tenant = ?2
++                    UNION ALL SELECT MAX(seq) FROM origin_prefixes WHERE origin = ?1 AND tenant = ?2
++                    UNION ALL SELECT MAX(origin_seq) FROM replication_publications WHERE origin = ?1 AND tenant = ?2)",
+                 rusqlite::params![provenance.origin(), intent.tenant.as_str()],
+                 |row| row.get::<_, i64>(0),

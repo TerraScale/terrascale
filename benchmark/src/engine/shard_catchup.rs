@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::{
     engine::{Engine, ReplicatedPublication},
     shard_split::{DurableSplitState, canonical_shard_key},
-    types::TenantScope,
+    types::{StorageSequence, TenantScope},
 };
 
 /// Maximum number of retained source transactions read by one catch-up step.
@@ -17,7 +17,7 @@ pub(crate) const MAX_SHARD_CATCH_UP_BATCH: u32 = 1024;
 
 /// Failure while reading or applying a shard catch-up page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ShardCatchUpError {
+pub enum ShardCatchUpError {
     /// The source publication history could not be read.
     SourceFailed,
     /// The target rejected a publication.
@@ -88,7 +88,7 @@ impl ShardJournalCatchUp {
         self.source
             .published_sequence()
             .map_err(|_| ShardCatchUpError::SourceFailed)
-            .map(|sequence| sequence.get())
+            .map(StorageSequence::get)
     }
 
     /// Applies one bounded page and returns the number of source groups read.

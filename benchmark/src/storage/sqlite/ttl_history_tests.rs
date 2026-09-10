@@ -132,6 +132,10 @@ fn undeclared_history_expires_after_seven_days_and_declared_history_survives_res
         .unwrap();
     engine.shutdown().unwrap();
     let mut storage = SqliteStorage::open(&path).unwrap();
+    let head = storage.published_state().0.get();
+    for name in ["replication", "metering"] {
+        storage.advance_consumer_frontier(name, head).unwrap();
+    }
     storage.advance_consumer_frontier("qualified-consumer", 5).unwrap();
     {
         let writer = storage.raw_writer_connection();

@@ -1,0 +1,1083 @@
+//! Bounded encryption-at-rest primitives and key-provider seams.
+//!
+//! AWS-LC supplies AES-256-GCM, HKDF-SHA-256, SHA-256, and randomness in its
+//! single non-FIPS build (D-41 defers FIPS builds past the first customer).
+//! Local development uses the local-file provider. OCI Vault wrapping and
+//! storage-format integration remain separate production responsibilities.
+
+use std::collections::BTreeSet;
+use std::fmt;
+use std::time::Instant;
+
+use aws_lc_rs::{aead, digest, hkdf, rand};
+use zeroize::Zeroize;
+
+#[cfg(target_os = "linux")]
+mod key_delivery;
+#[cfg(target_os = "linux")]
+mod customer_key_delivery;
+mod local_file;
+mod oci_vault;
+mod provider;
+
+#[cfg(target_os = "linux")]
+pub use customer_key_delivery::CustomerKmsKeyDelivery;
+pub use key_delivery::{CustomerKmsDatabaseKeys, OciVaultDatabaseKeys, OciVaultKeyDelivery};
+pub use local_file::LocalFileKeyProvider;
+pub use oci_vault::UnconfiguredOciVaultProvider;
+pub use provider::{
+    ArtifactKind, CustomerKmsAdapter, DatabaseKeyHierarchy, DatabaseKeyLease, DatabaseKeySource,
+    DatabaseKeyVersion, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
+    KeyWrappingProvider, MAX_DATABASE_KEY_LEASE, MAX_WRAPPED_KEY_BYTES, ProductionCapabilityStatus,
+    ProviderCapability, WrappedDatabaseKey, production_capability_status,
+};
+
+const AES_TAG_LEN: usize = 16;
+const NONCE_LEN: usize = 12;
+const MAX_IDENTITY_BYTES: usize = 128;
+const MAX_AAD_BYTES: usize = 2_048;
+/// Maximum plaintext accepted by this bounded foundation.
+pub const MAX_PLAINTEXT_BYTES: usize = 64 * 1024 * 1024;
+const ENVELOPE_MAGIC: [u8; 4] = *b"TBE1";
+const ENVELOPE_VERSION: u8 = 1;
+const AAD_MAGIC: [u8; 4] = *b"TBA1";
+const AAD_VERSION: u8 = 1;
+const MAX_ORDINAL: u128 = (1u128 << 96) - 1;
+const MAX_TRACKED_ORDINALS: usize = 65_536;
+
+/// The compression marker authenticated in each artifact's AAD.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum Compression {
+    /// Plain, uncompressed bytes.
+    None = 0,
+    /// Zstandard-compressed bytes.
+    Zstd = 1,
+    /// LZ4-compressed bytes.
+    Lz4 = 2,
+}
+
+/// Selects the cryptographic provider mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderMode {
+    /// Local development with a key persisted beside the engine location.
+    LocalFile,
+    /// Production with an OCI Vault-authorized database key.
+    Production,
+}
+
+impl ProviderMode {
+    /// Returns the stable identity included in diagnostics and evidence.
+    #[must_use]
+    pub const fn identity(self) -> &'static str {
+        match self {
+            Self::LocalFile => "aws-lc-rs:local-file",
+            Self::Production => "aws-lc-rs:production",
+        }
+    }
+
+    /// Returns whether this mode represents production operation.
+    #[must_use]
+    pub const fn is_production(self) -> bool {
+        matches!(self, Self::Production)
+    }
+}
+
+/// Errors returned by the encryption foundation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum EncryptionError {
+    /// The requested production provider is not compiled and selected.
+    #[error("production provider unavailable")]
+    ProductionProviderUnavailable,
+    /// The local key file could not be created, read, or synchronized.
+    #[error("local encryption key unavailable")]
+    LocalKeyUnavailable,
+    /// The local key path, type, length, permissions, or identity is unsafe.
+    #[error("unsafe local encryption key file")]
+    UnsafeLocalKeyFile,
+    /// An identity or context field is empty, too long, or otherwise invalid.
+    #[error("invalid encryption context")]
+    InvalidContext,
+    /// The plaintext or envelope exceeds a configured bound.
+    #[error("encryption input exceeds size limit")]
+    SizeLimit,
+    /// The 96-bit ordinal nonce space has been exhausted.
+    #[error("96-bit encryption ordinal exhausted")]
+    OrdinalExhausted,
+    /// A reservation was reused or does not belong to this cipher.
+    #[error("invalid encryption ordinal reservation")]
+    OrdinalReservationInvalid,
+    /// The envelope or AAD has an invalid version, shape, or length.
+    #[error("malformed encryption envelope")]
+    MalformedEnvelope,
+    /// The provider rejected the encryption or decryption operation.
+    #[error("cryptographic provider failure")]
+    CryptographicFailure,
+    /// Authentication failed, including a wrong key or wrong AAD.
+    #[error("encryption authentication failed")]
+    AuthenticationFailed,
+    /// An already-opened ordinal was presented again.
+    #[error("encryption envelope replay refused")]
+    Replay,
+    /// Authenticated plaintext did not match its SHA-256 digest in the AAD.
+    #[error("plaintext digest mismatch")]
+    DigestMismatch,
+    /// The caller's bounded replay guard cannot track another ordinal.
+    #[error("encryption replay guard is full")]
+    ReplayGuardFull,
+    /// Key metadata is malformed or names the wrong hierarchy.
+    #[error("invalid database-key metadata")]
+    InvalidKeyMetadata,
+    /// Opaque provider wrapper bytes are empty or exceed their bound.
+    #[error("invalid wrapped database key")]
+    InvalidWrappedKey,
+    /// A database-key authorization lease is empty or exceeds thirty minutes.
+    #[error("invalid database-key authorization lease")]
+    InvalidKeyLease,
+    /// A database-key authorization lease expired.
+    #[error("database-key authorization lease expired")]
+    KeyLeaseExpired,
+    /// A rotation changes scope or reuses the current version.
+    #[error("invalid database-key rotation")]
+    InvalidKeyRotation,
+    /// No OCI Vault adapter or workload authorization is configured.
+    #[error("key provider is not configured")]
+    KeyProviderUnconfigured,
+}
+
+/// A random 256-bit database key held in zeroizing memory.
+pub struct DatabaseKey {
+    bytes: KeyMemory,
+}
+
+enum KeyMemory {
+    Local([u8; 32]),
+    Locked(memmap2::MmapMut),
+}
+
+impl DatabaseKey {
+    /// Generates a local database key with the provider's OS CSPRNG.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::CryptographicFailure`] if the provider's
+    /// system random source cannot fill the key.
+    pub fn generate() -> Result<Self, EncryptionError> {
+        let mut bytes = [0u8; 32];
+        rand::fill(&mut bytes).map_err(|_| EncryptionError::CryptographicFailure)?;
+        Ok(Self { bytes: KeyMemory::Local(bytes) })
+    }
+
+    /// Creates a key from exactly 256 bits of caller-owned key material.
+    ///
+    /// Callers should clear any other copy of the input after construction.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self { bytes: KeyMemory::Local(bytes) }
+    }
+
+    fn material(&self) -> &[u8] {
+        match &self.bytes {
+            KeyMemory::Local(bytes) => bytes,
+            KeyMemory::Locked(bytes) => bytes,
+        }
+    }
+
+    fn material_mut(&mut self) -> &mut [u8] {
+        match &mut self.bytes {
+            KeyMemory::Local(bytes) => bytes,
+            KeyMemory::Locked(bytes) => bytes,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn locked() -> Result<Self, EncryptionError> {
+        let memory = memmap2::MmapMut::map_anon(32)
+            .map_err(|_| EncryptionError::ProductionProviderUnavailable)?;
+        memory.lock().map_err(|_| EncryptionError::ProductionProviderUnavailable)?;
+        memory
+            .advise(memmap2::Advice::DontDump)
+            .map_err(|_| EncryptionError::ProductionProviderUnavailable)?;
+        Ok(Self { bytes: KeyMemory::Locked(memory) })
+    }
+
+    /// Immediately destroys this key's material.
+    ///
+    /// This is used by key-lifecycle owners when a database is deleted or a
+    /// failed rotation must not retain a live DEK until scope exit.  The
+    /// destructor performs the same operation, so calling this method is
+    /// idempotent.
+    pub fn destroy(&mut self) {
+        self.material_mut().zeroize();
+    }
+}
+
+impl Drop for DatabaseKey {
+    fn drop(&mut self) {
+        self.destroy();
+    }
+}
+
+impl fmt::Debug for DatabaseKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DatabaseKey(REDACTED)")
+    }
+}
+
+/// Identity and format metadata authenticated with every encrypted unit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncryptionContext {
+    environment: String,
+    tenant: String,
+    project: Option<String>,
+    database: String,
+    artifact_kind: String,
+    artifact_id: String,
+    key_version: String,
+    format_major: u16,
+    compression: Compression,
+}
+
+impl EncryptionContext {
+    /// Builds a bounded context from canonical textual identities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidContext`] when an identity is empty,
+    /// contains a NUL byte, exceeds its bound, or the format major is zero.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        environment: impl Into<String>,
+        tenant: impl Into<String>,
+        database: impl Into<String>,
+        artifact_kind: impl Into<String>,
+        artifact_id: impl Into<String>,
+        key_version: impl Into<String>,
+        format_major: u16,
+        compression: Compression,
+    ) -> Result<Self, EncryptionError> {
+        let context = Self {
+            environment: environment.into(),
+            tenant: tenant.into(),
+            project: None,
+            database: database.into(),
+            artifact_kind: artifact_kind.into(),
+            artifact_id: artifact_id.into(),
+            key_version: key_version.into(),
+            format_major,
+            compression,
+        };
+        context.validate()?;
+        Ok(context)
+    }
+
+    /// Builds a context bound to a project as well as tenant and database.
+    /// The older [`Self::new`] form remains readable for compatibility data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidContext`] when any context identity
+    /// or format value is invalid.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_project(
+        environment: impl Into<String>,
+        tenant: impl Into<String>,
+        project: impl Into<String>,
+        database: impl Into<String>,
+        artifact_kind: impl Into<String>,
+        artifact_id: impl Into<String>,
+        key_version: impl Into<String>,
+        format_major: u16,
+        compression: Compression,
+    ) -> Result<Self, EncryptionError> {
+        let mut context = Self::new(
+            environment,
+            tenant,
+            database,
+            artifact_kind,
+            artifact_id,
+            key_version,
+            format_major,
+            compression,
+        )?;
+        context.project = Some(project.into());
+        context.validate()?;
+        Ok(context)
+    }
+
+    /// Builds a context from typed key and artifact identities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidKeyMetadata`] if the artifact uses
+    /// the wrong data, backup, or checkpoint hierarchy.
+    pub fn for_artifact(
+        scope: &KeyScope,
+        artifact_kind: ArtifactKind,
+        artifact_id: crate::identity::Ulid,
+        key_version: DatabaseKeyVersion,
+        format_major: u16,
+        compression: Compression,
+    ) -> Result<Self, EncryptionError> {
+        if scope.purpose() != artifact_kind.key_purpose() {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        match scope.project() {
+            Some(project) => Self::new_with_project(
+                scope.environment(),
+                scope.tenant().to_text(),
+                project.to_text(),
+                scope.database().to_text(),
+                artifact_kind.as_str(),
+                artifact_id,
+                key_version.to_text(),
+                format_major,
+                compression,
+            ),
+            None => Self::new(
+                scope.environment(),
+                scope.tenant().to_text(),
+                scope.database().to_text(),
+                artifact_kind.as_str(),
+                artifact_id,
+                key_version.to_text(),
+                format_major,
+                compression,
+            ),
+        }
+    }
+
+    /// Returns the environment identity.
+    #[must_use]
+    pub fn environment(&self) -> &str {
+        &self.environment
+    }
+
+    /// Returns the tenant identity authenticated in AAD.
+    #[must_use]
+    pub fn tenant(&self) -> &str {
+        &self.tenant
+    }
+
+    /// Returns the optional project identity authenticated in AAD.
+    #[must_use]
+    pub fn project(&self) -> Option<&str> {
+        self.project.as_deref()
+    }
+
+    /// Returns the database identity authenticated in AAD.
+    #[must_use]
+    pub fn database(&self) -> &str {
+        &self.database
+    }
+
+    /// Returns the artifact-kind domain.
+    #[must_use]
+    pub fn artifact_kind(&self) -> &str {
+        &self.artifact_kind
+    }
+
+    /// Returns the artifact identity.
+    #[must_use]
+    pub fn artifact_id(&self) -> &str {
+        &self.artifact_id
+    }
+
+    /// Returns the database-key version.
+    #[must_use]
+    pub fn key_version(&self) -> &str {
+        &self.key_version
+    }
+
+    /// Returns the format major version.
+    #[must_use]
+    pub const fn format_major(&self) -> u16 {
+        self.format_major
+    }
+
+    /// Returns the configured compression marker.
+    #[must_use]
+    pub const fn compression(&self) -> Compression {
+        self.compression
+    }
+
+    fn validate(&self) -> Result<(), EncryptionError> {
+        if self.format_major == 0
+            || !valid_identity(&self.environment)
+            || !valid_identity(&self.tenant)
+            || self.project.as_deref().is_some_and(|project| !valid_identity(project))
+            || !valid_identity(&self.database)
+            || !valid_identity(&self.artifact_kind)
+            || !valid_identity(&self.artifact_id)
+            || !valid_identity(&self.key_version)
+        {
+            return Err(EncryptionError::InvalidContext);
+        }
+        Ok(())
+    }
+
+    fn derivation_info(&self) -> Vec<u8> {
+        let mut info = Vec::with_capacity(256);
+        info.extend_from_slice(b"terrabase/artifact-key/v1\0");
+        append_string(&mut info, &self.environment);
+        append_string(&mut info, &self.tenant);
+        if let Some(project) = &self.project {
+            append_string(&mut info, project);
+        }
+        append_string(&mut info, &self.database);
+        append_string(&mut info, &self.artifact_kind);
+        append_string(&mut info, &self.artifact_id);
+        info.extend_from_slice(&self.format_major.to_be_bytes());
+        append_string(&mut info, &self.key_version);
+        info
+    }
+
+    fn canonical_aad(&self, ordinal: u128, logical_length: u64, digest: &[u8; 32]) -> Vec<u8> {
+        let mut aad = Vec::with_capacity(256);
+        aad.extend_from_slice(&AAD_MAGIC);
+        aad.push(if self.project.is_some() { 2 } else { AAD_VERSION });
+        append_string(&mut aad, &self.environment);
+        append_string(&mut aad, &self.tenant);
+        if let Some(project) = &self.project {
+            append_string(&mut aad, project);
+        }
+        append_string(&mut aad, &self.database);
+        append_string(&mut aad, &self.artifact_kind);
+        append_string(&mut aad, &self.artifact_id);
+        append_string(&mut aad, &self.key_version);
+        aad.extend_from_slice(&self.format_major.to_be_bytes());
+        aad.extend_from_slice(&ordinal.to_be_bytes()[4..]);
+        aad.extend_from_slice(&logical_length.to_be_bytes());
+        aad.push(self.compression as u8);
+        aad.extend_from_slice(digest);
+        aad
+    }
+}
+
+/// A durable reservation of one artifact ordinal.
+///
+/// Owners persist the returned next ordinal before writing the envelope. A
+/// crash therefore leaves a gap rather than permitting nonce reuse.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OrdinalReservation {
+    ordinal: u128,
+    next_ordinal: u128,
+}
+
+impl OrdinalReservation {
+    /// Returns the reserved 96-bit ordinal.
+    #[must_use]
+    pub const fn ordinal(self) -> u128 {
+        self.ordinal
+    }
+
+    /// Returns the next ordinal that an owner should durably record.
+    #[must_use]
+    pub const fn next_ordinal(self) -> u128 {
+        self.next_ordinal
+    }
+}
+
+/// An encryptor/decryptor for one artifact key and its monotonic ordinal.
+pub struct ArtifactCipher {
+    key: aead::LessSafeKey,
+    context: EncryptionContext,
+    mode: ProviderMode,
+    next_ordinal: u128,
+    reserved_ordinal: Option<u128>,
+    authorization_expires_at: Option<Instant>,
+}
+
+impl fmt::Debug for ArtifactCipher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ArtifactCipher")
+            .field("provider", &self.mode.identity())
+            .field("next_ordinal", &self.next_ordinal)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ArtifactCipher {
+    /// Creates a local artifact cipher starting at ordinal zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid context, unavailable production
+    /// provider, or cryptographic provider failure.
+    pub fn new(
+        mode: ProviderMode,
+        database_key: DatabaseKey,
+        context: EncryptionContext,
+    ) -> Result<Self, EncryptionError> {
+        Self::with_next_ordinal(mode, database_key, context, 0)
+    }
+
+    /// Creates an artifact cipher with a recovered next ordinal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid context, unavailable production
+    /// provider, an exhausted ordinal, or cryptographic provider failure.
+    pub fn with_next_ordinal(
+        mode: ProviderMode,
+        database_key: DatabaseKey,
+        context: EncryptionContext,
+        next_ordinal: u128,
+    ) -> Result<Self, EncryptionError> {
+        context.validate()?;
+        let cipher = Self::from_key(mode, &database_key, context, next_ordinal, None)?;
+        drop(database_key);
+        Ok(cipher)
+    }
+
+    /// Creates a production cipher from a provider-issued, unexpired lease.
+    ///
+    /// Raw [`DatabaseKey`] values are never accepted for production. The
+    /// Orchestrator adapter issues the lease through authenticated delivery
+    /// after resolving the exact regional wrapper and provider authorization.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the lease is expired, its metadata does not match
+    /// the context, the production provider is not configured, or the ordinal is invalid.
+    pub fn from_database_key_lease(
+        lease: &DatabaseKeyLease,
+        context: EncryptionContext,
+        next_ordinal: u128,
+    ) -> Result<Self, EncryptionError> {
+        if lease.provider() != KeyProviderIdentity::OciVault {
+            return Err(EncryptionError::ProductionProviderUnavailable);
+        }
+        let metadata = lease.metadata();
+        let scope = metadata.scope();
+        let purpose_matches = match scope.purpose() {
+            KeyPurpose::Data => matches!(
+                context.artifact_kind(),
+                "database"
+                    | "wal"
+                    | "segment"
+                    | "index"
+                    | "manifest"
+                    | "snapshot"
+                    | "large-value-chunk"
+                    | "webhook-secret"
+                    | "import"
+            ),
+            KeyPurpose::Backup => matches!(context.artifact_kind(), "backup" | "export" | "branch"),
+            KeyPurpose::Checkpoint => context.artifact_kind() == "checkpoint",
+        };
+        if !purpose_matches
+            || context.environment() != scope.environment()
+            || context.tenant() != scope.tenant().to_text()
+            || context.project()
+                != scope.project().map(crate::identity::ProjectUlid::to_text).as_deref()
+            || context.database() != scope.database().to_text()
+            || context.key_version() != metadata.version().to_text()
+        {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        lease.with_database_key(|key| {
+            Self::from_key(
+                ProviderMode::Production,
+                key,
+                context,
+                next_ordinal,
+                Some(lease.expires_at()),
+            )
+        })?
+    }
+
+    fn from_key(
+        mode: ProviderMode,
+        database_key: &DatabaseKey,
+        context: EncryptionContext,
+        next_ordinal: u128,
+        authorization_expires_at: Option<Instant>,
+    ) -> Result<Self, EncryptionError> {
+        context.validate()?;
+        if mode.is_production() && authorization_expires_at.is_none() {
+            return Err(EncryptionError::ProductionProviderUnavailable);
+        }
+        // `MAX_ORDINAL + 1` is the durable read-only recovery sentinel after
+        // the final 96-bit ordinal has been sealed. It must not be allocatable.
+        if next_ordinal > MAX_ORDINAL + 1 {
+            return Err(EncryptionError::OrdinalExhausted);
+        }
+
+        let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, b"terrabase/database-key/v1");
+        let prk = salt.extract(database_key.material());
+        let info = context.derivation_info();
+        let info_parts = [info.as_slice()];
+        let okm = prk
+            .expand(&info_parts, &aead::AES_256_GCM)
+            .map_err(|_| EncryptionError::CryptographicFailure)?;
+        let unbound = aead::UnboundKey::from(okm);
+        Ok(Self {
+            key: aead::LessSafeKey::new(unbound),
+            context,
+            mode,
+            next_ordinal,
+            reserved_ordinal: None,
+            authorization_expires_at,
+        })
+    }
+
+    fn ensure_authorized(&self) -> Result<(), EncryptionError> {
+        if self.mode.is_production()
+            && self.authorization_expires_at.is_none_or(|expires_at| Instant::now() >= expires_at)
+        {
+            Err(EncryptionError::KeyLeaseExpired)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Returns the selected provider mode.
+    #[must_use]
+    pub const fn mode(&self) -> ProviderMode {
+        self.mode
+    }
+
+    /// Returns the next ordinal that will be allocated for sealing.
+    #[must_use]
+    pub const fn next_ordinal(&self) -> u128 {
+        self.next_ordinal
+    }
+
+    /// Reserves the next ordinal and advances the durable recovery point.
+    ///
+    /// Persist [`OrdinalReservation::next_ordinal`] before writing the
+    /// envelope. An abandoned reservation is intentionally a harmless gap.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::OrdinalExhausted`] when the 96-bit space is
+    /// exhausted, or [`EncryptionError::OrdinalReservationInvalid`] when a
+    /// previous reservation is still awaiting sealing.
+    pub fn reserve_ordinal(&mut self) -> Result<OrdinalReservation, EncryptionError> {
+        self.ensure_authorized()?;
+        if self.reserved_ordinal.is_some() {
+            return Err(EncryptionError::OrdinalReservationInvalid);
+        }
+        let ordinal = self.next_ordinal;
+        if ordinal > MAX_ORDINAL {
+            return Err(EncryptionError::OrdinalExhausted);
+        }
+        let next_ordinal = ordinal.checked_add(1).ok_or(EncryptionError::OrdinalExhausted)?;
+        self.next_ordinal = next_ordinal;
+        self.reserved_ordinal = Some(ordinal);
+        Ok(OrdinalReservation { ordinal, next_ordinal })
+    }
+
+    /// Encrypts one bounded plaintext into a versioned envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the plaintext is too large, the ordinal is
+    /// exhausted, or the cryptographic provider rejects the operation.
+    pub fn seal(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        let reservation = self.reserve_ordinal()?;
+        self.seal_reserved(reservation, plaintext)
+    }
+
+    /// Seals plaintext using an ordinal previously returned by
+    /// [`Self::reserve_ordinal`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a reused reservation, oversized plaintext, or a
+    /// cryptographic provider failure. The reservation remains consumed on
+    /// failure, preventing a retry from reusing its nonce.
+    pub fn seal_reserved(
+        &mut self,
+        reservation: OrdinalReservation,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, EncryptionError> {
+        if self.reserved_ordinal != Some(reservation.ordinal)
+            || reservation.next_ordinal != self.next_ordinal
+        {
+            return Err(EncryptionError::OrdinalReservationInvalid);
+        }
+        self.reserved_ordinal = None;
+        self.seal_at(reservation.ordinal, plaintext)
+    }
+
+    fn seal_at(&self, ordinal: u128, plaintext: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        self.ensure_authorized()?;
+        if plaintext.len() > MAX_PLAINTEXT_BYTES {
+            return Err(EncryptionError::SizeLimit);
+        }
+        let digest = sha256(plaintext);
+        let aad = self.context.canonical_aad(ordinal, plaintext.len() as u64, &digest);
+        if aad.len() > MAX_AAD_BYTES {
+            return Err(EncryptionError::SizeLimit);
+        }
+        let nonce = nonce_for(ordinal);
+        let mut ciphertext = plaintext.to_vec();
+        self.key
+            .seal_in_place_append_tag(nonce, aead::Aad::from(aad.as_slice()), &mut ciphertext)
+            .map_err(|_| EncryptionError::CryptographicFailure)?;
+
+        let aad_len = u32::try_from(aad.len()).map_err(|_| EncryptionError::SizeLimit)?;
+        let ciphertext_len =
+            u64::try_from(ciphertext.len()).map_err(|_| EncryptionError::SizeLimit)?;
+        let mut envelope = Vec::with_capacity(29 + aad.len() + ciphertext.len());
+        envelope.extend_from_slice(&ENVELOPE_MAGIC);
+        envelope.push(ENVELOPE_VERSION);
+        envelope.extend_from_slice(&ordinal.to_be_bytes()[4..]);
+        envelope.extend_from_slice(&aad_len.to_be_bytes());
+        envelope.extend_from_slice(&ciphertext_len.to_be_bytes());
+        envelope.extend_from_slice(&aad);
+        envelope.extend_from_slice(&ciphertext);
+        Ok(envelope)
+    }
+
+    /// Reads an untrusted version selector only after checking the expected
+    /// owner, purpose, artifact kind and format. This does not authenticate the
+    /// envelope; callers must use the selected authorized lease to open it.
+    ///
+    /// # Errors
+    /// Returns an error for malformed or mismatched metadata.
+    pub fn envelope_key_version(
+        scope: &KeyScope,
+        artifact_kind: ArtifactKind,
+        expected_format_major: u16,
+        envelope: &[u8],
+    ) -> Result<DatabaseKeyVersion, EncryptionError> {
+        let (_, aad, _) = parse_envelope(envelope)?;
+        let parsed = parse_aad(aad)?;
+        if scope.purpose() != artifact_kind.key_purpose()
+            || parsed.environment != scope.environment().as_bytes()
+            || parsed.tenant != scope.tenant().to_text().as_bytes()
+            || parsed.project
+                != scope
+                    .project()
+                    .map(crate::identity::ProjectUlid::to_text)
+                    .as_deref()
+                    .map(str::as_bytes)
+            || parsed.database != scope.database().to_text().as_bytes()
+            || parsed.artifact_kind != artifact_kind.as_str().as_bytes()
+            || parsed.format_major != expected_format_major
+            || parsed.compression != Compression::None as u8
+        {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        std::str::from_utf8(parsed.key_version)
+            .ok()
+            .and_then(|text| DatabaseKeyVersion::from_text(text).ok())
+            .ok_or(EncryptionError::MalformedEnvelope)
+    }
+
+    /// Authenticates a persisted artifact using a newly authorized lease.
+    ///
+    /// The artifact identifier comes from bounded envelope metadata; the full
+    /// owner, key version, hierarchy, kind and format must match the caller's
+    /// authorization. No plaintext is returned before tag verification. The
+    /// temporary cipher is read-only, so restart cannot reuse a sealing nonce.
+    ///
+    /// # Errors
+    /// Returns an error for invalid metadata, expired authorization, malformed
+    /// envelopes, wrong scope/kind/format, or failed authentication.
+    pub fn open_envelope_from_database_key_lease(
+        lease: &DatabaseKeyLease,
+        artifact_kind: ArtifactKind,
+        expected_format_major: u16,
+        envelope: &[u8],
+    ) -> Result<Vec<u8>, EncryptionError> {
+        let (ordinal, aad, mut ciphertext) = parse_envelope(envelope)?;
+        let parsed = parse_aad(aad)?;
+        let metadata = lease.metadata();
+        let scope = metadata.scope();
+        if scope.purpose() != artifact_kind.key_purpose()
+            || parsed.environment != scope.environment().as_bytes()
+            || parsed.tenant != scope.tenant().to_text().as_bytes()
+            || parsed.project
+                != scope
+                    .project()
+                    .map(crate::identity::ProjectUlid::to_text)
+                    .as_deref()
+                    .map(str::as_bytes)
+            || parsed.database != scope.database().to_text().as_bytes()
+            || parsed.key_version != metadata.version().to_text().as_bytes()
+            || parsed.artifact_kind != artifact_kind.as_str().as_bytes()
+            || parsed.format_major != expected_format_major
+            || parsed.compression != Compression::None as u8
+        {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        let artifact_id = std::str::from_utf8(parsed.artifact_id)
+            .ok()
+            .and_then(|text| crate::identity::from_text(text).ok())
+            .ok_or(EncryptionError::MalformedEnvelope)?;
+        let context = EncryptionContext::for_artifact(
+            scope,
+            artifact_kind,
+            artifact_id,
+            metadata.version(),
+            expected_format_major,
+            Compression::None,
+        )?;
+        let cipher = Self::from_database_key_lease(lease, context, MAX_ORDINAL + 1)?;
+        cipher.open_parsed(ordinal, aad, &mut ciphertext)
+    }
+
+    /// Authenticates and decrypts one envelope.
+    ///
+    /// Random-access reads of immutable artifacts are valid. Use
+    /// [`Self::open_with_replay_guard`] at a journal or session boundary when
+    /// that owner requires replay refusal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed metadata, bounds violations,
+    /// authentication failure, or digest mismatch.
+    pub fn open(&self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        let (ordinal, aad, mut ciphertext) = parse_envelope(envelope)?;
+        self.open_parsed(ordinal, aad, &mut ciphertext)
+    }
+
+    /// Authenticates and decrypts an envelope while applying an owner policy.
+    ///
+    /// The guard is updated only after authentication and digest verification,
+    /// so malformed or forged envelopes do not consume replay state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for replay, malformed metadata, bounds violations,
+    /// authentication failure, digest mismatch, or a full replay guard.
+    pub fn open_with_replay_guard(
+        &self,
+        envelope: &[u8],
+        guard: &mut ReplayGuard,
+    ) -> Result<Vec<u8>, EncryptionError> {
+        let (ordinal, aad, mut ciphertext) = parse_envelope(envelope)?;
+        guard.check(ordinal)?;
+        let plaintext = self.open_parsed(ordinal, aad, &mut ciphertext)?;
+        guard.record(ordinal)?;
+        Ok(plaintext)
+    }
+
+    fn open_parsed(
+        &self,
+        ordinal: u128,
+        aad: &[u8],
+        ciphertext: &mut [u8],
+    ) -> Result<Vec<u8>, EncryptionError> {
+        self.ensure_authorized()?;
+        let parsed = parse_aad(aad)?;
+        if parsed.ordinal != ordinal
+            || parsed.environment != self.context.environment.as_bytes()
+            || parsed.tenant != self.context.tenant.as_bytes()
+            || parsed.project != self.context.project.as_deref().map(str::as_bytes)
+            || parsed.database != self.context.database.as_bytes()
+            || parsed.artifact_kind != self.context.artifact_kind.as_bytes()
+            || parsed.artifact_id != self.context.artifact_id.as_bytes()
+            || parsed.key_version != self.context.key_version.as_bytes()
+            || parsed.format_major != self.context.format_major
+            || parsed.compression != self.context.compression as u8
+        {
+            return Err(EncryptionError::AuthenticationFailed);
+        }
+        let plaintext_len =
+            usize::try_from(parsed.logical_length).map_err(|_| EncryptionError::SizeLimit)?;
+        if plaintext_len > MAX_PLAINTEXT_BYTES || ciphertext.len() != plaintext_len + AES_TAG_LEN {
+            return Err(EncryptionError::MalformedEnvelope);
+        }
+        let nonce = nonce_for(ordinal);
+        let plaintext = self
+            .key
+            .open_in_place(nonce, aead::Aad::from(aad), ciphertext)
+            .map_err(|_| EncryptionError::AuthenticationFailed)?;
+        let digest = sha256(plaintext);
+        if digest != parsed.digest {
+            return Err(EncryptionError::DigestMismatch);
+        }
+        Ok(plaintext.to_vec())
+    }
+}
+
+/// Owner-controlled replay state for journals and ordered sessions.
+///
+/// Decryption itself is random-access. This guard is an explicit boundary
+/// policy for callers that must reject each ordinal more than once.
+#[derive(Debug, Default)]
+pub struct ReplayGuard {
+    seen: BTreeSet<u128>,
+}
+
+impl ReplayGuard {
+    /// Creates an empty replay guard.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns whether an ordinal has already been accepted.
+    #[must_use]
+    pub fn contains(&self, ordinal: u128) -> bool {
+        self.seen.contains(&ordinal)
+    }
+
+    fn check(&self, ordinal: u128) -> Result<(), EncryptionError> {
+        if self.contains(ordinal) {
+            Err(EncryptionError::Replay)
+        } else if self.seen.len() >= MAX_TRACKED_ORDINALS {
+            Err(EncryptionError::ReplayGuardFull)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn record(&mut self, ordinal: u128) -> Result<(), EncryptionError> {
+        self.check(ordinal)?;
+        self.seen.insert(ordinal);
+        Ok(())
+    }
+}
+
+fn valid_identity(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_IDENTITY_BYTES
+        && !value.as_bytes().contains(&0)
+        && value.is_char_boundary(value.len())
+}
+
+fn append_string(out: &mut Vec<u8>, value: &str) {
+    let length = u16::try_from(value.len()).expect("identity length is validated");
+    out.extend_from_slice(&length.to_be_bytes());
+    out.extend_from_slice(value.as_bytes());
+}
+
+fn nonce_for(ordinal: u128) -> aead::Nonce {
+    let mut nonce = [0u8; NONCE_LEN];
+    nonce.copy_from_slice(&ordinal.to_be_bytes()[4..]);
+    aead::Nonce::assume_unique_for_key(nonce)
+}
+
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    let digest = digest::digest(&digest::SHA256, bytes);
+    let mut result = [0u8; 32];
+    result.copy_from_slice(digest.as_ref());
+    result
+}
+
+struct ParsedAad<'a> {
+    environment: &'a [u8],
+    tenant: &'a [u8],
+    project: Option<&'a [u8]>,
+    database: &'a [u8],
+    artifact_kind: &'a [u8],
+    artifact_id: &'a [u8],
+    key_version: &'a [u8],
+    format_major: u16,
+    ordinal: u128,
+    logical_length: u64,
+    compression: u8,
+    digest: [u8; 32],
+}
+
+fn parse_aad(aad: &[u8]) -> Result<ParsedAad<'_>, EncryptionError> {
+    if aad.len() > MAX_AAD_BYTES
+        || aad.len() < 5
+        || aad[..4] != AAD_MAGIC
+        || !matches!(aad[4], AAD_VERSION | 2)
+    {
+        return Err(EncryptionError::MalformedEnvelope);
+    }
+    let mut offset = 5;
+    let environment = read_string(aad, &mut offset)?;
+    let tenant = read_string(aad, &mut offset)?;
+    let project = (aad[4] == 2).then(|| read_string(aad, &mut offset)).transpose()?;
+    let database = read_string(aad, &mut offset)?;
+    let artifact_kind = read_string(aad, &mut offset)?;
+    let artifact_id = read_string(aad, &mut offset)?;
+    let key_version = read_string(aad, &mut offset)?;
+    let format_major = read_u16(aad, &mut offset)?;
+    let ordinal_bytes = read_bytes(aad, &mut offset, NONCE_LEN)?;
+    let mut full_ordinal = [0u8; 16];
+    full_ordinal[4..].copy_from_slice(ordinal_bytes);
+    let ordinal = u128::from_be_bytes(full_ordinal);
+    let logical_length = read_u64(aad, &mut offset)?;
+    let compression =
+        *read_bytes(aad, &mut offset, 1)?.first().ok_or(EncryptionError::MalformedEnvelope)?;
+    let digest_bytes = read_bytes(aad, &mut offset, 32)?;
+    let mut digest = [0u8; 32];
+    digest.copy_from_slice(digest_bytes);
+    if offset != aad.len() {
+        return Err(EncryptionError::MalformedEnvelope);
+    }
+    Ok(ParsedAad {
+        environment,
+        tenant,
+        project,
+        database,
+        artifact_kind,
+        artifact_id,
+        key_version,
+        format_major,
+        ordinal,
+        logical_length,
+        compression,
+        digest,
+    })
+}
+
+fn read_string<'a>(bytes: &'a [u8], offset: &mut usize) -> Result<&'a [u8], EncryptionError> {
+    let length = usize::from(read_u16(bytes, offset)?);
+    let value = read_bytes(bytes, offset, length)?;
+    if value.is_empty() || value.len() > MAX_IDENTITY_BYTES || value.contains(&0) {
+        return Err(EncryptionError::MalformedEnvelope);
+    }
+    Ok(value)
+}
+
+fn read_u16(bytes: &[u8], offset: &mut usize) -> Result<u16, EncryptionError> {
+    let value = read_bytes(bytes, offset, 2)?;
+    Ok(u16::from_be_bytes([value[0], value[1]]))
+}
+
+fn read_u64(bytes: &[u8], offset: &mut usize) -> Result<u64, EncryptionError> {
+    let value = read_bytes(bytes, offset, 8)?;
+    Ok(u64::from_be_bytes(value.try_into().map_err(|_| EncryptionError::MalformedEnvelope)?))
+}
+
+fn read_bytes<'a>(
+    bytes: &'a [u8],
+    offset: &mut usize,
+    length: usize,
+) -> Result<&'a [u8], EncryptionError> {
+    let end = offset.checked_add(length).ok_or(EncryptionError::MalformedEnvelope)?;
+    let value = bytes.get(*offset..end).ok_or(EncryptionError::MalformedEnvelope)?;
+    *offset = end;
+    Ok(value)
+}
+
+fn parse_envelope(envelope: &[u8]) -> Result<(u128, &[u8], Vec<u8>), EncryptionError> {
+    const HEADER_LEN: usize = 29;
+    if envelope.len() < HEADER_LEN
+        || envelope[..4] != ENVELOPE_MAGIC
+        || envelope[4] != ENVELOPE_VERSION
+    {
+        return Err(EncryptionError::MalformedEnvelope);
+    }
+    let mut ordinal_bytes = [0u8; 16];
+    ordinal_bytes[4..].copy_from_slice(&envelope[5..17]);
+    let ordinal = u128::from_be_bytes(ordinal_bytes);
+    let aad_len = usize::try_from(u32::from_be_bytes(
+        envelope[17..21].try_into().map_err(|_| EncryptionError::MalformedEnvelope)?,
+    ))
+    .map_err(|_| EncryptionError::MalformedEnvelope)?;
+    let ciphertext_len = usize::try_from(u64::from_be_bytes(
+        envelope[21..29].try_into().map_err(|_| EncryptionError::MalformedEnvelope)?,
+    ))
+    .map_err(|_| EncryptionError::SizeLimit)?;
+    if aad_len > MAX_AAD_BYTES
+        || !(AES_TAG_LEN..=MAX_PLAINTEXT_BYTES + AES_TAG_LEN).contains(&ciphertext_len)
+        || HEADER_LEN.checked_add(aad_len).and_then(|n| n.checked_add(ciphertext_len))
+            != Some(envelope.len())
+    {
+        return Err(EncryptionError::MalformedEnvelope);
+    }
+    let aad_end = HEADER_LEN + aad_len;
+    Ok((ordinal, &envelope[HEADER_LEN..aad_end], envelope[aad_end..].to_vec()))
+}

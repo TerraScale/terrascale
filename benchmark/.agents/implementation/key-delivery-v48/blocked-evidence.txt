@@ -1,0 +1,1 @@
+Root cause: snapshot key_delivery SocketFixture uses current_dir()/target/key-delivery-*; target is 0755, while validate_component rejects non-root ancestors with mode & 022 != 0. Failure occurs at provider constructor before socket/credentials.

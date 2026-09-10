@@ -1,0 +1,14 @@
+{
+  "status": "interrupted",
+  "workload": "write",
+  "target": "terrabase",
+  "reason": "Stopped to investigate unindexed sequence scans before retrying the full workload with the fix. No partial timing claimed.",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000
+  },
+  "ended_unix_seconds": 1788825345.0376182
+}

@@ -278,6 +278,12 @@ pub enum KeyProviderIdentity {
 }
 
 impl KeyProviderIdentity {
+    /// Returns whether this identity may authenticate a production key lease.
+    #[must_use]
+    pub const fn is_production(self) -> bool {
+        matches!(self, Self::OciVault | Self::CustomerKms)
+    }
+
     /// Returns the stable provider name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -623,7 +629,8 @@ impl DatabaseKeyLease {
         Ok(Self { metadata, key, provider: KeyProviderIdentity::LocalFile, expires_at })
     }
 
-    /// Creates a lease on behalf of an authorized key-provider adapter.
+    /// Creates a lease on behalf of an authorized key-provider adapter in
+    /// test-support fixtures.
     ///
     /// The adapter is responsible for establishing authorization and regional
     /// wrapper provenance before calling this constructor.
@@ -632,6 +639,7 @@ impl DatabaseKeyLease {
     ///
     /// Returns an error when the provider is not OCI Vault or the duration is
     /// outside the bounded lease interval.
+    #[cfg(any(test, feature = "test-support"))]
     pub(in crate::encryption) fn from_adapter(
         metadata: KeyVersionMetadata,
         key: DatabaseKey,
@@ -669,6 +677,10 @@ impl DatabaseKeyLease {
     }
 
     /// Constructs an OCI Vault lease for injected test fixtures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the lease duration or metadata is invalid.
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_oci_vault(
         metadata: KeyVersionMetadata,
@@ -679,6 +691,10 @@ impl DatabaseKeyLease {
     }
 
     /// Constructs a customer KMS lease for injected test fixtures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the lease duration or metadata is invalid.
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_customer_kms(
         metadata: KeyVersionMetadata,
@@ -814,6 +830,10 @@ pub trait CustomerKmsAdapter: fmt::Debug + Send + Sync {
     }
     /// Obtains one authorized lease for exactly this scope, version, and
     /// region. Missing or revoked versions must fail closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when authorization, metadata, or provider access fails.
     fn lease(
         &self,
         metadata: &KeyVersionMetadata,

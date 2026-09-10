@@ -1,0 +1,7 @@
+# v34 query fixture compile triage
+
+The v34 compile log (`.agents/qualification/current-20260910/engine/core-v34/compile.log`) reports six E0308 errors at `src/query/tests.rs:4476-4502`, claiming `deadline: None` and `cancellation: None`. Current shared source at those exact lines already uses the established concrete constructors `deadline()` (which returns `Deadline::after(Duration::from_secs(30))`) and `Cancellation::new()`. The current diff adds the SQL identity-column test and already contains those concrete fields in all three `QueryInput::SqlBounded` literals.
+
+Conclusion: the gate compiled an earlier source snapshot, but this cannot be called merely inherited: the file changed at least twice during the v33/v34 gate window (reported pre-hashes `2a55bd...` and `e9f277...`), and current mtime is `2026-09-10 18:12:21`, before the v34 terminal at `18:12:34`. The appended SQL identity/_id test is present in the current diff, but no commit, process, or agent attribution establishes its owner. Current source hash at inspection was `18e352636a0171beaf3da33327ad8594da337cd6e63f6eaa1e9b5ffc76c5523c`; this lane did not edit it. Treat provenance as unknown until the gate freezes a fresh snapshot. Do not weaken expired/cancelled behavior or alter the production API.
+
+No Cargo/build was run. Temporary diagnostics in `sql_execute.rs`, `member/shard_registry.rs`, and the supervisor fixture remain unchanged by this triage.

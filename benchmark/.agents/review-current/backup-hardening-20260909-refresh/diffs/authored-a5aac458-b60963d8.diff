@@ -1,0 +1,2255 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index c04ce8b1..bdc89c8b 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2554,6 +2554,7 @@ dependencies = [
+ name = "terrabase"
+ version = "0.1.0"
+ dependencies = [
++ "async-trait",
+  "aws-lc-rs",
+  "base64",
+  "blake3",
+diff --git a/Cargo.toml b/Cargo.toml
+index 4f9ca5b7..76da667c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -52,6 +52,7 @@ path = "tests/recovery/main.rs"
+ required-features = ["test-support"]
+ 
+ [dependencies]
++async-trait = "0.1"
+ # Standard codecs and error derives replace repository-owned implementations.
+ hex = "0.4"
+ base64 = "0.22"
+diff --git a/crates/terrabase-server/src/api.rs b/crates/terrabase-server/src/api.rs
+index 6b98e3be..99f26a83 100644
+--- a/crates/terrabase-server/src/api.rs
++++ b/crates/terrabase-server/src/api.rs
+@@ -4892,11 +4892,11 @@ async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<Strin
+         return error.into_response();
+     }
+     let (ready, streaming) = if let Some(native) = &state.native_backups {
+-        let ready = match native.is_ready(&name) {
++        let ready = match native.is_ready_async(&name).await {
+             Ok(value) => value,
+             Err(error) => return ApiError::backup(error).into_response(),
+         };
+-        let streaming = match native.attached(&name) {
++        let streaming = match native.attached_async(&name).await {
+             Ok(value) => value,
+             Err(error) => return ApiError::backup(error).into_response(),
+         };
+@@ -4980,7 +4980,14 @@ async fn restore_backup(
+             Err(error) => provisioning_error(error).into_response(),
+         };
+     }
+-    ApiError::backup("native restore provisioning authority is unavailable").into_response()
++    // Local/development members use the Litestream adapter. A production
++    // composition has native backup state but no provisioning authority and
++    // must fail closed rather than silently crossing into the local path.
++    if state.native_backups.is_some() || state.native_recovery.is_some() {
++        return ApiError::backup("native restore provisioning authority is unavailable")
++            .into_response();
++    }
++    restore_or_branch(state, name, body, RestoreFlavor::Restore).await
+ }
+ 
+ /// `POST /databases/{name}/branches` — restore plus register with parent
+diff --git a/crates/terrabase-server/src/auth_runtime/tests.rs b/crates/terrabase-server/src/auth_runtime/tests.rs
+index a0712393..d6754149 100644
+--- a/crates/terrabase-server/src/auth_runtime/tests.rs
++++ b/crates/terrabase-server/src/auth_runtime/tests.rs
+@@ -228,6 +228,7 @@ pub(crate) mod admitted_fixture {
+                 },
+                 enabled: true,
+                 backup: None,
++                byok: None,
+             }],
+             placement: ProductionPlacement {
+                 generation: 1,
+diff --git a/crates/terrabase-server/src/config.rs b/crates/terrabase-server/src/config.rs
+index 09813688..9bba89b4 100644
+--- a/crates/terrabase-server/src/config.rs
++++ b/crates/terrabase-server/src/config.rs
+@@ -89,6 +89,31 @@ pub struct ProductionDatabase {
+     /// Optional native backup policy. Production composition refuses an
+     /// enabled database without this policy before publishing readiness.
+     pub backup: Option<ProductionBackupConfig>,
++    /// Customer-managed backup and encryption references, when configured.
++    pub byok: Option<ProductionByokConfig>,
++}
++
++/// Nonsecret customer provider references carried through production admission.
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct ProductionByokConfig {
++    /// Object storage endpoint for customer-managed backup copies.
++    pub backup_endpoint: String,
++    /// Object storage bucket for customer-managed backup copies.
++    pub backup_bucket: String,
++    /// Object storage signing/placement region.
++    pub backup_region: String,
++    /// IAM role assumed for customer-managed backup access.
++    pub backup_role_arn: String,
++    /// Optional external identifier bound to the assumed role.
++    pub backup_external_id: Option<String>,
++    /// Key management provider identity.
++    pub key_provider: String,
++    /// Customer-managed encryption key identifier.
++    pub key_id: String,
++    /// Key management service region.
++    pub key_region: String,
++    /// Optional key management service endpoint.
++    pub key_endpoint: Option<String>,
+ }
+ 
+ /// Provider credentials and placement facts for one native backup copy.
+@@ -735,6 +760,24 @@ struct FileProductionDatabase {
+     enabled: Option<bool>,
+     #[serde(default)]
+     backup: Option<FileProductionBackup>,
++    #[serde(default)]
++    byok: Option<FileProductionByok>,
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct FileProductionByok {
++    backup_endpoint: String,
++    backup_bucket: String,
++    backup_region: String,
++    backup_role_arn: String,
++    #[serde(default)]
++    backup_external_id: Option<String>,
++    key_provider: String,
++    key_id: String,
++    key_region: String,
++    #[serde(default)]
++    key_endpoint: Option<String>,
+ }
+ 
+ #[derive(Deserialize)]
+@@ -1078,6 +1121,37 @@ impl ServerConfig {
+                 "local-file" => return Err(ConfigError::LocalProviderInProduction),
+                 _ => return Err(ConfigError::InvalidProductionBoundary),
+             };
++            if let Some(byok) = &entry.byok {
++                let valid_provider = matches!(
++                    byok.key_provider.as_str(),
++                    "oci-vault" | "aws-kms" | "azure-key-vault" | "customer-kms"
++                );
++                let valid_endpoint = |value: &str| {
++                    value.starts_with("https://")
++                        && value.len() <= 2048
++                        && !value.chars().any(char::is_control)
++                };
++                if !valid_endpoint(&byok.backup_endpoint)
++                    || byok.backup_bucket.is_empty()
++                    || byok.backup_bucket.len() > 63
++                    || byok.backup_region.is_empty()
++                    || byok.backup_region.len() > 64
++                    || !byok.backup_role_arn.starts_with("arn:")
++                    || byok.backup_role_arn.len() > 512
++                    || !valid_provider
++                    || byok.key_id.is_empty()
++                    || byok.key_id.len() > 512
++                    || byok.key_region.is_empty()
++                    || byok.key_region.len() > 64
++                    || byok.key_endpoint.as_deref().is_some_and(|value| !valid_endpoint(value))
++                    || byok
++                        .backup_external_id
++                        .as_deref()
++                        .is_some_and(|value| value.is_empty() || value.len() > 128)
++                {
++                    return Err(ConfigError::InvalidProductionBoundary);
++                }
++            }
+             let encryption_key = DatabaseKeyVersion::from_text(&entry.encryption_key)
+                 .map_err(|_| ConfigError::InvalidProductionBoundary)?;
+             let quotas = DatabaseQuotas {
+@@ -1140,6 +1214,7 @@ impl ServerConfig {
+                             // plus the authenticated envelope. Reserve 16 MiB.
+                             || destination.max_artifact_bytes < 16 * 1024 * 1024
+                             || destination.max_artifact_bytes > 256 * 1024 * 1024
++                            || destination.max_point_bytes > 4 * 1024 * 1024 * 1024
+                             || destination.max_point_bytes < destination.max_artifact_bytes
+                             || (provider == Provider::Oci
+                                 && (destination.signing_region != oci_region_name(region)
+@@ -1207,6 +1282,17 @@ impl ServerConfig {
+                 quotas,
+                 enabled: entry.enabled.unwrap_or(false),
+                 backup,
++                byok: entry.byok.map(|byok| ProductionByokConfig {
++                    backup_endpoint: byok.backup_endpoint,
++                    backup_bucket: byok.backup_bucket,
++                    backup_region: byok.backup_region,
++                    backup_role_arn: byok.backup_role_arn,
++                    backup_external_id: byok.backup_external_id,
++                    key_provider: byok.key_provider,
++                    key_id: byok.key_id,
++                    key_region: byok.key_region,
++                    key_endpoint: byok.key_endpoint,
++                }),
+             });
+         }
+         if !databases.iter().any(|database| database.enabled) && file.member_admission.is_none() {
+diff --git a/crates/terrabase-server/src/native_backup_runtime.rs b/crates/terrabase-server/src/native_backup_runtime.rs
+index 24d175fb..d93f0fb0 100644
+--- a/crates/terrabase-server/src/native_backup_runtime.rs
++++ b/crates/terrabase-server/src/native_backup_runtime.rs
+@@ -102,7 +102,7 @@ pub struct NativeBackupRuntime {
+     fleet: Arc<Mutex<NativeBackupFleet>>,
+     /// Queues async operations before they acquire the synchronous fleet
+     /// guard, preventing executor threads from blocking during awaits.
+-    async_fleet: tokio::sync::Mutex<()>,
++    async_fleet: Arc<tokio::sync::Mutex<()>>,
+     databases: Mutex<BTreeMap<String, PlacementLock>>,
+     incidents: Mutex<Vec<(String, FleetError)>>,
+ }
+@@ -110,8 +110,8 @@ pub struct NativeBackupRuntime {
+ impl NativeBackupRuntime {
+     /// Binds ordered participant manifests to one admitted shard read cut.
+     ///
+-    /// The caller must capture every manifest at the same common cut before
+-    /// calling this method. This seam performs no publication: the caller
++    /// Each participant's local snapshot boundary is authenticated independently.
++    /// This seam performs no publication: the caller
+     /// must invoke [`BackupEnvelope::verify_staged`] for every participant and
+     /// atomically publish the envelope only after all staged files verify.
+     pub fn assemble_shard_envelope(
+@@ -123,11 +123,6 @@ impl NativeBackupRuntime {
+         if cut.participants.len() != manifests.len() || cut.participants.is_empty() {
+             return Err(NativeBackupRuntimeError::Envelope);
+         }
+-        let common_cut = cut.participants[0].snapshot.sequence();
+-        if cut.participants.iter().any(|participant| participant.snapshot.sequence() != common_cut)
+-        {
+-            return Err(NativeBackupRuntimeError::Envelope);
+-        }
+         let participants = cut
+             .participants
+             .iter()
+@@ -145,7 +140,6 @@ impl NativeBackupRuntime {
+             cut.database_id.clone(),
+             cut.database_incarnation,
+             route_generation,
+-            common_cut,
+             participants,
+         )
+         .map_err(|_| NativeBackupRuntimeError::Envelope)
+@@ -210,7 +204,7 @@ impl NativeBackupRuntime {
+         }
+         Ok(Self {
+             fleet: Arc::new(Mutex::new(fleet)),
+-            async_fleet: tokio::sync::Mutex::new(()),
++            async_fleet: Arc::new(tokio::sync::Mutex::new(())),
+             databases: Mutex::new(databases),
+             incidents: Mutex::new(Vec::new()),
+         })
+@@ -222,6 +216,12 @@ impl NativeBackupRuntime {
+         Arc::clone(&self.fleet)
+     }
+ 
++    /// Returns the async admission gate shared with native recovery callers.
++    #[must_use]
++    pub fn fleet_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
++        Arc::clone(&self.async_fleet)
++    }
++
+     /// Executes one bounded asynchronous fleet tick.
+     pub async fn tick(&self) -> Result<Vec<(String, FleetError)>, NativeBackupRuntimeError> {
+         let _async_fleet = self.async_fleet.lock().await;
+@@ -303,6 +303,21 @@ impl NativeBackupRuntime {
+         fleet.retained_points(database).map_err(NativeBackupRuntimeError::Fleet)
+     }
+ 
++    /// Async retained-chain observation serialized with provider operations.
++    pub async fn retained_points_async(
++        &self,
++        database: &str,
++    ) -> Result<Vec<terrabase::backup::BackupManifest>, NativeBackupRuntimeError> {
++        let _gate = self.async_fleet.lock().await;
++        self.retained_points(database)
++    }
++
++    /// Async readiness observation serialized with provider operations.
++    pub async fn is_ready_async(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
++        let _gate = self.async_fleet.lock().await;
++        self.is_ready(database)
++    }
++
+     /// Converts a public Unix-second timestamp to the native millisecond unit.
+     pub fn unix_seconds_to_millis(seconds: u64) -> Result<u64, NativeBackupRuntimeError> {
+         seconds.checked_mul(1_000).ok_or(NativeBackupRuntimeError::Unavailable)
+@@ -396,6 +411,15 @@ impl NativeBackupRuntime {
+         Ok(())
+     }
+ 
++    /// Async admission path coordinated with captures and synchronization.
++    pub async fn attach_async(
++        &self,
++        input: NativeBackupInput,
++    ) -> Result<(), NativeBackupRuntimeError> {
++        let _gate = self.async_fleet.lock().await;
++        self.attach(input)
++    }
++
+     /// Releases target engine references under the serialized native fleet lock.
+     pub fn suspend_for_restore(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
+         self.fleet
+@@ -405,6 +429,15 @@ impl NativeBackupRuntime {
+             .map_err(NativeBackupRuntimeError::Fleet)
+     }
+ 
++    /// Suspends a stream while coordinating with active fleet work.
++    pub async fn suspend_for_restore_async(
++        &self,
++        database: &str,
++    ) -> Result<(), NativeBackupRuntimeError> {
++        let _gate = self.async_fleet.lock().await;
++        self.suspend_for_restore(database)
++    }
++
+     /// Restores the same backup policy with the reopened admitted target engine.
+     pub fn resume_after_restore(
+         &self,
+@@ -423,6 +456,17 @@ impl NativeBackupRuntime {
+             .map_err(NativeBackupRuntimeError::Fleet)
+     }
+ 
++    /// Rebinds a restored host while coordinating with active fleet work.
++    pub async fn resume_after_restore_async(
++        &self,
++        database: &str,
++        host: Arc<MemberHost>,
++        resume_capture: bool,
++    ) -> Result<(), NativeBackupRuntimeError> {
++        let _gate = self.async_fleet.lock().await;
++        self.resume_after_restore(database, host, resume_capture)
++    }
++
+     /// Detaches one stream while retaining its staged and remote artifacts.
+     pub fn detach(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
+         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+@@ -431,6 +475,12 @@ impl NativeBackupRuntime {
+         Ok(())
+     }
+ 
++    /// Detaches a stream without blocking an executor thread on the fleet lock.
++    pub async fn detach_async(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
++        let _gate = self.async_fleet.lock().await;
++        self.detach(database)
++    }
++
+     /// Fences all admitted streams and releases their scheduler registrations.
+     ///
+     /// # Errors
+@@ -446,6 +496,12 @@ impl NativeBackupRuntime {
+         Ok(())
+     }
+ 
++    /// Fences and detaches every stream without blocking an executor thread.
++    pub async fn drain_async(&self) -> Result<(), NativeBackupRuntimeError> {
++        let _gate = self.async_fleet.lock().await;
++        self.drain()
++    }
++
+     /// Returns whether this owner still has an admitted stream.
+     #[must_use]
+     pub fn contains(&self, database: &str) -> bool {
+@@ -465,6 +521,12 @@ impl NativeBackupRuntime {
+             .contains_key(database))
+     }
+ 
++    /// Async attachment observation serialized with provider operations.
++    pub async fn attached_async(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
++        let _gate = self.async_fleet.lock().await;
++        self.attached(database)
++    }
++
+     /// Reads current protection from every configured provider and the source
+     /// journal frontier; cached scheduler health is never sufficient.
+     pub fn is_ready(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
+@@ -666,9 +728,9 @@ mod restore_tests {
+             [NativeBackupInput {
+                 engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&target.database.host))),
+                 keys: Arc::new(
+-                    terrabase::backup::worker::OciBackupKeys::new(crate::test_keys::backup_keys(
+-                        &scope,
+-                    ))
++                    terrabase::backup::worker::CustomerKmsBackupKeys::new(
++                        crate::test_keys::backup_keys(&scope),
++                    )
+                     .unwrap(),
+                 ),
+                 destinations: vec![(
+@@ -773,9 +835,9 @@ mod restore_tests {
+             inputs.push(NativeBackupInput {
+                 engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&snapshot.database.host))),
+                 keys: Arc::new(
+-                    terrabase::backup::worker::OciBackupKeys::new(crate::test_keys::backup_keys(
+-                        &scope,
+-                    ))
++                    terrabase::backup::worker::CustomerKmsBackupKeys::new(
++                        crate::test_keys::backup_keys(&scope),
++                    )
+                     .unwrap(),
+                 ),
+                 destinations: vec![(
+@@ -949,9 +1011,9 @@ mod restore_tests {
+             [NativeBackupInput {
+                 engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&target.database.host))),
+                 keys: Arc::new(
+-                    terrabase::backup::worker::OciBackupKeys::new(crate::test_keys::backup_keys(
+-                        &scope,
+-                    ))
++                    terrabase::backup::worker::CustomerKmsBackupKeys::new(
++                        crate::test_keys::backup_keys(&scope),
++                    )
+                     .unwrap(),
+                 ),
+                 destinations: vec![(
+diff --git a/crates/terrabase-server/src/native_recovery.rs b/crates/terrabase-server/src/native_recovery.rs
+index 49abb28e..21f99247 100644
+--- a/crates/terrabase-server/src/native_recovery.rs
++++ b/crates/terrabase-server/src/native_recovery.rs
+@@ -319,6 +319,7 @@ pub enum NativeRecoveryError {
+ /// The constructor never creates a mock fleet, local key, or reduced-security fallback.
+ pub struct NativeRecoveryRuntime {
+     fleet: Arc<Mutex<NativeBackupFleet>>,
++    fleet_gate: Option<Arc<tokio::sync::Mutex<()>>>,
+     operations: Mutex<Connection>,
+     registry: Arc<AdmittedDatabaseRegistry>,
+     limits: NativeRecoveryLimits,
+@@ -343,6 +344,10 @@ impl NativeRecoveryRuntime {
+         Option<(terrabase::backup::BackupEnvelope, terrabase::backup::object_store::Provider)>,
+         NativeRecoveryError,
+     > {
++        let _fleet_gate = match self.fleet_gate.as_ref() {
++            Some(gate) => Some(gate.lock().await),
++            None => None,
++        };
+         let database = self
+             .registry
+             .resolve(source)
+@@ -421,6 +426,10 @@ impl NativeRecoveryRuntime {
+         (terrabase::backup::BackupManifest, terrabase::backup::object_store::Provider),
+         NativeRecoveryError,
+     > {
++        let _fleet_gate = match self.fleet_gate.as_ref() {
++            Some(gate) => Some(gate.lock().await),
++            None => None,
++        };
+         let database = self
+             .registry
+             .resolve(source)
+@@ -503,6 +512,18 @@ impl NativeRecoveryRuntime {
+         registry: Arc<AdmittedDatabaseRegistry>,
+         limits: NativeRecoveryLimits,
+         restore_executor: Arc<dyn RestoreExecutor>,
++    ) -> Result<(Arc<Self>, NativeRecoveryWorker), NativeRecoveryError> {
++        Self::new_with_fleet_gate(root, fleet, registry, limits, restore_executor, None)
++    }
++
++    /// Opens recovery while sharing the backup owner's async fleet gate.
++    pub fn new_with_fleet_gate(
++        root: &Path,
++        fleet: Arc<Mutex<NativeBackupFleet>>,
++        registry: Arc<AdmittedDatabaseRegistry>,
++        limits: NativeRecoveryLimits,
++        restore_executor: Arc<dyn RestoreExecutor>,
++        fleet_gate: Option<Arc<tokio::sync::Mutex<()>>>,
+     ) -> Result<(Arc<Self>, NativeRecoveryWorker), NativeRecoveryError> {
+         let limits = limits.validate()?;
+         let executor =
+@@ -549,6 +570,7 @@ impl NativeRecoveryRuntime {
+         worker_lease.try_lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+         let runtime = Arc::new(Self {
+             fleet,
++            fleet_gate,
+             operations: Mutex::new(connection),
+             registry,
+             limits,
+@@ -1203,6 +1225,11 @@ impl NativeRecoveryRuntime {
+         }
+         let checkpoint = self.load_checkpoint(source, operation)?;
+         let capture = || {
++            let _fleet_gate = self.fleet_gate.as_ref().map(|gate| {
++                tokio::task::block_in_place(|| {
++                    tokio::runtime::Handle::current().block_on(gate.lock())
++                })
++            });
+             let manifest = {
+                 let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+                 tokio::task::block_in_place(|| {
+@@ -1215,6 +1242,11 @@ impl NativeRecoveryRuntime {
+         let persist =
+             |operation: &NativeRecoveryOperation, cp: Option<&Checkpoint>| self.save(operation, cp);
+         let measure = |point: &Checkpoint| {
++            let _fleet_gate = self.fleet_gate.as_ref().map(|gate| {
++                tokio::task::block_in_place(|| {
++                    tokio::runtime::Handle::current().block_on(gate.lock())
++                })
++            });
+             let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+             fleet
+                 .retained_points(source)
+@@ -1954,6 +1986,7 @@ mod tests {
+             worker: Arc::new(RegistryLifecycleWorker {
+                 registry: Arc::clone(&registry),
+                 backups: None,
++                backup_gate: None,
+                 recovery: Some(Arc::clone(&runtime)),
+                 receipts,
+                 journal: None,
+diff --git a/crates/terrabase-server/src/native_snapshot_backup.rs b/crates/terrabase-server/src/native_snapshot_backup.rs
+index efcd0ed4..39c28593 100644
+--- a/crates/terrabase-server/src/native_snapshot_backup.rs
++++ b/crates/terrabase-server/src/native_snapshot_backup.rs
+@@ -63,12 +63,9 @@ pub async fn upload_snapshot(
+     {
+         return Err(SnapshotBackupError::Provider);
+     }
+-    if !placement.allows(source_region)
+-        || destinations.iter().any(|destination| {
+-            destination.admitted_region() != source_region
+-                || !placement.allows(destination.admitted_region())
+-        })
+-    {
++    if destinations.iter().any(|destination| {
++        validate_residency(source_region, destination.admitted_region(), placement).is_err()
++    }) {
+         return Err(SnapshotBackupError::Provider);
+     }
+     let metadata = lease.metadata();
+@@ -281,13 +278,13 @@ pub async fn restore_snapshot(
+     max_bytes: u64,
+ ) -> Result<(WalFollowerDriver, WalCheckpointMessage), SnapshotBackupError> {
+     validate_residency(source_region, destination.admitted_region(), placement)?;
+-    let mut downloaded = false;
++    let mut staging_cleanup = RestoreStagingCleanup::new(staging);
+     let result = async {
+         destination
+             .download_point_with_byte_limit(prefix, staging, max_bytes)
+             .await
+             .map_err(|_| SnapshotBackupError::Provider)?;
+-        downloaded = true;
++        staging_cleanup.mark_downloaded();
+         let envelope = read_bounded(&staging.join("manifest.tbv3e"), 2 * 1024 * 1024)?;
+         let manifest_bytes =
+             reader.open_backup_envelope(&envelope).map_err(|_| SnapshotBackupError::Encryption)?;
+@@ -333,18 +330,45 @@ pub async fn restore_snapshot(
+                 offset = next;
+             }
+         }
+-        sink.finish_local().await.map_err(|error| {
+-            eprintln!("native snapshot finish error: {error:?}");
+-            SnapshotBackupError::Snapshot
+-        })
++        sink.finish_local().await.map_err(|_| SnapshotBackupError::Snapshot)
+     }
+     .await;
+-    if downloaded && result.is_err() {
+-        let _ = std::fs::remove_dir_all(staging);
++    if result.is_ok() {
++        staging_cleanup.keep();
+     }
+     result
+ }
+ 
++/// Removes a downloaded restore point if any verification or installation step
++/// fails, including cancellation while the restore future is suspended.
++struct RestoreStagingCleanup {
++    path: PathBuf,
++    downloaded: bool,
++    keep: bool,
++}
++
++impl RestoreStagingCleanup {
++    fn new(path: &Path) -> Self {
++        Self { path: path.to_owned(), downloaded: false, keep: false }
++    }
++
++    fn mark_downloaded(&mut self) {
++        self.downloaded = true;
++    }
++
++    fn keep(&mut self) {
++        self.keep = true;
++    }
++}
++
++impl Drop for RestoreStagingCleanup {
++    fn drop(&mut self) {
++        if self.downloaded && !self.keep {
++            let _ = std::fs::remove_dir_all(&self.path);
++        }
++    }
++}
++
+ fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), SnapshotBackupError> {
+     use std::io::Write;
+     let mut file = std::fs::OpenOptions::new()
+diff --git a/crates/terrabase-server/src/native_snapshot_backup_tests.rs b/crates/terrabase-server/src/native_snapshot_backup_tests.rs
+index 0c6a6d2f..372cef60 100644
+--- a/crates/terrabase-server/src/native_snapshot_backup_tests.rs
++++ b/crates/terrabase-server/src/native_snapshot_backup_tests.rs
+@@ -36,6 +36,7 @@ impl DatabaseKeySource for StaticKeys {
+ async fn fixture() -> (
+     WalSnapshotSource,
+     WalReplicaBinding,
++    WalReplicaBinding,
+     Arc<DatabaseKeyLease>,
+     Arc<DatabaseKeyLease>,
+     std::path::PathBuf,
+@@ -129,12 +130,30 @@ async fn fixture() -> (
+     );
+     let source =
+         WalSnapshotSource::capture(binding.clone(), engine, root.join("source")).await.unwrap();
+-    (source, binding, lease, data_lease, root)
++    let follower_placement = ProductionPlacement::try_new(
++        MemberUlid::from_text(follower).unwrap(),
++        1,
++        7,
++        [ProductionRegionSeats::try_new(
++            RegionCode::GRU,
++            [MemberUlid::from_text(writer).unwrap(), MemberUlid::from_text(follower).unwrap()],
++        )
++        .unwrap()],
++    )
++    .unwrap();
++    let follower_binding = WalReplicaBinding::new(
++        scope.clone(),
++        &follower_placement,
++        MemberWorkloadIdentity::try_new("prod", "cluster", writer).unwrap(),
++        MemberWorkloadIdentity::try_new("prod", "cluster", follower).unwrap(),
++    )
++    .unwrap();
++    (source, binding, follower_binding, lease, data_lease, root)
+ }
+ 
+ #[tokio::test]
+ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
+-    let (source, binding, lease, data_lease, root) = fixture().await;
++    let (source, _binding, follower_binding, lease, data_lease, root) = fixture().await;
+     let store = Arc::new(object_store::memory::InMemory::new());
+     let destination = Arc::new(terrabase::backup::object_store::ObjectDestination::for_test(
+         terrabase::backup::object_store::Provider::Oci,
+@@ -225,13 +244,31 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
+         Err(super::native_snapshot_backup::SnapshotBackupError::Snapshot)
+     );
+     std::fs::remove_file(staging.join("chunk-extra")).unwrap();
++    let failed_download = root.join("failed-download");
++    assert!(matches!(
++        super::native_snapshot_backup::restore_snapshot(
++            &destination,
++            "roundtrip-retry",
++            &failed_download,
++            &*data_lease as &dyn BackupReader,
++            follower_binding.clone(),
++            RegionCode::GRU,
++            &placement,
++            root.join("failed-target"),
++            Arc::new(StaticKeys(Arc::clone(&data_lease))),
++            8 * 1024 * 1024,
++        )
++        .await,
++        Err(super::native_snapshot_backup::SnapshotBackupError::Encryption)
++    ));
++    assert!(!failed_download.exists());
+     let target = root.join("target");
+     let restore_result = super::native_snapshot_backup::restore_snapshot(
+         &destination,
+         "roundtrip-retry",
+         &root.join("download"),
+         &*lease as &dyn BackupReader,
+-        binding,
++        follower_binding,
+         RegionCode::GRU,
+         &placement,
+         target,
+@@ -239,9 +276,6 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
+         8 * 1024 * 1024,
+     )
+     .await;
+-    if let Err(error) = &restore_result {
+-        println!("restore error: {error:?}");
+-    }
+     let (_follower, receipt) = restore_result.unwrap();
+     assert!(receipt.checkpoint.is_some());
+ }
+diff --git a/crates/terrabase-server/src/production_backup.rs b/crates/terrabase-server/src/production_backup.rs
+index fb50da54..789a0376 100644
+--- a/crates/terrabase-server/src/production_backup.rs
++++ b/crates/terrabase-server/src/production_backup.rs
+@@ -12,7 +12,9 @@ use std::fs::{self, File};
+ use std::io::Read;
+ use std::path::Path;
+ use std::sync::Arc;
+-use terrabase::backup::object_store::{Credentials, DestinationConfig, ObjectDestination};
++use terrabase::backup::object_store::{
++    Credentials, DestinationConfig, ObjectDestination, WorkloadIdentityProvider,
++};
+ use terrabase::backup::worker::FleetLimits;
+ use terrabase::regions::RegionCode;
+ 
+@@ -58,6 +60,66 @@ pub fn destination_from_config(
+     Ok(Arc::new(destination))
+ }
+ 
++/// Resolves one destination through the caller-supplied workload identity.
++///
++/// This is the production path for customer-owned S3. The provider is called
++/// lazily by the object store for each request, allowing expiry and revocation
++/// to take effect without rebuilding the destination.
++pub fn destination_from_config_with_workload_identity(
++    config: &ProductionBackupDestination,
++    database_region: RegionCode,
++    provider: Arc<dyn WorkloadIdentityProvider>,
++) -> Result<Arc<ObjectDestination>, ProductionBackupFactoryError> {
++    let destination = ObjectDestination::new_with_workload_identity(
++        DestinationConfig {
++            admitted_region: database_region,
++            provider: config.provider,
++            endpoint: config.endpoint.clone(),
++            signing_region: config.signing_region.clone(),
++            database_region: match config.provider {
++                terrabase::backup::object_store::Provider::Oci => config.signing_region.clone(),
++                terrabase::backup::object_store::Provider::Tigris => {
++                    database_region.as_str().to_owned()
++                }
++            },
++            bucket: config.bucket.clone(),
++            verified_geography: config.verified_geography.clone(),
++            permitted_geographies: config.permitted_geographies.clone(),
++            placement_revision: config.placement_revision.clone(),
++            credentials: Credentials::new(String::new(), String::new()),
++            max_artifact_bytes: config.max_artifact_bytes,
++            max_point_bytes: config.max_point_bytes,
++        },
++        provider,
++    )
++    .map_err(|_| ProductionBackupFactoryError::Destination)?;
++    Ok(Arc::new(destination))
++}
++
++/// Resolves all destinations through one explicit workload identity authority.
++pub fn destinations_from_config_with_workload_identity(
++    configs: &[ProductionBackupDestination],
++    database_region: RegionCode,
++    provider: Arc<dyn WorkloadIdentityProvider>,
++) -> Result<
++    Vec<(terrabase::backup::object_store::Provider, Arc<ObjectDestination>)>,
++    ProductionBackupFactoryError,
++> {
++    configs
++        .iter()
++        .map(|config| {
++            Ok((
++                config.provider,
++                destination_from_config_with_workload_identity(
++                    config,
++                    database_region,
++                    Arc::clone(&provider),
++                )?,
++            ))
++        })
++        .collect()
++}
++
+ /// Resolves every selected destination in configuration order. A failure
+ /// discards all already-created clients, so callers cannot publish a partial
+ /// provider policy.
+diff --git a/crates/terrabase-server/src/production_data_runtime.rs b/crates/terrabase-server/src/production_data_runtime.rs
+index c7d3c686..879a9eb3 100644
+--- a/crates/terrabase-server/src/production_data_runtime.rs
++++ b/crates/terrabase-server/src/production_data_runtime.rs
+@@ -887,6 +887,7 @@ impl ProductionAdmissionRuntime {
+     pub fn with_native_deletion(
+         mut self,
+         backups: Arc<Mutex<terrabase::backup::worker::NativeBackupFleet>>,
++        backup_gate: Arc<tokio::sync::Mutex<()>>,
+     ) -> Result<Self, String> {
+         let host = Arc::try_unwrap(self.host).map_err(|_| "admission host already shared")?;
+         let preflight = self.registry.clone();
+@@ -895,6 +896,7 @@ impl ProductionAdmissionRuntime {
+         self.host = Arc::new(
+             host.with_storage_stop_preflight(Arc::new(move |record, _request| {
+                 let protected = preflight.stop_preflight(record)?;
++                let _gate = backup_gate.try_lock().map_err(|_| "native backup fleet busy")?;
+                 let retained = backups
+                     .lock()
+                     .map_err(|_| "native backup fleet poisoned")?
+@@ -986,7 +988,7 @@ impl ProductionAdmissionRuntime {
+         limits: FleetLimits,
+     ) -> Result<crate::native_backup_runtime::NativeBackupRuntime, String> {
+         use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
+-        use terrabase::backup::{PlacementLock, worker::OciBackupKeys};
++        use terrabase::backup::{PlacementLock, worker::CustomerKmsBackupKeys};
+         use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
+         let key_config = self.config.keys.as_ref().ok_or("production key delivery missing")?;
+         let provider = OciVaultKeyDelivery::new(
+@@ -1058,7 +1060,7 @@ impl ProductionAdmissionRuntime {
+             inputs.push(NativeBackupInput {
+                 engine: Arc::new(AdmittedBackupEngine::new(snapshot.database.host.clone())),
+                 keys: Arc::new(
+-                    OciBackupKeys::new(Arc::new(source))
++                    CustomerKmsBackupKeys::new(Arc::new(source))
+                         .map_err(|_| "backup key authorization unavailable")?,
+                 ),
+                 destinations,
+@@ -1088,7 +1090,7 @@ impl ProductionAdmissionRuntime {
+         database: &str,
+     ) -> Result<crate::native_backup_runtime::NativeBackupInput, String> {
+         use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
+-        use terrabase::backup::{PlacementLock, worker::OciBackupKeys};
++        use terrabase::backup::{PlacementLock, worker::CustomerKmsBackupKeys};
+         use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
+         let snapshot = self
+             .registry
+@@ -1176,7 +1178,7 @@ impl ProductionAdmissionRuntime {
+         Ok(NativeBackupInput {
+             engine: Arc::new(AdmittedBackupEngine::new(snapshot.database.host.clone())),
+             keys: Arc::new(
+-                OciBackupKeys::new(Arc::new(source))
++                CustomerKmsBackupKeys::new(Arc::new(source))
+                     .map_err(|_| "backup key authorization unavailable")?,
+             ),
+             destinations,
+@@ -1310,7 +1312,7 @@ impl ProductionAdmissionRuntime {
+         let scope = record_scope(&record)?;
+         let data = self.lifecycle.get().ok_or("replication lifecycle unavailable")?;
+         let _suspension = data.peers.suspend_database(scope).await?;
+-        let result = match backups.suspend_for_restore(target) {
++        let result = match backups.suspend_for_restore_async(target).await {
+             Ok(()) => {
+                 self.restore_native_to_target(
+                     backups,
+@@ -1373,11 +1375,12 @@ impl ProductionAdmissionRuntime {
+             .find(|entry| entry.database.record.database_id == target)
+             .ok_or("restore target host unavailable")?;
+         backups
+-            .resume_after_restore(
++            .resume_after_restore_async(
+                 &record.database_id,
+                 Arc::clone(&target.database.host),
+                 resume_capture,
+             )
++            .await
+             .map_err(|_| "native backup restore rebind unavailable".to_owned())
+     }
+ 
+diff --git a/crates/terrabase-server/src/production_lifecycle_control.rs b/crates/terrabase-server/src/production_lifecycle_control.rs
+index 29256f28..697a79a7 100644
+--- a/crates/terrabase-server/src/production_lifecycle_control.rs
++++ b/crates/terrabase-server/src/production_lifecycle_control.rs
+@@ -490,6 +490,8 @@ pub struct RegistryLifecycleWorker {
+     pub registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+     /// Optional native backup fleet retained by the production composition.
+     pub backups: Option<Arc<std::sync::Mutex<terrabase::backup::worker::NativeBackupFleet>>>,
++    /// Shared async gate for every native fleet operation.
++    pub backup_gate: Option<Arc<tokio::sync::Mutex<()>>>,
+     /// Durable native recovery owner.
+     pub recovery: Option<Arc<crate::native_recovery::NativeRecoveryRuntime>>,
+     /// Durable signed completed observations.
+@@ -873,11 +875,15 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
+         }
+         let backups =
+             Arc::clone(self.backups.as_ref().ok_or("native backup fleet is not composed")?);
++        let backup_gate = Arc::clone(
++            self.backup_gate.as_ref().ok_or("native backup fleet gate is not composed")?,
++        );
+         let database_id = assignment.database.clone();
+         let operation = operation.to_owned();
+         // The blocking owner retains fleet serialization throughout provider I/O;
+         // the async request only awaits a Send join handle.
+         tokio::task::spawn_blocking(move || {
++            let _gate = tokio::runtime::Handle::current().block_on(backup_gate.lock());
+             let mut fleet = backups.lock().map_err(|_| "native backup fleet poisoned")?;
+             tokio::runtime::Handle::current()
+                 .block_on(fleet.lifecycle_delete(&database_id, &operation))
+diff --git a/crates/terrabase-server/src/runtime.rs b/crates/terrabase-server/src/runtime.rs
+index cedfc87f..2b022dd6 100644
+--- a/crates/terrabase-server/src/runtime.rs
++++ b/crates/terrabase-server/src/runtime.rs
+@@ -421,7 +421,7 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
+         })?);
+         startup_owners.native = Some(Arc::clone(&native));
+         admission = admission
+-            .with_native_deletion(native.fleet())
++            .with_native_deletion(native.fleet(), native.fleet_gate())
+             .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+         let admission = Arc::new(admission);
+         serve_admitted_production(
+@@ -464,7 +464,7 @@ impl ProductionStartupOwners {
+             auth.shutdown().await;
+         }
+         if let Some(native) = &self.native {
+-            let _ = native.drain();
++            let _ = native.drain_async().await;
+         }
+         let _ = self.member.drain().await;
+     }
+@@ -609,27 +609,29 @@ async fn serve_admitted_production(
+     let auth_for_cleanup = auth.clone();
+     let native_shutdown = Arc::clone(&native);
+     let recovery_root = parts_root_for_recovery(production);
+-    let (recovery, recovery_worker) = crate::native_recovery::NativeRecoveryRuntime::new(
+-        &recovery_root,
+-        native.fleet(),
+-        Arc::clone(&registry),
+-        crate::native_recovery::NativeRecoveryLimits {
+-            pending_operations: 128,
+-            retained_operations: 512,
+-        },
+-        Arc::new(crate::production_data_runtime::ProductionRestoreExecutor::new(
+-            Arc::clone(&admission),
+-            Arc::clone(&native),
+-        )),
+-    )
+-    .map_err(|_| {
+-        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+-            crate::production::ProductionComponentError {
+-                component: crate::production::ProductionComponent::Backup,
+-                detail: "native recovery could not be composed",
++    let (recovery, recovery_worker) =
++        crate::native_recovery::NativeRecoveryRuntime::new_with_fleet_gate(
++            &recovery_root,
++            native.fleet(),
++            Arc::clone(&registry),
++            crate::native_recovery::NativeRecoveryLimits {
++                pending_operations: 128,
++                retained_operations: 512,
+             },
+-        ))) as Box<dyn Error + Send + Sync>
+-    })?;
++            Arc::new(crate::production_data_runtime::ProductionRestoreExecutor::new(
++                Arc::clone(&admission),
++                Arc::clone(&native),
++            )),
++            Some(native.fleet_gate()),
++        )
++        .map_err(|_| {
++            Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
++                crate::production::ProductionComponentError {
++                    component: crate::production::ProductionComponent::Backup,
++                    detail: "native recovery could not be composed",
++                },
++            ))) as Box<dyn Error + Send + Sync>
++        })?;
+     let mut recovery_worker = Some(recovery_worker);
+     let (native_stop, native_signal) = tokio::sync::watch::channel(false);
+     let native_supervisor = Arc::clone(&native);
+@@ -641,6 +643,7 @@ async fn serve_admitted_production(
+     let member_for_startup_cleanup = Arc::clone(&member);
+     let startup_result: Result<bool, Box<dyn Error + Send + Sync>> = async {
+         let lifecycle_fleet = native.fleet();
++        let lifecycle_gate = native.fleet_gate();
+         let Some(public) = public else {
+             return Err(Box::new(DaemonError::ProductionConfigurationMissing)
+                 as Box<dyn Error + Send + Sync>);
+@@ -812,6 +815,7 @@ async fn serve_admitted_production(
+             Arc::new(crate::production_lifecycle_control::RegistryLifecycleWorker {
+                 registry: Arc::clone(&registry),
+                 backups: Some(lifecycle_fleet),
++                backup_gate: Some(lifecycle_gate),
+                 recovery: Some(Arc::clone(&recovery)),
+                 receipts,
+                 journal: Some(journal.clone().ok_or_else(|| {
+@@ -1024,7 +1028,7 @@ async fn serve_admitted_production(
+         if let Some(auth) = &auth_for_cleanup {
+             auth.shutdown().await;
+         }
+-        native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
++        native_shutdown.drain_async().await.map_err(|_| DaemonError::ShutdownTimeout)?;
+         let report = member.drain().await;
+         report.storage.map_err(|error| {
+             Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+@@ -1075,7 +1079,7 @@ async fn cleanup_failed_production_startup(
+     if let Some(auth) = auth {
+         auth.shutdown().await;
+     }
+-    let _ = native.drain();
++    let _ = native.drain_async().await;
+     let _ = member.drain().await;
+ }
+ 
+@@ -2104,7 +2108,7 @@ mod tests {
+         use terrabase::backup::object_store::{ObjectDestination, Provider};
+         use terrabase::backup::{
+             PlacementLock,
+-            worker::{FleetLimits, OciBackupKeys},
++            worker::{CustomerKmsBackupKeys, FleetLimits},
+         };
+         use terrabase::identity::{ClusterUlid, MemberUlid};
+         use terrabase::member::DatabaseScope;
+@@ -2249,7 +2253,7 @@ mod tests {
+                 [NativeBackupInput {
+                     engine: Arc::new(AdmittedBackupEngine::new(target.database.host.clone())),
+                     keys: Arc::new(
+-                        OciBackupKeys::new(crate::test_keys::backup_keys(&scope)).unwrap(),
++                        CustomerKmsBackupKeys::new(crate::test_keys::backup_keys(&scope)).unwrap(),
+                     ),
+                     destinations: vec![(
+                         Provider::Oci,
+@@ -2288,7 +2292,8 @@ mod tests {
+             std::fs::remove_dir_all(root).unwrap();
+             return;
+         }
+-        let admission = Arc::new(admission.with_native_deletion(native.fleet()).unwrap());
++        let admission =
++            Arc::new(admission.with_native_deletion(native.fleet(), native.fleet_gate()).unwrap());
+         let publication_key = root.join("lifecycle-publisher.key");
+         std::fs::write(&publication_key, "p".repeat(32)).unwrap();
+         let outbox = root.join("lifecycle-outbox.sqlite");
+diff --git a/docs/adr/0030-service-managed-encryption-and-key-lifecycle.md b/docs/adr/0030-service-managed-encryption-and-key-lifecycle.md
+index 6f192928..8868d474 100644
+--- a/docs/adr/0030-service-managed-encryption-and-key-lifecycle.md
++++ b/docs/adr/0030-service-managed-encryption-and-key-lifecycle.md
+@@ -5,11 +5,16 @@ authority: ../../../GOAL.md
+ 
+ # Service-managed encryption and key lifecycle
+ 
++> **Superseded for customer key policy.** ADR 0049 replaces the first-release
++> restriction on customer-managed keys. The cryptographic format, lease
++> limits, and deletion caveats below remain applicable unless ADR 0049 says
++> otherwise.
++
+ ## Decision
+ 
+-The first release uses TerraScale-managed encryption only. It does not expose
+-customer-managed keys, imported keys, arbitrary KMS endpoints, or customer
+-cipher selection. OCI Vault supplies a regional key-encryption key; the
++The original first-release decision used TerraScale-managed encryption only.
++Customer-managed key policy is now defined by ADR 0049. OCI Vault supplies a
++regional key-encryption key for the currently qualified service-managed path;
+ Orchestrator resolves the canonical airport `RegionCode` to provider
+ configuration through workload identity and least-privilege IAM. OCI names
+ and credentials remain inside that adapter.
+diff --git a/docs/adr/0049-customer-key-policy-and-production-security.md b/docs/adr/0049-customer-key-policy-and-production-security.md
+new file mode 100644
+index 00000000..066b3766
+--- /dev/null
++++ b/docs/adr/0049-customer-key-policy-and-production-security.md
+@@ -0,0 +1,138 @@
++---
++date: 2026-09-09
++authority: ../../../GOAL.md
++supersedes: ADR 0030's service-managed-only customer-key restriction
++---
++
++# Customer key policy and production security boundary
++
++## Context
++
++ADR 0030 made service-managed encryption the only first-release key choice.
++That restriction is superseded. Customers may require a customer-controlled
++key provider for a database and may place encrypted backups in a customer-owned
++S3-compatible bucket. This record defines the security boundary and the limits
++that must be visible to customers and operators.
++
++The key provider is an adapter boundary. It must authorize an exact tenant,
++database, key version, Region, and purpose, and return a short-lived lease for
++the data key. TerraBase never accepts a raw key from customer configuration and
++never treats a bucket credential as a database-key credential. The current
++production capability still reports OCI Vault only; the adapter and policy are
++not evidence that a customer KMS integration has shipped or passed release
++qualification.
++
++## Decision
++
++Retain the existing envelope format and AES-256-GCM implementation. A
++customer-managed provider may replace the service-managed wrapper authority
++only after it satisfies the same authenticated metadata, exact-scope, bounded
++lease, locked-memory, zeroization, rotation, and fail-closed requirements.
++Imported key material, arbitrary KMS endpoints, provider escrow, and customer
++cipher selection remain unsupported until separately implemented and qualified.
++
++The service-managed OCI path remains available where the customer selects it.
++The effective key policy is durable database state, is resolved from the
++database owner, and is included in admission, rotation, backup, restore, and
++deletion operations. A policy change is not complete until the replacement
++provider has opened the required key versions and the relevant backup chain has
++been verified.
++
++## Production threat model
++
++Assets are customer documents and indexes, WAL and native backup artifacts,
++wrapped data keys, unwrapped key bytes, provider credentials, authorization
++leases, and the control records that bind them to a tenant and database.
++
++The trust boundaries are the public API, the TerraBase member, the host
++Orchestrator, the customer key provider, and each object-storage provider.
++Public requests are untrusted. Members may use only leases delivered through
++the authenticated host boundary. The Orchestrator owns OCI workload identity
++and service-managed wrappers; it does not gain authority over a customer KMS
++outside the provider contract. Backup objects are encrypted before upload, but
++object storage still learns bucket, object names, timing, size, and request
++metadata.
++
++The model covers credential theft, cross-tenant scope confusion, stale or
++replayed leases, stale leadership, lost provider responses, corrupted or
++partial backup objects, and a compromised storage account. Scope checks,
++authenticated encryption, durable fencing, independent restore validation,
++and least-privilege credentials address those cases. A host or provider
++operator with simultaneous access to live plaintext and its authorized key is
++trusted for that access interval. This design does not promise protection from
++an already compromised running member, plaintext already delivered to a
++customer, provider-retained copies, traffic metadata, or a customer who grants
++broader IAM access than this policy.
++
++## Revocation and lease limits
++
++Key authorization leases are bounded to at most 1,800 seconds. The client
++subtracts request time, renews before expiry, and refuses new key use after
++expiry or provider refusal. Authorization leases for customer operations are
++shorter (at most 30 seconds). These bounds limit continued use after a
++revocation is observed; they are not instantaneous revocation guarantees.
++
++Revocation cannot retract plaintext already returned, data already written to
++an authorized destination, or immutable provider and filesystem snapshots.
++Cached key references drain at their operation boundary, and a process crash
++or network partition can delay observation until the applicable lease expires.
++Deleting a catalog wrapper is immediate service access revocation, not proof
++of physical deletion or crypto-erasure. Provider key deletion, replicas,
++escrow, retention, and backup semantics require separate evidence as described
++by the crypto-shred operations decision.
++
++## Customer S3 policy
++
++Customer-owned backup storage must use a dedicated bucket or prefix and a
++dedicated role or access key used only by the backup adapter. The minimum
++object policy is:
++
++| Operation | Scope |
++| --- | --- |
++| `ListBucket` / equivalent listing | The configured bucket and backup prefix only |
++| `GetObject`, `HeadObject` | Objects below that prefix only |
++| `PutObject` and multipart part upload | Objects below that prefix only |
++| Abort multipart upload | Multipart uploads below that prefix only |
++| `DeleteObject` | Only when the customer explicitly delegates retention cleanup |
++
++Bucket administration, IAM administration, account access, versioning
++administration, KMS administration, unrelated prefixes, and cross-bucket
++listing are excluded. Transport must require TLS. Because TerraBase encrypts
++artifacts client-side, a customer KMS permission is not needed merely to store
++the ciphertext; customer-managed object-storage encryption may be layered on
++top, but its availability becomes part of restore readiness.
++
++Credentials are kept in the service secret store and are never written to
++backup objects, logs, metrics, URLs, or customer-visible error text. Rotation
++and revocation of the customer credential must stop new uploads after the
++current request and cause backup health to become degraded. The policy is a
++required configuration and review target; no customer S3 IAM integration is
++declared production-qualified by this ADR alone.
++
++## Restore tradeoffs
++
++Each selected destination must contain a complete independently restorable
++chain. OCI and Tigris provider redundancy can survive loss of one object store,
++but it does not survive loss of the key provider needed to unwrap the chain.
++A customer bucket adds control and residency options while also adding
++credential expiry, endpoint availability, lifecycle/versioning behavior,
++egress cost, and restore dependence on the customer's IAM policy.
++
++Restore always creates a new database identity and key version, verifies the
++manifest, chain, authenticated bytes, and frontier before publication, and
++must obtain a fresh authorized lease. A restore cannot proceed when the
++customer has revoked the key, removed the required objects, retained only an
++incomplete prefix, or imposed an object-storage policy that denies reads.
++Re-encryption during restore reduces exposure of the source wrapper but does
++not make an unavailable source key recoverable. Restore drills must exercise
++each selected provider independently, credential rotation, key revocation,
++partial uploads, retention/versioned objects, and loss of the other provider.
++
++## Consequences and release gate
++
++ADR 0030's service-managed-only restriction is no longer the product policy,
++but the customer-provider path remains a design and integration boundary until
++its implementation, real provider IAM behavior, revocation measurements, and
++independent restore evidence are qualified. Documentation, API capability
++advertising, and production admission must use the capability status rather
++than infer support from the adapter type or local tests.
+diff --git a/docs/adr/README.md b/docs/adr/README.md
+index f089e632..e8eb722b 100644
+--- a/docs/adr/README.md
++++ b/docs/adr/README.md
+@@ -13,7 +13,7 @@ choices, not release authorization.
+ - [0025 — Private protobuf and gRPC protocol](0025-private-protobuf-grpc.md)
+ - [0027 — ULID object identities](0027-ulid-object-identities.md)
+ - [0028 — Durable long-running operation progress](0028-durable-long-running-operation-progress.md)
+-- [0030 — Service-managed encryption and key lifecycle](0030-service-managed-encryption-and-key-lifecycle.md)
++- [0030 — Service-managed encryption and key lifecycle](0030-service-managed-encryption-and-key-lifecycle.md) (customer-key restriction superseded by 0049)
+ - [0032 — Public contract limits and compatibility](0032-public-contract-limits-and-compatibility.md)
+ - [0033 — Production SLOs, OCI placement, and operability](0033-production-slos-oci-placement-and-operability.md)
+ - [0035 — `GlobalDurable` requires multiple Regions](0035-one-region-global-durable-semantics.md)
+@@ -27,6 +27,7 @@ choices, not release authorization.
+ - [0044 — The two engines: replication and sync, on a research base](0044-sync-and-replication-engines.md)
+ - [0045 — The auto-indexing engine, on a research base](0045-auto-indexing-engine.md)
+ - [0046 — Native Rust backup subsystem informed by Litestream](0046-native-rust-backup-subsystem.md)
++- [0049 — Customer key policy and production security boundary](0049-customer-key-policy-and-production-security.md)
+ 
+ ## Authoring
+ 
+diff --git a/src/backup/envelope.rs b/src/backup/envelope.rs
+index 771e8fd1..24abd78b 100644
+--- a/src/backup/envelope.rs
++++ b/src/backup/envelope.rs
+@@ -2,12 +2,11 @@
+ //!
+ //! A database with admitted shard participants cannot publish independent
+ //! recovery points and call them one point.  This module binds the logical
+-//! database incarnation, route generation, common storage cut, and the
++//! database incarnation, route generation, and
+ //! ordered per-participant manifest identities into one digest.  Callers must
+ //! validate every participant before exposing the envelope as recoverable.
+ 
+ use super::{BackupError, BackupManifest};
+-use crate::types::StorageSequence;
+ use aws_lc_rs::digest::{SHA256, digest};
+ use serde::{Deserialize, Serialize};
+ use std::path::Path;
+@@ -29,7 +28,7 @@ pub struct BackupEnvelopeParticipant {
+     pub route_generation: u64,
+     /// Local journal boundary captured for this participant.
+     pub boundary: u64,
+-    /// Recovery-point manifest bound to the common cut.
++    /// Recovery-point manifest bound to this participant's local boundary.
+     pub manifest: BackupManifest,
+ }
+ 
+@@ -39,7 +38,6 @@ pub struct BackupEnvelope {
+     database_id: String,
+     database_incarnation: u128,
+     route_generation: u64,
+-    common_cut: StorageSequence,
+     participants: Vec<BackupEnvelopeParticipant>,
+     digest: String,
+ }
+@@ -51,7 +49,6 @@ struct EnvelopeWire {
+     database_id: String,
+     database_incarnation: String,
+     route_generation: u64,
+-    common_cut: u64,
+     participants: Vec<ParticipantWire>,
+     digest: String,
+ }
+@@ -73,7 +70,6 @@ impl BackupEnvelope {
+         database_id: String,
+         database_incarnation: u128,
+         route_generation: u64,
+-        common_cut: StorageSequence,
+         mut participants: Vec<BackupEnvelopeParticipant>,
+     ) -> Result<Self, BackupError> {
+         if database_id.is_empty()
+@@ -94,8 +90,7 @@ impl BackupEnvelope {
+                 || participant.database_incarnation != database_incarnation
+                 || participant.route_generation != route_generation
+                 || participant.manifest.database_id() != participant.database_id
+-                || participant.boundary != common_cut.get()
+-                || participant.manifest.boundary_sequence() != common_cut
++                || participant.manifest.boundary_sequence().get() != participant.boundary
+             {
+                 return Err(BackupError::ManifestInvalid);
+             }
+@@ -104,7 +99,6 @@ impl BackupEnvelope {
+             database_id,
+             database_incarnation,
+             route_generation,
+-            common_cut,
+             participants,
+             digest: String::new(),
+         };
+@@ -130,12 +124,6 @@ impl BackupEnvelope {
+         self.route_generation
+     }
+ 
+-    /// Returns the one storage boundary shared by every participant.
+-    #[must_use]
+-    pub const fn common_cut(&self) -> StorageSequence {
+-        self.common_cut
+-    }
+-
+     /// Returns participants in canonical identity order.
+     #[must_use]
+     pub fn participants(&self) -> &[BackupEnvelopeParticipant] {
+@@ -237,7 +225,6 @@ impl BackupEnvelope {
+             u128::from_str_radix(&wire.database_incarnation, 16)
+                 .map_err(|_| BackupError::ManifestInvalid)?,
+             wire.route_generation,
+-            StorageSequence::new(wire.common_cut),
+             participants,
+         )?;
+         if envelope.digest != wire.digest {
+@@ -301,7 +288,6 @@ impl BackupEnvelope {
+             database_id: self.database_id.clone(),
+             database_incarnation: format!("{:032x}", self.database_incarnation),
+             route_generation: self.route_generation,
+-            common_cut: self.common_cut.get(),
+             participants,
+             digest: self.digest.clone(),
+         })
+@@ -319,7 +305,7 @@ impl BackupEnvelope {
+ mod tests {
+     use super::*;
+     use crate::backup::manifest::{BackupTenantCount, ManifestFacts};
+-    use crate::types::TenantId;
++    use crate::types::{StorageSequence, TenantId};
+ 
+     fn manifest(boundary: u64) -> BackupManifest {
+         BackupManifest::assemble(ManifestFacts {
+@@ -351,7 +337,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn rejects_participants_from_different_common_cuts() {
++    fn accepts_participants_with_independent_local_boundaries() {
+         let first = manifest(7);
+         let second = manifest(8);
+         let participants = vec![
+@@ -373,14 +359,23 @@ mod tests {
+             },
+         ];
+ 
++        assert!(BackupEnvelope::assemble("logical-database".into(), 1, 1, participants).is_ok());
++    }
++
++    #[test]
++    fn rejects_participant_boundary_mismatch() {
++        let point = manifest(7);
++        let participant = BackupEnvelopeParticipant {
++            participant_id: "shard-0000000000000001".into(),
++            database_id: point.database_id().into(),
++            database_incarnation: 1,
++            route_generation: 1,
++            boundary: 8,
++            manifest: point,
++        };
++
+         assert_eq!(
+-            BackupEnvelope::assemble(
+-                "logical-database".into(),
+-                1,
+-                1,
+-                StorageSequence::new(7),
+-                participants,
+-            ),
++            BackupEnvelope::assemble("logical-database".into(), 1, 1, vec![participant]),
+             Err(BackupError::ManifestInvalid)
+         );
+     }
+diff --git a/src/backup/object_store.rs b/src/backup/object_store.rs
+index c008fee0..ca7a34ce 100644
+--- a/src/backup/object_store.rs
++++ b/src/backup/object_store.rs
+@@ -8,10 +8,10 @@ use std::fs::{self, File, OpenOptions};
+ use std::io::{Read, Write};
+ use std::path::Path;
+ use std::sync::Arc;
+-use std::time::Duration;
++use std::time::{Duration, SystemTime};
+ 
+ use futures_util::StreamExt;
+-use object_store::aws::{AmazonS3Builder, S3CopyIfNotExists};
++use object_store::aws::{AmazonS3Builder, AwsCredential, S3CopyIfNotExists};
+ use object_store::path::Path as ObjectPath;
+ use object_store::{ClientOptions, MultipartUpload, ObjectStore, PutMode, RetryConfig};
+ 
+@@ -34,12 +34,38 @@ pub enum Provider {
+ pub struct Credentials {
+     access_key: String,
+     secret_key: String,
++    session_token: Option<String>,
++    expires_at: Option<SystemTime>,
+ }
+ impl Credentials {
+     /// Takes ownership of the provider's access and secret keys.
+     #[must_use]
+     pub fn new(access_key: String, secret_key: String) -> Self {
+-        Self { access_key, secret_key }
++        Self { access_key, secret_key, session_token: None, expires_at: None }
++    }
++
++    /// Creates short-lived credentials issued by an explicit workload identity.
++    #[must_use]
++    pub fn temporary(
++        access_key: String,
++        secret_key: String,
++        session_token: String,
++        expires_at: SystemTime,
++    ) -> Self {
++        Self {
++            access_key,
++            secret_key,
++            session_token: Some(session_token),
++            expires_at: Some(expires_at),
++        }
++    }
++
++    fn take_parts(&mut self) -> (String, String, Option<String>) {
++        (
++            std::mem::take(&mut self.access_key),
++            std::mem::take(&mut self.secret_key),
++            std::mem::take(&mut self.session_token),
++        )
+     }
+ }
+ impl fmt::Debug for Credentials {
+@@ -52,6 +78,60 @@ impl Drop for Credentials {
+         use zeroize::Zeroize;
+         self.access_key.zeroize();
+         self.secret_key.zeroize();
++        self.session_token.zeroize();
++    }
++}
++
++/// Redacted failure from a customer workload-identity authority.
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum WorkloadIdentityError {
++    /// The authority could not issue a currently usable credential.
++    Unavailable,
++    /// The issued credential was already expired or malformed.
++    Invalid,
++}
++
++impl fmt::Display for WorkloadIdentityError {
++    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
++        formatter.write_str("workload identity credential unavailable")
++    }
++}
++impl std::error::Error for WorkloadIdentityError {}
++
++/// Explicit customer workload-identity seam for S3 credentials.
++///
++/// Implementations must obtain short-lived credentials from the customer
++/// authority. The object store invokes this for each request, so expiry and
++/// revocation are observed without ambient environment or static fallback.
++#[async_trait::async_trait]
++pub trait WorkloadIdentityProvider: fmt::Debug + Send + Sync {
++    /// Resolve one currently valid credential.
++    async fn credentials(&self) -> Result<Credentials, WorkloadIdentityError>;
++}
++
++#[derive(Debug)]
++struct S3WorkloadIdentityProvider(Arc<dyn WorkloadIdentityProvider>);
++
++#[async_trait::async_trait]
++impl object_store::CredentialProvider for S3WorkloadIdentityProvider {
++    type Credential = AwsCredential;
++
++    async fn get_credential(&self) -> object_store::Result<Arc<Self::Credential>> {
++        let mut credentials = self.0.credentials().await.map_err(|error| {
++            object_store::Error::Generic { store: "S3", source: Box::new(error) }
++        })?;
++        if credentials.access_key.is_empty()
++            || credentials.secret_key.is_empty()
++            || credentials.session_token.as_deref().is_some_and(str::is_empty)
++            || credentials.expires_at.is_some_and(|expiry| expiry <= SystemTime::now())
++        {
++            return Err(object_store::Error::Generic {
++                store: "S3",
++                source: Box::new(WorkloadIdentityError::Invalid),
++            });
++        }
++        let (key_id, secret_key, token) = credentials.take_parts();
++        Ok(Arc::new(AwsCredential { key_id, secret_key, token }))
+     }
+ }
+ 
+@@ -376,6 +456,53 @@ impl ObjectDestination {
+         })
+     }
+ 
++    /// Builds a production S3 client backed exclusively by workload identity.
++    ///
++    /// Credentials are resolved lazily for every request. No environment
++    /// provider, static secret, or expired credential can be selected.
++    pub fn new_with_workload_identity(
++        config: DestinationConfig,
++        provider: Arc<dyn WorkloadIdentityProvider>,
++    ) -> Result<Self, TransferError> {
++        validate_config_for_workload_identity(&config)?;
++        let store = AmazonS3Builder::new()
++            .with_bucket_name(&config.bucket)
++            .with_region(&config.signing_region)
++            .with_endpoint(&config.endpoint)
++            .with_credentials(Arc::new(S3WorkloadIdentityProvider(provider)))
++            .with_virtual_hosted_style_request(false)
++            .with_copy_if_not_exists(S3CopyIfNotExists::Multipart)
++            .with_client_options(
++                ClientOptions::new().with_allow_http(false).with_timeout(Duration::from_mins(1)),
++            )
++            .with_retry(RetryConfig {
++                max_retries: 2,
++                retry_timeout: Duration::from_mins(2),
++                ..RetryConfig::default()
++            })
++            .build()
++            .map_err(|_| TransferError::Configuration)?;
++        let mut identity_input = blake3::Hasher::new();
++        for value in [
++            format!("{:?}", config.provider),
++            config.endpoint.clone(),
++            config.bucket.clone(),
++            config.signing_region.clone(),
++            config.admitted_region.to_string(),
++        ] {
++            identity_input.update(value.as_bytes());
++            identity_input.update(&[0]);
++        }
++        Ok(Self {
++            identity: identity_input.finalize().to_hex().to_string(),
++            admitted_region: config.admitted_region,
++            provider: config.provider,
++            store: Arc::new(store),
++            max_artifact_bytes: config.max_artifact_bytes,
++            max_point_bytes: config.max_point_bytes,
++        })
++    }
++
+     /// Constructs an S3 destination against a local HTTP emulator (for
+     /// example MinIO or LocalStack). This entry point is available only to
+     /// tests and the explicit `test-support` feature; production admission
+@@ -1074,6 +1201,39 @@ fn validate_config(config: &DestinationConfig) -> Result<(), TransferError> {
+         || !config.permitted_geographies.contains(&config.verified_geography)
+         || config.max_artifact_bytes == 0
+         || config.max_artifact_bytes > 256 * 1024 * 1024
++        || config.max_point_bytes > 4 * 1024 * 1024 * 1024
++        || config.max_point_bytes < config.max_artifact_bytes
++    {
++        return Err(TransferError::Configuration);
++    }
++    Ok(())
++}
++
++fn validate_config_for_workload_identity(config: &DestinationConfig) -> Result<(), TransferError> {
++    let host = config.endpoint.strip_prefix("https://").ok_or(TransferError::Configuration)?;
++    let endpoint_valid = match config.provider {
++        Provider::Oci => {
++            config.signing_region == config.database_region
++                && host.ends_with(&format!(
++                    ".compat.objectstorage.{}.oraclecloud.com",
++                    config.database_region
++                ))
++        }
++        Provider::Tigris => host == "fly.storage.tigris.dev",
++    };
++    if !crate::regions::RegionCatalog::production().is_registered(&config.admitted_region)
++        || !endpoint_valid
++        || host.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
++        || config.signing_region.is_empty()
++        || config.database_region.is_empty()
++        || config.bucket.is_empty()
++        || config.bucket.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
++        || config.verified_geography.is_empty()
++        || config.placement_revision.is_empty()
++        || !config.permitted_geographies.contains(&config.verified_geography)
++        || config.max_artifact_bytes == 0
++        || config.max_artifact_bytes > 256 * 1024 * 1024
++        || config.max_point_bytes > 4 * 1024 * 1024 * 1024
+         || config.max_point_bytes < config.max_artifact_bytes
+     {
+         return Err(TransferError::Configuration);
+@@ -1114,6 +1274,17 @@ fn validate_point_prefix(point: &Path, prefix: &str) -> Result<(), TransferError
+     let Some(name) = point.file_name().and_then(|name| name.to_str()) else {
+         return Ok(());
+     };
++    // A canonical recovery-point prefix is an identity boundary.  Do not
++    // allow a caller to place an arbitrary staging directory under it: the
++    // directory basename must carry the same recovery identity.  Opaque
++    // transport fixtures retain their existing prefix-only behavior.
++    let prefix_name = prefix.rsplit('/').next().ok_or(TransferError::InvalidPoint)?;
++    if let Some(prefix_identity) = prefix_name.strip_prefix("rp-")
++        && super::manifest::validate_identity(prefix_identity).is_ok()
++        && name != prefix_name
++    {
++        return Err(TransferError::InvalidPoint);
++    }
+     let Some(identity) = name.strip_prefix("rp-") else {
+         return Ok(());
+     };
+@@ -1199,11 +1370,74 @@ fn parse_index(
+ mod tests {
+     use super::*;
+     use object_store::memory::InMemory;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++
++    #[derive(Debug)]
++    struct FakeWorkloadIdentity {
++        calls: AtomicUsize,
++        revoked: std::sync::atomic::AtomicBool,
++    }
++
++    #[async_trait::async_trait]
++    impl WorkloadIdentityProvider for FakeWorkloadIdentity {
++        async fn credentials(&self) -> Result<Credentials, WorkloadIdentityError> {
++            self.calls.fetch_add(1, Ordering::Relaxed);
++            if self.revoked.load(Ordering::Relaxed) {
++                return Err(WorkloadIdentityError::Unavailable);
++            }
++            Ok(Credentials::temporary(
++                "short-lived-access".into(),
++                "short-lived-secret".into(),
++                "short-lived-token".into(),
++                SystemTime::now() + Duration::from_secs(60),
++            ))
++        }
++    }
+ 
+     fn destination(store: Arc<InMemory>) -> ObjectDestination {
+         ObjectDestination::for_test(Provider::Oci, store, 1024, 4096)
+     }
+ 
++    #[tokio::test]
++    async fn workload_identity_refreshes_and_fails_closed_after_revocation() {
++        let provider = Arc::new(FakeWorkloadIdentity {
++            calls: AtomicUsize::new(0),
++            revoked: std::sync::atomic::AtomicBool::new(false),
++        });
++        let adapter = S3WorkloadIdentityProvider(provider.clone());
++        let first = object_store::CredentialProvider::get_credential(&adapter)
++            .await
++            .expect("initial short-lived credential");
++        assert_eq!(first.key_id, "short-lived-access");
++        provider.revoked.store(true, Ordering::Relaxed);
++        let revoked = object_store::CredentialProvider::get_credential(&adapter).await;
++        assert!(revoked.is_err(), "revocation must be observed on the next request");
++        assert_eq!(provider.calls.load(Ordering::Relaxed), 2);
++        assert!(!format!("{revoked:?}").contains("short-lived-secret"));
++    }
++
++    #[tokio::test]
++    async fn workload_identity_rejects_expired_credentials() {
++        #[derive(Debug)]
++        struct Expired;
++        #[async_trait::async_trait]
++        impl WorkloadIdentityProvider for Expired {
++            async fn credentials(&self) -> Result<Credentials, WorkloadIdentityError> {
++                Ok(Credentials::temporary(
++                    "access".into(),
++                    "secret".into(),
++                    "token".into(),
++                    SystemTime::now() - Duration::from_secs(1),
++                ))
++            }
++        }
++        let result = object_store::CredentialProvider::get_credential(&S3WorkloadIdentityProvider(
++            Arc::new(Expired),
++        ))
++        .await;
++        assert!(result.is_err());
++    }
++
+     /// SQLite WAL transport/recovery qualification (not the native backup format). Set
+     /// `TERRABASE_MINIO_ENDPOINT` to the emulator endpoint to run it.
+     #[test]
+@@ -1374,6 +1608,13 @@ mod tests {
+                 .await,
+             Err(TransferError::InvalidPoint)
+         );
++        let arbitrary = root.join("staging");
++        fs::create_dir_all(&arbitrary).unwrap();
++        assert_eq!(
++            destination.upload_point(&arbitrary, &format!("db/rp-{identity}")).await,
++            Err(TransferError::InvalidPoint),
++            "canonical prefixes must be bound to a canonical point directory"
++        );
+         destination.upload_point(&point, &format!("db/rp-{identity}")).await.unwrap();
+         fs::write(point.join("member.tbv3e"), b"replacement").unwrap();
+         assert_eq!(
+@@ -1626,6 +1867,13 @@ mod tests {
+         config.verified_geography = "BR".into();
+         config.endpoint = "http://fly.storage.tigris.dev".into();
+         assert_eq!(validate_config(&config), Err(TransferError::Configuration));
++        config.endpoint = "https://fly.storage.tigris.dev".into();
++        config.provider = Provider::Tigris;
++        config.max_point_bytes = 4 * 1024 * 1024 * 1024 + 1;
++        assert_eq!(
++            validate_config_for_workload_identity(&config),
++            Err(TransferError::Configuration)
++        );
+     }
+ 
+     #[test]
+diff --git a/src/backup/restore/mod.rs b/src/backup/restore/mod.rs
+index 7f64e7b0..64e28d0d 100644
+--- a/src/backup/restore/mod.rs
++++ b/src/backup/restore/mod.rs
+@@ -1661,11 +1661,23 @@ fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
+     // a sync error cannot make generic cleanup remove the published path.
+     staging.mark_published();
+     if let Some(parent) = target.parent() {
+-        super::sync_directory(parent)?;
++        sync_restore_parent(parent)?;
+     }
+     Ok(())
+ }
+ 
++#[cfg(test)]
++static FAIL_NEXT_RESTORE_PARENT_SYNC: std::sync::atomic::AtomicBool =
++    std::sync::atomic::AtomicBool::new(false);
++
++fn sync_restore_parent(parent: &Path) -> Result<(), BackupError> {
++    #[cfg(test)]
++    if FAIL_NEXT_RESTORE_PARENT_SYNC.swap(false, std::sync::atomic::Ordering::SeqCst) {
++        return Err(BackupError::DestinationUnavailable);
++    }
++    super::sync_directory(parent)
++}
++
+ fn write_restore_metadata(
+     engine: &Engine,
+     identity: &RestoreIdentity,
+@@ -1781,7 +1793,7 @@ fn publish_with_identity(
+     // it for recovery.
+     staging.mark_published();
+     if let Some(parent) = target.parent() {
+-        super::sync_directory(parent)?;
++        sync_restore_parent(parent)?;
+     }
+     Ok(())
+ }
+@@ -2562,3 +2574,56 @@ mod digest_tests {
+         std::fs::remove_dir_all(path).unwrap();
+     }
+ }
++
++#[cfg(test)]
++mod publication_tests {
++    use super::*;
++
++    fn test_root(name: &str) -> PathBuf {
++        std::env::temp_dir().join(format!(
++            "terrabase-restore-{name}-{}-{}",
++            std::process::id(),
++            std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .unwrap()
++                .as_nanos(),
++        ))
++    }
++
++    #[test]
++    fn exchange_sync_failure_preserves_retired_target_for_recovery() {
++        let root = test_root("exchange-sync-failure");
++        let target = root.join("target");
++        std::fs::create_dir_all(&target).unwrap();
++        std::fs::write(target.join("state"), b"previous").unwrap();
++        let staging = StagingDir::create(&target).unwrap();
++        std::fs::write(staging.path().join("state"), b"restored").unwrap();
++
++        FAIL_NEXT_RESTORE_PARENT_SYNC.store(true, std::sync::atomic::Ordering::SeqCst);
++        let result = publish_with_identity(&staging, &target, true);
++        assert_eq!(result, Err(BackupError::DestinationUnavailable));
++        assert_eq!(std::fs::read(target.join("state")).unwrap(), b"restored");
++
++        // The caller's failure cleanup must preserve the previous target,
++        // which is now held at the exchanged staging pathname.
++        staging.discard();
++        assert_eq!(std::fs::read(staging.path().join("state")).unwrap(), b"previous");
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn successful_exchange_discards_retired_target() {
++        let root = test_root("exchange-success");
++        let target = root.join("target");
++        std::fs::create_dir_all(&target).unwrap();
++        std::fs::write(target.join("state"), b"previous").unwrap();
++        let staging = StagingDir::create(&target).unwrap();
++        std::fs::write(staging.path().join("state"), b"restored").unwrap();
++
++        publish_with_identity(&staging, &target, true).unwrap();
++        staging.discard_replaced();
++        assert_eq!(std::fs::read(target.join("state")).unwrap(), b"restored");
++        assert!(!staging.path().exists());
++        std::fs::remove_dir_all(root).unwrap();
++    }
++}
+diff --git a/src/backup/worker.rs b/src/backup/worker.rs
+index b77c0f5a..aa8bc467 100644
+--- a/src/backup/worker.rs
++++ b/src/backup/worker.rs
+@@ -72,49 +72,53 @@ pub trait BackupKeys: BackupReader + Send + Sync {
+     fn lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError>;
+ }
+ 
+-/// OCI-authorized backup hierarchy, including explicitly retained versions.
++/// Customer-KMS-authorized backup hierarchy, including explicitly retained versions.
+ ///
+ /// The source must be constructed for the database's separate backup key
+-/// purpose and durable active backup version; data-purpose leases are refused.
++/// purpose and durable active backup version; data-purpose and local-file
++/// leases are refused.
+ #[derive(Debug)]
+-pub struct OciBackupKeys {
++pub struct CustomerKmsBackupKeys {
+     source: Arc<dyn crate::encryption::DatabaseKeySource>,
+     scope: crate::encryption::KeyScope,
++    provider: crate::encryption::KeyProviderIdentity,
+ }
+ 
+-impl OciBackupKeys {
++impl CustomerKmsBackupKeys {
+     /// Validates the backup hierarchy before a stream can be registered.
+     ///
+     /// # Errors
+-    /// Fails closed on unavailable keys, wrong purpose or non-OCI authorization.
++    /// Fails closed on unavailable keys, wrong purpose or local-file authorization.
+     pub fn new(
+         source: Arc<dyn crate::encryption::DatabaseKeySource>,
+     ) -> Result<Self, EncryptionError> {
+         let lease = source.current_lease()?;
+-        if lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
++        if lease.provider() == crate::encryption::KeyProviderIdentity::LocalFile
+             || lease.metadata().scope().purpose() != crate::encryption::KeyPurpose::Backup
+-            || lease.is_expired()
+         {
+             return Err(EncryptionError::InvalidKeyMetadata);
+         }
+-        Ok(Self { scope: lease.metadata().scope().clone(), source })
++        if lease.is_expired() {
++            return Err(EncryptionError::KeyLeaseExpired);
++        }
++        Ok(Self { scope: lease.metadata().scope().clone(), provider: lease.provider(), source })
+     }
+ }
+ 
+-impl BackupKeys for OciBackupKeys {
++impl BackupKeys for CustomerKmsBackupKeys {
+     fn lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+         let lease = self.source.current_lease()?;
+-        if lease.metadata().scope() != &self.scope
+-            || lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+-            || lease.is_expired()
+-        {
++        if lease.metadata().scope() != &self.scope || lease.provider() != self.provider {
+             return Err(EncryptionError::InvalidKeyMetadata);
+         }
++        if lease.is_expired() {
++            return Err(EncryptionError::KeyLeaseExpired);
++        }
+         Ok(lease)
+     }
+ }
+ 
+-impl BackupReader for OciBackupKeys {
++impl BackupReader for CustomerKmsBackupKeys {
+     fn open_backup_envelope(&self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+         let version = crate::encryption::ArtifactCipher::envelope_key_version(
+             &self.scope,
+@@ -123,9 +127,15 @@ impl BackupReader for OciBackupKeys {
+             envelope,
+         )?;
+         let lease = self.source.lease(version)?;
+-        if lease.metadata().scope() != &self.scope || lease.metadata().version() != version {
++        if lease.metadata().scope() != &self.scope
++            || lease.metadata().version() != version
++            || lease.provider() != self.provider
++        {
+             return Err(EncryptionError::InvalidKeyMetadata);
+         }
++        if lease.is_expired() {
++            return Err(EncryptionError::KeyLeaseExpired);
++        }
+         crate::encryption::ArtifactCipher::open_envelope_from_database_key_lease(
+             &lease,
+             crate::encryption::ArtifactKind::Backup,
+@@ -2165,7 +2175,8 @@ mod tests {
+     use crate::backup::BackupEnvelopeParticipant;
+     use crate::backup::tests::{committed, location, open_engine, put, text};
+     use crate::encryption::{
+-        DatabaseKey, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
++        DatabaseKey, DatabaseKeySource, DatabaseKeyVersion, KeyPurpose, KeyScope,
++        KeyVersionMetadata,
+     };
+     use crate::types::LocalDurability;
+     use object_store::ObjectStore;
+@@ -2204,6 +2215,46 @@ mod tests {
+         )))
+     }
+ 
++    #[derive(Debug)]
++    struct Source(Arc<DatabaseKeyLease>);
++
++    impl DatabaseKeySource for Source {
++        fn current_lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
++            Ok(Arc::clone(&self.0))
++        }
++
++        fn lease(
++            &self,
++            _version: DatabaseKeyVersion,
++        ) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
++            Ok(Arc::clone(&self.0))
++        }
++    }
++
++    #[test]
++    fn customer_kms_backup_keys_rejects_expired_authorization() {
++        let scope = KeyScope::new_with_project(
++            "production",
++            crate::identity::TenantUlid::generate(),
++            crate::identity::ProjectUlid::generate(),
++            crate::identity::DatabaseUlid::generate(),
++            KeyPurpose::Backup,
++        )
++        .unwrap();
++        let lease = DatabaseKeyLease::test_oci_vault(
++            KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()),
++            DatabaseKey::from_bytes([91; 32]),
++            Duration::from_nanos(1),
++        )
++        .unwrap();
++        std::thread::sleep(Duration::from_millis(1));
++
++        assert!(matches!(
++            CustomerKmsBackupKeys::new(Arc::new(Source(Arc::new(lease)))),
++            Err(EncryptionError::KeyLeaseExpired)
++        ));
++    }
++
+     #[cfg(unix)]
+     #[test]
+     fn staging_temporary_rejects_symlink_without_touching_target() {
+@@ -2304,7 +2355,6 @@ mod tests {
+             database.clone(),
+             incarnation,
+             1,
+-            manifest.boundary_sequence(),
+             vec![BackupEnvelopeParticipant {
+                 participant_id: "shard-0000000000000001".into(),
+                 database_id: database.clone(),
+@@ -2320,7 +2370,6 @@ mod tests {
+             "another-database".into(),
+             incarnation,
+             1,
+-            manifest.boundary_sequence(),
+             vec![BackupEnvelopeParticipant {
+                 participant_id: "shard-0000000000000001".into(),
+                 database_id: database.clone(),
+diff --git a/src/encryption/key_delivery.rs b/src/encryption/key_delivery.rs
+index 09432073..1a2d3f7c 100644
+--- a/src/encryption/key_delivery.rs
++++ b/src/encryption/key_delivery.rs
+@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
+ use std::time::{Duration, Instant};
+ 
+ use super::{
+-    DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionError,
+-    KeyVersionMetadata, MAX_DATABASE_KEY_LEASE,
++    CustomerKmsAdapter, DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion,
++    EncryptionError, KeyProviderIdentity, KeyVersionMetadata, MAX_DATABASE_KEY_LEASE,
+ };
+ use crate::regions::{RegionCatalog, RegionCode};
+ 
+@@ -141,14 +141,24 @@ impl OciVaultKeyDelivery {
+     }
+ }
+ 
++impl CustomerKmsAdapter for OciVaultKeyDelivery {
++    fn lease(
++        &self,
++        metadata: &KeyVersionMetadata,
++        region: RegionCode,
++    ) -> Result<DatabaseKeyLease, EncryptionError> {
++        Self::lease(self, metadata, region)
++    }
++}
++
+ /// Bounded, renewable OCI leases for one immutable database scope and version.
+ ///
+ /// Replace this source only after a new active version is durably admitted.
+ /// Historical versions are requested explicitly and remain usable only while
+ /// the orchestrator authorizes their regional wrappers.
+ #[derive(Debug)]
+-pub struct OciVaultDatabaseKeys {
+-    provider: OciVaultKeyDelivery,
++pub struct CustomerKmsDatabaseKeys<A> {
++    provider: A,
+     metadata: KeyVersionMetadata,
+     region: RegionCode,
+     cache: Mutex<BTreeMap<DatabaseKeyVersion, CachedLease>>,
+@@ -160,13 +170,13 @@ struct CachedLease {
+     renew_at: Instant,
+ }
+ 
+-impl OciVaultDatabaseKeys {
++impl<A: CustomerKmsAdapter> CustomerKmsDatabaseKeys<A> {
+     /// Authorizes the active key before returning a production storage source.
+     ///
+     /// # Errors
+     /// Fails closed when the bound scope/version/Region cannot obtain a lease.
+     pub fn new(
+-        provider: OciVaultKeyDelivery,
++        provider: A,
+         metadata: KeyVersionMetadata,
+         region: RegionCode,
+     ) -> Result<Self, EncryptionError> {
+@@ -176,7 +186,7 @@ impl OciVaultDatabaseKeys {
+     }
+ }
+ 
+-impl DatabaseKeySource for OciVaultDatabaseKeys {
++impl<A: CustomerKmsAdapter> DatabaseKeySource for CustomerKmsDatabaseKeys<A> {
+     fn current_lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+         self.lease(self.metadata.version())
+     }
+@@ -195,6 +205,9 @@ impl DatabaseKeySource for OciVaultDatabaseKeys {
+         }
+         let metadata = KeyVersionMetadata::new(self.metadata.scope().clone(), version);
+         let lease = Arc::new(self.provider.lease(&metadata, self.region)?);
++        if lease.metadata() != &metadata || lease.provider() != KeyProviderIdentity::OciVault {
++            return Err(EncryptionError::InvalidKeyMetadata);
++        }
+         let now = Instant::now();
+         let remaining = lease
+             .expires_at()
+@@ -211,6 +224,9 @@ impl DatabaseKeySource for OciVaultDatabaseKeys {
+     }
+ }
+ 
++/// OCI Vault's host-delivered implementation of [`CustomerKmsDatabaseKeys`].
++pub type OciVaultDatabaseKeys = CustomerKmsDatabaseKeys<OciVaultKeyDelivery>;
++
+ fn validate_component(
+     path: &Path,
+     socket: &Path,
+@@ -255,6 +271,23 @@ mod tests {
+ 
+     static NEXT: AtomicU64 = AtomicU64::new(0);
+ 
++    #[derive(Debug)]
++    struct InjectedAdapter;
++
++    impl CustomerKmsAdapter for InjectedAdapter {
++        fn lease(
++            &self,
++            metadata: &KeyVersionMetadata,
++            _region: RegionCode,
++        ) -> Result<DatabaseKeyLease, EncryptionError> {
++            DatabaseKeyLease::test_oci_vault(
++                metadata.clone(),
++                DatabaseKey::from_bytes([7; 32]),
++                Duration::from_secs(60),
++            )
++        }
++    }
++
+     struct SocketFixture {
+         directory: PathBuf,
+         socket: PathBuf,
+@@ -561,4 +594,19 @@ mod tests {
+         );
+         assert!(source.current_lease().is_ok());
+     }
++
++    #[test]
++    fn customer_kms_source_uses_injected_adapter_and_preserves_scope() {
++        let metadata = metadata("01ARZ3NDEKTSV4RRFFQ69G5FB0");
++        let source = CustomerKmsDatabaseKeys::new(
++            InjectedAdapter,
++            metadata.clone(),
++            RegionCode::from_text("GRU").unwrap(),
++        )
++        .unwrap();
++        let lease = source.current_lease().unwrap();
++        assert_eq!(lease.metadata(), &metadata);
++        assert_eq!(lease.metadata().scope().purpose(), KeyPurpose::Data);
++        assert_eq!(lease.provider(), KeyProviderIdentity::OciVault);
++    }
+ }
+diff --git a/src/encryption/mod.rs b/src/encryption/mod.rs
+index 50183c33..7d85e729 100644
+--- a/src/encryption/mod.rs
++++ b/src/encryption/mod.rs
+@@ -19,12 +19,12 @@ mod oci_vault;
+ mod provider;
+ 
+ #[cfg(target_os = "linux")]
+-pub use key_delivery::{OciVaultDatabaseKeys, OciVaultKeyDelivery};
++pub use key_delivery::{CustomerKmsDatabaseKeys, OciVaultDatabaseKeys, OciVaultKeyDelivery};
+ pub use local_file::LocalFileKeyProvider;
+ pub use oci_vault::UnconfiguredOciVaultProvider;
+ pub use provider::{
+-    ArtifactKind, DatabaseKeyHierarchy, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion,
+-    KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
++    ArtifactKind, CustomerKmsAdapter, DatabaseKeyHierarchy, DatabaseKeyLease, DatabaseKeySource,
++    DatabaseKeyVersion, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
+     KeyWrappingProvider, MAX_DATABASE_KEY_LEASE, MAX_WRAPPED_KEY_BYTES, ProductionCapabilityStatus,
+     ProviderCapability, WrappedDatabaseKey, production_capability_status,
+ };
+diff --git a/src/encryption/provider.rs b/src/encryption/provider.rs
+index e5f6ff5e..c23e9b96 100644
+--- a/src/encryption/provider.rs
++++ b/src/encryption/provider.rs
+@@ -783,6 +783,21 @@ pub trait DatabaseKeySource: fmt::Debug + Send + Sync {
+     ) -> Result<std::sync::Arc<DatabaseKeyLease>, EncryptionError>;
+ }
+ 
++/// Adapter-owned customer KMS lease delivery.
++///
++/// The adapter owns provider credentials, resource identifiers, authorization,
++/// and revocation checks. TerraBase receives only the already-authorized,
++/// bounded lease and its durable request metadata.
++pub trait CustomerKmsAdapter: fmt::Debug + Send + Sync {
++    /// Obtains one authorized lease for exactly this scope, version, and
++    /// region. Missing or revoked versions must fail closed.
++    fn lease(
++        &self,
++        metadata: &KeyVersionMetadata,
++        region: RegionCode,
++    ) -> Result<DatabaseKeyLease, EncryptionError>;
++}
++
+ /// Provider-neutral key wrapping, rotation, recovery, and destruction seam.
+ ///
+ /// Provider implementations must keep OCI OCIDs and credentials outside all
+diff --git a/tests/encryption/main.rs b/tests/encryption/main.rs
+index 562e7ee2..0a948560 100644
+--- a/tests/encryption/main.rs
++++ b/tests/encryption/main.rs
+@@ -1,9 +1,12 @@
++use std::sync::Arc;
++use std::sync::atomic::{AtomicUsize, Ordering};
+ use terrabase::encryption::{
+-    ArtifactCipher, ArtifactKind, Compression, DatabaseKey, DatabaseKeyLease, DatabaseKeyVersion,
+-    EncryptionContext, EncryptionError, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope,
+-    KeyVersionMetadata, KeyWrappingProvider, LocalFileKeyProvider, MAX_PLAINTEXT_BYTES,
+-    ProductionCapabilityStatus, ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider,
+-    WrappedDatabaseKey, production_capability_status,
++    ArtifactCipher, ArtifactKind, Compression, CustomerKmsAdapter, CustomerKmsDatabaseKeys,
++    DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionContext,
++    EncryptionError, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
++    KeyWrappingProvider, LocalFileKeyProvider, MAX_PLAINTEXT_BYTES, ProductionCapabilityStatus,
++    ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider, WrappedDatabaseKey,
++    production_capability_status,
+ };
+ use terrabase::identity::{DatabaseUlid, TenantUlid, from_text};
+ use terrabase::regions::RegionCode;
+@@ -207,17 +210,23 @@ fn backup_envelopes_bind_nonce_and_metadata_to_the_key() {
+         Compression::None,
+     )
+     .unwrap();
+-    let mut writer =
+-        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([0x37; 32]), context)
+-            .unwrap();
++    let mut writer = ArtifactCipher::new(
++        ProviderMode::LocalFile,
++        DatabaseKey::from_bytes([0x37; 32]),
++        context.clone(),
++    )
++    .unwrap();
+     let envelope = writer.seal(b"backup payload").unwrap();
+     let next = writer.seal(b"backup payload").unwrap();
+     assert_ne!(envelope, next, "each backup record must use a fresh ordinal nonce");
+     assert_eq!(writer.open(&envelope).unwrap(), b"backup payload");
+ 
+-    let wrong_key =
+-        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([0x38; 32]), context)
+-            .unwrap();
++    let wrong_key = ArtifactCipher::new(
++        ProviderMode::LocalFile,
++        DatabaseKey::from_bytes([0x38; 32]),
++        context.clone(),
++    )
++    .unwrap();
+     assert_eq!(wrong_key.open(&envelope), Err(EncryptionError::AuthenticationFailed));
+ 
+     let mut altered_ordinal = envelope.clone();
+@@ -497,6 +506,95 @@ fn local_file_key_rejects_symlink() {
+     std::fs::remove_dir_all(directory).unwrap();
+ }
+ 
++#[cfg(feature = "test-support")]
++#[derive(Debug)]
++struct CountingByokAdapter {
++    calls: Arc<AtomicUsize>,
++}
++
++#[cfg(feature = "test-support")]
++impl CustomerKmsAdapter for CountingByokAdapter {
++    fn lease(
++        &self,
++        metadata: &KeyVersionMetadata,
++        _region: RegionCode,
++    ) -> Result<DatabaseKeyLease, EncryptionError> {
++        self.calls.fetch_add(1, Ordering::Relaxed);
++        DatabaseKeyLease::test_oci_vault(
++            metadata.clone(),
++            DatabaseKey::from_bytes([0x71; 32]),
++            std::time::Duration::from_secs(60),
++        )
++    }
++}
++
++#[cfg(feature = "test-support")]
++#[derive(Debug)]
++struct MismatchedByokAdapter;
++
++#[cfg(feature = "test-support")]
++impl CustomerKmsAdapter for MismatchedByokAdapter {
++    fn lease(
++        &self,
++        metadata: &KeyVersionMetadata,
++        _region: RegionCode,
++    ) -> Result<DatabaseKeyLease, EncryptionError> {
++        let wrong_scope = typed_scope(KeyPurpose::Data);
++        DatabaseKeyLease::test_oci_vault(
++            KeyVersionMetadata::new(wrong_scope, metadata.version()),
++            DatabaseKey::from_bytes([0x72; 32]),
++            std::time::Duration::from_secs(60),
++        )
++    }
++}
++
++#[cfg(feature = "test-support")]
++#[test]
++fn customer_kms_source_caches_current_lease_and_requests_explicit_history() {
++    let calls = Arc::new(AtomicUsize::new(0));
++    let source = CustomerKmsDatabaseKeys::new(
++        CountingByokAdapter { calls: Arc::clone(&calls) },
++        KeyVersionMetadata::new(
++            typed_scope(KeyPurpose::Data),
++            DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
++        ),
++        RegionCode::from_text("GRU").unwrap(),
++    )
++    .unwrap();
++    assert_eq!(calls.load(Ordering::Relaxed), 1);
++
++    let first = source.current_lease().unwrap();
++    let second = source.current_lease().unwrap();
++    assert!(Arc::ptr_eq(&first, &second));
++    assert_eq!(calls.load(Ordering::Relaxed), 1);
++
++    let historical = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB1").unwrap();
++    let historical_lease = source.lease(historical).unwrap();
++    assert_eq!(historical_lease.metadata().version(), historical);
++    assert_eq!(historical_lease.metadata().scope().purpose(), KeyPurpose::Data);
++    assert_eq!(historical_lease.provider(), KeyProviderIdentity::OciVault);
++    assert_eq!(calls.load(Ordering::Relaxed), 2);
++}
++
++#[cfg(feature = "test-support")]
++#[test]
++fn customer_kms_source_rejects_adapter_scope_mismatch() {
++    let metadata = KeyVersionMetadata::new(
++        typed_scope(KeyPurpose::Data),
++        DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
++    );
++    assert_eq!(
++        CustomerKmsDatabaseKeys::new(
++            MismatchedByokAdapter,
++            metadata,
++            RegionCode::from_text("GRU").unwrap(),
++        )
++        .unwrap_err()
++        .to_string(),
++        "invalid database-key metadata"
++    );
++}
++
+ fn unique_directory(label: &str) -> std::path::PathBuf {
+     use std::sync::atomic::{AtomicU64, Ordering};
+ 

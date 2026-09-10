@@ -1,5 +1,5 @@
 //! Durable intent for root replacement across process and provider failures.
-use super::*;
+use super::{FleetError, StorageSequence, Stream};
 
 pub(super) fn read(stream: &Stream) -> Result<Option<(StorageSequence, u64)>, FleetError> {
     use std::io::Read;

@@ -1,0 +1,50 @@
+{
+  "status": "failed",
+  "target": "terrabase",
+  "workload": "write",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0
+  },
+  "error": "legacy Go served benchmark adapter is retired; use a direct public-boundary family",
+  "environment": {
+    "observed_identity": "not captured: served run failed before identity observation",
+    "endpoint": "TERRABASE_BENCH_ENDPOINT is not set",
+    "client_transport": "Rust-owned served runner; network mTLS contract",
+    "unix_seconds": 1788816291,
+    "kernel": "Linux 7.2.3",
+    "logical_cpus": 28
+  },
+  "comparability": {
+    "run_digest": "unassigned",
+    "candidate_digest": "unassigned",
+    "workload_digest": "unassigned",
+    "topology_digest": "unassigned",
+    "run_group": "unassigned",
+    "config_digest": "bdfe342f5a3e96300b3e54f43585ee347bdb8b213b803ea0dac000ef8eb60d80",
+    "controlled_host_identity": "Linux 7.2.3;logical-cpus=28",
+    "time_window": "496893",
+    "window_start_unix_seconds": 1788816291,
+    "window_end_unix_seconds": 1788816291,
+    "workload_version": "terrabase-se15-workload-v1",
+    "boundary_class": "production-member",
+    "concurrency": 16,
+    "samples": 5,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0,
+    "seed_policy": "seed-{index}, tenant benchmark-tenant, index modulo seed count",
+    "document_policy": "seed documents have id seed-{index}, name user-{index}, group index modulo 100, 256-byte payload",
+    "operation_policy": "mixed uses index modulo 10: 0..4 read, 5..7 write, 8..9 query; read/query address index modulo seed count",
+    "write_id_policy": "measured writes use measured-{global operation index}",
+    "durability_semantics": "LocalDurability::Synced acknowledged commits",
+    "server_configuration_provenance": "terrabase-runtime-catalog-v1"
+  },
+  "samples": [],
+  "limits": [
+    "failed or invalid attempts are retained for audit and cannot be compared"
+  ]
+}

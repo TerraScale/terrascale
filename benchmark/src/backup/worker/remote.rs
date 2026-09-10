@@ -1,5 +1,9 @@
 //! Remote metadata discovery and bounded retained-point migration.
-use super::*;
+use super::{
+    BackupKeys, FleetError, FleetLimits, ObjectDestination, Provider, Stream, inventory_path,
+    inventory_point_limit, inventory_points, staged_bytes,
+};
+use std::sync::Arc;
 
 pub(super) async fn remote_points(
     database: &str,
@@ -26,7 +30,7 @@ pub(super) async fn remote_points_with_keys(
     let mut points = Vec::with_capacity(prefixes.len());
     for prefix in prefixes {
         let envelope = destination
-            .get_member(&format!("{prefix}/{}", super::super::manifest::ENCRYPTED_MANIFEST_FILE,))
+            .get_member(&format!("{prefix}/{}", super::super::manifest::ENCRYPTED_MANIFEST_FILE))
             .await
             .map_err(|_| FleetError::Upload)?;
         let bytes = keys.open_backup_envelope(&envelope).map_err(|_| FleetError::Capture)?;

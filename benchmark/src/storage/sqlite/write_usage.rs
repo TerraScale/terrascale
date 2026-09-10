@@ -84,8 +84,17 @@ pub(super) fn mint(
     billed_writes: u64,
     provenance: &JournalProvenance,
 ) -> Result<(), ()> {
-    if intent.internal_maintenance || billed_writes == 0 || provenance.kind() != JournalKind::Origin
-    {
+    if intent.internal_maintenance || provenance.kind() != JournalKind::Origin {
+        return Ok(());
+    }
+    // This context is accepted only by the exact durable cross-file path.
+    // Other participants still publish ordinary origin/storage effects.
+    if intent.cross_file_billing.as_ref().is_some_and(|b| b.participant != b.metering_participant) {
+        return Ok(());
+    }
+    let billed_writes =
+        intent.cross_file_billing.as_ref().map_or(billed_writes, |b| b.total_write_units);
+    if billed_writes == 0 {
         return Ok(());
     }
     let Some(binding) = binding_for(transaction, &intent.tenant)? else {
@@ -104,12 +113,14 @@ pub(super) fn mint(
 
     if let Some(admission) = &intent.usage_admission {
         // stage_intent already minted the verified admission fact inside this
-        // transaction. Check it covers the actual local write set, then leave
-        // that single fact authoritative instead of minting a duplicate.
+        // transaction. The admission bills its envelope-aware upper-bound
+        // estimate, so the durable envelope can only be smaller or equal —
+        // never larger. An admission that fails to cover the actual local
+        // write set still fails closed.
         let expected = i128::from(billed_writes)
             .checked_mul(i128::try_from(binding.selected_regions.len()).map_err(|_| ())?)
             .ok_or(())?;
-        return if admission.integer_units() == expected { Ok(()) } else { Err(()) };
+        return if admission.integer_units() >= expected { Ok(()) } else { Err(()) };
     }
     let at = provenance.hlc() >> 16;
     if at == 0 {

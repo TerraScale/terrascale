@@ -72,10 +72,9 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
 
     // The static peer list enumerates this member's cross-region lanes
     // (SHORT_GOAL section 1): region code plus replication endpoint, fail
-    // closed when the configuration names none. The lanes are inert until
-    // the S-09 member composition spawns the transports this plan names;
-    // until then each configured peer's frontier reports Unknown — never
-    // Healthy — so readiness keeps telling the truth.
+    // closed when the configuration names none. Each lane's frontier stays
+    // Unknown until the lane observer's authenticated health probe admits
+    // it, so readiness keeps telling the truth.
     for lane in config.replication_lanes() {
         metrics.set_replication_frontier_health(lane.region, HealthStatus::Unknown);
     }
@@ -116,7 +115,7 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         config.project.clone(),
         live_tls.clone(),
         format!("{certificate}\n{private_key}").into_bytes(),
-        client_ca.into_bytes(),
+        client_ca.clone().into_bytes(),
     )
     .await?;
 
@@ -133,11 +132,38 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
             .await
     });
 
-    // A standalone EngineHost cannot assert replication or membership health.
-    // Those required components remain Unknown, so readiness stays false until
-    // the cluster composition supplies authoritative observations.
+    // The lane observer turns each configured static peer into an
+    // authoritative health observation: replication and membership stay
+    // Unknown (never ready) until every lane answers an authenticated
+    // `ReplicationService.Health` call over mTLS. A member with no
+    // configured peers fails closed: no lanes, no readiness.
+    let (lane_shutdown, lane_signal) = tokio::sync::watch::channel(false);
+    if let Some(principal) = config.member_principals.iter().next().cloned() {
+        terrabase_tbep::local_lanes::spawn_lanes(
+            config
+                .replication_lanes()
+                .iter()
+                .map(|lane| terrabase_tbep::local_lanes::Lane {
+                    region: lane.region,
+                    authority: lane.address.to_string(),
+                })
+                .collect(),
+            &terrabase_tbep::local_lanes::LaneInputs {
+                principal,
+                tenant: config.tenant.clone(),
+                project: config.project.clone(),
+                database: config.database.clone(),
+                certificate_pem: certificate.clone().into_bytes(),
+                private_key_pem: private_key.clone().into_bytes(),
+                client_ca_pem: client_ca.clone().into_bytes(),
+            },
+            &metrics,
+            &lane_signal,
+        );
+    }
     metrics.transition_service(ServiceState::Serving)?;
     wait_for_shutdown().await?;
+    let _ = lane_shutdown.send(true);
     metrics.transition_service(ServiceState::Draining)?;
     let _ = host.begin_shutdown(&SupervisionShutdownRequest { reason: ShutdownReason::Supervisor });
     network.begin_drain();
@@ -775,8 +801,12 @@ async fn serve_admitted_production(
             parts_root_for_recovery(production),
             None,
             Arc::new(crate::guards::AbuseGuards::default()),
-            Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
-            Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
+            // The production rings come from the configured key files and
+            // fail closed (disabled) when a deployment configures none; the
+            // public conformance constant must never sign production
+            // capabilities.
+            Arc::new(origin_proof_key_ring(public)?),
+            Arc::new(capability_key_ring(public)?),
             None,
             delegated_identity,
             byo_jwt,
@@ -784,6 +814,12 @@ async fn serve_admitted_production(
             Some(Arc::new(exports)),
             admission.budget_runtime().map(Arc::new),
         );
+        // Pricing is the product contract: a production member without a
+        // budget runtime would serve chargeable writes with no spending
+        // cap. Fail closed instead of silently disabling cap enforcement.
+        if state.budget.is_none() {
+            return Err(Box::new(DaemonError::ProductionConfigurationMissing) as Box<dyn Error + Send + Sync>);
+        }
         let imports = crate::api::imports::ImportRuntime::open(primary.backup_root.join("imports"))
             .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
         Arc::get_mut(&mut state).expect("unique production API state").imports =

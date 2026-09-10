@@ -1,0 +1,72 @@
+terrabase HEAD 945401c32f8ddbce113bf3e1b84963f845b316e0
+terrabase tree eea23961e5ed01331070ac32bbda5c21282f4718
+terrabase status
+?? .agents/qualification/backup-resume-20260909-v2/core.log
+?? .agents/qualification/backup-resume-20260909-v2/fmt.log
+?? .agents/qualification/backup-resume-20260909-v2/object_store.log
+?? .agents/qualification/backup-resume-20260909-v2/publication.log
+?? .agents/qualification/backup-resume-20260909-v2/workload.log
+?? .agents/review-current/backup-hardening-20260909-refresh/SHA256SUMS
+?? .agents/review-current/backup-hardening-20260909-refresh/diffs/authored-a5aac458-b60963d8.diff
+?? .agents/review-current/backup-hardening-20260909-refresh/diffs/dirty-overlay-current.diff
+?? .agents/review-current/backup-hardening-20260909-refresh/index.md
+?? .agents/review-current/backup-hardening-20260909-refresh/logs/full-clippy-current.log
+?? .agents/review-current/backup-hardening-20260909-refresh/logs/native-backup-runtime-focused-20260908.log
+?? .agents/review-current/backup-hardening-20260909-refresh/logs/native-backup-worker-envelope-20260908.log
+?? .agents/review-current/backup-hardening-20260909-refresh/manifest-check-1.txt
+?? .agents/review-current/backup-hardening-20260909-refresh/manifest-check-2.txt
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/Cargo.lock
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/Cargo.toml
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_api.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_auth_runtime_tests.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_config.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_native_backup_runtime.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_native_recovery.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_native_snapshot_backup.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_native_snapshot_backup_tests.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_production_backup.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_production_data_runtime.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_production_lifecycle_control.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/crates_terrabase-server_src_runtime.rs
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/docs_adr_0030-service-managed-encryption-and-key-lifecycle.md
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/docs_adr_0049-customer-key-policy-and-production-security.md
+?? .agents/review-current/backup-hardening-20260909-refresh/source-current/docs_adr_README.md
+diff stat 962..HEAD
+ contracts/proto/terrabase/v1/engine.proto          |   1 +
+ crates/terrabase-server/src/api.rs                 |  58 ++++++-
+ crates/terrabase-server/src/config.rs              |  90 ++++++++++-
+ crates/terrabase-server/src/native_recovery.rs     |   2 +-
+ crates/terrabase-server/src/production.rs          |  54 +++++--
+ .../terrabase-server/src/production_admission.rs   |  93 +++++++++--
+ .../src/production_data_runtime.rs                 |  61 +++++--
+ .../src/production_lifecycle_control.rs            |  38 ++++-
+ .../terrabase-tbep/proto/terrabase/v1/engine.proto |   1 +
+ .../terrabase-tbep/src/grpc/lifecycle_control.rs   |   2 +-
+ src/backup/object_store.rs                         |  78 +++++++++
+ src/backup/restore/mod.rs                          | 179 ++++++++++++++++++++-
+ src/backup/worker.rs                               | 164 ++++++++++++++++---
+ src/backup/workload_identity_delivery.rs           | 123 +++++++++++++-
+ src/encryption/customer_key_delivery.rs            |  28 +++-
+ 15 files changed, 895 insertions(+), 77 deletions(-)
+captured hashes
+c800e5767de51333369fb6e0986502cfd0f603ca4e9956e233aa57c7ea4da5d5  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/contracts_proto_terrabase_v1_engine.proto
+963008fbe3553789f50b922bb015d3e1032616afc4f08afc2d8caa95c91a89b5  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/crates_terrabase-server_src_api.rs
+e9bbcf01b9ccbc7d8a8a98714ddada4db1457de3a2398e720224bef21ed7bb6d  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/crates_terrabase-server_src_config.rs
+f64e09c9777b3c640d701a8ecf7ed18fa16dc0df0ee0ebe086eb786dd3df901b  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/crates_terrabase-server_src_native_recovery.rs
+e3a318848d8a7945c461ece6f5446f428d60bef05fa6e0a0486a18d1e53c5997  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/crates_terrabase-server_src_production.rs
+85128ebbed69466fcc92fe4a8b37dcb7c971aab8310dcea39740e5bc2c6ce0a1  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/crates_terrabase-server_src_production_admission.rs
+f68882218e8b1baa1fbe3730543afdf81cfa2282d08ee539292f35a8ba93c7af  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/crates_terrabase-server_src_production_data_runtime.rs
+d57976fa509a3747657ef9b528a4051d191a2e3a877587f7d8c5c52b848eead5  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/crates_terrabase-server_src_production_lifecycle_control.rs
+c800e5767de51333369fb6e0986502cfd0f603ca4e9956e233aa57c7ea4da5d5  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/crates_terrabase-tbep_proto_terrabase_v1_engine.proto
+1ed9f2c6717d72fccef82b8d93286fc59fef0524cda4084289c437bfe87098c9  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/crates_terrabase-tbep_src_grpc_lifecycle_control.rs
+f6a19f846deeb1154adf16dd4203ec1b6b4c7e9061ce7d77530c5eb5f52ff3f4  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/src_backup_object_store.rs
+e15e84618f295f080dd23d7036e84787b5f918d2a709e250ddd67c7f5d379af4  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/src_backup_restore_mod.rs
+45175e43dfc6b7ede859197fa1d262b927223e38f2164c78613a21e9dd8f2d05  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/src_backup_worker.rs
+3e3b126921dbc641316b1c088e00eb5905b59b36c3205efd74f31313a926edb1  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/src_backup_workload_identity_delivery.rs
+613f711ba363883856c4e68c42d7c1c9dde3292bb52eb4cc58194d719a902342  terrabase/.agents/review-current/backup-hardening-20260909-v3/source/src_encryption_customer_key_delivery.rs
+5a82d027eb5896aaabf2f9c757bf1d4e728ff23e62ae5c8c51e41516b59955a4  terrabase/.agents/review-current/backup-hardening-20260909-v3/evidence/capture_snapshot.log
+9cbcc01d8926c86939d0d39198c338397601a81195e979c990f7b98466f25d62  terrabase/.agents/review-current/backup-hardening-20260909-v3/evidence/core-backup-selector.log
+3775373324a8cb98b525e8bde3207948bfca789413f8d07aa94fbaf200b2c025  terrabase/.agents/review-current/backup-hardening-20260909-v3/evidence/core.log
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  terrabase/.agents/review-current/backup-hardening-20260909-v3/evidence/fmt.log
+d01c5ef712eb2b6e186f60e3a58feab12666f7c392ec0cd112f3b5f4ad9c27e3  terrabase/.agents/review-current/backup-hardening-20260909-v3/evidence/native_fleet.log
+2cc15e8edcc4cb209881bd94b6ec452396044b247dedaa12241009e4a19079b4  terrabase/.agents/review-current/backup-hardening-20260909-v3/evidence/sustained_capture.log

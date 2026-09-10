@@ -45,6 +45,9 @@ pub(crate) fn copy_encrypted_snapshot(
     if validate_database_binding(&connection, &source_binding).map_err(|_| ())? {
         return Err(());
     }
+    if super::cross_file::reserved_on(&connection)? {
+        return Err(());
+    }
     let integrity: String =
         connection.query_row("PRAGMA integrity_check", [], |row| row.get(0)).map_err(|_| ())?;
     if integrity != "ok" {
@@ -96,6 +99,9 @@ pub(crate) fn rebind_owner(
     source: &Path,
     target: &Path,
 ) -> Result<(), ()> {
+    if super::cross_file::reserved_on(transaction)? {
+        return Err(());
+    }
     let old = super::database_binding(source).map_err(|_| ())?.ok_or(())?;
     let new = super::database_binding(target).map_err(|_| ())?.ok_or(())?;
     if validate_database_binding(transaction, &old).map_err(|_| ())? {

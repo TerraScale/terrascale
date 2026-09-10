@@ -256,6 +256,8 @@ pub struct NativeRestoreOperation {
 /// Structured facts produced only after native restore verification.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NativeRestoreReceipt {
+    /// Authenticated complete source envelope, absent for scalar recovery points.
+    pub envelope: Option<String>,
     /// Authenticated selected manifest identity.
     pub selected_identity: String,
     /// Logical BLAKE3 checksum of restored content.
@@ -1111,6 +1113,7 @@ impl NativeRecoveryRuntime {
             return Ok(None);
         };
         Ok(Some(NativeRestoreReceipt {
+            envelope: marker.envelope,
             selected_identity: operation.request.recovery_point_id.clone(),
             logical_content_checksum: marker.logical_checksum,
             restored_documents: marker
@@ -1167,7 +1170,11 @@ impl NativeRecoveryRuntime {
             expected_journal_boundary: journal_cut,
             restore_epoch: request.restore_epoch,
         };
-        let Some(marker) = terrabase::backup::read_restore_marker(engine, &identity)
+        let Some(marker) = target
+            .database
+            .host
+            .engine_host()
+            .verify_published_restore(&identity)
             .map_err(|_| NativeRecoveryError::VerificationFailed)?
         else {
             let tenant = terrabase::types::TenantId::try_new(&target.database.record.tenant_id)
@@ -1232,6 +1239,19 @@ impl NativeRecoveryRuntime {
             });
             let manifest = {
                 let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+                if let Some(cut) = host
+                    .engine_host()
+                    .admitted_shard_read_cut()
+                    .map_err(|_| NativeRecoveryError::Unavailable)?
+                    .filter(|cut| cut.route_generation.is_some())
+                {
+                    let envelope = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current()
+                            .block_on(fleet.capture_shard_envelope(&cut))
+                    })
+                    .map_err(map_fleet_error)?;
+                    return Ok(Checkpoint::from_envelope(&envelope, source, &placement));
+                }
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(fleet.capture_snapshot(source))
                 })
@@ -1248,6 +1268,23 @@ impl NativeRecoveryRuntime {
                 })
             });
             let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            if let Some(envelope) = fleet
+                .retained_envelopes(source)
+                .map_err(map_fleet_error)?
+                .into_iter()
+                .find(|envelope| point.matches_envelope(envelope, source, &placement))
+            {
+                return Ok(RecoveryPointFacts {
+                    recovery_point_id: envelope.digest().to_owned(),
+                    source_database_id: source.to_owned(),
+                    journal_cut: point.journal_cut,
+                    captured_at_millis: envelope.captured_unix_millis(),
+                    checksum: envelope.logical_checksum(),
+                    row_count: envelope.logical_documents(),
+                    placement: placement.clone(),
+                    retained_until_millis: envelope.retain_until_unix_millis(),
+                });
+            }
             fleet
                 .retained_points(source)
                 .map_err(map_fleet_error)?
@@ -1857,6 +1894,7 @@ mod tests {
         claimed.phase = NativeRestorePhase::Verifying;
         claimed.error = None;
         claimed.receipt = Some(NativeRestoreReceipt {
+            envelope: None,
             selected_identity: claimed.request.recovery_point_id.clone(),
             logical_content_checksum: blake3::hash(b"claimed").to_hex().to_string(),
             restored_documents: 0,

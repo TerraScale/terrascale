@@ -25,6 +25,8 @@ use crate::types::{
 };
 
 use super::SqliteStorage;
+#[path = "cross_file_tests.rs"]
+mod cross_file_tests;
 
 #[test]
 fn default_local_origin_uses_canonical_lane_identity() {
@@ -771,8 +773,8 @@ fn sequence_only_delete_is_durable_across_reopen() {
         assert_eq!(storage.port.metering_fact("tenant-a").expect("metering fact").seq_hi(), first);
         assert_eq!(
             storage.port.journaled_high_water().unwrap(),
-            None,
-            "no document row was written"
+            Some(StorageSequence::new(first)),
+            "the durable no-row publication still covers the acknowledged backup cut"
         );
     }
     drop(engine);
@@ -1022,6 +1024,10 @@ fn delete(collection: Option<&str>, id: &str, expected: ExpectedVersion) -> Stag
 fn intent(operation: &str, writes: Vec<StagedWrite>, durability: LocalDurability) -> CommitIntent {
     let tenant = tenant();
     CommitIntent {
+        cross_file_control: None,
+        cross_file_dependencies: None,
+        cross_file_billing: None,
+        generated_primary_file_identity: None,
         digest: write_set_digest(&tenant, &writes),
         tenant,
         operation: OperationId::try_new(operation).expect("valid identifier"),
@@ -1052,6 +1058,170 @@ fn fresh_intent(
     let mut intent = intent(operation, writes, durability);
     intent.snapshot_sequence = storage.published_state().0;
     intent
+}
+
+fn generated_identity_intent(storage: &SqliteStorage, operation: &str, id: &str) -> CommitIntent {
+    let lane = crate::origin_lane::OriginLaneId::parse(storage.local_replication_origin()).unwrap();
+    let identity = crate::shard_split::FileShardIdentity {
+        database_incarnation: 1,
+        shard_id: 1,
+        region: crate::regions::RegionCode::GRU,
+        origin_lane_incarnation: lane.incarnation(),
+    };
+    let key = crate::engine::shard_split::file_shard_key(identity.database_incarnation);
+    let mut value = intent(
+        operation,
+        vec![put(document(id, "users", "value"), ExpectedVersion::New)],
+        LocalDurability::Synced,
+    );
+    value.metadata.push(crate::storage::PrivateMetadataWrite {
+        key: key.clone(),
+        value: Some(DocumentValue::String(hex::encode(
+            crate::engine::shard_split::encode_file_identity(identity),
+        ))),
+    });
+    value.generated_primary_file_identity = Some(key);
+    value
+}
+
+fn admitted_identity_store(tag: &str) -> (PathBuf, SqliteStorage) {
+    let (dir, mut storage) = sqlite_store(tag);
+    let identity = generated_identity_intent(&storage, "admission-template", "template")
+        .validated_generated_identity()
+        .unwrap()
+        .unwrap();
+    storage.bind_generated_primary_identity(identity).unwrap();
+    (dir, storage)
+}
+
+#[test]
+fn generated_identity_same_snapshot_preserves_customer_and_metadata_occ() {
+    let (dir, mut storage) = admitted_identity_store("generated-identity-occ");
+    let first = generated_identity_intent(&storage, "first", "first");
+    let second = generated_identity_intent(&storage, "second", "second");
+    let same_document = generated_identity_intent(&storage, "same-document", "first");
+    let mut explicit = generated_identity_intent(&storage, "explicit", "explicit");
+    explicit.generated_primary_file_identity = None;
+    let key = first.generated_primary_file_identity.clone().unwrap();
+    assert_eq!(stored_sequence(&storage.commit(first)), 1);
+    assert_eq!(stored_sequence(&storage.commit(second)), 2);
+    assert!(matches!(
+        storage.commit(same_document),
+        CommitResult::Rejected(crate::storage::CommitRejection::Conflict)
+    ));
+    assert!(matches!(
+        storage.commit(explicit),
+        CommitResult::Rejected(crate::storage::CommitRejection::Conflict)
+    ));
+    let rows: i64 = storage
+        .raw_writer_connection()
+        .query_row(
+            "SELECT count(*) FROM family_metadata WHERE tenant=?1 AND record_key=?2",
+            rusqlite::params![tenant().as_str(), key],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 1, "only the first customer commit installs the physical identity");
+    let publications = storage.replication_publications(&tenant(), 0, 10).unwrap();
+    assert_eq!(publications.len(), 2, "no separate initialization publication");
+    let (metadata, _) =
+        crate::storage::decode_private_changes(&publications[1].1.private_payload).unwrap();
+    assert!(metadata.is_empty(), "equal generated initialization is a no-op");
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn generated_identity_marker_is_validated_and_codec_bound() {
+    let (dir, mut storage) = sqlite_store("generated-identity-invalid");
+    let value = generated_identity_intent(&storage, "generated", "document");
+    assert!(
+        matches!(
+            storage.commit(value.clone()),
+            CommitResult::Rejected(crate::storage::CommitRejection::Conflict)
+        ),
+        "raw storage has no admitted identity authority"
+    );
+    storage
+        .bind_generated_primary_identity(value.validated_generated_identity().unwrap().unwrap())
+        .unwrap();
+    let encoded = crate::storage::prepared_codec::encode(&value).unwrap();
+    let decoded = crate::storage::prepared_codec::decode(&encoded).unwrap();
+    assert_eq!(decoded.generated_primary_file_identity, value.generated_primary_file_identity);
+    assert_eq!(crate::storage::prepared_codec::encode(&decoded).unwrap(), encoded);
+    let mut legacy: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    legacy["version"] = 2.into();
+    assert!(crate::storage::prepared_codec::decode(&serde_json::to_vec(&legacy).unwrap()).is_err());
+    let mut wrong_key = value.clone();
+    wrong_key.generated_primary_file_identity = Some("unrelated-key".into());
+    assert!(crate::storage::prepared_codec::encode(&wrong_key).is_err());
+    assert!(matches!(
+        storage.commit(wrong_key),
+        CommitResult::Rejected(crate::storage::CommitRejection::Validation)
+    ));
+    let mut duplicate = value.clone();
+    duplicate.metadata.push(duplicate.metadata[0].clone());
+    assert!(crate::storage::prepared_codec::encode(&duplicate).is_err());
+    assert!(matches!(
+        storage.commit(duplicate),
+        CommitResult::Rejected(crate::storage::CommitRejection::Validation)
+    ));
+    let mut foreign = value;
+    let mut identity = foreign.validated_generated_identity().unwrap().unwrap();
+    identity.origin_lane_incarnation ^= 1;
+    foreign.metadata[0].value = Some(DocumentValue::String(hex::encode(
+        crate::engine::shard_split::encode_file_identity(identity),
+    )));
+    assert!(matches!(
+        storage.commit(foreign),
+        CommitResult::Rejected(crate::storage::CommitRejection::Conflict)
+    ));
+    assert_eq!(storage.published_state().0.get(), 0);
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn generated_identity_rolls_back_and_rejects_replacement_or_tombstone() {
+    let (dir, mut storage) = admitted_identity_store("generated-identity-rollback");
+    let value = generated_identity_intent(&storage, "first", "first");
+    let key = value.generated_primary_file_identity.clone().unwrap();
+    storage.arm_test_fault(FaultPoint::WalAppend);
+    assert!(matches!(storage.commit(value.clone()), CommitResult::Rejected(_)));
+    assert_eq!(storage.published_state().0.get(), 0);
+    assert!(
+        storage
+            .private_metadata_at(&tenant(), &key, StorageSequence::new(u64::MAX >> 1))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(stored_sequence(&storage.commit(value)), 1);
+    let mut different = generated_identity_intent(&storage, "different", "different");
+    let mut identity = different.validated_generated_identity().unwrap().unwrap();
+    identity.region = crate::regions::RegionCode::SFO;
+    different.metadata[0].value = Some(DocumentValue::String(hex::encode(
+        crate::engine::shard_split::encode_file_identity(identity),
+    )));
+    different.generated_primary_file_identity = None;
+    different.snapshot_sequence = storage.published_state().0;
+    assert_eq!(stored_sequence(&storage.commit(different)), 2);
+    let replacement = generated_identity_intent(&storage, "after-replacement", "after-replacement");
+    assert!(matches!(
+        storage.commit(replacement),
+        CommitResult::Rejected(crate::storage::CommitRejection::Conflict)
+    ));
+    let mut tombstone = intent("tombstone", Vec::new(), LocalDurability::Synced);
+    tombstone.snapshot_sequence = storage.published_state().0;
+    tombstone.metadata.push(crate::storage::PrivateMetadataWrite { key: key.clone(), value: None });
+    assert_eq!(stored_sequence(&storage.commit(tombstone)), 3);
+    let retry = generated_identity_intent(&storage, "after-tombstone", "after-tombstone");
+    assert!(matches!(
+        storage.commit(retry),
+        CommitResult::Rejected(crate::storage::CommitRejection::Conflict)
+    ));
+    assert_eq!(storage.published_state().0.get(), 3);
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 fn commit(
@@ -1193,6 +1363,15 @@ fn sqlite_store(tag: &str) -> (PathBuf, SqliteStorage) {
     (dir, storage)
 }
 
+/// A fixture must acknowledge the production-required consumers before its
+/// synthetic frontier can exercise the pruning policy.
+fn acknowledge_required_frontiers(storage: &mut SqliteStorage) {
+    let head = storage.published_state().0.get();
+    for name in ["replication", "metering"] {
+        storage.advance_consumer_frontier(name, head).expect("required frontier advances");
+    }
+}
+
 #[test]
 fn journal_replay_rejects_corrupt_rows_instead_of_serving_a_partial_commit() {
     for mutation in [
@@ -1253,14 +1432,14 @@ fn journal_metadata_distinguishes_empty_storage_from_failed_reads() {
     let cursor = StorageSequence::new(0);
     assert_eq!(engine.committed_tenants().unwrap(), Vec::<TenantId>::new());
     assert_eq!(engine.tenant_sequence(&tenant, cursor).unwrap(), None);
-    assert_eq!(engine.servable_history_start().unwrap(), None);
+    assert_eq!(engine.servable_history_start().unwrap(), Some(StorageSequence::new(0)));
     assert_eq!(engine.journaled_high_water().unwrap(), None);
     assert_eq!(
         engine.tenant_sequence(&tenant, StorageSequence::new(u64::MAX)),
         Err(crate::engine::EngineError::StorageFailure)
     );
     let connection = Connection::open(dir.join("terrabase.sqlite3")).unwrap();
-    connection.execute_batch("DROP TABLE documents").unwrap();
+    connection.execute_batch("DROP TABLE documents; DROP TABLE consumer_frontiers").unwrap();
     assert_eq!(engine.committed_tenants(), Err(crate::engine::EngineError::StorageFailure));
     assert_eq!(
         engine.tenant_sequence(&tenant, cursor),
@@ -1271,6 +1450,24 @@ fn journal_metadata_distinguishes_empty_storage_from_failed_reads() {
     drop(connection);
     drop(engine);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn journal_high_water_covers_metadata_only_publication_after_reopen() {
+    let dir = location("metadata-publication-high-water");
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    let mut request = intent("metadata-only", vec![], LocalDurability::Synced);
+    request.metadata.push(crate::storage::PrivateMetadataWrite {
+        key: "catalog:identity".into(),
+        value: Some(DocumentValue::String("bound".into())),
+    });
+    let CommitResult::Committed(receipt) = storage.commit(request) else {
+        panic!("metadata publication");
+    };
+    assert_eq!(storage.journaled_high_water().unwrap(), Some(receipt.sequence));
+    drop(storage);
+    let storage = SqliteStorage::open(&dir).unwrap();
+    assert_eq!(storage.journaled_high_water().unwrap(), Some(receipt.sequence));
 }
 
 #[test]
@@ -1342,6 +1539,7 @@ fn pruning_requires_every_consumer_frontier() {
             )],
         );
     }
+    acknowledge_required_frontiers(&mut storage);
     assert_eq!(storage.journal_records(), 3);
     backdate_all_rows(&storage);
     // Both consumers exist, pinned at zero. One advancing prunes nothing:
@@ -1392,6 +1590,7 @@ fn fresh_rows_survive_the_sweep_regardless_of_frontiers() {
         );
     }
     let head = storage.published_state().0;
+    acknowledge_required_frontiers(&mut storage);
     storage.advance_consumer_frontier("solo", head.get()).expect("frontier passes everything");
     let pruned = storage.prune_below_consumer_frontiers().expect("prune runs");
     assert_eq!(pruned, 0, "nothing inside the history floor is prunable");
@@ -1431,6 +1630,7 @@ fn collection_history_windows_are_evaluated_independently() {
             put(document("long", "long-lived", "new"), ExpectedVersion::Exact(1)),
         ],
     );
+    acknowledge_required_frontiers(&mut storage);
     storage.advance_consumer_frontier("solo", 3).expect("frontier advances");
     {
         let connection = storage.raw_writer_connection();
@@ -1466,6 +1666,7 @@ fn pruning_preserves_complete_commits_across_history_windows_and_reopen() {
         );
         assert_eq!(stored_sequence(&result), version);
     }
+    acknowledge_required_frontiers(&mut storage);
     storage.advance_consumer_frontier("solo", 3).unwrap();
     {
         let writer = storage.raw_writer_connection();
@@ -1546,6 +1747,7 @@ fn journal_pruning_watermark_is_atomic_durable_and_tenant_scoped() {
         )),
         3
     );
+    acknowledge_required_frontiers(&mut storage);
     storage.advance_consumer_frontier("consumer", 3).unwrap();
     assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 0);
     assert_eq!(
@@ -1631,6 +1833,7 @@ fn retained_publication_proofs_survive_later_journal_gaps() {
         "new",
         vec![put(document("hot", "users", "new"), ExpectedVersion::Exact(1))],
     );
+    acknowledge_required_frontiers(&mut storage);
     storage.advance_consumer_frontier("consumer", 3).unwrap();
     backdate_all_rows(&storage);
     assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 1);
@@ -1673,6 +1876,7 @@ fn pruning_keeps_each_keys_newest_version() {
         "op-4",
         vec![put(document("fresh", "users", "new"), ExpectedVersion::New)],
     );
+    acknowledge_required_frontiers(&mut storage);
     storage.advance_consumer_frontier("solo", 4).expect("frontier advances");
     // Backdate the rows past the 30-day history floor so the sweep is
     // frontier-bounded (fresh rows are inside the floor by construction).
@@ -1700,8 +1904,8 @@ fn pruning_keeps_each_keys_newest_version() {
 #[test]
 fn sustained_writes_with_advancing_consumers_keep_the_journal_bounded() {
     let (_dir, mut storage) = sqlite_store("prune-bounded");
-    storage.advance_consumer_frontier("replication", 0).expect("frontier registers");
-    storage.advance_consumer_frontier("sync", 0).expect("frontier registers");
+    storage.advance_consumer_frontier("fast", 0).expect("frontier registers");
+    storage.advance_consumer_frontier("slow", 0).expect("frontier registers");
     // One hot key: each round's commit shadows the last, so an advancing
     // consumer fleet bounds the retained history (the newest version is
     // current state and pins its own commit).
@@ -1715,8 +1919,9 @@ fn sustained_writes_with_advancing_consumers_keep_the_journal_bounded() {
             )],
         );
         let head = storage.published_state().0.get();
-        storage.advance_consumer_frontier("replication", head).expect("frontier advances");
-        storage.advance_consumer_frontier("sync", head).expect("frontier advances");
+        acknowledge_required_frontiers(&mut storage);
+        storage.advance_consumer_frontier("fast", head).expect("frontier advances");
+        storage.advance_consumer_frontier("slow", head).expect("frontier advances");
         backdate_all_rows(&storage);
         storage.prune_below_consumer_frontiers().expect("prune runs");
     }
@@ -1733,9 +1938,10 @@ fn sustained_writes_with_advancing_consumers_keep_the_journal_bounded() {
         "op-51",
         vec![put(document("hot", "users", "v51"), ExpectedVersion::Exact(50))],
     );
-    storage.advance_consumer_frontier("metering", 50).expect("frontier registers at the head");
-    storage.advance_consumer_frontier("replication", 51).expect("frontier advances");
-    storage.advance_consumer_frontier("sync", 51).expect("frontier advances");
+    storage.advance_consumer_frontier("lagging", 50).expect("frontier registers at the head");
+    acknowledge_required_frontiers(&mut storage);
+    storage.advance_consumer_frontier("fast", 51).expect("frontier advances");
+    storage.advance_consumer_frontier("slow", 51).expect("frontier advances");
     storage.prune_below_consumer_frontiers().expect("prune runs");
     assert_eq!(storage.servable_history_start().unwrap().map(StorageSequence::get), Some(50));
     assert_eq!(storage.journal_records(), 2);
@@ -1757,6 +1963,7 @@ fn compact_sweeps_the_pruning_floor() {
     }
     // The lifecycle sweep: backdating past the D-42 history floor and
     // advancing the frontier bounds the journal with no other call.
+    acknowledge_required_frontiers(&mut storage);
     backdate_all_rows(&storage);
     storage.advance_consumer_frontier("solo", 3).expect("frontier advances");
     storage.run_retention_sweep().expect("sweep runs");
@@ -1809,7 +2016,7 @@ fn retention_frontier_rejects_sequences_sqlite_cannot_represent() {
 }
 
 #[test]
-fn reopened_location_does_not_retain_process_owned_sync_lease() {
+fn raw_reopened_location_retains_process_owned_sync_lease_for_engine_admission() {
     let (dir, mut storage) = sqlite_store("sync-lease-restart");
     storage.register_consumer_frontier("sync", 7).expect("registers sync lease");
     drop(storage);
@@ -1821,7 +2028,7 @@ fn reopened_location_does_not_retain_process_owned_sync_lease() {
             row.get(0)
         })
         .expect("reads consumer leases");
-    assert_eq!(sync_rows, 0, "a process-owned sync lease cannot survive restart");
+    assert_eq!(sync_rows, 1, "raw storage does not own Engine sync lease retirement");
 }
 
 #[test]
@@ -2140,6 +2347,10 @@ fn commit_as(
 ) -> CommitResult {
     let tenant = TenantId::try_new(tenant_name).expect("valid tenant");
     let intent = CommitIntent {
+        cross_file_control: None,
+        cross_file_dependencies: None,
+        cross_file_billing: None,
+        generated_primary_file_identity: None,
         digest: write_set_digest(&tenant, &writes),
         tenant,
         operation: OperationId::try_new(operation).expect("valid identifier"),
@@ -2853,8 +3064,9 @@ fn origin_progress_survives_pruning_and_reopen_atomically() {
             )],
         );
     }
+    acknowledge_required_frontiers(&mut storage);
     backdate_all_rows(&storage);
-    storage.advance_consumer_frontier("replication", 3).unwrap();
+    storage.advance_consumer_frontier("origin-reader", 3).unwrap();
     {
         let writer = storage.raw_writer_connection();
         writer
@@ -2886,9 +3098,10 @@ fn origin_progress_survives_pruning_and_reopen_atomically() {
         "prefix-4",
         vec![put(document("doc", "users", "v4"), ExpectedVersion::Exact(3))],
     );
+    acknowledge_required_frontiers(&mut storage);
     assert_eq!(storage.durable_origin_prefixes(&tenant()).unwrap()[0].origin_sequence, 4);
     backdate_all_rows(&storage);
-    storage.advance_consumer_frontier("replication", 4).unwrap();
+    storage.advance_consumer_frontier("origin-reader", 4).unwrap();
     assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 1);
     drop(storage);
     let mut storage = SqliteStorage::open(&dir).unwrap();
@@ -2899,7 +3112,7 @@ fn origin_progress_survives_pruning_and_reopen_atomically() {
             .execute("INSERT INTO collection_history (collection, days) VALUES ('users', 1)", [])
             .unwrap();
     }
-    storage.advance_consumer_frontier("replication", 5).unwrap();
+    storage.advance_consumer_frontier("origin-reader", 5).unwrap();
     assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 0);
     assert_eq!(storage.journal_records(), 1, "history expiry must preserve current state");
     drop(storage);
@@ -2941,8 +3154,9 @@ fn pruning_preserves_a_gap_instead_of_promoting_the_maximum_sequence() {
             .unwrap();
         writer.execute("DELETE FROM replication_publications WHERE origin_seq = 2", []).unwrap();
     }
+    acknowledge_required_frontiers(&mut storage);
     backdate_all_rows(&storage);
-    storage.advance_consumer_frontier("replication", 3).unwrap();
+    storage.advance_consumer_frontier("gap-reader", 3).unwrap();
     assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 2);
     drop(storage);
     let storage = SqliteStorage::open(&dir).unwrap();
@@ -3034,13 +3248,14 @@ fn origin_prefix_preserves_unsigned_hlc_through_pruning() {
             )],
         );
     }
+    acknowledge_required_frontiers(&mut storage);
     {
         let writer = storage.raw_writer_connection();
         writer.execute("UPDATE documents SET hlc = CASE origin_seq WHEN 1 THEN 100 WHEN 2 THEN -1 ELSE -9223372036854775808 END", []).unwrap();
     }
     assert_eq!(storage.durable_origin_prefixes(&tenant()).unwrap()[0].hlc, u64::MAX);
     backdate_all_rows(&storage);
-    storage.advance_consumer_frontier("replication", 3).unwrap();
+    storage.advance_consumer_frontier("hlc-reader", 3).unwrap();
     assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 2);
     drop(storage);
     let storage = SqliteStorage::open(&dir).unwrap();

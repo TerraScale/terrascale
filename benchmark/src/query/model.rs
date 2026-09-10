@@ -250,13 +250,24 @@ impl NormalizedQuery {
 
 /// Returns one field (including a dotted nested JSON path) of a document, or
 /// `None` when the document is not an object or does not carry the field.
+///
+/// The identity columns `id` and `_id` resolve to the document identity:
+/// every presented row shape (`{id, value}`) shows the identity as `id`, so
+/// that is exactly what `WHERE id =` compares. A body key with that name is
+/// shadowed, the same way it is in the envelope; the body stays reachable
+/// through its JSON path.
 pub(crate) fn field_of<'document>(
     document: &'document Document,
     field: &str,
-) -> Option<&'document DocumentValue> {
+) -> Option<std::borrow::Cow<'document, DocumentValue>> {
+    if field == "id" || field == "_id" {
+        return Some(std::borrow::Cow::Owned(DocumentValue::String(
+            document.id().as_str().to_owned(),
+        )));
+    }
     let DocumentValue::Object(fields) = document.value() else { return None };
     if let Some(value) = fields.get(field) {
-        return Some(value);
+        return Some(std::borrow::Cow::Borrowed(value));
     }
     let mut parts = field.split('.');
     let first = parts.next()?;
@@ -265,7 +276,7 @@ pub(crate) fn field_of<'document>(
         let DocumentValue::Object(fields) = value else { return None };
         value = fields.get(part)?;
     }
-    Some(value)
+    Some(std::borrow::Cow::Borrowed(value))
 }
 
 /// Reports whether one field map satisfies the predicate conjunction.
@@ -309,7 +320,9 @@ pub(crate) fn matches(predicate: &QueryPredicate, document: &Document) -> bool {
     predicate
         .conditions()
         .iter()
-        .all(|condition| matches_condition(condition, field_of(document, condition.field())))
+        .all(|condition| {
+            matches_condition(condition, field_of(document, condition.field()).as_deref())
+        })
 }
 
 /// Evaluates one closed condition against one optionally present field value.
@@ -658,7 +671,11 @@ pub(crate) fn compare_documents(
             .cmp(&random_order_key(seed, right.id().as_str()));
     }
     for key in ordering.keys() {
-        let ordering = compare_key(key, field_of(left, key.field()), field_of(right, key.field()));
+        let ordering = compare_key(
+            key,
+            field_of(left, key.field()).as_deref(),
+            field_of(right, key.field()).as_deref(),
+        );
         if ordering != Ordering::Equal {
             return ordering;
         }

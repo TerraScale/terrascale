@@ -1050,7 +1050,7 @@ impl Member {
                 || metadata.project() != Some(scope.project())
                 || metadata.database() != scope.database()
                 || metadata.purpose() != crate::encryption::KeyPurpose::Data
-                || lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+                || !lease.provider().is_production()
                 || lease.is_expired()
             {
                 return Err(MemberOpenError::Validation(
@@ -1087,7 +1087,7 @@ impl Member {
             || key_scope.project() != Some(owner.project())
             || key_scope.database() != owner.database()
             || key_scope.purpose() != crate::encryption::KeyPurpose::Data
-            || lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+            || !lease.provider().is_production()
             || lease.is_expired()
         {
             return Err(CatalogValidationError::EncryptionUnavailable);
@@ -1742,6 +1742,19 @@ impl DatabaseLease {
         Ok(cut)
     }
 
+    /// Verifies an exact published restore through retained physical ownership.
+    /// Paused targets remain unavailable to public reads throughout verification.
+    ///
+    /// # Errors
+    /// Rejects revoked access, in-flight cross-file state, stale routes, or mismatched
+    /// marker identity and physical contents.
+    pub fn verify_published_restore(
+        &self,
+        identity: &crate::backup::RestoreIdentity,
+    ) -> Result<Option<crate::backup::RestoreMarkerFacts>, crate::backup::BackupError> {
+        self.route_registry.verify_published_restore(identity)
+    }
+
     /// Selects the physical participant shared by all supplied document IDs.
     pub fn document_participant(
         &self,
@@ -1753,6 +1766,29 @@ impl DatabaseLease {
             .map(|id| crate::shard_split::canonical_shard_key(collection, id))
             .collect::<Vec<_>>();
         self.route_registry.participant(&keys)
+    }
+
+    /// Selects the receipt and admission owner for a logical document batch.
+    pub fn batch_coordinator(
+        &self,
+        collection: &crate::types::CollectionName,
+        ids: &[crate::types::DocumentId],
+    ) -> Result<&Engine, crate::EngineError> {
+        let keys = ids
+            .iter()
+            .map(|id| crate::shard_split::canonical_shard_key(collection, id))
+            .collect::<Vec<_>>();
+        self.route_registry.batch_coordinator(&keys)
+    }
+
+    /// Returns every origin receipt plus the coordinator completion receipt
+    /// of a completed cross-file batch; ordinary batches return `None`.
+    pub fn batch_commit_receipts(
+        &self,
+        scope: &TenantScope,
+        operation: &OperationId,
+    ) -> Result<Option<Vec<(Arc<Engine>, crate::CommitReceipt)>>, crate::EngineError> {
+        self.route_registry.batch_commit_receipts(scope, operation)
     }
 
     /// Begins an origin transaction through the lease-owned durable route.
@@ -2237,12 +2273,9 @@ fn open_database_engine(
                 // before SQLite can open any files.
                 revalidate_created_location(&inner.root, location)
                     .map_err(MemberError::Validation)?;
-                let config = scope.as_ref().map_or(config.clone(), |scope| {
-                    config.with_owner(scope.owner().clone()).with_replication_origin(
-                        crate::types::RegionId::try_new(scope.owner().region().as_str())
-                            .expect("registered Region"),
-                    )
-                });
+                let config = scope
+                    .as_ref()
+                    .map_or(config.clone(), |scope| config.with_owner(scope.owner().clone()));
                 let config = storage_keys
                     .as_ref()
                     .map_or(config.clone(), |keys| config.with_storage_keys(Arc::clone(keys)));
@@ -2411,28 +2444,54 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct TestStorageKeys(crate::encryption::KeyVersionMetadata);
+    struct TestStorageKeys {
+        metadata: crate::encryption::KeyVersionMetadata,
+        provider: crate::encryption::KeyProviderIdentity,
+        expired: bool,
+    }
     impl crate::encryption::DatabaseKeySource for TestStorageKeys {
         fn current_lease(
             &self,
         ) -> Result<Arc<crate::encryption::DatabaseKeyLease>, crate::encryption::EncryptionError>
         {
-            self.lease(self.0.version())
+            if self.expired {
+                return Err(crate::encryption::EncryptionError::KeyLeaseExpired);
+            }
+            self.lease(self.metadata.version())
         }
         fn lease(
             &self,
             version: crate::encryption::DatabaseKeyVersion,
         ) -> Result<Arc<crate::encryption::DatabaseKeyLease>, crate::encryption::EncryptionError>
         {
-            if version != self.0.version() {
+            if version != self.metadata.version() {
                 return Err(crate::encryption::EncryptionError::InvalidKeyMetadata);
             }
-            crate::encryption::DatabaseKeyLease::test_oci_vault(
-                self.0.clone(),
-                crate::encryption::DatabaseKey::from_bytes([29; 32]),
-                Duration::from_secs(60),
-            )
-            .map(Arc::new)
+            let lease = (match self.provider {
+                crate::encryption::KeyProviderIdentity::OciVault => {
+                    crate::encryption::DatabaseKeyLease::test_oci_vault(
+                        self.metadata.clone(),
+                        crate::encryption::DatabaseKey::from_bytes([29; 32]),
+                        Duration::from_secs(60),
+                    )
+                }
+                crate::encryption::KeyProviderIdentity::CustomerKms => {
+                    crate::encryption::DatabaseKeyLease::test_customer_kms(
+                        self.metadata.clone(),
+                        crate::encryption::DatabaseKey::from_bytes([29; 32]),
+                        Duration::from_secs(60),
+                    )
+                }
+                crate::encryption::KeyProviderIdentity::LocalFile => {
+                    crate::encryption::DatabaseKeyLease::new(
+                        self.metadata.clone(),
+                        crate::encryption::DatabaseKey::from_bytes([29; 32]),
+                        Duration::from_secs(60),
+                    )
+                }
+            })
+            .map(Arc::new);
+            lease
         }
     }
     fn storage_keys(
@@ -2455,9 +2514,75 @@ mod tests {
             .unwrap(),
             crate::encryption::DatabaseKeyVersion::from_text(version).unwrap(),
         );
+        storage_keys_with_metadata(metadata, crate::encryption::KeyProviderIdentity::OciVault)
+    }
+    fn storage_keys_with_provider(
+        scope: &DatabaseScope,
+        provider: crate::encryption::KeyProviderIdentity,
+    ) -> BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>> {
+        let metadata = crate::encryption::KeyVersionMetadata::new(
+            crate::encryption::KeyScope::new_with_project(
+                scope.owner().environment().as_str(),
+                scope.tenant(),
+                scope.project(),
+                scope.database(),
+                crate::encryption::KeyPurpose::Data,
+            )
+            .unwrap(),
+            crate::encryption::DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
+        );
+        storage_keys_with_metadata(metadata, provider)
+    }
+    fn storage_keys_with_key_scope(
+        target: &DatabaseScope,
+        key_scope: crate::encryption::KeyScope,
+        provider: crate::encryption::KeyProviderIdentity,
+    ) -> BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>> {
+        let metadata = crate::encryption::KeyVersionMetadata::new(
+            key_scope,
+            crate::encryption::DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
+        );
+        storage_keys_for_id(DatabaseId::from(target.database()), metadata, provider, false)
+    }
+    // Exercises a source error, not a returned lease whose deadline has elapsed.
+    fn storage_keys_with_lease_expiry_error(
+        scope: &DatabaseScope,
+    ) -> BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>> {
+        let metadata = crate::encryption::KeyVersionMetadata::new(
+            crate::encryption::KeyScope::new_with_project(
+                scope.owner().environment().as_str(),
+                scope.tenant(),
+                scope.project(),
+                scope.database(),
+                crate::encryption::KeyPurpose::Data,
+            )
+            .unwrap(),
+            crate::encryption::DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
+        );
+        storage_keys_for_id(
+            DatabaseId::from(scope.database()),
+            metadata,
+            crate::encryption::KeyProviderIdentity::OciVault,
+            true,
+        )
+    }
+    fn storage_keys_with_metadata(
+        metadata: crate::encryption::KeyVersionMetadata,
+        provider: crate::encryption::KeyProviderIdentity,
+    ) -> BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>> {
+        let id = DatabaseId::from(metadata.scope().database());
+        storage_keys_for_id(id, metadata, provider, false)
+    }
+    fn storage_keys_for_id(
+        id: DatabaseId,
+        metadata: crate::encryption::KeyVersionMetadata,
+        provider: crate::encryption::KeyProviderIdentity,
+        expired: bool,
+    ) -> BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>> {
         BTreeMap::from([(
-            scope.database().into(),
-            Arc::new(TestStorageKeys(metadata)) as Arc<dyn crate::encryption::DatabaseKeySource>,
+            id,
+            Arc::new(TestStorageKeys { metadata, provider, expired })
+                as Arc<dyn crate::encryption::DatabaseKeySource>,
         )])
     }
 
@@ -2627,6 +2752,260 @@ mod tests {
     }
 
     #[test]
+    fn kms_providers_are_admitted_for_open_and_add_production_database() {
+        for (label, provider) in [
+            ("customer-kms", crate::encryption::KeyProviderIdentity::CustomerKms),
+            ("oci-vault", crate::encryption::KeyProviderIdentity::OciVault),
+        ] {
+            let root = root(label);
+            let first = DatabaseScope::new(
+                "production",
+                TenantUlid::generate(),
+                ProjectUlid::generate(),
+                DatabaseUlid::generate(),
+                RegionCode::GRU,
+            )
+            .unwrap();
+            let second = DatabaseScope::new(
+                "production",
+                TenantUlid::generate(),
+                ProjectUlid::generate(),
+                DatabaseUlid::generate(),
+                RegionCode::GRU,
+            )
+            .unwrap();
+            let member = Member::open_production(
+                &root,
+                [DatabaseSpec::scoped(first.clone(), "first")],
+                AdmissionLimits::new(2, 1),
+                storage_keys_with_provider(&first, provider),
+            )
+            .expect("KMS production member");
+            assert_eq!(
+                member.add_production_database(
+                    DatabaseSpec::scoped(second.clone(), "second"),
+                    1,
+                    storage_keys_with_provider(&second, provider)
+                        .remove(&DatabaseId::from(second.database()))
+                        .unwrap(),
+                ),
+                Ok(())
+            );
+            assert_eq!(member.database_ids().count(), 2);
+            member.close(Duration::from_secs(1)).unwrap();
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn local_file_provider_is_rejected_at_member_production_admission() {
+        let root = root("local-file");
+        let scope = DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .unwrap();
+        let result = Member::open_production(
+            &root,
+            [DatabaseSpec::scoped(scope.clone(), "db")],
+            AdmissionLimits::new(2, 1),
+            storage_keys_with_provider(&scope, crate::encryption::KeyProviderIdentity::LocalFile),
+        );
+        assert!(matches!(
+            result,
+            Err(MemberOpenError::Validation(CatalogValidationError::EncryptionUnavailable))
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn admission_scope() -> DatabaseScope {
+        DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .unwrap()
+    }
+
+    // Each case differs from the requested database in exactly one key field.
+    fn wrong_admission_key_scopes(target: &DatabaseScope) -> [crate::encryption::KeyScope; 5] {
+        [
+            crate::encryption::KeyScope::new_with_project(
+                "other-environment",
+                target.tenant(),
+                target.project(),
+                target.database(),
+                crate::encryption::KeyPurpose::Data,
+            )
+            .unwrap(),
+            crate::encryption::KeyScope::new_with_project(
+                target.owner().environment().as_str(),
+                TenantUlid::generate(),
+                target.project(),
+                target.database(),
+                crate::encryption::KeyPurpose::Data,
+            )
+            .unwrap(),
+            crate::encryption::KeyScope::new_with_project(
+                target.owner().environment().as_str(),
+                target.tenant(),
+                ProjectUlid::generate(),
+                target.database(),
+                crate::encryption::KeyPurpose::Data,
+            )
+            .unwrap(),
+            crate::encryption::KeyScope::new_with_project(
+                target.owner().environment().as_str(),
+                target.tenant(),
+                target.project(),
+                DatabaseUlid::generate(),
+                crate::encryption::KeyPurpose::Data,
+            )
+            .unwrap(),
+            crate::encryption::KeyScope::new_with_project(
+                target.owner().environment().as_str(),
+                target.tenant(),
+                target.project(),
+                target.database(),
+                crate::encryption::KeyPurpose::Backup,
+            )
+            .unwrap(),
+        ]
+    }
+
+    #[test]
+    fn production_open_rejects_wrong_scope_purpose_and_source_lease_expiry_error() {
+        let target = admission_scope();
+        for (index, key_scope) in wrong_admission_key_scopes(&target).into_iter().enumerate() {
+            let root = root(&format!("wrong-open-{index}"));
+            assert!(matches!(
+                Member::open_production(
+                    &root,
+                    [DatabaseSpec::scoped(target.clone(), "db")],
+                    AdmissionLimits::new(2, 1),
+                    storage_keys_with_key_scope(
+                        &target,
+                        key_scope,
+                        crate::encryption::KeyProviderIdentity::OciVault,
+                    ),
+                ),
+                Err(MemberOpenError::Validation(CatalogValidationError::EncryptionUnavailable))
+            ));
+            let _ = fs::remove_dir_all(root);
+        }
+        let root = root("expired-open");
+        assert!(matches!(
+            Member::open_production(
+                &root,
+                [DatabaseSpec::scoped(target.clone(), "db")],
+                AdmissionLimits::new(2, 1),
+                storage_keys_with_lease_expiry_error(&target),
+            ),
+            Err(MemberOpenError::Validation(CatalogValidationError::EncryptionUnavailable))
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_add_rejects_wrong_scope_purpose_and_source_lease_expiry_error() {
+        let base = admission_scope();
+        let target = admission_scope();
+        for (index, key_scope) in wrong_admission_key_scopes(&target).into_iter().enumerate() {
+            let root = root(&format!("wrong-add-{index}"));
+            let member = Member::open_production(
+                &root,
+                [DatabaseSpec::scoped(base.clone(), "base")],
+                AdmissionLimits::new(2, 1),
+                storage_keys(&base),
+            )
+            .unwrap();
+            assert_eq!(
+                member.add_production_database(
+                    DatabaseSpec::scoped(target.clone(), "db"),
+                    1,
+                    storage_keys_with_key_scope(
+                        &target,
+                        key_scope,
+                        crate::encryption::KeyProviderIdentity::OciVault,
+                    )
+                    .remove(&DatabaseId::from(target.database()))
+                    .unwrap(),
+                ),
+                Err(CatalogValidationError::EncryptionUnavailable)
+            );
+            assert_eq!(
+                member.database_ids().collect::<Vec<_>>(),
+                vec![DatabaseId::from(base.database())]
+            );
+            member.close(Duration::from_secs(1)).unwrap();
+            let _ = fs::remove_dir_all(root);
+        }
+        let root = root("expired-add");
+        let member = Member::open_production(
+            &root,
+            [DatabaseSpec::scoped(base.clone(), "base")],
+            AdmissionLimits::new(2, 1),
+            storage_keys(&base),
+        )
+        .unwrap();
+        let target = admission_scope();
+        assert_eq!(
+            member.add_production_database(
+                DatabaseSpec::scoped(target.clone(), "db"),
+                1,
+                storage_keys_with_lease_expiry_error(&target)
+                    .remove(&DatabaseId::from(target.database()))
+                    .unwrap(),
+            ),
+            Err(CatalogValidationError::EncryptionUnavailable)
+        );
+        assert_eq!(
+            member.database_ids().collect::<Vec<_>>(),
+            vec![DatabaseId::from(base.database())]
+        );
+        member.close(Duration::from_secs(1)).unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_add_rejects_local_file_provider_without_registration() {
+        let base = admission_scope();
+        let root = root("local-file-add");
+        let member = Member::open_production(
+            &root,
+            [DatabaseSpec::scoped(base.clone(), "base")],
+            AdmissionLimits::new(2, 1),
+            storage_keys(&base),
+        )
+        .unwrap();
+        let target = admission_scope();
+        assert_eq!(
+            member.add_production_database(
+                DatabaseSpec::scoped(target.clone(), "db"),
+                1,
+                storage_keys_with_provider(
+                    &target,
+                    crate::encryption::KeyProviderIdentity::LocalFile,
+                )
+                .remove(&DatabaseId::from(target.database()))
+                .unwrap(),
+            ),
+            Err(CatalogValidationError::EncryptionUnavailable)
+        );
+        assert_eq!(
+            member.database_ids().collect::<Vec<_>>(),
+            vec![DatabaseId::from(base.database())]
+        );
+        member.close(Duration::from_secs(1)).unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn production_retry_rejects_a_different_key_version_for_same_database() {
         let root = root("key-version-conflict");
         let scope = DatabaseScope::new(
@@ -2788,8 +3167,7 @@ mod tests {
             );
             let split = ShardSplit::plan_with_context(None, b"m".to_vec(), context).unwrap();
             let mut adapter =
-                crate::engine::shard_split::ScopedShardEngine::new(engine.clone(), engine_scope)
-                    .unwrap();
+                crate::engine::shard_split::ScopedShardEngine::new(engine.clone(), engine_scope);
             adapter.save(&split.durable_state()).unwrap();
             if budget == 1 {
                 assert!(adapter.create_split_target(&context).is_err());

@@ -1,0 +1,26 @@
+2026-09-08T01:40:16Z
+4a2c36aabdc5cbd663d20f4dbe8d5cedb1a48fc7
+ M crates/terrabase-server/Cargo.toml
+ M crates/terrabase-server/src/api.rs
+ M crates/terrabase-server/src/budget_http_tests.rs
+ M crates/terrabase-server/src/production_budget.rs
+ M crates/terrabase-server/src/schema_migration_runtime.rs
+ M crates/terrabase-server/src/usage_admission.rs
+ M crates/terrabase-tbep/src/engine_host.rs
+ M src/engine/commit_timing_probe.rs
+ M src/engine/mod.rs
+ M src/engine/shard_split.rs
+ M src/member/mod.rs
+ M src/member/shard_registry.rs
+ M src/storage/mod.rs
+ M src/storage/sqlite/mod.rs
+ M src/storage/sqlite/tests.rs
+ M src/storage/sqlite/write_usage.rs
+ M src/usage/mod.rs
+?? .agents/benchmark-20260907/review/SHA256SUMS-correction
+?? .agents/benchmark-20260907/review/correction-harness-fix.diff
+?? .agents/benchmark-20260907/review/correction-index.md
+?? .agents/review-current/resume-20260907/core-wave/
+?? bench/results/run-20260907-independent-1714381/current-bench-build.log
+?? bench/results/run-20260907-independent-1714381/current-workspace-build.log
+?? bench/results/run-20260907-independent-1714381/snapshot-source.txt

@@ -54,6 +54,8 @@
 //! Schema enforcement does not run during internal restore publication.
 
 mod decode;
+mod envelope;
+pub use envelope::{EnvelopeRecoveryReceipt, verify_envelope_restore};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -705,6 +707,8 @@ pub struct RestoreIdentity {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 /// Authenticated facts recovered from a published restore marker.
 pub struct RestoreMarkerFacts {
+    /// Complete authenticated source envelope for routed restores.
+    pub envelope: Option<String>,
     /// The complete durable identity written by the restore publisher.
     pub identity: RestoreIdentity,
     /// Target sequence at publication.
@@ -727,6 +731,7 @@ pub struct RestoreMarkerFacts {
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 struct RestoreMarker {
+    envelope: Option<envelope::EnvelopeRestoreMarker>,
     identity: RestoreIdentity,
     target_sequence: u64,
     logical_checksum: String,
@@ -778,6 +783,7 @@ pub fn read_restore_marker(
         return Err(BackupError::ChecksumMismatch);
     }
     Ok(Some(RestoreMarkerFacts {
+        envelope: marker.envelope.map(|envelope| envelope.source),
         identity: marker.identity,
         target_sequence: marker.target_sequence,
         logical_checksum: marker.logical_checksum,
@@ -1592,7 +1598,7 @@ fn admit_target(target: &Path) -> Result<(), BackupError> {
 struct StagingDir {
     path: PathBuf,
     #[cfg(unix)]
-    lock: std::fs::File,
+    _lock: std::fs::File,
     /// Set once the staging path has been renamed into the target slot. For
     /// an exchange this path is then the retired target, so generic failure
     /// cleanup must not remove it.
@@ -1662,7 +1668,7 @@ impl StagingDir {
         Ok(Self {
             path,
             #[cfg(unix)]
-            lock,
+            _lock: lock,
             published: std::cell::Cell::new(false),
         })
     }
@@ -1821,11 +1827,8 @@ fn write_restore_metadata(
     facts: &RunFacts,
     selected: &BackupManifest,
 ) -> Result<(), BackupError> {
-    let tenant = TenantId::try_new(engine.database_owner().tenant().to_text().as_str())
-        .map_err(|_| BackupError::DestinationUnavailable)?;
-    let operation = OperationId::try_new(&format!("restore-marker-{}", identity.operation_id))
-        .map_err(|_| BackupError::DestinationUnavailable)?;
-    let value = serde_json::to_string(&RestoreMarker {
+    let marker = RestoreMarker {
+        envelope: None,
         identity: identity.clone(),
         target_sequence: facts.target_sequence.get(),
         logical_checksum: facts.logical_checksum.clone(),
@@ -1835,11 +1838,24 @@ fn write_restore_metadata(
         source_logical_documents: selected.logical_documents(),
         source_captured_unix_millis: selected.captured_unix_millis(),
         source_retain_until_unix_millis: selected.retain_until_unix_millis(),
-    })
-    .map_err(|_| BackupError::DestinationUnavailable)?;
+    };
+    write_marker(engine, &marker)
+}
+
+fn write_marker(engine: &Engine, marker: &RestoreMarker) -> Result<(), BackupError> {
+    let identity = &marker.identity;
+    let tenant = TenantId::try_new(engine.database_owner().tenant().to_text().as_str())
+        .map_err(|_| BackupError::DestinationUnavailable)?;
+    let operation = OperationId::try_new(&format!("restore-marker-{}", identity.operation_id))
+        .map_err(|_| BackupError::DestinationUnavailable)?;
+    let value = serde_json::to_string(marker).map_err(|_| BackupError::DestinationUnavailable)?;
     let mut guard = engine.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
     let intent = CommitIntent {
         budget_allocation: None,
+        cross_file_control: None,
+        cross_file_dependencies: None,
+        cross_file_billing: None,
+        generated_primary_file_identity: None,
         tenant: tenant.clone(),
         digest: write_set_digest(&tenant, &[]),
         snapshot_sequence: guard.port.published_state().0,
@@ -2430,6 +2446,10 @@ impl Replay {
         let snapshot_sequence = guard.port.published_state().0;
         let intent = CommitIntent {
             budget_allocation: None,
+            cross_file_control: None,
+            cross_file_dependencies: None,
+            cross_file_billing: None,
+            generated_primary_file_identity: None,
             tenant: tenant.clone(),
             digest,
             snapshot_sequence,

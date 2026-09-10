@@ -448,6 +448,7 @@ mod tests {
             },
             phase: NativeRestorePhase::Accepted,
             receipt: Some(NativeRestoreReceipt {
+                envelope: None,
                 selected_identity: expected.recovery_point_digest.clone(),
                 logical_content_checksum: expected.target_checksum.clone(),
                 restored_documents: expected.target_row_count,

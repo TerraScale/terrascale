@@ -468,13 +468,15 @@ impl CausalDriver {
             return Err(refused("causal source has no correlated repair authorization"));
         }
         let scope = engine.scope_for(&TenantId::try_new(&self.scope.tenant).map_err(failure)?);
-        if !engine
-            .replication_publication_dependencies_ready(&scope, &publication)
-            .map_err(failure)?
-        {
-            return Ok(CausalReceive::Deferred);
+        let applied = engine.apply_replicated_publication(&scope, &publication);
+        if let Err(error) = applied {
+            // Causal gaps are expected during bounded out-of-order delivery;
+            // all other failures remain authenticated engine failures.
+            if matches!(error, terrabase::engine::EngineError::Conflict) {
+                return Ok(CausalReceive::Deferred);
+            }
+            return Err(failure(error));
         }
-        engine.apply_replicated_publication(&scope, &publication).map_err(failure)?;
         let operations = vec![publication.commit_ulid.clone()];
         let receipt = self.wrap(&Envelope {
             kind: FrameKind::AckBatch,
@@ -744,7 +746,11 @@ mod tests {
             let id = format!("remote-{index}");
             commit_test_document(&remote, &remote_scope, &operation, &id, index);
             let publication = remote
-                .replication_publications(&remote_scope, index as u64, 1)
+                .replication_publications(
+                    &remote_scope,
+                    u64::try_from(index).expect("fixture index is nonnegative"),
+                    1,
+                )
                 .unwrap()
                 .remove(0)
                 .1;
@@ -848,6 +854,60 @@ mod tests {
         );
         drop(source);
         drop(target);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn receive_defers_causal_gap_then_replays_once() {
+        let path = std::env::temp_dir().join(format!("causal-gap-{}", std::process::id()));
+        let source = Engine::open(EngineConfig::durable(path.join("source")).unwrap()).unwrap();
+        let target = Engine::open(EngineConfig::durable(path.join("target")).unwrap()).unwrap();
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let source_scope = source.scope_for(&tenant);
+        let target_scope = target.scope_for(&tenant);
+        commit_test_document(&source, &source_scope, "gap-first", "gap-first", 1);
+        commit_test_document(&source, &source_scope, "gap-second", "gap-second", 2);
+        let first = source.replication_publications(&source_scope, 0, 1).unwrap().remove(0).1;
+        let second = source.replication_publications(&source_scope, 1, 1).unwrap().remove(0).1;
+        let bound = BoundScope {
+            principal: "member".into(),
+            tenant: "tenant".into(),
+            project: "project".into(),
+            database: "database".into(),
+        };
+        let mut receiver = CausalDriver::new(
+            MemberId::try_new("b").unwrap(),
+            MemberId::try_new("a").unwrap(),
+            source.replication_origin().unwrap(),
+            target.replication_origin().unwrap(),
+            bound,
+            1,
+            1,
+        )
+        .unwrap();
+        let second_frame = receiver.publication_frame(&second, 0).unwrap();
+        assert!(matches!(
+            receiver.receive_frame(&target, &second_frame, 0).unwrap(),
+            CausalReceive::Deferred
+        ));
+        assert!(target.replication_publications(&target_scope, 0, 10).unwrap().is_empty());
+        let first_frame = receiver.publication_frame(&first, 0).unwrap();
+        assert!(matches!(
+            receiver.receive_frame(&target, &first_frame, 0).unwrap(),
+            CausalReceive::Applied { .. }
+        ));
+        assert!(matches!(
+            receiver.receive_frame(&target, &second_frame, 0).unwrap(),
+            CausalReceive::Applied { .. }
+        ));
+        assert!(matches!(
+            receiver.receive_frame(&target, &second_frame, 0).unwrap(),
+            CausalReceive::Applied { .. }
+        ));
+        assert_eq!(target.replication_publications(&target_scope, 0, 10).unwrap().len(), 2);
+        commit_test_document(&target, &target_scope, "target-after-gap", "target-after-gap", 3);
+        source.shutdown().unwrap();
+        target.shutdown().unwrap();
         std::fs::remove_dir_all(path).unwrap();
     }
 

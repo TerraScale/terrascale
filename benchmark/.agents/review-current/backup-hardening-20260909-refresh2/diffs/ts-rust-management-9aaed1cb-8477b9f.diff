@@ -1,0 +1,1137 @@
+diff --git a/src/management.rs b/src/management.rs
+index 9005251..0543de1 100644
+--- a/src/management.rs
++++ b/src/management.rs
+@@ -10,10 +10,6 @@ use crate::regions::RegionCode;
+ use crate::schema::CollectionSchema;
+ use crate::transport::{Method, Request};
+ use serde::{de::DeserializeOwned, Deserialize, Serialize};
+-use std::sync::{
+-    atomic::{AtomicBool, Ordering},
+-    Arc,
+-};
+ 
+ const DEFAULT_PAGE_SIZE: u32 = 100;
+ const MAX_PAGE_SIZE: u32 = 1_000;
+@@ -51,22 +47,7 @@ impl PageOptions {
+     }
+ }
+ 
+-/// Cooperative cancellation checked before and during a management request.
+-#[derive(Debug, Clone, Default)]
+-pub struct CancellationToken(Arc<AtomicBool>);
+-impl CancellationToken {
+-    #[must_use]
+-    pub fn new() -> Self {
+-        Self::default()
+-    }
+-    pub fn cancel(&self) {
+-        self.0.store(true, Ordering::Release);
+-    }
+-    #[must_use]
+-    pub fn is_cancelled(&self) -> bool {
+-        self.0.load(Ordering::Acquire)
+-    }
+-}
++pub use crate::reactive::CancellationToken;
+ 
+ /// Options for retry-safe management mutations.
+ #[derive(Debug, Clone, Default)]
+@@ -187,9 +168,7 @@ async fn send_with_options<T: DeserializeOwned>(
+     }
+ }
+ async fn wait_cancelled(token: CancellationToken) {
+-    while !token.is_cancelled() {
+-        tokio::task::yield_now().await;
+-    }
++    token.cancelled().await;
+ }
+ fn database_url(shared: &SharedClient, name: &str) -> Result<String> {
+     Ok(format!(
+@@ -229,8 +208,6 @@ pub struct DatabaseRecord {
+ pub struct DatabaseListResponse {
+     pub databases: Vec<DatabaseRecord>,
+ }
+-/// Compatibility name from the pre-contract Rust draft.
+-pub type ProjectDatabase = DatabaseRecord;
+ 
+ /// Database creation distinguishes a created database from accepted provisioning.
+ #[derive(Debug, Clone, PartialEq)]
+@@ -243,13 +220,177 @@ pub enum CreateDatabaseResult {
+ #[derive(Debug, Clone, PartialEq)]
+ pub enum DeleteDatabaseResult {
+     Deleted(DatabaseRecord),
+-    Accepted(DeleteDatabaseAccepted),
++    Accepted(Box<DeleteDatabaseAccepted>),
+ }
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ pub struct DeleteDatabaseAccepted {
+     pub operation_id: String,
+     pub state: String,
+     pub location: String,
++    pub request: DeletionRequest,
++    pub requested_at: String,
++    pub cutoff: String,
++    pub targets: Vec<DeletionTarget>,
++    #[serde(default)]
++    pub edge_receipt: Option<DeletionEdgeReceipt>,
++    #[serde(default)]
++    pub claim: Option<DeletionClaimReceipt>,
++    #[serde(default)]
++    pub automatic_policy_revision: Option<String>,
++    #[serde(default)]
++    pub automatic_grace_condition: Option<String>,
++    #[serde(default)]
++    pub automatic_deadline: Option<String>,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct DeletionRequest {
++    pub environment: String,
++    pub tenant_id: String,
++    pub project_id: String,
++    pub database_id: String,
++    pub operation_id: String,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct DeletionStop {
++    pub environment: String,
++    pub organization_id: String,
++    pub project_id: String,
++    pub database_id: String,
++    #[serde(default)]
++    pub parent_database_id: Option<String>,
++    pub operation_id: String,
++    pub region: String,
++    pub cutoff: String,
++    #[serde(default)]
++    pub retain_until: Option<String>,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct DeletionPreparation {
++    pub environment: String,
++    pub organization_id: String,
++    pub project_id: String,
++    pub database_id: String,
++    #[serde(default)]
++    pub parent_database_id: Option<String>,
++    pub operation_id: String,
++    pub region: String,
++    pub prepared: bool,
++    pub last_accounted_at: String,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct DeletionReceipt {
++    pub environment: String,
++    pub organization_id: String,
++    pub project_id: String,
++    pub database_id: String,
++    #[serde(default)]
++    pub parent_database_id: Option<String>,
++    pub operation_id: String,
++    pub region: String,
++    pub cutoff: String,
++    #[serde(default)]
++    pub retain_until: Option<String>,
++    pub access_revoked: bool,
++    pub usage_stopped: bool,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct DeletionEdgeReceipt {
++    pub request: DeletionRequest,
++    pub cutoff: String,
++    pub access_revoked: bool,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct DeletionClaimReceipt {
++    #[serde(rename = "schemaVersion")]
++    pub schema_version: u32,
++    pub environment: String,
++    pub tenant_id: String,
++    pub project_id: String,
++    pub database_id: String,
++    pub operation_id: String,
++    pub policy_revision: String,
++    pub policy_fingerprint: String,
++    pub grace_condition: String,
++    pub deadline: String,
++    pub accepted_at: String,
++    pub authority_epoch: String,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct DeletionTarget {
++    pub stop: DeletionStop,
++    #[serde(default)]
++    pub preparation: Option<DeletionPreparation>,
++    #[serde(default)]
++    pub receipt: Option<DeletionReceipt>,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct DeletionOperation {
++    pub request: DeletionRequest,
++    pub requested_at: String,
++    pub state: String,
++    pub cutoff: String,
++    pub targets: Vec<DeletionTarget>,
++    #[serde(default)]
++    pub edge_receipt: Option<DeletionEdgeReceipt>,
++    #[serde(default)]
++    pub claim: Option<DeletionClaimReceipt>,
++    #[serde(default)]
++    pub automatic_policy_revision: Option<String>,
++    #[serde(default)]
++    pub automatic_grace_condition: Option<String>,
++    #[serde(default)]
++    pub automatic_deadline: Option<String>,
++}
++
++fn validate_deletion_operation(operation: &DeletionOperation) -> Result<()> {
++    let request = &operation.request;
++    for (value, field) in [
++        (&request.environment, "environment"),
++        (&request.tenant_id, "tenant_id"),
++        (&request.project_id, "project_id"),
++        (&request.database_id, "database_id"),
++        (&request.operation_id, "operation_id"),
++        (&operation.requested_at, "requested_at"),
++        (&operation.cutoff, "cutoff"),
++    ] {
++        validate_non_empty(value, field)?;
++    }
++    if !matches!(
++        operation.state.as_str(),
++        "preparing" | "stopping" | "edge_pending" | "cleanup_pending"
++    ) {
++        return Err(Error::invalid_response(
++            "deletion response has an unknown state",
++        ));
++    }
++    if operation.targets.is_empty() || operation.targets.len() > 3000 {
++        return Err(Error::invalid_response(
++            "deletion response has an invalid target count",
++        ));
++    }
++    for target in &operation.targets {
++        let stop = &target.stop;
++        if stop.environment != request.environment
++            || stop.organization_id != request.tenant_id
++            || stop.project_id != request.project_id
++            || stop.operation_id != request.operation_id
++            || stop.database_id.is_empty()
++            || stop.cutoff.is_empty()
++        {
++            return Err(Error::invalid_response(
++                "deletion response has an inconsistent target",
++            ));
++        }
++    }
++    Ok(())
+ }
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ pub struct ProvisioningOperation {
+@@ -280,14 +421,6 @@ pub struct CreateDatabaseRequest {
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub residency: Option<String>,
+ }
+-/// Compatibility request retained only to produce a useful validation error;
+-/// placement is required by the current contract.
+-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+-pub struct CreateDatabase {
+-    pub name: String,
+-}
+-pub type CreateDatabaseWithPlacement = CreateDatabaseRequest;
+-
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub enum PlacementLock {
+     EuOnly,
+@@ -423,17 +556,6 @@ impl Databases {
+         };
+         self.shared.send_typed(request).await
+     }
+-    pub async fn create(
+-        &self,
+-        _request: CreateDatabase,
+-        _project_id: Option<&str>,
+-    ) -> Result<DatabaseRecord> {
+-        Err(Error::new(
+-            ErrorKind::Validation,
+-            "placement_required",
+-            "database creation requires an explicit placement; use CreateDatabaseRequest.",
+-        ))
+-    }
+     pub async fn create_with_placement(
+         &self,
+         request: CreateDatabaseRequest,
+@@ -554,32 +676,90 @@ impl Databases {
+                 });
+         }
+         if response.status == 202 {
+-            let operation_id = body
+-                .get("request")
+-                .and_then(|request| request.get("operation_id"))
+-                .and_then(serde_json::Value::as_str)
+-                .ok_or_else(|| {
+-                    Error::invalid_response("accepted database deletion has no operation_id")
+-                })?;
+-            let state = body
+-                .get("state")
+-                .and_then(serde_json::Value::as_str)
+-                .ok_or_else(|| {
+-                    Error::invalid_response("accepted database deletion has no state")
+-                })?;
++            let operation: DeletionOperation = serde_json::from_value(body).map_err(|error| {
++                Error::invalid_response(format!(
++                    "accepted database deletion response does not match the contract: {error}"
++                ))
++            })?;
++            validate_deletion_operation(&operation)?;
++            if operation.request.database_id != database_id {
++                return Err(Error::invalid_response(
++                    "accepted database deletion is for a different database",
++                ));
++            }
+             let location = response.header("location").ok_or_else(|| {
+                 Error::invalid_response("accepted database deletion has no Location header")
+             })?;
+-            return Ok(DeleteDatabaseResult::Accepted(DeleteDatabaseAccepted {
+-                operation_id: operation_id.to_owned(),
+-                state: state.to_owned(),
+-                location: location.to_owned(),
+-            }));
++            return Ok(DeleteDatabaseResult::Accepted(Box::new(
++                DeleteDatabaseAccepted {
++                    operation_id: operation.request.operation_id.clone(),
++                    state: operation.state.clone(),
++                    location: location.to_owned(),
++                    request: operation.request,
++                    requested_at: operation.requested_at,
++                    cutoff: operation.cutoff,
++                    targets: operation.targets,
++                    edge_receipt: operation.edge_receipt,
++                    claim: operation.claim,
++                    automatic_policy_revision: operation.automatic_policy_revision,
++                    automatic_grace_condition: operation.automatic_grace_condition,
++                    automatic_deadline: operation.automatic_deadline,
++                },
++            )));
+         }
+         Err(Error::invalid_response(
+             "database deletion returned an unsupported success status",
+         ))
+     }
++
++    /// Reads the durable deletion operation without resubmitting the deletion.
++    pub async fn get_deletion_status(
++        &self,
++        database_id: &str,
++        operation_id: &str,
++        _project_id: Option<&str>,
++    ) -> Result<DeletionOperation> {
++        validate_bounded(operation_id, "operation_id", 128)?;
++        if !operation_id
++            .bytes()
++            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
++        {
++            return Err(Error::new(
++                ErrorKind::Validation,
++                "invalid_operation_id",
++                "operation_id must contain only ASCII letters, digits, hyphens, or underscores.",
++            ));
++        }
++        let response = self
++            .shared
++            .send_response(Request {
++                route_name: "deletion_status".to_owned(),
++                method: Method::Get,
++                url: format!(
++                    "{}/deletions/{}",
++                    database_url(&self.shared, database_id)?,
++                    encode_segment(operation_id, "operation_id")?
++                ),
++                headers: Vec::new(),
++                body: None,
++            })
++            .await?;
++        if response.status != 200 {
++            return Err(Error::invalid_response(
++                "deletion status returned an unsupported success status",
++            ));
++        }
++        let operation: DeletionOperation = response.json_body()?;
++        validate_deletion_operation(&operation)?;
++        if operation.request.database_id != database_id
++            || operation.request.operation_id != operation_id
++        {
++            return Err(Error::invalid_response(
++                "deletion status response does not match the requested scope",
++            ));
++        }
++        Ok(operation)
++    }
+     pub async fn restore(
+         &self,
+         database_id: &str,
+@@ -607,6 +787,7 @@ pub struct RestoreRequest {
+     pub name: String,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub at: Option<i64>,
++    pub operation_id: String,
+ }
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ pub struct BranchListResponse {
+@@ -664,6 +845,7 @@ impl Branches {
+ }
+ fn validate_restore(request: &RestoreRequest) -> Result<()> {
+     validate_non_empty(&request.name, "database_name")?;
++    validate_bounded(&request.operation_id, "operation_id", 128)?;
+     if request.at.is_some_and(|at| at < 0) {
+         return Err(Error::new(
+             ErrorKind::Validation,
+@@ -933,8 +1115,9 @@ impl Backups {
+         request: RestoreRequest,
+         _project_id: Option<&str>,
+         options: OperationOptions,
+-    ) -> Result<DatabaseRecord> {
++    ) -> Result<ProvisioningOperation> {
+         validate_restore(&request)?;
++        let operation_id = request.operation_id.clone();
+         let request = request_with_options(
+             "backups.restore",
+             Method::Post,
+@@ -945,7 +1128,26 @@ impl Backups {
+             &request,
+             &options,
+         )?;
+-        send_with_options(&self.shared, request, &options).await
++        let response = if let Some(token) = options.cancellation.clone() {
++            tokio::select! {
++                response = self.shared.send_response(request) => response?,
++                () = wait_cancelled(token) => return Err(Error::new(ErrorKind::Transport, "cancelled", "The management operation was cancelled.")),
++            }
++        } else {
++            self.shared.send_response(request).await?
++        };
++        if response.status != 202 {
++            return Err(Error::invalid_response(
++                "backup restore returned an unsupported success status",
++            ));
++        }
++        let operation: ProvisioningOperation = response.json_body()?;
++        if operation.operation_id != operation_id {
++            return Err(Error::invalid_response(
++                "backup restore response does not match the requested operation",
++            ));
++        }
++        Ok(operation)
+     }
+ }
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+@@ -1184,6 +1386,146 @@ impl Exports {
+         send_with_options(&self.shared, request, &options).await
+     }
+ }
++
++/// Import admitted data into a database through the resumable upload flow.
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct CreateImport {
++    pub format: TransferFormat,
++    pub idempotency_key: String,
++}
++
++/// Durable import progress and resumable input state.
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct ImportJob {
++    pub committed_records: i64,
++    pub cursor: i64,
++    pub database_id: String,
++    pub durability: String,
++    pub error: Option<String>,
++    pub format: String,
++    pub input_committed: bool,
++    pub input_digest: Option<String>,
++    pub input_length: Option<i64>,
++    pub operation_id: String,
++    pub pending_cursor: Option<i64>,
++    pub pending_operation: Option<String>,
++    pub pending_records: Option<i64>,
++    pub project_id: String,
++    pub state: String,
++    pub tenant_id: String,
++}
++
++#[derive(Debug, Clone)]
++pub struct Imports {
++    shared: SharedClient,
++}
++
++impl Imports {
++    pub(crate) fn new(shared: SharedClient) -> Self {
++        Self { shared }
++    }
++
++    pub async fn create(
++        &self,
++        database_id: &str,
++        input: CreateImport,
++        _project_id: Option<&str>,
++        options: OperationOptions,
++    ) -> Result<ImportJob> {
++        validate_non_empty(&input.idempotency_key, "idempotency_key")?;
++        let request = request_with_options(
++            "imports.create",
++            Method::Post,
++            format!("{}/imports", database_url(&self.shared, database_id)?),
++            &input,
++            &options,
++        )?;
++        send_with_options(&self.shared, request, &options).await
++    }
++
++    pub async fn list(&self, database_id: &str) -> Result<Vec<ImportJob>> {
++        self.shared
++            .send_typed(Request {
++                route_name: "imports.list".into(),
++                method: Method::Get,
++                url: format!("{}/imports", database_url(&self.shared, database_id)?),
++                headers: Vec::new(),
++                body: None,
++            })
++            .await
++    }
++
++    pub async fn get(&self, database_id: &str, import_id: &str) -> Result<ImportJob> {
++        self.shared
++            .send_typed(Request {
++                route_name: "imports.get".into(),
++                method: Method::Get,
++                url: format!(
++                    "{}/imports/{}",
++                    database_url(&self.shared, database_id)?,
++                    encode_segment(import_id, "import_id")?
++                ),
++                headers: Vec::new(),
++                body: None,
++            })
++            .await
++    }
++
++    pub async fn upload(
++        &self,
++        database_id: &str,
++        import_id: &str,
++        bytes: Vec<u8>,
++        options: OperationOptions,
++    ) -> Result<ImportJob> {
++        validate_non_empty(import_id, "import_id")?;
++        if bytes.is_empty() {
++            return Err(Error::new(
++                ErrorKind::Validation,
++                "invalid_input",
++                "import input cannot be empty.",
++            ));
++        }
++        let request = request_options(
++            Request {
++                route_name: "imports.upload".into(),
++                method: Method::Put,
++                url: format!(
++                    "{}/imports/{}/input",
++                    database_url(&self.shared, database_id)?,
++                    encode_segment(import_id, "import_id")?
++                ),
++                headers: vec![("content-type".into(), "application/octet-stream".into())],
++                body: Some(bytes),
++            },
++            &options,
++        )?;
++        send_with_options(&self.shared, request, &options).await
++    }
++
++    pub async fn resume(
++        &self,
++        database_id: &str,
++        import_id: &str,
++        options: OperationOptions,
++    ) -> Result<ImportJob> {
++        let request = request_options(
++            Request {
++                route_name: "imports.resume".into(),
++                method: Method::Post,
++                url: format!(
++                    "{}/imports/{}/resume",
++                    database_url(&self.shared, database_id)?,
++                    encode_segment(import_id, "import_id")?
++                ),
++                headers: Vec::new(),
++                body: None,
++            },
++            &options,
++        )?;
++        send_with_options(&self.shared, request, &options).await
++    }
++}
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ pub struct Usage {
+     /// End of the latest finalized storage interval, when available.
+@@ -1253,6 +1595,22 @@ impl UsageClient {
+ // Member health and root
+ // ---------------------------------------------------------------------------
+ 
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct RegionDetails {
++    pub code: String,
++    pub name: String,
++    pub country: String,
++    pub latitude: f64,
++    pub longitude: f64,
++    pub available: bool,
++}
++
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct RegionCatalogResponse {
++    pub regions: Vec<RegionDetails>,
++    pub hosts: std::collections::BTreeMap<String, String>,
++}
++
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ pub struct HealthResponse {
+     pub region: String,
+@@ -1266,7 +1624,8 @@ impl Regions {
+     pub(crate) fn new(shared: SharedClient) -> Self {
+         Self { shared }
+     }
+-    pub async fn list(&self) -> Result<HealthResponse> {
++    /// Returns the anonymous edge-published region catalog.
++    pub async fn catalog(&self) -> Result<RegionCatalogResponse> {
+         let request = Request {
+             route_name: "regions.list".to_owned(),
+             method: Method::Get,
+@@ -1274,6 +1633,49 @@ impl Regions {
+             headers: Vec::new(),
+             body: None,
+         };
++        let response: RegionCatalogResponse = self.shared.send_typed(request).await?;
++        if response.regions.is_empty() {
++            return Err(Error::invalid_response(
++                "region catalog must contain at least one region",
++            ));
++        }
++        let mut seen = std::collections::BTreeSet::new();
++        for region in &response.regions {
++            if region.code.is_empty()
++                || region.name.is_empty()
++                || region.country.is_empty()
++                || !seen.insert(region.code.as_str())
++                || !response.hosts.contains_key(&region.code)
++            {
++                return Err(Error::invalid_response(
++                    "region catalog contains invalid or incomplete region data",
++                ));
++            }
++        }
++        Ok(response)
++    }
++
++    /// Returns the serving member's status from the selected regional origin.
++    pub async fn status(&self, region: RegionCode) -> Result<HealthResponse> {
++        let request = Request {
++            route_name: "regions.status".to_owned(),
++            method: Method::Get,
++            url: format!("{}/health", self.shared.pinned_base_url(Some(region))?),
++            headers: Vec::new(),
++            body: None,
++        };
++        self.shared.send_typed(request).await
++    }
++
++    /// Returns member liveness from the selected regional origin.
++    pub async fn health(&self, region: RegionCode) -> Result<HealthResponse> {
++        let request = Request {
++            route_name: "regions.health".to_owned(),
++            method: Method::Get,
++            url: format!("{}/health", self.shared.pinned_base_url(Some(region))?),
++            headers: Vec::new(),
++            body: None,
++        };
+         self.shared.send_typed(request).await
+     }
+ }
+@@ -1311,6 +1713,10 @@ impl ManagementClient {
+         Exports::new(self.shared.clone())
+     }
+     #[must_use]
++    pub fn imports(&self) -> Imports {
++        Imports::new(self.shared.clone())
++    }
++    #[must_use]
+     pub fn usage(&self) -> UsageClient {
+         UsageClient::new(self.shared.clone())
+     }
+@@ -1351,7 +1757,6 @@ struct EmptyBody {}
+ pub type DatabaseSchema = CollectionSchema;
+ pub type DeletedDatabase = DatabaseRecord;
+ pub type Backup = BackupStatusResponse;
+-pub type RegionSummary = HealthResponse;
+ pub type UsageSummary = Usage;
+ 
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+@@ -1408,11 +1813,15 @@ pub struct ApiKeys;
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(rename_all = "kebab-case")]
+ pub enum TransferFormat {
++    Native,
+     Jsonl,
+     Csv,
++    #[serde(rename = "mongo_json")]
+     MongoJson,
++    #[serde(rename = "cosmos_json")]
+     CosmosJson,
+-    DynamoDb,
++    #[serde(rename = "dynamo_json")]
++    DynamoJson,
+ }
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+ pub enum UsageRange {
+@@ -1864,6 +2273,7 @@ pub struct AuthTransactionIdentity {
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct AuthResult {
++    pub count: Option<i64>,
+     pub record: Option<AuthRecord>,
+     pub matched: bool,
+     pub records: Option<Vec<AuthRecord>>,
+@@ -1917,6 +2327,25 @@ pub struct AuthPageQuery {
+     pub offset: u32,
+     pub limit: u32,
+ }
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct AuthPredicateOnly {
++    pub model: String,
++    pub predicates: Vec<AuthPredicate>,
++}
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct AuthPredicateUpdate {
++    pub model: String,
++    pub predicates: Vec<AuthPredicate>,
++    pub update: AuthRecord,
++}
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct AuthIncrement {
++    pub model: String,
++    pub predicates: Vec<AuthPredicate>,
++    pub increment: AuthRecord,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub set: Option<AuthRecord>,
++}
+ /// Every auth mutation requires caller-owned durable identity.
+ #[derive(Debug, Clone)]
+ pub struct AuthOperationOptions {
+@@ -2010,6 +2439,64 @@ impl AuthPersistence {
+     ) -> Result<AuthResult> {
+         self.post(database_id, "findPage", &input, options).await
+     }
++    pub async fn update_one(
++        &self,
++        database_id: &str,
++        input: AuthPredicateUpdate,
++        options: AuthOperationOptions,
++    ) -> Result<AuthResult> {
++        self.post(database_id, "updateOne", &input, options).await
++    }
++    pub async fn update_many(
++        &self,
++        database_id: &str,
++        input: AuthPredicateUpdate,
++        options: AuthOperationOptions,
++    ) -> Result<AuthResult> {
++        self.post(database_id, "updateMany", &input, options).await
++    }
++    pub async fn delete_one(
++        &self,
++        database_id: &str,
++        input: AuthPredicateOnly,
++        options: AuthOperationOptions,
++    ) -> Result<AuthResult> {
++        self.post(database_id, "deleteOne", &input, options).await
++    }
++    pub async fn delete_many(
++        &self,
++        database_id: &str,
++        input: AuthPredicateOnly,
++        options: AuthOperationOptions,
++    ) -> Result<AuthResult> {
++        self.post(database_id, "deleteMany", &input, options).await
++    }
++    pub async fn increment_one(
++        &self,
++        database_id: &str,
++        input: AuthIncrement,
++        options: AuthOperationOptions,
++    ) -> Result<AuthResult> {
++        self.post(database_id, "incrementOne", &input, options)
++            .await
++    }
++    pub async fn consume_matching(
++        &self,
++        database_id: &str,
++        input: AuthPredicateOnly,
++        options: AuthOperationOptions,
++    ) -> Result<AuthResult> {
++        self.post(database_id, "consumeMatching", &input, options)
++            .await
++    }
++    pub async fn count(
++        &self,
++        database_id: &str,
++        input: AuthPredicateOnly,
++        options: AuthOperationOptions,
++    ) -> Result<AuthResult> {
++        self.post(database_id, "count", &input, options).await
++    }
+     pub async fn find_one(&self, database_id: &str, model: &str, id: &str) -> Result<AuthResult> {
+         self.shared
+             .send_typed(Request {
+diff --git a/tests/management.rs b/tests/management.rs
+index ea8e873..c5927c2 100644
+--- a/tests/management.rs
++++ b/tests/management.rs
+@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
+ use async_trait::async_trait;
+ use serde_json::json;
+ use terrascale::management::{
+-    CancellationToken, CreateDatabaseRequest, CreateIndexRequest, OperationListOptions,
+-    OperationOptions, PageOptions, PlacementLock, RestoreRequest,
++    CancellationToken, CreateDatabaseRequest, CreateImport, CreateIndexRequest,
++    OperationListOptions, OperationOptions, PageOptions, PlacementLock, RestoreRequest,
++    TransferFormat,
+ };
+ use terrascale::{
+     ClientConfig, HttpTransport, Method, RegionCode, Request, Response, Result, TerraScaleClient,
+@@ -129,6 +130,36 @@ fn placement_and_residency_fail_closed_before_transport() {
+     assert!(CreateDatabaseRequest::new("orders", vec![RegionCode::Gru, RegionCode::Gru]).is_err());
+ }
+ 
++#[tokio::test]
++async fn create_requires_contract_provisioning_fields_before_transport() {
++    let mock = Mock::new(vec![]);
++    let api = client(Arc::clone(&mock)).management().databases();
++
++    let operation_only = CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
++        .expect("placement")
++        .operation_id("op")
++        .expect("operation id");
++    let error = api
++        .create_with_placement(operation_only, None, OperationOptions::default())
++        .await
++        .expect_err("residency is required by the create contract");
++    assert_eq!(error.kind, terrascale::ErrorKind::Validation);
++    assert_eq!(error.code, "provisioning_fields_required");
++
++    let residency_only = CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
++        .expect("placement")
++        .residency("br-only")
++        .expect("residency");
++    let error = api
++        .create_with_placement(residency_only, None, OperationOptions::default())
++        .await
++        .expect_err("operation_id is required by the create contract");
++    assert_eq!(error.kind, terrascale::ErrorKind::Validation);
++    assert_eq!(error.code, "provisioning_fields_required");
++
++    assert!(mock.requests.lock().expect("requests mutex").is_empty());
++}
++
+ #[tokio::test]
+ async fn schema_is_one_collection_schema_and_direct_path() {
+     let mock = Mock::new(vec![Response::json(
+@@ -202,14 +233,16 @@ async fn cancellation_does_not_admit_mutations() {
+ #[tokio::test]
+ async fn branch_and_backup_restore_use_restore_request() {
+     let record = json!({"name":"copy","placement":"GRU","residency":"br-only","deleted":false,"created_at":1,"parent":"db"});
++    let operation = json!({"environment":"production","tenant_id":"tenant","project_id":"project","operation_id":"restore-op","database_id":"restored-db","parent_database_id":null,"key_version":"key-1","name":"copy","regions":["GRU"],"residency":"br-only","state":"pending"});
+     let mock = Mock::new(vec![
+         Response::json(201, &record),
+-        Response::json(201, &record),
++        Response::json(202, &operation),
+     ]);
+     let sdk = client(Arc::clone(&mock));
+     let body = RestoreRequest {
+         name: "copy".into(),
+         at: Some(10),
++        operation_id: "restore-op".into(),
+     };
+     sdk.management()
+         .branches()
+@@ -229,6 +262,55 @@ async fn branch_and_backup_restore_use_restore_request() {
+         mock.last().url,
+         "https://api.terrascale.tech/api/v1/databases/db/backups/restore"
+     );
++    assert_eq!(
++        serde_json::from_slice::<serde_json::Value>(&mock.last().body.expect("body"))
++            .expect("json"),
++        json!({"name":"copy","at":10,"operation_id":"restore-op"})
++    );
++}
++
++#[tokio::test]
++async fn backup_restore_rejects_non_accepted_status() {
++    let record = json!({"name":"copy","placement":"GRU","residency":"br-only","deleted":false,"created_at":1,"parent":"db"});
++    let mock = Mock::new(vec![Response::json(201, &record)]);
++    let error = client(mock)
++        .management()
++        .backups()
++        .restore(
++            "db",
++            RestoreRequest {
++                name: "copy".into(),
++                at: None,
++                operation_id: "restore-op".into(),
++            },
++            None,
++            OperationOptions::default(),
++        )
++        .await
++        .expect_err("restore must require HTTP 202");
++    assert_eq!(error.code, "invalid_response");
++}
++
++#[tokio::test]
++async fn backup_restore_rejects_mismatched_operation_identity() {
++    let operation = json!({"environment":"production","tenant_id":"tenant","project_id":"project","operation_id":"other-op","database_id":"restored-db","parent_database_id":null,"key_version":"key-1","name":"copy","regions":["GRU"],"residency":"br-only","state":"pending"});
++    let mock = Mock::new(vec![Response::json(202, &operation)]);
++    let error = client(mock)
++        .management()
++        .backups()
++        .restore(
++            "db",
++            RestoreRequest {
++                name: "copy".into(),
++                at: None,
++                operation_id: "restore-op".into(),
++            },
++            None,
++            OperationOptions::default(),
++        )
++        .await
++        .expect_err("restore must preserve operation identity");
++    assert_eq!(error.code, "invalid_response");
+ }
+ 
+ #[test]
+@@ -407,6 +489,102 @@ async fn exports_send_identity_and_resume_cursor_and_preserve_progress() {
+     );
+ }
+ 
++#[tokio::test]
++async fn imports_use_direct_routes_and_resumable_upload_flow() {
++    let status = json!({
++        "committed_records": 3,
++        "cursor": 3,
++        "database_id": "db 1",
++        "durability": "durable",
++        "error": null,
++        "format": "jsonl",
++        "input_committed": true,
++        "input_digest": "abc",
++        "input_length": 12,
++        "operation_id": "op",
++        "pending_cursor": null,
++        "pending_operation": null,
++        "pending_records": null,
++        "project_id": "project",
++        "state": "complete",
++        "tenant_id": "tenant"
++    });
++    let mock = Mock::new(vec![
++        Response::json(202, &status),
++        Response::json(200, &json!([status.clone()])),
++        Response::json(200, &status),
++        Response::json(200, &status),
++        Response::json(200, &status),
++    ]);
++    let api = client(Arc::clone(&mock)).management().imports();
++
++    let created = api
++        .create(
++            "db 1",
++            CreateImport {
++                format: TransferFormat::Jsonl,
++                idempotency_key: "import-once".into(),
++            },
++            None,
++            OperationOptions::default(),
++        )
++        .await
++        .expect("create");
++    assert_eq!(created.operation_id, "op");
++    let request = mock.last();
++    assert_eq!(request.method, Method::Post);
++    assert_eq!(
++        request.url,
++        "https://api.terrascale.tech/api/v1/databases/db%201/imports"
++    );
++    assert_eq!(
++        serde_json::from_slice::<serde_json::Value>(&request.body.expect("body")).expect("json"),
++        json!({"format":"jsonl","idempotency_key":"import-once"})
++    );
++
++    assert_eq!(api.list("db 1").await.expect("list").len(), 1);
++    assert_eq!(
++        mock.last().url,
++        "https://api.terrascale.tech/api/v1/databases/db%201/imports"
++    );
++
++    api.get("db 1", "job/1").await.expect("get");
++    assert_eq!(
++        mock.last().url,
++        "https://api.terrascale.tech/api/v1/databases/db%201/imports/job%2F1"
++    );
++
++    api.upload(
++        "db 1",
++        "job/1",
++        b"{\"id\":1}\n".to_vec(),
++        OperationOptions::default(),
++    )
++    .await
++    .expect("upload");
++    let request = mock.last();
++    assert_eq!(request.method, Method::Put);
++    assert_eq!(
++        request.url,
++        "https://api.terrascale.tech/api/v1/databases/db%201/imports/job%2F1/input"
++    );
++    assert_eq!(request.body.expect("body"), b"{\"id\":1}\n");
++    assert!(request
++        .headers
++        .iter()
++        .any(|(name, value)| name == "content-type" && value == "application/octet-stream"));
++
++    api.resume("db 1", "job/1", OperationOptions::default())
++        .await
++        .expect("resume");
++    assert_eq!(mock.last().method, Method::Post);
++    assert_eq!(
++        mock.last().url,
++        "https://api.terrascale.tech/api/v1/databases/db%201/imports/job%2F1/resume"
++    );
++    assert!(mock.last().body.is_none());
++}
++
+ #[tokio::test]
+ async fn export_download_preserves_binary_body_and_authentication() {
+     let bytes = vec![0, 0xff, b'"', b'\n'];
+@@ -544,10 +722,11 @@ async fn database_delete_decodes_accepted_provisioning_lifecycle() {
+             "/api/v1/databases/orders/deletions/op".into(),
+         )],
+         body: serde_json::to_vec(&json!({
+-            "request": {"operation_id": "op"},
++            "request": {"environment":"production","tenant_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op"},
++            "requested_at": "2026-09-06T00:00:00Z",
+             "state": "preparing",
+             "cutoff": "2026-09-06T00:00:00Z",
+-            "targets": []
++            "targets": [{"stop":{"environment":"production","organization_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op","region":"GRU","cutoff":"2026-09-06T00:00:00Z"}}]
+         }))
+         .unwrap(),
+     }]);
+@@ -563,6 +742,34 @@ async fn database_delete_decodes_accepted_provisioning_lifecycle() {
+     assert_eq!(accepted.operation_id, "op");
+     assert_eq!(accepted.state, "preparing");
+     assert_eq!(accepted.location, "/api/v1/databases/orders/deletions/op");
++    assert_eq!(accepted.cutoff, "2026-09-06T00:00:00Z");
++    assert_eq!(accepted.targets.len(), 1);
++}
++
++#[tokio::test]
++async fn database_deletion_status_reads_typed_authoritative_progress() {
++    let body = json!({
++        "request": {"environment":"production","tenant_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op"},
++        "requested_at": "2026-09-06T00:00:00Z",
++        "state": "cleanup_pending",
++        "cutoff": "2026-09-06T00:00:00Z",
++        "targets": [{"stop":{"environment":"production","organization_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op","region":"GRU","cutoff":"2026-09-06T00:00:00Z","retain_until":"2026-09-13T00:00:00Z"},"receipt":{"environment":"production","organization_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op","region":"GRU","cutoff":"2026-09-06T00:00:00Z","access_revoked":true,"usage_stopped":true}}]
++    });
++    let mock = Mock::new(vec![Response::json(200, &body)]);
++    let operation = client(Arc::clone(&mock))
++        .management()
++        .databases()
++        .get_deletion_status("orders", "op", None)
++        .await
++        .expect("deletion status");
++    assert_eq!(operation.state, "cleanup_pending");
++    assert_eq!(operation.targets[0].stop.region, "GRU");
++    assert!(operation.targets[0].receipt.as_ref().unwrap().usage_stopped);
++    assert_eq!(mock.last().method, Method::Get);
++    assert_eq!(
++        mock.last().url,
++        "https://api.terrascale.tech/api/v1/databases/orders/deletions/op"
++    );
+ }
+ 
+ #[tokio::test]
+@@ -1119,3 +1326,57 @@ async fn auth_persistence_uses_public_named_operations_and_stable_identity() {
+         .is_err());
+     assert_eq!(mock.requests.lock().unwrap().len(), 9);
+ }
++
++#[tokio::test]
++async fn auth_persistence_exposes_predicate_operations() {
++    use terrascale::*;
++    let response = json!({"record":null,"matched":true,"records":[],"count":2});
++    let mock = Mock::new((0..7).map(|_| Response::json(200, &response)).collect());
++    let api = client(Arc::clone(&mock)).management().auth_persistence();
++    let options = AuthOperationOptions {
++        idempotency_key: "stable".into(),
++        transaction_id: None,
++    };
++    let request = AuthPredicateOnly {
++        model: "user".into(),
++        predicates: vec![],
++    };
++    let update = AuthPredicateUpdate {
++        model: "user".into(),
++        predicates: vec![],
++        update: AuthRecord::new(),
++    };
++    let increment = AuthIncrement {
++        model: "user".into(),
++        predicates: vec![],
++        increment: [("loginCount".into(), json!(1))].into_iter().collect(),
++        set: None,
++    };
++    api.update_one("db", update.clone(), options.clone())
++        .await
++        .unwrap();
++    assert!(mock.last().url.ends_with("/auth/updateOne"));
++    api.update_many("db", update, options.clone())
++        .await
++        .unwrap();
++    assert!(mock.last().url.ends_with("/auth/updateMany"));
++    api.delete_one("db", request.clone(), options.clone())
++        .await
++        .unwrap();
++    assert!(mock.last().url.ends_with("/auth/deleteOne"));
++    api.delete_many("db", request.clone(), options.clone())
++        .await
++        .unwrap();
++    assert!(mock.last().url.ends_with("/auth/deleteMany"));
++    api.increment_one("db", increment, options.clone())
++        .await
++        .unwrap();
++    assert!(mock.last().url.ends_with("/auth/incrementOne"));
++    api.consume_matching("db", request.clone(), options.clone())
++        .await
++        .unwrap();
++    assert!(mock.last().url.ends_with("/auth/consumeMatching"));
++    let result = api.count("db", request, options).await.unwrap();
++    assert_eq!(result.count, Some(2));
++    assert!(mock.last().url.ends_with("/auth/count"));
++}

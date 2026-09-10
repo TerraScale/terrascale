@@ -273,6 +273,9 @@ pub(crate) fn execute_routed(
     let control = SqlControl::new(runtime);
     control.check()?;
     let started = Instant::now();
+    if plan.sql_execute_only_operator().is_none() {
+        return execute_routed_lowered(cut, plan, runtime, &control, started);
+    }
     let connection = materialized_connection(cut, &tenant, &runtime.tables, &control)?;
     let progress_control = control.clone();
     connection
@@ -363,6 +366,77 @@ pub(crate) fn execute_routed(
     ))
 }
 
+fn execute_routed_lowered(
+    cut: &crate::query::routed::RoutedReadCut,
+    plan: &QueryPlan,
+    runtime: &SqlRuntime,
+    control: &SqlControl,
+    started: Instant,
+) -> Result<QueryResult, QueryError> {
+    // Lowered SQL is the same canonical query model used by the normal
+    // single-engine executor. Evaluate it over the route-owned, bounded
+    // union, then perform one global ordering/projection/page. MATCH is
+    // included here because its typed analyzer predicate is already lowered.
+    let snapshot = &cut.participants.first().ok_or(QueryError::StorageFailure)?.snapshot;
+    let query = plan.model();
+    if query.tenant_claim().is_some_and(|tenant| tenant != snapshot.tenant()) {
+        return Err(QueryError::SnapshotTenantMismatch);
+    }
+    let mut documents = Vec::new();
+    let mut scanned = 0_u64;
+    visit_routed_documents(cut, snapshot.tenant(), &runtime.tables, control, |document, _body| {
+        scanned = scanned.saturating_add(1);
+        if super::model::matches(query.predicate(), &document) {
+            documents.push(document);
+        }
+        Ok(())
+    })?;
+    control.check()?;
+    documents.sort_by(|left, right| super::model::compare_documents(query.ordering(), left, right));
+    control.check()?;
+    let matched = u64::try_from(documents.len()).map_err(|_| QueryError::CandidateBoundExceeded)?;
+    let rows = super::execute::materialize(query, &documents, &BTreeMap::new())?;
+    if rows.len() > MAX_SQL_OUTPUT_ROWS {
+        return Err(QueryError::CandidateBoundExceeded);
+    }
+    let mut bytes = 0_usize;
+    for row in &rows {
+        control.check()?;
+        bytes = bytes
+            .checked_add(value_size(row.document().value())?)
+            .ok_or(QueryError::CandidateBoundExceeded)?;
+        for (name, value) in row.projected() {
+            bytes = bytes
+                .checked_add(name.len())
+                .and_then(|bytes| bytes.checked_add(value_size(value).ok()?))
+                .ok_or(QueryError::CandidateBoundExceeded)?;
+        }
+        if bytes > MAX_SQL_OUTPUT_BYTES {
+            return Err(QueryError::CandidateBoundExceeded);
+        }
+    }
+    let sequence =
+        cut.participants.iter().map(|p| p.snapshot.sequence().get()).max().unwrap_or_default();
+    let staleness = StalenessReport::default();
+    let statistics = super::statistics::QueryStatistics::new(
+        matched,
+        query.paging(),
+        scanned,
+        scanned.saturating_sub(matched),
+        ResultEtag::of(crate::types::StorageSequence::new(sequence), &staleness),
+        DiagnosticDuration::new(started.elapsed()),
+    );
+    Ok(QueryResult::new(
+        rows,
+        matched,
+        plan.ordering().clone(),
+        staleness,
+        None,
+        super::includes::IncludeSet::default(),
+        statistics,
+    ))
+}
+
 fn resolve_source_id(
     projected: &[(String, DocumentValue)],
     used_ids: &BTreeSet<String>,
@@ -431,15 +505,44 @@ fn materialized_connection(
         )
         .map_err(|_| QueryError::StorageFailure)?;
     let transaction = connection.unchecked_transaction().map_err(|_| QueryError::StorageFailure)?;
-    let mut seen = BTreeSet::new();
-    let mut input_documents = 0usize;
-    let mut input_bytes = 0usize;
     let sequence = cut
         .participants
         .iter()
         .map(|participant| participant.snapshot.sequence().get())
         .max()
         .unwrap_or_default();
+    visit_routed_documents(cut, tenant, tables, control, |document, body| {
+        transaction
+            .execute(
+                "INSERT INTO documents
+                 (tenant, collection, id, body, revision, hlc, committed_at, commit_seq, deleted)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, 0)",
+                rusqlite::params![
+                    tenant.as_str(),
+                    document.collection().as_str(),
+                    document.id().as_str(),
+                    body,
+                    i64::try_from(document.metadata().version()).unwrap_or(i64::MAX),
+                    i64::try_from(sequence).map_err(|_| QueryError::CandidateBoundExceeded)?,
+                ],
+            )
+            .map_err(|_| QueryError::StorageFailure)?;
+        Ok(())
+    })?;
+    transaction.commit().map_err(|_| QueryError::StorageFailure)?;
+    Ok(connection)
+}
+
+fn visit_routed_documents(
+    cut: &crate::query::routed::RoutedReadCut,
+    tenant: &crate::types::TenantId,
+    tables: &[String],
+    control: &SqlControl,
+    mut visit: impl FnMut(Document, String) -> Result<(), QueryError>,
+) -> Result<(), QueryError> {
+    let mut seen = BTreeSet::new();
+    let mut input_documents = 0usize;
+    let mut input_bytes = 0usize;
     for participant in &cut.participants {
         control.check()?;
         let scope =
@@ -489,27 +592,12 @@ fn materialized_connection(
                     {
                         return Err(QueryError::CandidateBoundExceeded);
                     }
-                    transaction
-                    .execute(
-                    "INSERT INTO documents
-                     (tenant, collection, id, body, revision, hlc, committed_at, commit_seq, deleted)
-                     VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, 0)",
-                    rusqlite::params![
-                        tenant.as_str(),
-                        document.collection().as_str(),
-                        document.id().as_str(),
-                        body,
-                        i64::try_from(document.metadata().version()).unwrap_or(i64::MAX),
-                        i64::try_from(sequence).map_err(|_| QueryError::CandidateBoundExceeded)?,
-                    ],
-                    )
-                    .map_err(|_| QueryError::StorageFailure)?;
+                    visit(document, body)?;
                 }
             }
         }
     }
-    drop(transaction);
-    Ok(connection)
+    Ok(())
 }
 
 fn check_input_bounds(
@@ -783,3 +871,11 @@ fn json_value(value: &DocumentValue) -> Result<String, QueryError> {
             .map(|values| format!("{{{}}}", values.join(","))),
     }
 }
+
+#[cfg(test)]
+#[path = "routed_match_tests.rs"]
+mod routed_match_tests;
+
+#[cfg(test)]
+#[path = "routed_lowered_tests.rs"]
+mod routed_lowered_tests;

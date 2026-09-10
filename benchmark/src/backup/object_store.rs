@@ -3,6 +3,7 @@
 //! Each destination is independent. The transfer index is published last and
 //! contains the digest of every ciphertext file; it never contains credentials.
 //! Restore requires a known point prefix and never consults another provider.
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -237,7 +238,6 @@ impl MultipartCleanup {
             .expect("multipart upload guard is armed")
             .put_part(data)
             .await
-            .map(|_| ())
             .map_err(|_| TransferError::Unavailable)
     }
 
@@ -281,6 +281,9 @@ impl Drop for MultipartCleanup {
 impl ObjectDestination {
     /// Publishes one authenticated multi-participant envelope. The envelope
     /// is written before its commit index and read back before success.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when validation, publication, or read-back fails.
     pub async fn upload_envelope(
         &self,
         envelope: &Path,
@@ -330,6 +333,10 @@ impl ObjectDestination {
     }
 
     /// Fetches one envelope and enforces its bounded authenticated artifact size.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when the prefix is invalid, the object is unavailable,
+    /// or the downloaded artifact exceeds its bound or fails integrity checks.
     pub async fn download_envelope(&self, prefix: &str) -> Result<Vec<u8>, TransferError> {
         validate_prefix(prefix)?;
         let response = self
@@ -349,6 +356,105 @@ impl ObjectDestination {
             return Err(TransferError::Integrity);
         }
         Ok(bytes)
+    }
+
+    /// Lists sealed envelope prefixes directly below one database namespace.
+    /// The listing is bounded across the complete nested result.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when the database prefix, listing, or discovered
+    /// object violates the envelope namespace and bounds.
+    pub async fn list_envelope_prefixes(
+        &self,
+        database: &str,
+        max: usize,
+    ) -> Result<Vec<String>, TransferError> {
+        validate_prefix(database)?;
+        if max == 0 || max > MAX_FILES {
+            return Err(TransferError::Configuration);
+        }
+        let root = format!("{database}/envelopes/");
+        let path = ObjectPath::parse(&root).map_err(|_| TransferError::InvalidPoint)?;
+        let mut stream = self.store.list(Some(&path));
+        let mut prefixes = BTreeSet::new();
+        let mut scanned = 0_usize;
+        while let Some(result) = stream.next().await {
+            let object = result.map_err(|_| TransferError::Unavailable)?;
+            scanned = scanned.saturating_add(1);
+            if scanned > max.saturating_mul(2).saturating_add(1) {
+                return Err(TransferError::InvalidPoint);
+            }
+            let Some(name) = object.location.as_ref().strip_prefix(&root) else {
+                return Err(TransferError::InvalidPoint);
+            };
+            let Some((envelope, member)) = name.split_once('/') else {
+                return Err(TransferError::InvalidPoint);
+            };
+            validate_envelope_name(envelope)?;
+            if member != ENVELOPE_FILE {
+                return Err(TransferError::InvalidPoint);
+            }
+            prefixes.insert(format!("{root}{envelope}"));
+            if prefixes.len() > max {
+                return Err(TransferError::InvalidPoint);
+            }
+        }
+        Ok(prefixes.into_iter().collect())
+    }
+
+    /// Deletes exactly one sealed envelope object in the authenticated
+    /// envelope namespace. Unknown provider results remain retryable.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when the prefix is invalid or the provider request fails.
+    pub async fn delete_envelope(&self, prefix: &str) -> Result<(), TransferError> {
+        validate_envelope_prefix(prefix)?;
+        self.delete_if_present(&object_key(prefix, ENVELOPE_FILE)?).await
+    }
+
+    /// Complete bounded physical inventory for this database's participant archives.
+    /// Every returned key is exact: callers must never turn it into a prefix delete.
+    pub(crate) async fn retention_participant_objects(
+        &self,
+        database: &str,
+        max_entries: usize,
+        max_bytes: u64,
+    ) -> Result<Vec<(String, u64)>, TransferError> {
+        validate_prefix(database)?;
+        let root = ObjectPath::parse(format!("{database}/participants/"))
+            .map_err(|_| TransferError::InvalidPoint)?;
+        let mut listed = self.store.list(Some(&root));
+        let mut objects = Vec::new();
+        let mut bytes = 0_u64;
+        while let Some(item) = listed.next().await {
+            let item = item.map_err(|_| TransferError::Unavailable)?;
+            validate_retention_participant_key(database, item.location.as_ref())?;
+            bytes = bytes.checked_add(item.size).ok_or(TransferError::InvalidPoint)?;
+            if objects.len() >= max_entries || bytes > max_bytes {
+                return Err(TransferError::InvalidPoint);
+            }
+            objects.push((item.location.to_string(), item.size));
+        }
+        objects.sort();
+        Ok(objects)
+    }
+
+    /// Deletes one immutable, previously journaled retention target, idempotently.
+    pub(crate) async fn delete_retention_object(
+        &self,
+        database: &str,
+        key: &str,
+    ) -> Result<(), TransferError> {
+        if let Some(prefix) = key.strip_suffix("/envelope.tbv1") {
+            validate_envelope_prefix(prefix)?;
+            if !prefix.starts_with(&format!("{database}/envelopes/")) {
+                return Err(TransferError::InvalidPoint);
+            }
+        } else {
+            validate_retention_participant_key(database, key)?;
+        }
+        self.delete_if_present(&ObjectPath::parse(key).map_err(|_| TransferError::InvalidPoint)?)
+            .await
     }
 
     /// Publishes one bounded opaque member through the authenticated provider.
@@ -477,11 +583,14 @@ impl ObjectDestination {
     ///
     /// Credentials are resolved lazily for every request. No environment
     /// provider, static secret, or expired credential can be selected.
+    ///
+    /// # Errors
+    /// Returns [`TransferError::Configuration`] when admission or client construction fails.
     pub fn new_with_workload_identity(
-        config: DestinationConfig,
+        config: &DestinationConfig,
         provider: Arc<dyn WorkloadIdentityProvider>,
     ) -> Result<Self, TransferError> {
-        validate_config_for_workload_identity(&config)?;
+        validate_config_for_workload_identity(config)?;
         let store = AmazonS3Builder::new()
             .with_bucket_name(&config.bucket)
             .with_region(&config.signing_region)
@@ -521,9 +630,13 @@ impl ObjectDestination {
     }
 
     /// Constructs an S3 destination against a local HTTP emulator (for
-    /// example MinIO or LocalStack). This entry point is available only to
+    /// example `MinIO` or `LocalStack`). This entry point is available only to
     /// tests and the explicit `test-support` feature; production admission
     /// continues to require HTTPS.
+    ///
+    /// # Errors
+    /// Returns [`TransferError::Configuration`] when test configuration or client construction
+    /// fails.
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_for_test(config: DestinationConfig) -> Result<Self, TransferError> {
         validate_config_for_test(&config)?;
@@ -636,6 +749,10 @@ impl ObjectDestination {
     /// The returned prefixes are direct children of `prefix`; nested keys are
     /// rejected so callers cannot accidentally truncate a point prefix and
     /// delete a sibling or an unrelated descendant.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when the prefix, listing, or discovered object is invalid,
+    /// unavailable, or exceeds the configured bound.
     pub async fn list_point_prefixes(
         &self,
         prefix: &str,
@@ -690,6 +807,30 @@ impl ObjectDestination {
         validate_point_prefix(point, prefix)?;
         let entries = self.scan_point(point)?;
         let index = render_index(&entries);
+        self.upload_artifacts(point, prefix, &entries).await?;
+        let key = object_key(prefix, INDEX)?;
+        let entry = Entry {
+            name: INDEX.into(),
+            length: index.len() as u64,
+            digest: blake3::hash(index.as_bytes()),
+        };
+        let index_bytes = index.into_bytes();
+        match self.store.put_opts(&key, index_bytes.clone().into(), PutMode::Create.into()).await {
+            Ok(_) => {}
+            Err(object_store::Error::AlreadyExists { .. }) => {
+                self.verify_remote(&key, &entry).await?;
+            }
+            Err(_) => return Err(TransferError::Unavailable),
+        }
+        self.verify_remote(&key, &entry).await
+    }
+
+    async fn upload_artifacts(
+        &self,
+        point: &Path,
+        prefix: &str,
+        entries: &[Entry],
+    ) -> Result<(), TransferError> {
         for entry in entries
             .iter()
             .filter(|entry| entry.name != super::manifest::ENCRYPTED_MANIFEST_FILE)
@@ -701,26 +842,7 @@ impl ObjectDestination {
         {
             let key = object_key(prefix, &entry.name)?;
             if entry.length == 0 {
-                // Reopen the source after the initial scan. An empty artifact
-                // must still be present as the same valid zero-length file at
-                // the immutable create boundary; otherwise a mutation after
-                // the scan could publish a stale empty claim.
-                validate_empty_artifact(&point.join(&entry.name), entry)?;
-                match self
-                    .store
-                    .put_opts(&key, Vec::<u8>::new().into(), PutMode::Create.into())
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(object_store::Error::AlreadyExists { .. }) => {
-                        self.verify_remote(&key, entry).await?;
-                    }
-                    Err(_) => return Err(TransferError::Unavailable),
-                }
-                // Revalidate the local source immediately before accepting
-                // the remote read-back as proof of a complete upload.
-                validate_empty_artifact(&point.join(&entry.name), entry)?;
-                self.verify_remote(&key, entry).await?;
+                self.upload_empty_artifact(point, &key, entry).await?;
                 continue;
             }
             // Multipart uploads are completed under a unique key and moved
@@ -784,21 +906,27 @@ impl ObjectDestination {
             }
             self.verify_remote(&key, entry).await?;
         }
-        let key = object_key(prefix, INDEX)?;
-        let entry = Entry {
-            name: INDEX.into(),
-            length: index.len() as u64,
-            digest: blake3::hash(index.as_bytes()),
-        };
-        let index_bytes = index.into_bytes();
-        match self.store.put_opts(&key, index_bytes.clone().into(), PutMode::Create.into()).await {
+        Ok(())
+    }
+
+    async fn upload_empty_artifact(
+        &self,
+        point: &Path,
+        key: &ObjectPath,
+        entry: &Entry,
+    ) -> Result<(), TransferError> {
+        // Reopen the source at both sides of publication so a mutation after
+        // the scan cannot publish a stale empty claim.
+        validate_empty_artifact(&point.join(&entry.name), entry)?;
+        match self.store.put_opts(key, Vec::<u8>::new().into(), PutMode::Create.into()).await {
             Ok(_) => {}
             Err(object_store::Error::AlreadyExists { .. }) => {
-                self.verify_remote(&key, &entry).await?;
+                self.verify_remote(key, entry).await?;
             }
             Err(_) => return Err(TransferError::Unavailable),
         }
-        self.verify_remote(&key, &entry).await
+        validate_empty_artifact(&point.join(&entry.name), entry)?;
+        self.verify_remote(key, entry).await
     }
 
     /// Verifies an existing remote point against the local sealed artifacts.
@@ -900,6 +1028,10 @@ impl ObjectDestination {
     /// appear in this listing, so they are left untouched. Every candidate is
     /// validated before any deletion; malformed or unexpectedly nested keys
     /// fail closed.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when the prefix is invalid, provider listing fails, or a
+    /// candidate cannot be safely removed.
     pub async fn cleanup_multipart(
         &self,
         prefix: &str,
@@ -1316,6 +1448,30 @@ fn validate_config_for_test(config: &DestinationConfig) -> Result<(), TransferEr
     }
     validate_config(config)
 }
+fn validate_retention_participant_key(database: &str, key: &str) -> Result<(), TransferError> {
+    let suffix = key
+        .strip_prefix(&format!("{database}/participants/"))
+        .ok_or(TransferError::InvalidPoint)?;
+    let parts = suffix.split('/').collect::<Vec<_>>();
+    if parts.len() != 5
+        || ![(parts[0], 32), (parts[1], 16), (parts[2], 32)].iter().all(|(part, length)| {
+            part.len() == *length && part.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        return Err(TransferError::InvalidPoint);
+    }
+    let identity = parts[3].strip_prefix("rp-").ok_or(TransferError::InvalidPoint)?;
+    super::manifest::validate_identity(identity).map_err(|_| TransferError::InvalidPoint)?;
+    let incarnation =
+        u128::from_str_radix(parts[0], 16).map_err(|_| TransferError::InvalidPoint)?;
+    if crate::identity::DatabaseUlid::from_wire_bytes(incarnation.to_be_bytes()).to_text()
+        != database
+    {
+        return Err(TransferError::InvalidPoint);
+    }
+    if parts[4] == INDEX { Ok(()) } else { validate_name(parts[4]) }
+}
+
 fn validate_name(name: &str) -> Result<(), TransferError> {
     if name.is_empty()
         || name.len() > 128
@@ -1333,6 +1489,20 @@ fn validate_prefix(prefix: &str) -> Result<(), TransferError> {
         return Err(TransferError::InvalidPoint);
     }
     Ok(())
+}
+fn validate_envelope_name(name: &str) -> Result<(), TransferError> {
+    if name.len() != 68
+        || !name.starts_with("env-")
+        || !name[4..].bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(TransferError::InvalidPoint);
+    }
+    Ok(())
+}
+fn validate_envelope_prefix(prefix: &str) -> Result<(), TransferError> {
+    let (database, name) = prefix.rsplit_once("/envelopes/").ok_or(TransferError::InvalidPoint)?;
+    validate_prefix(database)?;
+    validate_envelope_name(name)
 }
 fn validate_point_prefix(point: &Path, prefix: &str) -> Result<(), TransferError> {
     validate_prefix(prefix)?;
@@ -1584,52 +1754,9 @@ mod tests {
             let integrity: String =
                 recovered.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
             assert_eq!(integrity, "ok");
-            let mut statement =
-                recovered.prepare("SELECT id, value FROM items ORDER BY id").unwrap();
-            let mut rows = statement.query([]).unwrap();
-            for expected in 0..100_000_i64 {
-                let row = rows.next().unwrap().expect("all committed rows must recover");
-                assert_eq!(row.get::<_, i64>(0).unwrap(), expected);
-                assert_eq!(
-                    row.get::<_, String>(1).unwrap(),
-                    format!("value-{expected}-{}", "abcdef0123456789".repeat(16))
-                );
-            }
-            assert!(rows.next().unwrap().is_none(), "no duplicate or unexpected rows");
+            verify_minio_rows(&recovered);
             eprintln!("SQLite recovery verified 100000 exact rows; integrity_check=ok");
-            // Mutate only this fixture's remote WAL. Integrity failures must
-            // never leave a published target directory.
-            let remote_wal = object_key(&prefix, "wal.tbv3e").unwrap();
-            let rejected = root.with_extension("rejected");
-            let mut corrupt = payload.clone();
-            let middle = corrupt.len() / 2;
-            corrupt[middle] ^= 0x80;
-            destination.store.put(&remote_wal, corrupt.into()).await.unwrap();
-            assert_eq!(
-                destination.download_point(&prefix, &rejected).await,
-                Err(TransferError::Integrity)
-            );
-            assert!(!rejected.exists());
-            destination
-                .store
-                .put(&remote_wal, payload[..payload.len() / 2].to_vec().into())
-                .await
-                .unwrap();
-            assert_eq!(
-                destination.download_point(&prefix, &rejected).await,
-                Err(TransferError::Integrity)
-            );
-            assert!(!rejected.exists());
-            destination.store.delete(&remote_wal).await.unwrap();
-            assert_eq!(
-                destination.download_point(&prefix, &rejected).await,
-                Err(TransferError::Unavailable)
-            );
-            assert!(!rejected.exists());
-            destination.delete_point(&prefix).await.unwrap();
-            eprintln!(
-                "S3 corruption, truncation, and missing WAL rejected; no partial restore published"
-            );
+            verify_minio_corruption(&destination, &prefix, &payload, &root).await;
 
             eprintln!(
                 "sqlite 100k WAL: {} bytes, writes {:?}, upload {:?}, restore {:?}",
@@ -1640,6 +1767,59 @@ mod tests {
             );
         });
         let _ = fs::remove_dir_all(root);
+    }
+
+    async fn verify_minio_corruption(
+        destination: &ObjectDestination,
+        prefix: &str,
+        payload: &[u8],
+        root: &Path,
+    ) {
+        let remote_wal = object_key(prefix, "wal.tbv3e").unwrap();
+        let rejected = root.with_extension("rejected");
+        let mut corrupt = payload.to_vec();
+        let middle = corrupt.len() / 2;
+        corrupt[middle] ^= 0x80;
+        destination.store.put(&remote_wal, corrupt.into()).await.unwrap();
+        assert_eq!(
+            destination.download_point(prefix, &rejected).await,
+            Err(TransferError::Integrity)
+        );
+        assert!(!rejected.exists());
+        destination
+            .store
+            .put(&remote_wal, payload[..payload.len() / 2].to_vec().into())
+            .await
+            .unwrap();
+        assert_eq!(
+            destination.download_point(prefix, &rejected).await,
+            Err(TransferError::Integrity)
+        );
+        assert!(!rejected.exists());
+        destination.store.delete(&remote_wal).await.unwrap();
+        assert_eq!(
+            destination.download_point(prefix, &rejected).await,
+            Err(TransferError::Unavailable)
+        );
+        assert!(!rejected.exists());
+        destination.delete_point(prefix).await.unwrap();
+        eprintln!(
+            "S3 corruption, truncation, and missing WAL rejected; no partial restore published"
+        );
+    }
+
+    fn verify_minio_rows(connection: &rusqlite::Connection) {
+        let mut statement = connection.prepare("SELECT id, value FROM items ORDER BY id").unwrap();
+        let mut rows = statement.query([]).unwrap();
+        for expected in 0..100_000_i64 {
+            let row = rows.next().unwrap().expect("all committed rows must recover");
+            assert_eq!(row.get::<_, i64>(0).unwrap(), expected);
+            assert_eq!(
+                row.get::<_, String>(1).unwrap(),
+                format!("value-{expected}-{}", "abcdef0123456789".repeat(16))
+            );
+        }
+        assert!(rows.next().unwrap().is_none(), "no duplicate or unexpected rows");
     }
 
     #[tokio::test]

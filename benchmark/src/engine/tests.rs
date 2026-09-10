@@ -1587,7 +1587,8 @@ fn engine_publication_history_serves_reconstructable_commits_across_tenants() {
     );
     assert_eq!(
         engine.servable_history_start().expect("reports the window"),
-        Some(crate::types::StorageSequence::new(1))
+        Some(crate::types::StorageSequence::new(0)),
+        "history remains servable from the pre-first-commit boundary"
     );
     // Repair F2: the journaled high-water mark names the newest journaled
     // sequence, so a consumer can compare it with the published sequence.
@@ -2951,6 +2952,14 @@ pub(crate) fn test_storage_keys(
     owner: &crate::storage::DatabaseOwner,
     byte: u8,
 ) -> Arc<dyn crate::encryption::DatabaseKeySource> {
+    test_storage_keys_with_provider(owner, byte, crate::encryption::KeyProviderIdentity::OciVault)
+}
+
+fn test_storage_keys_with_provider(
+    owner: &crate::storage::DatabaseOwner,
+    byte: u8,
+    provider: crate::encryption::KeyProviderIdentity,
+) -> Arc<dyn crate::encryption::DatabaseKeySource> {
     use crate::encryption::{
         DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionError,
         KeyPurpose, KeyScope, KeyVersionMetadata,
@@ -2984,14 +2993,37 @@ pub(crate) fn test_storage_keys(
         scope,
         DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
     );
-    Arc::new(Keys(Arc::new(
-        DatabaseKeyLease::test_oci_vault(
+    let lease = match provider {
+        crate::encryption::KeyProviderIdentity::OciVault => DatabaseKeyLease::test_oci_vault(
             metadata,
             DatabaseKey::from_bytes([byte; 32]),
             std::time::Duration::from_mins(5),
-        )
-        .unwrap(),
-    )))
+        ),
+        crate::encryption::KeyProviderIdentity::CustomerKms => DatabaseKeyLease::test_customer_kms(
+            metadata,
+            DatabaseKey::from_bytes([byte; 32]),
+            std::time::Duration::from_mins(5),
+        ),
+        crate::encryption::KeyProviderIdentity::LocalFile => unreachable!(),
+    }
+    .unwrap();
+    Arc::new(Keys(Arc::new(lease)))
+}
+
+#[test]
+fn customer_kms_storage_keys_are_admitted() {
+    let dir = location("customer-kms-owner");
+    let owner = crate::storage::DatabaseOwner::local_development();
+    let config = EngineConfig::durable(&dir).unwrap().with_owner(owner.clone()).with_storage_keys(
+        test_storage_keys_with_provider(
+            &owner,
+            94,
+            crate::encryption::KeyProviderIdentity::CustomerKms,
+        ),
+    );
+    let engine = Engine::open(config).expect("customer KMS owner opens");
+    engine.shutdown().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

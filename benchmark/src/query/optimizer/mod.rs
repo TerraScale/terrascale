@@ -867,6 +867,12 @@ impl QueryDemand {
 pub(crate) fn demand_of(query: &NormalizedQuery) -> QueryDemand {
     let mut fields: Vec<IndexField> = Vec::new();
     for condition in query.predicate().conditions() {
+        // Identity columns resolve from the envelope in the executor; they
+        // carry no body-field index demand, because a segment over the body
+        // key would answer a different question than the predicate asks.
+        if condition.field() == "id" || condition.field() == "_id" {
+            continue;
+        }
         let capability = match condition {
             super::QueryCondition::Equals { .. }
             | super::QueryCondition::NotEquals { .. }
@@ -891,7 +897,9 @@ pub(crate) fn demand_of(query: &NormalizedQuery) -> QueryDemand {
         demand_field(&mut fields, condition.field(), capability);
     }
     for key in query.ordering().keys() {
-        demand_field(&mut fields, key.field(), IndexCapability::Ordering);
+        if key.field() != "id" && key.field() != "_id" {
+            demand_field(&mut fields, key.field(), IndexCapability::Ordering);
+        }
     }
     QueryDemand {
         // A family source never reaches the optimizer pass (its execution

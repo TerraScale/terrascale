@@ -1,0 +1,92 @@
+{
+  "status": "complete",
+  "target": "sqlite",
+  "workload": "mixed",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0
+  },
+  "environment": {
+    "observed_identity": "SQLite 3.53.2 (bundled); journal_mode=WAL; synchronous=FULL; busy_timeout=5000ms; one writer connection, per-slot concurrent readers",
+    "endpoint": "file://bench/target/sqlite-reference.db",
+    "client_transport": "bundled rusqlite, one embedded reader connection per concurrency slot, writes serialized through one shared writer connection, cached prepared statements, autocommit per statement",
+    "unix_seconds": 1788890554,
+    "kernel": "Linux 7.2.3",
+    "logical_cpus": 2
+  },
+  "comparability": {
+    "run_digest": "unassigned",
+    "candidate_digest": "unassigned",
+    "workload_digest": "unassigned",
+    "topology_digest": "unassigned",
+    "run_group": "unassigned",
+    "config_digest": "bdfe342f5a3e96300b3e54f43585ee347bdb8b213b803ea0dac000ef8eb60d80",
+    "controlled_host_identity": "Linux 7.2.3;logical-cpus=2",
+    "time_window": "496914",
+    "window_start_unix_seconds": 1788890554,
+    "window_end_unix_seconds": 1788890631,
+    "workload_version": "terrabase-se15-workload-v1",
+    "boundary_class": "embedded-reference",
+    "concurrency": 16,
+    "samples": 5,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0,
+    "seed_policy": "seed-{index}, tenant benchmark-tenant, index modulo seed count",
+    "document_policy": "seed documents have id seed-{index}, name user-{index}, group index modulo 100, 256-byte payload",
+    "operation_policy": "mixed uses index modulo 10: 0..4 read, 5..7 write, 8..9 query; read/query address index modulo seed count",
+    "write_id_policy": "measured writes use measured-{global operation index}",
+    "durability_semantics": "WAL journal with synchronous=FULL and a five-second busy timeout; autocommit statement acknowledgement",
+    "server_configuration_provenance": "bundled sqlite at shipped defaults plus WAL, synchronous=FULL, busy_timeout=5000ms"
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 7.183136487,
+      "throughput_ops_per_s": 1392.1495182637757,
+      "p50_us": 42.387,
+      "p95_us": 45372.152,
+      "p99_us": 138017.114
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 7.126567586,
+      "throughput_ops_per_s": 1403.2000509817378,
+      "p50_us": 42.806000000000004,
+      "p95_us": 35170.023,
+      "p99_us": 101193.243
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 17.548732095,
+      "throughput_ops_per_s": 569.8417381874107,
+      "p50_us": 44.586999999999996,
+      "p95_us": 90350.4,
+      "p99_us": 361244.477
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 11.872021453,
+      "throughput_ops_per_s": 842.3165372122074,
+      "p50_us": 47.45,
+      "p95_us": 76595.668,
+      "p99_us": 335866.62200000003
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 32.677374295999996,
+      "throughput_ops_per_s": 306.0221396437011,
+      "p50_us": 47.059,
+      "p95_us": 87829.54599999999,
+      "p99_us": 373600.52999999997
+    }
+  ],
+  "limits": [
+    "embedded reference: the measured member is this driver's own process, so the load generator and the database share one resource envelope",
+    "SQLite's concurrency model is many readers, one writer: reads and queries run concurrently on per-slot connections while every write serializes through one shared writer connection, the canonical deployment shape",
+    "sixteen contending per-slot writers instead busy-retry the WAL write lock and a starved slot can exceed the busy timeout; that retries SQLite's lock manager, not its storage, so this reference does not drive it"
+  ]
+}

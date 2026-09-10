@@ -99,7 +99,7 @@ impl Dependencies {
                 let value = if field.is_empty() {
                     Some(FieldValue::Number(0.0))
                 } else {
-                    LiveQueryPlan::dependency_value(document, field).and_then(scalar)
+                    LiveQueryPlan::dependency_value(document, field).as_deref().and_then(scalar)
                 }?;
                 Some((field.as_str(), value))
             })

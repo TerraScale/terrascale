@@ -430,7 +430,8 @@ mod tests {
         object.push(VALUE_OBJECT);
         object.extend_from_slice(&2_u64.to_le_bytes());
         for value in [b"x".as_slice(), b"x".as_slice()] {
-            object.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            let length = u32::try_from(value.len()).expect("bounded fixture length");
+            object.extend_from_slice(&length.to_le_bytes());
             object.extend_from_slice(value);
             object.push(VALUE_NULL);
         }

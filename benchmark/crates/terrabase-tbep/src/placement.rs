@@ -486,10 +486,40 @@ pub struct PlacementJournal {
     trust: Mutex<Option<transition::TransitionTrust>>,
 }
 
+/// Exact identity and signed proof supplied for lifecycle authority checks.
+#[derive(Clone, Copy)]
+pub struct LifecycleAuthorityRequest<'a> {
+    /// Deployment environment bound to the authority proof.
+    pub environment: &'a str,
+    /// Tenant identity bound to the authority proof.
+    pub tenant: &'a str,
+    /// Project identity bound to the authority proof.
+    pub project: &'a str,
+    /// Database identity bound to the authority proof.
+    pub database: &'a str,
+    /// Region identity bound to the authority proof.
+    pub region: &'a str,
+    /// Member identity bound to the authority proof.
+    pub member: &'a str,
+    /// Proposal generation being authorized.
+    pub revision: u64,
+    /// Signature over the accepted authority proposal.
+    pub signature: &'a [u8],
+}
+
+// Column order matches the lifecycle_operations SELECT used for retry comparison:
+// action, environment, tenant, project, database, region, member,
+// placement_revision, proof_digest, authority_epoch, authority_lease, restore_request_digest.
+type LifecycleOperationRow =
+    (String, String, String, String, String, String, String, i64, String, i64, String, String);
+
 impl PlacementJournal {
     /// Durably fences a lifecycle operation before its native effect.
     ///
     /// Returns `true` for a new operation and `false` for an exact retry.
+    ///
+    /// # Errors
+    /// Returns an invalid-value, stale-authority, retry-mismatch, or journal storage error.
     pub fn admit_lifecycle_operation(
         &self,
         grant: &LifecycleOperationGrant,
@@ -508,7 +538,7 @@ impl PlacementJournal {
         let revision = i64::try_from(grant.accepted_placement_revision)
             .map_err(|_| PlacementError::Invalid)?;
         let epoch = i64::try_from(grant.authority_epoch).map_err(|_| PlacementError::Invalid)?;
-        let existing: Option<(String, String, String, String, String, String, String, i64, String, i64, String, String)> = transaction
+        let existing: Option<LifecycleOperationRow> = transaction
             .query_row(
                 "SELECT action,environment,tenant,project,database,region,member,placement_revision,proof_digest,authority_epoch,authority_lease,restore_request_digest FROM lifecycle_operations WHERE operation_id=?1",
                 [grant.operation_id.as_str()],
@@ -542,6 +572,9 @@ impl PlacementJournal {
     /// Verifies retained signed authorization against the immutable admitted operation.
     /// Renewal may update the observation lease; the original signed mutation grant
     /// remains valid evidence for durable execution and is never rewritten here.
+    ///
+    /// # Errors
+    /// Returns an invalid grant, unavailable trust or storage, or admitted-operation mismatch.
     pub fn verify_admitted_lifecycle_operation(
         &self,
         encoded: &[u8],
@@ -568,6 +601,9 @@ impl PlacementJournal {
     }
 
     /// Verifies one signed lifecycle grant with the retained authority pins.
+    ///
+    /// # Errors
+    /// Returns an invalid or unauthenticated grant, missing trust, or trust lock error.
     pub fn verify_lifecycle_grant(
         &self,
         encoded: &[u8],
@@ -579,25 +615,19 @@ impl PlacementJournal {
 
     /// Verifies that a lifecycle request carries the currently accepted GRU
     /// proof and names the exact local database/member proposal binding.
+    ///
+    /// # Errors
+    /// Returns a missing accepted proof, invalid proof or trust, journal storage error, or binding conflict.
     pub fn verify_lifecycle_authority(
         &self,
-        environment: &str,
-        tenant: &str,
-        project: &str,
-        database: &str,
-        region: &str,
-        member: &str,
-        revision: u64,
-        _authority_epoch: u64,
-        _authority_lease: &str,
-        signature: &[u8],
+        request: LifecycleAuthorityRequest<'_>,
     ) -> Result<(u64, String), PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let chain = self.verified_chain(&connection, trust)?;
         let (_, accepted_revision, accepted) = chain.last().ok_or(PlacementError::NotFound)?;
-        if *accepted_revision != revision || environment.is_empty() {
+        if *accepted_revision != request.revision || request.environment.is_empty() {
             return Err(PlacementError::Conflict);
         }
         let joined = join::stored(&connection)?
@@ -605,7 +635,7 @@ impl PlacementJournal {
             .transpose()?;
         let supplied = trust
             .decode_with_prior(
-                signature,
+                request.signature,
                 chain
                     .iter()
                     .rev()
@@ -623,19 +653,20 @@ impl PlacementJournal {
         let bytes: Vec<u8> = connection
             .query_row(
                 "SELECT proposal FROM proposals WHERE revision=?1",
-                [i64::try_from(revision).map_err(|_| PlacementError::Invalid)?],
+                [i64::try_from(request.revision).map_err(|_| PlacementError::Invalid)?],
                 |row| row.get(0),
             )
             .map_err(|_| PlacementError::Storage)?;
         let proposal =
             pb::PlacementProposal::decode(bytes.as_slice()).map_err(|_| PlacementError::Storage)?;
-        if proposal.environment != environment
+        if proposal.environment != request.environment
             || !proposal.assignments.iter().any(|item| {
-                item.tenant == tenant
-                    && item.project == project
-                    && item.database == database
-                    && item.region == region
-                    && (item.writer_member == member || item.follower_member == member)
+                item.tenant == request.tenant
+                    && item.project == request.project
+                    && item.database == request.database
+                    && item.region == request.region
+                    && (item.writer_member == request.member
+                        || item.follower_member == request.member)
             })
         {
             return Err(PlacementError::Conflict);
@@ -1019,14 +1050,14 @@ impl PlacementJournal {
         }
         self.match_proposal(&transaction, request.proposal_revision, &verified)?;
         verified.follows(predecessor)?;
-        if chain.is_empty() {
-            if let Some(joined) = &joined {
-                self.match_join(&transaction, joined, &verified, request.proposal_revision)?;
-                join::persist(
-                    &transaction,
-                    attempt.checkpoint.as_ref().ok_or(PlacementError::Invalid)?,
-                )?;
-            }
+        if chain.is_empty()
+            && let Some(joined) = &joined
+        {
+            Self::match_join(&transaction, joined, &verified, request.proposal_revision)?;
+            join::persist(
+                &transaction,
+                attempt.checkpoint.as_ref().ok_or(PlacementError::Invalid)?,
+            )?;
         }
         drain::match_successor(
             &transaction,
@@ -1068,6 +1099,9 @@ impl PlacementJournal {
 
     /// Returns the digest of the currently accepted signed placement proof.
     /// Lifecycle grants bind to this historical proof evidence.
+    ///
+    /// # Errors
+    /// Returns an unavailable or invalid trust/chain, storage error, or missing accepted proof.
     pub fn accepted_proof_digest(&self) -> Result<String, PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
@@ -1098,6 +1132,9 @@ impl PlacementJournal {
 
     /// Returns the digest of the canonical proposal backing the accepted proof.
     /// This is the placement binding used by data-plane readiness receipts.
+    ///
+    /// # Errors
+    /// Returns an invalid or unavailable chain, missing accepted proof, or proposal storage error.
     pub fn accepted_placement_digest(&self) -> Result<String, PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
@@ -1157,10 +1194,10 @@ impl PlacementJournal {
             {
                 return Err(PlacementError::Conflict);
             }
-            if chain.is_empty() {
-                if let Some(joined) = &joined {
-                    self.match_join(connection, joined, &verified, revision)?;
-                }
+            if chain.is_empty()
+                && let Some(joined) = &joined
+            {
+                Self::match_join(connection, joined, &verified, revision)?;
             }
             drain::match_successor(
                 connection,

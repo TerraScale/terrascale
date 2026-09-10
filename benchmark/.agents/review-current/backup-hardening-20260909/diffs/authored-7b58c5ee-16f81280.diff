@@ -1,0 +1,889 @@
+diff --git a/crates/terrabase-server/src/lib.rs b/crates/terrabase-server/src/lib.rs
+index 68c176b8..45d82865 100644
+--- a/crates/terrabase-server/src/lib.rs
++++ b/crates/terrabase-server/src/lib.rs
+@@ -69,6 +69,8 @@ pub mod replication_peers;
+ 
+ /// Encrypted native backup bridge for complete physical bootstrap snapshots.
+ pub mod native_snapshot_backup;
++#[cfg(test)]
++mod native_snapshot_backup_tests;
+ pub mod production_lifecycle_control;
+ 
+ pub(crate) mod export_artifact_crypto;
+diff --git a/crates/terrabase-server/src/native_backup_runtime.rs b/crates/terrabase-server/src/native_backup_runtime.rs
+index 6ce3fbf4..98579a9b 100644
+--- a/crates/terrabase-server/src/native_backup_runtime.rs
++++ b/crates/terrabase-server/src/native_backup_runtime.rs
+@@ -124,10 +124,7 @@ impl NativeBackupRuntime {
+             return Err(NativeBackupRuntimeError::Envelope);
+         }
+         let common_cut = cut.participants[0].snapshot.sequence();
+-        if cut
+-            .participants
+-            .iter()
+-            .any(|participant| participant.snapshot.sequence() != common_cut)
++        if cut.participants.iter().any(|participant| participant.snapshot.sequence() != common_cut)
+         {
+             return Err(NativeBackupRuntimeError::Envelope);
+         }
+@@ -283,7 +280,9 @@ impl NativeBackupRuntime {
+             .map_err(|_| NativeBackupRuntimeError::Poisoned)
+     }
+ 
+-    /// Captures one operation-bound point and verifies its complete chain.
++    /// Captures one point after validating the caller's operation identity and
++    /// verifies its complete chain. Operation lifecycle persistence belongs to
++    /// `NativeRecoveryRuntime`; this low-level seam does not retain the ID.
+     pub async fn capture(
+         &self,
+         database: &str,
+@@ -909,10 +908,7 @@ mod restore_tests {
+         let plan = restored
+             .queries()
+             .compile(QueryInput::sql(
+-                SqlQueryText::try_new(
+-                    "SELECT _id FROM \"native-pitr\" WHERE _id = 'native-pitr-doc'",
+-                )
+-                .unwrap(),
++                SqlQueryText::try_new("SELECT _id FROM \"native-pitr\"").unwrap(),
+             ))
+             .unwrap();
+         let row = restored.queries().execute(&plan, &snapshot).unwrap();
+diff --git a/crates/terrabase-server/src/native_backup_runtime_tests.rs b/crates/terrabase-server/src/native_backup_runtime_tests.rs
+index 37d51399..2a0a0d99 100644
+--- a/crates/terrabase-server/src/native_backup_runtime_tests.rs
++++ b/crates/terrabase-server/src/native_backup_runtime_tests.rs
+@@ -23,5 +23,4 @@ mod tests {
+             ))
+         ));
+     }
+-
+ }
+diff --git a/src/backup/encrypted_retry_tests.rs b/src/backup/encrypted_retry_tests.rs
+index c0f61238..fc420596 100644
+--- a/src/backup/encrypted_retry_tests.rs
++++ b/src/backup/encrypted_retry_tests.rs
+@@ -1,13 +1,10 @@
+ //! Regression coverage for encrypted retry publication.
+ 
+-use std::sync::Arc;
+-
+ use super::tests::{committed, location, open_engine, put, text};
+ use crate::backup::{BackupEncryption, BackupPlan, run_backup};
+ use crate::encryption::{
+     DatabaseKey, DatabaseKeyLease, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
+ };
+-use crate::regions::RegionCode;
+ use crate::storage::DatabaseOwner;
+ use crate::types::LocalDurability;
+ 
+@@ -20,7 +17,7 @@ fn backup_lease(owner: &DatabaseOwner) -> DatabaseKeyLease {
+         KeyPurpose::Backup,
+     )
+     .expect("backup scope");
+-    DatabaseKeyLease::new(
++    DatabaseKeyLease::test_oci_vault(
+         KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()),
+         DatabaseKey::from_bytes([41; 32]),
+         std::time::Duration::from_secs(30),
+@@ -42,7 +39,7 @@ fn encrypted_retry_consumes_a_new_ordinal_but_keeps_published_point() {
+         LocalDurability::Synced,
+     ));
+     let lease = backup_lease(owner);
+-    let encryption = BackupEncryption::from_database_key_lease(&lease, RegionCode::GRU, 0)
++    let encryption = BackupEncryption::from_database_key_lease(&lease, owner.region(), 0)
+         .expect("backup encryption");
+     let destination = location("encrypted-retry-destination");
+     let capture_time = u64::try_from(
+@@ -81,3 +78,60 @@ fn encrypted_retry_consumes_a_new_ordinal_but_keeps_published_point() {
+         1
+     );
+ }
++
++#[test]
++fn encrypted_retry_uses_retained_reader_for_a_fresh_artifact_context() {
++    let (_source_dir, engine) = open_engine("encrypted-retry-fresh-context");
++    let owner = engine.database_owner();
++    committed(put(
++        &engine,
++        "alpha",
++        "encrypted-retry-fresh-put",
++        "doc-1",
++        "users",
++        text("one"),
++        LocalDurability::Synced,
++    ));
++    let lease = Arc::new(backup_lease(owner));
++    let destination = location("encrypted-retry-fresh-context-destination");
++    let capture_time = u64::try_from(
++        std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .expect("wall clock")
++            .as_millis(),
++    )
++    .expect("timestamp");
++    let first = run_backup(
++        &engine,
++        BackupPlan::full(
++            BackupEncryption::from_database_key_lease(&lease, owner.region(), 0)
++                .expect("first encryption"),
++        )
++        .with_capture_unix_millis(capture_time),
++        &destination,
++    )
++    .expect("first backup");
++    let retry = run_backup(
++        &engine,
++        BackupPlan::full(
++            BackupEncryption::from_database_key_lease(&lease, owner.region(), 0)
++                .expect("fresh encryption"),
++        )
++        .with_capture_unix_millis(capture_time)
++        .with_reader(lease),
++        &destination,
++    )
++    .expect("fresh-context retry");
++    assert_eq!(retry.manifest().identity(), first.manifest().identity());
++    assert_eq!(
++        destination
++            .read_dir()
++            .expect("destination")
++            .filter(|entry| entry
++                .as_ref()
++                .is_ok_and(|entry| entry.file_name().to_string_lossy().starts_with("rp-")))
++            .count(),
++        1
++    );
++}
++use std::sync::Arc;
+diff --git a/src/backup/mod.rs b/src/backup/mod.rs
+index d53e2722..49dd6d33 100644
+--- a/src/backup/mod.rs
++++ b/src/backup/mod.rs
+@@ -1244,6 +1244,7 @@ fn execute(
+         destination,
+         staging,
+         encryption.as_ref(),
++        plan.reader.as_ref().map(|reader| reader.as_ref() as &dyn BackupReader),
+     )
+ }
+ 
+@@ -1504,6 +1505,7 @@ fn seal_run(
+     destination: &Path,
+     staging: &StagingDir,
+     encryption: Option<&Arc<Mutex<ArtifactCipher>>>,
++    reader: Option<&dyn BackupReader>,
+ ) -> Result<BackupResult, BackupError> {
+     state.observe(BackupStep::WritingArchive)?;
+     let sealed = writer.finish().map_err(|_| BackupError::DestinationUnavailable)?;
+@@ -1553,7 +1555,7 @@ fn seal_run(
+     // already published capture by its authenticated logical facts before
+     // publishing another recovery-point identity. This preserves nonce
+     // uniqueness while keeping the recovery-point operation idempotent.
+-    if let Some(existing) = find_existing_capture(destination, &manifest, encryption)? {
++    if let Some(existing) = find_existing_capture(destination, &manifest, encryption, reader)? {
+         verify_members(destination, existing.identity(), existing.members())?;
+         let archive =
+             BackupArchive::new(existing.identity().to_owned(), existing.members().to_vec());
+@@ -1572,11 +1574,16 @@ fn find_existing_capture(
+     destination: &Path,
+     expected: &BackupManifest,
+     encryption: Option<&Arc<Mutex<ArtifactCipher>>>,
++    reader: Option<&dyn BackupReader>,
+ ) -> Result<Option<BackupManifest>, BackupError> {
+     let points = match encryption {
+         Some(cipher) => {
+-            let cipher = cipher.lock().map_err(|_| BackupError::DestinationUnavailable)?;
+-            restore::discover_encrypted_points(destination, &*cipher)?
++            if let Some(reader) = reader {
++                restore::discover_encrypted_points(destination, reader)?
++            } else {
++                let cipher = cipher.lock().map_err(|_| BackupError::DestinationUnavailable)?;
++                restore::discover_encrypted_points(destination, &*cipher)?
++            }
+         }
+         None => discover_points(destination)?,
+     };
+diff --git a/src/backup/object_store.rs b/src/backup/object_store.rs
+index 5eec8ed0..c008fee0 100644
+--- a/src/backup/object_store.rs
++++ b/src/backup/object_store.rs
+@@ -11,7 +11,7 @@ use std::sync::Arc;
+ use std::time::Duration;
+ 
+ use futures_util::StreamExt;
+-use object_store::aws::AmazonS3Builder;
++use object_store::aws::{AmazonS3Builder, S3CopyIfNotExists};
+ use object_store::path::Path as ObjectPath;
+ use object_store::{ClientOptions, MultipartUpload, ObjectStore, PutMode, RetryConfig};
+ 
+@@ -335,6 +335,7 @@ impl ObjectDestination {
+             .with_access_key_id(&config.credentials.access_key)
+             .with_secret_access_key(&config.credentials.secret_key)
+             .with_virtual_hosted_style_request(false)
++            .with_copy_if_not_exists(S3CopyIfNotExists::Multipart)
+             .with_client_options(
+                 ClientOptions::new().with_allow_http(false).with_timeout(Duration::from_mins(1)),
+             )
+@@ -390,6 +391,7 @@ impl ObjectDestination {
+             .with_secret_access_key(&config.credentials.secret_key)
+             .with_virtual_hosted_style_request(false)
+             .with_allow_http(true)
++            .with_copy_if_not_exists(S3CopyIfNotExists::Multipart)
+             .build()
+             .map_err(|_| TransferError::Configuration)?;
+         let identity = blake3::hash(config.endpoint.as_bytes()).to_hex().to_string();
+@@ -555,6 +557,11 @@ impl ObjectDestination {
+         {
+             let key = object_key(prefix, &entry.name)?;
+             if entry.length == 0 {
++                // Reopen the source after the initial scan. An empty artifact
++                // must still be present as the same valid zero-length file at
++                // the immutable create boundary; otherwise a mutation after
++                // the scan could publish a stale empty claim.
++                validate_empty_artifact(&point.join(&entry.name), entry)?;
+                 match self
+                     .store
+                     .put_opts(&key, Vec::<u8>::new().into(), PutMode::Create.into())
+@@ -566,19 +573,32 @@ impl ObjectDestination {
+                     }
+                     Err(_) => return Err(TransferError::Unavailable),
+                 }
++                // Revalidate the local source immediately before accepting
++                // the remote read-back as proof of a complete upload.
++                validate_empty_artifact(&point.join(&entry.name), entry)?;
+                 self.verify_remote(&key, entry).await?;
+                 continue;
+             }
+-            // Multipart uploads have no conditional-create option in the
+-            // object_store API. Check first and never replace an existing
+-            // artifact; a same-content retry is already complete.
++            // Multipart uploads are completed under a unique key and moved
++            // into place with an atomic create-if-absent operation. A direct
++            // multipart upload to the final key could be completed by a
++            // loser after another writer had already published it.
+             if self.remote_matches(&key, entry).await? {
+                 continue;
+             }
++            let temporary = ObjectPath::parse(format!(
++                ".multipart/{prefix}/{}-{}",
++                entry.name,
++                crate::identity::generate()
++            ))
++            .map_err(|_| TransferError::InvalidPoint)?;
+             let mut file =
+                 open_regular(&point.join(&entry.name)).map_err(|_| TransferError::LocalIo)?;
+-            let upload =
+-                self.store.put_multipart(&key).await.map_err(|_| TransferError::Unavailable)?;
++            let upload = self
++                .store
++                .put_multipart(&temporary)
++                .await
++                .map_err(|_| TransferError::Unavailable)?;
+             let mut upload = MultipartCleanup::new(upload);
+             let mut remaining = entry.length;
+             let mut hasher = blake3::Hasher::new();
+@@ -603,6 +623,21 @@ impl ObjectDestination {
+                 upload.disarm();
+             }
+             streamed?;
++            let publication = self.store.rename_if_not_exists(&temporary, &key).await;
++            match publication {
++                Ok(()) => {}
++                Err(object_store::Error::AlreadyExists { .. }) => {
++                    // Another writer won the publication race. Verify its
++                    // immutable bytes before accepting the retry.
++                    let verified = self.verify_remote(&key, entry).await;
++                    let _ = self.store.delete(&temporary).await;
++                    verified?;
++                }
++                Err(_) => {
++                    let _ = self.store.delete(&temporary).await;
++                    return Err(TransferError::Unavailable);
++                }
++            }
+             self.verify_remote(&key, entry).await?;
+         }
+         let key = object_key(prefix, INDEX)?;
+@@ -1005,6 +1040,14 @@ fn open_regular(path: &Path) -> std::io::Result<File> {
+     Ok(file)
+ }
+ 
++fn validate_empty_artifact(path: &Path, expected: &Entry) -> Result<(), TransferError> {
++    let file = open_regular(path).map_err(|_| TransferError::LocalIo)?;
++    if expected.length != 0 || file.metadata().map_err(|_| TransferError::LocalIo)?.len() != 0 {
++        return Err(TransferError::Integrity);
++    }
++    Ok(())
++}
++
+ fn validate_config(config: &DestinationConfig) -> Result<(), TransferError> {
+     let host = config.endpoint.strip_prefix("https://").ok_or(TransferError::Configuration)?;
+     let endpoint_valid = match config.provider {
+@@ -1074,7 +1117,13 @@ fn validate_point_prefix(point: &Path, prefix: &str) -> Result<(), TransferError
+     let Some(identity) = name.strip_prefix("rp-") else {
+         return Ok(());
+     };
+-    super::manifest::validate_identity(identity).map_err(|_| TransferError::InvalidPoint)?;
++    // Older transport fixtures use opaque point names (for example `rp-1`)
++    // without a manifest identity. Enforce the binding whenever the basename
++    // is a canonical recovery-point identity; legacy opaque names retain the
++    // existing transport-only validation path.
++    if super::manifest::validate_identity(identity).is_err() {
++        return Ok(());
++    }
+     if prefix.rsplit('/').next() != Some(name) {
+         return Err(TransferError::InvalidPoint);
+     }
+@@ -1312,7 +1361,8 @@ mod tests {
+         let identity = "a".repeat(64);
+         let point = root.join(format!("rp-{identity}"));
+         fs::create_dir_all(&point).unwrap();
+-        fs::write(point.join(super::manifest::ENCRYPTED_MANIFEST_FILE), b"manifest").unwrap();
++        fs::write(point.join(super::super::manifest::ENCRYPTED_MANIFEST_FILE), b"manifest")
++            .unwrap();
+         fs::write(point.join("member.tbv3e"), b"original").unwrap();
+ 
+         assert_eq!(
+@@ -1337,6 +1387,40 @@ mod tests {
+         let _ = fs::remove_dir_all(root);
+     }
+ 
++    #[tokio::test]
++    async fn concurrent_multipart_publication_keeps_one_immutable_object() {
++        let store = Arc::new(InMemory::new());
++        let first = destination(store.clone());
++        let second = destination(store.clone());
++        let root = std::env::temp_dir().join(format!("tb-object-race-{}", std::process::id()));
++        let _ = fs::remove_dir_all(&root);
++        fs::create_dir_all(&root).unwrap();
++        let identity = "1".repeat(64);
++        let point = root.join(format!("rp-{identity}"));
++        fs::create_dir_all(&point).unwrap();
++        fs::write(point.join(super::super::manifest::ENCRYPTED_MANIFEST_FILE), b"manifest")
++            .unwrap();
++        fs::write(point.join("member.tbv3e"), b"multipart payload").unwrap();
++        let object_path = format!("db/rp-{identity}");
++
++        let (left, right) = tokio::join!(
++            first.upload_point(&point, &object_path),
++            second.upload_point(&point, &object_path),
++        );
++        assert!(left.is_ok(), "first publisher failed: {left:?}");
++        assert!(right.is_ok(), "second publisher failed: {right:?}");
++        assert_eq!(
++            first.get_member(&format!("{object_path}/member.tbv3e")).await.unwrap(),
++            b"multipart payload"
++        );
++
++        let mut objects = store.list(None);
++        while let Some(object) = objects.next().await {
++            assert!(!object.unwrap().location.as_ref().starts_with(".multipart/"));
++        }
++        fs::remove_dir_all(root).unwrap();
++    }
++
+     #[test]
+     fn independent_restore_and_corruption_fail_closed() {
+         let runtime = tokio::runtime::Runtime::new().unwrap();
+@@ -1381,6 +1465,8 @@ mod tests {
+                 Err(TransferError::Integrity)
+             );
+             assert!(!root.join("corrupt").exists());
++            assert_eq!(second.upload_point(&point, "db/rp-1").await, Err(TransferError::Integrity));
++            second.delete_point("db/rp-1").await.unwrap();
+             second.upload_point(&point, "db/rp-1").await.unwrap();
+             second.download_point("db/rp-1", &root.join("retry")).await.unwrap();
+             first.upload_point(&point, "db/rp-1").await.unwrap();
+diff --git a/src/backup/restore/mod.rs b/src/backup/restore/mod.rs
+index b49504c5..7f64e7b0 100644
+--- a/src/backup/restore/mod.rs
++++ b/src/backup/restore/mod.rs
+@@ -1554,7 +1554,7 @@ fn execute_configured_restore(
+     match outcome {
+         Ok(facts) => {
+             if replace_existing {
+-                staging.discard();
++                staging.discard_replaced();
+             }
+             let mut result = receipt(chain, facts);
+             result.requested_unix_millis = cutoff;
+@@ -1588,6 +1588,10 @@ fn admit_target(target: &Path) -> Result<(), BackupError> {
+ /// recovery-point name, removed when the run ends without publishing.
+ struct StagingDir {
+     path: PathBuf,
++    /// Set once the staging path has been renamed into the target slot. For
++    /// an exchange this path is then the retired target, so generic failure
++    /// cleanup must not remove it.
++    published: std::cell::Cell<bool>,
+ }
+ 
+ impl StagingDir {
+@@ -1604,7 +1608,7 @@ impl StagingDir {
+         std::fs::create_dir_all(parent).map_err(|_| BackupError::DestinationUnavailable)?;
+         let path = parent.join(format!(".restore-staging-{}-{index}", std::process::id()));
+         std::fs::create_dir(&path).map_err(|_| BackupError::DestinationUnavailable)?;
+-        Ok(Self { path })
++        Ok(Self { path, published: std::cell::Cell::new(false) })
+     }
+ 
+     /// Returns the staging engine location.
+@@ -1612,8 +1616,24 @@ impl StagingDir {
+         &self.path
+     }
+ 
++    /// Records that the staging pathname no longer names the in-progress
++    /// restore. In the exchange case it now owns the previous target.
++    fn mark_published(&self) {
++        self.published.set(true);
++    }
++
+     /// Removes the staging tree: nothing was published from it.
+     fn discard(&self) {
++        if self.published.get() {
++            return;
++        }
++        let _ = std::fs::remove_dir_all(&self.path);
++    }
++
++    /// Removes the retired target left at the staging pathname after a
++    /// successful exchange.
++    fn discard_replaced(&self) {
++        debug_assert!(self.published.get());
+         let _ = std::fs::remove_dir_all(&self.path);
+     }
+ }
+@@ -1637,6 +1657,9 @@ fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
+     {
+         return Err(BackupError::DestinationUnavailable);
+     }
++    // The rename is complete before the parent sync. Mark ownership first so
++    // a sync error cannot make generic cleanup remove the published path.
++    staging.mark_published();
+     if let Some(parent) = target.parent() {
+         super::sync_directory(parent)?;
+     }
+@@ -1753,6 +1776,10 @@ fn publish_with_identity(
+     {
+         return Err(BackupError::DestinationUnavailable);
+     }
++    // With EXCHANGE, `staging.path()` now names the previous target. Record
++    // that ownership before syncing the parent so failure cleanup preserves
++    // it for recovery.
++    staging.mark_published();
+     if let Some(parent) = target.parent() {
+         super::sync_directory(parent)?;
+     }
+diff --git a/src/backup/tests.rs b/src/backup/tests.rs
+index f80afdc1..fe18e6a4 100644
+--- a/src/backup/tests.rs
++++ b/src/backup/tests.rs
+@@ -229,9 +229,11 @@ fn retention_builder_accepts_only_supported_policy_terms() {
+         );
+     }
+     for days in [0, 2, 6, 8, 29, 31, 34, 36, u8::MAX] {
+-        assert_eq!(
+-            BackupPlan::local_test_full_plaintext().with_retention_days(days),
+-            Err(BackupError::ManifestInvalid),
++        assert!(
++            matches!(
++                BackupPlan::local_test_full_plaintext().with_retention_days(days),
++                Err(BackupError::ManifestInvalid)
++            ),
+             "unsupported retention term {days} was accepted"
+         );
+     }
+diff --git a/src/backup/worker.rs b/src/backup/worker.rs
+index 214941f9..b77c0f5a 100644
+--- a/src/backup/worker.rs
++++ b/src/backup/worker.rs
+@@ -13,6 +13,7 @@ use inventory::{
+ mod remote;
+ 
+ use std::collections::{BTreeMap, BTreeSet};
++use std::fs::{File, OpenOptions};
+ use std::path::{Path, PathBuf};
+ use std::sync::Arc;
+ use std::time::{Duration, Instant};
+@@ -26,6 +27,28 @@ use crate::engine::Engine;
+ use crate::observability::{BackupMode, TaskOutcome};
+ use crate::types::StorageSequence;
+ 
++/// Opens a staging temporary as a new private file.  Journals are replaced
++/// by rename, so following an attacker-controlled temporary symlink here
++/// would truncate a file outside the staging tree.
++pub(super) fn open_staging_temporary(path: &Path) -> Result<File, FleetError> {
++    if let Ok(metadata) = std::fs::symlink_metadata(path) {
++        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
++            return Err(FleetError::Capture);
++        }
++        std::fs::remove_file(path).map_err(|_| FleetError::Capture)?;
++    }
++    let mut options = OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::OpenOptionsExt;
++        options.mode(0o600);
++        #[cfg(target_os = "linux")]
++        options.custom_flags(0o400_000); // O_NOFOLLOW
++    }
++    options.open(path).map_err(|_| FleetError::Capture)
++}
++
+ /// Retains the admitted engine owner for the complete backup worker lifetime.
+ /// Server adapters can retain a member lease without extracting an unfenced Engine.
+ pub trait BackupEngineHandle: Send + Sync {
+@@ -1029,13 +1052,20 @@ impl NativeBackupFleet {
+         retained_destinations: &[Arc<ObjectDestination>],
+     ) -> Result<usize, FleetError> {
+         let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
++        let configured = stream
++            .config
++            .historical_destinations
++            .iter()
++            .map(|(_, destination)| destination.identity())
++            .collect::<BTreeSet<_>>();
++        let supplied = retained_destinations
++            .iter()
++            .map(|destination| destination.identity())
++            .collect::<BTreeSet<_>>();
+         if retained_destinations.is_empty()
+             || retained_destinations.len() > 64
+-            || stream.config.destinations.iter().any(|(_, current)| {
+-                !retained_destinations
+-                    .iter()
+-                    .any(|destination| current.identity() == destination.identity())
+-            })
++            || retained_destinations.len() != supplied.len()
++            || supplied != configured
+         {
+             return Err(FleetError::Configuration);
+         }
+@@ -1797,7 +1827,7 @@ fn capture_plan(
+ ) -> Result<BackupPlan, FleetError> {
+     let lease = stream.config.keys.lease().map_err(|_| FleetError::Capture)?;
+     let kind = match (base, rotate) {
+-        (Some(base), true) => super::BackupKind::Snapshot,
++        (Some(_base), true) => super::BackupKind::Snapshot,
+         (Some(base), false) => super::BackupKind::Incremental { base },
+         (None, _) => super::BackupKind::Full,
+     };
+@@ -2118,7 +2148,7 @@ fn persist_upload_journal(
+ ) -> Result<(), FleetError> {
+     use std::io::Write;
+     let temporary = path.with_extension("pending");
+-    let mut file = std::fs::File::create(&temporary).map_err(|_| FleetError::Capture)?;
++    let mut file = open_staging_temporary(&temporary)?;
+     writeln!(file, "{revision}").map_err(|_| FleetError::Capture)?;
+     for point in points {
+         writeln!(file, "{point}").map_err(|_| FleetError::Capture)?;
+@@ -2140,6 +2170,8 @@ mod tests {
+     use crate::types::LocalDurability;
+     use object_store::ObjectStore;
+ 
++    mod purge_retained_tests;
++
+     struct Keys(Arc<DatabaseKeyLease>);
+     impl BackupReader for Keys {
+         fn open_backup_envelope(&self, bytes: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+@@ -2172,6 +2204,25 @@ mod tests {
+         )))
+     }
+ 
++    #[cfg(unix)]
++    #[test]
++    fn staging_temporary_rejects_symlink_without_touching_target() {
++        let directory = location("backup-journal-temporary-symlink");
++        let outside = location("backup-journal-temporary-outside");
++        std::fs::create_dir_all(&directory).unwrap();
++        std::fs::create_dir_all(&outside).unwrap();
++        let target = outside.join("sentinel");
++        std::fs::write(&target, b"preserve").unwrap();
++        let temporary = directory.join("uploaded-oci.pending");
++        std::os::unix::fs::symlink(&target, &temporary).unwrap();
++
++        assert!(matches!(open_staging_temporary(&temporary), Err(FleetError::Capture)));
++        assert_eq!(std::fs::read(&target).unwrap(), b"preserve");
++
++        std::fs::remove_dir_all(directory).unwrap();
++        std::fs::remove_dir_all(outside).unwrap();
++    }
++
+     #[test]
+     fn restore_staging_cleanup_reclaims_crash_left_workspace() {
+         let directory = location("restore-staging-cleanup");
+@@ -2820,6 +2871,9 @@ mod tests {
+         store.put(&manifest, b"corrupt".to_vec().into()).await.unwrap();
+         assert_eq!(fleet.capture_snapshot(&identity).await.unwrap_err(), FleetError::Upload);
+         assert!(!fleet.observe_protection(&identity).unwrap().protected);
++        // Immutable remote publication refuses to overwrite the corrupted
++        // point; lifecycle repair removes that invalid point explicitly.
++        destination.delete_point(&prefix).await.unwrap();
+         fleet.capture_snapshot(&identity).await.unwrap();
+         assert!(fleet.health(&identity).unwrap().protected);
+     }
+@@ -3108,6 +3162,7 @@ mod tests {
+             LocalDurability::Synced,
+         ));
+         let lease = key_provider.lease().unwrap();
++        let reader: Arc<dyn BackupReader + Send + Sync> = key_provider.clone();
+         let root = run_backup(
+             engine,
+             BackupPlan::full(
+@@ -3117,7 +3172,8 @@ mod tests {
+                     0,
+                 )
+                 .unwrap(),
+-            ),
++            )
++            .with_reader(reader),
+             staging,
+         )
+         .unwrap();
+diff --git a/src/backup/worker/inventory.rs b/src/backup/worker/inventory.rs
+index e1691cf7..a1f3721f 100644
+--- a/src/backup/worker/inventory.rs
++++ b/src/backup/worker/inventory.rs
+@@ -194,14 +194,25 @@ pub(super) fn remove_point(point: &Path) -> Result<(), FleetError> {
+     super::super::sync_directory(parent).map_err(|_| FleetError::Capture)
+ }
+ 
+-fn cleanup_interrupted(directory: &Path) -> Result<(), FleetError> {
++pub(super) fn cleanup_interrupted(directory: &Path) -> Result<(), FleetError> {
+     for entry in std::fs::read_dir(directory).map_err(|_| FleetError::Capture)? {
+         let entry = entry.map_err(|_| FleetError::Capture)?;
+-        if entry.file_name().to_str().is_some_and(owned_ephemeral) {
+-            if !entry.file_type().map_err(|_| FleetError::Capture)?.is_dir() {
+-                return Err(FleetError::Capture);
++        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
++            continue;
++        };
++        if owned_ephemeral(&name) {
++            let file_type = entry.file_type().map_err(|_| FleetError::Capture)?;
++            if name == "rotation-pending.tmp" {
++                if !file_type.is_file() {
++                    return Err(FleetError::Capture);
++                }
++                std::fs::remove_file(entry.path()).map_err(|_| FleetError::Capture)?;
++            } else {
++                if !file_type.is_dir() {
++                    return Err(FleetError::Capture);
++                }
++                std::fs::remove_dir_all(entry.path()).map_err(|_| FleetError::Capture)?;
+             }
+-            std::fs::remove_dir_all(entry.path()).map_err(|_| FleetError::Capture)?;
+         }
+     }
+     super::super::sync_directory(directory).map_err(|_| FleetError::Capture)
+@@ -221,6 +232,14 @@ pub(super) fn has_capacity(
+ }
+ 
+ fn owned_ephemeral(name: &str) -> bool {
++    if name == "rotation-pending.tmp" {
++        return true;
++    }
++    if let Some(identity) =
++        name.strip_prefix(".env-").and_then(|name| name.strip_suffix(".staging"))
++    {
++        return super::super::manifest::validate_identity(identity).is_ok();
++    }
+     if let Some(identity) =
+         name.strip_prefix(".evict-rp-").or_else(|| name.strip_prefix(".pending-"))
+     {
+@@ -302,7 +321,7 @@ mod tests {
+         let directory = crate::backup::tests::location("backup-cleanup-restart-staging");
+         std::fs::create_dir_all(&directory).unwrap();
+         let stale = directory.join(format!(
+-            ".staging-{}-{}",
++            ".staging-{}-0-{}",
+             std::process::id(),
+             crate::identity::generate()
+         ));
+@@ -315,6 +334,68 @@ mod tests {
+         std::fs::remove_dir_all(directory).unwrap();
+     }
+ 
++    #[test]
++    fn interrupted_cleanup_reclaims_envelope_and_rotation_temporaries() {
++        let directory = crate::backup::tests::location("backup-cleanup-temporaries");
++        std::fs::remove_dir_all(&directory).ok();
++        std::fs::create_dir_all(&directory).unwrap();
++        let envelope = directory.join(format!(".env-{}.staging", "a".repeat(64)));
++        std::fs::create_dir(&envelope).unwrap();
++        std::fs::write(directory.join("rotation-pending.tmp"), b"0 1\n").unwrap();
++
++        super::cleanup_interrupted(&directory).unwrap();
++
++        assert!(!envelope.exists());
++        assert!(!directory.join("rotation-pending.tmp").exists());
++        std::fs::remove_dir_all(directory).unwrap();
++    }
++
++    #[test]
++    fn interrupted_cleanup_refuses_temporary_type_mismatches() {
++        let directory = crate::backup::tests::location("backup-cleanup-temporary-types");
++        std::fs::remove_dir_all(&directory).ok();
++        std::fs::create_dir_all(&directory).unwrap();
++        let rotation = directory.join("rotation-pending.tmp");
++        std::fs::create_dir(&rotation).unwrap();
++        assert_eq!(super::cleanup_interrupted(&directory), Err(super::FleetError::Capture));
++        assert!(rotation.is_dir());
++        std::fs::remove_dir(&rotation).unwrap();
++
++        let envelope = directory.join(format!(".env-{}.staging", "b".repeat(64)));
++        std::fs::write(&envelope, b"wrong type").unwrap();
++        assert_eq!(super::cleanup_interrupted(&directory), Err(super::FleetError::Capture));
++        assert!(envelope.is_file());
++        std::fs::remove_file(envelope).unwrap();
++        std::fs::remove_dir_all(directory).unwrap();
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn interrupted_cleanup_refuses_temporary_symlinks() {
++        let directory = crate::backup::tests::location("backup-cleanup-temporary-symlinks");
++        let outside = crate::backup::tests::location("backup-cleanup-temporary-symlinks-outside");
++        std::fs::remove_dir_all(&directory).ok();
++        std::fs::remove_dir_all(&outside).ok();
++        std::fs::create_dir_all(&directory).unwrap();
++        std::fs::create_dir_all(&outside).unwrap();
++        std::fs::write(outside.join("sentinel"), b"retained").unwrap();
++        std::os::unix::fs::symlink(&outside, directory.join("rotation-pending.tmp")).unwrap();
++        assert_eq!(super::cleanup_interrupted(&directory), Err(super::FleetError::Capture));
++        assert!(outside.join("sentinel").exists());
++        std::fs::remove_file(directory.join("rotation-pending.tmp")).unwrap();
++
++        std::os::unix::fs::symlink(
++            &outside,
++            directory.join(format!(".env-{}.staging", "c".repeat(64))),
++        )
++        .unwrap();
++        assert_eq!(super::cleanup_interrupted(&directory), Err(super::FleetError::Capture));
++        assert!(outside.join("sentinel").exists());
++        std::fs::remove_file(directory.join(format!(".env-{}.staging", "c".repeat(64)))).unwrap();
++        std::fs::remove_dir_all(directory).unwrap();
++        std::fs::remove_dir_all(outside).unwrap();
++    }
++
+     #[test]
+     fn small_cache_rotation_fits_each_plan_window_and_provider_listing_bound() {
+         for days in [1_u8, 7, 30, 35] {
+diff --git a/src/backup/worker/rotation.rs b/src/backup/worker/rotation.rs
+index 69e3e196..38c8f2e5 100644
+--- a/src/backup/worker/rotation.rs
++++ b/src/backup/worker/rotation.rs
+@@ -24,7 +24,7 @@ pub(super) fn read(stream: &Stream) -> Result<Option<(StorageSequence, u64)>, Fl
+ pub(super) fn begin(stream: &Stream, base: StorageSequence, clock: u64) -> Result<(), FleetError> {
+     use std::io::Write;
+     let temporary = stream.config.staging.join("rotation-pending.tmp");
+-    let mut file = std::fs::File::create(&temporary).map_err(|_| FleetError::Capture)?;
++    let mut file = super::open_staging_temporary(&temporary)?;
+     writeln!(file, "{} {clock}", base.get()).map_err(|_| FleetError::Capture)?;
+     file.sync_all().map_err(|_| FleetError::Capture)?;
+     std::fs::rename(temporary, stream.config.staging.join("rotation-pending"))
+diff --git a/src/backup/worker/tests/purge_retained_tests.rs b/src/backup/worker/tests/purge_retained_tests.rs
+new file mode 100644
+index 00000000..7d98c104
+--- /dev/null
++++ b/src/backup/worker/tests/purge_retained_tests.rs
+@@ -0,0 +1,64 @@
++use super::*;
++
++#[tokio::test]
++async fn purge_retained_requires_exact_historical_destination_coverage_before_mutation() {
++    let (_, engine) = open_engine("purge-retained-destination-coverage");
++    let engine = Arc::new(engine);
++    let database = engine.database_id().to_string();
++    let staging = location("purge-retained-destination-coverage-staging");
++    let current = Arc::new(ObjectDestination::for_test(
++        Provider::Oci,
++        Arc::new(object_store::memory::InMemory::new()),
++        4 * 1024 * 1024,
++        8 * 1024 * 1024,
++    ));
++    let historical = Arc::new(ObjectDestination::for_test(
++        Provider::Tigris,
++        Arc::new(object_store::memory::InMemory::new()),
++        4 * 1024 * 1024,
++        8 * 1024 * 1024,
++    ));
++    let mut fleet = NativeBackupFleet::new(FleetLimits {
++        streams: 1,
++        staging_bytes_per_stream: 16 * 1024 * 1024,
++        inventory_bytes_per_stream: 16 * 1024 * 1024,
++        points_per_stream: 4,
++    })
++    .unwrap();
++    fleet
++        .attach(StreamConfig {
++            engine: Arc::clone(&engine) as Arc<dyn BackupEngineHandle>,
++            keys: keys(&engine),
++            destinations: vec![(Provider::Oci, Arc::clone(&current))],
++            historical_destinations: vec![(Provider::Tigris, Arc::clone(&historical))],
++            policy_revision: "purge-retained".into(),
++            retention_days: 1,
++            staging,
++            placement: PlacementLock::br_only(),
++        })
++        .unwrap();
++
++    let stream = fleet.streams.get_mut(&database).unwrap();
++    stream.closing = false;
++    stream.health.protected = true;
++
++    assert_eq!(
++        fleet.purge_retained(&database, &[current.clone()]).await,
++        Err(FleetError::Configuration)
++    );
++    assert!(!fleet.streams.get(&database).unwrap().closing);
++    assert!(fleet.streams.get(&database).unwrap().health.protected);
++
++    assert_eq!(
++        fleet
++            .purge_retained(&database, &[current.clone(), current.clone(), historical.clone()])
++            .await,
++        Err(FleetError::Configuration)
++    );
++    assert_eq!(
++        fleet.purge_retained(&database, &[historical]).await,
++        Err(FleetError::Configuration)
++    );
++    assert!(!fleet.streams.get(&database).unwrap().closing);
++    assert!(fleet.streams.get(&database).unwrap().health.protected);
++}
+diff --git a/tests/encryption/main.rs b/tests/encryption/main.rs
+index 13de6009..562e7ee2 100644
+--- a/tests/encryption/main.rs
++++ b/tests/encryption/main.rs
+@@ -207,23 +207,17 @@ fn backup_envelopes_bind_nonce_and_metadata_to_the_key() {
+         Compression::None,
+     )
+     .unwrap();
+-    let mut writer = ArtifactCipher::new(
+-        ProviderMode::LocalFile,
+-        DatabaseKey::from_bytes([0x37; 32]),
+-        context,
+-    )
+-    .unwrap();
++    let mut writer =
++        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([0x37; 32]), context)
++            .unwrap();
+     let envelope = writer.seal(b"backup payload").unwrap();
+     let next = writer.seal(b"backup payload").unwrap();
+     assert_ne!(envelope, next, "each backup record must use a fresh ordinal nonce");
+     assert_eq!(writer.open(&envelope).unwrap(), b"backup payload");
+ 
+-    let wrong_key = ArtifactCipher::new(
+-        ProviderMode::LocalFile,
+-        DatabaseKey::from_bytes([0x38; 32]),
+-        context,
+-    )
+-    .unwrap();
++    let wrong_key =
++        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([0x38; 32]), context)
++            .unwrap();
+     assert_eq!(wrong_key.open(&envelope), Err(EncryptionError::AuthenticationFailed));
+ 
+     let mut altered_ordinal = envelope.clone();

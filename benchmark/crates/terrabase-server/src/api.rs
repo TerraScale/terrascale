@@ -2619,6 +2619,19 @@ struct WriteDurability {
     standalone: bool,
 }
 
+/// Durability proofs for a logical batch.  Cross-file commits publish one
+/// receipt per origin plus a coordinator completion receipt; keep those
+/// proofs private while preserving the single public batch response.
+struct BatchDurability {
+    entries: Vec<(String, WriteDurability)>,
+}
+
+fn engine_identity(engine: &terrabase::Engine) -> String {
+    // The owner scope is shared by split files; the durable database ULID is
+    // the physical-file identity needed to keep origin proofs distinct.
+    engine.database_id().to_string()
+}
+
 fn durability_unavailable(global: bool) -> ApiError {
     ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
@@ -2727,6 +2740,20 @@ impl WriteDurability {
         Ok(())
     }
 
+    fn guard_routed(
+        &self,
+        transaction: &mut terrabase::Transaction<'_>,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Result<(), ApiError> {
+        if let Some(context) = &self.uniform_context {
+            transaction
+                .require_routed_uniform_context(collection, id, context.clone())
+                .map_err(|_| durability_unavailable(true))?;
+        }
+        Ok(())
+    }
+
     async fn confirm(
         &self,
         engine: &terrabase::Engine,
@@ -2759,6 +2786,105 @@ impl WriteDurability {
                 .wait_global(self.scope, &row.origin, row.origin_sequence, self.timeout)
                 .await
                 .map_err(|_| durability_unknown())?;
+        }
+        Ok(())
+    }
+}
+
+impl BatchDurability {
+    async fn prepare(
+        state: &ApiState,
+        host: &terrabase_tbep::engine_host::EngineHost,
+        collection: &CollectionName,
+        ids: &[DocumentId],
+        scope: &terrabase::types::TenantScope,
+        headers: &axum::http::HeaderMap,
+        replay: bool,
+    ) -> Result<Self, ApiError> {
+        let coordinator =
+            host.batch_coordinator(collection, ids).map_err(|_| ApiError::control_unavailable())?;
+        let mut engines = Vec::with_capacity(ids.len() + 1);
+        engines.push(coordinator);
+        // Single-child routed writes coordinate on the admitted root even
+        // though their document participant is the child origin.
+        engines.push(host.engine());
+        for id in ids {
+            engines.push(
+                host.document_participant(collection, std::slice::from_ref(id))
+                    .map_err(|_| ApiError::control_unavailable())?,
+            );
+        }
+        let mut entries = Vec::new();
+        for engine in engines {
+            let identity = engine_identity(engine);
+            if entries.iter().any(|(known, _)| known == &identity) {
+                continue;
+            }
+            let engine_scope = engine.scope_for(scope.tenant());
+            let durability = if replay {
+                WriteDurability::prepare_replay(state, engine, &engine_scope, headers).await?
+            } else {
+                WriteDurability::prepare(state, engine, &engine_scope, headers).await?
+            };
+            entries.push((identity, durability));
+        }
+        Ok(Self { entries })
+    }
+
+    fn guard(
+        &self,
+        transaction: &mut terrabase::Transaction<'_>,
+        host: &terrabase_tbep::engine_host::EngineHost,
+        collection: &CollectionName,
+        ids: &[DocumentId],
+    ) -> Result<(), ApiError> {
+        let mut guarded = std::collections::BTreeSet::new();
+        for id in ids {
+            let engine = host
+                .document_participant(collection, std::slice::from_ref(id))
+                .map_err(|_| ApiError::control_unavailable())?;
+            let identity = engine_identity(engine);
+            if !guarded.insert(identity.clone()) {
+                continue;
+            }
+            let entry = self
+                .entries
+                .iter()
+                .find(|(known, _)| known == &identity)
+                .ok_or_else(durability_unknown)?;
+            entry.1.guard_routed(transaction, collection, id)?;
+        }
+        Ok(())
+    }
+
+    async fn confirm(
+        &self,
+        host: &terrabase_tbep::engine_host::EngineHost,
+        scope: &terrabase::types::TenantScope,
+        operation: &OperationId,
+        fallback_engine: &terrabase::Engine,
+        fallback_scope: &terrabase::types::TenantScope,
+        fallback: &terrabase::CommitReceipt,
+    ) -> Result<(), ApiError> {
+        let Some(receipts) =
+            host.batch_commit_receipts(scope, operation).map_err(|_| durability_unknown())?
+        else {
+            let entry = self
+                .entries
+                .iter()
+                .find(|(identity, _)| identity == &engine_identity(fallback_engine))
+                .ok_or_else(durability_unknown)?;
+            return entry.1.confirm(fallback_engine, fallback_scope, fallback).await;
+        };
+        for (engine, receipt) in receipts {
+            let identity = engine_identity(&engine);
+            let entry = self
+                .entries
+                .iter()
+                .find(|(known, _)| known == &identity)
+                .ok_or_else(durability_unknown)?;
+            let engine_scope = engine.scope_for(scope.tenant());
+            entry.1.confirm(&engine, &engine_scope, &receipt).await?;
         }
         Ok(())
     }
@@ -2867,10 +2993,7 @@ async fn batch_documents(
         Ok(operations) => operations,
         Err(error) => return error.into_response(),
     };
-    // A batch transaction has one physical participant. Validate every key
-    // before reserving durability or opening a transaction so a split target
-    // cannot be staged on the source, and mixed-participant batches fail
-    // before any effect.
+    // Capture all routed keys before reserving the logical batch operation.
     let ids = match batch_route_ids(&operations) {
         Ok(ids) => ids,
         Err(error) => return error,
@@ -2900,12 +3023,22 @@ async fn batch_documents(
         Ok(None) => {}
         Err(error) => return error.into_response(),
     }
-    let engine = match host.engine_host().document_participant(&collection, &ids) {
+    let engine = match host.engine_host().batch_coordinator(&collection, &ids) {
         Ok(engine) => engine,
         Err(_) => return ApiError::control_unavailable().into_response(),
     };
     let scope = engine.scope_for(scope.tenant());
-    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
+    let durability = match BatchDurability::prepare(
+        &state,
+        host.engine_host(),
+        &collection,
+        &ids,
+        &scope,
+        &headers,
+        false,
+    )
+    .await
+    {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -2964,7 +3097,7 @@ async fn batch_documents(
     ) {
         return error.into_response();
     }
-    if let Err(error) = durability.guard(&mut transaction) {
+    if let Err(error) = durability.guard(&mut transaction, host.engine_host(), &collection, &ids) {
         return error.into_response();
     }
     let outcome = commit_on_runtime(transaction, LocalDurability::Synced);
@@ -2988,7 +3121,17 @@ async fn batch_documents(
     }
     match outcome {
         CommitOutcome::Committed(receipt) => {
-            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
+            if let Err(error) = durability
+                .confirm(
+                    host.engine_host(),
+                    &scope,
+                    &operation_id,
+                    engine,
+                    &scope,
+                    &receipt,
+                )
+                .await
+            {
                 return error.into_response();
             }
             match batch_write_response(&mut session, receipt.sequence().get(), operations.len()) {
@@ -3066,8 +3209,9 @@ async fn replay_batch_request(
     };
     let resolved_scope = engine.scope_for(scope.tenant());
     let scope = &resolved_scope;
-    let durability = WriteDurability::prepare_replay(state, &engine, scope, headers).await?;
-    durability.confirm(&engine, scope, &receipt).await?;
+    let durability =
+        BatchDurability::prepare(state, host, collection, ids, scope, headers, true).await?;
+    durability.confirm(host, scope, operation, &engine, scope, &receipt).await?;
     let mut session = open_session(&engine, scope, headers)?;
     batch_write_response(&mut session, receipt.sequence().get(), count).map(Some)
 }
@@ -3141,13 +3285,18 @@ fn stage_batch_operation(
             let Some(value) = item.get("value") else {
                 return Err(("missing_value", "the put names no value"));
             };
+            let units = terrabase::usage::write_units_for_bytes(
+                terrabase::storage::estimated_document_body_bytes(
+                    collection.as_str(),
+                    id.as_str(),
+                    serde_json::to_vec(value).map_or(0, |bytes| bytes.len() as u64),
+                ),
+            );
             let document = Document::new(id, collection.clone(), json_value(value));
             if transaction.put(document, ExpectedVersion::Any).is_err() {
                 return Err(("staging_refused", "the put could not stage"));
             }
-            Ok(terrabase::usage::write_units_for_bytes(
-                serde_json::to_vec(value).map_or(0, |bytes| bytes.len() as u64),
-            ))
+            Ok(units)
         }
         Some("patch") => {
             let existing = transaction.read_in_collection(collection, &id);
@@ -3159,12 +3308,18 @@ fn stage_batch_operation(
                 &mut merged,
                 &json_value(item.get("value").unwrap_or(&serde_json::Value::Null)),
             );
-            let units = document_value_bytes(&merged);
+            let units = terrabase::usage::write_units_for_bytes(
+                terrabase::storage::estimated_document_body_bytes(
+                    collection.as_str(),
+                    id.as_str(),
+                    document_value_bytes(&merged),
+                ),
+            );
             let patched = Document::new(id, collection.clone(), merged);
             if transaction.put(patched, ExpectedVersion::Any).is_err() {
                 return Err(("staging_refused", "the patch could not stage"));
             }
-            Ok(terrabase::usage::write_units_for_bytes(units))
+            Ok(units)
         }
         Some("delete") => {
             if transaction.read_in_collection(collection, &id).ok().flatten().is_none() {
@@ -3511,7 +3666,10 @@ fn check_if_match(
         });
     }
     match live {
-        Some(revision) if format!("\"{revision}\"") == expected => Ok(()),
+        // The entity-tag form is the wire standard; the bare form is the
+        // revision as the write response body reports it, so a client that
+        // echoes the body value back satisfies the same precondition.
+        Some(revision) if format!("\"{revision}\"") == expected || revision == expected => Ok(()),
         _ => Err(ApiError::precondition_failed("the ETag no longer matches the live revision")),
     }
 }
@@ -3585,9 +3743,17 @@ async fn replay_document_request(
     };
     let resolved_scope = resolved_engine.scope_for(scope.tenant());
     let scope = &resolved_scope;
-    let durability =
-        WriteDurability::prepare_replay(state, &resolved_engine, scope, headers).await?;
-    durability.confirm(&resolved_engine, scope, &receipt).await?;
+    let durability = BatchDurability::prepare(
+        state,
+        host,
+        collection,
+        std::slice::from_ref(id),
+        scope,
+        headers,
+        true,
+    )
+    .await?;
+    durability.confirm(host, scope, operation, &resolved_engine, scope, &receipt).await?;
     let mut session = open_session(&resolved_engine, scope, headers)?;
     let response = document_write_response(&mut session, collection, id, revision)?;
     Ok(Some(response))
@@ -3970,7 +4136,17 @@ async fn put_document(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
+    let durability = match BatchDurability::prepare(
+        &state,
+        host.engine_host(),
+        &collection,
+        std::slice::from_ref(&id),
+        &scope,
+        &headers,
+        false,
+    )
+    .await
+    {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -4005,9 +4181,12 @@ async fn put_document(
     }
     let database_id = engine.database_owner().database().to_text();
     let operation_id = transaction.operation_id().clone();
-    let units = terrabase::usage::write_units_for_bytes(
-        serde_json::to_vec(&value).map_or(0, |bytes| bytes.len() as u64),
-    );
+    let units =
+        terrabase::usage::write_units_for_bytes(terrabase::storage::estimated_document_body_bytes(
+            collection.as_str(),
+            id.as_str(),
+            serde_json::to_vec(&value).map_or(0, |bytes| bytes.len() as u64),
+        ));
     if let Err(error) = attach_write_budget(
         &state,
         &mut transaction,
@@ -4056,7 +4235,12 @@ async fn put_document(
             return document_request_error(error).into_response();
         }
     }
-    if let Err(error) = durability.guard(&mut transaction) {
+    if let Err(error) = durability.guard(
+        &mut transaction,
+        host.engine_host(),
+        &collection,
+        std::slice::from_ref(&id),
+    ) {
         return error.into_response();
     }
     mark(trace, &mut t, "staging");
@@ -4083,7 +4267,10 @@ async fn put_document(
     match outcome {
         CommitOutcome::Committed(receipt) => {
             mark(trace, &mut t, "commit");
-            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
+            if let Err(error) = durability
+                .confirm(host.engine_host(), &scope, &operation_id, engine, &scope, &receipt)
+                .await
+            {
                 return error.into_response();
             }
             let revision = if has_idempotency_key(&headers) {
@@ -4188,7 +4375,17 @@ async fn patch_document(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
+    let durability = match BatchDurability::prepare(
+        &state,
+        host.engine_host(),
+        &collection,
+        std::slice::from_ref(&id),
+        &scope,
+        &headers,
+        false,
+    )
+    .await
+    {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -4234,7 +4431,12 @@ async fn patch_document(
     };
     let mut merged = existing.value().clone();
     merge_patch(&mut merged, &json_value(&value));
-    let units = document_value_bytes(&merged);
+    let units =
+        terrabase::usage::write_units_for_bytes(terrabase::storage::estimated_document_body_bytes(
+            collection.as_str(),
+            id.as_str(),
+            document_value_bytes(&merged),
+        ));
     let patched = Document::new(id.clone(), collection.clone(), merged);
     if let Err(error) = attach_write_budget(
         &state,
@@ -4243,7 +4445,7 @@ async fn patch_document(
         engine.database_owner().project().to_string().as_str(),
         &database_id,
         &operation_id,
-        terrabase::usage::write_units_for_bytes(units),
+        units,
     ) {
         return error.into_response();
     }
@@ -4265,7 +4467,12 @@ async fn patch_document(
             return document_request_error(error).into_response();
         }
     }
-    if let Err(error) = durability.guard(&mut transaction) {
+    if let Err(error) = durability.guard(
+        &mut transaction,
+        host.engine_host(),
+        &collection,
+        std::slice::from_ref(&id),
+    ) {
         return error.into_response();
     }
     let outcome = commit_on_runtime(transaction, LocalDurability::Synced);
@@ -4290,7 +4497,10 @@ async fn patch_document(
     }
     match outcome {
         CommitOutcome::Committed(receipt) => {
-            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
+            if let Err(error) = durability
+                .confirm(host.engine_host(), &scope, &operation_id, engine, &scope, &receipt)
+                .await
+            {
                 return error.into_response();
             }
             let revision = if has_idempotency_key(&headers) {
@@ -4468,7 +4678,17 @@ async fn delete_document(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
+    let durability = match BatchDurability::prepare(
+        &state,
+        host.engine_host(),
+        &collection,
+        std::slice::from_ref(&id),
+        &scope,
+        &headers,
+        false,
+    )
+    .await
+    {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -4543,7 +4763,12 @@ async fn delete_document(
             return document_request_error(error).into_response();
         }
     }
-    if let Err(error) = durability.guard(&mut transaction) {
+    if let Err(error) = durability.guard(
+        &mut transaction,
+        host.engine_host(),
+        &collection,
+        std::slice::from_ref(&id),
+    ) {
         return error.into_response();
     }
     let outcome = commit_on_runtime(transaction, LocalDurability::Synced);
@@ -4568,7 +4793,10 @@ async fn delete_document(
     }
     match outcome {
         CommitOutcome::Committed(receipt) => {
-            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
+            if let Err(error) = durability
+                .confirm(host.engine_host(), &scope, &operation_id, engine, &scope, &receipt)
+                .await
+            {
                 return error.into_response();
             }
             let revision = if has_idempotency_key(&headers) {
@@ -6161,6 +6389,8 @@ mod tests {
                     .header("authorization", auth)
                     .header("x-terrascale-tenant-id", "terrabase-local")
                     .header("x-terrascale-project-id", "local")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"live","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -6373,6 +6603,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header("authorization", auth)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"tt","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -6483,6 +6715,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(create))
                     .expect("request"),
             )
@@ -6515,6 +6749,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"eu","placement":["FRA"],"residency":"eu-only"}"#))
                     .expect("request"),
             )
@@ -6559,6 +6795,10 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -6760,6 +7000,10 @@ mod tests {
             .oneshot(
                 Request::get("/api/v1/databases/prod")
                     .header("authorization", "Bearer eyJhbGciOiJub25lIn0.e30.c2ln")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -6782,6 +7026,10 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -6854,6 +7102,26 @@ mod tests {
             .expect("the patch names the revision")
             .to_owned();
         assert_ne!(patched_etag, get_etag, "the patch advanced the revision");
+        // The bare revision — what the write response body reports — satisfies
+        // the same precondition as the quoted entity-tag form.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::patch(path)
+                    .header(auth, key)
+                    .header("if-match", patched_etag.trim_matches('"'))
+                    .body(Body::from(r#"{"n":9}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let live_etag = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .expect("the bare-form patch names the revision")
+            .to_owned();
         // `If-Match: *` guards existence on delete: present deletes, absent
         // refuses instead of inventing a 404-or-success ambiguity.
         let response = router
@@ -6873,7 +7141,7 @@ mod tests {
             .oneshot(
                 Request::delete(path)
                     .header(auth, key)
-                    .header("if-match", patched_etag.as_str())
+                    .header("if-match", live_etag.as_str())
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -6909,6 +7177,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -6989,6 +7259,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -7104,6 +7376,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -7199,6 +7473,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header("authorization", key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -7387,6 +7663,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header("authorization", key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .unwrap(),
             )
@@ -7444,6 +7722,10 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -7578,6 +7860,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -7644,6 +7928,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -7679,6 +7965,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -7716,6 +8004,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"eu","placement":["FRA"],"residency":"eu-only"}"#))
                     .expect("request"),
             )
@@ -7767,6 +8057,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -7830,6 +8122,8 @@ mod tests {
                     .header("authorization", auth)
                     .header("x-terrascale-tenant-id", "terrabase-local")
                     .header("x-terrascale-project-id", "local")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(
                         r#"{"name":"prod","placement":["GRU","SFO","FRA"],"residency":null}"#,
                     ))
@@ -7882,6 +8176,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, key)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )

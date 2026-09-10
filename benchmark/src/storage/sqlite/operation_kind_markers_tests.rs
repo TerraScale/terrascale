@@ -20,6 +20,10 @@ fn causal_context(origin: &str, sequence: u64) -> Vec<u8> {
 
 fn metadata_intent(operation: &str, maintenance: bool, writes: Vec<StagedWrite>) -> CommitIntent {
     CommitIntent {
+        cross_file_control: None,
+        cross_file_dependencies: None,
+        cross_file_billing: None,
+        generated_primary_file_identity: None,
         tenant: TenantId::try_new("marker-tenant").unwrap(),
         operation: OperationId::try_new(operation).unwrap(),
         digest: 1,

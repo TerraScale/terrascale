@@ -27,13 +27,33 @@ impl AdmittedDatabase {
     /// # Errors
     /// Returns an error when the admitted identity or lifecycle state cannot be read.
     pub fn public_record(&self) -> Result<DatabaseRecord, String> {
+        self.record_at(&self.lifecycle_state()?)
+    }
+
+    fn lifecycle_state(
+        &self,
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleState, String> {
         let tenant = terrabase::types::TenantId::try_new(&self.record.tenant_id)
             .map_err(|_| "invalid admitted tenant")?;
-        let state = self
-            .host
+        self.host
             .engine()
             .lifecycle_state(&self.host.engine().scope_for(&tenant))
-            .map_err(|_| "lifecycle source unavailable")?;
+            .map_err(|_| "lifecycle source unavailable".into())
+    }
+
+    fn visible_record(&self, serving: bool) -> Result<Option<DatabaseRecord>, String> {
+        let state = self.lifecycle_state()?;
+        if serving || state.deletion.is_some() || (state.paused && !state.access_revoked()) {
+            self.record_at(&state).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn record_at(
+        &self,
+        state: &terrabase::engine::lifecycle_state::LifecycleState,
+    ) -> Result<DatabaseRecord, String> {
         Ok(DatabaseRecord {
             name: self.record.database_id.clone(),
             placement: self
@@ -522,7 +542,30 @@ impl AdmittedDatabaseRegistry {
         if databases.iter().any(|id| !retained.contains_key(id)) {
             return Err("activation database is not retained".into());
         }
-        serving.extend(databases.iter().cloned());
+        // Replay may rebuild replication lanes for retained paused databases.
+        // Read every lifecycle before publishing any serving changes, under the
+        // same gate used by pause/resume, so replay cannot reactivate them.
+        let activation = databases
+            .iter()
+            .map(|id| {
+                let entry = &retained[id];
+                let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
+                    .map_err(|_| "invalid admitted tenant")?;
+                let state = entry
+                    .host
+                    .engine()
+                    .lifecycle_state(&entry.host.engine().scope_for(&tenant))
+                    .map_err(|_| "lifecycle source unavailable")?;
+                Ok((id, !state.paused && !state.access_revoked()))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        for (id, eligible) in activation {
+            if eligible {
+                serving.insert(id.clone());
+            } else {
+                serving.remove(id);
+            }
+        }
         Ok(())
     }
 
@@ -627,7 +670,7 @@ impl AdmittedDatabaseRegistry {
             .get(database)
             .cloned();
         match retained {
-            Some(entry) if serving.contains(database) || entry.public_record()?.deleted => {
+            Some(entry) if entry.visible_record(serving.contains(database))?.is_some() => {
                 Ok(Some(entry))
             }
             _ => Ok(None),
@@ -668,9 +711,9 @@ impl AdmittedDatabaseRegistry {
             .read()
             .map_err(|_| "admitted registry unavailable")?
             .iter()
-            .filter_map(|(id, database)| match database.public_record() {
-                Ok(record) if serving.contains(id) || record.deleted => Some(Ok(record)),
-                Ok(_) => None,
+            .filter_map(|(id, database)| match database.visible_record(serving.contains(id)) {
+                Ok(Some(record)) => Some(Ok(record)),
+                Ok(None) => None,
                 Err(error) => Some(Err(error)),
             })
             .collect()
@@ -1195,17 +1238,40 @@ pub(crate) mod tests {
         assert!(registry.resolve(database).unwrap().is_none());
         assert!(registry.resolve_serving(database).unwrap().is_none());
         assert!(registry.resolve_metadata(database).unwrap().is_some());
+        assert!(registry.public_records().unwrap().iter().any(|record| record.name == *database));
+
+        registry.activate(std::slice::from_ref(database)).unwrap();
+        assert!(
+            !registry
+                .retained_snapshot()
+                .unwrap()
+                .into_iter()
+                .find(|entry| entry.database.record.database_id == *database)
+                .unwrap()
+                .activated
+        );
 
         registry.resume(database, "resume-1").unwrap();
         assert!(!engine.lifecycle_state(&scope).unwrap().paused);
         let resumed = registry.resolve(database).unwrap().unwrap();
         assert!(Arc::ptr_eq(&admitted, &resumed));
+        drop(resumed);
 
         engine.lifecycle_prepare_deletion(&scope, "delete-after-pause").unwrap();
         assert!(registry.resolve(database).unwrap().is_some());
         assert!(registry.resolve_serving(database).unwrap().is_none());
         assert!(registry.pause(database, "pause-2").is_err());
         assert!(registry.resume(database, "resume-2").is_err());
+        registry.activate(std::slice::from_ref(database)).unwrap();
+        assert!(
+            !registry
+                .retained_snapshot()
+                .unwrap()
+                .into_iter()
+                .find(|entry| entry.database.record.database_id == *database)
+                .unwrap()
+                .activated
+        );
 
         drop(admitted);
         drop(registry);

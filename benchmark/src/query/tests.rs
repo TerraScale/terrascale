@@ -4448,3 +4448,87 @@ fn index_tenant_observations_use_the_executed_snapshot_scope() {
     drop(engine);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn sql_identity_columns_filter_and_project_the_document_id() {
+    // Direct probe of the typed evaluator before any scan layer.
+    {
+        let document =
+            object_document("doc-1", "orders", &[("total", DocumentValue::Integer(7))]);
+        let predicate = QueryPredicate::all(vec![QueryCondition::Equals {
+            field: "id".to_owned(),
+            value: DocumentValue::String("doc-1".into()),
+        }])
+        .unwrap();
+        assert!(crate::query::model::matches(&predicate, &document), "typed matches on id");
+    }
+    let (dir, engine) = open_engine("sql-identity-columns");
+    let tenant_scope = scope(&engine, "tenant");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("doc-1", "orders", &[("total", DocumentValue::Integer(7))]),
+            // A body key named `id` is shadowed by the envelope identity.
+            object_document(
+                "doc-2",
+                "orders",
+                &[("id", DocumentValue::String("not-the-identity".into()))],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+
+    let plan = store
+        .compile(QueryInput::SqlBounded {
+            text: SqlQueryText::try_new("SELECT * FROM orders WHERE id = :id").unwrap(),
+            deadline: deadline(),
+            cancellation: Cancellation::new(),
+            parameters: sql_params(&[("id", "doc-1")]),
+        })
+        .unwrap();
+    let result = store.execute(&plan, &snapshot).unwrap();
+    assert_eq!(result.rows().len(), 1);
+    assert_eq!(result.rows()[0].document().id().as_str(), "doc-1");
+
+    // The shadowed body key must not satisfy the identity predicate.
+    let plan = store
+        .compile(QueryInput::SqlBounded {
+            text: SqlQueryText::try_new("SELECT * FROM orders WHERE id = :id").unwrap(),
+            deadline: deadline(),
+            cancellation: Cancellation::new(),
+            parameters: sql_params(&[("id", "not-the-identity")]),
+        })
+        .unwrap();
+    let result = store.execute(&plan, &snapshot).unwrap();
+    assert_eq!(result.rows().len(), 0);
+
+    // `_id` is the same identity column; projecting `id` yields it.
+    let plan = store
+        .compile(QueryInput::SqlBounded {
+            text: SqlQueryText::try_new("SELECT id FROM orders WHERE _id = :id").unwrap(),
+            deadline: deadline(),
+            cancellation: Cancellation::new(),
+            parameters: sql_params(&[("id", "doc-2")]),
+        })
+        .unwrap();
+    let result = store.execute(&plan, &snapshot).unwrap();
+    assert_eq!(result.rows().len(), 1);
+    assert_eq!(
+        result.rows()[0].projected(),
+        &[("id".to_owned(), DocumentValue::String("doc-2".into()))]
+    );
+
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn sql_params(pairs: &[(&str, &str)]) -> crate::query::sql::SqlParameters {
+    let mut parameters = crate::query::sql::SqlParameters::new();
+    for (name, value) in pairs {
+        parameters.insert(name, DocumentValue::String((*value).to_owned())).unwrap();
+    }
+    parameters
+}

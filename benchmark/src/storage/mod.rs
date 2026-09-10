@@ -16,6 +16,7 @@ mod invisible;
 mod ownership;
 pub(crate) mod participant;
 mod physical_file;
+mod prepared_codec;
 mod shadow;
 mod sqlite;
 pub use physical_file::{
@@ -32,8 +33,8 @@ pub use shadow::{
 #[cfg(test)]
 pub(crate) use faults::FaultPoint;
 pub(crate) use intent::{
-    CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite,
-    SupersededReplication, TtlGuard, UnknownCause,
+    CommitIntent, CommitRejection, CommitResult, CrossFileBilling, OperationResolution,
+    StagedWrite, SupersededReplication, TtlGuard, UnknownCause,
 };
 
 /// Completion handle for a batch submitted to a storage-owned commit lane.
@@ -634,6 +635,25 @@ pub fn billed_writes_for_bytes(body_len: u64) -> u64 {
     body_len.div_ceil(4096).max(1)
 }
 
+/// Admission-side upper bound of one document write's stored envelope
+/// bytes: the canonical value bytes plus the collection id, document id, the
+/// fixed `{"$collection":…,"$id":…,"$value":…,"$version":…}` framing, and
+/// headroom for the `u64` version digits the commit assigns. The commit
+/// bills the admission's units, so the estimate must never fall short of the
+/// durable envelope — being a little high only rounds one unit.
+/// ponytail: a pathological value of many non-finite floats serializes
+/// wider at commit than any cheap bound predicts; the commit's coverage
+/// check fails closed in that case rather than under-billing.
+#[must_use]
+pub fn estimated_document_body_bytes(collection: &str, id: &str, value_len: u64) -> u64 {
+    // 64 bytes of JSON framing plus decimal headroom for `u64` versions.
+    const FRAMING: u64 = 64;
+    value_len
+        .saturating_add(collection.len() as u64)
+        .saturating_add(id.len() as u64)
+        .saturating_add(FRAMING)
+}
+
 /// One origin's applied causal progress for a tenant.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AppliedFrontierEntry {
@@ -645,7 +665,10 @@ pub(crate) struct AppliedFrontierEntry {
     pub(crate) hlc: u64,
 }
 
-pub(crate) use participant::{ParticipantIdentity, ParticipantPrepare, ParticipantPrepareReceipt};
+pub(crate) use codec::staged_writes_have_duplicate_targets;
+#[cfg(test)]
+pub(crate) use participant::ParticipantPrepare;
+pub(crate) use participant::{ParticipantIdentity, PreparedCrossFileIntent};
 
 /// The private storage adapter seam the Engine depends on.
 ///
@@ -653,16 +676,47 @@ pub(crate) use participant::{ParticipantIdentity, ParticipantPrepare, Participan
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
-    fn prepare_participant(
-        &mut self,
-        _prepare: &ParticipantPrepare,
-    ) -> Result<ParticipantPrepareReceipt, ()> {
-        Err(())
-    }
-    fn resolve_participant(
+    /// Durably validates and reserves a complete cross-file participant.
+    /// Implementations must retain the exact intent until explicit completion
+    /// or abort; installation is never allowed to re-run arbitrary admission.
+    fn prepare_cross_file_intent(
         &mut self,
         _identity: &ParticipantIdentity,
-    ) -> Result<Option<ParticipantPrepareReceipt>, ()> {
+        _intent: Option<&CommitIntent>,
+    ) -> Result<PreparedCrossFileIntent, CommitRejection> {
+        Err(CommitRejection::Storage)
+    }
+
+    /// Reopens a retained cross-file intent by its exact participant identity.
+    fn resolve_cross_file_intent(
+        &mut self,
+        _identity: &ParticipantIdentity,
+    ) -> Result<Option<PreparedCrossFileIntent>, ()> {
+        Ok(None)
+    }
+
+    /// Installs a previously admitted intent after coordinator authorization.
+    fn install_cross_file_intent(&mut self, _prepared: &PreparedCrossFileIntent) -> CommitResult {
+        CommitResult::Rejected(CommitRejection::Storage)
+    }
+
+    /// Releases a retained reservation without publishing any effects.
+    fn abort_cross_file_intent(&mut self, _identity: &ParticipantIdentity) -> Result<(), ()> {
+        Err(())
+    }
+
+    /// Marks a successfully installed participant complete and releases its
+    /// reservation. This is deliberately separate from install for recovery.
+    fn finish_cross_file_intent(&mut self, _identity: &ParticipantIdentity) -> Result<(), ()> {
+        Err(())
+    }
+
+    #[cfg(test)]
+    fn prepare_participant(&mut self, _prepare: &ParticipantPrepare) -> Result<(), ()> {
+        Err(())
+    }
+    #[cfg(test)]
+    fn resolve_participant(&mut self, _identity: &ParticipantIdentity) -> Result<Option<()>, ()> {
         Ok(None)
     }
     fn lifecycle_update(

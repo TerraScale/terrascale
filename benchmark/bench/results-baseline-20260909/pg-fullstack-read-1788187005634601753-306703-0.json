@@ -1,0 +1,92 @@
+{
+  "status": "complete",
+  "target": "pg-fullstack",
+  "workload": "read",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0
+  },
+  "environment": {
+    "observed_identity": "PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit, behind pgbouncer (transaction pooling) behind the pgrest HTTP/JSON service (service-reported /healthz)",
+    "endpoint": "http://127.0.0.1:55433",
+    "client_transport": "postgres 18 jsonb documents behind pgbouncer transaction pooling behind a Go stdlib HTTP/JSON service; rust ureq 2 HTTP/1.1 keep-alive, one agent connection per concurrency slot",
+    "unix_seconds": 1788187000,
+    "kernel": "Linux 7.2.1",
+    "logical_cpus": 28
+  },
+  "comparability": {
+    "run_digest": "unassigned",
+    "candidate_digest": "unassigned",
+    "workload_digest": "unassigned",
+    "topology_digest": "unassigned",
+    "run_group": "envelope-rebaseline",
+    "config_digest": "bdfe342f5a3e96300b3e54f43585ee347bdb8b213b803ea0dac000ef8eb60d80",
+    "controlled_host_identity": "terrabase-dev-28core",
+    "time_window": "496718",
+    "window_start_unix_seconds": 1788187000,
+    "window_end_unix_seconds": 1788187005,
+    "workload_version": "terrabase-se15-workload-v1",
+    "boundary_class": "network-reference",
+    "concurrency": 16,
+    "samples": 5,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0,
+    "seed_policy": "seed-{index}, tenant benchmark-tenant, index modulo seed count",
+    "document_policy": "seed documents have id seed-{index}, name user-{index}, group index modulo 100, 256-byte payload",
+    "operation_policy": "mixed uses index modulo 10: 0..4 read, 5..7 write, 8..9 query; read/query address index modulo seed count",
+    "write_id_policy": "measured writes use measured-{global operation index}",
+    "durability_semantics": "synchronous_commit=on; fsync=on; full_page_writes=on; autocommit statement acknowledgement through pgbouncer transaction pooling and the pgrest HTTP/JSON service",
+    "server_configuration_provenance": "se15-reference-pin-v1; pgbouncer transaction pooling; pgrest HTTP/JSON service"
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 1.187222403,
+      "throughput_ops_per_s": 8423.021646770592,
+      "p50_us": 1531.576,
+      "p95_us": 4052.9199999999996,
+      "p99_us": 6923.543
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 1.043635321,
+      "throughput_ops_per_s": 9581.891105810897,
+      "p50_us": 1418.587,
+      "p95_us": 3174.6029999999996,
+      "p99_us": 4616.833
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 1.012831885,
+      "throughput_ops_per_s": 9873.306861779929,
+      "p50_us": 1390.739,
+      "p95_us": 3020.5769999999998,
+      "p99_us": 4410.456
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.969910334,
+      "throughput_ops_per_s": 10310.231419804626,
+      "p50_us": 1335.805,
+      "p95_us": 2852.528,
+      "p99_us": 4218.275
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.937374093,
+      "throughput_ops_per_s": 10668.099400950694,
+      "p50_us": 1305.472,
+      "p95_us": 2690.745,
+      "p99_us": 4000.018
+    }
+  ],
+  "limits": [
+    "the measured boundary deliberately includes pgbouncer (transaction pooling) and the pgrest HTTP/JSON layer; JSON encode/decode on both sides of the wire is part of every operation, not overhead to apologize for",
+    "server-side PostgreSQL configuration is the SE-15 pin's (synchronous_commit=on, fsync=on, full_page_writes=on), captured verbatim on the receipt",
+    "planner and memory settings are the pinned artifact's shipped defaults; no ANALYZE beyond what warm-up naturally produces"
+  ]
+}

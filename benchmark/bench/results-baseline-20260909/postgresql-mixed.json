@@ -1,0 +1,66 @@
+{
+  "target": "postgresql",
+  "workload": "mixed",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0
+  },
+  "environment": {
+    "observed_identity": "PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit",
+    "endpoint": "postgres://bench@127.0.0.1:55432/postgres",
+    "client_transport": "rust postgres crate 0.19, one synchronous TCP connection per concurrency slot, prepared statements, autocommit per statement",
+    "unix_seconds": 1788104646,
+    "kernel": "Linux 7.2.1",
+    "logical_cpus": 28
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 1.207299011,
+      "throughput_ops_per_s": 8282.952200645843,
+      "p50_us": 153.524,
+      "p95_us": 6040.324,
+      "p99_us": 6114.021
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 1.4421544499999999,
+      "throughput_ops_per_s": 6934.070064409538,
+      "p50_us": 149.746,
+      "p95_us": 6047.381,
+      "p99_us": 7047.558
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 1.223838502,
+      "throughput_ops_per_s": 8171.0127469089875,
+      "p50_us": 148.053,
+      "p95_us": 6041.505,
+      "p99_us": 6393.9710000000005
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 1.221863892,
+      "throughput_ops_per_s": 8184.217624789259,
+      "p50_us": 159.934,
+      "p95_us": 6048.528,
+      "p99_us": 6958.378000000001
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 1.204436406,
+      "throughput_ops_per_s": 8302.638437516644,
+      "p50_us": 156.42499999999998,
+      "p95_us": 6034.397,
+      "p99_us": 6104.218
+    }
+  ],
+  "limits": [
+    "server-side configuration is the SE-15 pin's, captured verbatim on the receipt",
+    "planner and memory settings are the pinned artifact's shipped defaults; no ANALYZE beyond what warm-up naturally produces"
+  ]
+}

@@ -1,0 +1,1464 @@
+diff --git a/contracts/proto/terrabase/v1/engine.proto b/contracts/proto/terrabase/v1/engine.proto
+index da70a47c..31b1e7c9 100644
+--- a/contracts/proto/terrabase/v1/engine.proto
++++ b/contracts/proto/terrabase/v1/engine.proto
+@@ -959,6 +959,7 @@ enum RestoreProvider {
+   RESTORE_PROVIDER_UNSPECIFIED = 0;
+   RESTORE_PROVIDER_OCI = 1;
+   RESTORE_PROVIDER_TIGRIS = 2;
++  RESTORE_PROVIDER_CUSTOMER_S3 = 3;
+ }
+ 
+ message LifecycleControlContext {
+diff --git a/crates/terrabase-server/src/api.rs b/crates/terrabase-server/src/api.rs
+index 99f26a83..88002ee9 100644
+--- a/crates/terrabase-server/src/api.rs
++++ b/crates/terrabase-server/src/api.rs
+@@ -4959,7 +4959,18 @@ async fn restore_backup(
+             return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
+                 .into_response();
+         };
+-        let selection = match value.get("at").and_then(serde_json::Value::as_u64) {
++        if target.is_empty() || !valid_restore_operation_id(operation) {
++            return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
++                .into_response();
++        }
++        let at = match restore_at_millis(value.get("at")) {
++            Ok(at) => at,
++            Err(()) => {
++                return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
++                    .into_response();
++            }
++        };
++        let selection = match at {
+             Some(unix_millis) => {
+                 serde_json::json!({"kind":"unix_millis","unix_millis":unix_millis})
+             }
+@@ -5061,6 +5072,21 @@ enum RestoreFlavor {
+     Branch,
+ }
+ 
++/// Parses the optional restore point without allowing malformed values to
++/// silently select the latest backup. `null` has the same meaning as omission.
++fn restore_at_millis(value: Option<&serde_json::Value>) -> Result<Option<i64>, ()> {
++    match value {
++        None | Some(serde_json::Value::Null) => Ok(None),
++        Some(value) => value.as_i64().filter(|millis| *millis >= 0).map(Some).ok_or(()),
++    }
++}
++
++fn valid_restore_operation_id(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 128
++        && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
++}
++
+ /// The shared restore-to-new-database path: register the target record,
+ /// restore the file into the target's catalog location, and answer the
+ /// record. A failed restore soft-deletes the record it just made so no
+@@ -5104,7 +5130,23 @@ async fn restore_or_branch(
+         }
+         .into_response();
+     };
+-    let at = request.get("at").and_then(serde_json::Value::as_i64);
++    if let Some(operation) = request.get("operation_id") {
++        if operation.as_str().is_none_or(|operation| !valid_restore_operation_id(operation)) {
++            return ApiError {
++                status: StatusCode::BAD_REQUEST,
++                code: "invalid_operation_id",
++                message: "the operation_id must be printable ASCII text of at most 128 bytes"
++                    .into(),
++                fix: "send a stable non-empty operation_id, or omit it on a local member".into(),
++                placement: None,
++            }
++            .into_response();
++        }
++    }
++    let at = match restore_at_millis(request.get("at")) {
++        Ok(at) => at,
++        Err(()) => return invalid_at("it must be a non-negative integer or null"),
++    };
+     let placement = [state.region];
+     let registered = match flavor {
+         // D-52: a restore is bytes at rest in a new place — the target
+@@ -5128,7 +5170,7 @@ async fn restore_or_branch(
+     // A resident host for the target must not hold the file the restore
+     // swaps (S-06: restore never writes under a live engine).
+     catalog.close_database(&state.scope.0, &state.scope.1, target);
+-    let at_seconds = at.map(|millis| u64::try_from(millis.div_euclid(1000)).unwrap_or(0));
++    let at_seconds = at.map(|millis| u64::try_from(millis / 1000).unwrap_or(0));
+     let Some(backups) = state.backups.as_ref() else {
+         return ApiError::backup("native backup restore authority is unavailable").into_response();
+     };
+@@ -7932,6 +7974,16 @@ mod tests {
+         assert!(body.contains("fix"), "{body}");
+         let _ = header::AUTHORIZATION;
+     }
++
++    #[test]
++    fn restore_at_rejects_malformed_values_and_preserves_latest() {
++        for value in [serde_json::json!(-1), serde_json::json!("1000"), serde_json::json!(1.5)] {
++            assert_eq!(super::restore_at_millis(Some(&value)), Err(()));
++        }
++        assert_eq!(super::restore_at_millis(None), Ok(None));
++        assert_eq!(super::restore_at_millis(Some(&serde_json::Value::Null)), Ok(None));
++        assert_eq!(super::restore_at_millis(Some(&serde_json::json!(1_000))), Ok(Some(1_000)));
++    }
+ }
+ 
+ #[cfg(test)]
+diff --git a/crates/terrabase-server/src/config.rs b/crates/terrabase-server/src/config.rs
+index 042212f7..dd71685a 100644
+--- a/crates/terrabase-server/src/config.rs
++++ b/crates/terrabase-server/src/config.rs
+@@ -1134,7 +1134,13 @@ impl ServerConfig {
+                     "oci-vault" | "aws-kms" | "azure-key-vault" | "customer-kms"
+                 );
+                 let valid_endpoint = |value: &str| {
+-                    value.starts_with("https://")
++                    let remainder = value.strip_prefix("https://");
++                    let Some(remainder) = remainder else { return false };
++                    let host = remainder.split('/').next().unwrap_or_default();
++                    !host.is_empty()
++                        && !host.contains('@')
++                        && !value.contains('?')
++                        && !value.contains('#')
+                         && value.len() <= 2048
+                         && !value.chars().any(char::is_control)
+                 };
+@@ -1204,6 +1210,7 @@ impl ServerConfig {
+                         let provider = match destination.provider.as_str() {
+                             "oci" => Provider::Oci,
+                             "tigris" => Provider::Tigris,
++                            "customer-s3" => Provider::CustomerS3,
+                             _ => return Err(ConfigError::InvalidProductionBoundary),
+                         };
+                         let current = index < current_count;
+@@ -1232,9 +1239,20 @@ impl ServerConfig {
+                         {
+                             return Err(ConfigError::InvalidProductionBoundary);
+                         }
+-                        let access_key_file = production_path(&destination.access_key_file)?;
+-                        let secret_key_file = production_path(&destination.secret_key_file)?;
+-                        paths.extend([access_key_file.clone(), secret_key_file.clone()]);
++                        let (access_key_file, secret_key_file) = if provider == Provider::CustomerS3
++                        {
++                            if !destination.access_key_file.as_os_str().is_empty()
++                                || !destination.secret_key_file.as_os_str().is_empty()
++                            {
++                                return Err(ConfigError::InvalidProductionBoundary);
++                            }
++                            (PathBuf::new(), PathBuf::new())
++                        } else {
++                            let access = production_path(&destination.access_key_file)?;
++                            let secret = production_path(&destination.secret_key_file)?;
++                            paths.extend([access.clone(), secret.clone()]);
++                            (access, secret)
++                        };
+                         let parsed = ProductionBackupDestination {
+                             provider,
+                             endpoint: destination.endpoint,
+@@ -2272,6 +2290,70 @@ historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.sto
+         assert_eq!(backup.destinations[0].verified_geography, "br");
+     }
+ 
++    #[test]
++    fn vmengineconfig_byok_fixture_round_trips_customer_providers() {
++        let config = production_valid()
++            .replace("encryption_provider = \"oci-vault\"", "encryption_provider = \"customer-kms\"")
++            .replace(
++                "[databases.backup]\n",
++                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nbackup_external_id = \"external-123\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/abcd1234\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
++            )
++            .replace(
++                "{ provider = \"oci\", endpoint = \"https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com\", signing_region = \"sa-saopaulo-1\", bucket = \"backup-a\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
++                "{ provider = \"customer-s3\", endpoint = \"https://s3.customer.example\", signing_region = \"us-east-1\", bucket = \"customer-backups\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"\", secret_key_file = \"\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
++            );
++        let production = ServerConfig::parse(&config)
++            .expect("vmengineconfig BYOK output parses")
++            .production
++            .expect("production section");
++        let database = &production.databases[0];
++        assert_eq!(database.encryption_provider, KeyProviderIdentity::CustomerKms);
++        let byok = database.byok.as_ref().expect("BYOK references");
++        assert_eq!(byok.key_provider, "aws-kms");
++        let backup = database.backup.as_ref().expect("backup policy");
++        assert_eq!(backup.destinations[0].provider, Provider::CustomerS3);
++        assert!(backup.destinations[0].access_key_file.as_os_str().is_empty());
++        assert!(backup.destinations[0].secret_key_file.as_os_str().is_empty());
++    }
++
++    #[test]
++    fn production_byok_provider_names_and_endpoints_fail_closed() {
++        let valid = production_valid()
++            .replace("encryption_provider = \"oci-vault\"", "encryption_provider = \"customer-kms\"")
++            .replace(
++                "[databases.backup]\n",
++                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/abcd1234\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
++            )
++            .replace(
++                "{ provider = \"oci\", endpoint = \"https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com\", signing_region = \"sa-saopaulo-1\", bucket = \"backup-a\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
++                "{ provider = \"customer-s3\", endpoint = \"https://s3.customer.example\", signing_region = \"us-east-1\", bucket = \"customer-backups\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"\", secret_key_file = \"\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
++            );
++
++        for provider in ["oci-vault", "aws-kms", "azure-key-vault", "customer-kms"] {
++            let config = valid
++                .replace("key_provider = \"aws-kms\"", &format!("key_provider = \"{provider}\""));
++            assert!(ServerConfig::parse(&config).is_ok(), "BYOK provider {provider} rejected");
++        }
++        for invalid in [
++            valid.replace("key_provider = \"aws-kms\"", "key_provider = \"unimplemented\""),
++            valid.replace("provider = \"customer-s3\"", "provider = \"unimplemented\""),
++            valid.replace(
++                "backup_endpoint = \"https://s3.customer.example\"",
++                "backup_endpoint = \"https://user:secret@s3.customer.example\"",
++            ),
++            valid.replace(
++                "backup_endpoint = \"https://s3.customer.example\"",
++                "backup_endpoint = \"https://s3.customer.example/path?token=secret\"",
++            ),
++            valid.replace(
++                "key_endpoint = \"https://kms.us-east-1.amazonaws.com\"",
++                "key_endpoint = \"https://kms.us-east-1.amazonaws.com?token=secret\"",
++            ),
++        ] {
++            assert!(ServerConfig::parse(&invalid).is_err(), "unsafe or unknown provider accepted");
++        }
++    }
++
+     #[test]
+     fn pending_control_requires_private_path_and_explicit_principals() {
+         let suffix = r#"
+diff --git a/crates/terrabase-server/src/native_recovery.rs b/crates/terrabase-server/src/native_recovery.rs
+index 21f99247..e693f536 100644
+--- a/crates/terrabase-server/src/native_recovery.rs
++++ b/crates/terrabase-server/src/native_recovery.rs
+@@ -709,7 +709,7 @@ impl NativeRecoveryRuntime {
+             || request.authority_lease.is_empty()
+             || request.accepted_proof_digest.len() != 64
+             || request.operation_grant.is_empty()
+-            || !matches!(request.provider.as_str(), "oci" | "tigris")
++            || !matches!(request.provider.as_str(), "oci" | "tigris" | "customer-s3")
+             || request.residency.is_empty()
+             || request.placement.is_empty()
+             || request
+diff --git a/crates/terrabase-server/src/production.rs b/crates/terrabase-server/src/production.rs
+index 8757b99d..e56b0b86 100644
+--- a/crates/terrabase-server/src/production.rs
++++ b/crates/terrabase-server/src/production.rs
+@@ -207,12 +207,6 @@ impl ProductionCatalogBootstrap {
+ 
+         let key_config =
+             config.keys.as_ref().ok_or(ProductionCatalogError::EncryptionUnavailable)?;
+-        let provider = terrabase::encryption::OciVaultKeyDelivery::new(
+-            key_config.socket.clone(),
+-            key_config.orchestrator_uid,
+-            key_config.socket_gid,
+-        )
+-        .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
+         let mut keys: BTreeMap<
+             terrabase::member::DatabaseId,
+             Arc<dyn terrabase::encryption::DatabaseKeySource>,
+@@ -228,13 +222,47 @@ impl ProductionCatalogBootstrap {
+             .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
+             let metadata =
+                 terrabase::encryption::KeyVersionMetadata::new(scope, database.encryption_key);
+-            let source = terrabase::encryption::OciVaultDatabaseKeys::new(
+-                provider.clone(),
+-                metadata,
+-                database.region,
+-            )
+-            .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
+-            keys.insert(database.database.into(), Arc::new(source));
++            let source: Arc<dyn terrabase::encryption::DatabaseKeySource> =
++                if let Some(byok) = &database.byok {
++                    let endpoint = byok
++                        .key_endpoint
++                        .clone()
++                        .ok_or(ProductionCatalogError::EncryptionUnavailable)?;
++                    let adapter = terrabase::encryption::CustomerKmsKeyDelivery::new(
++                        key_config.socket.clone(),
++                        key_config.orchestrator_uid,
++                        key_config.socket_gid,
++                        byok.key_provider.clone(),
++                        byok.key_id.clone(),
++                        byok.key_region.clone(),
++                        endpoint,
++                    )
++                    .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
++                    Arc::new(
++                        terrabase::encryption::CustomerKmsDatabaseKeys::new(
++                            adapter,
++                            metadata,
++                            database.region,
++                        )
++                        .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?,
++                    )
++                } else {
++                    let provider = terrabase::encryption::OciVaultKeyDelivery::new(
++                        key_config.socket.clone(),
++                        key_config.orchestrator_uid,
++                        key_config.socket_gid,
++                    )
++                    .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
++                    Arc::new(
++                        terrabase::encryption::OciVaultDatabaseKeys::new(
++                            provider,
++                            metadata,
++                            database.region,
++                        )
++                        .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?,
++                    )
++                };
++            keys.insert(database.database.into(), source);
+         }
+         let member = Member::open_production(&root, specs.clone(), limits, keys)
+             .map_err(ProductionCatalogError::MemberOpen)?;
+diff --git a/crates/terrabase-server/src/production_admission.rs b/crates/terrabase-server/src/production_admission.rs
+index b13f38d7..30772db2 100644
+--- a/crates/terrabase-server/src/production_admission.rs
++++ b/crates/terrabase-server/src/production_admission.rs
+@@ -72,6 +72,15 @@ impl terrabase::member::DatabaseRoleAuthority for Writer {
+ fn register_storage(
+     member: &Member,
+     provider: &OciVaultKeyDelivery,
++    customer_source: Option<
++        &(
++             dyn Fn(
++            &AdmissionRecord,
++        ) -> Result<Arc<dyn terrabase::encryption::DatabaseKeySource>, String>
++                 + Send
++                 + Sync
++         ),
++    >,
+     record: &AdmissionRecord,
+     per_database: usize,
+ ) -> Result<(RegionCode, TenantId), String> {
+@@ -91,14 +100,19 @@ fn register_storage(
+         KeyPurpose::Data,
+     )
+     .map_err(|_| "invalid key scope")?;
+-    let keys = Arc::new(
+-        OciVaultDatabaseKeys::new(
+-            provider.clone(),
+-            KeyVersionMetadata::new(key_scope, version),
+-            region,
+-        )
+-        .map_err(|_| "key authorization unavailable")?,
+-    );
++    let keys: Arc<dyn terrabase::encryption::DatabaseKeySource> =
++        if let Some(resolve) = customer_source {
++            resolve(record)?
++        } else {
++            Arc::new(
++                OciVaultDatabaseKeys::new(
++                    provider.clone(),
++                    KeyVersionMetadata::new(key_scope, version),
++                    region,
++                )
++                .map_err(|_| "key authorization unavailable")?,
++            )
++        };
+     member
+         .add_production_database(
+             DatabaseSpec::scoped(scope, &record.database_id),
+@@ -146,6 +160,35 @@ pub fn storage_admission_with_replay(
+     )
+ }
+ 
++/// Constructs storage admission with customer key-source resolution for BYOK records.
++pub fn storage_admission_with_replay_and_customer(
++    member: Member,
++    registry: Arc<AdmittedDatabaseRegistry>,
++    provider: OciVaultKeyDelivery,
++    authority: AdmissionAuthority,
++    per_database: usize,
++    instance: u64,
++    replaying: Arc<AtomicBool>,
++    customer_source: Arc<
++        dyn Fn(
++                &AdmissionRecord,
++            ) -> Result<Arc<dyn terrabase::encryption::DatabaseKeySource>, String>
++            + Send
++            + Sync,
++    >,
++) -> StorageAdmission {
++    storage_admission_inner_with_customer(
++        member,
++        registry,
++        provider,
++        authority,
++        per_database,
++        instance,
++        Some(replaying),
++        Some(customer_source),
++    )
++}
++
+ fn storage_admission_inner(
+     member: Member,
+     registry: Arc<AdmittedDatabaseRegistry>,
+@@ -154,9 +197,41 @@ fn storage_admission_inner(
+     per_database: usize,
+     instance: u64,
+     replaying: Option<Arc<AtomicBool>>,
++) -> StorageAdmission {
++    storage_admission_inner_with_customer(
++        member,
++        registry,
++        provider,
++        authority,
++        per_database,
++        instance,
++        replaying,
++        None,
++    )
++}
++
++fn storage_admission_inner_with_customer(
++    member: Member,
++    registry: Arc<AdmittedDatabaseRegistry>,
++    provider: OciVaultKeyDelivery,
++    authority: AdmissionAuthority,
++    per_database: usize,
++    instance: u64,
++    replaying: Option<Arc<AtomicBool>>,
++    customer_source: Option<
++        Arc<
++            dyn Fn(
++                    &AdmissionRecord,
++                )
++                    -> Result<Arc<dyn terrabase::encryption::DatabaseKeySource>, String>
++                + Send
++                + Sync,
++        >,
++    >,
+ ) -> StorageAdmission {
+     Arc::new(move |record| {
+-        let (region, tenant_id) = register_storage(&member, &provider, record, per_database)?;
++        let (region, tenant_id) =
++            register_storage(&member, &provider, customer_source.as_deref(), record, per_database)?;
+         // Registration precedes placement proposal. A pending scope is durable but
+         // remains closed and absent from public routing until an authenticated retry.
+         let Some(accepted) = authority(record)? else {
+diff --git a/crates/terrabase-server/src/production_data_runtime.rs b/crates/terrabase-server/src/production_data_runtime.rs
+index db0a5b97..3ab3a937 100644
+--- a/crates/terrabase-server/src/production_data_runtime.rs
++++ b/crates/terrabase-server/src/production_data_runtime.rs
+@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
+ use std::sync::{Arc, Mutex};
+ use terrabase::backup::worker::FleetLimits;
+ use terrabase::encryption::{
+-    DatabaseKeySource, DatabaseKeyVersion,
++    CustomerKmsDatabaseKeys, CustomerKmsKeyDelivery, DatabaseKeySource, DatabaseKeyVersion,
+     KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys, OciVaultKeyDelivery,
+ };
+ use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
+@@ -577,6 +577,7 @@ fn native_restore_request_digest(
+     let provider = match request.provider.as_str() {
+         "oci" => 1,
+         "tigris" => 2,
++        "customer-s3" => 3,
+         _ => return Err("restore provider is not approved".into()),
+     };
+     crate::production_lifecycle_control::restore_request_digest(
+@@ -671,6 +672,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
+             let provider = match request.provider.as_str() {
+                 "oci" => terrabase::backup::object_store::Provider::Oci,
+                 "tigris" => terrabase::backup::object_store::Provider::Tigris,
++                "customer-s3" => terrabase::backup::object_store::Provider::CustomerS3,
+                 _ => return Err("restore provider is not approved".into()),
+             };
+             let (point, timestamp) = match &request.selection {
+@@ -811,7 +813,46 @@ impl ProductionAdmissionRuntime {
+             local.clone(),
+         );
+         let replaying = Arc::new(AtomicBool::new(true));
+-        let storage = crate::production_admission::storage_admission_with_replay(
++        let customer_configs = config.databases.clone();
++        let customer_keys = config.keys.clone().ok_or("production key delivery missing")?;
++        let customer_source = Arc::new(move |record: &crate::admission::AdmissionRecord| {
++            let configured = customer_configs
++                .iter()
++                .find(|entry| entry.database.to_text() == record.database_id)
++                .ok_or("configured database unavailable")?;
++            let byok = configured.byok.as_ref().ok_or("customer KMS configuration missing")?;
++            let endpoint = byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?;
++            let adapter = CustomerKmsKeyDelivery::new(
++                customer_keys.socket.clone(),
++                customer_keys.orchestrator_uid,
++                customer_keys.socket_gid,
++                byok.key_provider.clone(),
++                byok.key_id.clone(),
++                byok.key_region.clone(),
++                endpoint,
++            )
++            .map_err(|_| "customer KMS adapter unavailable")?;
++            let scope = KeyScope::new_with_project(
++                &record.environment,
++                terrabase::identity::TenantUlid::from_text(&record.tenant_id).map_err(failure)?,
++                terrabase::identity::ProjectUlid::from_text(&record.project_id).map_err(failure)?,
++                terrabase::identity::DatabaseUlid::from_text(&record.database_id)
++                    .map_err(failure)?,
++                KeyPurpose::Data,
++            )
++            .map_err(failure)?;
++            let version = DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?;
++            let region = record.region.parse().map_err(|_| "invalid admitted Region")?;
++            Ok(Arc::new(
++                CustomerKmsDatabaseKeys::new(
++                    adapter,
++                    KeyVersionMetadata::new(scope, version),
++                    region,
++                )
++                .map_err(|_| "customer key authorization unavailable")?,
++            ) as Arc<dyn DatabaseKeySource>)
++        });
++        let storage = crate::production_admission::storage_admission_with_replay_and_customer(
+             member.clone(),
+             registry.clone(),
+             provider,
+@@ -819,6 +860,7 @@ impl ProductionAdmissionRuntime {
+             per_database,
+             instance,
+             Arc::clone(&replaying),
++            customer_source,
+         );
+         let callback: crate::admission::StorageAdmission = Arc::new(move |record| {
+             storage(record)?;
+@@ -1079,7 +1121,6 @@ impl ProductionAdmissionRuntime {
+             {
+                 return Err("customer BYOK provider disagrees with admitted configuration".into());
+             }
+-            let key_region = byok.key_region.parse().map_err(|_| "invalid customer KMS Region")?;
+             let endpoint = byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?;
+             let adapter = terrabase::encryption::CustomerKmsKeyDelivery::new(
+                 key_config.socket.clone(),
+@@ -1087,7 +1128,7 @@ impl ProductionAdmissionRuntime {
+                 key_config.socket_gid,
+                 byok.key_provider.clone(),
+                 byok.key_id.clone(),
+-                key_region,
++                byok.key_region.clone(),
+                 endpoint,
+             )
+             .map_err(|_| "customer KMS adapter unavailable")?;
+@@ -1100,10 +1141,12 @@ impl ProductionAdmissionRuntime {
+                 region,
+             )
+             .map_err(|_| "customer key authorization unavailable")?;
+-            let destination_policy = policy
+-                .destinations
+-                .first()
+-                .ok_or("customer backup policy metadata unavailable")?;
++            let destination_policy =
++                policy.destinations.first().ok_or("customer backup policy metadata unavailable")?;
++            if destination_policy.provider != terrabase::backup::object_store::Provider::CustomerS3
++            {
++                return Err("customer backup policy provider unavailable".into());
++            }
+             let identity =
+                 terrabase::backup::workload_identity_delivery::UnixWorkloadIdentityProvider::new(
+                     key_config.socket.clone(),
+@@ -1500,7 +1543,7 @@ impl ProductionAdmissionRuntime {
+             operation_id: operation_id.to_owned(),
+             source_database_id: source.to_owned(),
+             target_database_id: target.to_owned(),
+-            provider: format!("{provider:?}").to_lowercase(),
++            provider: provider.as_str().to_owned(),
+             selection,
+             expected_manifest_digest: expected_manifest_digest.to_owned(),
+             expected_journal_boundary,
+diff --git a/crates/terrabase-server/src/production_lifecycle_control.rs b/crates/terrabase-server/src/production_lifecycle_control.rs
+index 58f40d38..9ca06c81 100644
+--- a/crates/terrabase-server/src/production_lifecycle_control.rs
++++ b/crates/terrabase-server/src/production_lifecycle_control.rs
+@@ -612,10 +612,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
+                 terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris
+             }
+             terrabase::backup::object_store::Provider::CustomerS3 => {
+-                return Err(
+-                    "customer S3 restore provider is not supported by the recovery wire contract"
+-                        .to_owned(),
+-                );
++                terrabase_tbep::proto::terrabase::v1::RestoreProvider::CustomerS3
+             }
+         };
+         Ok(terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointResponse {
+@@ -683,6 +680,8 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
+             1
+         } else if request.provider == "tigris" {
+             2
++        } else if request.provider == "customer-s3" {
++            3
+         } else {
+             return Err("restore provider is not approved".into());
+         };
+@@ -781,6 +780,9 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
+             ) {
+                 Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::Oci) => "oci",
+                 Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris) => "tigris",
++                Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::CustomerS3) => {
++                    "customer-s3"
++                }
+                 _ => return Err("restore provider is not approved".into()),
+             }
+             .into(),
+@@ -1132,6 +1134,34 @@ mod restore_digest_tests {
+             })
+             .unwrap()
+         );
++        let customer = RestoreToTargetRequest {
++            provider: RestoreProvider::CustomerS3 as i32,
++            source_owner: "source-owner".into(),
++            source_database: "source-database".into(),
++            recovery_point_id: "recovery-point".into(),
++            recovery_point_digest: "recovery-digest".into(),
++            target_owner: "target-owner".into(),
++            target_database: "target-database".into(),
++            journal_cut: "journal-cut".into(),
++            restore_epoch: 7,
++            ..Default::default()
++        };
++        assert_ne!(
++            restore_request_digest(&customer).unwrap(),
++            restore_request_digest(&RestoreToTargetRequest {
++                provider: RestoreProvider::Oci as i32,
++                source_owner: "source-owner".into(),
++                source_database: "source-database".into(),
++                recovery_point_id: "recovery-point".into(),
++                recovery_point_digest: "recovery-digest".into(),
++                target_owner: "target-owner".into(),
++                target_database: "target-database".into(),
++                journal_cut: "journal-cut".into(),
++                restore_epoch: 7,
++                ..Default::default()
++            })
++            .unwrap()
++        );
+     }
+ 
+     #[test]
+diff --git a/crates/terrabase-tbep/proto/terrabase/v1/engine.proto b/crates/terrabase-tbep/proto/terrabase/v1/engine.proto
+index da70a47c..31b1e7c9 100644
+--- a/crates/terrabase-tbep/proto/terrabase/v1/engine.proto
++++ b/crates/terrabase-tbep/proto/terrabase/v1/engine.proto
+@@ -959,6 +959,7 @@ enum RestoreProvider {
+   RESTORE_PROVIDER_UNSPECIFIED = 0;
+   RESTORE_PROVIDER_OCI = 1;
+   RESTORE_PROVIDER_TIGRIS = 2;
++  RESTORE_PROVIDER_CUSTOMER_S3 = 3;
+ }
+ 
+ message LifecycleControlContext {
+diff --git a/crates/terrabase-tbep/src/grpc/lifecycle_control.rs b/crates/terrabase-tbep/src/grpc/lifecycle_control.rs
+index 819fbda3..809dcfb8 100644
+--- a/crates/terrabase-tbep/src/grpc/lifecycle_control.rs
++++ b/crates/terrabase-tbep/src/grpc/lifecycle_control.rs
+@@ -107,7 +107,7 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
+             || !valid_owner(&request.target_owner)
+             || request.target_database.is_empty()
+             || request.journal_cut.is_empty()
+-            || !matches!(request.provider, 1 | 2)
++            || !matches!(request.provider, 1 | 2 | 3)
+         {
+             return Err(Status::invalid_argument("restore request is incomplete"));
+         }
+diff --git a/src/backup/object_store.rs b/src/backup/object_store.rs
+index 2ef0a11c..3bbca6bd 100644
+--- a/src/backup/object_store.rs
++++ b/src/backup/object_store.rs
+@@ -32,6 +32,18 @@ pub enum Provider {
+     CustomerS3,
+ }
+ 
++impl Provider {
++    /// Returns the canonical wire identity used in durable restore records.
++    #[must_use]
++    pub const fn as_str(self) -> &'static str {
++        match self {
++            Self::Oci => "oci",
++            Self::Tigris => "tigris",
++            Self::CustomerS3 => "customer-s3",
++        }
++    }
++}
++
+ /// S3 credentials whose formatting never reveals key material.
+ pub struct Credentials {
+     access_key: String,
+@@ -883,6 +895,52 @@ impl ObjectDestination {
+         Ok(())
+     }
+ 
++    /// Removes completed multipart staging objects left by an interrupted
++    /// upload. Active multipart sessions are provider-side state and do not
++    /// appear in this listing, so they are left untouched. Every candidate is
++    /// validated before any deletion; malformed or unexpectedly nested keys
++    /// fail closed.
++    pub async fn cleanup_multipart(
++        &self,
++        prefix: &str,
++        max: usize,
++        minimum_age: Duration,
++    ) -> Result<usize, TransferError> {
++        validate_prefix(prefix)?;
++        if max == 0 || max > MAX_FILES {
++            return Err(TransferError::Configuration);
++        }
++        let list_prefix = ObjectPath::parse(format!(".multipart/{prefix}/"))
++            .map_err(|_| TransferError::InvalidPoint)?;
++        let expected_prefix = format!(".multipart/{prefix}/");
++        let mut stream = self.store.list(Some(&list_prefix));
++        let mut candidates = Vec::new();
++        while let Some(result) = stream.next().await {
++            let object = result.map_err(|_| TransferError::Unavailable)?;
++            if candidates.len() >= max {
++                return Err(TransferError::InvalidPoint);
++            }
++            let name = object
++                .location
++                .as_ref()
++                .strip_prefix(&expected_prefix)
++                .ok_or(TransferError::InvalidPoint)?;
++            let (artifact, token) = name.rsplit_once('-').ok_or(TransferError::InvalidPoint)?;
++            validate_name(artifact)?;
++            if crate::identity::from_text(token).is_err() {
++                return Err(TransferError::InvalidPoint);
++            }
++            let modified: SystemTime = object.last_modified.into();
++            if SystemTime::now().duration_since(modified).unwrap_or_default() >= minimum_age {
++                candidates.push(object.location);
++            }
++        }
++        for key in &candidates {
++            self.store.delete(key).await.map_err(|_| TransferError::Unavailable)?;
++        }
++        Ok(candidates.len())
++    }
++
+     /// Deletes one retired recovery point after the caller validates retention.
+     ///
+     /// Invalidates its publication index and encrypted manifest before deleting
+@@ -1669,6 +1727,26 @@ mod tests {
+         fs::remove_dir_all(root).unwrap();
+     }
+ 
++    #[tokio::test]
++    async fn multipart_cleanup_is_bounded_and_fails_closed_on_malformed_keys() {
++        let store = Arc::new(InMemory::new());
++        let destination = destination(store.clone());
++        let valid = ObjectPath::parse(".multipart/db/rp-1/member.tbv3e-01ARZ3NDEKTSV4RRFFQ69G5FAV")
++            .unwrap();
++        let malformed = ObjectPath::parse(".multipart/db/rp-1/member.tbv3e-nested/part").unwrap();
++        store.put(&valid, b"stale".to_vec().into()).await.unwrap();
++        store.put(&malformed, b"keep".to_vec().into()).await.unwrap();
++
++        assert_eq!(
++            destination.cleanup_multipart("db/rp-1", 10, Duration::ZERO).await,
++            Err(TransferError::InvalidPoint)
++        );
++        assert!(store.get(&valid).await.is_ok(), "validation must precede deletion");
++        store.delete(&malformed).await.unwrap();
++        assert_eq!(destination.cleanup_multipart("db/rp-1", 10, Duration::ZERO).await, Ok(1));
++        assert!(store.get(&valid).await.is_err());
++    }
++
+     #[test]
+     fn independent_restore_and_corruption_fail_closed() {
+         let runtime = tokio::runtime::Runtime::new().unwrap();
+diff --git a/src/backup/restore/mod.rs b/src/backup/restore/mod.rs
+index 0de8d59b..7d3f2d83 100644
+--- a/src/backup/restore/mod.rs
++++ b/src/backup/restore/mod.rs
+@@ -1425,6 +1425,7 @@ fn execute_restore(
+ ) -> Result<RecoveryReceipt, BackupError> {
+     let chain = resolve_chain(destination, selection)?;
+     admit_target(target)?;
++    reconcile_staging(target)?;
+     let staging = StagingDir::create(target)?;
+     let outcome = build_and_verify(&staging, destination, &chain)
+         .and_then(|run| publish(&staging, target).map(|()| run));
+@@ -1447,6 +1448,7 @@ fn execute_restore_encrypted(
+ ) -> Result<RecoveryReceipt, BackupError> {
+     let chain = resolve_encrypted_chain(destination, cipher, selection)?;
+     admit_target(target)?;
++    reconcile_staging(target)?;
+     let staging = StagingDir::create(target)?;
+     let outcome = build_and_verify_encrypted(&staging, destination, &chain, cipher, None)
+         .and_then(|run| publish(&staging, target).map(|()| run));
+@@ -1507,6 +1509,7 @@ fn execute_configured_restore(
+             std::fs::remove_dir(path).map_err(|_| BackupError::TargetNotEmpty)?;
+         }
+     }
++    reconcile_staging(path)?;
+     let staging = StagingDir::create(path)?;
+     let config = target.clone().at_location(staging.path());
+     let outcome = (|| {
+@@ -1588,6 +1591,8 @@ fn admit_target(target: &Path) -> Result<(), BackupError> {
+ /// recovery-point name, removed when the run ends without publishing.
+ struct StagingDir {
+     path: PathBuf,
++    #[cfg(unix)]
++    lock: std::fs::File,
+     /// Set once the staging path has been renamed into the target slot. For
+     /// an exchange this path is then the retired target, so generic failure
+     /// cleanup must not remove it.
+@@ -1607,8 +1612,59 @@ impl StagingDir {
+         let parent = target.parent().unwrap_or_else(|| Path::new("."));
+         std::fs::create_dir_all(parent).map_err(|_| BackupError::DestinationUnavailable)?;
+         let path = parent.join(format!(".restore-staging-{}-{index}", std::process::id()));
+-        std::fs::create_dir(&path).map_err(|_| BackupError::DestinationUnavailable)?;
+-        Ok(Self { path, published: std::cell::Cell::new(false) })
++        #[cfg(unix)]
++        let lock = {
++            use std::os::unix::fs::OpenOptionsExt;
++            let lock_path = restore_lock_path(&path);
++            let file = match std::fs::OpenOptions::new()
++                .create_new(true)
++                .read(true)
++                .write(true)
++                .mode(0o600)
++                .open(&lock_path)
++            {
++                Ok(file) => file,
++                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
++                    // A previous process may have died after creating the
++                    // reservation. Reclaim it only when no process still
++                    // holds its flock; an active creator remains protected.
++                    let old = std::fs::OpenOptions::new()
++                        .read(true)
++                        .write(true)
++                        .open(&lock_path)
++                        .map_err(|_| BackupError::DestinationUnavailable)?;
++                    if rustix::fs::flock(&old, rustix::fs::FlockOperation::NonBlockingLockExclusive)
++                        .is_err()
++                    {
++                        return Err(BackupError::DestinationUnavailable);
++                    }
++                    std::fs::remove_file(&lock_path)
++                        .map_err(|_| BackupError::DestinationUnavailable)?;
++                    std::fs::OpenOptions::new()
++                        .create_new(true)
++                        .read(true)
++                        .write(true)
++                        .mode(0o600)
++                        .open(&lock_path)
++                        .map_err(|_| BackupError::DestinationUnavailable)?
++                }
++                Err(_) => return Err(BackupError::DestinationUnavailable),
++            };
++            rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
++                .map_err(|_| BackupError::DestinationUnavailable)?;
++            file
++        };
++        if std::fs::create_dir(&path).is_err() {
++            #[cfg(unix)]
++            let _ = std::fs::remove_file(restore_lock_path(&path));
++            return Err(BackupError::DestinationUnavailable);
++        }
++        Ok(Self {
++            path,
++            #[cfg(unix)]
++            lock,
++            published: std::cell::Cell::new(false),
++        })
+     }
+ 
+     /// Returns the staging engine location.
+@@ -1638,6 +1694,86 @@ impl StagingDir {
+     }
+ }
+ 
++fn restore_lock_path(staging: &Path) -> PathBuf {
++    let mut path = staging.to_owned();
++    let name = staging.file_name().and_then(|name| name.to_str()).unwrap_or_default();
++    path.set_file_name(format!("{name}.lock"));
++    path
++}
++
++fn restore_staging_name(name: &str) -> bool {
++    let Some(rest) = name.strip_prefix(".restore-staging-") else { return false };
++    let Some((pid, counter)) = rest.split_once('-') else { return false };
++    pid.parse::<u32>().is_ok() && counter.parse::<u64>().is_ok()
++}
++
++/// Reclaims only crash-left restore staging. A lock held by another process
++/// makes a candidate ambiguous and therefore preserves it.
++fn reconcile_staging(target: &Path) -> Result<(), BackupError> {
++    let parent = target.parent().unwrap_or_else(|| Path::new("."));
++    let entries = match std::fs::read_dir(parent) {
++        Ok(entries) => entries,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
++        Err(_) => return Err(BackupError::DestinationUnavailable),
++    };
++    for entry in entries {
++        let entry = entry.map_err(|_| BackupError::DestinationUnavailable)?;
++        let name = entry.file_name();
++        let Some(name) = name.to_str() else { continue };
++        if !restore_staging_name(name) {
++            continue;
++        }
++        let path = entry.path();
++        let metadata =
++            std::fs::symlink_metadata(&path).map_err(|_| BackupError::DestinationUnavailable)?;
++        if !metadata.file_type().is_dir() {
++            return Err(BackupError::DestinationUnavailable);
++        }
++        #[cfg(unix)]
++        {
++            let lock_path = restore_lock_path(&path);
++            let lock_metadata = std::fs::symlink_metadata(&lock_path);
++            let Ok(lock_metadata) = lock_metadata else {
++                // A missing reservation is ambiguous: a creator may be
++                // between mkdir and lock creation. Preserve the candidate.
++                continue;
++            };
++            if !lock_metadata.file_type().is_file() {
++                return Err(BackupError::DestinationUnavailable);
++            }
++            let lock = std::fs::OpenOptions::new().read(true).write(true).open(&lock_path);
++            let Ok(lock) = lock else { continue };
++            if rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive)
++                .is_err()
++            {
++                continue;
++            }
++            let tombstone = parent.join(format!(".restore-gc-{name}"));
++            std::fs::rename(&path, &tombstone).map_err(|_| BackupError::DestinationUnavailable)?;
++            std::fs::remove_dir_all(&tombstone).map_err(|_| BackupError::DestinationUnavailable)?;
++            let _ = std::fs::remove_file(lock_path);
++        }
++        #[cfg(not(unix))]
++        {
++            return Err(BackupError::DestinationUnavailable);
++        }
++    }
++    Ok(())
++}
++
++impl Drop for StagingDir {
++    fn drop(&mut self) {
++        // Restore may be cancelled while awaiting provider I/O. Ensure the
++        // private staging tree is reclaimed even when normal error handling
++        // is bypassed by task cancellation or unwinding.
++        if !self.published.get() {
++            let _ = std::fs::remove_dir_all(&self.path);
++        }
++        #[cfg(unix)]
++        let _ = std::fs::remove_file(restore_lock_path(&self.path));
++    }
++}
++
+ /// Publishes the staged engine location as the target by one atomic
+ /// directory rename, then syncs the parent directory.
+ ///
+@@ -2623,4 +2759,43 @@ mod publication_tests {
+         assert!(!staging.path().exists());
+         std::fs::remove_dir_all(root).unwrap();
+     }
++
++    #[test]
++    fn dropped_staging_removes_unpublished_tree() {
++        let root = test_root("drop-cleanup");
++        let target = root.join("target");
++        std::fs::create_dir_all(&target).unwrap();
++        let staging_path = {
++            let staging = StagingDir::create(&target).unwrap();
++            std::fs::write(staging.path().join("partial"), b"incomplete").unwrap();
++            staging.path().to_owned()
++        };
++        assert!(!staging_path.exists());
++        std::fs::remove_dir_all(root).unwrap();
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn reconciliation_removes_stale_restore_staging_but_preserves_active() {
++        let root = test_root("reconcile-staging");
++        let target = root.join("target");
++        std::fs::create_dir_all(&target).unwrap();
++
++        let stale = root.join(format!(".restore-staging-{}-91", std::process::id()));
++        std::fs::create_dir(&stale).unwrap();
++        std::fs::File::create(restore_lock_path(&stale)).unwrap();
++        std::fs::write(stale.join("partial"), b"crashed").unwrap();
++        reconcile_staging(&target).unwrap();
++        assert!(!stale.exists());
++        assert!(!restore_lock_path(&stale).exists());
++
++        let active = StagingDir::create(&target).unwrap();
++        let active_path = active.path().to_owned();
++        std::fs::write(active.path().join("live"), b"in progress").unwrap();
++        reconcile_staging(&target).unwrap();
++        assert!(active_path.exists());
++        drop(active);
++        assert!(!active_path.exists());
++        std::fs::remove_dir_all(root).unwrap();
++    }
+ }
+diff --git a/src/backup/worker.rs b/src/backup/worker.rs
+index bfde8f68..cbb3b9ad 100644
+--- a/src/backup/worker.rs
++++ b/src/backup/worker.rs
+@@ -1406,28 +1406,54 @@ impl NativeBackupFleet {
+             || !stream.config.placement.allows(owner.region())
+             || identity.source_database_id != database
+             || identity.target_database_id != owner.database().to_text()
+-            || identity.provider != format!("{provider:?}").to_lowercase()
++            || identity.provider != provider.as_str()
+             || identity.selection != expected_selection
+         {
+             return Err(FleetError::Configuration);
+         }
+-        let destination = stream
+-            .config
+-            .destinations
+-            .iter()
+-            .find(|(kind, _)| *kind == provider)
+-            .map(|(_, destination)| destination)
+-            .ok_or(FleetError::Configuration)?;
+-        let points = remote::remote_points(database, stream, destination).await?;
+-        let chain = if let Some(at) = at {
+-            super::restore::resolve_timestamp_points_chain(&points, at)
+-        } else {
+-            let selection = point.map_or(super::restore::Selection::Latest, |identity| {
+-                super::restore::Selection::Point { identity: identity.to_owned() }
+-            });
+-            super::restore::resolve_encrypted_points_chain(&points, &selection)
++        // A recovery point may have been written under a retired policy
++        // destination. Discovery deliberately includes that history, so the
++        // restore download must use the same retained destination set rather
++        // than only the current policy. Keep provider matching strict and
++        // deduplicate identities because current destinations are also copied
++        // into historical_destinations at admission.
++        let mut destinations = Vec::new();
++        let mut seen = BTreeSet::new();
++        for (kind, candidate) in
++            stream.config.destinations.iter().chain(stream.config.historical_destinations.iter())
++        {
++            if *kind == provider && seen.insert(candidate.identity().to_owned()) {
++                destinations.push(candidate);
++            }
+         }
+-        .map_err(|_| FleetError::Capture)?;
++        if destinations.is_empty() {
++            return Err(FleetError::Configuration);
++        }
++        let mut selected = None;
++        for destination in destinations {
++            let points = match remote::remote_points(database, stream, destination).await {
++                Ok(points) => points,
++                Err(error) => {
++                    if matches!(error, FleetError::Capture | FleetError::Upload) {
++                        continue;
++                    }
++                    return Err(error);
++                }
++            };
++            let chain = if let Some(at) = at {
++                super::restore::resolve_timestamp_points_chain(&points, at)
++            } else {
++                let selection = point.map_or(super::restore::Selection::Latest, |identity| {
++                    super::restore::Selection::Point { identity: identity.to_owned() }
++                });
++                super::restore::resolve_encrypted_points_chain(&points, &selection)
++            };
++            if let Ok(chain) = chain {
++                selected = Some((destination, chain));
++                break;
++            }
++        }
++        let (destination, chain) = selected.ok_or(FleetError::Capture)?;
+         let staging =
+             stream.config.staging.join(format!("restore-{}", crate::identity::generate()));
+         std::fs::create_dir(&staging).map_err(|_| FleetError::Capture)?;
+@@ -1995,6 +2021,18 @@ async fn enforce_retention_at(
+     let manifest_path =
+         inventory_path(stream).join(&root_name).join(super::manifest::ENCRYPTED_MANIFEST_FILE);
+     for (_, destination) in &stream.config.destinations {
++        // Reconcile completed multipart staging objects left by a crashed
++        // upload before using the destination for retention decisions. The
++        // one-hour floor leaves recently written objects alone; active
++        // provider-side multipart sessions are not listed and remain intact.
++        // A malformed candidate fails closed rather than broadening cleanup.
++        for point in &points {
++            let point_prefix = format!("{identity}/rp-{}", point.identity());
++            destination
++                .cleanup_multipart(&point_prefix, 4096, Duration::from_secs(3600))
++                .await
++                .map_err(|_| FleetError::Upload)?;
++        }
+         destination
+             .verify_manifest(&format!("{identity}/{root_name}"), &manifest_path, root)
+             .await
+@@ -2317,7 +2355,7 @@ mod tests {
+             opts: object_store::GetOptions,
+         ) -> object_store::Result<object_store::GetResult> {
+             if self.armed.load(std::sync::atomic::Ordering::SeqCst)
+-                && location.as_ref().ends_with("member-000001")
++                && location.as_ref().ends_with("member-000000")
+             {
+                 self.started.notify_one();
+                 std::future::pending().await
+@@ -2325,6 +2363,19 @@ mod tests {
+             self.inner.get_opts(location, opts).await
+         }
+ 
++        async fn get(
++            &self,
++            location: &object_store::path::Path,
++        ) -> object_store::Result<object_store::GetResult> {
++            if self.armed.load(std::sync::atomic::Ordering::SeqCst)
++                && location.as_ref().ends_with("member-000000")
++            {
++                self.started.notify_one();
++                std::future::pending().await
++            }
++            self.inner.get(location).await
++        }
++
+         async fn delete(&self, location: &object_store::path::Path) -> object_store::Result<()> {
+             self.inner.delete(location).await
+         }
+@@ -3132,6 +3183,72 @@ mod tests {
+         fleet.resume(&owner.database().to_string()).unwrap();
+     }
+ 
++    #[tokio::test]
++    async fn customer_s3_restore_uses_canonical_provider_identity() {
++        let (_, engine) = open_engine("fleet-customer-s3-restore");
++        let engine = Arc::new(engine);
++        let staging = location("fleet-customer-s3-restore-staging");
++        let destination = Arc::new(ObjectDestination::for_test(
++            Provider::CustomerS3,
++            Arc::new(object_store::memory::InMemory::new()),
++            4 * 1024 * 1024,
++            8 * 1024 * 1024,
++        ));
++        let config = StreamConfig {
++            engine: engine.clone(),
++            keys: keys(&engine),
++            destinations: vec![(Provider::CustomerS3, destination)],
++            historical_destinations: Vec::new(),
++            policy_revision: "policy-customer-s3".into(),
++            retention_days: 1,
++            staging: staging.clone(),
++            placement: PlacementLock::br_only(),
++        };
++        let mut fleet = NativeBackupFleet::new(FleetLimits {
++            streams: 1,
++            staging_bytes_per_stream: 16 * 1024 * 1024,
++            inventory_bytes_per_stream: 16 * 1024 * 1024,
++            points_per_stream: 8,
++        })
++        .unwrap();
++        fleet.attach(config).unwrap();
++        committed(put(
++            &engine,
++            engine.database_owner().tenant().to_text().as_str(),
++            "customer-s3-restore-op",
++            "customer-s3-restore-doc",
++            "users",
++            text("customer destination"),
++            LocalDurability::Synced,
++        ));
++        assert!(fleet.sync_once().await.is_empty());
++        let source = engine.database_id().to_string();
++        let (target_owner, target) =
++            restore_config("fleet-customer-s3-target", engine.database_owner());
++        let point = fleet.retained_points(&source).unwrap().pop().unwrap();
++        let receipt = fleet
++            .restore_from_provider(
++                &source,
++                Provider::CustomerS3,
++                None,
++                &target,
++                &crate::backup::restore::RestoreIdentity {
++                    operation_id: "customer-s3-restore-op".into(),
++                    source_database_id: source.clone(),
++                    target_database_id: target_owner.database().to_string(),
++                    provider: Provider::CustomerS3.as_str().into(),
++                    selection: "latest".into(),
++                    expected_manifest_digest: point.identity().into(),
++                    expected_journal_boundary: point.boundary_sequence().get(),
++                    restore_epoch: 1,
++                },
++            )
++            .await
++            .unwrap();
++        assert_eq!(receipt.restored_documents(), 1);
++        assert_eq!(receipt.chain_depth(), 1);
++    }
++
+     fn restore_config(
+         label: &str,
+         owner: &crate::storage::DatabaseOwner,
+@@ -3171,7 +3288,7 @@ mod tests {
+             operation_id,
+             source_database_id: identity.to_owned(),
+             target_database_id: target_owner.database().to_string(),
+-            provider: format!("{provider:?}").to_lowercase(),
++            provider: provider.as_str().to_owned(),
+             selection: "latest".into(),
+             expected_manifest_digest: point.identity().to_owned(),
+             expected_journal_boundary: point.boundary_sequence().get(),
+@@ -3437,7 +3554,7 @@ mod tests {
+                         operation_id: format!("retained-root-restore-{provider:?}"),
+                         source_database_id: identity.clone(),
+                         target_database_id: target_owner.database().to_string(),
+-                        provider: format!("{provider:?}").to_lowercase(),
++                        provider: provider.as_str().to_owned(),
+                         selection: "latest".into(),
+                         expected_manifest_digest: root.manifest().identity().into(),
+                         expected_journal_boundary: root.manifest().boundary_sequence().get(),
+@@ -3706,6 +3823,13 @@ mod tests {
+         let mut fleet = NativeBackupFleet::new(limits).unwrap();
+         fleet.attach(config()).unwrap();
+         assert_eq!(fleet.retained_points(&identity).unwrap().len(), 4);
++        // The current policy has moved to Tigris while the selected point is
++        // retained only by the retired OCI destination. Restore must follow
++        // the provider returned by discovery into historical policy state.
++        fleet.streams.get_mut(&identity).unwrap().config.destinations =
++            vec![(Provider::Tigris, target.clone())];
++        fleet.streams.get_mut(&identity).unwrap().config.historical_destinations =
++            vec![(Provider::Oci, source.clone()), (Provider::Tigris, target.clone())];
+         let selected = &history[0];
+         let (owner, restore) = restore_config("remote-selected-restore", engine.database_owner());
+         let foreign_owner = crate::storage::DatabaseOwner::try_new(
+diff --git a/src/backup/workload_identity_delivery.rs b/src/backup/workload_identity_delivery.rs
+index a07bac11..4dc51835 100644
+--- a/src/backup/workload_identity_delivery.rs
++++ b/src/backup/workload_identity_delivery.rs
+@@ -1,6 +1,12 @@
+ //! Bounded local broker for customer S3 workload identity credentials.
+ 
+ use std::fmt;
++#[cfg(unix)]
++use std::fs;
++#[cfg(unix)]
++use std::os::unix::fs::{FileTypeExt, MetadataExt};
++#[cfg(unix)]
++use std::path::Component;
+ use std::path::PathBuf;
+ use std::time::{Duration, SystemTime, UNIX_EPOCH};
+ 
+@@ -67,11 +73,6 @@ impl UnixWorkloadIdentityProvider {
+         scope: WorkloadIdentityScope,
+     ) -> Result<Self, WorkloadIdentityError> {
+         if !socket.is_absolute()
+-            || scope.role.is_empty()
+-            || scope.endpoint.is_empty()
+-            || scope.bucket.is_empty()
+-            || scope.region.is_empty()
+-            || scope.placement_revision.is_empty()
+             || [
+                 scope.role.as_str(),
+                 scope.endpoint.as_str(),
+@@ -80,12 +81,55 @@ impl UnixWorkloadIdentityProvider {
+                 scope.placement_revision.as_str(),
+             ]
+             .into_iter()
+-            .any(|value| value.chars().any(char::is_control))
++            .any(|value| !valid_scope_field(value))
++            || scope.external_id.as_deref().is_some_and(|value| !valid_scope_field(value))
+         {
+             return Err(WorkloadIdentityError::Invalid);
+         }
+         Ok(Self { socket, scope })
+     }
++
++    #[cfg(unix)]
++    fn validate_path(&self) -> Result<u32, WorkloadIdentityError> {
++        if !self.socket.is_absolute() {
++            return Err(WorkloadIdentityError::Unavailable);
++        }
++        let mut path = PathBuf::new();
++        let mut parent: Option<fs::Metadata> = None;
++        for component in self.socket.components() {
++            match component {
++                Component::RootDir | Component::Normal(_) => path.push(component),
++                _ => return Err(WorkloadIdentityError::Unavailable),
++            }
++            let metadata =
++                fs::symlink_metadata(&path).map_err(|_| WorkloadIdentityError::Unavailable)?;
++            if metadata.file_type().is_symlink() {
++                return Err(WorkloadIdentityError::Unavailable);
++            }
++            if path == self.socket {
++                if !metadata.file_type().is_socket() || metadata.mode() & 0o777 != 0o660 {
++                    return Err(WorkloadIdentityError::Unavailable);
++                }
++                let parent_metadata = parent.as_ref().ok_or(WorkloadIdentityError::Unavailable)?;
++                if parent_metadata.uid() != metadata.uid()
++                    || parent_metadata.gid() != metadata.gid()
++                    || parent_metadata.mode() & 0o777 != 0o710
++                {
++                    return Err(WorkloadIdentityError::Unavailable);
++                }
++                return Ok(metadata.uid());
++            }
++            if !metadata.is_dir() || metadata.mode() & 0o022 != 0 {
++                return Err(WorkloadIdentityError::Unavailable);
++            }
++            parent = Some(metadata);
++        }
++        Err(WorkloadIdentityError::Unavailable)
++    }
++}
++
++fn valid_scope_field(value: &str) -> bool {
++    !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control)
+ }
+ 
+ #[cfg(unix)]
+@@ -95,9 +139,15 @@ impl WorkloadIdentityProvider for UnixWorkloadIdentityProvider {
+         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+         use tokio::net::UnixStream;
+ 
++        let socket_uid = self.validate_path()?;
+         let mut stream = UnixStream::connect(&self.socket)
+             .await
+             .map_err(|_| WorkloadIdentityError::Unavailable)?;
++        let credentials = rustix::net::sockopt::socket_peercred(&stream)
++            .map_err(|_| WorkloadIdentityError::Unavailable)?;
++        if credentials.uid.as_raw() != socket_uid {
++            return Err(WorkloadIdentityError::Unavailable);
++        }
+         let request = serde_json::to_vec(&CredentialRequest { version: 1, scope: &self.scope })
+             .map_err(|_| WorkloadIdentityError::Invalid)?;
+         if request.len() > MAX_REQUEST_BYTES {
+@@ -148,3 +198,64 @@ impl WorkloadIdentityProvider for UnixWorkloadIdentityProvider {
+         Err(WorkloadIdentityError::Unavailable)
+     }
+ }
++
++#[cfg(all(test, unix))]
++mod tests {
++    use super::*;
++    use std::fs;
++    use std::os::unix::fs::PermissionsExt;
++    use std::os::unix::net::UnixListener;
++
++    fn scope() -> WorkloadIdentityScope {
++        WorkloadIdentityScope {
++            role: "role".into(),
++            external_id: None,
++            endpoint: "https://example.invalid".into(),
++            bucket: "bucket".into(),
++            region: "region".into(),
++            placement_revision: "revision".into(),
++        }
++    }
++
++    fn fixture_path(name: &str) -> (PathBuf, PathBuf) {
++        let root =
++            std::env::temp_dir().join(format!("terrabase-workload-{}-{name}", std::process::id()));
++        let parent = root.join("protected");
++        fs::create_dir_all(&parent).unwrap();
++        fs::set_permissions(&parent, fs::Permissions::from_mode(0o710)).unwrap();
++        (root, parent.join("broker.sock"))
++    }
++
++    #[test]
++    fn path_validation_rejects_symlink_components() {
++        let (root, socket) = fixture_path("symlink");
++        let link = root.join("link");
++        std::os::unix::fs::symlink(socket.parent().unwrap(), &link).unwrap();
++        let provider =
++            UnixWorkloadIdentityProvider::new(link.join("broker.sock"), scope()).unwrap();
++        assert_eq!(provider.validate_path(), Err(WorkloadIdentityError::Unavailable));
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn path_validation_rejects_unprotected_socket_mode() {
++        let (root, socket) = fixture_path("mode");
++        let _listener = UnixListener::bind(&socket).unwrap();
++        fs::set_permissions(&socket, fs::Permissions::from_mode(0o666)).unwrap();
++        let provider = UnixWorkloadIdentityProvider::new(socket, scope()).unwrap();
++        assert_eq!(provider.validate_path(), Err(WorkloadIdentityError::Unavailable));
++        fs::remove_dir_all(root).unwrap();
++    }
++
++    #[test]
++    fn constructor_rejects_unbounded_or_controlled_external_id() {
++        for external_id in [Some("bad\nexternal".into()), Some("x".repeat(129))] {
++            let mut candidate = scope();
++            candidate.external_id = external_id;
++            assert!(matches!(
++                UnixWorkloadIdentityProvider::new(PathBuf::from("/run/broker.sock"), candidate),
++                Err(WorkloadIdentityError::Invalid)
++            ));
++        }
++    }
++}
+diff --git a/src/encryption/customer_key_delivery.rs b/src/encryption/customer_key_delivery.rs
+index e2e49b9d..468cdc8d 100644
+--- a/src/encryption/customer_key_delivery.rs
++++ b/src/encryption/customer_key_delivery.rs
+@@ -17,7 +17,6 @@ use crate::regions::{RegionCatalog, RegionCode};
+ const MAGIC: &[u8; 5] = b"TBCK\x01";
+ const TIMEOUT: Duration = Duration::from_secs(25);
+ const MAX_FRAME: usize = 4096;
+-const KEY_BYTES: usize = 32;
+ 
+ /// Customer KMS adapter bound to one admitted provider configuration.
+ #[derive(Clone)]
+@@ -27,7 +26,7 @@ pub struct CustomerKmsKeyDelivery {
+     socket_gid: u32,
+     provider: String,
+     key_id: String,
+-    key_region: RegionCode,
++    key_region: String,
+     key_endpoint: String,
+ }
+ 
+@@ -45,7 +44,7 @@ impl CustomerKmsKeyDelivery {
+         socket_gid: u32,
+         provider: impl Into<String>,
+         key_id: impl Into<String>,
+-        key_region: RegionCode,
++        key_region: impl Into<String>,
+         key_endpoint: impl Into<String>,
+     ) -> Result<Self, EncryptionError> {
+         let source = Self {
+@@ -54,10 +53,10 @@ impl CustomerKmsKeyDelivery {
+             socket_gid,
+             provider: provider.into(),
+             key_id: key_id.into(),
+-            key_region,
++            key_region: key_region.into(),
+             key_endpoint: key_endpoint.into(),
+         };
+-        if !RegionCatalog::production().is_registered(&source.key_region)
++        if !valid_region(&source.key_region)
+             || !valid_field(&source.provider)
+             || !valid_field(&source.key_id)
+             || !valid_field(&source.key_endpoint)
+@@ -190,6 +189,25 @@ fn valid_field(value: &str) -> bool {
+     !value.is_empty() && value.len() <= 128 && !value.as_bytes().contains(&0)
+ }
+ 
++fn valid_region(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 64
++        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
++}
++
+ fn unavailable<T>(_: T) -> EncryptionError {
+     EncryptionError::ProductionProviderUnavailable
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::valid_region;
++
++    #[test]
++    fn accepts_cloud_provider_regions() {
++        assert!(valid_region("us-east-1"));
++        assert!(valid_region("eu-west-1"));
++        assert!(!valid_region("us east 1"));
++        assert!(!valid_region(""));
++    }
++}

@@ -58,6 +58,11 @@ fn is_lower_hex_digest(value: &str) -> bool {
 
 impl LifecycleOperationGrant {
     /// Validates bounded identity, digest, domain/version, and time ordering.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LifecycleError::Invalid`] when the grant identity, proof,
+    /// action-specific digest, or validity window is outside its bounds.
     pub fn validate(&self, now_unix_millis: i64) -> Result<(), LifecycleError> {
         if self.version != 1
             || self.domain != "terrascale-lifecycle-operation-v1"
@@ -175,6 +180,11 @@ pub enum LifecycleError {
 /// Signature verification is deliberately owned by the placement journal;
 /// this function only rejects absent proof and malformed identity. Callers
 /// must compare the decoded proof with the durable accepted assignment.
+///
+/// # Errors
+///
+/// Returns [`LifecycleError::Invalid`] when the context is absent or contains
+/// an empty, oversized, or otherwise incomplete identity field.
 pub fn validate_context(
     context: Option<&pb::LifecycleControlContext>,
 ) -> Result<(), LifecycleError> {
@@ -200,6 +210,11 @@ pub fn validate_context(
 }
 
 /// Validates a lifecycle mutation and returns its stable operation identity.
+///
+/// # Errors
+///
+/// Returns [`LifecycleError::Invalid`] when the context or operation identity
+/// is incomplete or exceeds its contract bound.
 pub fn validate_request(request: &pb::LifecycleControlRequest) -> Result<&str, LifecycleError> {
     validate_context(request.context.as_ref())?;
     if request.operation_id.is_empty() || request.operation_id.len() > 128 {
@@ -209,6 +224,7 @@ pub fn validate_request(request: &pb::LifecycleControlRequest) -> Result<&str, L
 }
 
 /// Reports a capability which is not yet connected to the native runtime.
+#[must_use]
 pub fn unavailable(operation_id: &str) -> pb::LifecycleControlResponse {
     pb::LifecycleControlResponse {
         status: pb::LifecycleStatus::Unavailable as i32,
@@ -222,6 +238,7 @@ pub fn unavailable(operation_id: &str) -> pb::LifecycleControlResponse {
 }
 
 /// Reports a successfully applied native lifecycle operation.
+#[must_use]
 pub fn applied(operation_id: &str) -> pb::LifecycleControlResponse {
     pb::LifecycleControlResponse {
         status: pb::LifecycleStatus::Applied as i32,
@@ -235,12 +252,21 @@ pub fn applied(operation_id: &str) -> pb::LifecycleControlResponse {
 }
 
 /// Validates a same-database reactivation request before admission.
+///
+/// # Errors
+///
+/// Returns [`LifecycleError::Invalid`] when the nested request is absent or
+/// fails the common lifecycle request validation.
 pub fn validate_reactivate(
     request: &pb::LifecycleReactivateRequest,
 ) -> Result<&str, LifecycleError> {
     let Some(inner) = request.request.as_ref() else { return Err(LifecycleError::Invalid) };
     validate_request(inner)
 }
+
+/// Asynchronous authenticated source-point response.
+pub type ResolveRecoveryPointFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<pb::ResolveRecoveryPointResponse, String>> + Send + 'a>>;
 
 #[cfg(test)]
 mod tests {
@@ -285,7 +311,3 @@ mod tests {
         assert_eq!(response.operation_id, "op");
     }
 }
-
-/// Asynchronous authenticated source-point response.
-pub type ResolveRecoveryPointFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<pb::ResolveRecoveryPointResponse, String>> + Send + 'a>>;

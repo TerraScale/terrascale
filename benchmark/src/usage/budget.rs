@@ -100,6 +100,21 @@ pub enum AllocationError {
 }
 
 impl VerifiedAllocation {
+    /// Private durable representation of authority already verified at prepare.
+    /// Only storage's integrity-bound intent codec may restore this value.
+    pub(crate) fn encode_prepared(&self) -> Result<Vec<u8>, ()> {
+        let bytes = serde_json::to_vec(&(&self.envelope, self.payload_digest)).map_err(|_| ())?;
+        (bytes.len() <= MAX_ALLOCATION_BYTES).then_some(bytes).ok_or(())
+    }
+
+    pub(crate) fn decode_prepared(bytes: &[u8]) -> Result<Self, ()> {
+        if bytes.len() > MAX_ALLOCATION_BYTES {
+            return Err(());
+        }
+        let (envelope, payload_digest) = serde_json::from_slice(bytes).map_err(|_| ())?;
+        Ok(Self { envelope, payload_digest })
+    }
+
     /// Verifies the exact producer bytes and all local identity bindings.
     ///
     /// The argument list is the frozen producer/consumer binding contract;

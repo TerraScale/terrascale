@@ -545,7 +545,7 @@ impl ArtifactCipher {
         context: EncryptionContext,
         next_ordinal: u128,
     ) -> Result<Self, EncryptionError> {
-        if lease.provider() != KeyProviderIdentity::OciVault {
+        if !lease.provider().is_production() {
             return Err(EncryptionError::ProductionProviderUnavailable);
         }
         let metadata = lease.metadata();

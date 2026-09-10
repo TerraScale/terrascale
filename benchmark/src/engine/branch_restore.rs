@@ -1,6 +1,6 @@
 //! Encrypted immutable-cut import into a new owned database.
 
-use super::{Engine, EngineConfig, EngineOpenError};
+use super::{Engine, EngineConfig, EngineOpenError, admission::EngineAdmissionGuard};
 use crate::{
     storage::DatabaseOwner,
     types::{OperationId, StorageSequence, TenantId},
@@ -75,6 +75,7 @@ impl BranchRestoreReservation {
             use std::os::unix::fs::OpenOptionsExt;
             let file = fs::OpenOptions::new()
                 .create(true)
+                .truncate(false)
                 .read(true)
                 .write(true)
                 .mode(0o600)
@@ -82,7 +83,7 @@ impl BranchRestoreReservation {
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
             rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            return Ok(Self { file, _process_guard: process_guard });
+            Ok(Self { file, _process_guard: process_guard })
         }
         #[cfg(not(unix))]
         {
@@ -144,6 +145,7 @@ impl Engine {
         .map_err(|_| EngineOpenError::InvalidConfig)?;
         let target = &config.location;
         let _restore_reservation = BranchRestoreReservation::acquire(target)?;
+        let target_guard = std::sync::Arc::new(EngineAdmissionGuard::acquire(target)?);
         if let Ok(metadata) = fs::symlink_metadata(target)
             && (!metadata.is_dir() || metadata.file_type().is_symlink())
         {
@@ -152,7 +154,7 @@ impl Engine {
         let marker =
             format!("{}:{}:{}", operation.as_str(), source_owner.database(), child.database());
         if fs::read_dir(target).ok().and_then(|entries| entries.into_iter().next()).is_some() {
-            return read_installed_branch_cut(config, target, &marker);
+            return read_installed_branch_cut(config, target, &marker, target_guard);
         }
         // `EngineConfig::durable` creates the target directory up front. An
         // empty directory is only a reservation; remove it so the prepared
@@ -161,7 +163,7 @@ impl Engine {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
-                if let Some(existing) = installed_cut(config, &marker) {
+                if let Some(existing) = installed_cut(config, &marker, target_guard) {
                     sync_parent(target)?;
                     return Ok(StorageSequence::new(existing));
                 }
@@ -169,87 +171,91 @@ impl Engine {
             }
             Err(_) => return Err(EngineOpenError::StorageUnavailable),
         }
-        let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
-        let staging = parent.join(format!(".branch-restore-{}", crate::identity::generate()));
-        let mut builder = fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder.create(&staging).map_err(|_| EngineOpenError::StorageUnavailable)?;
-        let result = (|| {
-            crate::storage::load_or_create(
-                &staging,
-                Some(child),
-                crate::storage::OwnershipMode::Production,
-            )
-            .map_err(|error| {
-                eprintln!("branch restore load_or_create staging failed: {error:?}");
-                EngineOpenError::FormatMismatch
-            })?;
-            let source_owner = source.database_owner();
-            let mut source_path = None;
-            let registration = source
-                .with_quiescent_wal(|source_location| {
-                    source_path = Some(source_location.to_owned());
-                    crate::storage::copy_encrypted_snapshot(
-                        source_location,
-                        &staging,
-                        source_owner,
-                        keys.clone(),
-                    )
-                })
-                .map_err(|error| {
-                    eprintln!("branch restore quiescent source failed: {error:?}");
-                    EngineOpenError::StorageUnavailable
-                })?
-                .map_err(|()| {
-                    eprintln!("branch restore encrypted snapshot copy failed");
-                    EngineOpenError::StorageUnavailable
-                })?;
-            let cut = transform_snapshot(
-                source_path.as_deref().ok_or(EngineOpenError::StorageUnavailable)?,
-                &staging,
-                source_owner,
-                child,
-                config,
-                &marker,
-                &child_placement,
-            )?;
-            let mut staged = config.clone();
-            staged.location.clone_from(&staging);
-            drop(Self::open(staged)?);
-            drop(registration);
-            fs::File::open(&staging).and_then(|directory| directory.sync_all()).map_err(
-                |error| {
-                    eprintln!("branch restore staging sync failed: {error:?}");
-                    EngineOpenError::StorageUnavailable
-                },
-            )?;
-            if fs::rename(&staging, target).is_err() {
-                // Another restore may have won the target rename while this
-                // source was quiesced. Re-read the durable marker to make an
-                // exact same-operation loser idempotent; a different marker
-                // remains a conflict.
-                if let Some(existing) = installed_cut(config, &marker) {
-                    fs::remove_dir_all(&staging)
-                        .map_err(|_| EngineOpenError::StorageUnavailable)?;
-                    sync_parent(target)?;
-                    return Ok(StorageSequence::new(existing));
-                }
-                return Err(EngineOpenError::StorageUnavailable);
-            }
-            sync_parent(target)?;
-            Ok(StorageSequence::new(
-                u64::try_from(cut).map_err(|_| EngineOpenError::FormatMismatch)?,
-            ))
-        })();
-        if result.is_err() {
-            let _ = fs::remove_dir_all(&staging);
-        }
-        result
+        restore_to_staging(source, config, child, keys, &child_placement, &marker, target_guard)
     }
+}
+
+fn restore_to_staging(
+    source: &Engine,
+    config: &EngineConfig,
+    child: &DatabaseOwner,
+    keys: &std::sync::Arc<dyn crate::encryption::DatabaseKeySource>,
+    child_placement: &UsagePlacement,
+    marker: &str,
+    target_guard: std::sync::Arc<EngineAdmissionGuard>,
+) -> Result<StorageSequence, EngineOpenError> {
+    let target = config.location();
+    let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
+    let staging = parent.join(format!(".branch-restore-{}", crate::identity::generate()));
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&staging).map_err(|_| EngineOpenError::StorageUnavailable)?;
+    let result = (|| {
+        crate::storage::load_or_create(
+            &staging,
+            Some(child),
+            crate::storage::OwnershipMode::Production,
+        )
+        .map_err(|error| {
+            eprintln!("branch restore load_or_create staging failed: {error:?}");
+            EngineOpenError::FormatMismatch
+        })?;
+        let source_owner = source.database_owner();
+        let mut source_path = None;
+        let registration = source
+            .with_quiescent_wal(|source_location| {
+                source_path = Some(source_location.to_owned());
+                crate::storage::copy_encrypted_snapshot(
+                    source_location,
+                    &staging,
+                    source_owner,
+                    keys.clone(),
+                )
+            })
+            .map_err(|error| {
+                eprintln!("branch restore quiescent source failed: {error:?}");
+                EngineOpenError::StorageUnavailable
+            })?
+            .map_err(|()| {
+                eprintln!("branch restore encrypted snapshot copy failed");
+                EngineOpenError::StorageUnavailable
+            })?;
+        let cut = transform_snapshot(
+            source_path.as_deref().ok_or(EngineOpenError::StorageUnavailable)?,
+            &staging,
+            source_owner,
+            child,
+            config,
+            marker,
+            child_placement,
+        )?;
+        let mut staged = config.clone();
+        staged.location.clone_from(&staging);
+        drop(Engine::open(staged)?);
+        drop(registration);
+        fs::File::open(&staging).and_then(|directory| directory.sync_all()).map_err(|error| {
+            eprintln!("branch restore staging sync failed: {error:?}");
+            EngineOpenError::StorageUnavailable
+        })?;
+        if fs::rename(&staging, target).is_err() {
+            if let Some(existing) = installed_cut(config, marker, target_guard) {
+                fs::remove_dir_all(&staging).map_err(|_| EngineOpenError::StorageUnavailable)?;
+                sync_parent(target)?;
+                return Ok(StorageSequence::new(existing));
+            }
+            return Err(EngineOpenError::StorageUnavailable);
+        }
+        sync_parent(target)?;
+        Ok(StorageSequence::new(u64::try_from(cut).map_err(|_| EngineOpenError::FormatMismatch)?))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
 }
 
 fn sync_parent(target: &Path) -> Result<(), EngineOpenError> {
@@ -263,8 +269,9 @@ fn read_installed_branch_cut(
     config: &EngineConfig,
     target: &Path,
     marker: &str,
+    guard: std::sync::Arc<EngineAdmissionGuard>,
 ) -> Result<StorageSequence, EngineOpenError> {
-    let engine = Engine::open(config.clone())?;
+    let engine = Engine::open_admitted(config, guard)?;
     let connection =
         engine.open_sqlite_read_connection().map_err(|_| EngineOpenError::StorageUnavailable)?;
     let found: String = connection
@@ -282,8 +289,12 @@ fn read_installed_branch_cut(
     Ok(StorageSequence::new(u64::try_from(sequence).map_err(|_| EngineOpenError::FormatMismatch)?))
 }
 
-fn installed_cut(config: &EngineConfig, marker: &str) -> Option<u64> {
-    let engine = Engine::open(config.clone()).ok()?;
+fn installed_cut(
+    config: &EngineConfig,
+    marker: &str,
+    guard: std::sync::Arc<EngineAdmissionGuard>,
+) -> Option<u64> {
+    let engine = Engine::open_admitted(config, guard).ok()?;
     let connection = engine.open_sqlite_read_connection().ok()?;
     let found: String = connection
         .query_row("SELECT value FROM meta WHERE key='branch_restore_operation'", [], |row| {

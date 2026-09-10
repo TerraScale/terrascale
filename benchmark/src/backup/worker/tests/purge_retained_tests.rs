@@ -43,7 +43,7 @@ async fn purge_retained_requires_exact_historical_destination_coverage_before_mu
     stream.health.protected = true;
 
     assert_eq!(
-        fleet.purge_retained(&database, &[current.clone()]).await,
+        fleet.purge_retained(&database, std::slice::from_ref(&current)).await,
         Err(FleetError::Configuration)
     );
     assert!(!fleet.streams.get(&database).unwrap().closing);

@@ -126,6 +126,10 @@ fn location(tag: &str) -> PathBuf {
 
 fn intent(operation: &str, writes: Vec<StagedWrite>) -> CommitIntent {
     CommitIntent {
+        cross_file_control: None,
+        cross_file_dependencies: None,
+        cross_file_billing: None,
+        generated_primary_file_identity: None,
         tenant: TenantId::try_new("t").unwrap(),
         operation: OperationId::try_new(operation).unwrap(),
         digest: 1,
@@ -227,6 +231,7 @@ fn engine_per_record_replication_updates_session_frontier_across_gaps_and_reopen
     let tenant = TenantId::try_new("t").unwrap();
     let scope = TenantScope::from_parts(tenant.clone(), engine.identity());
     let origin = OriginLaneId::try_new(RegionId::try_new("remote").unwrap(), 1).unwrap();
+    let origin_token = origin.as_str();
     for (sequence, expected) in [(3, 0), (1, 1), (2, 3)] {
         let record = ReplicatedRecord {
             collection: CollectionName::try_new("docs").unwrap(),
@@ -243,7 +248,12 @@ fn engine_per_record_replication_updates_session_frontier_across_gaps_and_reopen
         engine.apply_replicated(&scope, &record).unwrap();
         assert_eq!(engine.session_frontier(&scope).unwrap().sequence(&origin), expected);
         assert_eq!(
-            engine.durable_origin_prefixes(&scope).unwrap().get("remote").copied().unwrap_or(0),
+            engine
+                .durable_origin_prefixes(&scope)
+                .unwrap()
+                .get(&origin_token)
+                .copied()
+                .unwrap_or(0),
             expected
         );
     }

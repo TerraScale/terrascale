@@ -28,11 +28,18 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STACK_DIR="$ROOT/.terrascale/stack"
+# Parallel instances: STACK_NAME (default "stack") selects the state
+# directory and STACK_PORT_OFFSET (default 0) shifts every fixed port by a
+# constant so two stacks can coexist on one machine. The canonical instance
+# keeps the documented .terrascale/stack and port set.
+STACK_NAME="${STACK_NAME:-stack}"
+STACK_PORT_OFFSET="${STACK_PORT_OFFSET:-0}"
+STACK_DIR="$ROOT/.terrascale/$STACK_NAME"
 LOG_DIR="$STACK_DIR/logs"
 TLS_DIR="$STACK_DIR/tls"
 PIDS_FILE="$STACK_DIR/stack.pids"
 BOOTSTRAP_KEY_FILE="$STACK_DIR/bootstrap.key"
+CONTROL_PLANE_FILE="$STACK_DIR/control-plane.env"
 WEBHOOKS_LOG="$STACK_DIR/webhooks.log"
 BIN="$ROOT/target/debug/terrabase-server"
 
@@ -42,32 +49,32 @@ TYPESCRIPT_DIR="$ROOT/../ts-typescript"
 EDGE_RUN="$PROXY_DIR/harness/local-edge/run.ts"
 JOURNEY_FILE="$TYPESCRIPT_DIR/test/journey.test.ts"
 
-PROXY_PORT=7000
-STUB_PORT=7080
-WEBHOOK_PORT=7090
-DASHBOARD_PORT=7100
+PROXY_PORT=$((7000 + STACK_PORT_OFFSET))
+STUB_PORT=$((7080 + STACK_PORT_OFFSET))
+WEBHOOK_PORT=$((7090 + STACK_PORT_OFFSET))
+DASHBOARD_PORT=$((7100 + STACK_PORT_OFFSET))
 
 REGIONS="GRU SFO FRA"
 
 api_port() {
   case "$1" in
-    GRU) echo 7101 ;;
-    SFO) echo 7102 ;;
-    FRA) echo 7103 ;;
+    GRU) echo $((7101 + STACK_PORT_OFFSET)) ;;
+    SFO) echo $((7102 + STACK_PORT_OFFSET)) ;;
+    FRA) echo $((7103 + STACK_PORT_OFFSET)) ;;
   esac
 }
 tbep_port() {
   case "$1" in
-    GRU) echo 8421 ;;
-    SFO) echo 8422 ;;
-    FRA) echo 8423 ;;
+    GRU) echo $((8421 + STACK_PORT_OFFSET)) ;;
+    SFO) echo $((8422 + STACK_PORT_OFFSET)) ;;
+    FRA) echo $((8423 + STACK_PORT_OFFSET)) ;;
   esac
 }
 obs_port() {
   case "$1" in
-    GRU) echo 9461 ;;
-    SFO) echo 9462 ;;
-    FRA) echo 9463 ;;
+    GRU) echo $((9461 + STACK_PORT_OFFSET)) ;;
+    SFO) echo $((9462 + STACK_PORT_OFFSET)) ;;
+    FRA) echo $((9463 + STACK_PORT_OFFSET)) ;;
   esac
 }
 lower() {
@@ -158,13 +165,13 @@ tls_has_padding() {
 }
 
 gen_tls_once() {
-  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
     -keyout "$TLS_DIR/ca.key" -out "$TLS_DIR/ca.crt" \
     -days 3 -nodes -subj "/CN=terrabase-stack-ca" 2>/dev/null
-  openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+  openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
     -keyout "$TLS_DIR/server.key" -out "$TLS_DIR/server.csr" \
     -nodes -subj "/CN=127.0.0.1" 2>/dev/null
-  printf 'subjectAltName=IP:127.0.0.1,DNS:localhost\n' >"$TLS_DIR/san.ext"
+  printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,URI:spiffe://local/stack-member\n' >"$TLS_DIR/san.ext"
   openssl x509 -req -in "$TLS_DIR/server.csr" \
     -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" -CAcreateserial \
     -out "$TLS_DIR/server.crt" -days 3 -extfile "$TLS_DIR/san.ext" 2>/dev/null
@@ -196,6 +203,20 @@ ensure_tls() {
     fi
   done
   die "could not mint padding-free dev certificates in 100 attempts"
+}
+
+ensure_capability_key() {
+  # Members sign reactive view capabilities with this throwaway key; the
+  # X-6 harness verifies against the same material. Absent capability key
+  # files leave the member's ring disabled (fail closed), so the stack must
+  # provide one for the reactive journey to run at all.
+  if [ -f "$STACK_DIR/capability.key" ]; then
+    return 0
+  fi
+  umask 077
+  openssl rand -hex 32 >"$STACK_DIR/capability.key"
+  chmod 600 "$STACK_DIR/capability.key"
+  log "minted stack reactive capability key in $STACK_DIR/capability.key"
 }
 
 ensure_bootstrap_key() {
@@ -236,6 +257,95 @@ ensure_dashboard_secret() {
   chmod 600 "$STACK_DIR/dashboard-auth-secret"
 }
 
+
+ensure_local_database() {
+  # The member engine's own scope names database "local"; the public API
+  # only knows databases created through it, and each member keeps its own
+  # local control plane, so create it through the real route on EVERY
+  # member. check_member then has a durable database whose backup readiness
+  # it can observe per member.
+  local region api status
+  for region in $REGIONS; do
+    api="http://127.0.0.1:$(api_port "$region")"
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -X POST \
+      -H "Authorization: Bearer $(bootstrap_key)" \
+      -H 'Content-Type: application/json' \
+      -H 'Idempotency-Key: local-stack-engine-database' \
+      -H 'x-terrascale-tenant-id: terrabase-local' \
+      -H 'x-terrascale-project-id: local' \
+      "$api/api/v1/databases" \
+      --data '{"name":"local","placement":["GRU","SFO","FRA"]}')" || status="000"
+    case "$status" in
+      201|409) log "engine database 'local' present on $region (HTTP $status)" ;;
+      *) die "engine database 'local' creation on $region returned HTTP $status" ;;
+    esac
+  done
+}
+
+wait_for_member_backups() {
+  # Backup readiness needs one write to open the engine plus a first capture;
+  # both are bounded waits, never silent passes.
+  local deadline=$((SECONDS + 90)) region body ok=0
+  for region in $REGIONS; do
+    curl -s -o /dev/null --max-time 5 -X PUT \
+      -H "Authorization: Bearer $(bootstrap_key)" -H 'Content-Type: application/json' \
+      -H 'Idempotency-Key: backup-readiness-open' \
+      "http://127.0.0.1:$(api_port "$region")/api/v1/databases/local/collections/stack/documents/$(lower "$region")-$(api_port "$region")" \
+      --data '{"stack":"e15"}' >/dev/null 2>&1 || true
+  done
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    ok=0
+    for region in $REGIONS; do
+      body="$(curl -s --max-time 5 -H "Authorization: Bearer $(bootstrap_key)" \
+        "http://127.0.0.1:$(api_port "$region")/api/v1/databases/local/backups" 2>/dev/null || true)"
+      case "$body" in
+        *'"ready":true'*'"streaming":true'*) ok=$((ok + 1)) ;;
+      esac
+    done
+    [ "$ok" -eq 3 ] && { log "backup readiness: 3/3 members streaming and captured"; return 0; }
+    sleep 2
+  done
+  warn "backup readiness: only $ok/3 members ready after 90 s"
+  return 1
+}
+
+ensure_control_plane() {
+  if [ -f "$CONTROL_PLANE_FILE" ]; then return 0; fi
+  local api="http://127.0.0.1:$(api_port GRU)" response database status
+  # Project-administration routes (POST /databases) require the explicit
+  # tenant/project scope headers; send the member's own engine scope.
+  response="$(curl -sSL --max-time 15 -w '\n%{http_code}' -X POST \
+    -H "Authorization: Bearer $(bootstrap_key)" \
+    -H 'Content-Type: application/json' \
+    -H 'Idempotency-Key: local-dashboard-control-plane' \
+    -H 'x-terrascale-tenant-id: terrabase-local' \
+    -H 'x-terrascale-project-id: local' \
+    "$api/api/v1/databases" \
+    --data '{"name":"dashboard-control-plane","placement":["GRU"]}')" \
+    || die "control-plane database creation failed through the real public API"
+  status="${response##*$'\n'}"; response="${response%$'\n'*}"
+  database="dashboard-control-plane"
+  if [ "$status" = 409 ]; then
+    response="$(curl -sfL --max-time 15 -H "Authorization: Bearer $(bootstrap_key)" "$api/api/v1/databases/$database")" \
+      || die "control-plane create conflicted but exact existing database could not be read"
+    printf '%s' "$response" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value.get("name")=="dashboard-control-plane" and value.get("deleted") is not True and "GRU" in value.get("placement", "")' \
+      || die "existing control-plane database does not match the scoped local composition"
+  elif [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+    die "control-plane database creation returned HTTP $status"
+  fi
+  umask 077
+  {
+    printf 'TERRASCALE_CONTROL_PLANE_DATABASE=%s\n' "$database"
+    printf 'TERRASCALE_CONTROL_PLANE_ACCESS_TOKEN=%s\n' "${TERRASCALE_CONTROL_PLANE_ACCESS_TOKEN:-$(bootstrap_key)}"
+  } >"$CONTROL_PLANE_FILE"
+  chmod 600 "$CONTROL_PLANE_FILE"
+  log "created disposable control-plane database through GRU public API"
+}
+
+control_plane_value() {
+  sed -n "s/^$1=//p" "$CONTROL_PLANE_FILE" | head -n 1
+}
+
 bootstrap_key() {
   tr -d ' \t\r\n' <"$BOOTSTRAP_KEY_FILE"
 }
@@ -272,6 +382,8 @@ write_config() {
     printf '[public_api]\nlisten = "127.0.0.1:%s"\n' "$api"
     printf 'data_root = "%s/data"\n' "$member_dir"
     printf 'bootstrap_key_file = "%s"\n' "$BOOTSTRAP_KEY_FILE"
+    printf 'capability_key_file = "%s/capability.key"\n' "$STACK_DIR"
+    printf 'origin_proof_key_file = "%s/capability.key"\n' "$STACK_DIR"
     printf 'regions = ["GRU", "SFO", "FRA"]\n\n'
     printf '[replication]\npeers = [\n'
     for peer in $REGIONS; do
@@ -478,7 +590,7 @@ require_base_inputs() {
 
 ensure_stack_ports_free() {
   local port
-  for port in 7000 7080 7090 7100 7101 7102 7103 8421 8422 8423 9461 9462 9463; do
+  for port in "$PROXY_PORT" "$STUB_PORT" "$WEBHOOK_PORT" "$DASHBOARD_PORT"     "$(api_port GRU)" "$(api_port SFO)" "$(api_port FRA)"     "$(tbep_port GRU)" "$(tbep_port SFO)" "$(tbep_port FRA)"     "$(obs_port GRU)" "$(obs_port SFO)" "$(obs_port FRA)"; do
     if ss -H -ltn "sport = :$port" | grep -q .; then
       die "port $port is already owned by another process; stop that stack explicitly before starting this one"
     fi
@@ -493,7 +605,21 @@ start_proxy() {
     run_or_print npm --prefix "$PROXY_DIR" run dev
     return 0
   fi
-  nohup setsid npm --prefix "$PROXY_DIR" run dev >>"$LOG_DIR/proxy.log" 2>&1 &
+  # Keep the local worker's service name equal to Dashboard's PROXY binding;
+  # Wrangler otherwise derives ts-proxy-dev for --env dev. Run from the
+  # checkout itself: `npm --prefix … exec` no longer chdirs, and wrangler
+  # resolves wrangler.toml from the process cwd. A shifted instance gets a
+  # generated sibling config whose DEV_ORIGINS point at this stack's members
+  # (wrangler CLI --var does not override env-section vars).
+  local config="wrangler.toml"
+  if [ "$STACK_PORT_OFFSET" != "0" ]; then
+    config="wrangler.stack.toml"
+    sed "s#^DEV_ORIGINS = .*#DEV_ORIGINS = '{\"GRU\":\"http://127.0.0.1:$(api_port GRU)\",\"SFO\":\"http://127.0.0.1:$(api_port SFO)\",\"FRA\":\"http://127.0.0.1:$(api_port FRA)\"}'#" \
+      "$PROXY_DIR/wrangler.toml" >"$PROXY_DIR/$config"
+  fi
+  # CI=true plus a closed stdin keep wrangler's interactive watcher from
+  # exiting the dev session when the spawning shell goes away.
+  nohup setsid sh -c "cd '$PROXY_DIR' && CI=true WRANGLER_SEND_METRICS=false npm exec -- wrangler dev --env dev --config '$config' --name ts-proxy --port '$PROXY_PORT'" </dev/null >>"$LOG_DIR/proxy.log" 2>&1 &
   record_pid "proxy" "$!"
 }
 
@@ -517,11 +643,9 @@ start_dashboard() {
   log "starting dashboard on workerd (127.0.0.1:$DASHBOARD_PORT)"
   # The dashboard requires its runtime base URLs even in dev: first-contact
   # API calls go to the local proxy, the public URL is the local origin.
-  # NODE_ENV=development selects the dashboard's own local-dev mode (dev
-  # shim, workspace repository, insecure-cookie + local-portal paths); the
-  # Owning outcome: ts-dashboard local-dev behavior — dev-shim paths stay dev-only.
-  # production guards (auth terms version, 32-char session secret) stay on
-  # for real deploys via wrangler.jsonc and orchestrator secrets.
+  # NODE_ENV=production deliberately exercises the real Better Auth adapter
+  # and public SDK transport. The PROXY service binding is supplied by the
+  # Cloudflare Vite plugin's local workerd runtime.
   #
   # The workerd runtime does NOT inherit this shell's environment: the
   # Cloudflare Vite plugin builds worker env from wrangler.jsonc vars plus
@@ -538,19 +662,42 @@ start_dashboard() {
   {
     printf 'TERRASCALE_API_BASE_URL="http://127.0.0.1:%s"\n' "$PROXY_PORT"
     printf 'TERRASCALE_DASHBOARD_PUBLIC_URL="http://127.0.0.1:%s"\n' "$DASHBOARD_PORT"
-    printf 'NODE_ENV="development"\n'
+    printf 'NODE_ENV="production"\n'
+    printf 'TERRASCALE_DEPLOYMENT_ENVIRONMENT="production"\n'
     printf 'TERRASCALE_AUTH_TERMS_VERSION="local-2026-08-30"\n'
+    printf 'TERRASCALE_CONTROL_PLANE_DATABASE="%s"\n' "$(control_plane_value TERRASCALE_CONTROL_PLANE_DATABASE)"
+    printf 'TERRASCALE_CONTROL_PLANE_ACCESS_TOKEN="%s"\n' "$(control_plane_value TERRASCALE_CONTROL_PLANE_ACCESS_TOKEN)"
     printf 'BETTER_AUTH_SECRET="%s"\n' "$(cat "$STACK_DIR/dashboard-auth-secret")"
+    if [ -n "${TERRASCALE_PRODUCTION_ENV_FILE:-}" ]; then cat "$TERRASCALE_PRODUCTION_ENV_FILE"; fi
   } >"$DASHBOARD_DIR/.dev.vars"
+  chmod 600 "$DASHBOARD_DIR/.dev.vars"
   nohup setsid env \
-    NODE_ENV="development" \
+    CI="true" \
+    NODE_ENV="production" \
+    TERRASCALE_LOCAL_PRODUCTION="1" \
+    TERRASCALE_DEPLOYMENT_ENVIRONMENT="production" \
     TERRASCALE_API_BASE_URL="http://127.0.0.1:$PROXY_PORT" \
     TERRASCALE_DASHBOARD_PUBLIC_URL="http://127.0.0.1:$DASHBOARD_PORT" \
     TERRASCALE_DASHBOARD_DEV_PORT="$DASHBOARD_PORT" \
     TERRASCALE_AUTH_TERMS_VERSION="local-2026-08-30" \
     BETTER_AUTH_SECRET="$(cat "$STACK_DIR/dashboard-auth-secret")" \
-    npm --prefix "$DASHBOARD_DIR" run dev -- --port "$DASHBOARD_PORT" >>"$LOG_DIR/dashboard.log" 2>&1 &
+    TERRASCALE_CONTROL_PLANE_DATABASE="$(control_plane_value TERRASCALE_CONTROL_PLANE_DATABASE)" \
+    TERRASCALE_CONTROL_PLANE_ACCESS_TOKEN="$(control_plane_value TERRASCALE_CONTROL_PLANE_ACCESS_TOKEN)" \
+    npm --prefix "$DASHBOARD_DIR" run dev -- --port "$DASHBOARD_PORT" </dev/null >>"$LOG_DIR/dashboard.log" 2>&1 &
   record_pid "dashboard" "$!"
+}
+
+
+seed_proxy_regions_kv() {
+  # The proxy Worker's /api/v1/regions reads the regions health document from
+  # KV; in production the orchestrator publishes it (M3-3). Nothing else
+  # seeds the local namespaces, so the stack writes the three-member catalog
+  # into the Worker's local KV state itself. Idempotent: a fresh put with a
+  # current timestamp each boot.
+  local doc
+  doc=$(printf '{"v":1,"updated":%s,"regions":{"GRU":{"ok":true,"lat":-23.43,"lon":-46.47},"SFO":{"ok":true,"lat":37.77,"lon":-122.42},"FRA":{"ok":true,"lat":50.11,"lon":8.68}},"catalog":[{"code":"GRU","name":"Sao Paulo","country":"BR","lat":-23.43,"lon":-46.47},{"code":"SFO","name":"San Francisco","country":"US","lat":37.77,"lon":-122.42},{"code":"FRA","name":"Frankfurt","country":"DE","lat":50.11,"lon":8.68}]}' "$(date +%s)")
+  printf '%s' "$doc" >"$STACK_DIR/regions-health.json"
+  (cd "$PROXY_DIR" && npm exec -- wrangler kv key put regions --namespace-id=00000000000000000000000000000001 --local --path "$STACK_DIR/regions-health.json") >>"$LOG_DIR/proxy-kv.log" 2>&1 || warn "local regions KV seed failed; see $LOG_DIR/proxy-kv.log"
 }
 
 start_webhooks() {
@@ -565,7 +712,7 @@ start_webhooks() {
 }
 
 run_x6() {
-  local qualification="${1:-0}" endpoint="http://127.0.0.1:7101/api/v1/reactive/views"
+  local qualification="${1:-0}" endpoint="http://127.0.0.1:$(api_port GRU)/api/v1/reactive/views"
   log "running X-6 local edge harness against real member GRU (qualification=$qualification)"
   if dry_run; then
     log "DRY-RUN: would set TERRABASE_VIEW_ENDPOINT=$endpoint LOCAL_EDGE_QUALIFICATION=$qualification"
@@ -577,15 +724,21 @@ run_x6() {
   # preserves the member-issued view capability, while still sending all
   # snapshot/log reads through the real local member (never the X-4 stub).
   local capability_key
-  capability_key="$(printf '%s' 'terrascale-reactive-capability-v1' | od -An -tx1 | tr -d ' \n')"
+  # The snippet hex-decodes its key material; provide the key file's bytes
+  # as hex, exactly as the harness contract expects.
+  capability_key="$(tr -d ' \t\r\n' <"$STACK_DIR/capability.key" | od -An -tx1 | tr -d ' \n')"
+  local gru_api="http://127.0.0.1:$(api_port GRU)"
   (cd "$PROXY_DIR" && \
     TERRABASE_VIEW_ENDPOINT="$endpoint" \
     LOCAL_EDGE_QUALIFICATION="$qualification" \
     LOCAL_EDGE_CAPABILITY_KEY="$capability_key" \
     STACK_BOOTSTRAP_KEY="$(bootstrap_key)" \
+    STACK_GRU_API="$gru_api" \
+    STACK_QUAL_RUN="$$" \
     node --experimental-strip-types --input-type=module -e '
       import { runLocalEdgeQualification } from "./harness/local-edge/local-edge.ts";
       let issuedCapability;
+      let issuedCapabilityHeader = "X-TerraScale-Capability";
       const token = process.env.STACK_BOOTSTRAP_KEY;
       const fetchImpl = async (input, init) => {
         const incoming = new Request(input, init);
@@ -602,13 +755,31 @@ run_x6() {
             entitlement_epoch: request.entitlement_epoch ?? 1,
           });
           const response = await fetch(new Request(incoming, { headers, body }));
-          if (response.ok) issuedCapability = (await response.clone().json()).capability;
+          if (response.ok) {
+            const attached = await response.clone().json();
+            issuedCapability = attached.capability;
+            if (typeof attached.capability_header === "string" && attached.capability_header !== "")
+              issuedCapabilityHeader = attached.capability_header;
+          }
           return response;
         }
-        if (issuedCapability !== undefined) headers.set("x-terrascale-view-capability", issuedCapability);
+        if (issuedCapability !== undefined && !headers.has(issuedCapabilityHeader)) {
+          headers.set(issuedCapabilityHeader, issuedCapability);
+        }
         return fetch(new Request(incoming, { headers }));
       };
-      const report = await runLocalEdgeQualification({ fetchImpl });
+      let attachWrites = 0;
+      const report = await runLocalEdgeQualification({
+        fetchImpl,
+        onAttached: async () => {
+          attachWrites += 1;
+          await fetch(new Request(`${process.env.STACK_GRU_API}/api/v1/databases/local/collections/docs/documents/edge-qualify-${process.env.STACK_QUAL_RUN}-${attachWrites}`, {
+            method: "PUT",
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+            body: JSON.stringify({ stack: "edge-qualify", write: attachWrites }),
+          }));
+        },
+      });
       console.log(JSON.stringify(report, null, 2));
     ') >"$LOG_DIR/edge-qualify.log" 2>&1 || {
       tail -n 40 "$LOG_DIR/edge-qualify.log" >&2 || true
@@ -622,7 +793,7 @@ print_summary() {
     log "  $region  api=http://127.0.0.1:$(api_port "$region")  tbep=127.0.0.1:$(tbep_port "$region")  obs=http://127.0.0.1:$(obs_port "$region")"
   done
   log "  proxy=http://127.0.0.1:$PROXY_PORT  webhooks=http://127.0.0.1:$WEBHOOK_PORT  dashboard=http://127.0.0.1:$DASHBOARD_PORT"
-  log "  journey: export STACK_BOOTSTRAP_KEY=\"\$(cat $BOOTSTRAP_KEY_FILE)\"; curl -H \"Authorization: Bearer \$STACK_BOOTSTRAP_KEY\" http://127.0.0.1:7101/api/v1/health"
+  log "  journey: export STACK_BOOTSTRAP_KEY=\"\$(cat $BOOTSTRAP_KEY_FILE)\"; curl -H \"Authorization: Bearer \$STACK_BOOTSTRAP_KEY\" http://127.0.0.1:$(api_port GRU)/api/v1/health"
   log "  logs: $LOG_DIR  |  stop: ./scripts/stack.sh down"
 }
 
@@ -642,7 +813,7 @@ check_edge_components() {
   local failures=0 body
   body="$(curl -sfL --max-time 5 "http://127.0.0.1:$PROXY_PORT/api/v1/regions" 2>/dev/null || true)"
   case "$body" in
-    *'"hosts"'*'127.0.0.1:7101'*'127.0.0.1:7102'*'127.0.0.1:7103'*)
+    *'"hosts"'*"127.0.0.1:$(api_port GRU)"*"127.0.0.1:$(api_port SFO)"*"127.0.0.1:$(api_port FRA)"*)
       log "proxy Worker dev mode: ok ($body)" ;;
     *)
       warn "proxy Worker dev mode FAILED: '${body:-no body}'"
@@ -666,7 +837,7 @@ check_full_stack() {
 }
 
 dry_run_plan() {
-  log "DRY-RUN: full E-15 stack requires 3 real members, proxy Worker dev, local Snippet/X-6 harness, dashboard workerd, and webhook receiver"
+  log "DRY-RUN: full E-15 stack requires 3 real members, proxy Worker dev, local Snippet/X-6 harness, production Dashboard workerd with real control-plane persistence, and webhook receiver"
   require_base_inputs || true
   for region in $REGIONS; do write_config "$region"; done
   ensure_binary
@@ -700,6 +871,7 @@ cmd_up() {
   : >"$PIDS_FILE"
   ensure_tls
   ensure_bootstrap_key
+  ensure_capability_key
   for region in $REGIONS; do
     write_config "$region"
   done
@@ -717,7 +889,16 @@ cmd_up() {
     done
     die "stack up failed: members unhealthy"
   fi
+  ensure_control_plane
+  ensure_local_database
+  if ! wait_for_member_backups; then
+    die "stack up failed: members never reached backup readiness"
+  fi
   start_proxy
+  # The Worker reads KV state lazily, but its dev session must be listening
+  # before the CLI can write to the same local persistence.
+  wait_for_http "proxy Worker listener" "http://127.0.0.1:$PROXY_PORT/cdn-cgi/local/explorer/api" || true
+  seed_proxy_regions_kv
   start_dashboard
   wait_for_http "proxy Worker" "http://127.0.0.1:$PROXY_PORT/api/v1/regions"
   wait_for_http "dashboard workerd" "http://127.0.0.1:$DASHBOARD_PORT/"
@@ -746,7 +927,7 @@ cmd_check() {
 
 cmd_test() {
   if dry_run; then
-    log "DRY-RUN: would run P-3 journey against $TYPESCRIPT_DIR and X-6 qualification against http://127.0.0.1:7101"
+    log "DRY-RUN: would run P-3 journey against $TYPESCRIPT_DIR and X-6 qualification against http://127.0.0.1:$(api_port GRU)"
     return 0
   fi
   [ -f "$BOOTSTRAP_KEY_FILE" ] || die "no $BOOTSTRAP_KEY_FILE; is the stack up? (./scripts/stack.sh up)"
@@ -755,12 +936,12 @@ cmd_test() {
   check_full_stack || die "stack test preflight failed"
   log "running P-3 journey against real GRU member"
   (cd "$TYPESCRIPT_DIR" && \
-    TERRASCALE_API_BASE_URL="http://127.0.0.1:7101" \
+    TERRASCALE_API_BASE_URL="http://127.0.0.1:$(api_port GRU)" \
     TERRASCALE_E2E_ACCESS_TOKEN="$(bootstrap_key)" \
     TERRASCALE_G1_STRICT=1 \
     TERRASCALE_E2E_RUN_ID="stack" \
     TERRASCALE_DASHBOARD_BASE_URL="http://127.0.0.1:$DASHBOARD_PORT" \
-    TERRASCALE_E2E_REGION_BASE_URLS="GRU=http://127.0.0.1:7101,SFO=http://127.0.0.1:7102,FRA=http://127.0.0.1:7103" \
+    TERRASCALE_E2E_REGION_BASE_URLS="GRU=http://127.0.0.1:$(api_port GRU),SFO=http://127.0.0.1:$(api_port SFO),FRA=http://127.0.0.1:$(api_port FRA)" \
     npm test -- --run test/journey.test.ts) 2>&1 | tee "$LOG_DIR/p3-journey.log"
   run_x6 1
   log "stack test passed: P-3 journey + X-6 10,000-subscriber qualification"

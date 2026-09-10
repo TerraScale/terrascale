@@ -94,3 +94,5 @@ pub mod catchup_observation;
 mod test_keys;
 
 mod authorization_leases;
+#[cfg(all(test, target_os = "linux"))]
+mod routed_restore_lifecycle_tests;

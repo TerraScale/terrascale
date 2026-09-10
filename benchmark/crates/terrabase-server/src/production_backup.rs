@@ -72,7 +72,7 @@ pub fn destination_from_config_with_workload_identity(
     provider: Arc<dyn WorkloadIdentityProvider>,
 ) -> Result<Arc<ObjectDestination>, ProductionBackupFactoryError> {
     let destination = ObjectDestination::new_with_workload_identity(
-        DestinationConfig {
+        &DestinationConfig {
             admitted_region: database_region,
             provider: config.provider,
             endpoint: config.endpoint.clone(),

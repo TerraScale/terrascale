@@ -101,7 +101,7 @@ impl JoinFixture {
             "successor_request_digest":accepted["request_digest"],
             "stage_proposal_digest":hash(&proposal.encode_to_vec()),"proposal_revision":1,
             "authority_epoch":1,"lease_id":"lease-one","candidate_id":"gru-authority",
-            "issued_at_unix_millis":now()-1000,"expires_at_unix_millis":now()+200000
+            "issued_at_unix_millis":now()-1000,"expires_at_unix_millis":now()+200_000
         });
         Self { _origin: origin, recipient, journal, pins, prior, accepted, checkpoint, proposal }
     }

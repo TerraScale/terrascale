@@ -19,6 +19,10 @@ pub struct OriginLaneId {
 impl OriginLaneId {
     /// Constructs an origin lane from the accepted Region and durable lane
     /// incarnation. Zero is reserved for an absent or uninitialized lane.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OriginLaneError::ZeroIncarnation`] when `incarnation` is zero.
     pub fn try_new(region: RegionId, incarnation: u128) -> Result<Self, OriginLaneError> {
         if incarnation == 0 {
             return Err(OriginLaneError::ZeroIncarnation);
@@ -27,6 +31,12 @@ impl OriginLaneId {
     }
 
     /// Parses the canonical wire/storage spelling `lane1.<region>.<hex128>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OriginLaneError::Malformed`] when `value` is not a canonical
+    /// lane token, or [`OriginLaneError::ZeroIncarnation`] when its
+    /// incarnation is zero.
     pub fn parse(value: &str) -> Result<Self, OriginLaneError> {
         let mut parts = value.split('.');
         if parts.next() != Some(PREFIX) {

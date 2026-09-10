@@ -23,7 +23,7 @@ comparison. There is no unfenced gating mode.
 | --- | --- | --- |
 | point ops | read, write | rendered below |
 | indexed query | query | <!-- E-13 indexed-query STATUS -->failed<!-- E-13 indexed-query STATUS-END --> |
-| ingest | bulk load | <!-- E-13 ingest STATUS -->unavailable<!-- E-13 ingest STATUS-END --> |
+| ingest | bulk load | <!-- E-13 ingest STATUS -->complete<!-- E-13 ingest STATUS-END --> |
 | auto-indexing | index build / shadow verify | <!-- E-13 auto-indexing STATUS -->unavailable<!-- E-13 auto-indexing STATUS-END --> |
 | sync | view attach / delta log | <!-- E-13 sync STATUS -->unavailable<!-- E-13 sync STATUS-END --> |
 
@@ -42,16 +42,17 @@ attempt failed, older complete attempts are superseded.
 
 | workload | side | status | ops/s | p50 us | p95 us | p99 us | wall ms |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| read | terrabase | failed | - | - | - | - | - |
+| read | terrabase | complete | 1832 | 8812 | 13201 | 15878 | 5459 |
 | read | postgresql | failed | - | - | - | - | - |
 | read | pg-fullstack | invalid | - | - | - | - | - |
 | read | ravendb | invalid | - | - | - | - | - |
-| write | terrabase | failed | - | - | - | - | - |
+| write | terrabase | complete | 37 | 402833 | 730633 | 892002 | 267006 |
 | write | postgresql | failed | - | - | - | - | - |
 | write | pg-fullstack | invalid | - | - | - | - | - |
 | write | ravendb | invalid | - | - | - | - | - |
 
 <!-- E-13 point-ops END -->
+
 
 
 
@@ -77,17 +78,19 @@ per `LaneConfig::RECORD_MINIMUM`.
 
 Only rows with a valid comparability contract may join a workload comparison; no verdict is produced by this renderer. Failed/raw attempts remain retained and never contribute measurements.
 
-- terrabase/read: failed/raw — `bench/results/terrabase-read-1788816291301969015-821228-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
+- terrabase/read: invalid/raw — `bench/results/terrabase-read-1789003420160262363-240723-0.json` — diagnostic qualification is not decision-grade evidence
 - postgresql/read: failed/raw — `bench/results/postgresql-read-1788137614741020195-272364-0.json` — cannot connect to the pinned reference: error connecting to server
 - pg-fullstack/read: invalid/raw — `bench/results/pg-fullstack-read-1788187005634601753-306703-0.json` — comparability.run_digest is not a SHA-256 digest
 - ravendb/read: invalid/raw — `bench/results/ravendb-read-1788135679661528717-4010795-0.json` — comparability.run_digest is not a SHA-256 digest
-- terrabase/write: failed/raw — `bench/results/terrabase-write-1788816291307716735-821233-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
+- terrabase/write: invalid/raw — `bench/results/terrabase-write-1789004867097608972-241570-0.json` — diagnostic qualification is not decision-grade evidence
 - postgresql/write: failed/raw — `bench/results/postgresql-write-1788137614935028280-272475-0.json` — cannot connect to the pinned reference: error connecting to server
 - pg-fullstack/write: invalid/raw — `bench/results/pg-fullstack-write-1788187050721866209-310755-0.json` — comparability.run_digest is not a SHA-256 digest
 - ravendb/write: invalid/raw — `bench/results/ravendb-write-1788135716237245380-4013312-0.json` — comparability.run_digest is not a SHA-256 digest
+- terrabase/query: invalid/raw — `bench/results/terrabase-query-1789004924026723372-275486-0.json` — diagnostic qualification is not decision-grade evidence
 - postgresql/query: failed/raw — `bench/results/postgresql-query-1788137615123935909-272552-0.json` — cannot connect to the pinned reference: error connecting to server
 - pg-fullstack/query: invalid/raw — `bench/results/pg-fullstack-query-1788187017599762987-309854-0.json` — comparability.run_digest is not a SHA-256 digest
 - ravendb/query: invalid/raw — `bench/results/ravendb-query-1788135744820433018-4027234-0.json` — comparability.run_digest is not a SHA-256 digest
+- terrabase/mixed: invalid/raw — `bench/results/terrabase-mixed-1789005752198718554-277182-0.json` — diagnostic qualification is not decision-grade evidence
 - postgresql/mixed: failed/raw — `bench/results/postgresql-mixed-1788137615313202308-272578-0.json` — cannot connect to the pinned reference: error connecting to server
 - pg-fullstack/mixed: invalid/raw — `bench/results/pg-fullstack-mixed-1788187073308144008-328055-0.json` — comparability.run_digest is not a SHA-256 digest
 - ravendb/mixed: invalid/raw — `bench/results/ravendb-mixed-1788135763958015648-4034105-0.json` — comparability.run_digest is not a SHA-256 digest
@@ -101,6 +104,7 @@ Only rows with a valid comparability contract may join a workload comparison; no
 These attempts are retained for audit and are never used as complete measurements.
 
 - `bench/results/auto-index-1788816336-828597.json` — missing required TERRABASE_BENCH_TERRABASE_ENDPOINT
+- `bench/results/ingest-terrabase-single-node-1788821392281937185-1143841-0.json` — TerraBase health probe failed: http://127.0.0.1:7211/api/v1/health: status code 401
 - `bench/results/postgresql-mixed-1788135184461262373-3832326-0.json` — cannot connect to the pinned reference: error connecting to server
 - `bench/results/postgresql-mixed-1788137615313202308-272578-0.json` — cannot connect to the pinned reference: error connecting to server
 - `bench/results/postgresql-query-1788135183790116747-3831866-0.json` — cannot connect to the pinned reference: error connecting to server
@@ -116,30 +120,32 @@ These attempts are retained for audit and are never used as complete measurement
 - `bench/results/terrabase-read-1788128659735477939-2.json` — Go benchmark adapter exited with status exit status: 1
 - `bench/results/terrabase-read-1788128992385733234-2.json` — invalid adapter result: config operation counts must be divisible by concurrency
 - `bench/results/terrabase-read-1788816291301969015-821228-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
+- `bench/results/terrabase-read-1788823625410107490-1286302-0.json` — measured operation 0 failed: read failed: http://127.0.0.1:7211/api/v1/databases/local/collections/users/documents/seed-0: status code 429
 - `bench/results/terrabase-write-1788816291307716735-821233-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
 
 ## Results (median across samples)
 
 | workload | side | status | ops/s | p50 µs (median–max) | p95 µs | p99 µs | sample wall ms |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| read | terrabase | failed | — | — | — | — | — |
+| read | terrabase | invalid | — | — | — | — | — |
 | read | postgresql | failed | — | — | — | — | — |
 | read | pg-fullstack | invalid | — | — | — | — | — |
 | read | ravendb | invalid | — | — | — | — | — |
-| write | terrabase | failed | — | — | — | — | — |
+| write | terrabase | invalid | — | — | — | — | — |
 | write | postgresql | failed | — | — | — | — | — |
 | write | pg-fullstack | invalid | — | — | — | — | — |
 | write | ravendb | invalid | — | — | — | — | — |
-| query | terrabase | missing | — | — | — | — | — |
+| query | terrabase | invalid | — | — | — | — | — |
 | query | postgresql | failed | — | — | — | — | — |
 | query | pg-fullstack | invalid | — | — | — | — | — |
 | query | ravendb | invalid | — | — | — | — | — |
-| mixed | terrabase | missing | — | — | — | — | — |
+| mixed | terrabase | invalid | — | — | — | — | — |
 | mixed | postgresql | failed | — | — | — | — | — |
 | mixed | pg-fullstack | invalid | — | — | — | — | — |
 | mixed | ravendb | invalid | — | — | — | — | — |
 
 <!-- E-13 benchmark-history END -->
+
 
 
 <!-- E-13 indexed-query BEGIN -->
@@ -163,13 +169,14 @@ Numbers are admitted only from side adapters with observed identities, immutable
 <!-- E-13 indexed-query END -->
 
 
+
 <!-- E-13 ingest BEGIN -->
 
 ### Bulk ingest
 
 | target | topology | status | documents/sample | docs/s | p50 batch us | p95 batch us | p99 batch us |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| terrabase | single-node | unavailable | - | - | - | - | - |
+| terrabase | single-node | complete | 100000.00 | 623.30 | 865311.93 | 4792095.38 | 5331102.29 |
 | terrabase | rf2 | unavailable | - | - | - | - | - |
 | postgresql-jsonb | single-node | unavailable | - | - | - | - | - |
 | postgresql-jsonb | rf2 | unavailable | - | - | - | - | - |
@@ -179,6 +186,7 @@ Numbers are admitted only from side adapters with observed identities, immutable
 The launch-member contract is exactly 2 OCPU / 12 GiB; single-node and RF=2 rows never share a comparison group.
 
 <!-- E-13 ingest END -->
+
 
 
 <!-- E-13 auto-indexing BEGIN -->
@@ -195,6 +203,7 @@ Required gates: 5% regression rollback, fixed-point replay, 12 visible-index cap
 <!-- E-13 auto-indexing END -->
 
 
+
 <!-- E-13 sync BEGIN -->
 
 ### Sync
@@ -208,4 +217,5 @@ Status: **unavailable** — no served-boundary receipt was retained.
 | unknown | cross_region | unavailable | - | - | - |
 
 <!-- E-13 sync END -->
+
 

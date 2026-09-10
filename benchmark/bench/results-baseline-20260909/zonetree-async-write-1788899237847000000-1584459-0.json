@@ -1,0 +1,68 @@
+{
+  "status": "complete",
+  "target": "zonetree-async",
+  "workload": "write",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000
+  },
+  "environment": {
+    "observed_identity": "ZoneTree 1.9.7.0; WAL=AsyncCompressed; mutable segment default 1,000,000 items",
+    "endpoint": "file:///home/mariogk/Projects/TerraScale/terrabase/bench/target/zonetree-async",
+    "client_transport": "embedded ZoneTree 1.9.7.0, one shared LSM per tree, AsyncCompressed write-ahead log",
+    "unix_seconds": 1788899237,
+    "kernel": "Linux 7.2.3",
+    "logical_cpus": 2
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 0.018814057,
+      "throughput_ops_per_s": 531517.4712184619,
+      "p50_us": 2.208,
+      "p95_us": 2.736,
+      "p99_us": 12.629
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.020815861,
+      "throughput_ops_per_s": 480402.90046133567,
+      "p50_us": 2.228,
+      "p95_us": 2.652,
+      "p99_us": 5.053
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.018213632,
+      "throughput_ops_per_s": 549039.3129717346,
+      "p50_us": 2.263,
+      "p95_us": 2.778,
+      "p99_us": 5.364
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.010132879,
+      "throughput_ops_per_s": 986886.352832201,
+      "p50_us": 2.222,
+      "p95_us": 2.64,
+      "p99_us": 5.02
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.009651024,
+      "throughput_ops_per_s": 1036159.4790355925,
+      "p50_us": 2.223,
+      "p95_us": 2.602,
+      "p99_us": 5.047
+    }
+  ],
+  "limits": [
+    "embedded reference: the measured member is this driver\u0027s own process, so the load generator and the database share one resource envelope",
+    "LSM with the default 1,000,000-item mutable segment: the whole working set stays in the mutable segment, writes are AsyncCompressed WAL appends, and no disk segment forms during measurement",
+    "the write lane maintains the primary zone and the secondary (tenant, name) zone explicitly \u2014 the KV-store analogue of SQLite\u0027s two B-trees per indexed upsert",
+    "async mode: recent writes can be lost if the process terminates before the background WAL work is durable; durability is deferred, not caller-waited"
+  ]
+}

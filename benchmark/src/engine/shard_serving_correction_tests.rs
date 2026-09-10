@@ -30,7 +30,7 @@ fn admitted_target(tag: &str) -> (PathBuf, Arc<Engine>, Arc<Engine>, TenantId, S
             super::tests::operation("initial-route"),
         )
         .unwrap();
-    let mut adapter = ScopedShardEngine::new(source.clone(), scope.clone()).unwrap();
+    let mut adapter = ScopedShardEngine::new(source.clone(), scope.clone());
     adapter.save(&split.durable_state()).unwrap();
     adapter.create_split_target(&context).unwrap();
     split.begin_backfill().unwrap();

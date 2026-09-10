@@ -46,8 +46,6 @@ impl RoutedReadParticipant {
 
 /// One immutable, coordinated multi-shard read cut for one database.
 pub(crate) struct RoutedReadCut {
-    pub(crate) database_incarnation: u128,
-    pub(crate) route_generation: u64,
     pub(crate) participants: Vec<RoutedReadParticipant>,
 }
 
@@ -74,6 +72,6 @@ impl RoutedReadCut {
         if participants.iter().any(|participant| !seen.insert(participant.identity.shard_id)) {
             return Err("duplicate routed read participant");
         }
-        Ok(Self { database_incarnation, route_generation, participants })
+        Ok(Self { participants })
     }
 }

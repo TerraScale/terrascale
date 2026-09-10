@@ -704,19 +704,12 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
             })
             .await
             .map_err(|_| "restore executor unavailable")??;
-            if receipt.selected_identity() != request.recovery_point_id
-                || receipt.selected().boundary_sequence().get() != expected_cut
+            if receipt.selected_identity != request.recovery_point_id
+                || receipt.journal_cut != expected_cut
             {
                 return Err("authenticated recovery manifest facts do not match request".into());
             }
-            Ok(crate::native_recovery::NativeRestoreOutcome {
-                receipt: crate::native_recovery::NativeRestoreReceipt {
-                    selected_identity: receipt.selected_identity().to_owned(),
-                    logical_content_checksum: receipt.logical_checksum().to_owned(),
-                    restored_documents: receipt.documents_read_back(),
-                    journal_cut: receipt.selected_boundary().get(),
-                },
-            })
+            Ok(crate::native_recovery::NativeRestoreOutcome { receipt })
         })
     }
 }
@@ -815,29 +808,11 @@ impl ProductionAdmissionRuntime {
         let replaying = Arc::new(AtomicBool::new(true));
         let customer_configs = config.databases.clone();
         let customer_keys = config.keys.clone().ok_or("production key delivery missing")?;
-        let customer_source = Arc::new(move |record: &crate::admission::AdmissionRecord| {
+        let key_source = Arc::new(move |record: &crate::admission::AdmissionRecord| {
             let configured = customer_configs
                 .iter()
                 .find(|entry| entry.database.to_text() == record.database_id)
                 .ok_or("configured database unavailable")?;
-            let byok = configured.byok.as_ref().ok_or("customer KMS configuration missing")?;
-            if configured.encryption_provider
-                != terrabase::encryption::KeyProviderIdentity::CustomerKms
-                || byok.key_provider != "aws-kms"
-            {
-                return Err("customer KMS provider disagrees with configuration".into());
-            }
-            let endpoint = byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?;
-            let adapter = CustomerKmsKeyDelivery::new(
-                customer_keys.socket.clone(),
-                customer_keys.orchestrator_uid,
-                customer_keys.socket_gid,
-                byok.key_provider.clone(),
-                byok.key_id.clone(),
-                byok.key_region.clone(),
-                endpoint,
-            )
-            .map_err(|_| "customer KMS adapter unavailable")?;
             let scope = KeyScope::new_with_project(
                 &record.environment,
                 terrabase::identity::TenantUlid::from_text(&record.tenant_id).map_err(failure)?,
@@ -849,16 +824,53 @@ impl ProductionAdmissionRuntime {
             .map_err(failure)?;
             let version = DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?;
             let region = record.region.parse().map_err(|_| "invalid admitted Region")?;
-            Ok(Arc::new(
-                CustomerKmsDatabaseKeys::new(
-                    adapter,
-                    KeyVersionMetadata::new(scope, version),
-                    region,
-                )
-                .map_err(|_| "customer key authorization unavailable")?,
-            ) as Arc<dyn DatabaseKeySource>)
+            match configured.encryption_provider {
+                terrabase::encryption::KeyProviderIdentity::OciVault
+                    if configured.byok.is_none() =>
+                {
+                    Ok(Arc::new(
+                        OciVaultDatabaseKeys::new(
+                            OciVaultKeyDelivery::new(
+                                customer_keys.socket.clone(),
+                                customer_keys.orchestrator_uid,
+                                customer_keys.socket_gid,
+                            )
+                            .map_err(|_| "OCI Vault adapter unavailable")?,
+                            KeyVersionMetadata::new(scope, version),
+                            region,
+                        )
+                        .map_err(|_| "key authorization unavailable")?,
+                    ) as Arc<dyn DatabaseKeySource>)
+                }
+                terrabase::encryption::KeyProviderIdentity::CustomerKms => {
+                    let byok =
+                        configured.byok.as_ref().ok_or("customer KMS configuration missing")?;
+                    if byok.key_provider != "aws-kms" {
+                        return Err("customer KMS provider disagrees with configuration".into());
+                    }
+                    let adapter = CustomerKmsKeyDelivery::new(
+                        customer_keys.socket.clone(),
+                        customer_keys.orchestrator_uid,
+                        customer_keys.socket_gid,
+                        byok.key_provider.clone(),
+                        byok.key_id.clone(),
+                        byok.key_region.clone(),
+                        byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?,
+                    )
+                    .map_err(|_| "customer KMS adapter unavailable")?;
+                    Ok(Arc::new(
+                        CustomerKmsDatabaseKeys::new(
+                            adapter,
+                            KeyVersionMetadata::new(scope, version),
+                            region,
+                        )
+                        .map_err(|_| "customer key authorization unavailable")?,
+                    ) as Arc<dyn DatabaseKeySource>)
+                }
+                _ => Err("encryption provider and BYOK configuration disagree".into()),
+            }
         });
-        let storage = crate::production_admission::storage_admission_with_replay_and_customer(
+        let storage = crate::production_admission::storage_admission_with_replay_and_key_source(
             member.clone(),
             registry.clone(),
             provider,
@@ -866,7 +878,7 @@ impl ProductionAdmissionRuntime {
             per_database,
             instance,
             Arc::clone(&replaying),
-            customer_source,
+            key_source,
         );
         let callback: crate::admission::StorageAdmission = Arc::new(move |record| {
             storage(record)?;
@@ -1037,9 +1049,26 @@ impl ProductionAdmissionRuntime {
     ) -> Result<crate::native_backup_runtime::NativeBackupRuntime, String> {
         let snapshots = self.registry.retained_snapshot()?;
         let mut inputs = Vec::new();
-        for snapshot in snapshots.into_iter().filter(|snapshot| snapshot.activated) {
+        for snapshot in snapshots {
             let database = snapshot.database.record.database_id.clone();
-            inputs.push(self.resolve_native_backup_input(&database)?);
+            let input = if snapshot.activated {
+                self.resolve_native_backup_input(&database)?
+            } else {
+                let tenant =
+                    terrabase::types::TenantId::try_new(&snapshot.database.record.tenant_id)
+                        .map_err(|_| "invalid admitted tenant")?;
+                let lifecycle = snapshot
+                    .database
+                    .host
+                    .engine()
+                    .lifecycle_state(&snapshot.database.host.engine().scope_for(&tenant))
+                    .map_err(|_| "database lifecycle unavailable")?;
+                if !lifecycle.paused {
+                    continue;
+                }
+                self.resolve_native_backup_input_for_recovery(&database)?
+            };
+            inputs.push(input);
         }
         crate::production_backup::compose_native_backup(limits, inputs)
             .map_err(|error| error.to_string())
@@ -1052,6 +1081,25 @@ impl ProductionAdmissionRuntime {
         &self,
         database: &str,
     ) -> Result<crate::native_backup_runtime::NativeBackupInput, String> {
+        self.resolve_native_backup_input_with_mode(database, false)
+    }
+
+    /// Resolves a retained paused database for startup recovery. This path is
+    /// intentionally private to composition: a paused target has no public
+    /// read cut, but its durable owner, policy, keys, and placement still
+    /// require the same admission checks as an active stream.
+    fn resolve_native_backup_input_for_recovery(
+        &self,
+        database: &str,
+    ) -> Result<crate::native_backup_runtime::NativeBackupInput, String> {
+        self.resolve_native_backup_input_with_mode(database, true)
+    }
+
+    fn resolve_native_backup_input_with_mode(
+        &self,
+        database: &str,
+        allow_paused: bool,
+    ) -> Result<crate::native_backup_runtime::NativeBackupInput, String> {
         use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
         use terrabase::backup::worker::CustomerKmsBackupKeys;
         use terrabase::encryption::{
@@ -1061,17 +1109,35 @@ impl ProductionAdmissionRuntime {
             .registry
             .retained_snapshot()?
             .into_iter()
-            .find(|snapshot| snapshot.activated && snapshot.database.record.database_id == database)
-            .ok_or("database is not actively admitted")?;
-        let read_cut = snapshot
+            .find(|snapshot| snapshot.database.record.database_id == database)
+            .ok_or("database is not retained")?;
+        let tenant = terrabase::types::TenantId::try_new(&snapshot.database.record.tenant_id)
+            .map_err(|_| "invalid admitted tenant")?;
+        let lifecycle = snapshot
             .database
             .host
-            .engine_host()
-            .admitted_shard_read_cut()
-            .map_err(|_| "admitted shard inventory unavailable")?;
-        ensure_native_backup_shard_capture_supported(
-            read_cut.as_ref().and_then(|cut| cut.route_generation),
-        )?;
+            .engine()
+            .lifecycle_state(&snapshot.database.host.engine().scope_for(&tenant))
+            .map_err(|_| "database lifecycle unavailable")?;
+        if lifecycle.access_revoked() {
+            return Err("database access is revoked".into());
+        }
+        if snapshot.activated {
+            if lifecycle.paused {
+                return Err("active database lifecycle is paused".into());
+            }
+            let read_cut = snapshot
+                .database
+                .host
+                .engine_host()
+                .admitted_shard_read_cut()
+                .map_err(|_| "admitted shard inventory unavailable")?;
+            ensure_native_backup_shard_capture_supported(
+                read_cut.as_ref().and_then(|cut| cut.route_generation),
+            )?;
+        } else if !allow_paused || !lifecycle.paused {
+            return Err("database is not actively admitted".into());
+        }
         let record = self
             .admitted_records()?
             .into_iter()
@@ -1344,7 +1410,7 @@ impl ProductionAdmissionRuntime {
         expected_manifest_digest: &str,
         expected_journal_boundary: u64,
         restore_epoch: u64,
-    ) -> Result<terrabase::backup::RecoveryReceipt, String> {
+    ) -> Result<crate::native_recovery::NativeRestoreReceipt, String> {
         // The ProductionRestoreExecutor blocking owner retains this complete
         // workflow when the requesting future is cancelled.
         let record = self
@@ -1443,7 +1509,7 @@ impl ProductionAdmissionRuntime {
         expected_manifest_digest: &str,
         expected_journal_boundary: u64,
         restore_epoch: u64,
-    ) -> Result<terrabase::backup::RecoveryReceipt, String> {
+    ) -> Result<crate::native_recovery::NativeRestoreReceipt, String> {
         let reservation = self
             .registry
             .reserve_restore(target)?
@@ -1564,14 +1630,14 @@ impl ProductionAdmissionRuntime {
                     &identity,
                 )
                 .await
+                .map(|receipt| crate::native_backup_runtime::native_restore_receipt(&receipt))
         } else {
             backups
-                .restore_from_provider(
+                .restore_logical_from_provider(
                     source,
                     provider,
-                    point,
+                    point.ok_or("restore point is missing")?,
                     &target_config,
-                    operation_id,
                     &placement,
                     &identity,
                 )
@@ -1905,10 +1971,8 @@ impl ProductionAdmissionRuntime {
     }
 }
 
-/// Native fleet ticks capture one database stream at a time. A durable shard
-/// route needs the common-cut envelope caller, which is not part of startup
-/// composition yet; refusing admission keeps a sharded database from being
-/// advertised as protected while only its source participant is backed up.
+/// Keep routed streams fail-closed until the real production lifecycle test
+/// proves envelope capture and restore end-to-end.
 fn ensure_native_backup_shard_capture_supported(
     route_generation: Option<u64>,
 ) -> Result<(), String> {

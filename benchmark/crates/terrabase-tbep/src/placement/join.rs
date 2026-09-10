@@ -6,6 +6,7 @@ use prost::Message as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use rusqlite::{Connection, OptionalExtension as _, params};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 
 const MAX_ACCEPT_BYTES: usize = 256 * 1024;
 const MAX_JOIN_LIFETIME_MS: i64 = 300_000;
@@ -18,6 +19,18 @@ struct AcceptanceEnvelope {
     signature: String,
     #[serde(default)]
     join_checkpoint: Option<Signed>,
+}
+
+#[derive(Serialize)]
+struct Challenge<'a> {
+    schema_version: u32,
+    kind: &'static str,
+    scope_id: String,
+    member_identity: &'a str,
+    member_region: &'a str,
+    bootstrap_nonce: String,
+    proposal_revision: u64,
+    stage_proposal_digest: String,
 }
 
 pub(super) struct Acceptance {
@@ -105,7 +118,10 @@ pub(super) fn initialize(connection: &Connection) -> Result<(), PlacementError> 
         }
         let mut bytes = [0_u8; 32];
         SystemRandom::new().fill(&mut bytes).map_err(|_| PlacementError::Storage)?;
-        let nonce = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let mut nonce = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            let _ = write!(&mut nonce, "{byte:02x}");
+        }
         connection
             .execute("INSERT INTO placement_join_nonce VALUES(1,?1)", [nonce])
             .map_err(|_| PlacementError::Storage)?;
@@ -161,6 +177,12 @@ impl PlacementJournal {
     }
     /// Signs the fresh journal's random challenge only for a persisted local proposal.
     /// Its deterministic bytes remain stable for retries after acceptance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlacementError::Storage`] when the local proposal or nonce
+    /// cannot be read, and [`PlacementError::Invalid`] when the response does
+    /// not match the persisted proposal.
     pub fn sign_join_challenge(
         &self,
         response: &pb::PlacementProposalResponse,
@@ -184,17 +206,6 @@ impl PlacementJournal {
             .iter()
             .find(|region| region.members.contains(&self.boundary.member))
             .ok_or(PlacementError::Invalid)?;
-        #[derive(Serialize)]
-        struct Challenge<'a> {
-            schema_version: u32,
-            kind: &'static str,
-            scope_id: String,
-            member_identity: &'a str,
-            member_region: &'a str,
-            bootstrap_nonce: String,
-            proposal_revision: u64,
-            stage_proposal_digest: String,
-        }
         signer.sign_join_challenge(
             &identity,
             &serde_json::to_vec(&Challenge {
@@ -292,7 +303,6 @@ impl PlacementJournal {
     }
 
     pub(super) fn match_join(
-        &self,
         connection: &Connection,
         join: &VerifiedJoin,
         proof: &VerifiedProof,

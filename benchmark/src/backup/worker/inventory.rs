@@ -1,5 +1,10 @@
 //! Authenticated retained metadata is separate from the bounded archive cache.
-use super::*;
+use super::{
+    BackupReader, FleetError, FleetLimits, Provider, Stream, persist_upload_journal, point_paths,
+    staged_bytes,
+};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 pub(super) fn inventory_path(stream: &Stream) -> PathBuf {
     stream.config.staging.join(".inventory")

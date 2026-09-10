@@ -119,8 +119,28 @@ pub(crate) struct ReplicationPublicationIntent {
 }
 
 /// The validated, digest-bound request storage publishes for one transaction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CrossFileBilling {
+    pub(crate) operation: OperationId,
+    pub(crate) metering_participant: String,
+    pub(crate) participant: String,
+    pub(crate) total_write_units: u64,
+}
+
+/// The validated, digest-bound request storage publishes for one transaction.
 #[derive(Clone, Debug)]
 pub(crate) struct CommitIntent {
+    /// The exact metadata key added by automatic primary-file initialization.
+    /// Only this generated write has create-if-absent semantics; caller metadata
+    /// retains its ordinary snapshot conflict checks.
+    pub(crate) generated_primary_file_identity: Option<String>,
+    /// Present only for exact coordinated prepare/install, never ordinary commits.
+    pub(crate) cross_file_billing: Option<CrossFileBilling>,
+    /// Exact coordinator-only metadata authorization; never customer admission.
+    pub(crate) cross_file_control: Option<OperationId>,
+    /// Verified physical-owner prefixes required by this coordinated publication.
+    /// These are dependencies, not evidence that this file has applied those rows.
+    pub(crate) cross_file_dependencies: Option<Vec<u8>>,
     /// The tenant whose data the write set touches.
     pub(crate) tenant: TenantId,
     /// The caller-supplied stable operation identity.
@@ -160,6 +180,47 @@ pub(crate) struct CommitIntent {
     pub(crate) metadata: Vec<PrivateMetadataWrite>,
     /// Schema envelopes atomically bound to their active validation controls.
     pub(crate) schema_envelopes: Vec<SchemaEnvelopeWrite>,
+}
+
+impl CommitIntent {
+    /// Validates the bounded marker and its exact canonical metadata payload.
+    pub(crate) fn validated_generated_identity(
+        &self,
+    ) -> Result<Option<crate::shard_split::FileShardIdentity>, ()> {
+        let Some(key) = &self.generated_primary_file_identity else { return Ok(None) };
+        if key.len() > 4096
+            || self.writes.is_empty()
+            || self.cross_file_control.is_some()
+            || self.replication_publication.is_some()
+            || self.replication_fingerprint.is_some()
+            || self.writes.iter().any(|write| {
+                matches!(
+                    write,
+                    StagedWrite::ReplicatedPut { .. } | StagedWrite::ReplicatedDelete { .. }
+                )
+            })
+        {
+            return Err(());
+        }
+        let mut matching = self.metadata.iter().filter(|write| &write.key == key);
+        let write = matching.next().ok_or(())?;
+        if matching.next().is_some() {
+            return Err(());
+        }
+        let Some(crate::types::DocumentValue::String(value)) = &write.value else { return Err(()) };
+        if value.len() != 88 {
+            return Err(());
+        }
+        let bytes = hex::decode(value).map_err(|_| ())?;
+        let identity = crate::engine::shard_split::decode_file_identity(&bytes).map_err(|_| ())?;
+        if identity.shard_id != 1
+            || *key != crate::engine::shard_split::file_shard_key(identity.database_incarnation)
+            || *value != hex::encode(crate::engine::shard_split::encode_file_identity(identity))
+        {
+            return Err(());
+        }
+        Ok(Some(identity))
+    }
 }
 
 /// The storage-side view of one local commit receipt.

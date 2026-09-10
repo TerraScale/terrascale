@@ -33,7 +33,7 @@ pub(crate) enum SplitStep {
 
 /// Failure while driving the real engine split path.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum SplitSupervisorError<OE> {
+pub enum SplitSupervisorError<OE> {
     /// The generic runtime rejected lifecycle, placement, or route work.
     Runtime(SplitRuntimeError<RouteCatalogError, EngineError, RouteCatalogError, OE>),
     /// The engine journal could not provide a complete bounded tail page.
@@ -71,13 +71,11 @@ where
         orchestrator: O,
         router: ShardRouter,
     ) -> Result<Self, SplitSupervisorError<O::Error>> {
-        let adapter = ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
-            .map_err(|_| SplitSupervisorError::MissingRoute)?;
+        let adapter = ScopedShardEngine::new(Arc::clone(&engine), scope.clone());
         let context = split.context().ok_or(SplitSupervisorError::MissingRoute)?;
         let mut runtime = SplitRuntime::new(adapter, orchestrator, router);
         runtime.admit(split).map_err(SplitSupervisorError::Runtime)?;
         let target = ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
-            .map_err(|_| SplitSupervisorError::MissingRoute)?
             .open_existing_target(&context)
             .map_err(SplitSupervisorError::TargetOpen)?;
         let source = ScopedShardRangeSource::new(Arc::clone(&engine), &scope)
@@ -105,8 +103,7 @@ where
         orchestrator: O,
         router: ShardRouter,
     ) -> Result<Option<Self>, SplitSupervisorError<O::Error>> {
-        let adapter = ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
-            .map_err(|_| SplitSupervisorError::MissingRoute)?;
+        let adapter = ScopedShardEngine::new(Arc::clone(&engine), scope.clone());
         let mut runtime = SplitRuntime::new(adapter, orchestrator, router);
         if !runtime.resume().map_err(SplitSupervisorError::Runtime)? {
             return Ok(None);
@@ -114,7 +111,6 @@ where
         let split = runtime.split().expect("resumed split");
         let context = split.context().ok_or(SplitSupervisorError::MissingRoute)?;
         let target = ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
-            .map_err(|_| SplitSupervisorError::MissingRoute)?
             .open_existing_target(&context)
             .map_err(SplitSupervisorError::TargetOpen)?;
         let source = ScopedShardRangeSource::new(Arc::clone(&engine), &scope)
@@ -225,7 +221,6 @@ where
                 .and_then(ShardSplit::context)
                 .ok_or(SplitSupervisorError::MissingRoute)?;
             ScopedShardEngine::new(Arc::clone(&self.engine), self.scope.clone())
-                .map_err(|_| SplitSupervisorError::MissingRoute)?
                 .prepare_split_verification(&context, high)
                 .map_err(|error| SplitSupervisorError::Runtime(SplitRuntimeError::Data(error)))?;
             // Each attempt obtains a fresh permit. The engine's exclusive

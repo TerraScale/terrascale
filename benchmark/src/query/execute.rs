@@ -930,6 +930,12 @@ fn pushdown_fields(filter: &ScanFilter) -> Vec<&str> {
 /// ever narrows.
 pub(crate) fn pushdown_filter(predicate: &super::spec::QueryPredicate) -> Option<ScanFilter> {
     fn push(conditions: &mut Vec<ScanCondition>, field: &str, op: ScanOp, value: &DocumentValue) {
+        // Identity columns resolve from the document envelope in the
+        // executor; storage's extracted columns are body fields, so pushing
+        // one would be an unsound narrowing, not a cache of the same rule.
+        if field == "id" || field == "_id" {
+            return;
+        }
         if matches!(
             value,
             DocumentValue::String(_) | DocumentValue::Integer(_) | DocumentValue::Number(_)
@@ -1189,7 +1195,7 @@ fn fallback_score(document: &Document, predicate: &super::spec::QueryPredicate) 
         let QueryCondition::Search { field, query, match_any } = condition else { continue };
         let parsed = super::parse_search_query(query, *match_any);
         let mut terms = Vec::new();
-        match model::field_of(document, field) {
+        match model::field_of(document, field).as_deref() {
             Some(DocumentValue::String(text)) => {
                 terms.extend(super::standard_terms(text));
             }
@@ -1307,7 +1313,8 @@ fn resolve_references(
     let mut pending = BTreeSet::new();
     for document in rows {
         for load in query.loads() {
-            if let Some(DocumentValue::String(reference)) = model::field_of(document, load.field())
+            if let Some(DocumentValue::String(reference)) =
+                model::field_of(document, load.field()).as_deref()
                 && !reference.is_empty()
             {
                 pending.insert(reference.clone());
@@ -1470,7 +1477,7 @@ fn resolve_loads<'a>(
     shapes
         .iter()
         .map(|shape| {
-            let referenced = match model::field_of(document, shape.field.as_str()) {
+            let referenced = match model::field_of(document, shape.field.as_str()).as_deref() {
                 Some(DocumentValue::String(id)) => by_id.get(id.as_str()).copied(),
                 _ => None,
             };
@@ -1514,7 +1521,7 @@ fn project(
                 .and_then(|outputs| outputs.get(index))
                 .map_or(name.as_str(), String::as_str);
             let metadata = match name.as_str() {
-                "_id" => Some(DocumentValue::String(document.id().as_str().to_owned())),
+                "_id" | "id" => Some(DocumentValue::String(document.id().as_str().to_owned())),
                 "_rev" => Some(DocumentValue::Integer(
                     i64::try_from(document.metadata().version()).unwrap_or(i64::MAX),
                 )),

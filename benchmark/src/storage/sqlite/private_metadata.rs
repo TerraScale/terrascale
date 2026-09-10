@@ -6,6 +6,57 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
+/// Checks a generated marker against Engine's independently admitted owner/lane.
+pub(super) fn validate_primary_identity<'a>(
+    intent: &'a crate::storage::CommitIntent,
+    admitted: Option<&PrivateMetadataWrite>,
+) -> Result<Option<&'a PrivateMetadataWrite>, crate::storage::CommitRejection> {
+    use crate::storage::CommitRejection;
+    let Some(_) =
+        intent.validated_generated_identity().map_err(|()| CommitRejection::Validation)?
+    else {
+        return Ok(None);
+    };
+    let key = intent.generated_primary_file_identity.as_ref().ok_or(CommitRejection::Validation)?;
+    let generated = intent
+        .metadata
+        .iter()
+        .find(|write| &write.key == key)
+        .ok_or(CommitRejection::Validation)?;
+    let admitted = admitted.ok_or(CommitRejection::Conflict)?;
+    if generated.key != admitted.key || generated.value != admitted.value {
+        return Err(CommitRejection::Conflict);
+    }
+    Ok(Some(generated))
+}
+
+/// Resolves validated generated initialization under the same writer transaction
+/// as customer OCC and publication. Unmarked metadata never takes this path.
+pub(super) fn initialize_primary_identity<'a>(
+    connection: &Connection,
+    intent: &'a crate::storage::CommitIntent,
+    generated: Option<&PrivateMetadataWrite>,
+) -> Result<std::borrow::Cow<'a, crate::storage::CommitIntent>, crate::storage::CommitRejection> {
+    use crate::storage::CommitRejection;
+    let Some(generated) = generated else { return Ok(std::borrow::Cow::Borrowed(intent)) };
+    let key = &generated.key;
+    let current: Option<Option<Vec<u8>>> = connection.query_row(
+        "SELECT value FROM family_metadata WHERE tenant=?1 AND record_key=?2 ORDER BY seq DESC LIMIT 1",
+        params![intent.tenant.as_str(), key], |row| row.get(0),
+    ).optional().map_err(|_| CommitRejection::Storage)?;
+    let Some(current) = current else { return Ok(std::borrow::Cow::Borrowed(intent)) };
+    let Some(current) = current else { return Err(CommitRejection::Conflict) };
+    let current = codec::decode_private_value(&current).ok_or(CommitRejection::Storage)?;
+    let expected = generated.value.as_ref().ok_or(CommitRejection::Validation)?;
+    if &current != expected {
+        return Err(CommitRejection::Conflict);
+    }
+    let mut initialized = intent.clone();
+    initialized.metadata.retain(|write| &write.key != key);
+    initialized.generated_primary_file_identity = None;
+    Ok(std::borrow::Cow::Owned(initialized))
+}
+
 pub(super) fn read_private_metadata_on(
     connection: &Connection,
     tenant: &TenantId,

@@ -1,0 +1,1 @@
+copied staged regression module to path declared by query/mod.rs

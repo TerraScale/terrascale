@@ -26,6 +26,17 @@ pub struct Signed {
     pub signature: String,
 }
 
+#[derive(Serialize)]
+struct FencedReceipt<'a> {
+    kind: &'static str,
+    member_identity: &'a str,
+    scope_id: &'a str,
+    prior_epoch: u64,
+    prior_generation: u64,
+    request_digest: &'a str,
+    frontier_digest: &'a str,
+}
+
 /// Signs the existing member fence receipt envelope for an admitted transition.
 /// The key is provisioned by the host and the domain is distinct from readiness
 /// receipts; callers must supply measured durable frontier evidence.
@@ -55,6 +66,9 @@ impl TransitionReceiptSigner {
         .map_err(|_| PlacementError::Storage)
     }
     /// Loads a dedicated member receipt key from PKCS#8 bytes.
+    ///
+    /// # Errors
+    /// Returns [`PlacementError::Invalid`] for an invalid key identifier, size, or encoding.
     pub fn from_pkcs8(key_id: String, der: &[u8]) -> Result<Self, PlacementError> {
         if !token(&key_id) || der.len() > 16 * 1024 {
             return Err(PlacementError::Invalid);
@@ -66,6 +80,9 @@ impl TransitionReceiptSigner {
 
     /// Signs the canonical `old_epoch_drained_fenced` receipt consumed by the
     /// transition verifier. `frontier_digest` must cover measured final data.
+    ///
+    /// # Errors
+    /// Returns an invalid member identity or frontier digest, or a receipt serialization error.
     pub fn sign_old_epoch_fenced(
         &self,
         prepared: &VerifiedPreparedTransition,
@@ -76,17 +93,7 @@ impl TransitionReceiptSigner {
         {
             return Err(PlacementError::Invalid);
         }
-        #[derive(Serialize)]
-        struct Receipt<'a> {
-            kind: &'static str,
-            member_identity: &'a str,
-            scope_id: &'a str,
-            prior_epoch: u64,
-            prior_generation: u64,
-            request_digest: &'a str,
-            frontier_digest: &'a str,
-        }
-        let payload = serde_json::to_vec(&Receipt {
+        let payload = serde_json::to_vec(&FencedReceipt {
             kind: "old_epoch_drained_fenced",
             member_identity,
             scope_id: prepared.scope_id(),
@@ -192,6 +199,54 @@ pub struct TransitionTrust {
     members: BTreeMap<String, Vec<u8>>,
 }
 
+fn decode_signed_proof(encoded: &[u8]) -> Result<Signed, PlacementError> {
+    if encoded.len() > MAX_PROOF_BYTES {
+        return Err(PlacementError::Invalid);
+    }
+    let signed: Signed = serde_json::from_slice(encoded).map_err(|_| PlacementError::Invalid)?;
+    Ok(signed)
+}
+
+fn validate_accepted_proof(proof: Proof) -> Result<Proof, PlacementError> {
+    if proof.schema_version != 1
+        || proof.kind != "accepted_epoch"
+        || proof.authority_epoch == 0
+        || proof.journal_revision == 0
+        || !token(&proof.lease_id)
+        || proof.request.epoch <= proof.request.prior_epoch
+        || proof.request.generation == 0
+        || !token(&proof.request.operation_id)
+        || !token(&proof.request.scope_id)
+        || proof.request.members.len() < 2
+        || proof.request.members.len() > 40
+        || proof.request_digest
+            != hash(&serde_json::to_vec(&proof.request).map_err(|_| PlacementError::Invalid)?)
+    {
+        return Err(PlacementError::Invalid);
+    }
+    Ok(proof)
+}
+
+fn accepted_member_keys(proof: &Proof) -> Result<BTreeMap<String, Vec<u8>>, PlacementError> {
+    let mut regions: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut previous: Option<&str> = None;
+    for member in &proof.request.members {
+        if !token(&member.identity)
+            || !valid_hash(&member.placement_digest)
+            || !matches!(member.region.as_str(), "GRU" | "SFO" | "FRA")
+            || previous.is_some_and(|old| old >= member.identity.as_str())
+        {
+            return Err(PlacementError::Invalid);
+        }
+        previous = Some(&member.identity);
+        *regions.entry(&member.region).or_default() += 1;
+    }
+    if regions.values().any(|count| *count != 2) {
+        return Err(PlacementError::Invalid);
+    }
+    admitted_member_keys(proof)
+}
+
 impl TransitionTrust {
     /// Verifies and strictly decodes a signed lifecycle operation grant.
     pub(super) fn verify_lifecycle_grant(
@@ -271,46 +326,12 @@ impl TransitionTrust {
         prior: Option<&VerifiedProof>,
         checkpoint_attested: bool,
     ) -> Result<VerifiedProof, PlacementError> {
-        if encoded.len() > MAX_PROOF_BYTES {
-            return Err(PlacementError::Invalid);
-        }
-        let signed: Signed =
-            serde_json::from_slice(encoded).map_err(|_| PlacementError::Invalid)?;
+        let signed = decode_signed_proof(encoded)?;
         let payload = verify(&signed, &self.authority)?;
-        let proof: Proof = serde_json::from_slice(&payload).map_err(|_| PlacementError::Invalid)?;
-        if proof.schema_version != 1
-            || proof.kind != "accepted_epoch"
-            || proof.authority_epoch == 0
-            || proof.journal_revision == 0
-            || !token(&proof.lease_id)
-            || proof.request.epoch <= proof.request.prior_epoch
-            || proof.request.generation == 0
-            || !token(&proof.request.operation_id)
-            || !token(&proof.request.scope_id)
-            || proof.request.members.len() < 2
-            || proof.request.members.len() > 40
-            || proof.request_digest
-                != hash(&serde_json::to_vec(&proof.request).map_err(|_| PlacementError::Invalid)?)
-        {
-            return Err(PlacementError::Invalid);
-        }
-        let mut regions: BTreeMap<&str, usize> = BTreeMap::new();
-        let mut previous: Option<&str> = None;
-        for member in &proof.request.members {
-            if !token(&member.identity)
-                || !valid_hash(&member.placement_digest)
-                || !matches!(member.region.as_str(), "GRU" | "SFO" | "FRA")
-                || previous.is_some_and(|old| old >= member.identity.as_str())
-            {
-                return Err(PlacementError::Invalid);
-            }
-            previous = Some(&member.identity);
-            *regions.entry(&member.region).or_default() += 1;
-        }
-        if regions.values().any(|count| *count != 2) {
-            return Err(PlacementError::Invalid);
-        }
-        let member_keys = admitted_member_keys(&proof)?;
+        let proof = validate_accepted_proof(
+            serde_json::from_slice(&payload).map_err(|_| PlacementError::Invalid)?,
+        )?;
+        let member_keys = accepted_member_keys(&proof)?;
         if checkpoint_attested {
             if member_keys.is_empty() {
                 return Err(PlacementError::Invalid);
@@ -322,6 +343,15 @@ impl TransitionTrust {
                 member_keys,
             });
         }
+        let fences = self.verify_predecessor_fences(&proof, prior)?;
+        Ok(VerifiedProof { proof, digest: hash(&payload), fences, member_keys })
+    }
+
+    fn verify_predecessor_fences(
+        &self,
+        proof: &Proof,
+        prior: Option<&VerifiedProof>,
+    ) -> Result<Vec<FenceReceipt>, PlacementError> {
         // A successor may not substitute its own keys for old-epoch fences.
         // Only the retained predecessor's signed inventory can extend the
         // startup pins. Reconstructing the chain repeats this verification.
@@ -379,7 +409,7 @@ impl TransitionTrust {
                 return Err(PlacementError::Invalid);
             }
         }
-        Ok(VerifiedProof { proof, digest: hash(&payload), fences, member_keys })
+        Ok(fences)
     }
 
     /// Verifies an authority-signed prepared transition against the exact

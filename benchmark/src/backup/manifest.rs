@@ -387,6 +387,11 @@ impl BackupManifest {
     }
 
     /// Verifies every archive member against this manifest before restore.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ChecksumMismatch`] when a member is missing or
+    /// does not match its authenticated length and digest.
     pub fn verify(&self, destination: &std::path::Path) -> Result<(), BackupError> {
         super::verify_members(destination, &self.identity, &self.members)
     }

@@ -64,28 +64,7 @@ fn source_file_rejects_moved_and_cross_collection_tokens_after_cutover() {
         )
         .unwrap();
 
-    let through = engine.published_sequence().unwrap().get();
-    split.begin_backfill().unwrap();
-    split.begin_catch_up(through).unwrap();
-    split.note_source_high_water(through);
-    split.note_acked(through);
-    split.note_target_applied(through);
-    let mut fence = WriterFence::new();
-    fence.begin_drain(through).unwrap();
-    let permit = fence.try_fence(through).unwrap();
-    engine
-        .install_shard_split_route(
-            &scope,
-            &CutoverContext {
-                split: context,
-                route_generation: 0,
-                drained_through: through,
-                permit,
-            },
-            &split.durable_state(),
-            operation("admission-cutover"),
-        )
-        .unwrap();
+    let _fence = commit_admission_cutover(&engine, &scope, &mut split, context);
     assert!(
         matches!(
             in_flight.commit(LocalDurability::Synced),
@@ -124,4 +103,35 @@ fn source_file_rejects_moved_and_cross_collection_tokens_after_cutover() {
     assert!(matches!(tx.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
     drop(engine);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+fn commit_admission_cutover(
+    engine: &Engine,
+    scope: &crate::types::TenantScope,
+    split: &mut ShardSplit,
+    context: SplitContext,
+) -> WriterFence {
+    let through = engine.published_sequence().unwrap().get();
+    split.begin_backfill().unwrap();
+    split.begin_catch_up(through).unwrap();
+    split.note_source_high_water(through);
+    split.note_acked(through);
+    split.note_target_applied(through);
+    let mut fence = WriterFence::new();
+    fence.begin_drain(through).unwrap();
+    let permit = fence.try_fence(through).unwrap();
+    engine
+        .install_shard_split_route(
+            scope,
+            &CutoverContext {
+                split: context,
+                route_generation: 0,
+                drained_through: through,
+                permit,
+            },
+            &split.durable_state(),
+            operation("admission-cutover"),
+        )
+        .unwrap();
+    fence
 }

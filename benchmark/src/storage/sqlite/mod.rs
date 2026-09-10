@@ -96,6 +96,7 @@ pub(crate) mod branch_provenance;
 mod budget;
 #[cfg(test)]
 mod causal_frontier_tests;
+mod cross_file;
 mod descriptor_removal;
 pub(super) mod encrypted_file;
 pub(super) mod encrypted_vfs;
@@ -1529,6 +1530,7 @@ fn validate_database_binding(
 
 /// The `SQLite` storage engine behind [`StoragePort`].
 pub(crate) struct SqliteStorage {
+    generated_primary_identity: Arc<std::sync::OnceLock<super::PrivateMetadataWrite>>,
     local_origin: String,
     encryption: Option<Arc<encrypted_vfs::EncryptedVfs>>,
     /// The location's database path, kept for pool overflow opens.
@@ -1650,6 +1652,7 @@ struct CommitRequest {
 /// Immutable state the committer needs while owning the writer lock.
 #[derive(Clone)]
 struct CommitContext {
+    generated_primary_identity: Arc<std::sync::OnceLock<super::PrivateMetadataWrite>>,
     local_origin: String,
     extracted: Arc<Mutex<ExtractedState>>,
     fts: Arc<Mutex<FtsState>>,
@@ -1938,102 +1941,120 @@ impl SqliteStorage {
             }
         }
         configure_connection(&writer)?;
-        {
-            let transaction = writer.transaction().map_err(|_| StorageOpenError::Unavailable)?;
-            let has_pruning_watermarks: bool = transaction.query_row(
+        // A prepared file resumes the exact admitted state. Reconciliation and
+        // migrations must not mutate its validator dependencies before recovery.
+        let resuming_cross_file =
+            cross_file::reserved_on(&writer).map_err(|_| StorageOpenError::Unavailable)?;
+        if !resuming_cross_file {
+            {
+                let transaction =
+                    writer.transaction().map_err(|_| StorageOpenError::Unavailable)?;
+                let has_pruning_watermarks: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'journal_pruning')",
                 [], |row| row.get(0),
             ).map_err(|_| StorageOpenError::Unavailable)?;
-            transaction.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
-            // Native backup is process owned. A previous member process may
-            // have exited without retiring its stream, so never let its
-            // durable lease pin pruning for a newly opened database.
-            transaction
-                .execute("DELETE FROM consumer_frontiers WHERE name = 'native-backup'", [])
-                .map_err(|_| StorageOpenError::Unavailable)?;
-            for name in REQUIRED_CONSUMER_FRONTIERS {
+                transaction.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
+                // Native backup is process owned. A previous member process may
+                // have exited without retiring its stream, so never let its
+                // durable lease pin pruning for a newly opened database.
                 transaction
-                    .execute(
-                        "INSERT OR IGNORE INTO consumer_frontiers(name, seq) VALUES (?1, 0)",
-                        [*name],
-                    )
+                    .execute("DELETE FROM consumer_frontiers WHERE name = 'native-backup'", [])
                     .map_err(|_| StorageOpenError::Unavailable)?;
-            }
-            repair_summary::initialize(&transaction).map_err(|_| StorageOpenError::Unavailable)?;
-            if !has_pruning_watermarks {
-                // Legacy files have no exact deletion evidence. Refuse the
-                // potentially pruned prefix rather than infer completeness
-                // from retained rows (which can have legitimate holes).
-                transaction
-                    .execute(
-                        "INSERT INTO journal_pruning (tenant, pruned_through)
+                for name in REQUIRED_CONSUMER_FRONTIERS {
+                    transaction
+                        .execute(
+                            "INSERT OR IGNORE INTO consumer_frontiers(name, seq) VALUES (?1, 0)",
+                            [*name],
+                        )
+                        .map_err(|_| StorageOpenError::Unavailable)?;
+                }
+                repair_summary::initialize(&transaction)
+                    .map_err(|_| StorageOpenError::Unavailable)?;
+                if !has_pruning_watermarks {
+                    // Legacy files have no exact deletion evidence. Refuse the
+                    // potentially pruned prefix rather than infer completeness
+                    // from retained rows (which can have legitimate holes).
+                    transaction
+                        .execute(
+                            "INSERT INTO journal_pruning (tenant, pruned_through)
                      SELECT tenant, frontier - 1 FROM
                        (SELECT tenant FROM documents UNION SELECT tenant FROM origin_prefixes)
                      CROSS JOIN (SELECT MAX(seq) AS frontier FROM consumer_frontiers)
                      WHERE frontier > 1",
-                        [],
-                    )
-                    .map_err(|_| StorageOpenError::Unavailable)?;
+                            [],
+                        )
+                        .map_err(|_| StorageOpenError::Unavailable)?;
+                }
+                transaction.commit().map_err(|_| StorageOpenError::Unavailable)?;
             }
-            transaction.commit().map_err(|_| StorageOpenError::Unavailable)?;
+            migrate_fts_keys(&mut writer).map_err(|()| StorageOpenError::Unavailable)?;
+            writer
+                .execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, ?2)",
+                    rusqlite::params![SCHEMA_BINDING_KEY, expected_binding],
+                )
+                .map_err(|_| StorageOpenError::Unavailable)?;
+            migrate_documents_provenance(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            let local_origin =
+                origin.map_or_else(|| local_origin_for(&database_path), str::to_owned);
+            writer
+                .execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES ('local_origin', ?1)",
+                    [&local_origin],
+                )
+                .map_err(|_| StorageOpenError::Unavailable)?;
+            let local_origin = writer
+                .query_row("SELECT value FROM meta WHERE key = 'local_origin'", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(|_| StorageOpenError::Unavailable)?;
+            if origin.is_some_and(|expected| expected != local_origin) {
+                return Err(StorageOpenError::Unavailable);
+            }
+            migrate_documents_origin_sequence(&mut writer, &local_origin)
+                .map_err(|()| StorageOpenError::Unavailable)?;
+            migrate_documents_context(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            migrate_documents_idempotency(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            migrate_documents_row_aliases(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            {
+                let transaction =
+                    writer.transaction().map_err(|_| StorageOpenError::Unavailable)?;
+                initialize_causal_frontiers(&transaction)
+                    .map_err(|_| StorageOpenError::Unavailable)?;
+                transaction.commit().map_err(|_| StorageOpenError::Unavailable)?;
+            }
+            storage_closure::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            accounting::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            storage_intervals::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            migrate_operation_facts(&mut writer).map_err(|()| StorageOpenError::Unavailable)?;
+            validate_operation_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            // The SQLite schema is authoritative; the metadata table carries only
+            // runtime state, never a backend selector.
+            writer
+                .execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES ('root_head', ?1)",
+                    [INITIAL_ROOT_HEAD],
+                )
+                .map_err(|_| StorageOpenError::Unavailable)?;
+            // Usage-counter reconciliation (D-42): the counter is a cache of
+            // the journal, never an independent source of truth. On open, a
+            // counter whose high-water trails the folded rows — or no counter
+            // at all — is recomputed from the journal itself, so a torn WAL
+            // tail or a lost wave leaves the counter honest.
+            reconcile_usage_counters(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+            // E-9 per-database metering facts reconcile the same way: the table
+            // is a cache of the folded rows, so a torn wave or a lost counter
+            // row is rebuilt from the journal on open.
+            reconcile_metering_db_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         }
-        migrate_fts_keys(&mut writer).map_err(|()| StorageOpenError::Unavailable)?;
-        writer
-            .execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, ?2)",
-                rusqlite::params![SCHEMA_BINDING_KEY, expected_binding],
-            )
-            .map_err(|_| StorageOpenError::Unavailable)?;
-        migrate_documents_provenance(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        let local_origin = origin.map_or_else(|| local_origin_for(&database_path), str::to_owned);
-        writer
-            .execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES ('local_origin', ?1)",
-                [&local_origin],
-            )
-            .map_err(|_| StorageOpenError::Unavailable)?;
-        let local_origin = writer
-            .query_row("SELECT value FROM meta WHERE key = 'local_origin'", [], |row| {
-                row.get::<_, String>(0)
-            })
+        let local_origin: String = writer
+            .query_row("SELECT value FROM meta WHERE key='local_origin'", [], |row| row.get(0))
             .map_err(|_| StorageOpenError::Unavailable)?;
         if origin.is_some_and(|expected| expected != local_origin) {
             return Err(StorageOpenError::Unavailable);
         }
-        migrate_documents_origin_sequence(&mut writer, &local_origin)
-            .map_err(|()| StorageOpenError::Unavailable)?;
-        migrate_documents_context(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        migrate_documents_idempotency(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        migrate_documents_row_aliases(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        {
-            let transaction = writer.transaction().map_err(|_| StorageOpenError::Unavailable)?;
-            initialize_causal_frontiers(&transaction).map_err(|_| StorageOpenError::Unavailable)?;
-            transaction.commit().map_err(|_| StorageOpenError::Unavailable)?;
-        }
-        storage_closure::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        accounting::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        storage_intervals::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        migrate_operation_facts(&mut writer).map_err(|()| StorageOpenError::Unavailable)?;
-        validate_operation_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        // The SQLite schema is authoritative; the metadata table carries only
-        // runtime state, never a backend selector.
-        writer
-            .execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES ('root_head', ?1)",
-                [INITIAL_ROOT_HEAD],
-            )
-            .map_err(|_| StorageOpenError::Unavailable)?;
-        // Usage-counter reconciliation (D-42): the counter is a cache of
-        // the journal, never an independent source of truth. On open, a
-        // counter whose high-water trails the folded rows — or no counter
-        // at all — is recomputed from the journal itself, so a torn WAL
-        // tail or a lost wave leaves the counter honest.
-        reconcile_usage_counters(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        // E-9 per-database metering facts reconcile the same way: the table
-        // is a cache of the folded rows, so a torn wave or a lost counter
-        // row is rebuilt from the journal on open.
-        reconcile_metering_db_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        cross_file::install_guards(&writer).map_err(|_| StorageOpenError::Unavailable)?;
         let mut readers = ReaderPool::new(rss_budget_bytes());
         for _ in 0..READ_POOL_WIDTH {
             let connection =
@@ -2050,7 +2071,9 @@ impl SqliteStorage {
         let fts = Arc::new(Mutex::new(fts));
         #[cfg(test)]
         let faults = Arc::new(Mutex::new(FaultPlan::empty()));
+        let generated_primary_identity = Arc::new(std::sync::OnceLock::new());
         let context = CommitContext {
+            generated_primary_identity: Arc::clone(&generated_primary_identity),
             local_origin: local_origin.clone(),
             extracted: Arc::clone(&extracted),
             fts: Arc::clone(&fts),
@@ -2068,6 +2091,7 @@ impl SqliteStorage {
         )?;
         let committer = spawn_committer(Arc::clone(&writer), context, checkpointer.wake.clone())?;
         Ok(Self {
+            generated_primary_identity,
             local_origin,
             encryption,
             database_path,
@@ -2084,6 +2108,22 @@ impl SqliteStorage {
             #[cfg(test)]
             faults,
         })
+    }
+
+    /// Binds generated bookkeeping to the owner and lane admitted by Engine.
+    /// Raw storage has no such authority; marked initialization fails closed.
+    pub(crate) fn bind_generated_primary_identity(
+        &mut self,
+        identity: crate::shard_split::FileShardIdentity,
+    ) -> Result<(), ()> {
+        let bytes = crate::engine::shard_split::encode_file_identity(identity);
+        crate::engine::shard_split::decode_file_identity(&bytes).map_err(|_| ())?;
+        self.generated_primary_identity
+            .set(super::PrivateMetadataWrite {
+                key: crate::engine::shard_split::file_shard_key(identity.database_incarnation),
+                value: Some(crate::types::DocumentValue::String(hex::encode(bytes))),
+            })
+            .map_err(|_| ())
     }
 
     /// Checks out one read connection, opening a fresh one when the pool is
@@ -2388,6 +2428,18 @@ impl CommitContext {
     ) -> Result<Vec<CommitResult>, ()> {
         let transaction =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
+        let results = self.stage_transaction(&transaction, intents, None)?;
+        transaction.commit().map_err(|_| ())?;
+        Ok(results)
+    }
+
+    fn stage_transaction(
+        &self,
+        transaction: &rusqlite::Transaction<'_>,
+        intents: &[CommitIntent],
+        prepared: Option<(&super::ParticipantIdentity, bool)>,
+    ) -> Result<Vec<CommitResult>, ()> {
+        cross_file::authorize(transaction, intents, prepared, &self.local_origin)?;
         let accounting_now = accounting::begin_change(&transaction, unix_millis().max(0) as u64)?;
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
         let mut watermark = durable_watermark(&transaction)?;
@@ -2460,12 +2512,14 @@ impl CommitContext {
                 &mut observed_origin_epoch,
                 intent,
                 &self.local_origin,
+                self.generated_primary_identity.get(),
                 &fields,
                 &put_sql,
                 &descriptors,
                 &fts_descriptors,
                 &ttl_fields,
                 &merge_schemas,
+                prepared,
             )?);
         }
         // The wave's usage counter flush: one write per wave, never per
@@ -2509,7 +2563,7 @@ impl CommitContext {
                 return Err(());
             }
         }
-        transaction.commit().map_err(|_| ())?;
+        cross_file::clear_authorization(transaction)?;
         Ok(results.into_iter().map(Option::unwrap).collect())
     }
 }
@@ -2530,13 +2584,21 @@ fn stage_intent(
     observed_origin_epoch: &mut Option<(u64, bool)>,
     intent: &CommitIntent,
     local_origin: &str,
+    generated_primary_identity: Option<&super::PrivateMetadataWrite>,
     extracted_fields: &[String],
     put_insert_sql: &str,
     descriptors: &std::collections::BTreeMap<(String, String), bool>,
     fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
     ttl_fields: &std::collections::BTreeMap<String, Option<String>>,
     merge_schemas: &std::collections::BTreeMap<String, String>,
+    cross_file_admission: Option<(&super::ParticipantIdentity, bool)>,
 ) -> Result<CommitResult, ()> {
+    let prepared = cross_file_admission.is_some_and(|(_, installing)| installing);
+    let metering_only = cross_file_admission.is_some()
+        && intent
+            .cross_file_billing
+            .as_ref()
+            .is_some_and(|b| b.participant == b.metering_participant && b.total_write_units > 0);
     if let Some(expected) = intent.expected_origin_epoch {
         let (epoch, closed) = if let Some(observed) = *observed_origin_epoch {
             observed
@@ -2553,19 +2615,25 @@ fn stage_intent(
     if (intent.writes.is_empty()
         && intent.metadata.is_empty()
         && intent.schema_envelopes.is_empty()
-        && intent.replication_publication.is_none())
+        && intent.replication_publication.is_none()
+        && !metering_only)
         || codec::staged_writes_have_duplicate_targets(&intent.writes)
         || !private_metadata::valid_metadata(&intent.metadata)
         || !private_metadata::valid_envelopes(&intent.schema_envelopes)
     {
         return Ok(CommitResult::Rejected(CommitRejection::Validation));
     }
+    let generated_identity =
+        match private_metadata::validate_primary_identity(intent, generated_primary_identity) {
+            Ok(generated) => generated,
+            Err(reason) => return Ok(CommitResult::Rejected(reason)),
+        };
     // An admitted mutation must be locally synced: its billable fact is
     // bound to this transaction's durable sequence. The admission identity
     // is also the operation identity, so retries can verify the exact fact
     // instead of minting a second one.
     let admitted_fact = if let Some(admission) = &intent.usage_admission {
-        if intent.writes.is_empty()
+        if (intent.writes.is_empty() && !metering_only)
             || intent.durability != LocalDurability::Synced
             || admission.request_id().as_str() != intent.operation.as_str()
         {
@@ -2624,10 +2692,6 @@ fn stage_intent(
                 return Ok(CommitResult::Rejected(CommitRejection::Storage));
             }
         } else if entry.digest != intent.digest {
-            eprintln!(
-                "operation digest mismatch op={} stored={} incoming={}",
-                intent.operation, entry.digest, intent.digest
-            );
             return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
         }
         if entry.rejection.is_none()
@@ -2672,16 +2736,34 @@ fn stage_intent(
             durability: entry.requested,
         }));
     }
+    let initialized = match private_metadata::initialize_primary_identity(
+        transaction,
+        intent,
+        generated_identity,
+    ) {
+        Ok(initialized) => initialized,
+        Err(reason) => return Ok(CommitResult::Rejected(reason)),
+    };
+    let intent = initialized.as_ref();
     // The uniform-cut guard must run inside this exact writer transaction:
     // later intents in the same wave see earlier intents' new dependencies.
     // Replay above intentionally wins, so a committed operation never turns
     // into a failed precondition merely because later writes advanced context.
     if let Some(expected) = &intent.expected_uniform_context
         && context_frontier(transaction, &intent.tenant)? != *expected
+        && !prepared
     {
+        let explained = match cross_file_admission {
+            Some((identity, _)) => {
+                cross_file::uniform_control_delta(transaction, intent, identity, local_origin)?
+            }
+            None => false,
+        };
         // This admission guard publishes and binds nothing. The same logical
         // operation may retry after the caller establishes a new uniform cut.
-        return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+        if !explained {
+            return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+        }
     }
     // Step 3: conflict-check every write against the snapshot and the
     // published view. The published watermark already includes every
@@ -2739,60 +2821,61 @@ fn stage_intent(
         }
         // Replicated writes check for changes since the merge snapshot,
         // allowing the caller to recompute after contention.
-        let mismatch = match write {
-            StagedWrite::Put { document, expected } => conflict_between(
-                transaction,
-                &intent.tenant,
-                document.collection(),
-                document.id(),
-                *expected,
-                None,
-                snapshot_sequence,
-                *watermark,
-            )?,
-            StagedWrite::ReplicatedPut { document, .. } => conflict_between(
-                transaction,
-                &intent.tenant,
-                document.collection(),
-                document.id(),
-                crate::types::ExpectedVersion::Any,
-                None,
-                snapshot_sequence,
-                *watermark,
-            )?,
-            StagedWrite::Delete { collection: Some(collection), id, expected, ttl_guard } => {
-                conflict_between(
+        let mismatch = !prepared
+            && match write {
+                StagedWrite::Put { document, expected } => conflict_between(
+                    transaction,
+                    &intent.tenant,
+                    document.collection(),
+                    document.id(),
+                    *expected,
+                    None,
+                    snapshot_sequence,
+                    *watermark,
+                )?,
+                StagedWrite::ReplicatedPut { document, .. } => conflict_between(
+                    transaction,
+                    &intent.tenant,
+                    document.collection(),
+                    document.id(),
+                    crate::types::ExpectedVersion::Any,
+                    None,
+                    snapshot_sequence,
+                    *watermark,
+                )?,
+                StagedWrite::Delete { collection: Some(collection), id, expected, ttl_guard } => {
+                    conflict_between(
+                        transaction,
+                        &intent.tenant,
+                        collection,
+                        id,
+                        *expected,
+                        ttl_guard.as_ref(),
+                        snapshot_sequence,
+                        *watermark,
+                    )?
+                }
+                StagedWrite::Delete { collection: None, id, expected, .. } => {
+                    conflict_for_absent_document(
+                        transaction,
+                        &intent.tenant,
+                        id,
+                        *expected,
+                        snapshot_sequence,
+                        *watermark,
+                    )?
+                }
+                StagedWrite::ReplicatedDelete { collection, id, .. } => conflict_between(
                     transaction,
                     &intent.tenant,
                     collection,
                     id,
-                    *expected,
-                    ttl_guard.as_ref(),
+                    crate::types::ExpectedVersion::Any,
+                    None,
                     snapshot_sequence,
                     *watermark,
-                )?
-            }
-            StagedWrite::Delete { collection: None, id, expected, .. } => {
-                conflict_for_absent_document(
-                    transaction,
-                    &intent.tenant,
-                    id,
-                    *expected,
-                    snapshot_sequence,
-                    *watermark,
-                )?
-            }
-            StagedWrite::ReplicatedDelete { collection, id, .. } => conflict_between(
-                transaction,
-                &intent.tenant,
-                collection,
-                id,
-                crate::types::ExpectedVersion::Any,
-                None,
-                snapshot_sequence,
-                *watermark,
-            )?,
-        };
+                )?,
+            };
         if mismatch {
             // Replication recomputes from a newer snapshot after contention.
             // Binding this transient refusal would permanently reject its source dot.
@@ -2948,7 +3031,7 @@ fn stage_intent(
         let now_millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_millis().try_into().unwrap_or(u64::MAX));
-        if !allocation.valid_at(now_millis) {
+        if !prepared && !allocation.valid_at(now_millis) {
             transaction
                 .execute_batch(
                     "ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission",
@@ -3028,7 +3111,7 @@ fn stage_intent(
     // commit carries the commit's own identity — the journal is the table.
     // A replicated commit carries the source region's identity and its
     // provenance stamp on every row.
-    let context = intent
+    let mut context = intent
         .replication_publication
         .as_ref()
         .map(|group| group.context.clone())
@@ -3044,6 +3127,18 @@ fn stage_intent(
             })
         })
         .unwrap_or(context_frontier(transaction, &intent.tenant)?);
+    if let Some(dependencies) = &intent.cross_file_dependencies {
+        let extra = cross_file::decode_dependencies(dependencies)?;
+        let current = crate::engine::merge::decode_context(&context).ok_or(())?;
+        if extra.frontier().get(local_origin).copied().unwrap_or(0)
+            > current.frontier().get(local_origin).copied().unwrap_or(0)
+        {
+            return Err(());
+        }
+        // Borrowed owner prefixes constrain replication delivery; they never
+        // advance this physical file's applied causal_frontiers.
+        context = crate::engine::merge::encode_context(&current.joined(&extra));
+    }
     provenance = provenance.with_context(context.clone());
     let commit = FoldedCommit {
         operation: &row_identity,
@@ -4973,6 +5068,34 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
+    fn prepare_cross_file_intent(
+        &mut self,
+        identity: &super::ParticipantIdentity,
+        intent: Option<&CommitIntent>,
+    ) -> Result<super::PreparedCrossFileIntent, CommitRejection> {
+        self.prepare_cross_file(identity, intent)
+    }
+    fn resolve_cross_file_intent(
+        &mut self,
+        identity: &super::ParticipantIdentity,
+    ) -> Result<Option<super::PreparedCrossFileIntent>, ()> {
+        self.resolve_cross_file(identity)
+    }
+    fn install_cross_file_intent(
+        &mut self,
+        prepared: &super::PreparedCrossFileIntent,
+    ) -> CommitResult {
+        self.install_cross_file(prepared)
+    }
+    fn abort_cross_file_intent(&mut self, identity: &super::ParticipantIdentity) -> Result<(), ()> {
+        self.complete_cross_file(identity, true)
+    }
+    fn finish_cross_file_intent(
+        &mut self,
+        identity: &super::ParticipantIdentity,
+    ) -> Result<(), ()> {
+        self.complete_cross_file(identity, false)
+    }
     fn advance_consumer_frontier(&mut self, name: &str, sequence: u64) -> Result<(), ()> {
         self.advance_consumer_frontier_inner(name, sequence)
     }
@@ -4985,10 +5108,11 @@ impl StoragePort for SqliteStorage {
         SqliteStorage::retire_consumer_frontier(self, name)
     }
 
+    #[cfg(test)]
     fn prepare_participant(
         &mut self,
         prepare: &crate::storage::ParticipantPrepare,
-    ) -> Result<crate::storage::ParticipantPrepareReceipt, ()> {
+    ) -> Result<(), ()> {
         let identity = &prepare.identity;
         if prepare.writes.len() > 1024 {
             return Err(());
@@ -5019,18 +5143,13 @@ impl StoragePort for SqliteStorage {
         // records. The prepare itself is FULL-synchronous, but subsequent
         // queue traffic should not inherit that slower mode.
         connection.execute_batch("PRAGMA synchronous = NORMAL").map_err(|_| ())?;
-        Ok(crate::storage::ParticipantPrepareReceipt {
-            identity: identity.clone(),
-            writes: prepare.writes.clone(),
-            metadata: prepare.metadata.clone(),
-            schema_envelopes: prepare.schema_envelopes.clone(),
-            replication_publication: prepare.replication_publication.clone(),
-        })
+        Ok(())
     }
+    #[cfg(test)]
     fn resolve_participant(
         &mut self,
         identity: &crate::storage::ParticipantIdentity,
-    ) -> Result<Option<crate::storage::ParticipantPrepareReceipt>, ()> {
+    ) -> Result<Option<()>, ()> {
         let connection = self.writer.lock().map_err(|_| ())?;
         let found: Option<(String, i64, i64, Vec<u8>, Vec<u8>)> = connection.query_row("SELECT owner,epoch,snapshot,digest,payload FROM participant_prepares WHERE tenant=?1 AND incarnation=?2 AND operation=?3 AND participant=?4", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).optional().map_err(|_| ())?;
         match found {
@@ -5043,15 +5162,8 @@ impl StoragePort for SqliteStorage {
                 if *blake3::hash(&payload).as_bytes() != identity.digest {
                     return Err(());
                 }
-                let (writes, metadata, schema_envelopes, replication_publication) =
-                    crate::storage::participant::decode_prepare_payload(&payload)?;
-                Ok(Some(crate::storage::ParticipantPrepareReceipt {
-                    identity: identity.clone(),
-                    writes,
-                    metadata,
-                    schema_envelopes,
-                    replication_publication,
-                }))
+                let _ = crate::storage::participant::decode_prepare_payload(&payload)?;
+                Ok(Some(()))
             }
             Some(_) => Err(()),
             None => Ok(None),
@@ -6026,62 +6138,70 @@ impl StoragePort for SqliteStorage {
         intent: super::SupersededReplication,
     ) -> Result<bool, CommitRejection> {
         let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let transaction = writer.transaction().map_err(|_| CommitRejection::Storage)?;
-        let bound = replication_fingerprint_on(&transaction, &intent.tenant, &intent.operation)
-            .map_err(|()| CommitRejection::Storage)?;
-        if bound.is_some_and(|fingerprint| fingerprint != intent.fingerprint) {
-            return Err(CommitRejection::OperationIdReuse);
-        }
-        if replication_was_superseded_on(&transaction, &intent.tenant, &intent.operation)
-            .map_err(|()| CommitRejection::Storage)?
-        {
-            return if bound.is_some() { Ok(true) } else { Err(CommitRejection::Storage) };
-        }
-        if operation_view(&transaction, &intent.tenant, &intent.operation, &intent.operation)
-            .map_err(|()| CommitRejection::Storage)?
-            .is_some()
-        {
-            return Err(CommitRejection::Conflict);
-        }
-        if bound.is_some() {
-            return Err(CommitRejection::Storage);
-        }
-        if conflict_between(
-            &transaction,
-            &intent.tenant,
-            &intent.collection,
-            &intent.id,
-            ExpectedVersion::Any,
-            None,
-            intent.snapshot_sequence.get(),
-            i64::MAX as u64,
-        )
-        .map_err(|()| CommitRejection::Storage)?
-        {
-            return Err(CommitRejection::Conflict);
-        }
-        if let Some(conflict) = &intent.conflict {
-            persist_merge_conflict(
+        writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| CommitRejection::Storage)?;
+        let result = (|| {
+            let transaction = writer.transaction().map_err(|_| CommitRejection::Storage)?;
+            let bound = replication_fingerprint_on(&transaction, &intent.tenant, &intent.operation)
+                .map_err(|()| CommitRejection::Storage)?;
+            if bound.is_some_and(|fingerprint| fingerprint != intent.fingerprint) {
+                return Err(CommitRejection::OperationIdReuse);
+            }
+            if replication_was_superseded_on(&transaction, &intent.tenant, &intent.operation)
+                .map_err(|()| CommitRejection::Storage)?
+            {
+                return if bound.is_some() { Ok(true) } else { Err(CommitRejection::Storage) };
+            }
+            if operation_view(&transaction, &intent.tenant, &intent.operation, &intent.operation)
+                .map_err(|()| CommitRejection::Storage)?
+                .is_some()
+            {
+                return Err(CommitRejection::Conflict);
+            }
+            if bound.is_some() {
+                return Err(CommitRejection::Storage);
+            }
+            if conflict_between(
                 &transaction,
                 &intent.tenant,
                 &intent.collection,
                 &intent.id,
-                conflict,
+                ExpectedVersion::Any,
+                None,
+                intent.snapshot_sequence.get(),
+                i64::MAX as u64,
             )
-            .map_err(|()| CommitRejection::Storage)?;
-        }
-        transaction.execute(
+            .map_err(|()| CommitRejection::Storage)?
+            {
+                return Err(CommitRejection::Conflict);
+            }
+            if let Some(conflict) = &intent.conflict {
+                persist_merge_conflict(
+                    &transaction,
+                    &intent.tenant,
+                    &intent.collection,
+                    &intent.id,
+                    conflict,
+                )
+                .map_err(|()| CommitRejection::Storage)?;
+            }
+            transaction.execute(
             "INSERT INTO replication_bindings (tenant, operation, fingerprint) VALUES (?1, ?2, ?3)",
             rusqlite::params![intent.tenant.as_str(), intent.operation.as_str(), intent.fingerprint.as_slice()],
         ).map_err(|_| CommitRejection::Storage)?;
-        transaction
-            .execute(
-                "INSERT INTO replication_superseded (tenant, operation) VALUES (?1, ?2)",
-                rusqlite::params![intent.tenant.as_str(), intent.operation.as_str()],
-            )
-            .map_err(|_| CommitRejection::Storage)?;
-        transaction.commit().map_err(|_| CommitRejection::Storage)?;
-        Ok(false)
+            transaction
+                .execute(
+                    "INSERT INTO replication_superseded (tenant, operation) VALUES (?1, ?2)",
+                    rusqlite::params![intent.tenant.as_str(), intent.operation.as_str()],
+                )
+                .map_err(|_| CommitRejection::Storage)?;
+            transaction.commit().map_err(|_| CommitRejection::Storage)?;
+            Ok(false)
+        })();
+        let restored = writer.execute_batch("PRAGMA synchronous = NORMAL");
+        if restored.is_err() {
+            return Err(CommitRejection::Storage);
+        }
+        result
     }
 
     fn merge_conflicts_for(
@@ -6916,9 +7036,15 @@ impl StoragePort for SqliteStorage {
         let reader = self.reader();
         let sequence = reader
             .connection()
-            .query_row("SELECT MAX(commit_seq) FROM documents", [], |row| {
-                row.get::<_, Option<i64>>(0)
-            })
+            .query_row(
+                "SELECT NULLIF(MAX(sequence), 0) FROM (
+                SELECT MAX(commit_seq) AS sequence FROM documents
+                UNION ALL SELECT MAX(local_seq) FROM replication_publications
+                UNION ALL SELECT MAX(sequence) FROM operation_facts WHERE committed=1
+                UNION ALL SELECT MAX(seq) FROM usage_facts)",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
             .map_err(|_| ())?;
         sequence
             .map(|value| u64::try_from(value).map(StorageSequence::new).map_err(|_| ()))

@@ -15,13 +15,24 @@ use terrabase::backup::worker::{
     BackupEngineHandle, BackupKeys, FleetLimits, NativeBackupFleet, StreamConfig,
 };
 use terrabase::backup::{
-    BackupEnvelope, BackupEnvelopeParticipant, BackupManifest, PlacementLock,
-    object_store::ObjectDestination,
+    BackupEnvelope, BackupManifest, PlacementLock, object_store::ObjectDestination,
 };
 use terrabase::engine::Engine;
 use terrabase_tbep::member_host::MemberHost;
 
 const MAX_RETAINED_INCIDENTS: usize = 1024;
+
+pub(crate) fn native_restore_receipt(
+    receipt: &terrabase::backup::RecoveryReceipt,
+) -> crate::native_recovery::NativeRestoreReceipt {
+    crate::native_recovery::NativeRestoreReceipt {
+        envelope: None,
+        selected_identity: receipt.selected_identity().to_owned(),
+        logical_content_checksum: receipt.logical_checksum().to_owned(),
+        restored_documents: receipt.documents_read_back(),
+        journal_cut: receipt.selected_boundary().get(),
+    }
+}
 
 /// Retains the exact admitted Member host for a backup stream.
 ///
@@ -43,6 +54,11 @@ impl AdmittedBackupEngine {
 impl BackupEngineHandle for AdmittedBackupEngine {
     fn engine(&self) -> &Engine {
         self.host.engine()
+    }
+    fn admitted_shard_read_cut(
+        &self,
+    ) -> Result<Option<terrabase::member::AdmittedShardReadCut>, FleetError> {
+        self.host.engine_host().admitted_shard_read_cut().map_err(|_| FleetError::Capture)
     }
 }
 
@@ -119,30 +135,8 @@ impl NativeBackupRuntime {
         cut: &terrabase::member::AdmittedShardReadCut,
         manifests: Vec<BackupManifest>,
     ) -> Result<BackupEnvelope, NativeBackupRuntimeError> {
-        let route_generation = cut.route_generation.ok_or(NativeBackupRuntimeError::Envelope)?;
-        if cut.participants.len() != manifests.len() || cut.participants.is_empty() {
-            return Err(NativeBackupRuntimeError::Envelope);
-        }
-        let participants = cut
-            .participants
-            .iter()
-            .zip(manifests)
-            .map(|(participant, manifest)| BackupEnvelopeParticipant {
-                participant_id: format!("shard-{:016x}", participant.identity.shard_id),
-                database_id: participant.engine.database_id().to_string(),
-                database_incarnation: cut.database_incarnation,
-                route_generation,
-                boundary: participant.snapshot.sequence().get(),
-                manifest,
-            })
-            .collect();
-        BackupEnvelope::assemble(
-            cut.database_id.clone(),
-            cut.database_incarnation,
-            route_generation,
-            participants,
-        )
-        .map_err(|_| NativeBackupRuntimeError::Envelope)
+        BackupEnvelope::from_read_cut(cut, manifests)
+            .map_err(|_| NativeBackupRuntimeError::Envelope)
     }
 
     /// Captures every admitted physical participant at its retained serving
@@ -156,18 +150,9 @@ impl NativeBackupRuntime {
             return Err(NativeBackupRuntimeError::Envelope);
         }
         let _async_fleet = self.async_fleet.lock().await;
-        let requested = cut
-            .participants
-            .iter()
-            .map(|participant| {
-                (participant.engine.database_id().to_string(), participant.snapshot.sequence())
-            })
-            .collect::<Vec<_>>();
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        let manifests = fleet
-            .capture_participants_at(&requested)
-            .await
-            .map_err(NativeBackupRuntimeError::Fleet)?;
+        let manifests =
+            fleet.capture_participants_at(cut).await.map_err(NativeBackupRuntimeError::Fleet)?;
         let envelope = self.assemble_shard_envelope(cut, manifests)?;
         fleet.publish_envelope(&envelope).await.map_err(NativeBackupRuntimeError::Fleet)?;
         Ok(envelope)
@@ -220,6 +205,21 @@ impl NativeBackupRuntime {
     #[must_use]
     pub fn fleet_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
         Arc::clone(&self.async_fleet)
+    }
+
+    /// Reports whether the authenticated local envelope catalog contains the
+    /// selected logical recovery point.
+    pub fn has_retained_envelope(
+        &self,
+        database: &str,
+        digest: &str,
+    ) -> Result<bool, NativeBackupRuntimeError> {
+        let fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+        Ok(fleet
+            .retained_envelopes(database)
+            .map_err(NativeBackupRuntimeError::Fleet)?
+            .into_iter()
+            .any(|envelope| envelope.digest() == digest))
     }
 
     /// Executes one bounded asynchronous fleet tick.
@@ -342,6 +342,59 @@ impl NativeBackupRuntime {
             .restore_from_provider(database, provider, point, target, identity)
             .await
             .map_err(NativeBackupRuntimeError::Fleet)
+    }
+
+    /// Restores through an inclusive Unix-second timestamp using one provider.
+    pub async fn restore_logical_from_provider(
+        &self,
+        database: &str,
+        provider: Provider,
+        point: &str,
+        target: &terrabase::engine::EngineConfig,
+        placement: &PlacementLock,
+        identity: &terrabase::backup::RestoreIdentity,
+    ) -> Result<crate::native_recovery::NativeRestoreReceipt, NativeBackupRuntimeError> {
+        validate_operation_id(&identity.operation_id)?;
+        self.validate_restore_placement(database, placement)?;
+        let _gate = self.async_fleet.lock().await;
+        let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+        if fleet
+            .retained_envelopes(database)
+            .map_err(NativeBackupRuntimeError::Fleet)?
+            .iter()
+            .any(|envelope| envelope.digest() == point)
+        {
+            let receipt = fleet
+                .restore_envelope_from_provider(database, provider, point, target, identity)
+                .await
+                .map_err(NativeBackupRuntimeError::Fleet)?;
+            return Ok(crate::native_recovery::NativeRestoreReceipt {
+                envelope: Some(
+                    String::from_utf8(
+                        receipt
+                            .envelope
+                            .encode()
+                            .map_err(|_| NativeBackupRuntimeError::Envelope)?,
+                    )
+                    .map_err(|_| NativeBackupRuntimeError::Envelope)?,
+                ),
+                selected_identity: receipt.envelope.digest().to_owned(),
+                journal_cut: receipt
+                    .envelope
+                    .participants()
+                    .iter()
+                    .map(|p| p.boundary)
+                    .max()
+                    .unwrap_or_default(),
+                logical_content_checksum: receipt.logical_checksum,
+                restored_documents: receipt.documents_read_back,
+            });
+        }
+        let receipt = fleet
+            .restore_from_provider(database, provider, Some(point), target, identity)
+            .await
+            .map_err(NativeBackupRuntimeError::Fleet)?;
+        Ok(native_restore_receipt(&receipt))
     }
 
     /// Restores through an inclusive Unix-second timestamp using one provider.

@@ -38,6 +38,11 @@ impl fmt::Debug for CustomerKmsKeyDelivery {
 
 impl CustomerKmsKeyDelivery {
     /// Binds an admitted customer KMS instance without accepting credentials.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when configuration fields or the authenticated socket
+    /// path are invalid or unavailable.
     pub fn new(
         socket: PathBuf,
         orchestrator_uid: u32,
@@ -113,7 +118,7 @@ impl CustomerKmsAdapter for CustomerKmsKeyDelivery {
         }
         let scope = metadata.scope();
         let project = scope.project().ok_or(EncryptionError::InvalidKeyMetadata)?;
-        let key_region = self.key_region.to_string();
+        let key_region = self.key_region.clone();
         let tenant = scope.tenant().to_string();
         let project_id = project.to_string();
         let database = scope.database().to_string();

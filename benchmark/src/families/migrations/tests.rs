@@ -1790,12 +1790,13 @@ fn stopped_partial_migration_rolls_back_across_two_reopens() {
 
     let engine = Engine::open(EngineConfig::durable(&dir).unwrap()).unwrap();
     let users = scope(&engine, "alpha");
-    // Admission replay must preserve the cursor, not restore the first page again.
+    // A fresh operation stages no work for an already-RollingBack record;
+    // idempotent state handling is distinct from replaying its original operation.
     assert!(matches!(
         commit(&engine, &users, |_, transaction, _| {
             super::stage_rollback(transaction, &contract).unwrap();
         }),
-        CommitOutcome::Committed(_)
+        CommitOutcome::Rejected(crate::engine::CommitError::Validation)
     ));
     assert_eq!(rollback(&engine, &users, &contract), Ok(RollbackStep::Complete { restored: 0 }));
     assert_eq!(user_value(&engine, &users, "doc-00000"), object(&[("a", text("x"))]));

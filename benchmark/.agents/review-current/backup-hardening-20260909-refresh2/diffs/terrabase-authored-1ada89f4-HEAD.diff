@@ -1,0 +1,141 @@
+diff --git a/crates/terrabase-server/src/production_data_runtime.rs b/crates/terrabase-server/src/production_data_runtime.rs
+index d08917ca..db0a5b97 100644
+--- a/crates/terrabase-server/src/production_data_runtime.rs
++++ b/crates/terrabase-server/src/production_data_runtime.rs
+@@ -10,11 +10,8 @@ use std::sync::OnceLock;
+ use std::sync::atomic::{AtomicBool, Ordering};
+ use std::sync::{Arc, Mutex};
+ use terrabase::backup::worker::FleetLimits;
+-use terrabase::backup::workload_identity_delivery::{
+-    UnixWorkloadIdentityProvider, WorkloadIdentityScope,
+-};
+ use terrabase::encryption::{
+-    CustomerKmsDatabaseKeys, CustomerKmsKeyDelivery, DatabaseKeySource, DatabaseKeyVersion,
++    DatabaseKeySource, DatabaseKeyVersion,
+     KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys, OciVaultKeyDelivery,
+ };
+ use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
+@@ -1075,7 +1072,10 @@ impl ProductionAdmissionRuntime {
+         {
+             if configured.encryption_provider
+                 != terrabase::encryption::KeyProviderIdentity::CustomerKms
+-                || byok.key_provider != "customer-kms"
++                || !matches!(
++                    byok.key_provider.as_str(),
++                    "aws-kms" | "azure-key-vault" | "customer-kms" | "oci-vault"
++                )
+             {
+                 return Err("customer BYOK provider disagrees with admitted configuration".into());
+             }
+@@ -1100,6 +1100,10 @@ impl ProductionAdmissionRuntime {
+                 region,
+             )
+             .map_err(|_| "customer key authorization unavailable")?;
++            let destination_policy = policy
++                .destinations
++                .first()
++                .ok_or("customer backup policy metadata unavailable")?;
+             let identity =
+                 terrabase::backup::workload_identity_delivery::UnixWorkloadIdentityProvider::new(
+                     key_config.socket.clone(),
+@@ -1109,13 +1113,13 @@ impl ProductionAdmissionRuntime {
+                         endpoint: byok.backup_endpoint.clone(),
+                         bucket: byok.backup_bucket.clone(),
+                         region: byok.backup_region.clone(),
+-                        placement_revision: policy.destinations[0].placement_revision.clone(),
++                        placement_revision: destination_policy.placement_revision.clone(),
+                     },
+                 )
+                 .map_err(|_| "customer S3 workload identity unavailable")?;
+             let destination = crate::production_backup::customer_destination_from_config(
+                 byok,
+-                &policy.destinations[0],
++                destination_policy,
+                 region,
+                 Arc::new(identity),
+             )
+diff --git a/crates/terrabase-server/src/production_lifecycle_control.rs b/crates/terrabase-server/src/production_lifecycle_control.rs
+index 697a79a7..58f40d38 100644
+--- a/crates/terrabase-server/src/production_lifecycle_control.rs
++++ b/crates/terrabase-server/src/production_lifecycle_control.rs
+@@ -611,6 +611,12 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
+             terrabase::backup::object_store::Provider::Tigris => {
+                 terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris
+             }
++            terrabase::backup::object_store::Provider::CustomerS3 => {
++                return Err(
++                    "customer S3 restore provider is not supported by the recovery wire contract"
++                        .to_owned(),
++                );
++            }
+         };
+         Ok(terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointResponse {
+             operation_id: request.operation_id.clone(),
+diff --git a/src/backup/worker.rs b/src/backup/worker.rs
+index df07fc59..bfde8f68 100644
+--- a/src/backup/worker.rs
++++ b/src/backup/worker.rs
+@@ -2281,6 +2281,7 @@ mod tests {
+ 
+     #[derive(Debug)]
+     struct BlockingDownloadStore {
++        armed: std::sync::atomic::AtomicBool,
+         inner: Arc<object_store::memory::InMemory>,
+         started: Arc<tokio::sync::Notify>,
+     }
+@@ -2315,7 +2316,9 @@ mod tests {
+             location: &object_store::path::Path,
+             opts: object_store::GetOptions,
+         ) -> object_store::Result<object_store::GetResult> {
+-            if location.as_ref().ends_with("member-000001") {
++            if self.armed.load(std::sync::atomic::Ordering::SeqCst)
++                && location.as_ref().ends_with("member-000001")
++            {
+                 self.started.notify_one();
+                 std::future::pending().await
+             }
+@@ -2367,12 +2370,13 @@ mod tests {
+         let staging = location("restore-cancelled-download-staging");
+         let started = Arc::new(tokio::sync::Notify::new());
+         let store = Arc::new(BlockingDownloadStore {
++            armed: std::sync::atomic::AtomicBool::new(false),
+             inner: Arc::new(object_store::memory::InMemory::new()),
+             started: started.clone(),
+         });
+         let destination = Arc::new(ObjectDestination::for_test(
+             Provider::Oci,
+-            store,
++            store.clone(),
+             4 * 1024 * 1024,
+             8 * 1024 * 1024,
+         ));
+@@ -2406,6 +2410,8 @@ mod tests {
+         ));
+         let point = fleet.capture_snapshot(&database).await.unwrap();
+         let at = point.recoverable_through_unix_millis();
++        // Capture uploads and verifies members too; block only restore's download.
++        store.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+         for path in point_paths(&staging, 4).unwrap() {
+             std::fs::remove_dir_all(path).unwrap();
+         }
+@@ -2420,10 +2426,18 @@ mod tests {
+             expected_journal_boundary: point.boundary_sequence().get(),
+             restore_epoch: 1,
+         };
+-        let task = tokio::spawn(async move {
++        let mut task = tokio::spawn(async move {
+             fleet.restore_at_from_provider(&database, Provider::Oci, at, &target, &identity).await
+         });
+-        started.notified().await;
++        tokio::select! {
++            () = started.notified() => {}
++            result = &mut task => panic!("restore finished before blocked download: {result:?}"),
++            () = tokio::time::sleep(Duration::from_secs(10)) => {
++                task.abort();
++                let result = task.await;
++                panic!("restore did not reach blocked download within 10 seconds: {result:?}");
++            }
++        }
+         assert!(
+             std::fs::read_dir(&staging).unwrap().any(|entry| entry
+                 .unwrap()

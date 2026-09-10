@@ -17,6 +17,9 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod admission;
+#[cfg(test)]
+mod admission_tests;
 mod authorized;
 mod batch_request;
 mod branch_restore;
@@ -51,9 +54,9 @@ mod replication_dependencies;
 mod replication_wire;
 mod schema_indexes;
 mod schema_metadata;
-pub(crate) mod shard_catchup;
-pub(crate) mod shard_split;
-pub(crate) mod shard_supervisor;
+pub mod shard_catchup;
+pub mod shard_split;
+pub mod shard_supervisor;
 mod webhook_metadata;
 
 #[cfg(test)]
@@ -72,7 +75,7 @@ mod shard_serving_correction_tests;
 mod shard_split_tests;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 pub(crate) use tests::test_storage_keys;
 
@@ -83,6 +86,9 @@ pub use crate::storage::{
     MergeKernelEntry, MergePolicy, MergeSchema, MergeSchemaError,
 };
 pub use authorized::{AuthorizedEngine, AuthorizedEngineError, AuthorizedSession};
+pub(crate) use cross_file::{
+    CrossFileBatch, CrossFileDecision, validate_control_metadata, validate_control_origin,
+};
 pub use cross_file::{CrossFileReceiptPhase, LocalCrossFileReceipt};
 pub use export::{ExportHistoryRow, ExportMetadataSnapshot};
 pub use ingest::{
@@ -553,6 +559,9 @@ pub struct EngineConfig {
     replication_lane_origin: Option<crate::origin_lane::OriginLaneId>,
     replication_clock: Arc<dyn ReplicationClock>,
     storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
+    /// Source-owned identity for a split participant. Kept private so callers
+    /// cannot select an arbitrary physical shard identity.
+    initial_file_identity: Option<crate::shard_split::FileShardIdentity>,
     allow_create: bool,
 }
 
@@ -586,6 +595,7 @@ impl EngineConfig {
             replication_lane_origin: None,
             replication_clock: Arc::new(SystemReplicationClock),
             storage_keys: None,
+            initial_file_identity: None,
             allow_create: true,
         })
     }
@@ -613,6 +623,7 @@ impl EngineConfig {
             replication_lane_origin: None,
             replication_clock: Arc::new(SystemReplicationClock),
             storage_keys: None,
+            initial_file_identity: None,
             allow_create: false,
         }
     }
@@ -681,6 +692,14 @@ impl EngineConfig {
 
     pub(crate) fn at_location(mut self, location: impl Into<PathBuf>) -> Self {
         self.location = location.into();
+        self
+    }
+
+    pub(crate) fn with_initial_file_identity(
+        mut self,
+        identity: crate::shard_split::FileShardIdentity,
+    ) -> Self {
+        self.initial_file_identity = Some(identity);
         self
     }
 
@@ -1154,6 +1173,7 @@ fn unfold_stamp(hlc: u64) -> (u64, u64) {
 /// The locked storage state of one Engine.
 pub(crate) struct StorageState {
     pub(crate) port: Box<dyn StoragePort>,
+    _admission_guard: Arc<admission::EngineAdmissionGuard>,
 }
 
 type AutoIndexShadowSamples = BTreeMap<
@@ -1241,6 +1261,13 @@ pub struct Engine {
     /// The group-commit mailbox: waiting intents and the leader flag.
     /// Shared through the [`Arc`] so cloned engines form one group.
     origin_commit_barrier: std::sync::RwLock<()>,
+    /// Serializes logical read admission with publication of a cross-file
+    /// fence. Separate from origin admission: control metadata readers can
+    /// run while the origin writer holds its exclusive barrier.
+    cross_file_snapshot_barrier: std::sync::RwLock<()>,
+    cross_file_publications: Mutex<BTreeMap<(String, String), CommitPublicationEvent>>,
+    #[cfg(test)]
+    cross_file_interrupt_after: std::sync::atomic::AtomicUsize,
     /// One resident handle per admitted shard, bounded by the route catalog limit.
     shard_participants: Mutex<BTreeMap<u64, Arc<Engine>>>,
     /// Target commits share the source database's live authority, without a cycle.
@@ -1254,6 +1281,9 @@ pub struct Engine {
     /// state, because the leader hands its guard to the wait and the
     /// condvar must outlive that move.
     commit_arrivals: std::sync::Condvar,
+    /// Must be declared last: Rust drops struct fields in declaration order,
+    /// so the admission lock outlives storage, subscriptions, and workers.
+    _admission_guard: Arc<admission::EngineAdmissionGuard>,
 }
 
 /// The group-commit mailbox state.
@@ -1289,7 +1319,7 @@ impl EngineConfig {
                 let lease =
                     keys.current_lease().map_err(|_| EngineOpenError::StorageUnavailable)?;
                 let scope = lease.metadata().scope();
-                if lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+                if !lease.provider().is_production()
                     || scope.purpose() != crate::encryption::KeyPurpose::Data
                     || scope.environment() != owner.environment().as_str()
                     || scope.tenant() != owner.tenant()
@@ -1344,23 +1374,24 @@ impl EngineConfig {
     }
 }
 
-impl Engine {
-    /// Opens a durable `SQLite` Engine.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineOpenError::InvalidConfig`] for an unusable
-    /// configuration, [`EngineOpenError::FormatMismatch`] when the location
-    /// is not an owned `SQLite` database directory, and
-    /// [`EngineOpenError::StorageUnavailable`] when the location cannot be
-    /// opened.
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn open(config: EngineConfig) -> Result<Self, EngineOpenError> {
-        let location = config.location().clone();
-        let owner = config.open_owner()?;
-        let metrics = Arc::new(MetricsRegistry::new());
-        let configured_lane = config.replication_lane_origin.clone().or_else(|| {
-            let owner = config.owner.as_ref()?;
+impl EngineConfig {
+    /// Opens the physical file and resolves its configured or persisted origin lane.
+    fn open_storage(
+        &self,
+        owner: &crate::storage::DatabaseOwner,
+    ) -> Result<(storage::SqliteStorage, crate::origin_lane::OriginLaneId), EngineOpenError> {
+        let location = self.location();
+        // A derived owner lane is safe only for a genuinely new physical
+        // file. Existing restored/split files own their persisted lane;
+        // passing the database-derived default makes SQLite correctly reject
+        // an otherwise valid reopen as a false identity mismatch.
+        let existing_location =
+            storage::existing_database_location(location, self.storage_keys.is_some());
+        let configured_lane = self.replication_lane_origin.clone().or_else(|| {
+            if existing_location {
+                return None;
+            }
+            let owner = self.owner.as_ref()?;
             let region = RegionId::try_new(owner.region().as_str()).ok()?;
             crate::origin_lane::OriginLaneId::try_new(
                 region,
@@ -1372,24 +1403,22 @@ impl Engine {
             configured_lane.as_ref().map(crate::origin_lane::OriginLaneId::as_str);
         let replication_origin = lane_origin_text
             .as_deref()
-            .or_else(|| config.replication_origin.as_ref().map(RegionId::as_str));
+            .or_else(|| self.replication_origin.as_ref().map(RegionId::as_str));
         // Production owners use the authenticated VFS for every connection.
-        let open_storage = if config.allow_create {
+        let open_storage = if self.allow_create {
             storage::SqliteStorage::open_with_keys(
-                &location,
+                location,
                 replication_origin,
-                config.storage_keys.clone(),
+                self.storage_keys.clone(),
             )
         } else {
             storage::SqliteStorage::open_existing_with_keys(
-                &location,
+                location,
                 replication_origin,
-                config.storage_keys.clone(),
+                self.storage_keys.clone(),
             )
         };
-        let mut storage: Box<dyn storage::StoragePort> = open_storage
-            .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
-            .map_err(|_| EngineOpenError::StorageUnavailable)?;
+        let mut storage = open_storage.map_err(|_| EngineOpenError::StorageUnavailable)?;
         let replication_lane_origin = configured_lane
             .or_else(|| {
                 crate::origin_lane::OriginLaneId::parse(storage.local_replication_origin()).ok()
@@ -1403,6 +1432,48 @@ impl Engine {
                 .ok()
             })
             .ok_or(EngineOpenError::FormatMismatch)?;
+        storage
+            .bind_generated_primary_identity(self.initial_file_identity.unwrap_or(
+                crate::shard_split::FileShardIdentity {
+                    database_incarnation: u128::from_be_bytes(owner.database().as_bytes()),
+                    shard_id: 1,
+                    region: owner.region(),
+                    origin_lane_incarnation: replication_lane_origin.incarnation(),
+                },
+            ))
+            .map_err(|()| EngineOpenError::StorageUnavailable)?;
+        Ok((storage, replication_lane_origin))
+    }
+}
+
+impl Engine {
+    /// Opens a durable `SQLite` Engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineOpenError::InvalidConfig`] for an unusable
+    /// configuration, [`EngineOpenError::FormatMismatch`] when the location
+    /// is not an owned `SQLite` database directory, and
+    /// [`EngineOpenError::StorageUnavailable`] when the location cannot be
+    /// opened.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn open(config: EngineConfig) -> Result<Self, EngineOpenError> {
+        let guard = Arc::new(admission::EngineAdmissionGuard::acquire(config.location())?);
+        Self::open_admitted(&config, guard)
+    }
+
+    fn open_admitted(
+        config: &EngineConfig,
+        admission_guard: Arc<admission::EngineAdmissionGuard>,
+    ) -> Result<Self, EngineOpenError> {
+        if !admission_guard.matches(config.location()) {
+            return Err(EngineOpenError::InvalidConfig);
+        }
+        let location = config.location().clone();
+        let owner = config.open_owner()?;
+        let metrics = Arc::new(MetricsRegistry::new());
+        let (storage, replication_lane_origin) = config.open_storage(&owner)?;
+        let mut storage: Box<dyn storage::StoragePort> = Box::new(storage);
         // Sync subscriptions are process-owned. Their in-memory checkpoint
         // handles cannot survive this Engine admission, so retire an old
         // sync lease before serving. The required replication, metering, and
@@ -1410,7 +1481,7 @@ impl Engine {
         // the retained journal floor safe for reconnect/reset.
         storage
             .retire_consumer_frontier("sync")
-            .map_err(|_| EngineOpenError::StorageUnavailable)?;
+            .map_err(|()| EngineOpenError::StorageUnavailable)?;
         if config.owner.is_some()
             && storage.origin_epoch().map_err(|()| EngineOpenError::StorageUnavailable)?.0 == 0
         {
@@ -1464,7 +1535,10 @@ impl Engine {
             // real sample promptly; an explicit unknown/stale sample is
             // fail-closed through `clear_clock_offset_seconds()`.
             clock_offset_seconds: Mutex::new(Some(0.0)),
-            storage: Arc::new(Mutex::new(StorageState { port: storage })),
+            storage: Arc::new(Mutex::new(StorageState {
+                port: storage,
+                _admission_guard: Arc::clone(&admission_guard),
+            })),
             primary_file_shard_identities: Mutex::new(BTreeSet::new()),
             lifecycle_paused: Mutex::new(BTreeMap::new()),
             metrics,
@@ -1477,12 +1551,17 @@ impl Engine {
             auto_index_observations: Mutex::new(crate::auto_index::WorkloadSketch::default()),
             auto_index_shadow_samples: Mutex::new(BTreeMap::new()),
             origin_commit_barrier: std::sync::RwLock::new(()),
+            cross_file_snapshot_barrier: std::sync::RwLock::new(()),
+            cross_file_publications: Mutex::new(BTreeMap::new()),
+            #[cfg(test)]
+            cross_file_interrupt_after: std::sync::atomic::AtomicUsize::new(usize::MAX),
             shard_participants: Mutex::new(BTreeMap::new()),
             shard_authority: Mutex::new(None),
             shard_resource_factory: Mutex::new(None),
             shard_resources: Mutex::new(None),
             commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
             commit_arrivals: std::sync::Condvar::new(),
+            _admission_guard: admission_guard,
         })
     }
 
@@ -1841,6 +1920,39 @@ impl Engine {
     /// Engine and [`EngineError::StorageFailure`] when storage cannot be
     /// reached.
     pub fn read_snapshot(&self, scope: &TenantScope) -> Result<ReadSnapshot, EngineError> {
+        self.with_logical_read(scope, || self.read_snapshot_unfenced(scope))
+    }
+
+    pub(crate) fn with_logical_read<T>(
+        &self,
+        scope: &TenantScope,
+        read: impl FnOnce() -> Result<T, EngineError>,
+    ) -> Result<T, EngineError> {
+        self.validate_scope(scope)?;
+        let source = self
+            .shard_authority
+            .lock()
+            .map_err(|_| EngineError::StorageFailure)?
+            .as_ref()
+            .map(|source| source.upgrade().ok_or(EngineError::StorageFailure))
+            .transpose()?;
+        let authority = source.as_deref().unwrap_or(self);
+        let _cut = authority
+            .cross_file_snapshot_barrier
+            .read()
+            .map_err(|_| EngineError::StorageFailure)?;
+        if authority.read_cross_file_active(&authority.scope_for(scope.tenant()))?.is_some() {
+            return Err(EngineError::Conflict);
+        }
+        read()
+    }
+
+    /// Coordinator recovery reads private state while customer read admission
+    /// remains fenced. This is never used to mint a public partial snapshot.
+    pub(crate) fn read_snapshot_unfenced(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<ReadSnapshot, EngineError> {
         self.validate_scope(scope)?;
         let sequence = {
             let storage = self.lock_storage()?;
@@ -1874,26 +1986,61 @@ impl Engine {
         scope: &TenantScope,
     ) -> Result<crate::session::SessionFrontier, EngineError> {
         self.validate_scope(scope)?;
-        let epoch = self.session_epoch();
-        let mut frontier = crate::session::SessionFrontier::new(epoch);
-        let storage = self.lock_storage()?;
-        for entry in storage
-            .port
-            .live_origin_prefixes(scope.tenant())
-            .map_err(|()| EngineError::StorageFailure)?
-        {
-            let origin = crate::origin_lane::OriginLaneId::parse(&entry.origin)
-                .map_err(|_| EngineError::InvalidDocument)?;
-            if entry.origin_sequence == 0 {
-                continue;
-            }
-            frontier
-                .advance(origin, entry.origin_sequence)
-                .map_err(|_| EngineError::InvalidDocument)?;
-            let (ticks, counter) = unfold_stamp(entry.hlc);
-            frontier.observe_write(ReplicationClockStamp::new(ticks, counter));
+        let source = self
+            .shard_authority
+            .lock()
+            .map_err(|_| EngineError::StorageFailure)?
+            .as_ref()
+            .map(|source| source.upgrade().ok_or(EngineError::StorageFailure))
+            .transpose()?;
+        if let Some(source) = source {
+            return source.session_frontier(&source.scope_for(scope.tenant()));
         }
-        Ok(frontier)
+        let _cut = self.origin_commit_barrier.write().map_err(|_| EngineError::StorageFailure)?;
+        self.with_logical_read(scope, || {
+            let epoch = self.session_epoch();
+            let mut frontier = crate::session::SessionFrontier::new(epoch);
+            let mut entries = self
+                .lock_storage()?
+                .port
+                .live_origin_prefixes(scope.tenant())
+                .map_err(|()| EngineError::StorageFailure)?;
+            if let Some((router, _)) = self.load_shard_router(scope)? {
+                let root = self.file_shard_identity(scope)?.ok_or(EngineError::Conflict)?.shard_id;
+                let shards = router
+                    .table()
+                    .routes()
+                    .iter()
+                    .map(crate::shard_split::ShardRoute::shard_id)
+                    .filter(|shard| *shard != root)
+                    .collect::<BTreeSet<_>>();
+                let participants =
+                    self.shard_participants.lock().map_err(|_| EngineError::StorageFailure)?;
+                for shard in shards {
+                    let participant = participants.get(&shard).ok_or(EngineError::Conflict)?;
+                    entries.extend(
+                        participant
+                            .lock_storage()?
+                            .port
+                            .live_origin_prefixes(scope.tenant())
+                            .map_err(|()| EngineError::StorageFailure)?,
+                    );
+                }
+            }
+            for entry in entries {
+                let origin = crate::origin_lane::OriginLaneId::parse(&entry.origin)
+                    .map_err(|_| EngineError::InvalidDocument)?;
+                if entry.origin_sequence == 0 {
+                    continue;
+                }
+                frontier
+                    .advance(origin, entry.origin_sequence)
+                    .map_err(|_| EngineError::InvalidDocument)?;
+                let (ticks, counter) = unfold_stamp(entry.hlc);
+                frontier.observe_write(ReplicationClockStamp::new(ticks, counter));
+            }
+            Ok(frontier)
+        })
     }
 
     /// Durably records one trusted, tenant-bound usage event.
@@ -2163,6 +2310,9 @@ impl Engine {
             replication_fingerprint: None,
             replication_publication: None,
             shard_admission: None,
+            cross_file_batch: None,
+            cross_file_control: None,
+            cross_file_dependencies: None,
             writes: Vec::new(),
             metadata: Vec::new(),
             schema_envelopes: Vec::new(),
@@ -2240,6 +2390,28 @@ impl Engine {
     /// Returns [`EngineError::ScopeMismatch`] for a scope from another Engine
     /// and [`EngineError::StorageFailure`] when storage cannot be reached.
     pub fn resolve_commit(
+        &self,
+        scope: &TenantScope,
+        operation: OperationId,
+    ) -> Result<DurableResolution, EngineError> {
+        self.validate_scope(scope)?;
+        if let Some(record) = self.read_cross_file_decision(scope, &operation)? {
+            return Ok(match record.decision {
+                Some(CrossFileDecision::Aborted) => {
+                    DurableResolution::Rejected(CommitError::Conflict)
+                }
+                Some(CrossFileDecision::Committed) => self
+                    .cross_file_completion(scope, &operation)?
+                    .map_or(DurableResolution::Pending, |(_, _, receipt)| {
+                        DurableResolution::Committed(receipt)
+                    }),
+                None => DurableResolution::Pending,
+            });
+        }
+        self.with_logical_read(scope, || self.resolve_commit_unfenced(scope, operation))
+    }
+
+    fn resolve_commit_unfenced(
         &self,
         scope: &TenantScope,
         operation: OperationId,
@@ -2876,6 +3048,9 @@ impl Engine {
     /// Advances one required retention consumer after its durable
     /// acknowledgement. Unknown consumers are rejected so a caller cannot
     /// accidentally create an unaccounted pruning floor.
+    ///
+    /// # Errors
+    /// Returns a storage failure when the retention frontier cannot be persisted.
     pub fn advance_retention_frontier(&self, name: &str, sequence: u64) -> Result<(), EngineError> {
         let mut storage = self.storage.lock().map_err(|_| EngineError::StorageFailure)?;
         storage
@@ -3841,6 +4016,7 @@ impl Engine {
                 Self::now_millis(),
             )
             .map_err(|()| EngineError::StorageFailure)?;
+        view.pinned = true;
         view.generation = lifecycle.generation(tenant.as_str());
         Ok(view)
     }
@@ -4087,6 +4263,10 @@ impl Engine {
     }
 
     /// Abandons a shadow candidate rejected by the measured gate.
+    ///
+    /// # Errors
+    /// Returns an error for a foreign tenant, unavailable storage or lifecycle lock,
+    /// stale generation, missing candidate, or failed durable abandonment.
     pub fn auto_index_abandon_shadow(
         &self,
         tenant: &TenantId,
@@ -4109,7 +4289,7 @@ impl Engine {
                 at_millis,
                 *blake3::hash(index_id.as_bytes()).as_bytes(),
             )
-            .map_err(|_| EngineError::Conflict)?;
+            .map_err(|()| EngineError::Conflict)?;
         let mut abandoned = view;
         abandoned.phase = crate::auto_index::LifecyclePhase::Abandoned;
         abandoned.visible = false;
@@ -4146,7 +4326,7 @@ impl Engine {
         view.regression_free = false;
         lifecycle
             .install(self.lock_storage()?.port.as_mut(), view.clone(), at_millis, [0; 32])
-            .map_err(|_| EngineError::StorageFailure)?;
+            .map_err(|()| EngineError::StorageFailure)?;
         view.generation = lifecycle.generation(tenant.as_str());
         Ok(view)
     }
@@ -4415,8 +4595,10 @@ impl Engine {
         limit: u32,
     ) -> Result<Vec<crate::storage::DocumentRevisionEntry>, EngineError> {
         self.validate_scope(scope)?;
-        let storage = self.lock_storage()?;
-        Ok(storage.port.document_history_in_collection(scope.tenant(), collection, id, limit))
+        self.with_logical_read(scope, || {
+            let storage = self.lock_storage()?;
+            Ok(storage.port.document_history_in_collection(scope.tenant(), collection, id, limit))
+        })
     }
 
     /// Advances every building descriptor's governed backfill by one
@@ -4540,10 +4722,12 @@ impl Engine {
         limit: u32,
     ) -> Result<Vec<PublishedCommit>, EngineError> {
         self.validate_tenant(tenant)?;
-        let storage = self.lock_storage()?;
-        storage.port.tenant_commits(tenant, after, limit).map_err(|error| match error {
-            storage::JournalReadError::StorageFailure => EngineError::StorageFailure,
-            storage::JournalReadError::HistoryExpired => EngineError::HistoryExpired,
+        self.with_logical_read(&self.scope_for(tenant), || {
+            let storage = self.lock_storage()?;
+            storage.port.tenant_commits(tenant, after, limit).map_err(|error| match error {
+                storage::JournalReadError::StorageFailure => EngineError::StorageFailure,
+                storage::JournalReadError::HistoryExpired => EngineError::HistoryExpired,
+            })
         })
     }
 
@@ -4579,18 +4763,20 @@ impl Engine {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let storage = self.lock_storage()?;
-        Ok(storage
-            .port
-            .journal_rows(scope.tenant(), StorageSequence::new(after), limit)
-            .into_iter()
-            .map(|row| JournalRow {
-                commit_sequence: row.commit_sequence,
-                origin: row.origin,
-                origin_sequence: row.origin_sequence,
-                canonical: row.canonical,
-            })
-            .collect())
+        self.with_logical_read(scope, || {
+            let storage = self.lock_storage()?;
+            Ok(storage
+                .port
+                .journal_rows(scope.tenant(), StorageSequence::new(after), limit)
+                .into_iter()
+                .map(|row| JournalRow {
+                    commit_sequence: row.commit_sequence,
+                    origin: row.origin,
+                    origin_sequence: row.origin_sequence,
+                    canonical: row.canonical,
+                })
+                .collect())
+        })
     }
 
     /// Recovers contiguous origin prefixes from durable provenance and progress
@@ -4745,7 +4931,9 @@ impl Engine {
     /// journal does not serve (W4-CA-4 repair F2's divergence, as a
     /// count).
     ///
-    fn lock_storage(&self) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {
+    pub(crate) fn lock_storage(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {
         self.validate_storage_authorization()?;
         self.storage.lock().map_err(|_| EngineError::StorageFailure)
     }
@@ -4968,6 +5156,9 @@ pub struct Transaction<'engine> {
     replication_fingerprint: Option<[u8; 32]>,
     replication_publication: Option<storage::ReplicationPublicationIntent>,
     shard_admission: Option<crate::shard_split::ShardAdmissionToken>,
+    cross_file_batch: Option<cross_file::CrossFileBatch>,
+    cross_file_control: Option<OperationId>,
+    cross_file_dependencies: Option<Vec<u8>>,
     writes: Vec<StagedWrite>,
     metadata: Vec<storage::PrivateMetadataWrite>,
     schema_envelopes: Vec<storage::SchemaEnvelopeWrite>,
@@ -5096,6 +5287,9 @@ impl Transaction<'_> {
                 });
             }
         }
+        if let Some(batch) = &self.cross_file_batch {
+            return batch.read_identifier(self.scope.tenant(), id);
+        }
         let storage = self.engine.lock_storage()?;
         Ok(storage.port.read_document_at(self.snapshot_sequence, self.scope.tenant(), id))
     }
@@ -5144,9 +5338,13 @@ impl Transaction<'_> {
                 });
             }
         }
-        let storage = self.engine.lock_storage()?;
+        let (engine, sequence) = match &self.cross_file_batch {
+            Some(batch) => batch.read_target(collection, id)?,
+            None => (self.engine, self.snapshot_sequence),
+        };
+        let storage = engine.lock_storage()?;
         Ok(storage.port.read_document_in_collection_at(
-            self.snapshot_sequence,
+            sequence,
             self.scope.tenant(),
             collection,
             id,
@@ -5189,9 +5387,14 @@ impl Transaction<'_> {
                 _ => {}
             }
         }
-        let storage = self.engine.lock_storage()?;
+        let (engine, sequence) = match &self.cross_file_batch {
+            Some(batch) => batch.read_target(collection, id)?,
+            None => (self.engine, self.snapshot_sequence),
+        };
+        engine.validate_storage_authorization()?;
+        let storage = engine.lock_storage()?;
         Ok(storage.port.document_revision_in_collection_at(
-            self.snapshot_sequence,
+            sequence,
             self.scope.tenant(),
             collection,
             id,
@@ -5334,6 +5537,9 @@ impl Transaction<'_> {
     /// behaves exactly as a serial commit.
     #[must_use]
     pub fn commit(self, durability: LocalDurability) -> CommitOutcome {
+        if self.cross_file_batch.is_some() {
+            return self.commit_cross_file(durability);
+        }
         if self.engine.validate_storage_authorization().is_err() {
             return CommitOutcome::Rejected(CommitError::StorageFailure);
         }
@@ -5395,6 +5601,16 @@ impl Transaction<'_> {
         if engine.lifecycle_is_paused(&self.scope).unwrap_or(true) {
             return CommitOutcome::Rejected(CommitError::StorageFailure);
         }
+        if !self.internal_maintenance {
+            let authority = source_authority.as_ref().map_or(engine, |(source, _)| source);
+            let authority_scope = authority.scope_for(self.scope.tenant());
+            if authority
+                .read_cross_file_active(&authority_scope)
+                .map_or(true, |active| active.is_some())
+            {
+                return CommitOutcome::Rejected(CommitError::Conflict);
+            }
+        }
         let outcome = if self.internal_maintenance {
             self.commit_unobserved(durability)
         } else {
@@ -5415,6 +5631,25 @@ impl Transaction<'_> {
         };
         metrics.record_commit(metric_result, started.elapsed());
         outcome
+    }
+
+    // Bind the caller's request before first-write bookkeeping adds a
+    // file identity. That generated metadata is absent on replay, but
+    // still persists atomically with the original request below.
+    fn prepare_request_metadata(
+        &mut self,
+        writes: &[StagedWrite],
+        initialize_identity: bool,
+    ) -> Result<(u64, Option<String>), EngineError> {
+        let digest = storage::transaction_digest(
+            self.scope.tenant(),
+            writes,
+            &self.metadata,
+            &self.schema_envelopes,
+        );
+        let generated =
+            if initialize_identity { self.ensure_primary_file_shard_identity()? } else { None };
+        Ok((digest, generated))
     }
 
     fn commit_unobserved(mut self, durability: LocalDurability) -> CommitOutcome {
@@ -5438,15 +5673,13 @@ impl Transaction<'_> {
         let needs_primary_file_shard_identity = !replicated
             && !writes.is_empty()
             && !self.engine.primary_file_shard_identity_cached(self.scope.tenant());
-        if needs_primary_file_shard_identity {
-            if self.ensure_primary_file_shard_identity().is_err() {
-                return CommitOutcome::Rejected(CommitError::StorageFailure);
-            }
-        }
+        let Ok((write_digest, generated_primary_file_identity)) =
+            self.prepare_request_metadata(&writes, needs_primary_file_shard_identity)
+        else {
+            return CommitOutcome::Rejected(CommitError::StorageFailure);
+        };
         let metadata = std::mem::take(&mut self.metadata);
         let schema_envelopes = std::mem::take(&mut self.schema_envelopes);
-        let write_digest =
-            storage::transaction_digest(self.scope.tenant(), &writes, &metadata, &schema_envelopes);
         // An origin commit stamps the replication clock (the hybrid
         // logical clock the deterministic merge compares); a replicated
         // intent carries its source stamp on the staged variant.
@@ -5480,29 +5713,17 @@ impl Transaction<'_> {
             writes,
             metadata,
             schema_envelopes,
+            cross_file_control: self.cross_file_control.clone(),
+            cross_file_dependencies: self.cross_file_dependencies.take(),
+            cross_file_billing: None,
+            generated_primary_file_identity,
         };
         let engine = self.engine;
         let operation = self.operation.clone();
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        let become_leader = {
-            let Ok(mut mailbox) = engine.commit_mailbox.lock() else {
-                return CommitOutcome::Rejected(CommitError::StorageFailure);
-            };
-            mailbox.queue.push((intent, sender));
-            if mailbox.leader_active {
-                false
-            } else {
-                mailbox.leader_active = true;
-                true
-            }
+        let result = match engine.submit_commit_intent(intent) {
+            Ok(result) => result,
+            Err(error) => return CommitOutcome::Rejected(error),
         };
-        // Wake a coalescing leader at once: waves gather on arrival
-        // notifications, not on sleep-slice polls.
-        engine.commit_arrivals.notify_all();
-        if become_leader {
-            engine.drive_as_leader();
-        }
-        let result = engine.await_commit_answer(receiver);
         if needs_primary_file_shard_identity && matches!(&result, CommitResult::Committed(_)) {
             engine.cache_primary_file_shard_identity(self.scope.tenant());
         }
@@ -5512,7 +5733,16 @@ impl Transaction<'_> {
                 receipt.root.clone(),
                 receipt.sequence,
             );
-            engine.emit_publication_event(&event);
+            if let Some(control) = &self.cross_file_control {
+                if let Ok(mut pending) = engine.cross_file_publications.lock() {
+                    pending.insert(
+                        (self.scope.tenant().to_string(), control.as_str().to_owned()),
+                        event,
+                    );
+                }
+            } else {
+                engine.emit_publication_event(&event);
+            }
         }
 
         match result {
@@ -5542,6 +5772,30 @@ impl Transaction<'_> {
 }
 
 impl Engine {
+    /// Queues one intent, driving the commit wave if this arrival becomes its leader.
+    fn submit_commit_intent(&self, intent: CommitIntent) -> Result<CommitResult, CommitError> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let become_leader = {
+            let Ok(mut mailbox) = self.commit_mailbox.lock() else {
+                return Err(CommitError::StorageFailure);
+            };
+            mailbox.queue.push((intent, sender));
+            if mailbox.leader_active {
+                false
+            } else {
+                mailbox.leader_active = true;
+                true
+            }
+        };
+        // Wake a coalescing leader at once: waves gather on arrival
+        // notifications, not on sleep-slice polls.
+        self.commit_arrivals.notify_all();
+        if become_leader {
+            self.drive_as_leader();
+        }
+        Ok(self.await_commit_answer(receiver))
+    }
+
     fn release_operation(&self, scope: &TenantScope, operation: &OperationId) {
         if let Ok(mut in_flight) = self.in_flight.lock() {
             in_flight.remove(&reservation_key(scope, operation));

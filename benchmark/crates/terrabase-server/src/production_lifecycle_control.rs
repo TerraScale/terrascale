@@ -47,18 +47,16 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
         expected_restore_digest: Option<&str>,
     ) -> Result<(), String> {
         self.journal
-            .verify_lifecycle_authority(
-                &assignment.environment,
-                &assignment.tenant,
-                &assignment.project,
-                &assignment.database,
-                &assignment.region,
-                &assignment.member,
-                assignment.placement_revision,
-                assignment.authority_epoch,
-                &assignment.authority_lease,
+            .verify_lifecycle_authority(terrabase_tbep::placement::LifecycleAuthorityRequest {
+                environment: &assignment.environment,
+                tenant: &assignment.tenant,
+                project: &assignment.project,
+                database: &assignment.database,
+                region: &assignment.region,
+                member: &assignment.member,
+                revision: assignment.placement_revision,
                 signature,
-            )
+            })
             .map_err(|_| "accepted lifecycle authority proof is invalid or stale")?;
         let grant = self
             .journal
@@ -105,6 +103,31 @@ fn verify_restore_request_digest(
         Some(_) => Err("lifecycle restore request digest does not match".into()),
         None if grant.accepted_restore_request_digest.is_empty() => Ok(()),
         None => Err("non-restore lifecycle grant carries restore request digest".into()),
+    }
+}
+
+fn recovery_envelope_facts(
+    envelope: &terrabase::backup::BackupEnvelope,
+) -> terrabase_tbep::proto::terrabase::v1::RecoveryEnvelopeFacts {
+    terrabase_tbep::proto::terrabase::v1::RecoveryEnvelopeFacts {
+        envelope_digest: envelope.digest().to_owned(),
+        database_id: envelope.database_id().to_owned(),
+        database_incarnation: format!("{:032x}", envelope.database_incarnation()),
+        route_generation: envelope.route_generation(),
+        participants: envelope
+            .participants()
+            .iter()
+            .map(|participant| terrabase_tbep::proto::terrabase::v1::RecoveryParticipant {
+                participant_id: participant.participant_id.clone(),
+                database_id: participant.database_id.clone(),
+                journal_cut: participant.boundary,
+                manifest_digest: participant.manifest.identity().to_owned(),
+                checksum: participant.manifest.logical_checksum().to_owned(),
+                row_count: participant.manifest.logical_documents(),
+                captured_at_millis: participant.manifest.captured_unix_millis(),
+                retained_until_millis: participant.manifest.retain_until_unix_millis(),
+            })
+            .collect(),
     }
 }
 
@@ -558,30 +581,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
                 envelope.logical_checksum(),
                 envelope.logical_documents(),
                 provider,
-                Some(terrabase_tbep::proto::terrabase::v1::RecoveryEnvelopeFacts {
-                    envelope_digest: envelope.digest().to_owned(),
-                    database_id: envelope.database_id().to_owned(),
-                    database_incarnation: format!("{:032x}", envelope.database_incarnation()),
-                    route_generation: envelope.route_generation(),
-                    participants: envelope
-                        .participants()
-                        .iter()
-                        .map(|participant| {
-                            terrabase_tbep::proto::terrabase::v1::RecoveryParticipant {
-                                participant_id: participant.participant_id.clone(),
-                                database_id: participant.database_id.clone(),
-                                journal_cut: participant.boundary,
-                                manifest_digest: participant.manifest.identity().to_owned(),
-                                checksum: participant.manifest.logical_checksum().to_owned(),
-                                row_count: participant.manifest.logical_documents(),
-                                captured_at_millis: participant.manifest.captured_unix_millis(),
-                                retained_until_millis: participant
-                                    .manifest
-                                    .retain_until_unix_millis(),
-                            }
-                        })
-                        .collect(),
-                }),
+                Some(recovery_envelope_facts(&envelope)),
             )
         } else {
             let (manifest, provider) = recovery
@@ -710,6 +710,38 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         let retained = recovery
             .restore_request(&request.operation_id, &request.target_database, &request.target_owner)
             .map_err(|_| "native restore request mismatch")?;
+        if let Some(supplied) = request.envelope.as_ref() {
+            // The digest selects the immutable participant vector. Never let
+            // descriptive wire facts silently disagree with that authority.
+            // Completed retries use their durable marker receipt even after
+            // the source database and its discovery catalog have disappeared.
+            let receipt = recovery
+                .restore_status(&request.operation_id)
+                .map_err(|_| "native restore status unavailable")?
+                .and_then(|operation| operation.receipt)
+                .and_then(|receipt| receipt.envelope);
+            let envelope = if let Some(encoded) = receipt {
+                terrabase::backup::BackupEnvelope::decode(encoded.as_bytes())
+                    .map_err(|_| "native restore envelope is invalid")?
+            } else {
+                self.backups
+                    .as_ref()
+                    .ok_or("native backup fleet is not composed")?
+                    .lock()
+                    .map_err(|_| "native backup fleet poisoned")?
+                    .retained_envelopes(&request.source_database)
+                    .map_err(|_| "native restore envelope unavailable")?
+                    .into_iter()
+                    .find(|envelope| envelope.digest() == request.recovery_point_digest)
+                    .ok_or("native restore envelope not found")?
+            };
+            if supplied != &recovery_envelope_facts(&envelope)
+                || envelope.digest() != request.recovery_point_digest
+                || envelope.database_id() != request.source_database
+            {
+                return Err("restore envelope facts do not match the selected point".into());
+            }
+        }
         let (placement, residency) = if let Some(retained) = &retained {
             (retained.placement.clone(), retained.residency.clone())
         } else {
@@ -968,6 +1000,15 @@ impl ProductionLifecycleControl {
             Some(&request_digest),
         )?;
         let receipt = self.worker.restore_stats(request).await?;
+        let envelope = receipt
+            .envelope
+            .as_ref()
+            .map(|encoded| {
+                terrabase::backup::BackupEnvelope::decode(encoded.as_bytes())
+                    .map(|envelope| recovery_envelope_facts(&envelope))
+                    .map_err(|_| "restore envelope is invalid".to_owned())
+            })
+            .transpose()?;
         let signed_completed_receipt =
             self.worker.signed_completed_receipt(&request.operation_id).await?;
         Ok(terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse {
@@ -980,7 +1021,7 @@ impl ProductionLifecycleControl {
                 .map_err(|_| "restore row count exceeds the wire range")?,
             journal_cut: request.journal_cut.clone(),
             placement,
-            envelope: None,
+            envelope,
         })
     }
     /// Ensures a complete snapshot after verifying accepted authority.
@@ -1227,6 +1268,7 @@ mod restore_stats_tests {
                 return Err("restore is not complete or identity mismatched".into());
             }
             Ok(NativeRestoreReceipt {
+                envelope: None,
                 selected_identity: "manifest-sha256".into(),
                 logical_content_checksum: "logical-blake3".into(),
                 restored_documents: 12,

@@ -221,8 +221,13 @@ impl ImportWriteTarget for EngineImportWriteTarget {
             let value: serde_json::Value = serde_json::from_slice(&record.value)
                 .map_err(|_| "import document value is invalid JSON".to_owned())?;
             let value = super::json_value(&value);
-            units = units
-                .saturating_add(terrabase::usage::write_units_for_bytes(record.value.len() as u64));
+            units = units.saturating_add(terrabase::usage::write_units_for_bytes(
+                terrabase::storage::estimated_document_body_bytes(
+                    record.collection.as_str(),
+                    record.id.as_str(),
+                    record.value.len() as u64,
+                ),
+            ));
             transaction
                 .put(Document::new(id, collection, value), ExpectedVersion::Any)
                 .map_err(|_| "import document could not stage".to_owned())?;

@@ -237,6 +237,12 @@ enum HostEngine {
     Admitted(Arc<terrabase::member::DatabaseLease>),
 }
 
+/// Durable proofs returned for a completed routed batch.
+pub type BatchCommitReceipts = Option<Vec<(Arc<Engine>, terrabase::CommitReceipt)>>;
+
+/// Receipt and optional revision returned for an idempotent document request.
+pub type ResolvedDocumentRequest = Option<(Arc<Engine>, terrabase::CommitReceipt, Option<String>)>;
+
 impl std::ops::Deref for HostEngine {
     type Target = Engine;
     fn deref(&self) -> &Engine {
@@ -266,6 +272,10 @@ impl EngineHost {
         matches!(self.engine, HostEngine::Admitted(_))
     }
     /// Consumes an admitted host and releases its exclusive Member lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the lease is still shared or the host is local.
     pub fn into_admitted_lease(self) -> Result<terrabase::member::DatabaseLease, HostingError> {
         match self.engine {
             HostEngine::Admitted(lease) => Arc::try_unwrap(lease)
@@ -356,6 +366,10 @@ impl EngineHost {
     }
 
     /// Refreshes a stale serving snapshot without acquiring more admission capacity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when refreshing the retained admission lease fails.
     pub fn refreshed_serving_host(&self) -> Result<Option<Self>, terrabase::EngineError> {
         let HostEngine::Admitted(lease) = &self.engine else {
             return Ok(None);
@@ -366,6 +380,10 @@ impl EngineHost {
     }
 
     /// Captures admitted physical lanes; local standalone hosts have no Member inventory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when admitted shard state cannot be read.
     pub fn admitted_shard_read_cut(
         &self,
     ) -> Result<Option<terrabase::member::AdmittedShardReadCut>, terrabase::EngineError> {
@@ -375,7 +393,26 @@ impl EngineHost {
         }
     }
 
+    /// Verifies a saved restore using only the retained Member admission owner.
+    ///
+    /// # Errors
+    /// Refuses standalone hosts, revoked access, conflicting publication, and
+    /// marker or restored-tree mismatches without admitting public reads.
+    pub fn verify_published_restore(
+        &self,
+        identity: &terrabase::backup::RestoreIdentity,
+    ) -> Result<Option<terrabase::backup::RestoreMarkerFacts>, terrabase::backup::BackupError> {
+        match &self.engine {
+            HostEngine::Admitted(lease) => lease.verify_published_restore(identity),
+            HostEngine::Local(_) => Err(terrabase::backup::BackupError::SourceUnavailable),
+        }
+    }
+
     /// Selects the engine used for document reads, replay, sessions and durability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when routed participant selection fails.
     pub fn document_participant(
         &self,
         collection: &CollectionName,
@@ -387,8 +424,45 @@ impl EngineHost {
         }
     }
 
+    /// Selects the logical batch coordinator or its sole physical participant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when routed participant selection fails.
+    pub fn batch_coordinator(
+        &self,
+        collection: &CollectionName,
+        ids: &[terrabase::types::DocumentId],
+    ) -> Result<&Engine, terrabase::EngineError> {
+        match &self.engine {
+            HostEngine::Admitted(lease) => lease.batch_coordinator(collection, ids),
+            HostEngine::Local(engine) => Ok(engine),
+        }
+    }
+
+    /// Returns all durable proofs required by a completed logical batch,
+    /// including the root completion. Ordinary single-file batches return `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when durable receipts cannot be read.
+    pub fn batch_commit_receipts(
+        &self,
+        scope: &TenantScope,
+        operation: &OperationId,
+    ) -> Result<BatchCommitReceipts, terrabase::EngineError> {
+        match &self.engine {
+            HostEngine::Admitted(lease) => lease.batch_commit_receipts(scope, operation),
+            HostEngine::Local(_) => Ok(None),
+        }
+    }
+
     /// Begins a named document write through the admitted serving registry.
     /// Local development hosts retain their ordinary single-engine path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when admission or snapshot creation fails.
     pub fn begin_routed_document(
         &self,
         scope: &TenantScope,
@@ -407,6 +481,10 @@ impl EngineHost {
     }
 
     /// Begins one routed transaction for a batch sharing one participant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when admission or snapshot creation fails.
     pub fn begin_routed_batch(
         &self,
         scope: &TenantScope,
@@ -425,6 +503,10 @@ impl EngineHost {
     }
 
     /// Begins one routed transaction from canonical keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when admission or snapshot creation fails.
     pub fn begin_routed_batch_keys(
         &self,
         scope: &TenantScope,
@@ -440,6 +522,10 @@ impl EngineHost {
     }
 
     /// Resolves an idempotent document request on its selected participant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when request resolution fails.
     pub fn resolve_routed_document_request(
         &self,
         scope: &TenantScope,
@@ -447,10 +533,7 @@ impl EngineHost {
         id: &terrabase::types::DocumentId,
         operation: OperationId,
         fingerprint: [u8; 32],
-    ) -> Result<
-        Option<(Arc<Engine>, terrabase::CommitReceipt, Option<String>)>,
-        terrabase::engine::EngineError,
-    > {
+    ) -> Result<ResolvedDocumentRequest, terrabase::engine::EngineError> {
         match &self.engine {
             HostEngine::Admitted(lease) => {
                 lease.resolve_routed_document_request(scope, collection, id, operation, fingerprint)
@@ -462,6 +545,10 @@ impl EngineHost {
     }
 
     /// Resolves a batch on its original participant, preserving its receipt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine error when request resolution fails.
     pub fn resolve_routed_batch_request(
         &self,
         scope: &TenantScope,

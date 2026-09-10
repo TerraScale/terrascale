@@ -83,35 +83,63 @@ impl Engine {
         fingerprint: [u8; 32],
     ) -> Result<Option<(CommitReceipt, usize)>, EngineError> {
         self.validate_scope(scope)?;
+        if let Some(record) = self.read_cross_file_decision(scope, &operation)? {
+            let Some((_, _, receipt)) = self.cross_file_completion(scope, &operation)? else {
+                return if record.decision == Some(super::CrossFileDecision::Aborted) {
+                    Ok(None)
+                } else {
+                    Err(EngineError::Conflict)
+                };
+            };
+            let Some(DocumentValue::Array(fields)) = self.cross_file_request(scope, &operation)?
+            else {
+                return Err(EngineError::OperationIdReuse { operation_id: operation });
+            };
+            let [DocumentValue::String(stored), DocumentValue::String(count)] = fields.as_slice()
+            else {
+                return Err(EngineError::StorageFailure);
+            };
+            if stored != &hex::encode(fingerprint) {
+                return Err(EngineError::OperationIdReuse { operation_id: operation });
+            }
+            let count = count
+                .parse::<usize>()
+                .ok()
+                .filter(|count| (1..=1000).contains(count))
+                .ok_or(EngineError::StorageFailure)?;
+            return Ok(Some((receipt, count)));
+        }
         if self.lifecycle_is_paused(scope).map_err(|_| EngineError::StorageFailure)? {
             return Err(EngineError::StorageFailure);
         }
-        let storage = self.lock_storage()?;
-        let Some(storage::OperationResolution::Committed { sequence, durability }) =
-            storage.port.resolve_operation(scope.tenant(), &operation)
-        else {
-            return Ok(None);
-        };
-        let metadata = storage
-            .port
-            .private_metadata_at(scope.tenant(), &key(&operation), sequence)
-            .map_err(|()| EngineError::StorageFailure)?;
-        let Some(DocumentValue::Array(fields)) = metadata else {
-            return Err(EngineError::OperationIdReuse { operation_id: operation });
-        };
-        let [DocumentValue::String(stored), DocumentValue::String(count)] = fields.as_slice()
-        else {
-            return Err(EngineError::StorageFailure);
-        };
-        if stored != &hex::encode(fingerprint) {
-            return Err(EngineError::OperationIdReuse { operation_id: operation });
-        }
-        let count = count
-            .parse::<usize>()
-            .ok()
-            .filter(|count| (1..=1000).contains(count))
-            .ok_or(EngineError::StorageFailure)?;
-        Ok(Some((CommitReceipt::new(operation, sequence, durability), count)))
+        self.with_logical_read(scope, || {
+            let storage = self.lock_storage()?;
+            let Some(storage::OperationResolution::Committed { sequence, durability }) =
+                storage.port.resolve_operation(scope.tenant(), &operation)
+            else {
+                return Ok(None);
+            };
+            let metadata = storage
+                .port
+                .private_metadata_at(scope.tenant(), &key(&operation), sequence)
+                .map_err(|()| EngineError::StorageFailure)?;
+            let Some(DocumentValue::Array(fields)) = metadata else {
+                return Err(EngineError::OperationIdReuse { operation_id: operation });
+            };
+            let [DocumentValue::String(stored), DocumentValue::String(count)] = fields.as_slice()
+            else {
+                return Err(EngineError::StorageFailure);
+            };
+            if stored != &hex::encode(fingerprint) {
+                return Err(EngineError::OperationIdReuse { operation_id: operation });
+            }
+            let count = count
+                .parse::<usize>()
+                .ok()
+                .filter(|count| (1..=1000).contains(count))
+                .ok_or(EngineError::StorageFailure)?;
+            Ok(Some((CommitReceipt::new(operation, sequence, durability), count)))
+        })
     }
 }
 

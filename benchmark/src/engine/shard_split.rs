@@ -16,6 +16,17 @@ use crate::{
 const VERSION: u8 = 1;
 const MAX_ROUTES: usize = 1024;
 const MAX_BYTES: usize = 1024 * 1024;
+const RESTORED_ROUTE_BINDING_KEY: &str = "control:restored-route/v1";
+
+pub(crate) fn restored_lane_incarnation(binding: &[u8; 32], shard_id: u64) -> u128 {
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"terrabase-restored-lane-v1\0");
+    digest.update(binding);
+    digest.update(&shard_id.to_be_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest.finalize().as_bytes()[..16]);
+    u128::from_be_bytes(bytes).max(1)
+}
 
 #[cfg(test)]
 #[path = "shard_admission_tests.rs"]
@@ -53,12 +64,9 @@ pub(crate) struct ScopedShardEngine {
 }
 
 impl ScopedShardEngine {
-    pub(crate) fn new(
-        engine: std::sync::Arc<Engine>,
-        scope: TenantScope,
-    ) -> Result<Self, RouteCatalogError> {
+    pub(crate) fn new(engine: std::sync::Arc<Engine>, scope: TenantScope) -> Self {
         let incarnation = u128::from_be_bytes(engine.database_id().as_bytes().to_owned());
-        Ok(Self { engine, scope, incarnation })
+        Self { engine, scope, incarnation }
     }
     fn operation(split: SplitContext) -> Result<OperationId, RouteCatalogError> {
         OperationId::try_new(&format!("shard-split-{:032x}", split.split_id()))
@@ -75,8 +83,14 @@ impl ScopedShardEngine {
         &self,
         context: &SplitContext,
     ) -> Result<std::sync::Arc<Engine>, EngineOpenError> {
+        let identity = self.file_identity(*context).map_err(|_| EngineOpenError::InvalidConfig)?;
         self.engine
-            .open_shard_participant_mode(context.target_shard(), true, Some(context.split_id()))?
+            .open_shard_participant_mode(
+                context.target_shard(),
+                true,
+                Some(context.split_id()),
+                Some(identity),
+            )?
             .ok_or(EngineOpenError::StorageUnavailable)
     }
 
@@ -85,9 +99,22 @@ impl ScopedShardEngine {
         &self,
         context: &SplitContext,
     ) -> Result<std::sync::Arc<Engine>, EngineOpenError> {
-        self.engine
-            .open_shard_participant_mode(context.target_shard(), false, Some(context.split_id()))?
-            .ok_or(EngineOpenError::StorageUnavailable)
+        let expected = self.file_identity(*context).map_err(|_| EngineOpenError::InvalidConfig)?;
+        let target = self
+            .engine
+            .open_shard_participant_mode(
+                context.target_shard(),
+                false,
+                Some(context.split_id()),
+                Some(expected),
+            )?
+            .ok_or(EngineOpenError::StorageUnavailable)?;
+        match Self::file_identity_at(&target, &Self::target_scope(&target, &self.scope))
+            .map_err(|_| EngineOpenError::StorageUnavailable)?
+        {
+            Some(actual) if actual == expected => Ok(target),
+            Some(_) | None => Err(EngineOpenError::FormatMismatch),
+        }
     }
 
     /// Records the exact verified target snapshot before route publication.
@@ -191,6 +218,25 @@ impl ScopedShardEngine {
         Ok(bytes)
     }
 
+    fn file_identity(
+        &self,
+        context: SplitContext,
+    ) -> Result<crate::shard_split::FileShardIdentity, EngineError> {
+        let region = self.engine.database_owner().region();
+        if context.database_incarnation() != self.incarnation
+            || context.target_shard() == 0
+            || context.split_id() == 0
+        {
+            return Err(EngineError::Conflict);
+        }
+        Ok(crate::shard_split::FileShardIdentity {
+            database_incarnation: self.incarnation,
+            shard_id: context.target_shard(),
+            region,
+            origin_lane_incarnation: context.split_id(),
+        })
+    }
+
     fn target_identity_at(
         target: &Engine,
         scope: &TenantScope,
@@ -199,7 +245,7 @@ impl ScopedShardEngine {
         let value = target
             .lock_storage()?
             .port
-            .private_metadata_at(scope.tenant(), &target_identity_key(), snapshot.sequence())
+            .private_metadata_at(scope.tenant(), target_identity_key(), snapshot.sequence())
             .map_err(|()| EngineError::StorageFailure)?;
         match value {
             None => Ok(None),
@@ -210,22 +256,50 @@ impl ScopedShardEngine {
         }
     }
 
+    fn file_identity_at(
+        target: &Engine,
+        scope: &TenantScope,
+    ) -> Result<Option<crate::shard_split::FileShardIdentity>, EngineError> {
+        let snapshot = target.read_snapshot(scope)?;
+        let key = crate::engine::shard_split::file_shard_key(u128::from_be_bytes(
+            target.database_id().as_bytes().to_owned(),
+        ));
+        let value = target
+            .lock_storage()?
+            .port
+            .private_metadata_at(scope.tenant(), &key, snapshot.sequence())
+            .map_err(|()| EngineError::StorageFailure)?;
+        match value {
+            None => Ok(None),
+            Some(DocumentValue::String(value)) => {
+                let bytes = hex::decode(value).map_err(|_| EngineError::Conflict)?;
+                crate::engine::shard_split::decode_file_identity(&bytes).map(Some)
+            }
+            Some(_) => Err(EngineError::Conflict),
+        }
+    }
+
     fn persist_target_identity(
         target: &Engine,
         scope: &TenantScope,
         context: SplitContext,
         identity: &[u8],
+        file_identity: crate::shard_split::FileShardIdentity,
     ) -> Result<(), EngineError> {
         let operation = OperationId::try_new(&format!("shard-target-{:032x}", context.split_id()))
             .map_err(|_| EngineError::InvalidDocument)?;
         let mut tx = target.begin(scope, target.read_snapshot(scope)?, operation)?;
         tx.internal_maintenance = true;
-        tx.put_private_metadata(&target_identity_key(), value(identity))?;
+        tx.put_private_metadata(
+            &crate::engine::shard_split::file_shard_key(file_identity.database_incarnation),
+            value(&crate::engine::shard_split::encode_file_identity(file_identity)),
+        )?;
+        tx.put_private_metadata(target_identity_key(), value(identity))?;
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
-            CommitOutcome::Rejected(
-                CommitError::Conflict | CommitError::OperationIdReuse { .. },
-            ) => Err(EngineError::Conflict),
+            CommitOutcome::Rejected(CommitError::Conflict | CommitError::OperationIdReuse) => {
+                Err(EngineError::Conflict)
+            }
             CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
                 Err(EngineError::StorageFailure)
             }
@@ -252,7 +326,7 @@ impl ScopedShardEngine {
         }
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_)
-            | CommitOutcome::Rejected(CommitError::OperationIdReuse { .. }) => Ok(()),
+            | CommitOutcome::Rejected(CommitError::OperationIdReuse) => Ok(()),
             CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict),
             CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
                 Err(EngineError::StorageFailure)
@@ -293,6 +367,7 @@ impl SplitEngineAdapter for ScopedShardEngine {
         let state =
             self.load().map_err(|_| EngineError::StorageFailure)?.ok_or(EngineError::Conflict)?;
         let identity = Self::target_identity(*context, &state)?;
+        let file_identity = self.file_identity(*context)?;
         let target = self.open_target(context).map_err(|error| match error {
             EngineOpenError::InvalidConfig | EngineOpenError::FormatMismatch => {
                 EngineError::Conflict
@@ -300,6 +375,11 @@ impl SplitEngineAdapter for ScopedShardEngine {
             EngineOpenError::StorageUnavailable => EngineError::StorageFailure,
         })?;
         let target_scope = Self::target_scope(&target, &self.scope);
+        if let Some(existing) = Self::file_identity_at(&target, &target_scope)?
+            && existing != file_identity
+        {
+            return Err(EngineError::Conflict);
+        }
         match Self::target_identity_at(&target, &target_scope)? {
             Some(existing) if existing == identity => Ok(()),
             Some(_) => Err(EngineError::Conflict),
@@ -311,6 +391,13 @@ impl SplitEngineAdapter for ScopedShardEngine {
                 if epoch == 0 || fenced {
                     return Err(EngineError::Conflict);
                 }
+                Self::persist_target_identity(
+                    &target,
+                    &target_scope,
+                    *context,
+                    &identity,
+                    file_identity,
+                )?;
                 target.activate_origin_epoch(epoch)?;
                 if let Some(placement) = self
                     .engine
@@ -322,7 +409,7 @@ impl SplitEngineAdapter for ScopedShardEngine {
                         .map_err(|_| EngineError::StorageFailure)?;
                 }
                 self.copy_schema_metadata(&target, &target_scope, *context)?;
-                Self::persist_target_identity(&target, &target_scope, *context, &identity)
+                Ok(())
             }
         }
     }
@@ -599,9 +686,7 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
         }
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
-            CommitOutcome::Rejected(CommitError::OperationIdReuse { .. }) => {
-                Err(EngineError::Conflict)
-            }
+            CommitOutcome::Rejected(CommitError::OperationIdReuse) => Err(EngineError::Conflict),
             CommitOutcome::Rejected(CommitError::Conflict) | CommitOutcome::Unknown(_) => {
                 Err(EngineError::StorageFailure)
             }
@@ -645,9 +730,9 @@ impl SplitStateStore for ScopedShardEngine {
         tx.put_private_metadata(&split_key(self.incarnation), value(&state.encode()))?;
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
-            CommitOutcome::Rejected(
-                CommitError::Conflict | CommitError::OperationIdReuse { .. },
-            ) => Err(RouteCatalogError::Conflict),
+            CommitOutcome::Rejected(CommitError::Conflict | CommitError::OperationIdReuse) => {
+                Err(RouteCatalogError::Conflict)
+            }
             CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
                 Err(RouteCatalogError::Engine(EngineError::StorageFailure))
             }
@@ -715,7 +800,7 @@ pub(crate) struct RouteCatalog {
 
 /// Failures reading or installing a route catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum RouteCatalogError {
+pub enum RouteCatalogError {
     /// Bytes were malformed or violated route invariants.
     Malformed,
     /// The caller's expected catalog is stale.
@@ -749,7 +834,7 @@ pub(crate) fn encode_file_identity(identity: crate::shard_split::FileShardIdenti
     bytes
 }
 
-fn decode_file_identity(
+pub(crate) fn decode_file_identity(
     bytes: &[u8],
 ) -> Result<crate::shard_split::FileShardIdentity, EngineError> {
     if bytes.len() != 44 || bytes[0] != 1 {
@@ -882,6 +967,96 @@ fn bytes(value: Option<DocumentValue>) -> Result<Option<Vec<u8>>, RouteCatalogEr
 }
 
 impl Engine {
+    /// Installs only into a private, freshly replayed restore file. Logical
+    /// restores establish new origin lanes; historical split receipts are not
+    /// reusable proof for a different target database.
+    pub(crate) fn install_restored_shard_catalog(
+        &self,
+        scope: &TenantScope,
+        shard_id: u64,
+        routes: Vec<ShardRoute>,
+        generation: u64,
+        binding: &[u8; 32],
+    ) -> Result<(), EngineError> {
+        let incarnation = u128::from_be_bytes(self.database_id().as_bytes());
+        if shard_id == 0
+            || generation == u64::MAX
+            || !routes.iter().any(|route| route.shard_id() == shard_id)
+        {
+            return Err(EngineError::Conflict);
+        }
+        let catalog = RouteCatalog {
+            table: RouteTable::new(routes)
+                .map_err(|_| EngineError::Conflict)?
+                .with_generation(generation),
+            generation,
+        };
+        let encoded = encode_catalog(&catalog).map_err(|_| EngineError::Conflict)?;
+        let identity = crate::shard_split::FileShardIdentity {
+            database_incarnation: incarnation,
+            shard_id,
+            region: self.database_owner().region(),
+            origin_lane_incarnation: restored_lane_incarnation(binding, shard_id),
+        };
+        let mut tx = self.begin(
+            scope,
+            self.read_snapshot(scope)?,
+            OperationId::try_new("restore-route").map_err(|_| EngineError::Conflict)?,
+        )?;
+        tx.internal_maintenance = true;
+        if tx.read_private_metadata(&key(incarnation))?.is_some()
+            || tx.read_private_metadata(&file_shard_key(incarnation))?.is_some()
+            || tx.read_private_metadata(RESTORED_ROUTE_BINDING_KEY)?.is_some()
+        {
+            return Err(EngineError::Conflict);
+        }
+        tx.put_private_metadata(&key(incarnation), value(&encoded))?;
+        tx.put_private_metadata(
+            &file_shard_key(incarnation),
+            value(&encode_file_identity(identity)),
+        )?;
+        tx.put_private_metadata(RESTORED_ROUTE_BINDING_KEY, value(binding))?;
+        match tx.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
+                Err(EngineError::StorageFailure)
+            }
+        }
+    }
+
+    pub(crate) fn restored_route_binding(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<Option<[u8; 32]>, EngineError> {
+        let snapshot = self.read_snapshot_unfenced(scope)?;
+        let raw = self
+            .lock_storage()?
+            .port
+            .private_metadata_at(scope.tenant(), RESTORED_ROUTE_BINDING_KEY, snapshot.sequence())
+            .map_err(|()| EngineError::StorageFailure)?;
+        bytes(raw)
+            .map_err(|_| EngineError::Conflict)?
+            .map(|value| value.try_into().map_err(|_| EngineError::Conflict))
+            .transpose()
+    }
+
+    pub(crate) fn validate_restored_shard_target(
+        &self,
+        scope: &TenantScope,
+        expected_route: &ShardRoute,
+        source_generation: u64,
+        binding: &[u8; 32],
+    ) -> Result<bool, EngineError> {
+        let Some((router, generation)) = self.load_shard_router(scope)? else { return Ok(false) };
+        let Some(identity) = self.file_shard_identity(scope)? else { return Ok(false) };
+        Ok(self.restored_route_binding(scope)?.as_ref() == Some(binding)
+            && identity.shard_id == expected_route.shard_id()
+            && identity.origin_lane_incarnation
+                == restored_lane_incarnation(binding, identity.shard_id)
+            && generation <= source_generation
+            && router.table().routes() == std::slice::from_ref(expected_route))
+    }
+
     /// Captures a bounded local MVCC cut while excluding source/target publication.
     /// The caller owns the validated participant list and retains the returned
     /// snapshots after this short exclusive admission barrier is released.
@@ -896,6 +1071,13 @@ impl Engine {
         }
         let _cut = self.origin_commit_barrier.write().map_err(|_| EngineError::StorageFailure)?;
         let scope = self.scope_for(tenant);
+        // Check under the same exclusive barrier used to capture every
+        // participant. Taking a read guard before entering this method would
+        // deadlock on the write acquisition above; checking before it would
+        // allow a prepare marker to race the captured cut.
+        if self.read_cross_file_active(&scope)?.is_some() {
+            return Err(EngineError::Conflict);
+        }
         if self.load_shard_router(&scope)?.as_ref().map(|(_, generation)| *generation)
             != expected_generation
         {
@@ -930,6 +1112,91 @@ impl Engine {
             .collect()
     }
 
+    /// Verifies one exact durable restore marker without admitting a public read.
+    /// The callback and its private snapshots stay inside both publication barriers.
+    pub(crate) fn verify_restore_with_registered_participants(
+        &self,
+        tenant: &crate::types::TenantId,
+        expected_generation: Option<u64>,
+        participants: &[std::sync::Arc<Engine>],
+        identity: &crate::backup::RestoreIdentity,
+        verify: impl FnOnce(Vec<crate::types::ReadSnapshot>) -> Result<(), crate::backup::BackupError>,
+    ) -> Result<Option<crate::backup::RestoreMarkerFacts>, crate::backup::BackupError> {
+        use crate::backup::BackupError;
+        fn unavailable<T>(_: T) -> BackupError {
+            BackupError::SourceUnavailable
+        }
+        if participants.is_empty() || participants.len() > MAX_ROUTES {
+            return Err(BackupError::ChecksumMismatch);
+        }
+        let _publication = self.origin_commit_barrier.write().map_err(unavailable)?;
+        let _snapshots = self.cross_file_snapshot_barrier.read().map_err(unavailable)?;
+        let scope = self.scope_for(tenant);
+        if self.read_cross_file_active(&scope).map_err(unavailable)?.is_some()
+            || self
+                .load_shard_router(&scope)
+                .map_err(unavailable)?
+                .as_ref()
+                .map(|(_, generation)| *generation)
+                != expected_generation
+            || self.database_id().to_text() != identity.target_database_id
+        {
+            return Err(BackupError::ChecksumMismatch);
+        }
+        let state = self.lifecycle_state(&scope).map_err(|_| BackupError::SourceUnavailable)?;
+        if state.access_revoked() {
+            return Err(BackupError::SourceUnavailable);
+        }
+        let Some(marker) = crate::backup::read_restore_marker(self, identity)? else {
+            return if state.paused { Ok(None) } else { Err(BackupError::ChecksumMismatch) };
+        };
+        let mut identities = std::collections::BTreeSet::new();
+        let mut snapshots = Vec::with_capacity(participants.len());
+        for participant in participants {
+            if !identities.insert(participant.identity())
+                || participant.database_owner() != self.database_owner()
+            {
+                return Err(BackupError::ChecksumMismatch);
+            }
+            if !std::ptr::eq(participant.as_ref(), self) {
+                let authority = participant.shard_authority.lock().map_err(unavailable)?;
+                if !authority
+                    .as_ref()
+                    .and_then(std::sync::Weak::upgrade)
+                    .is_some_and(|source| std::ptr::eq(source.as_ref(), self))
+                {
+                    return Err(BackupError::ChecksumMismatch);
+                }
+            }
+            let participant_scope = participant.scope_for(tenant);
+            if participant
+                .lifecycle_state(&participant_scope)
+                .map_err(|_| BackupError::SourceUnavailable)?
+                .access_revoked()
+                || participant
+                    .read_cross_file_active(&participant_scope)
+                    .map_err(unavailable)?
+                    .is_some()
+            {
+                return Err(BackupError::SourceUnavailable);
+            }
+            snapshots
+                .push(participant.read_snapshot_unfenced(&participant_scope).map_err(unavailable)?);
+        }
+        verify(snapshots)?;
+        // Revocation must not be turned into a successful administrative readback.
+        for participant in participants {
+            if participant
+                .lifecycle_state(&participant.scope_for(tenant))
+                .map_err(|_| BackupError::SourceUnavailable)?
+                .access_revoked()
+            {
+                return Err(BackupError::SourceUnavailable);
+            }
+        }
+        Ok(Some(marker))
+    }
+
     /// Opens an existing split participant beneath this database's durable
     /// root. Member admission uses this only after the route catalog names
     /// the shard; callers cannot supply an arbitrary path.
@@ -937,7 +1204,7 @@ impl Engine {
         self: &std::sync::Arc<Self>,
         shard_id: u64,
     ) -> Result<Option<std::sync::Arc<Engine>>, EngineOpenError> {
-        self.open_shard_participant_mode(shard_id, false, None)
+        self.open_shard_participant_mode(shard_id, false, None, None)
     }
 
     fn open_shard_participant_mode(
@@ -945,6 +1212,7 @@ impl Engine {
         shard_id: u64,
         create: bool,
         lane_incarnation: Option<u128>,
+        initial_file_identity: Option<crate::shard_split::FileShardIdentity>,
     ) -> Result<Option<std::sync::Arc<Engine>>, EngineOpenError> {
         let path = self.location.join("shards").join(format!("{shard_id:016x}.sqlite3"));
         let exists = crate::storage::existing_database_location(&path, self.storage_keys.is_some());
@@ -987,6 +1255,9 @@ impl Engine {
                 .map_err(|_| EngineOpenError::InvalidConfig)?;
             config = config.with_replication_lane_origin(lane);
         }
+        if let Some(identity) = initial_file_identity {
+            config = config.with_initial_file_identity(identity);
+        }
         let target = std::sync::Arc::new(Engine::open(config)?);
         if let Some(reservation) = resources.as_mut() {
             reservation.opened();
@@ -1008,7 +1279,7 @@ impl Engine {
         expected_route: &ShardRoute,
         source_generation: u64,
     ) -> Result<bool, EngineError> {
-        let snapshot = self.read_snapshot(scope)?;
+        let snapshot = self.read_snapshot_unfenced(scope)?;
         let storage = self.lock_storage()?;
         let read = |name: &str| -> Result<Vec<u8>, EngineError> {
             let value = storage
@@ -1140,10 +1411,9 @@ impl Engine {
         )?;
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
-            CommitOutcome::Rejected(CommitError::OperationIdReuse { .. }) => {
+            CommitOutcome::Rejected(CommitError::OperationIdReuse | CommitError::Conflict) => {
                 Err(EngineError::Conflict)
             }
-            CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict),
             CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
                 Err(EngineError::StorageFailure)
             }
@@ -1159,7 +1429,7 @@ impl Engine {
         scope: &TenantScope,
     ) -> Result<Option<crate::shard_split::FileShardIdentity>, EngineError> {
         let incarnation = u128::from_be_bytes(self.database_id().as_bytes());
-        let snapshot = self.read_snapshot(scope)?;
+        let snapshot = self.read_snapshot_unfenced(scope)?;
         let raw = self
             .lock_storage()?
             .port
@@ -1217,6 +1487,10 @@ impl Engine {
     }
 
     /// Validates a bounded batch whose canonical keys all route to one file.
+    ///
+    /// # Errors
+    /// Returns an error when the batch is empty, spans multiple shards, or the
+    /// admission token cannot be validated against the durable catalog.
     pub fn shard_admission_for_keys(
         &self,
         scope: &TenantScope,
@@ -1241,6 +1515,10 @@ impl Engine {
     /// Loads the authoritative serving router for an admitted database.
     /// Catalog decoding remains engine-owned; callers receive only the
     /// validated router and its durable generation.
+    ///
+    /// # Errors
+    /// Returns an error when the durable route catalog cannot be read or
+    /// decoded.
     pub fn load_shard_router(
         &self,
         scope: &TenantScope,
@@ -1328,7 +1606,7 @@ impl Engine {
         scope: &TenantScope,
         incarnation: u128,
     ) -> Result<Option<RouteCatalog>, RouteCatalogError> {
-        let snapshot = self.read_snapshot(scope)?;
+        let snapshot = self.read_snapshot_unfenced(scope)?;
         let value = self
             .lock_storage()
             .map_err(RouteCatalogError::from)?
@@ -1339,6 +1617,7 @@ impl Engine {
     }
 
     /// Atomically installs route bytes and the durable cutover split record.
+    #[cfg(test)]
     pub(crate) fn install_shard_route_catalog(
         &self,
         scope: &TenantScope,
@@ -1392,12 +1671,12 @@ impl Engine {
             CommitOutcome::Committed(_) => Ok(catalog.generation),
             CommitOutcome::Rejected(CommitError::Conflict) => Err(RouteCatalogError::Conflict),
             CommitOutcome::Rejected(error) => Err(RouteCatalogError::Engine(match error {
-                CommitError::Validation => EngineError::InvalidDocument,
-                CommitError::OperationIdReuse { .. } => EngineError::Conflict,
+                CommitError::Validation | CommitError::UsageRequiresSynced => {
+                    EngineError::InvalidDocument
+                }
+                CommitError::OperationIdReuse | CommitError::Conflict => EngineError::Conflict,
                 CommitError::EngineClosed => EngineError::Closed(super::EngineClosed),
-                CommitError::UsageRequiresSynced => EngineError::InvalidDocument,
                 CommitError::StorageFailure => EngineError::StorageFailure,
-                CommitError::Conflict => EngineError::Conflict,
             })),
             CommitOutcome::Unknown(_) => {
                 Err(RouteCatalogError::Engine(EngineError::StorageFailure))
@@ -1480,12 +1759,12 @@ impl Engine {
             CommitOutcome::Committed(_) => Ok(generation),
             CommitOutcome::Rejected(CommitError::Conflict) => Err(RouteCatalogError::Conflict),
             CommitOutcome::Rejected(error) => Err(RouteCatalogError::Engine(match error {
-                CommitError::Validation => EngineError::InvalidDocument,
-                CommitError::OperationIdReuse { .. } => EngineError::Conflict,
+                CommitError::Validation | CommitError::UsageRequiresSynced => {
+                    EngineError::InvalidDocument
+                }
+                CommitError::OperationIdReuse | CommitError::Conflict => EngineError::Conflict,
                 CommitError::EngineClosed => EngineError::Closed(super::EngineClosed),
-                CommitError::UsageRequiresSynced => EngineError::InvalidDocument,
                 CommitError::StorageFailure => EngineError::StorageFailure,
-                CommitError::Conflict => EngineError::Conflict,
             })),
             CommitOutcome::Unknown(_) => {
                 Err(RouteCatalogError::Engine(EngineError::StorageFailure))

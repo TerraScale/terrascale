@@ -1,0 +1,26 @@
+Exact authored changes, in application order:
+
+1. `src/engine/mod.rs`: add private `EngineConfig.initial_file_identity`, set
+   it to `None` in both constructors, add crate-private
+   `with_initial_file_identity(FileShardIdentity)`, and make `open_storage`
+   pass that identity to `bind_generated_primary_identity`, falling back to
+   the existing shard-1 identity.
+
+2. `src/engine/shard_split.rs`: pass a derived `FileShardIdentity` when
+   opening a target; pass the expected identity when reopening one and reject
+   absent/mismatched persisted file identity; add `file_identity` and
+   `file_identity_at`; extend `persist_target_identity` to atomically stage the
+   `file_shard_key` metadata with TSPLIT1; move epoch/fence validation before
+   that persistence; add the optional identity parameter to
+   `open_shard_participant_mode`; pass it into the private config setter; and
+   update all existing call sites with `None`.
+
+3. `src/storage/sqlite/mod.rs`: remove the unconditional
+   `identity.shard_id != 1` rejection from the narrow binder. All existing
+   codec, OnceLock, metadata, CAS, and reopen validation remains unchanged.
+
+The exact live source regions are identified by these symbols:
+`EngineConfig.initial_file_identity`, `with_initial_file_identity`,
+`ScopedShardEngine::{file_identity,file_identity_at,persist_target_identity,
+open_target,open_existing_target}`, `open_shard_participant_mode`, and
+`SqliteStorage::bind_generated_primary_identity`.

@@ -67,6 +67,7 @@ impl SqliteStorage {
             LifecycleCommand::Resume(id) => Some((id.clone(), false)),
             _ => None,
         };
+        let has_operation = operation.is_some();
         if let Some((id, paused)) = operation.as_ref() {
             if id.is_empty() || id.len() > 128 {
                 return Err(LifecycleError::Invalid);
@@ -193,16 +194,19 @@ impl SqliteStorage {
                 state.paused = false;
             }
         }
-        if state == before {
-            return Ok(state);
+        let state_changed = state != before;
+        if state_changed {
+            state.generation = state.generation.checked_add(1).ok_or(LifecycleError::Invalid)?;
+            let body = encode(&state);
+            tx.execute("INSERT INTO database_lifecycle VALUES (?1,?2) ON CONFLICT(tenant) DO UPDATE SET body=excluded.body", params![tenant.as_str(), body]).map_err(|_| LifecycleError::Unavailable)?;
         }
-        state.generation = state.generation.checked_add(1).ok_or(LifecycleError::Invalid)?;
-        let body = encode(&state);
-        tx.execute("INSERT INTO database_lifecycle VALUES (?1,?2) ON CONFLICT(tenant) DO UPDATE SET body=excluded.body", params![tenant.as_str(), body]).map_err(|_| LifecycleError::Unavailable)?;
         if let Some((id, paused)) = operation {
             let generation =
                 i64::try_from(state.generation).map_err(|_| LifecycleError::Invalid)?;
             tx.execute("INSERT INTO lifecycle_operations(tenant,operation_id,action,paused,generation) VALUES (?1,?2,?3,?4,?5)", params![tenant.as_str(), id, if paused { "pause" } else { "resume" }, i64::from(paused), generation]).map_err(|_| LifecycleError::Unavailable)?;
+        }
+        if !state_changed && !has_operation {
+            return Ok(state);
         }
         tx.commit().map_err(|_| LifecycleError::Unavailable)?;
         Ok(state)

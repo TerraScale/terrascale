@@ -459,6 +459,89 @@ fn assert_restore_marker_facts(
     assert!(crate::backup::restore::read_restore_marker(reopened, &wrong_identity).is_err());
 }
 
+fn assert_encrypted_restore_target(
+    target: &Path,
+    config: &EngineConfig,
+    owner: &DatabaseOwner,
+    backup: &crate::backup::BackupResult,
+) {
+    let bytes = std::fs::read(target.join("terrabase.sqlite3")).unwrap();
+    assert!(!bytes.starts_with(b"SQLite format 3"));
+    assert!(!bytes.windows(b"encrypted".len()).any(|window| window == b"encrypted"));
+    assert!(
+        Engine::open(config.clone().with_storage_keys(crate::engine::test_storage_keys(owner, 73)))
+            .is_err()
+    );
+    let reopened = Engine::open(config.clone()).unwrap();
+    assert_eq!(reopened.database_owner(), owner);
+    let restored_scope = scope(&reopened, owner.tenant().to_text().as_str());
+    assert!(reopened.lifecycle_state(&restored_scope).unwrap().paused);
+    let restore_identity = crate::backup::restore::RestoreIdentity {
+        operation_id: "test".into(),
+        source_database_id: "source".into(),
+        target_database_id: owner.database().to_text(),
+        provider: "oci".into(),
+        selection: "latest".into(),
+        expected_manifest_digest: backup.manifest().identity().into(),
+        expected_journal_boundary: backup.manifest().boundary_sequence().get(),
+        restore_epoch: 1,
+    };
+    assert_restore_marker_facts(&reopened, &restore_identity, backup.manifest());
+    reopened.lifecycle_resume(&restored_scope, "resume-restored").unwrap();
+    let snapshot = reopened.read_snapshot(&restored_scope).unwrap();
+    let transaction =
+        reopened.begin(&restored_scope, snapshot, operation("read-restored-target")).unwrap();
+    assert!(transaction.read(&document_id("old-doc")).unwrap().is_none());
+    assert!(transaction.read(&document_id("doc-1")).unwrap().is_some());
+    drop(transaction);
+    committed(put(
+        &reopened,
+        owner.tenant().to_text().as_str(),
+        "post-restore-put",
+        "doc-2",
+        "users",
+        text("after-restore"),
+        LocalDurability::Synced,
+    ));
+    assert!(
+        crate::backup::restore::read_restore_marker(&reopened, &restore_identity)
+            .unwrap()
+            .is_some()
+    );
+}
+
+fn assert_encrypted_restore_rejects_unavailable_key(
+    destination: &Path,
+    owner: &DatabaseOwner,
+    cipher: &dyn crate::backup::BackupReader,
+    backup: &crate::backup::BackupResult,
+) {
+    let rejected = location("encrypted-restore-unavailable-key");
+    let unavailable = EngineConfig::durable(&rejected)
+        .unwrap()
+        .with_owner(owner.clone())
+        .with_storage_keys(std::sync::Arc::new(UnavailableKeys));
+    assert!(
+        RestorePlan::restore_latest_encrypted_with_config(
+            destination,
+            &unavailable,
+            cipher,
+            &crate::backup::restore::RestoreIdentity {
+                operation_id: "test".into(),
+                source_database_id: "source".into(),
+                target_database_id: owner.database().to_text(),
+                provider: "oci".into(),
+                selection: "latest".into(),
+                expected_manifest_digest: backup.manifest().identity().into(),
+                expected_journal_boundary: backup.manifest().boundary_sequence().get(),
+                restore_epoch: 1,
+            }
+        )
+        .is_err()
+    );
+    assert!(!rejected.exists());
+}
+
 #[test]
 fn encrypted_restore_authenticates_the_native_backup_archive() {
     let owner = DatabaseOwner::local_development();
@@ -523,76 +606,8 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
     .expect("encrypted restore runs");
     assert_eq!(receipt.selected_identity(), backup.manifest().identity());
     assert_eq!(receipt.restored_documents(), 1);
-    let bytes = std::fs::read(target.join("terrabase.sqlite3")).unwrap();
-    assert!(!bytes.starts_with(b"SQLite format 3"));
-    assert!(!bytes.windows(b"encrypted".len()).any(|window| window == b"encrypted"));
-    assert!(
-        Engine::open(
-            config.clone().with_storage_keys(crate::engine::test_storage_keys(&owner, 73))
-        )
-        .is_err()
-    );
-    let reopened = Engine::open(config).unwrap();
-    assert_eq!(reopened.database_owner(), &owner);
-    let restored_scope = scope(&reopened, owner.tenant().to_text().as_str());
-    assert!(reopened.lifecycle_state(&restored_scope).unwrap().paused);
-    let restore_identity = crate::backup::restore::RestoreIdentity {
-        operation_id: "test".into(),
-        source_database_id: "source".into(),
-        target_database_id: owner.database().to_text(),
-        provider: "oci".into(),
-        selection: "latest".into(),
-        expected_manifest_digest: backup.manifest().identity().into(),
-        expected_journal_boundary: backup.manifest().boundary_sequence().get(),
-        restore_epoch: 1,
-    };
-    assert_restore_marker_facts(&reopened, &restore_identity, backup.manifest());
-    reopened.lifecycle_resume(&restored_scope, "resume-restored").unwrap();
-    let snapshot = reopened.read_snapshot(&restored_scope).unwrap();
-    let transaction =
-        reopened.begin(&restored_scope, snapshot, operation("read-restored-target")).unwrap();
-    assert!(transaction.read(&document_id("old-doc")).unwrap().is_none());
-    assert!(transaction.read(&document_id("doc-1")).unwrap().is_some());
-    drop(transaction);
-    committed(put(
-        &reopened,
-        owner.tenant().to_text().as_str(),
-        "post-restore-put",
-        "doc-2",
-        "users",
-        text("after-restore"),
-        LocalDurability::Synced,
-    ));
-    assert!(
-        crate::backup::restore::read_restore_marker(&reopened, &restore_identity)
-            .unwrap()
-            .is_some()
-    );
-    drop(reopened);
-    let rejected = location("encrypted-restore-unavailable-key");
-    let unavailable = EngineConfig::durable(&rejected)
-        .unwrap()
-        .with_owner(owner.clone())
-        .with_storage_keys(std::sync::Arc::new(UnavailableKeys));
-    assert!(
-        RestorePlan::restore_latest_encrypted_with_config(
-            &destination,
-            &unavailable,
-            &*cipher,
-            &crate::backup::restore::RestoreIdentity {
-                operation_id: "test".into(),
-                source_database_id: "source".into(),
-                target_database_id: owner.database().to_text(),
-                provider: "oci".into(),
-                selection: "latest".into(),
-                expected_manifest_digest: backup.manifest().identity().into(),
-                expected_journal_boundary: backup.manifest().boundary_sequence().get(),
-                restore_epoch: 1,
-            }
-        )
-        .is_err()
-    );
-    assert!(!rejected.exists());
+    assert_encrypted_restore_target(&target, &config, &owner, &backup);
+    assert_encrypted_restore_rejects_unavailable_key(&destination, &owner, &*cipher, &backup);
 }
 
 #[test]

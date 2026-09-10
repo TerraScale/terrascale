@@ -1,0 +1,6 @@
+2026-09-08T02:42:16Z
+a32fa8e6fc38608c08f99a5e050ad35da71aaa50e8d94369a10dc65815050309  /tmp/terrabase-qual-20260907.7lF9/target4/release/terrabase-server
+    PID  NI %CPU     ELAPSED STAT CMD
+2099587  19 78.0       01:14 SNsl /tmp/terrabase-qual-20260907.7lF9/target4/release/terrabase-server --config /tmp/terrabase-member-origin-diag2/member.toml
+2099774  19  2.0       01:13 SNl  /tmp/terrabase-qual-20260907.7lF9/bench-target/release/terrabase-bench-lane --target terrabase --workload write --seed 1000 --ops 10000 --samples 5 --concurrency 16 --warmup 1000 --out /home/mariogk/Projects/TerraScale/terrabase/bench/results/run-20260907-independent-1714381/origin-max-diagnostic2
+documents= 0

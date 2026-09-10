@@ -102,6 +102,79 @@ mod encrypted_retry_tests;
 mod sha256;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn routed_snapshot_filters_stale_copies_at_the_pinned_boundary() {
+    use crate::engine::CommitOutcome;
+    use crate::types::{CollectionName, DocumentId, DocumentValue, LocalDurability};
+    let (_, engine) = tests::open_engine("routed-snapshot");
+    let tenant = TenantId::try_new("alpha").unwrap();
+    let scope = engine.scope_for(&tenant);
+    let collection = CollectionName::try_new("items").unwrap();
+    for id in ["a-stale", "m-kept", "z-deleted"] {
+        assert!(matches!(
+            tests::put(
+                &engine,
+                "alpha",
+                id,
+                id,
+                "items",
+                DocumentValue::Integer(1),
+                LocalDurability::Synced
+            ),
+            CommitOutcome::Committed(_)
+        ));
+    }
+    let mut delete = engine
+        .begin(
+            &scope,
+            engine.read_snapshot(&scope).unwrap(),
+            crate::types::OperationId::try_new("delete").unwrap(),
+        )
+        .unwrap();
+    delete
+        .delete(DocumentId::try_new("z-deleted").unwrap(), crate::types::ExpectedVersion::Any)
+        .unwrap();
+    assert!(matches!(delete.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    let pin = engine.read_snapshot(&scope).unwrap();
+    assert!(matches!(
+        tests::put(
+            &engine,
+            "alpha",
+            "later",
+            "n-later",
+            "items",
+            DocumentValue::Integer(2),
+            LocalDurability::Synced
+        ),
+        CommitOutcome::Committed(_)
+    ));
+    let lower = crate::shard_split::canonical_shard_key(
+        &collection,
+        &DocumentId::try_new("m-kept").unwrap(),
+    );
+    let plan = BackupPlan::local_test_snapshot_at(pin.sequence())
+        .with_snapshot_routes(vec![
+            crate::shard_split::ShardRoute::new(1, Some(lower), None).unwrap(),
+        ])
+        .unwrap();
+    let archive = tests::location("routed-snapshot-archive");
+    let captured = run_backup(&engine, plan, &archive).unwrap();
+    assert_eq!(captured.manifest().logical_documents(), 1);
+    let restored = tests::location("routed-snapshot-restored");
+    let receipt = RestorePlan::restore_latest(&archive, &restored).unwrap();
+    assert_eq!(receipt.documents_read_back(), 1);
+    assert_eq!(receipt.logical_checksum(), captured.manifest().logical_checksum());
+    // The unfiltered scalar path still captures every live key at the same cut.
+    let scalar = run_backup(
+        &engine,
+        BackupPlan::local_test_snapshot_at(pin.sequence()),
+        &tests::location("scalar-snapshot-archive"),
+    )
+    .unwrap();
+    assert_eq!(scalar.manifest().logical_documents(), 2);
+}
 /// Bounded native backup scheduling shared by hosted databases.
 pub mod worker;
 pub use worker::FleetError;
@@ -109,8 +182,8 @@ pub use worker::FleetError;
 pub use envelope::{BackupEnvelope, BackupEnvelopeParticipant};
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
 pub use restore::{
-    RecoveryReceipt, RestoreChainLink, RestoreMarkerFacts, RestoredTenant, read_restore_marker,
-    verify_latest_chain_encrypted,
+    EnvelopeRecoveryReceipt, RecoveryReceipt, RestoreChainLink, RestoreMarkerFacts, RestoredTenant,
+    read_restore_marker, verify_envelope_restore, verify_latest_chain_encrypted,
 };
 
 use std::collections::BTreeMap;
@@ -442,6 +515,7 @@ impl BackupEncryption {
 /// durable publication history.
 #[derive(Clone)]
 pub struct BackupPlan {
+    snapshot_routes: Option<Vec<crate::shard_split::ShardRoute>>,
     kind: BackupKind,
     pinned_boundary: Option<StorageSequence>,
     member_bound_bytes: u64,
@@ -493,6 +567,7 @@ impl BackupPlan {
     #[must_use]
     pub fn full(encryption: BackupEncryption) -> Self {
         Self {
+            snapshot_routes: None,
             kind: BackupKind::Full,
             pinned_boundary: None,
             member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES,
@@ -515,6 +590,7 @@ impl BackupPlan {
     #[must_use]
     pub fn for_integration_tests_full() -> Self {
         Self {
+            snapshot_routes: None,
             kind: BackupKind::Full,
             pinned_boundary: None,
             member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES,
@@ -535,6 +611,7 @@ impl BackupPlan {
     #[cfg(test)]
     pub(crate) fn local_test_full_plaintext() -> Self {
         Self {
+            snapshot_routes: None,
             kind: BackupKind::Full,
             pinned_boundary: None,
             member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES,
@@ -603,6 +680,22 @@ impl BackupPlan {
             pinned_boundary: Some(boundary),
             ..Self::full(encryption)
         }
+    }
+
+    /// Narrows a self-contained snapshot to ranges from the same retained read cut.
+    /// Snapshot replay restores final state, so deletes at or before the pinned
+    /// boundary remain absent; later mutations never enter this archive.
+    pub(crate) fn with_snapshot_routes(
+        mut self,
+        routes: Vec<crate::shard_split::ShardRoute>,
+    ) -> Result<Self, BackupError> {
+        if self.kind != BackupKind::Snapshot || routes.is_empty() {
+            return Err(BackupError::ManifestInvalid);
+        }
+        crate::shard_split::RouteTable::new(routes.clone())
+            .map_err(|_| BackupError::ManifestInvalid)?;
+        self.snapshot_routes = Some(routes);
+        Ok(self)
     }
 
     /// Creates a plaintext snapshot plan for in-crate unit tests only.
@@ -1079,6 +1172,7 @@ fn validate_placement(engine: &Engine, plan: &BackupPlan) -> Result<(), BackupEr
 
 /// The mutable state of one executing backup run.
 struct RunState {
+    snapshot_routes: Option<Vec<crate::shard_split::ShardRoute>>,
     logical_hasher: blake3::Hasher,
     logical_documents: u64,
     budget: ReadBudget,
@@ -1095,6 +1189,7 @@ impl RunState {
     /// Creates the run state from the plan's bounds and observers.
     fn new(plan: &BackupPlan) -> Self {
         Self {
+            snapshot_routes: plan.snapshot_routes.clone(),
             logical_hasher: crate::engine::logical_state_hasher(),
             logical_documents: 0,
             budget: ReadBudget::new(plan.read_ops_per_second),
@@ -1450,6 +1545,18 @@ fn archive_state_at(
             }
             for record in &page {
                 let document = record.document().clone();
+                if state.snapshot_routes.as_ref().is_some_and(|routes| {
+                    let key = crate::shard_split::canonical_shard_key(
+                        document.collection(),
+                        document.id(),
+                    );
+                    !routes.iter().any(|route| {
+                        route.lower().is_none_or(|lower| lower <= key.as_slice())
+                            && route.upper().is_none_or(|upper| key.as_slice() < upper)
+                    })
+                }) {
+                    continue;
+                }
                 state
                     .logical_hasher
                     .update(&crate::engine::logical_document_digest(tenant, &document));

@@ -1,0 +1,91 @@
+{
+  "status": "complete",
+  "target": "postgresql",
+  "workload": "read",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0
+  },
+  "environment": {
+    "observed_identity": "PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit",
+    "endpoint": "postgres://bench@127.0.0.1:55432/postgres",
+    "client_transport": "rust postgres crate 0.19, one synchronous TCP connection per concurrency slot, prepared statements, autocommit per statement",
+    "unix_seconds": 1788135425,
+    "kernel": "Linux 7.2.1",
+    "logical_cpus": 28
+  },
+  "comparability": {
+    "run_digest": "unassigned",
+    "candidate_digest": "unassigned",
+    "workload_digest": "unassigned",
+    "topology_digest": "unassigned",
+    "run_group": "unassigned",
+    "config_digest": "bdfe342f5a3e96300b3e54f43585ee347bdb8b213b803ea0dac000ef8eb60d80",
+    "controlled_host_identity": "Linux 7.2.1;logical-cpus=28",
+    "time_window": "496704",
+    "window_start_unix_seconds": 1788135425,
+    "window_end_unix_seconds": 1788135427,
+    "workload_version": "terrabase-se15-workload-v1",
+    "boundary_class": "network-reference",
+    "concurrency": 16,
+    "samples": 5,
+    "warmup_operations": 1000,
+    "noise_percent": 5.0,
+    "seed_policy": "seed-{index}, tenant benchmark-tenant, index modulo seed count",
+    "document_policy": "seed documents have id seed-{index}, name user-{index}, group index modulo 100, 256-byte payload",
+    "operation_policy": "mixed uses index modulo 10: 0..4 read, 5..7 write, 8..9 query; read/query address index modulo seed count",
+    "write_id_policy": "measured writes use measured-{global operation index}",
+    "durability_semantics": "synchronous_commit=on; fsync=on; full_page_writes=on; autocommit statement acknowledgement",
+    "server_configuration_provenance": "se15-reference-pin-v1"
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 0.152757966,
+      "throughput_ops_per_s": 65463.03451042285,
+      "p50_us": 161.26700000000002,
+      "p95_us": 324.291,
+      "p99_us": 619.848
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.218399323,
+      "throughput_ops_per_s": 45787.6877209917,
+      "p50_us": 173.637,
+      "p95_us": 478.158,
+      "p99_us": 1408.067
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.288052104,
+      "throughput_ops_per_s": 34715.94152980046,
+      "p50_us": 173.869,
+      "p95_us": 702.245,
+      "p99_us": 3100.7169999999996
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.394343894,
+      "throughput_ops_per_s": 25358.57699878574,
+      "p50_us": 171.634,
+      "p95_us": 1245.176,
+      "p99_us": 3364.9370000000004
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 0.69270345,
+      "throughput_ops_per_s": 14436.191995290337,
+      "p50_us": 216.345,
+      "p95_us": 959.404,
+      "p99_us": 5034.1539999999995
+    }
+  ],
+  "limits": [
+    "server-side configuration is the SE-15 pin's, captured verbatim on the receipt",
+    "planner and memory settings are the pinned artifact's shipped defaults; no ANALYZE beyond what warm-up naturally produces"
+  ]
+}

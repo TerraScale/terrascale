@@ -208,7 +208,7 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
     let child_placement = child.usage_placement(&child.scope_for(&tenant)).unwrap().unwrap();
     assert_eq!(
         child_placement.selected_regions,
-        vec![crate::RegionCode::GRU, crate::RegionCode::FRA]
+        vec![crate::RegionCode::FRA, crate::RegionCode::GRU]
     );
     assert_eq!(child_placement.scope.database_id().as_str(), child_owner.database().to_text());
 
@@ -255,6 +255,80 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
     assert_branch_contents(&grandchild, &tenant, &grandchild_owner.database().to_string());
     drop(grandchild);
     drop(child);
+    drop(source);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn encrypted_duplicate_same_key_source_preserves_live_sync_lease() {
+    let root = std::env::temp_dir()
+        .join(format!("terrabase-branch-admission-{}", crate::identity::generate()));
+    let (source, source_owner, _) = open_branch_source(&root);
+    let child_owner = crate::storage::DatabaseOwner::new(
+        source_owner.environment().clone(),
+        source_owner.tenant(),
+        source_owner.project(),
+        crate::identity::DatabaseUlid::generate(),
+        source_owner.region(),
+    );
+    let keys = test_storage_keys(&child_owner, 147);
+    let config = EngineConfig::durable(root.join("target"))
+        .unwrap()
+        .with_owner(child_owner)
+        .with_storage_keys(keys.clone());
+    let engine = Engine::open(config.clone()).unwrap();
+    engine.storage.lock().unwrap().port.register_consumer_frontier("sync", 9).unwrap();
+    assert!(matches!(
+        Engine::open(config.with_storage_keys(keys)),
+        Err(EngineOpenError::StorageUnavailable)
+    ));
+    let connection = engine.open_sqlite_read_connection().unwrap();
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM consumer_frontiers WHERE name='sync'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(count, 1);
+    drop(engine);
+    drop(source);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn encrypted_restore_rejects_live_target_without_mutation() {
+    let root = std::env::temp_dir()
+        .join(format!("terrabase-branch-live-target-{}", crate::identity::generate()));
+    let (source, source_owner, tenant) = open_branch_source(&root);
+    let child_owner = crate::storage::DatabaseOwner::new(
+        source_owner.environment().clone(),
+        source_owner.tenant(),
+        source_owner.project(),
+        crate::identity::DatabaseUlid::generate(),
+        source_owner.region(),
+    );
+    let target = root.join("target");
+    let config = EngineConfig::durable(&target)
+        .unwrap()
+        .with_owner(child_owner.clone())
+        .with_storage_keys(test_storage_keys(&child_owner, 148));
+    let live = Engine::open(config.clone()).unwrap();
+    let before = live.schema_metadata_load("live", "main", "missing").unwrap();
+    let result = Engine::restore_encrypted_sqlite_branch(
+        &source,
+        &config,
+        &OperationId::try_new("live-target").unwrap(),
+    );
+    assert!(matches!(result, Err(EngineOpenError::StorageUnavailable)));
+    assert_eq!(live.schema_metadata_load("live", "main", "missing").unwrap(), before);
+    assert!(
+        live.snapshot_documents(
+            &live.scope_for(&tenant),
+            &live.read_snapshot(&live.scope_for(&tenant)).unwrap()
+        )
+        .unwrap()
+        .is_empty()
+    );
+    drop(live);
     drop(source);
     std::fs::remove_dir_all(root).unwrap();
 }
