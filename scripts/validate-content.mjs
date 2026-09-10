@@ -15,14 +15,13 @@ if (renderedFiles.length) failures.push(...scanProhibitedClaims(renderedFiles, r
 const pricing = fs.readFileSync(path.join(root, 'src/components/sections/PricingSection.svelte'), 'utf8')
 const site = fs.readFileSync(path.join(root, 'src/lib/site.ts'), 'utf8')
 const expectedPlans = new Map([
-  ['Developer', 0],
   ['Starter', 5],
   ['Pro', 25],
   ['Enterprise', 500],
 ])
 const planMatches = [...site.matchAll(/name:\s*'([^']+)'[\s\S]*?price:\s*(\d+)/g)]
 if (planMatches.length !== expectedPlans.size) {
-  failures.push('site.ts: Public Alpha catalog must contain exactly four plans.')
+  failures.push('site.ts: Public Alpha catalog must contain exactly three plans.')
 }
 for (const [, plan, priceText] of planMatches) {
   if (expectedPlans.get(plan) !== Number(priceText)) {
@@ -34,7 +33,6 @@ for (const plan of expectedPlans.keys()) {
   failures.push(`site.ts: missing Public Alpha plan ${plan}.`)
 }
 const expectedLimits = {
-  Developer: [1, 3, 3, 1, 10_000],
   Starter: [5, 10, 5, 5, 1_000_000],
   Pro: [25, 50, 25, 50, 10_000_000],
   Enterprise: [null, null, null, null, null],
@@ -50,7 +48,6 @@ for (const [plan, limits] of Object.entries(expectedLimits)) {
 }
 const englishMessages = fs.readFileSync(path.join(root, 'src/lib/i18n/messages/en.ts'), 'utf8')
 for (const phrase of [
-  'Non-expiring',
   '30-day trial',
   'Monthly support base plus metered usage',
   'Unavailable during Public Alpha',
@@ -58,8 +55,8 @@ for (const phrase of [
 ]) {
   if (!englishMessages.includes(phrase)) failures.push(`messages/en.ts: missing catalog wording ${phrase}.`)
 }
-if (/annual|Stripe|name:\s*'(?:Scale|Business)'/i.test(`${pricing}\n${site}`)) {
-  failures.push('Public Alpha pricing: annual, Stripe, Scale, and Business pricing must stay removed.')
+if (/annual|Stripe|name:\s*'(?:Developer|Scale|Business)'/i.test(`${pricing}\n${site}`)) {
+  failures.push('Public Alpha pricing: annual, Stripe, Developer, Scale, and Business pricing must stay removed.')
 }
 
 for (const url of [

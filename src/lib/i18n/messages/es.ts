@@ -146,12 +146,12 @@ export const es: Messages = {
   cta: {
     headlineLead: 'Regístrate en',
     headlineAccent: 'TerraScale Public Alpha.',
-    text: 'Developer no caduca. Starter y Pro ofrecen una prueba elegible de 30 días por método de pago verificado y organización.',
+    text: 'Starter y Pro ofrecen una prueba elegible de 30 días por método de pago verificado y organización.',
     ctaPrimary: 'Registrarse en Public Alpha',
     ctaPrelaunch: 'Public Alpha abre el 7 de septiembre',
     ctaSecondary: 'Hablar con ventas',
     perksAria: 'Detalles de planes',
-    perks: ['Developer no caduca', 'Planes pagados mensuales', 'Sin excedentes pagados'],
+    perks: ['Planes pagados mensuales', 'Sin excedentes pagados'],
     policyLead: 'Revisa antes de verificar el pago:',
   },
 
@@ -159,15 +159,10 @@ export const es: Messages = {
     eyebrow: 'Precios',
     titleLead: 'Precios simples',
     titleAccent: 'que escalan contigo',
-    subtitle: 'Cuatro planes mensuales para Public Alpha. Enterprise sigue sin estar disponible.',
+    subtitle: 'Tres planes mensuales para Public Alpha. Enterprise sigue sin estar disponible.',
     badge: 'Más popular',
     suffixMonthly: '/mes',
     plans: {
-      developer: {
-        description: 'Plan gratuito sin vencimiento con método de pago verificado',
-        features: ['1 proyecto', '3 bases de datos', '3 miembros', '1 GB entre regiones', '10.000 unidades de operación/mes'],
-        cta: 'Elegir Developer',
-      },
       starter: {
         description: 'Plan mensual con una prueba elegible de 30 días',
         features: ['5 proyectos', '10 bases de datos', '5 miembros', '5 GB entre regiones', '1.000.000 unidades de operación/mes'],
@@ -231,23 +226,19 @@ export const es: Messages = {
         },
         {
           q: '¿Cuándo puedo cambiar de plan?',
-          a: 'Los propietarios de organización pueden cambiar planes mensuales en el Dashboard. Los planes pagados renuevan mensualmente. La cancelación inicia 30 días de solo lectura si el uso supera Developer.',
+          a: 'Los propietarios de organización pueden cambiar planes mensuales en el Dashboard. Los planes pagados renuevan mensualmente. La cancelación inicia 30 días de solo lectura si el uso supera el plan.',
         },
         {
           q: '¿Puedo exportar mis datos?',
-          a: 'Sí. Las lecturas, exportación, eliminación y reducción de uso siguen disponibles durante límites y períodos de solo lectura.',
+          a: 'Sí. Lecturas, exportación, eliminación y reducción de uso siguen disponibles durante límites y períodos de lectura.',
         },
         {
           q: '¿Qué incluye el plan Enterprise?',
-          a: 'Enterprise tiene una base mensual de soporte de $500 más uso medido, pero no está disponible durante Public Alpha.',
-        },
-        {
-          q: '¿El plan Developer caduca?',
-          a: 'No. Developer no caduca y requiere un método de pago verificado sin crear una suscripción pagada.',
+          a: 'Enterprise tiene una base mensual de soporte de US$ 500 más uso medido, pero no está disponible durante Public Alpha.',
         },
       ],
-      footerTitle: '¿Aún tienes preguntas?',
-      footerText: 'Developer ofrece correo con mejor esfuerzo. Starter responde en dos días hábiles. Pro responde en un día hábil.',
+      footerTitle: '¿Todavía tienes dudas?',
+      footerText: 'Starter responde en dos días hábiles. Pro responde en un día hábil.',
       contactSales: 'Contactar ventas',
       readDocs: 'Leer documentación',
     },
