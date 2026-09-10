@@ -63,6 +63,7 @@ export class TerraScaleClient {
     this.sql = new SqlClient(this.#http);
     this.reactive = new TerraScaleSyncV1Client({
       ...(config.apiBaseUrl === undefined ? {} : { apiBaseUrl: config.apiBaseUrl }),
+      ...(config.syncBaseUrl === undefined ? {} : { syncBaseUrl: config.syncBaseUrl }),
       ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
       ...(config.accessToken === undefined ? {} : { accessToken: config.accessToken }),
       ...(config.tenantId === undefined ? {} : { tenantId: config.tenantId }),

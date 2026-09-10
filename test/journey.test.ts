@@ -945,6 +945,11 @@ async function liveRequest(
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${liveAccessToken!}`);
   headers.set("accept", "application/json");
+  // Project-administration routes (POST /api/v1/databases, the operations
+  // listing) require the explicit tenant/project scope headers, exactly as
+  // the SDK always sends them.
+  headers.set("x-terrascale-tenant-id", process.env.TERRASCALE_E2E_TENANT_ID?.trim() || "terrabase-local");
+  headers.set("x-terrascale-project-id", process.env.TERRASCALE_E2E_PROJECT_ID?.trim() || "local");
   const response = await fetch(new URL(path, `${base.replace(/\/$/u, "")}/`), {
     ...init,
     headers,

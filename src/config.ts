@@ -15,6 +15,8 @@ import type { TerraScaleRequestMetricRecorder } from "./http.js";
 
 export type TerraScaleRuntimeConfig = {
   readonly apiBaseUrl?: string;
+  /** Origin of the reactive view delivery (log/snapshot) endpoints. */
+  readonly syncBaseUrl?: string;
   readonly projectId?: ProjectId;
   /** Authorized tenant selector; it grants no permissions by itself. */
   readonly tenantId?: string;
