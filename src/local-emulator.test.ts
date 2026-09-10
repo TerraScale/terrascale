@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 
+import { createLocalBetterAuthHttpOperations } from "./better-auth.js";
 import { exercisePublicClientRoutes } from "./client-route-capture.js";
 import type { FetchLike } from "./config.js";
 import { createTerraScaleClient } from "./factory.js";
@@ -360,5 +361,40 @@ test("runtime clients enforce project isolation and idempotency fingerprints", a
     const reused = await idempotentA.databases.create({ name: "different" });
     assert.equal(reused.ok, false);
     if (!reused.ok) assert.equal(reused.error.code, "idempotency_key_reused");
+  });
+});
+
+test("organization creation assigns the authenticated Better Auth user as owner", async () => {
+  await withTempRuntime(async (runtime) => {
+    const address = await started(runtime);
+    try {
+      const auth = createLocalBetterAuthHttpOperations({ baseUrl: address.apiBaseUrl });
+      const created = expectOk(
+        await auth.insertUnique({
+          model: "user",
+          data: { email: "onboarding-owner@example.test", name: "Onboarding Owner" },
+          idempotencyKey: "owner-user",
+        }),
+      );
+      const userId = (created as unknown as { readonly id: string }).id;
+      const token = "local-onboarding-session-0123456789-abcdefghijk";
+      expectOk(
+        await auth.insertUnique({
+          model: "session",
+          data: {
+            token,
+            userId,
+            expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+          },
+          idempotencyKey: "owner-session",
+        }),
+      );
+
+      const client = runtime.createClient({ accessToken: token });
+      const organization = expectOk(await client.organizations.create({ name: "Owner org" }));
+      assert.deepEqual(organization.ownerUserIds, [userId]);
+    } finally {
+      await runtime.stop();
+    }
   });
 });

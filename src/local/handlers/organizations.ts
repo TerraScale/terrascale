@@ -33,19 +33,25 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
   if (matchLocalRoute(context, "POST", "/api/v1/organizations") !== undefined) {
     const name = nonBlank(body.name);
     if (name === undefined) return problemResponse(400, "invalid_request", "name is required.");
+    const actor = localActor(context);
     const organizationId = (await store.nextUlid()) as OrganizationId;
     const organization: Models.Organization = {
       organizationId,
       name,
-      ownerUserIds: [LOCAL_USER_ID],
-      createdByUserId: LOCAL_USER_ID,
+      ownerUserIds: [actor.userId],
+      createdByUserId: actor.userId,
       status: "Active",
       deletionRequestedAt: null,
       deletionRequestedByUserId: null,
       createdAt: context.now,
     };
     await put(store, "organizations", organizationId, organization);
-    await put(store, "organization-members", memberKey(organizationId, LOCAL_USER_ID), ownerMember(context.now));
+    await put(
+      store,
+      "organization-members",
+      memberKey(organizationId, actor.userId),
+      ownerMember(context.now, actor),
+    );
     return jsonResponse(organization, 201);
   }
 
@@ -74,7 +80,7 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
       ...organization,
       status: "DeletionPending",
       deletionRequestedAt: context.now,
-      deletionRequestedByUserId: LOCAL_USER_ID,
+      deletionRequestedByUserId: localActor(context).userId,
     };
     await put(store, "organizations", match.organizationId!, updated);
     return jsonResponse(updated);
@@ -83,7 +89,7 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
   if (match !== undefined) {
     const organization = await get<Models.Organization>(store, "organizations", match.organizationId!);
     if (organization === undefined) return notFound("organization");
-    const key = memberKey(match.organizationId!, LOCAL_USER_ID);
+    const key = memberKey(match.organizationId!, localActor(context).userId);
     if (await get(store, "organization-members", key) === undefined) return notFound("membership");
     await remove(store, "organization-members", key);
     return new Response(null, { status: 204 });
@@ -282,8 +288,9 @@ async function invitationAction(
   const invitation = await get<Models.Invitation>(store, "invitations", key);
   if (invitation === undefined) return notFound("invitation");
   if (action !== "resend" && invitation.status !== "Pending") return problemResponse(409, "conflict", "The invitation is no longer pending.");
+  const actor = localActor(context);
   const updated: Models.Invitation = action === "accept"
-    ? { ...invitation, status: "Accepted", acceptedAt: context.now, acceptedByUserId: LOCAL_USER_ID }
+    ? { ...invitation, status: "Accepted", acceptedAt: context.now, acceptedByUserId: actor.userId }
     : action === "decline"
       ? { ...invitation, status: "Declined", declinedAt: context.now }
       : action === "cancel"
@@ -291,7 +298,12 @@ async function invitationAction(
         : { ...invitation, lastSentAt: context.now, sentCount: invitation.sentCount + 1 };
   await put(store, "invitations", key, updated);
   if (action === "accept") {
-    await put(store, "organization-members", memberKey(organizationId, LOCAL_USER_ID), ownerMember(context.now, "Member"));
+    await put(
+      store,
+      "organization-members",
+      memberKey(organizationId, actor.userId),
+      ownerMember(context.now, actor, "Member"),
+    );
   }
   return jsonResponse(updated);
 }
@@ -306,8 +318,57 @@ async function getProject(store: TerraScaleSqliteStore, id: string): Promise<Res
   return item === undefined ? notFound("project") : jsonResponse(item);
 }
 
-function ownerMember(joinedAt: string, role: Models.OrganizationMemberRole = "OrganizationOwner"): Models.OrganizationMember {
-  return { userId: LOCAL_USER_ID, email: LOCAL_USER_EMAIL, displayName: LOCAL_USER_NAME, role, joinedAt };
+function ownerMember(
+  joinedAt: string,
+  actor: LocalActor,
+  role: Models.OrganizationMemberRole = "OrganizationOwner",
+): Models.OrganizationMember {
+  return { userId: actor.userId, email: actor.email, displayName: actor.displayName, role, joinedAt };
+}
+
+/**
+ * Resolve the acting user from the Better Auth session carried as a bearer.
+ * The Dashboard authenticates with its Better Auth session token, so the local
+ * runtime must echo the same user id back as the organization owner instead of
+ * a fixed placeholder. Seed/test traffic without a session falls back to the
+ * configurable local default user.
+ */
+type LocalActor = {
+  readonly userId: UserId;
+  readonly email: string;
+  readonly displayName: string;
+};
+
+function localActor(context: LocalRequestContext): LocalActor {
+  const token = bearerToken(context.request.headers.get("authorization"));
+  if (token !== undefined) {
+    const session = context.store
+      .list<Record<string, unknown>>("better-auth", "session")
+      .find((row) => row.token === token);
+    const userId = session?.userId;
+    if (typeof userId === "string" && userId.length > 0) {
+      const user = context.store
+        .list<Record<string, unknown>>("better-auth", "user")
+        .find((row) => row.id === userId);
+      return {
+        userId: userId as UserId,
+        email: typeof user?.email === "string" ? user.email : LOCAL_USER_EMAIL,
+        displayName: typeof user?.name === "string" ? user.name : LOCAL_USER_NAME,
+      };
+    }
+  }
+  const stored = context.store.getMeta<string>("local.defaultUserId");
+  return {
+    userId: (typeof stored === "string" && stored.length > 0 ? stored : LOCAL_USER_ID) as UserId,
+    email: LOCAL_USER_EMAIL,
+    displayName: LOCAL_USER_NAME,
+  };
+}
+
+function bearerToken(authorization: string | null): string | undefined {
+  if (authorization === null) return undefined;
+  const match = /^Bearer\s+(\S+)$/iu.exec(authorization.trim());
+  return match?.[1];
 }
 
 function memberKey(organizationId: string, userId: string): string { return `${organizationId}:${userId}`; }
