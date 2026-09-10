@@ -26,7 +26,7 @@
     '/pricing': {
       title: 'TerraScale Public Alpha pricing',
       description:
-        'Compare the Developer, Starter, and Pro Public Alpha plans and review the unavailable Enterprise plan.',
+        'Compare the Starter and Pro Public Alpha plans and review the unavailable Enterprise plan.',
     },
     '/404': {
       title: '404 | TerraScale',

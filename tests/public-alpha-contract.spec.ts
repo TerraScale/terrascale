@@ -24,7 +24,6 @@ const expectedRenderedCtaHrefs = {
   '/contact': [registrationUrl],
   '/pricing': [
     registrationUrl,
-    `${registrationUrl}?plan=developer`,
     `${registrationUrl}?plan=starter`,
     `${registrationUrl}?plan=pro`,
     './contact',
@@ -41,7 +40,6 @@ const expectedRenderedRegistrationHrefs = {
   '/contact': [registrationUrl],
   '/pricing': [
     registrationUrl,
-    `${registrationUrl}?plan=developer`,
     `${registrationUrl}?plan=starter`,
     `${registrationUrl}?plan=pro`,
     registrationUrl,
@@ -215,15 +213,9 @@ test('pricing matches the Public Alpha plan catalog', async ({ page }) => {
   await page.goto('/pricing')
 
   const cards = page.locator('.pricing-card')
-  await expect(cards).toHaveCount(4)
+  await expect(cards).toHaveCount(3)
 
   const expectedPlans = {
-    developer: {
-      name: 'Developer',
-      price: '$0',
-      limits: ['1 project', '3 databases', '3 members', '1 GB across regions', '10,000 operation units/month'],
-      href: `${registrationUrl}?plan=developer`,
-    },
     starter: {
       name: 'Starter',
       price: '$5',
@@ -254,10 +246,9 @@ test('pricing matches the Public Alpha plan catalog', async ({ page }) => {
     await expect(card.locator('a')).toHaveAttribute('href', expectedPlan.href)
   }
 
-  await expect(page.getByText(/^(Scale|Business)$/, { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/^(Developer|Scale|Business)$/, { exact: true })).toHaveCount(0)
   await expect(page.getByText(/annual|Stripe/i)).toHaveCount(0)
   await expect(page.getByText(/does not offer paid overages|without paid overages/i)).toBeVisible()
-  await expect(page.getByText(/non-expiring/i).first()).toBeVisible()
   await expect(page.getByText(/30-day trial/i).first()).toBeVisible()
 
   const enterprise = cards.filter({ hasText: 'Enterprise' })
@@ -270,8 +261,7 @@ test('pricing keeps every plan state usable on mobile', async ({ page }) => {
   await page.goto('/pricing')
 
   const cards = page.locator('.pricing-card')
-  await expect(cards).toHaveCount(4)
-  await expect(page.locator('.pricing-card[data-plan="developer"] a')).toHaveAttribute('href', `${registrationUrl}?plan=developer`)
+  await expect(cards).toHaveCount(3)
   await expect(page.locator('.pricing-card[data-plan="starter"] a')).toHaveAttribute('href', `${registrationUrl}?plan=starter`)
   await expect(page.locator('.pricing-card[data-plan="pro"] a')).toHaveAttribute('href', `${registrationUrl}?plan=pro`)
   await expect(page.locator('.pricing-card[data-plan="enterprise"] a')).toHaveAttribute('href', '/contact')
@@ -281,7 +271,6 @@ test('pricing presentation metadata stays keyed to each plan slug', async ({ pag
   await page.goto('/pricing')
 
   const metadata = {
-    developer: { icon: 'zap', popular: 'false' },
     starter: { icon: 'star', popular: 'false' },
     pro: { icon: 'trendingUp', popular: 'true' },
     enterprise: { icon: 'shieldCheck', popular: 'false' },

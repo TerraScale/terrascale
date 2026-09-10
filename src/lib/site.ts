@@ -28,20 +28,6 @@ export const loginUrl = 'https://dash.terrascale.tech/login'
 
 export const publicAlphaCatalog = [
   {
-    name: 'Developer',
-    slug: 'developer',
-    icon: 'zap' as AppIconName,
-    accent: 'var(--ts-secondary)',
-    accentRgb: 'var(--ts-secondary-rgb)',
-    popular: false,
-    price: 0,
-    projects: 1,
-    databases: 3,
-    members: 3,
-    storageGb: 1,
-    operationUnits: 10_000,
-  },
-  {
     name: 'Starter',
     slug: 'starter',
     icon: 'star' as AppIconName,

@@ -146,12 +146,12 @@ export const ptBr: Messages = {
   cta: {
     headlineLead: 'Cadastre-se no',
     headlineAccent: 'TerraScale Public Alpha.',
-    text: 'Developer não expira. Starter e Pro oferecem um teste elegível de 30 dias por método de pagamento verificado e organização.',
+    text: 'Starter e Pro oferecem um teste elegível de 30 dias por método de pagamento verificado e organização.',
     ctaPrimary: 'Cadastre-se no Public Alpha',
     ctaPrelaunch: 'Public Alpha abre em 7 de setembro',
     ctaSecondary: 'Fale com vendas',
     perksAria: 'Detalhes dos planos',
-    perks: ['Developer não expira', 'Planos pagos mensais', 'Sem excedentes pagos'],
+    perks: ['Planos pagos mensais', 'Sem excedentes pagos'],
     policyLead: 'Revise antes da verificação do pagamento:',
   },
 
@@ -159,15 +159,10 @@ export const ptBr: Messages = {
     eyebrow: 'Preços',
     titleLead: 'Preços simples',
     titleAccent: 'que escalam com VOCÊ',
-    subtitle: 'Quatro planos mensais para o Public Alpha. Enterprise continua indisponível.',
+    subtitle: 'Três planos mensais para o Public Alpha. Enterprise continua indisponível.',
     badge: 'Mais popular',
     suffixMonthly: '/mês',
     plans: {
-      developer: {
-        description: 'Plano gratuito sem prazo com método de pagamento verificado',
-        features: ['1 projeto', '3 bancos de dados', '3 membros', '1 GB entre regiões', '10.000 unidades de operação/mês'],
-        cta: 'Escolher Developer',
-      },
       starter: {
         description: 'Plano mensal com um teste elegível de 30 dias',
         features: ['5 projetos', '10 bancos de dados', '5 membros', '5 GB entre regiões', '1.000.000 unidades de operação/mês'],
@@ -231,7 +226,7 @@ export const ptBr: Messages = {
         },
         {
           q: 'Quando posso trocar de plano?',
-          a: 'Proprietários da organização podem trocar planos mensais pelo Dashboard. Planos pagos renovam mensalmente. O cancelamento inicia 30 dias de leitura quando o uso excede o Developer.',
+          a: 'Proprietários da organização podem trocar planos mensais pelo Dashboard. Planos pagos renovam mensalmente. O cancelamento inicia 30 dias de leitura quando o uso excede o plano.',
         },
         {
           q: 'Posso exportar meus dados?',
@@ -241,13 +236,9 @@ export const ptBr: Messages = {
           q: 'O que inclui o plano Enterprise?',
           a: 'Enterprise tem uma base mensal de suporte de US$ 500 mais uso medido, mas está indisponível durante o Public Alpha.',
         },
-        {
-          q: 'O plano Developer expira?',
-          a: 'Não. Developer não expira e exige um método de pagamento verificado sem criar uma assinatura paga.',
-        },
       ],
       footerTitle: 'Ainda tem dúvidas?',
-      footerText: 'O suporte Developer é por e-mail e melhor esforço. Starter responde em até dois dias úteis. Pro responde em até um dia útil.',
+      footerText: 'Starter responde em até dois dias úteis. Pro responde em até um dia útil.',
       contactSales: 'Falar com vendas',
       readDocs: 'Ler documentação',
     },

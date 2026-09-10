@@ -144,12 +144,12 @@ export const en = {
   cta: {
     headlineLead: 'Register for the',
     headlineAccent: 'TerraScale Public Alpha.',
-    text: 'Developer is non-expiring. Starter and Pro have one eligible 30-day trial per verified payment method and organization.',
+    text: 'Starter and Pro have one eligible 30-day trial per verified payment method and organization.',
     ctaPrimary: 'Register for Public Alpha',
     ctaPrelaunch: 'Public Alpha opens Sep 7',
     ctaSecondary: 'Talk to Sales',
     perksAria: 'Plan details',
-    perks: ['Non-expiring Developer plan', 'Monthly paid plans', 'No paid overages'],
+    perks: ['Monthly paid plans', 'No paid overages'],
     policyLead: 'Review before payment verification:',
   },
 
@@ -157,15 +157,10 @@ export const en = {
     eyebrow: 'Pricing',
     titleLead: 'Simple pricing',
     titleAccent: 'That scales with YOU',
-    subtitle: 'Four monthly plans for Public Alpha. Enterprise remains unavailable.',
+    subtitle: 'Three monthly plans for Public Alpha. Enterprise remains unavailable.',
     badge: 'Most Popular',
     suffixMonthly: '/month',
     plans: {
-      developer: {
-        description: 'Non-expiring free plan with a verified payment method',
-        features: ['1 project', '3 databases', '3 members', '1 GB across regions', '10,000 operation units/month'],
-        cta: 'Choose Developer',
-      },
       starter: {
         description: 'Monthly plan with one eligible 30-day trial',
         features: ['5 projects', '10 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month'],
@@ -239,13 +234,9 @@ export const en = {
           q: 'What does the Enterprise plan include?',
           a: 'Enterprise has a $500 monthly support base plus metered usage, but it is unavailable during Public Alpha.',
         },
-        {
-          q: 'Does the Developer plan expire?',
-          a: 'No. Developer is non-expiring and requires a verified payment method without creating a paid subscription.',
-        },
       ],
       footerTitle: 'Still have questions?',
-      footerText: 'Developer has best-effort email support. Starter targets two business days. Pro targets one business day.',
+      footerText: 'Starter targets two business days. Pro targets one business day.',
       contactSales: 'Contact Sales',
       readDocs: 'Read Documentation',
     },
