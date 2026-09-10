@@ -344,7 +344,7 @@ function localActor(context: LocalRequestContext): LocalActor {
   if (token !== undefined) {
     const session = context.store
       .list<Record<string, unknown>>("better-auth", "session")
-      .find((row) => row.token === token);
+      .find((row) => sessionTokenMatches(row.token, token));
     const userId = session?.userId;
     if (typeof userId === "string" && userId.length > 0) {
       const user = context.store
@@ -369,6 +369,16 @@ function bearerToken(authorization: string | null): string | undefined {
   if (authorization === null) return undefined;
   const match = /^Bearer\s+(\S+)$/iu.exec(authorization.trim());
   return match?.[1];
+}
+
+/**
+ * Better Auth signs the session cookie, so the Dashboard forwards
+ * `<session-token>.<signature>`. Match either the raw stored token or the
+ * signed value that begins with it; the raw token never contains a dot.
+ */
+function sessionTokenMatches(stored: unknown, presented: string): boolean {
+  if (typeof stored !== "string" || stored.length === 0) return false;
+  return presented === stored || presented.startsWith(`${stored}.`);
 }
 
 function memberKey(organizationId: string, userId: string): string { return `${organizationId}:${userId}`; }

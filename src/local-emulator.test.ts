@@ -390,7 +390,9 @@ test("organization creation assigns the authenticated Better Auth user as owner"
         }),
       );
 
-      const client = runtime.createClient({ accessToken: token });
+      // The Dashboard forwards Better Auth's signed session cookie
+      // (`<token>.<signature>`), not the raw session token.
+      const client = runtime.createClient({ accessToken: `${token}.signed-signature` });
       const organization = expectOk(await client.organizations.create({ name: "Owner org" }));
       assert.deepEqual(organization.ownerUserIds, [userId]);
     } finally {
