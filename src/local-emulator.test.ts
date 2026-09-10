@@ -410,3 +410,28 @@ test("organization creation assigns the authenticated Better Auth user as owner"
     }
   });
 });
+
+test("a rebuilt runtime does not replay idempotency records from a previous process", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "terrascale-local-generation-"));
+  const databasePath = join(directory, "idempotency.sqlite");
+  try {
+    const first = createTerraScaleSqliteRuntime({
+      sqlite: { enabled: true, databasePath },
+    });
+    const firstClient = first.createClient({ idempotencyKeyFactory: () => "generation-key" });
+    expectOk(await firstClient.organizations.create({ name: "First" }));
+    await first.close();
+
+    const second = createTerraScaleSqliteRuntime({
+      sqlite: { enabled: true, databasePath },
+    });
+    const secondClient = second.createClient({ idempotencyKeyFactory: () => "generation-key" });
+    // Same key, different request: an old process's record must not produce a
+    // replay or a 409 after the emulator is rebuilt and restarted.
+    const created = expectOk(await secondClient.organizations.create({ name: "Second" }));
+    assert.equal(created.name, "Second");
+    await second.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

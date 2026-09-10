@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   matchesLocalBearerAuthorization,
@@ -57,6 +57,13 @@ export class TerraScaleLocalRouter {
   readonly #bearerToken: string | undefined;
   readonly #routes: readonly CompiledManifestRoute[];
   readonly #store: TerraScaleSqliteStore;
+  /**
+   * Idempotency records are scoped to one runtime process. A rebuilt emulator
+   * must not replay a response produced by an older build with different
+   * behavior, so a fresh generation invalidates every previously stored
+   * record without mutating the database.
+   */
+  readonly #idempotencyGeneration = randomUUID();
 
   constructor(store: TerraScaleSqliteStore, options: TerraScaleLocalRouterOptions = {}) {
     this.#store = store;
@@ -176,7 +183,7 @@ export class TerraScaleLocalRouter {
     const stored = this.#store.get<StoredIdempotencyResponse>(
       "__idempotency",
       idempotencyScope(context),
-      key,
+      this.#idempotencyRecordId(key),
     );
     if (stored === undefined) {
       return undefined;
@@ -210,7 +217,7 @@ export class TerraScaleLocalRouter {
     this.#store.put<StoredIdempotencyResponse>(
       "__idempotency",
       idempotencyScope(context),
-      key,
+      this.#idempotencyRecordId(key),
       {
         body,
         fingerprint: requestFingerprint(context),
@@ -219,6 +226,10 @@ export class TerraScaleLocalRouter {
       },
     );
     return response;
+  }
+
+  #idempotencyRecordId(key: string): string {
+    return `${this.#idempotencyGeneration}:${key}`;
   }
 }
 
