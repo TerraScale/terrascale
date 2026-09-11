@@ -202,6 +202,28 @@ func TestRegionsListDecodesEdgeCatalogAndRejectsMemberHealth(t *testing.T) {
 	}
 }
 
+func TestRegionsStatusUsesMemberHealthRoute(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/health" {
+			t.Fatalf("request = %s %s, want GET /api/v1/health", r.Method, r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"region":"GRU","healthy":true}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := client.Regions.Status(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Region != RegionGRU || !status.Healthy {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
 func TestRegionJSONIncludesSchemaRequiredFields(t *testing.T) {
 	data, err := json.Marshal(Region{})
 	if err != nil {

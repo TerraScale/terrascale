@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,8 +27,8 @@ type observation struct {
 }
 
 type config struct {
-	apiURL, project, database, key, runID, collection string
-	denyKey                                           string
+	apiURL, _authURL, project, database, key, runID, collection string
+	denyKey                                                     string
 }
 
 func getenv(name string) (string, error) {
@@ -42,6 +43,9 @@ func loadConfig() (config, error) {
 	var c config
 	var err error
 	if c.apiURL, err = getenv("TERRASCALE_API_URL"); err != nil {
+		return c, err
+	}
+	if c._authURL, err = getenv("TERRASCALE_AUTH_URL"); err != nil {
 		return c, err
 	}
 	if c.project, err = getenv("TERRASCALE_PROJECT_ID"); err != nil {
@@ -61,8 +65,8 @@ func loadConfig() (config, error) {
 	if c.collection == "" {
 		c.collection = "sdk_journey"
 	}
-	if strings.ContainsAny(c.runID, "/\\\x00\r\n") {
-		return c, fmt.Errorf("JOURNEY_RUN_ID contains a path/control character")
+	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`).MatchString(c.runID) {
+		return c, fmt.Errorf("TERRASCALE_JOURNEY_RUN_ID must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 	}
 	return c, nil
 }

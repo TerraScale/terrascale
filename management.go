@@ -97,8 +97,9 @@ func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// HealthResponse is the generated response model for GET /api/v1/regions
-// and GET /api/v1/health. It identifies the member that served the request.
+// HealthResponse is the generated response model for the TerraBase member
+// health endpoint GET /api/v1/health. It identifies the member that served
+// the request.
 type HealthResponse struct {
 	Region  RegionCode `json:"region"`
 	Healthy bool       `json:"healthy"`
@@ -484,10 +485,11 @@ func collectionPath(database, collection string) (string, error) {
 // RegionsClient mirrors regions.* routes.
 type RegionsClient struct{ c *Client }
 
-// Status returns the member's serving region and health.
+// Status returns the member's serving region and health from the TerraBase
+// member endpoint. The edge /regions endpoint is reserved for List.
 func (r *RegionsClient) Status(ctx context.Context, opts ...RequestOption) (*HealthResponse, error) {
 	var out HealthResponse
-	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions", opts...); err != nil {
+	if err := r.c.do(ctx, "GET", "/api/v1/health", nil, nil, &out, "health", opts...); err != nil {
 		return nil, err
 	}
 	if _, err := ParseRegionCode(string(out.Region)); err != nil {

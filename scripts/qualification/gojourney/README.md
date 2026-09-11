@@ -8,7 +8,7 @@ this source revision, run `./prepare-file-proxy.sh ../../../
 `GOPROXY=file://... GOSUMDB=off` prefix. The generated
 `file-proxy/QUALIFICATION_SOURCE` and ZIP SHA-256 retain exact artifact identity.
 
-Required environment: `TERRASCALE_API_URL`,
+Required environment: `TERRASCALE_API_URL`, `TERRASCALE_AUTH_URL`,
 `TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_ID`, `TERRASCALE_API_KEY`, and
 `TERRASCALE_JOURNEY_RUN_ID`. `TERRASCALE_COLLECTION` is optional and defaults to
 `sdk_journey`. `TERRASCALE_DENY_API_KEY` is optional; when supplied, exercise verifies a
