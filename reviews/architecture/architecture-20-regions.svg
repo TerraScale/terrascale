@@ -92,7 +92,7 @@
 <text x="74" y="642" class="body" >CROSS-REGION: member ↔ member QUIC journal + causal CRDT merge + anti-entropy. Only Regions in that database’s immutable placement.</text>
 <rect x="32" y="706" width="1536" height="266" rx="12" fill="#fff" stroke="#d2dee8"/>
 <text x="52" y="740" class="section" >02  CONTROL AND OPERATIONS</text>
-<text x="834" y="740" class="small" >Customer documents, queries, WAL and reactive frames never enter NATS</text>
+<text x="834" y="740" class="small" >NATS: control metadata + BYOK references/wrapped ciphertext; no customer data or plaintext keys</text>
 <rect x="56" y="772" width="250" height="116" rx="12" fill="#f0eafb" stroke="#7956ad"/>
 <text x="73" y="801" class="h" >ts-deploy / Forgejo</text>
 <text x="73" y="830" class="body" >Check · build · sign · publish</text>

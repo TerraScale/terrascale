@@ -66,7 +66,7 @@ for (const count of [3, 10, 20]) {
 
   rect(32,706,1536,266,'#fff');
   text(52,740,'02  CONTROL AND OPERATIONS','section');
-  text(834,740,'Customer documents, queries, WAL and reactive frames never enter NATS','small');
+  text(834,740,'NATS: control metadata + BYOK references/wrapped ciphertext; no customer data or plaintext keys','small');
   card(56,772,250,116,'ts-deploy / Forgejo',['Check · build · sign · publish','Submit immutable candidate','No cluster rollout authority'],'control');
   card(366,772,310,116,'GRU global master',['One fenced mutation authority','Mirrors · canary · rollback','Controls regional admission'],'control');
   card(736,772,360,116,'Regional orchestrators',['Local process on EVERY member host','GRU-issued, Region-scoped authority','Durable intent and operation receipts'],'control');
