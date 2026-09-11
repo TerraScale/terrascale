@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "3bf6908d8f243708de1627703c6f1209e66b5e6293a3670f501802482dd03a40";
+    "638accfd6f44aa5d79fe42feb4c0a7236a2c4d9de71302b058720cf7dde51d22";
 pub const OPENAPI_BLAKE3: &str = "48e6c1b4aa4e5bf4ed04e27e38f7059109928cf3e5bde802fd555cdcf2532fc9";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
@@ -23,7 +23,7 @@ pub struct ContractArtifact {
 pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/http.json",
-        blake3: "096279b72cea6c8a49ada3d994192f4c617c03e340156b68783423ac0bc07f1f",
+        blake3: "046c35397a928f134b9b525c7bbf307e7941605397d4c6e20598d1ed6a176b3f",
     },
     ContractArtifact {
         path: "conformance/msgpack/hostile-vectors.json",
@@ -1529,6 +1529,6 @@ pub const MESSAGE_VECTOR_SHA256: &str =
 pub const HOSTILE_VECTOR_SHA256: &str =
     "e6d8e6d92a87fe4d37fb00e5b441d0c351eecaf6117e5ac50631ce94d18890f5";
 pub const HTTP_CONFORMANCE_SHA256: &str =
-    "1f42e45e8d54417da3bb8141c058bef792302035caf5f02e6a0cc0b89c52e9eb";
+    "cc04a423f64ff38cb0eacbae97de962095b8d64ce7b4c5631b065910a0a26def";
 pub const REACTIVE_CONFORMANCE_SHA256: &str =
     "87c646d5fed7a0812c8e12b01ae8bf76b4626b842128ec267989df1b52e5bdf0";

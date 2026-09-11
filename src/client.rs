@@ -367,9 +367,12 @@ impl Shared {
                         // of losing the producer's response to a status error.
                         Err(_error)
                             if response.status == 503
-                                && matches!(route.as_str(), "regions.health" | "regions.status") =>
+                                && matches!(
+                                    route.as_str(),
+                                    "regions.health" | "regions.status"
+                                ) =>
                         {
-                            response.json_body().map_err(|mut e: Error| {
+                            return response.json_body().map_err(|mut e: Error| {
                                 e.code = format!("{}.invalid_response", route_to_code(&route));
                                 e
                             })

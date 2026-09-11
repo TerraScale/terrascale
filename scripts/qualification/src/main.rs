@@ -39,15 +39,21 @@ fn config() -> std::result::Result<Config, String> {
     if !valid_run_id(&run) {
         return Err("TERRASCALE_JOURNEY_RUN_ID must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}".into());
     }
+    let key = required("TERRASCALE_API_KEY")?;
+    let deny_key = env::var("TERRASCALE_DENY_API_KEY")
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty());
+    if deny_key.as_deref() == Some(key.as_str()) {
+        return Err("TERRASCALE_DENY_API_KEY must differ from TERRASCALE_API_KEY".into());
+    }
     Ok(Config {
         api: required("TERRASCALE_API_URL")?,
         _auth: required("TERRASCALE_AUTH_URL")?,
         project: required("TERRASCALE_PROJECT_ID")?,
         database: required("TERRASCALE_DATABASE_ID")?,
-        key: required("TERRASCALE_API_KEY")?,
-        deny_key: env::var("TERRASCALE_DENY_API_KEY")
-            .ok()
-            .filter(|v| !v.trim().is_empty()),
+        key,
+        deny_key,
         run,
     })
 }

@@ -64,9 +64,15 @@ fn generated_contract_is_pinned_to_the_committed_bundle() {
 
 #[test]
 fn archive_pin_matches_the_producer_handoff() {
-    let pin = fs::read_to_string(format!("{}/CONTRACT_ARCHIVE_SHA256", env!("CARGO_MANIFEST_DIR")))
-        .expect("archive pin");
-    assert_eq!(pin.trim(), "e7a8bcbe752d814006c52fd40df055d54ac9adb7e3c1e5050630951d8f3498af");
+    let pin = fs::read_to_string(format!(
+        "{}/CONTRACT_ARCHIVE_SHA256",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("archive pin");
+    assert_eq!(
+        pin.trim(),
+        "e7a8bcbe752d814006c52fd40df055d54ac9adb7e3c1e5050630951d8f3498af"
+    );
 }
 
 #[test]
