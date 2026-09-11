@@ -681,6 +681,12 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			}
 			return decodeSuccess(out, respBody, headers.Get("Content-Type"))
 		}
+		// Health is a liveness response, so an unhealthy member still returns
+		// the typed HealthResponse body with HTTP 503. Preserve that body for
+		// callers; the `healthy` field carries the verdict.
+		if route == "health" && status == http.StatusServiceUnavailable {
+			return decodeSuccess(out, respBody, headers.Get("Content-Type"))
+		}
 		apiErr := errorFromResponse(route, method, path, status, headers, respBody)
 		if !recoveredPin && canRecoverRead(method) && (status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
 			if c.clearFailedPin(base) {

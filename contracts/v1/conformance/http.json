@@ -281,11 +281,9 @@
         },
         {
           "body": {
-            "error": {
-              "code": "unavailable",
-              "fix": "follow the contract and retry when safe",
-              "message": "conformance 503 response"
-            }
+            "healthy": false,
+            "region": "sample",
+            "version": "sample"
           },
           "mediaType": "application/json",
           "status": 503
@@ -6727,11 +6725,9 @@
         },
         {
           "body": {
-            "error": {
-              "code": "unavailable",
-              "fix": "follow the contract and retry when safe",
-              "message": "conformance 503 response"
-            }
+            "healthy": false,
+            "region": "sample",
+            "version": "sample"
           },
           "mediaType": "application/json",
           "status": 503
