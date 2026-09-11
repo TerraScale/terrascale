@@ -42,6 +42,34 @@ source observations, not a claim that the upstream test suite ran here.
 
 ## Implemented boundaries
 
+## Internal manifest format and capture provenance
+
+The current internal manifest header is `terrabase-backup-manifest 4`. This is
+the manifest schema version only; it does not change the encrypted artifact
+protocol, whose outer envelope and object layout remain `manifest.tbv3e` and
+the existing encrypted recovery-point paths. The version-4 body carries an
+explicit `capture_kind`:
+
+- `whole_database` identifies a standalone whole-database capture;
+- `routed_shard_participant` identifies a manifest that may be assembled only
+  as a participant of a complete, identity-matching routed envelope.
+
+An old or ambiguous version-3 manifest is rejected during authenticated
+validation. It is never assigned a default capture kind and is not treated as
+whole-database evidence. Existing files are not deleted by this decision, but
+they are not readable as accepted current-format points unless an explicit
+future migration defines and verifies their provenance. This prevents a
+participant manifest from being exposed as a whole database and prevents a
+whole-database point from being assembled into a routed envelope without its
+provenance binding.
+
+Capture provenance is bound to the database identity and, for routed points,
+the database incarnation and participant membership. A source that was later
+sharded therefore retains historical standalone points by their explicit
+identity, while current routed publication requires a complete matching
+envelope; absence or mismatch fails closed. Current mode alone is not used to
+reinterpret historical artifacts.
+
 The Rust worker uses shared bounded scheduling, an explicit per-database staging
 budget and maximum recovery-point count, database key leases, and separate OCI
 and Tigris clients. It captures logical state/journal records through the existing

@@ -191,7 +191,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use manifest::{ENCRYPTED_MANIFEST_FILE, MANIFEST_FILE, ManifestFacts, point_directory};
+use manifest::{
+    BackupCaptureKind, ENCRYPTED_MANIFEST_FILE, MANIFEST_FILE, ManifestFacts, point_directory,
+};
 pub mod object_store;
 pub mod workload_identity_delivery;
 use records::{MemberWriter, Record};
@@ -518,6 +520,7 @@ impl BackupEncryption {
 pub struct BackupPlan {
     snapshot_routes: Option<Vec<crate::shard_split::ShardRoute>>,
     kind: BackupKind,
+    pub(crate) capture_kind: BackupCaptureKind,
     pinned_boundary: Option<StorageSequence>,
     member_bound_bytes: u64,
     read_ops_per_second: Option<u32>,
@@ -570,6 +573,7 @@ impl BackupPlan {
         Self {
             snapshot_routes: None,
             kind: BackupKind::Full,
+            capture_kind: BackupCaptureKind::WholeDatabase,
             pinned_boundary: None,
             member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES,
             read_ops_per_second: None,
@@ -593,6 +597,7 @@ impl BackupPlan {
         Self {
             snapshot_routes: None,
             kind: BackupKind::Full,
+            capture_kind: BackupCaptureKind::WholeDatabase,
             pinned_boundary: None,
             member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES,
             read_ops_per_second: None,
@@ -614,6 +619,7 @@ impl BackupPlan {
         Self {
             snapshot_routes: None,
             kind: BackupKind::Full,
+            capture_kind: BackupCaptureKind::WholeDatabase,
             pinned_boundary: None,
             member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES,
             read_ops_per_second: None,
@@ -1332,6 +1338,7 @@ fn execute(
         tenant_counts,
         boundary,
         plan.kind,
+        plan.capture_kind,
         boundary_unix_millis,
         captured_unix_millis,
         captured_unix_millis
@@ -1607,6 +1614,7 @@ fn seal_run(
     tenant_counts: BTreeMap<TenantId, (u64, u64)>,
     boundary: StorageSequence,
     kind: BackupKind,
+    capture_kind: BackupCaptureKind,
     boundary_unix_millis: u64,
     captured_unix_millis: u64,
     retain_until_unix_millis: u64,
@@ -1635,6 +1643,7 @@ fn seal_run(
         database_id,
         partition_id: "partition-000000".to_owned(),
         kind,
+        capture_kind,
         boundary,
         boundary_unix_millis,
         captured_unix_millis,

@@ -170,6 +170,11 @@ pub(super) fn resolve_encrypted_points_chain(
     points: &[BackupManifest],
     selection: &Selection,
 ) -> Result<Vec<BackupManifest>, BackupError> {
+    if points.iter().any(|point| {
+        point.capture_kind() != crate::backup::manifest::BackupCaptureKind::WholeDatabase
+    }) {
+        return Err(BackupError::ManifestInvalid);
+    }
     let head = match selection {
         Selection::Latest => points
             .iter()
@@ -296,12 +301,13 @@ pub(super) fn resolve_timestamp_points_chain(
 #[cfg(test)]
 #[test]
 fn indexed_timestamp_roots_handle_long_chains_and_noop_heads() {
-    use crate::backup::manifest::ManifestFacts;
+    use crate::backup::manifest::{BackupCaptureKind, ManifestFacts};
     let point = |sequence: u64, kind: BackupKind| {
         BackupManifest::assemble(ManifestFacts {
             database_id: "0123456789abcdef0123456789abcdef".to_owned(),
             partition_id: "partition-000000".to_owned(),
             kind,
+            capture_kind: BackupCaptureKind::WholeDatabase,
             boundary: StorageSequence::new(sequence),
             boundary_unix_millis: sequence,
             captured_unix_millis: sequence + 1,
@@ -341,12 +347,13 @@ fn indexed_timestamp_roots_handle_long_chains_and_noop_heads() {
 #[cfg(test)]
 #[test]
 fn latest_same_boundary_prefers_capture_clock_and_complete_coverage() {
-    use crate::backup::manifest::ManifestFacts;
+    use crate::backup::manifest::{BackupCaptureKind, ManifestFacts};
     let point = |kind, captured| {
         BackupManifest::assemble(ManifestFacts {
             database_id: "0123456789abcdef0123456789abcdef".to_owned(),
             partition_id: "partition-000000".to_owned(),
             kind,
+            capture_kind: BackupCaptureKind::WholeDatabase,
             boundary: StorageSequence::new(7),
             boundary_unix_millis: 10,
             captured_unix_millis: captured,
@@ -397,6 +404,42 @@ fn latest_same_boundary_prefers_capture_clock_and_complete_coverage() {
     }
 }
 
+#[cfg(test)]
+#[test]
+fn encrypted_chain_rejects_participant_and_mixed_capture_kinds() {
+    use crate::backup::manifest::{BackupCaptureKind, ManifestFacts};
+    let point = |capture_kind| {
+        BackupManifest::assemble(ManifestFacts {
+            database_id: "0123456789abcdef0123456789abcdef".to_owned(),
+            partition_id: "partition-000000".to_owned(),
+            kind: BackupKind::Full,
+            capture_kind,
+            boundary: StorageSequence::new(1),
+            boundary_unix_millis: 1,
+            captured_unix_millis: 2,
+            retain_until_unix_millis: 86_400_002,
+            logical_checksum: crate::engine::logical_state_hasher().finalize().to_hex().to_string(),
+            logical_documents: 0,
+            documents: 0,
+            family_records: 0,
+            deletes: 0,
+            disclosures: 0,
+            tenants: Vec::new(),
+            members: Vec::new(),
+        })
+    };
+    let whole = point(BackupCaptureKind::WholeDatabase);
+    let participant = point(BackupCaptureKind::RoutedShardParticipant);
+    assert_eq!(
+        resolve_encrypted_points_chain(&[participant], &Selection::Latest),
+        Err(BackupError::ManifestInvalid)
+    );
+    assert_eq!(
+        resolve_encrypted_points_chain(&[whole, participant], &Selection::Latest),
+        Err(BackupError::ManifestInvalid)
+    );
+}
+
 pub(super) fn discover_encrypted_points(
     destination: &Path,
     cipher: &dyn BackupReader,
@@ -431,7 +474,9 @@ pub(super) fn discover_encrypted_points(
         let bytes =
             cipher.open_backup_envelope(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
         let manifest = BackupManifest::decode(&bytes)?;
-        if manifest.identity() != identity {
+        if manifest.identity() != identity
+            || manifest.capture_kind() != crate::backup::manifest::BackupCaptureKind::WholeDatabase
+        {
             return Err(BackupError::ManifestInvalid);
         }
         points.push(manifest);

@@ -368,6 +368,15 @@ impl NativeRecoveryRuntime {
         if envelopes.is_empty() {
             return Ok(None);
         }
+        // A routed catalog does not erase authenticated whole-database
+        // history. Explicit IDs absent from the envelope index must continue
+        // through the ordinary manifest resolver, which validates the remote
+        // chain and capture provenance independently.
+        if selection_kind == "point_id"
+            && !envelopes.iter().any(|envelope| envelope.digest() == point_id)
+        {
+            return Ok(None);
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| NativeRecoveryError::Unavailable)?

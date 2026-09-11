@@ -149,7 +149,9 @@ pub async fn list_backup_points(
     let envelopes = runtime.retained_envelopes_async(database).await?;
     let mut points = BTreeMap::<String, BackupPoint>::new();
     for manifest in manifests {
-        if manifest.database_id() != database {
+        if manifest.database_id() != database
+            || manifest.capture_kind() != terrabase::backup::BackupCaptureKind::WholeDatabase
+        {
             return Err(BackupPointCatalogError::ConflictingPoint);
         }
         let id = manifest.identity();
@@ -178,6 +180,8 @@ pub async fn list_backup_points(
             participant.database_id != database
                 || participant.database_incarnation != database_incarnation
                 || participant.manifest.database_id() != database
+                || participant.manifest.capture_kind()
+                    != terrabase::backup::BackupCaptureKind::RoutedShardParticipant
         }) {
             return Err(BackupPointCatalogError::ConflictingPoint);
         }

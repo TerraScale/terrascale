@@ -535,7 +535,7 @@ impl NativeBackupFleet {
                 .staging_bytes_per_stream
                 .checked_sub(staged_bytes(&stream.config.staging)?)
                 .ok_or(FleetError::StagingFull)?;
-            let plan = BackupPlan::snapshot_at(participant.snapshot.sequence(), encryption)
+            let mut plan = BackupPlan::snapshot_at(participant.snapshot.sequence(), encryption)
                 .with_snapshot_routes(participant.routes.clone())
                 .map_err(|_| FleetError::Configuration)?
                 .with_retention_days(stream.config.retention_days)
@@ -543,6 +543,11 @@ impl NativeBackupFleet {
                 .with_reader(reader)
                 .with_placement_lock(stream.config.placement.clone())
                 .with_archive_byte_limit(remaining.saturating_sub(2 * 1024 * 1024));
+            // A routed participant is physically archived in its shard
+            // namespace. Record that provenance in the authenticated manifest
+            // so relocation into the standalone database namespace is refused
+            // by restore and inventory consumers.
+            plan.capture_kind = super::BackupCaptureKind::RoutedShardParticipant;
             // The blocking owner retains the MVCC pin and counted admission
             // even if its requesting future is cancelled during capture.
             let retained = participant.clone();

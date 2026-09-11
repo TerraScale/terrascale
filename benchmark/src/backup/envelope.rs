@@ -6,7 +6,7 @@
 //! ordered per-participant manifest identities into one digest.  Callers must
 //! validate every participant before exposing the envelope as recoverable.
 
-use super::{BackupError, BackupManifest};
+use super::{BackupCaptureKind, BackupError, BackupManifest};
 use aws_lc_rs::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -171,6 +171,7 @@ impl BackupEnvelope {
                 || participant.route_generation != route_generation
                 || participant.manifest.database_id() != participant.database_id
                 || participant.manifest.boundary_sequence().get() != participant.boundary
+                || participant.manifest.capture_kind() != BackupCaptureKind::RoutedShardParticipant
             {
                 return Err(BackupError::ManifestInvalid);
             }
@@ -471,6 +472,7 @@ mod tests {
             database_id: database(),
             partition_id: "partition-000000".into(),
             kind: super::super::BackupKind::Full,
+            capture_kind: BackupCaptureKind::RoutedShardParticipant,
             boundary: StorageSequence::new(boundary),
             boundary_unix_millis: boundary,
             captured_unix_millis: boundary,
@@ -561,6 +563,31 @@ mod tests {
             database_incarnation: 1,
             route_generation: 1,
             boundary: 8,
+            manifest: point,
+        };
+
+        assert_eq!(
+            BackupEnvelope::assemble(database(), 1, 1, vec![participant]),
+            Err(BackupError::ManifestInvalid)
+        );
+    }
+
+    #[test]
+    fn rejects_whole_database_manifest_as_routed_participant() {
+        let mut point = manifest(7);
+        point.capture_kind = BackupCaptureKind::WholeDatabase;
+        point.identity = String::new();
+        point.identity =
+            hex::encode(digest(&SHA256, point.body_lines().join("\n").as_bytes()).as_ref());
+        let participant = BackupEnvelopeParticipant {
+            file_identity: identity(1),
+            is_root: true,
+            routes: vec![crate::shard_split::ShardRoute::new(1, None, None).unwrap()],
+            participant_id: "shard-0000000000000001".into(),
+            database_id: point.database_id().into(),
+            database_incarnation: 1,
+            route_generation: 1,
+            boundary: point.boundary_sequence().get(),
             manifest: point,
         };
 

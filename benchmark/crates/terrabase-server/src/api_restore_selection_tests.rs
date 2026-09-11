@@ -70,6 +70,15 @@ async fn restore_route_forwards_each_selector_to_provisioning_authority() {
     {
         let state = Arc::get_mut(&mut state).expect("unique state");
         state.admitted_databases = Some(Arc::new(registry));
+        let keys = crate::api_keys::KeyStore::empty();
+        keys.register_for_owner(
+            "tskey_test_abcdefghijklmnop",
+            "fixture",
+            crate::api_keys::Scope::every_database(crate::api_keys::Verbs::ALL),
+            (source.tenant_id.clone(), source.project_id.clone()),
+            None,
+        );
+        state.keys = Some(Arc::new(keys));
         state.provisioning = Some(Arc::new(
             crate::provisioning::ProvisioningClient::new(socket, uid, "production".into())
                 .expect("provisioning client"),
@@ -200,6 +209,15 @@ async fn backup_points_route_uses_native_catalog_and_enforces_scope() {
     let mut state = crate::api::tests::state_with_keys_and_control();
     Arc::get_mut(&mut state).unwrap().admitted_databases = Some(Arc::new(registry));
     Arc::get_mut(&mut state).unwrap().native_backups = Some(Arc::new(runtime));
+    let keys = crate::api_keys::KeyStore::empty();
+    keys.register_for_owner(
+        "tskey_test_abcdefghijklmnop",
+        "fixture",
+        crate::api_keys::Scope::every_database(crate::api_keys::Verbs::ALL),
+        (source.tenant_id.clone(), source.project_id.clone()),
+        None,
+    );
+    Arc::get_mut(&mut state).unwrap().keys = Some(Arc::new(keys));
     let path = format!("/api/v1/databases/{}/backups/points", source.database_id);
     let response = crate::api::router(Arc::clone(&state))
         .oneshot(

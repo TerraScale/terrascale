@@ -38,7 +38,29 @@ pub(crate) const ENCRYPTED_MANIFEST_FILE: &str = "manifest.tbv3e";
 /// interior whitespace (`team a` is committable) produced a manifest that
 /// could never be parsed back; version 2 encodes the name's byte length so
 /// the line is unambiguous for every representable tenant name.
-pub(crate) const HEADER: &str = "terrabase-backup-manifest 3";
+pub(crate) const HEADER: &str = "terrabase-backup-manifest 4";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BackupCaptureKind {
+    WholeDatabase,
+    RoutedShardParticipant,
+}
+
+impl BackupCaptureKind {
+    fn parse(value: &str) -> Result<Self, BackupError> {
+        match value {
+            "whole_database" => Ok(Self::WholeDatabase),
+            "routed_shard_participant" => Ok(Self::RoutedShardParticipant),
+            _ => Err(BackupError::ManifestInvalid),
+        }
+    }
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WholeDatabase => "whole_database",
+            Self::RoutedShardParticipant => "routed_shard_participant",
+        }
+    }
+}
 
 /// Hard upper bound for one serialized manifest.
 ///
@@ -142,6 +164,7 @@ pub(crate) struct ManifestFacts {
     pub(crate) partition_id: String,
     /// The backup kind.
     pub(crate) kind: BackupKind,
+    pub(crate) capture_kind: BackupCaptureKind,
     /// The storage-sequence boundary the recovery point covers.
     pub(crate) boundary: StorageSequence,
     /// Durable timestamp of the included commit boundary.
@@ -182,6 +205,7 @@ pub struct BackupManifest {
     tenant_scope: String,
     identity: String,
     kind: BackupKind,
+    capture_kind: BackupCaptureKind,
     boundary: StorageSequence,
     boundary_unix_millis: u64,
     captured_unix_millis: u64,
@@ -205,6 +229,7 @@ impl BackupManifest {
             database_id,
             partition_id,
             kind,
+            capture_kind,
             boundary,
             boundary_unix_millis,
             captured_unix_millis,
@@ -292,6 +317,11 @@ impl BackupManifest {
     #[must_use]
     pub fn captured_unix_millis(&self) -> u64 {
         self.captured_unix_millis
+    }
+
+    #[must_use]
+    pub fn capture_kind(&self) -> BackupCaptureKind {
+        self.capture_kind
     }
 
     /// Returns the immutable earliest deletion time bound to this artifact.
@@ -432,6 +462,7 @@ impl BackupManifest {
             BackupKind::Snapshot => "kind snapshot".to_owned(),
             BackupKind::Incremental { base } => format!("kind incremental {}", base.get()),
         }];
+        lines.push(format!("capture_kind {}", self.capture_kind.as_str()));
         lines.push(format!("database {}", self.database_id));
         lines.push(format!("partition {}", self.partition_id));
         lines.push(format!("tenant_scope {}", self.tenant_scope));
@@ -496,6 +527,9 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
     validate_identity_hex(identity)?;
 
     let kind = parse_kind(lines.next().ok_or_else(invalid)?)?;
+    let capture_kind = BackupCaptureKind::parse(
+        lines.next().ok_or_else(invalid)?.strip_prefix("capture_kind ").ok_or_else(invalid)?,
+    )?;
     let database_id = parse_database_id(lines.next().ok_or_else(invalid)?)?;
     let partition_id = parse_partition_id(lines.next().ok_or_else(invalid)?)?;
     let tenant_scope = parse_digest(lines.next().ok_or_else(invalid)?, "tenant_scope")?;
@@ -590,6 +624,7 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
         tenant_scope,
         identity: identity.to_owned(),
         kind,
+        capture_kind,
         boundary: StorageSequence::new(boundary),
         boundary_unix_millis,
         captured_unix_millis,
@@ -771,6 +806,7 @@ mod tests {
             database_id: "0123456789abcdef0123456789abcdef".to_owned(),
             partition_id: "partition-000000".to_owned(),
             kind: BackupKind::Full,
+            capture_kind: BackupCaptureKind::WholeDatabase,
             boundary: StorageSequence::new(7),
             boundary_unix_millis: 700,
             captured_unix_millis: 800,
@@ -810,6 +846,44 @@ mod tests {
             manifest.render().replace("logical_documents 1", "logical_documents 2"),
         ] {
             assert_eq!(parse_manifest(&changed), Err(BackupError::ManifestInvalid));
+        }
+    }
+
+    #[test]
+    fn capture_kind_roundtrips_and_changes_authenticated_identity() {
+        let whole = sample();
+        let mut participant = whole.clone();
+        participant.capture_kind = BackupCaptureKind::RoutedShardParticipant;
+        participant.identity = String::new();
+        participant.identity =
+            hex::encode(digest(&SHA256, participant.body_lines().join("\n").as_bytes()).as_ref());
+        assert_eq!(
+            BackupManifest::decode(&whole.encode()).unwrap().capture_kind(),
+            BackupCaptureKind::WholeDatabase
+        );
+        assert_eq!(
+            BackupManifest::decode(&participant.encode()).unwrap().capture_kind(),
+            BackupCaptureKind::RoutedShardParticipant
+        );
+        assert_ne!(whole.identity, participant.identity);
+    }
+
+    #[test]
+    fn capture_kind_is_required_and_strictly_parsed() {
+        let encoded = sample().encode();
+        for replacement in [
+            ("capture_kind whole_database\n", ""),
+            ("capture_kind whole_database", "capture_kind unknown"),
+            ("capture_kind whole_database", "capture_kind WholeDatabase"),
+            ("terrabase-backup-manifest 4", "terrabase-backup-manifest 3"),
+        ] {
+            let candidate = encoded.replacen(replacement.0, replacement.1, 1);
+            assert_eq!(
+                parse_manifest(&candidate),
+                Err(BackupError::ManifestInvalid),
+                "replacement {:?}",
+                replacement
+            );
         }
     }
 

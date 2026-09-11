@@ -1155,14 +1155,43 @@ mod restore_tests {
     async fn catalog_lists_an_authenticated_standalone_capture() {
         let (runtime, registry, member, root, database) = runtime_fixture("catalog-standalone");
         runtime.capture(&database, "catalog-standalone-capture").await.unwrap();
+        runtime.capture(&database, "catalog-standalone-capture-2").await.unwrap();
+        runtime.capture(&database, "catalog-standalone-capture-3").await.unwrap();
         let page =
-            crate::backup_point_catalog::list_backup_points(&runtime, &database, None, None, 0)
+            crate::backup_point_catalog::list_backup_points(&runtime, &database, Some(2), None, 0)
                 .await
                 .unwrap();
-        assert_eq!(page.points.len(), 1);
-        assert_eq!(page.points[0].source_database_id, database);
-        assert!(page.points[0].logical_documents.parse::<u64>().is_ok());
-        assert!(page.next_cursor.is_none());
+        assert_eq!(page.points.len(), 2);
+        assert!(page.points.iter().all(|point| point.source_database_id == database));
+        assert!(page.points.iter().all(|point| point.logical_documents.parse::<u64>().is_ok()));
+        let cursor = page.next_cursor.as_deref().expect("populated page has a cursor");
+        let next = crate::backup_point_catalog::list_backup_points(
+            &runtime,
+            &database,
+            Some(2),
+            Some(cursor),
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(next.points.len(), 1);
+        assert!(
+            page.points.iter().all(|first| next
+                .points
+                .iter()
+                .all(|second| { first.point_id != second.point_id }))
+        );
+        assert!(next.next_cursor.is_none());
+        let expired = crate::backup_point_catalog::list_backup_points(
+            &runtime,
+            &database,
+            Some(2),
+            None,
+            u64::MAX,
+        )
+        .await
+        .unwrap();
+        assert!(expired.points.is_empty());
         runtime.drain().unwrap();
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();

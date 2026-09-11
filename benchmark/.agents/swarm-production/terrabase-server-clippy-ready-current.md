@@ -142,3 +142,34 @@ other pre-existing server modules. Logs:
 `/tmp/terrabase-server-test-build-current-2-20260911.log`,
 `/tmp/terrabase-server-exact-*.log`, and
 `/tmp/terrabase-server-clippy-after-batches-20260911.log`.
+
+## Final frozen executable verification (2026-09-11)
+
+The corrected source cohort compiled successfully with:
+
+```text
+timeout --signal=TERM --kill-after=30s 900s nice -n 19 env CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/tmp/terrabase-native-g1-target.lNjLFz cargo test -p terrabase-server --lib --locked --no-run
+```
+
+Status was 0; the matching executable is
+`/tmp/terrabase-native-g1-target.lNjLFz/debug/deps/terrabase_server-b6b1a255b810086b`.
+The source HEAD was `7ec088a2b72286e62e789203b2b600e197db4896`; the build log
+is `/tmp/terrabase-server-test-build-final-frozen-20260911.log`.
+
+Twenty exact selectors were run. Eighteen passed with `running 1 test` and
+`test result: ok`; two restore HTTP selectors failed during authentication
+setup, returning 401 where the fixtures expected 200/202:
+
+- `api::tests::api_restore_selection_tests::backup_points_route_uses_native_catalog_and_enforces_scope`
+  (`api_restore_selection_tests.rs:215`)
+- `api::tests::api_restore_selection_tests::restore_route_forwards_each_selector_to_provisioning_authority`
+  (`api_restore_selection_tests.rs:101`)
+
+Full output: `/tmp/terrabase-server-focused-tests-20260911.log`. Standalone
+catalog, encrypted native capture/restore, export fail-closed,
+recovery-boundary, replication, lifecycle, API-operation, usage-admission, and
+usage-closure selectors passed.
+
+A fresh clippy run on this tree completed status 101 with 247 diagnostics;
+this is not a green gate. Log: `/tmp/terrabase-server-clippy-final-20260911.log`.
+No product source files were edited by the verification owner.

@@ -1132,6 +1132,11 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         )
         .unwrap(),
     );
+    // Retain a real whole-database point before publishing the routed capture.
+    // The catalog must preserve this historical point alongside the later
+    // envelope rather than projecting a participant as a standalone point.
+    let standalone =
+        backups.capture(&records[0].database_id, "lifecycle-standalone-capture").await.unwrap();
     let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
     let executor = Arc::new(ObservedExecutor {
         inner: crate::production_data_runtime::ProductionRestoreExecutor::new(
@@ -1179,6 +1184,40 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
     assert_eq!(provider, Provider::Oci);
     assert_eq!(envelope.logical_documents(), 2);
     assert!(!envelope.digest().is_empty());
+    let catalog = crate::backup_point_catalog::list_backup_points(
+        &backups,
+        &records[0].database_id,
+        Some(10),
+        None,
+        0,
+    )
+    .await
+    .unwrap();
+    assert_eq!(catalog.points.len(), 2);
+    assert!(catalog.points.iter().any(|point| point.point_id == standalone.identity()));
+    assert!(catalog.points.iter().any(|point| point.point_id == envelope.digest()));
+    assert!(catalog.points.windows(2).all(|points| {
+        (points[0].captured_at_unix_millis, points[0].point_id.as_str())
+            >= (points[1].captured_at_unix_millis, points[1].point_id.as_str())
+    }));
+    let (historical, historical_provider) = recovery
+        .resolve_recovery_point(
+            &records[0].database_id,
+            "point_id",
+            standalone.identity(),
+            &records[0].regions,
+        )
+        .await
+        .unwrap();
+    assert_eq!(historical.identity(), standalone.identity());
+    assert_eq!(historical_provider, Provider::Oci);
+    let latest = recovery
+        .resolve_recovery_envelope(&records[0].database_id, "latest", "", &records[0].regions)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest.0.digest(), envelope.digest());
+    assert_eq!(latest.1, Provider::Oci);
     assert!(envelope.route_generation() > 0);
     assert_eq!(
         envelope.database_incarnation(),

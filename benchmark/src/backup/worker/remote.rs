@@ -40,6 +40,7 @@ pub(super) async fn remote_points_with_keys(
             super::super::BackupManifest::decode(&bytes).map_err(|_| FleetError::Capture)?;
         if prefix != format!("{database}/rp-{}", manifest.identity())
             || manifest.database_id() != database
+            || manifest.capture_kind() != super::super::manifest::BackupCaptureKind::WholeDatabase
         {
             return Err(FleetError::Capture);
         }
