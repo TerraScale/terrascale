@@ -38,7 +38,6 @@ export const en = {
           features: 'Features',
           pricing: 'Pricing',
           changelog: 'Changelog',
-          roadmap: 'Roadmap',
           documentation: 'Documentation',
         },
       },

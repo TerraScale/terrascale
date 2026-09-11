@@ -183,7 +183,7 @@ test('published routes keep registration, login, status, and policy links canoni
     'https://status.terrascale.tech',
     'https://docs.terrascale.tech/legal/security/',
     'https://docs.terrascale.tech/legal/terms/',
-    'https://docs.terrascale.tech/legal/acceptable-use/',
+    'https://docs.terrascale.tech/legal/terms/#acceptable-use',
     'https://docs.terrascale.tech/legal/privacy/',
     'https://docs.terrascale.tech/legal/dpa/',
     'https://docs.terrascale.tech/legal/support/',
@@ -310,7 +310,7 @@ test('Public Alpha claims and customer links stay within the launch contract', a
     'https://status.terrascale.tech',
     'https://docs.terrascale.tech/legal/security/',
     'https://docs.terrascale.tech/legal/terms/',
-    'https://docs.terrascale.tech/legal/acceptable-use/',
+    'https://docs.terrascale.tech/legal/terms/#acceptable-use',
     'https://docs.terrascale.tech/legal/privacy/',
     'https://docs.terrascale.tech/legal/dpa/',
     'https://docs.terrascale.tech/legal/support/',
@@ -323,19 +323,19 @@ test('Public Alpha claims and customer links stay within the launch contract', a
   const policyLinks = [
     'https://docs.terrascale.tech/legal/terms/',
     'https://docs.terrascale.tech/legal/privacy/',
-    'https://docs.terrascale.tech/legal/acceptable-use/',
+    'https://docs.terrascale.tech/legal/terms/#acceptable-use',
     'https://docs.terrascale.tech/legal/dpa/',
   ]
   expect(new Set(policyLinks).size).toBe(policyLinks.length)
   for (const href of policyLinks) {
     await expect(page.locator(`nav[aria-label="Registration policies"] a[href="${href}"]`)).toBeVisible()
   }
-  await expect(page.locator('a[href="https://docs.terrascale.tech/legal/acceptable-use/"]')).toHaveCount(1)
+  await expect(page.locator('a[href="https://docs.terrascale.tech/legal/terms/#acceptable-use"]')).toHaveCount(1)
 })
 
-test('footer roadmap and API reference links keep their canonical documentation targets', async ({ page }) => {
+test('footer changelog and API reference links keep their canonical documentation targets', async ({ page }) => {
   const expectedFooterLinks = {
-    roadmap: 'https://docs.terrascale.tech/changelog/',
+    changelog: 'https://docs.terrascale.tech/changelog/',
     apiReference: 'https://docs.terrascale.tech/getting-started/',
   }
 
@@ -343,6 +343,6 @@ test('footer roadmap and API reference links keep their canonical documentation 
   for (const href of Object.values(expectedFooterLinks)) {
     await expect(page.locator(`footer a[href="${href}"]`)).toBeVisible()
   }
-  expect(expectedFooterLinks.roadmap).not.toBe(expectedFooterLinks.apiReference)
+  expect(expectedFooterLinks.changelog).not.toBe(expectedFooterLinks.apiReference)
   await expect(page.locator('footer a[href="https://docs.terrascale.tech"]')).toBeVisible()
 })
