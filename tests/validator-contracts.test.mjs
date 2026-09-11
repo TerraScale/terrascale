@@ -10,6 +10,7 @@ import {
   checkDeployedRedirects,
   validateRedirectRules,
 } from '../scripts/validate-redirect-contract.mjs'
+import { validateProductFooterLinks } from '../scripts/validate-content.mjs'
 import { extractAttributes, extractStructuredDataUrls, probeExternalLinks, requiredLinks } from '../scripts/validate-links.mjs'
 import { validateRenderedLinks } from '../scripts/validate-links.mjs'
 import { findProhibitedClaims, scanProhibitedClaims, walk as walkClaimFiles } from '../scripts/validate-claims.mjs'
@@ -19,6 +20,22 @@ test('required external destinations remain distinct', () => {
   assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/terms/'))
   assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/terms/#acceptable-use'))
   assert.ok(requiredLinks.includes('https://docs.terrascale.tech'))
+  assert.ok(requiredLinks.includes('https://docs.terrascale.tech/changelog/'))
+  assert.notEqual('https://docs.terrascale.tech/changelog/', 'https://docs.terrascale.tech')
+})
+
+test('product footer validator rejects duplicate roadmap and documentation destinations', () => {
+  const failures = validateProductFooterLinks(`
+    export const footerColumns = [{
+      key: 'product',
+      links: [
+        { key: 'roadmap', href: 'https://docs.terrascale.tech' },
+        { key: 'documentation', href: 'https://docs.terrascale.tech' },
+      ],
+    }]
+  `)
+  assert.match(failures.join('\n'), /roadmap must use https:\/\/docs\.terrascale\.tech\/changelog\//)
+  assert.match(failures.join('\n'), /product footer links must point to distinct canonical destinations/)
 })
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')

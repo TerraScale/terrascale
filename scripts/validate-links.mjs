@@ -19,6 +19,7 @@ export const requiredLinks = [
   'https://docs.terrascale.tech/legal/dpa/',
   'https://docs.terrascale.tech/legal/support/',
   'https://docs.terrascale.tech',
+  'https://docs.terrascale.tech/changelog/',
 ]
 
 if (new Set(requiredLinks).size !== requiredLinks.length) {
