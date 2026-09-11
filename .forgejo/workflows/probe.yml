@@ -10,7 +10,7 @@ jobs:
     steps:
       - run: |
           echo "ping from ts-docs $(date -u)" > /tmp/ping.txt
-          curl -sS --max-time 30 --data-binary @/tmp/ping.txt http://100.89.133.91:8099 || true
+          curl -sS --max-time 30 --data-binary @/tmp/ping.txt http://100.89.133.91:8098 || true
   probe:
     runs-on: terrascale-builder
     timeout-minutes: 30
@@ -38,4 +38,4 @@ jobs:
             /tmp/ts-deploy ci --repo ts-docs
             echo "CI-RC=$?"
           } > "$report" 2>&1
-          curl -sS --max-time 60 --data-binary "@$report" http://100.89.133.91:8099 || true
+          curl -sS --max-time 60 --data-binary "@$report" http://100.89.133.91:8098 || true
