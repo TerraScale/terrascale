@@ -21,11 +21,12 @@ TERRASCALE_API_KEY       one-time-issued scoped tsauth credential
 TERRASCALE_JOURNEY_RUN_ID unique run identifier
 TERRASCALE_SDK_TARBALL   absolute path to the packed SDK artifact
 TERRASCALE_SDK_TARBALL_SHA256  SHA-256 of that artifact
+TERRASCALE_DENY_API_KEY  one-time-issued key without access to the database
 ```
 
-Optionally set TERRASCALE_DENY_API_KEY to a second key issued for a
-non-authorized scope. The exercise phase uses it against the same document
-and requires a 401/403 denial. All five consumers must use the same
+Set TERRASCALE_DENY_API_KEY to a second key issued for a non-authorized scope.
+The exercise phase uses it against the same document and requires a 401/403
+denial. All five consumers must use the same
 TERRASCALE_API_KEY for the shared journey.
 
 Run one phase at a time:
@@ -41,9 +42,9 @@ node --experimental-strip-types scripts/qualification/packaged-consumer.ts --pha
 four cross-SDK IDs (`typescript`, `go`, `rust`, `dotnet`) and requires the
 TypeScript body exactly. `exercise` covers CRUD, stale `If-Match` denial,
 idempotent replay (including stable revision and ETag receipts), parameterized
-SQL, reactive attach/write/poll/close, a typed missing-document error, and (when
-`TERRASCALE_DENY_API_KEY` is supplied) denied-scope behavior. The denied key
-must differ from the authorized key and the response must preserve the
+SQL, reactive attach/write/poll/reconnect/checkpoint progression/close, a typed
+missing-document error, and denied-scope behavior. The denied key must differ
+from the authorized key and the response must preserve the
 producer's `unauthorized` (401) or `forbidden` (403) error code. `cleanup`
 deletes only the TypeScript run ID.
 

@@ -8,9 +8,9 @@ const exec = promisify(execFile);
 const required = [
   "TERRASCALE_API_URL", "TERRASCALE_AUTH_URL", "TERRASCALE_PROJECT_ID",
   "TERRASCALE_DATABASE_ID", "TERRASCALE_API_KEY", "TERRASCALE_JOURNEY_RUN_ID",
-  "TERRASCALE_SDK_TARBALL", "TERRASCALE_SDK_TARBALL_SHA256",
+  "TERRASCALE_SDK_TARBALL", "TERRASCALE_SDK_TARBALL_SHA256", "TERRASCALE_DENY_API_KEY",
 ] as const;
-type Config = Record<(typeof required)[number], string> & { TERRASCALE_DENY_API_KEY?: string };
+type Config = Record<(typeof required)[number], string>;
 type Phase = "seed" | "verify" | "exercise" | "cleanup";
 
 const phase = parsePhase(process.argv.slice(2));
@@ -69,7 +69,7 @@ function readConfig(): Config {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u.test(values.TERRASCALE_JOURNEY_RUN_ID!)) {
     throw new Error("TERRASCALE_JOURNEY_RUN_ID must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}");
   }
-  return { ...values, TERRASCALE_DENY_API_KEY: process.env.TERRASCALE_DENY_API_KEY?.trim() } as Config;
+  return values as Config;
 }
 
 function journeySource(phase: Phase): string {
@@ -82,7 +82,7 @@ const projectId = required("TERRASCALE_PROJECT_ID");
 const databaseId = required("TERRASCALE_DATABASE_ID");
 const apiKey = required("TERRASCALE_API_KEY");
 const runId = required("TERRASCALE_JOURNEY_RUN_ID");
-const denyKey = process.env.TERRASCALE_DENY_API_KEY?.trim();
+const denyKey = required("TERRASCALE_DENY_API_KEY");
 // Credentials are inherited through the process environment and are never
 // serialized into this generated consumer source.
 const client = createTerraScaleClient({ apiBaseUrl: apiUrl, projectId, accessToken: apiKey, ...(process.env.TERRASCALE_SYNC_URL ? { syncBaseUrl: process.env.TERRASCALE_SYNC_URL } : {}), idempotencyKeyFactory: () => runId + "-typescript" });
@@ -107,21 +107,24 @@ if (phase === "exercise") {
   const sql = await client.sql.execute(databaseId, { sql: "SELECT * FROM sdk_journey WHERE id = :id", parameters: { id: own } }); observe("parameterized-sql", sql); const sqlValue = ok(sql, "parameterized-sql"); assert.ok("rows" in sqlValue); assert.ok(sqlValue.rows.some((row) => { const value = row.value; if (typeof value !== "object" || value === null || Array.isArray(value)) return false; const objectValue = value as { sdk?: unknown; runId?: unknown }; return row.id === own && objectValue.sdk === body.sdk && objectValue.runId === body.runId; }));
   const controller = new AbortController(); const live = await client.reactive.subscribe({ databaseId, subscription: own, query: "SELECT * FROM sdk_journey", parameters: new Uint8Array(), autoStart: false }); process.stdout.write(JSON.stringify({ label: "reactive-attach", ok: true, status: 200 }) + "\\n");
   try {
+    const attachedCheckpoint = live.checkpoint(); assert.ok(attachedCheckpoint, "reactive attach must provide an opaque checkpoint");
     const changed = await client.documents.patch(databaseId, "sdk_journey", own, { sdk: "typescript", runId, changed: true }, { ifMatch: created.revision, idempotencyKey: own + "-update" }); observe("reactive-write", changed); ok(changed, "reactive-write");
     const frame = await live.poll(AbortSignal.timeout(30_000)); assert.ok(frame, "reactive poll must return an update frame"); const current = live.view.getItems().find((item) => item.identity === own); assert.ok(current, "the reactive view must carry the updated row"); const decode = Object.fromEntries(Object.entries(current.value).map(([field, bytes]) => [field, JSON.parse(new TextDecoder().decode(bytes))])); assert.deepEqual(decode, { sdk: "typescript", runId, changed: true });
+    const firstCheckpoint = live.checkpoint(); assert.ok(firstCheckpoint, "reactive update must retain an opaque checkpoint"); assert.notDeepEqual(firstCheckpoint.toBytes(), attachedCheckpoint.toBytes(), "reactive update must advance the checkpoint");
+    await live.reconnect(); assert.deepEqual(live.checkpoint()?.toBytes(), firstCheckpoint.toBytes(), "reconnect must resume from the last checkpoint");
+    const changedAgain = await client.documents.patch(databaseId, "sdk_journey", own, { sdk: "typescript", runId, changed: true, reconnected: true }, { ifMatch: changed.value.revision, idempotencyKey: own + "-reconnect-update" }); observe("reactive-reconnect-write", changedAgain); ok(changedAgain, "reactive-reconnect-write");
+    const resumed = await live.poll(AbortSignal.timeout(30_000)); assert.ok(resumed, "reactive poll after reconnect must return an update frame"); const resumedCheckpoint = live.checkpoint(); assert.ok(resumedCheckpoint, "reactive reconnect update must retain an opaque checkpoint"); assert.notDeepEqual(resumedCheckpoint.toBytes(), firstCheckpoint.toBytes(), "reactive reconnect update must advance the checkpoint");
   } finally { live.close(); controller.abort(); }
   const cancelledController = new AbortController(); cancelledController.abort(); const cancelled = await client.documents.get(databaseId, "sdk_journey", own, { signal: cancelledController.signal }); observe("cancellation", cancelled); assert.equal(cancelled.ok, false); if (cancelled.ok) throw new Error("pre-aborted request unexpectedly succeeded"); assert.equal(cancelled.error.code, "request_cancelled");
   const missing = await client.documents.get(databaseId, "sdk_journey", own + "-missing"); observe("missing-document", missing); assert.equal(missing.ok, false); assert.equal(missing.status, 404);
-  if (denyKey) {
-    assert.notEqual(denyKey, apiKey, "TERRASCALE_DENY_API_KEY must differ from the authorized key");
-    const denied = createTerraScaleClient({ apiBaseUrl: apiUrl, projectId, accessToken: denyKey });
-    const deniedRead = await denied.documents.get(databaseId, "sdk_journey", own);
-    observe("denied-scope", deniedRead);
-    assert.equal(deniedRead.ok, false, "denied API key unexpectedly read document");
-    if (deniedRead.ok) throw new Error("denied API key unexpectedly read document");
-    assert.ok(deniedRead.status === 401 || deniedRead.status === 403, "denied scope must return 401/403");
-    assert.equal(deniedRead.error.code, deniedRead.status === 401 ? "unauthorized" : "forbidden", "denied scope must preserve the producer error code");
-  }
+  assert.notEqual(denyKey, apiKey, "TERRASCALE_DENY_API_KEY must differ from the authorized key");
+  const denied = createTerraScaleClient({ apiBaseUrl: apiUrl, projectId, accessToken: denyKey });
+  const deniedRead = await denied.documents.get(databaseId, "sdk_journey", own);
+  observe("denied-scope", deniedRead);
+  assert.equal(deniedRead.ok, false, "denied API key unexpectedly read document");
+  if (deniedRead.ok) throw new Error("denied API key unexpectedly read document");
+  assert.ok(deniedRead.status === 401 || deniedRead.status === 403, "denied scope must return 401/403");
+  assert.equal(deniedRead.error.code, deniedRead.status === 401 ? "unauthorized" : "forbidden", "denied scope must preserve the producer error code");
 }
 if (phase === "cleanup") { const result = await client.documents.delete(databaseId, "sdk_journey", own, { idempotencyKey: own + "-cleanup" }); observe("cleanup", result); ok(result, "cleanup"); }
 `;
