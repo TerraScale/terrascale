@@ -4,7 +4,7 @@ This is a private qualification consumer, not part of the SDK module. It has
 no `replace` directive, mock transport, or local checkout fallback. Resolve
 `terrascale.tech/sdk` to an immutable released version before running. For
 this source revision, run `./prepare-file-proxy.sh ../../../
-658d897f69a529ae5b3e7668510723ae7eb0df7e`; use its printed
+71e10be4f6db77d3da40ed0361fc111a55aa8218`; use its printed
 `GOPROXY=file://... GOSUMDB=off` prefix. The generated
 `file-proxy/QUALIFICATION_SOURCE` and ZIP SHA-256 retain exact artifact identity.
 
@@ -16,6 +16,13 @@ Required environment: `TERRASCALE_API_URL`, `TERRASCALE_PROJECT_ID`,
 consumer; authentication is supplied through the API key.
 
 Run exactly one phase: `go run . --phase seed|verify|exercise|cleanup`.
+For the all-SDK coordinator, build with `go build -mod=readonly -o /absolute/path/gojourney .`
+using the approved immutable proxy, then supply that binary and its SHA-256.
+The binary embeds `main.go`, `go.mod`, `go.sum`, and their checksum manifest;
+startup verifies these embedded inputs independently of cwd. `gojourney --preflight`
+performs only that verification, without credentials or provider calls. Source
+changes require refreshing the exact manifest entry before building; mismatches
+remain fatal. Do not change `go.sum` to accept a broken proxy ZIP.
 Output is bounded JSON observations and never includes credentials. Missing
 configuration, unsupported operations, authorization failures, and timeouts
 are failures. Cleanup only addresses documents named
