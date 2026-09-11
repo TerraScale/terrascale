@@ -320,8 +320,7 @@ function isAuthorized(
 }
 
 function isAnonymousRoute(method: string, pathname: string): boolean {
-  return method === "GET"
-    && (pathname === "/api/v1/regions" || pathname.startsWith("/api/v1/regions/"));
+  return method === "GET" && pathname === "/api/v1/regions";
 }
 
 function idempotencyKey(context: LocalRequestContext): string | undefined {

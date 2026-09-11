@@ -41,12 +41,6 @@ export type RegionSummary = {
 
 export type RegionDetails = RegionSummary;
 
-/** Serving member observation published by the direct TerraBase API. */
-export type MemberRegionStatus = {
-  readonly region: string;
-  readonly healthy: boolean;
-};
-
 export type RegionsResponse = {
   readonly regions: readonly RegionSummary[];
 };

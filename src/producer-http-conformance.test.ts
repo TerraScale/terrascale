@@ -142,23 +142,3 @@ function assertSchema(value: unknown, schema: any, spec: any, label: string): vo
   else if (schema.type === "null") assert.equal(value, null, label);
   else assert.equal(typeof value, schema.type, label);
 }
-
-test("member status selects the explicit regional origin and validates the member response", async () => {
-  const { createTerraScaleClient } = await import("./factory.js");
-  const requests: Request[] = [];
-  const client = createTerraScaleClient({
-    apiBaseUrl: "https://api.terrascale.tech",
-    fetch: async input => {
-      requests.push(new Request(input));
-      return Response.json({ region: "GRU", healthy: true });
-    },
-  });
-  const result = await client.regions.memberStatus("GRU");
-  assert.equal(requests[0]?.url, "https://gru.api.terrascale.tech/api/v1/regions");
-  assert.ok(result.ok);
-  assert.deepEqual(result.value, { region: "GRU", healthy: true });
-  const malformed = createTerraScaleClient({ fetch: async () => Response.json({ regions: [] }) });
-  const rejected = await malformed.regions.memberStatus("GRU");
-  assert.equal(rejected.ok, false);
-  if (!rejected.ok) assert.equal(rejected.error.kind, "invalid-response");
-});

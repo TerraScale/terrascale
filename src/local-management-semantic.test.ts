@@ -52,7 +52,6 @@ test("organizations, regions, and saved-query versions have real CRUD, isolation
     const root = client(runtime);
     const regions = value(await root.regions.list());
     assert.deepEqual(regions.regions.map((region) => region.code), ["GRU", "SFO", "FRA"]);
-    assert.equal(value(await root.regions.get("GRU")).code, "GRU");
 
     const organization = value(await root.organizations.create({ name: "Semantic organization" }));
     const otherOrganization = value(await root.organizations.create({ name: "Isolated organization" }));

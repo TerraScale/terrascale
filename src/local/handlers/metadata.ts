@@ -1,6 +1,6 @@
 import type * as Models from "../../models.js";
 import type { ProjectId, Ulid } from "../../ids.js";
-import { findRegion, terraScaleRegions } from "../../regions.js";
+import { terraScaleRegions } from "../../regions.js";
 import {
   jsonResponse,
   matchLocalRoute,
@@ -31,20 +31,6 @@ export const handleLocalMetadata: LocalHandler = async (context) => {
       })),
     } satisfies Models.RegionsResponse);
   }
-  match = matchLocalRoute(context, "GET", "/api/v1/regions/{regionCode}");
-  if (match !== undefined) {
-    const region = findRegion(match.regionCode!);
-    if (region === undefined) return problemResponse(404, "not_found", "region was not found.");
-    return jsonResponse({
-      code: region.code,
-      name: region.displayName,
-      country: countryFor(region.code),
-      latitude: region.latitude,
-      longitude: region.longitude,
-      available: region.available,
-    } satisfies Models.RegionDetails);
-  }
-
   const projectId = projectIdFromContext(context) ?? projectIdFromRoute(context);
   if (projectId !== undefined) {
     match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/saved-queries");

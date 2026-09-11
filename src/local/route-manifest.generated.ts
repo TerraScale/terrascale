@@ -128,11 +128,6 @@ export const localManifestRoutes = [
   },
   {
     "method": "GET",
-    "pathTemplate": "/api/v1/regions/{regionCode}",
-    "routeName": "regions.get"
-  },
-  {
-    "method": "GET",
     "pathTemplate": "/api/v1/projects/{projectId}/saved-queries",
     "routeName": "savedQueries.list"
   },

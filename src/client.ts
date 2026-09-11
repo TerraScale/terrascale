@@ -5,7 +5,6 @@ import type * as Models from "./models.js";
 import {
   normalizeRegionCodes,
   parseRegionCode,
-  type TerraScaleRegionCode,
 } from "./regions.js";
 import { err, type TerraScaleFailure, type TerraScaleResult, type TerraScaleSuccess } from "./result.js";
 import { TerraScaleSyncV1Client } from "./sync/v1/client.js";
@@ -477,22 +476,6 @@ export class RegionsClient {
     this.#http = http;
   }
 
-  /** Query a direct member API origin for its serving region and health. */
-  async memberStatus(regionCode: TerraScaleRegionCode): Promise<TerraScaleResult<Models.MemberRegionStatus>> {
-    const result = await this.#http.request<unknown>({
-      method: "GET",
-      path: `${apiRoot}/regions`,
-      routeName: "regions.regions",
-      regionHint: parseRegionCode(regionCode, "regionCode"),
-    });
-    return decodeRegionResult(result, (value) => {
-      const response = requireRecord(value, "response");
-      const region = requireString(response.region, "response.region");
-      if (typeof response.healthy !== "boolean") throw new TypeError("response.healthy must be a boolean.");
-      return { region, healthy: response.healthy };
-    });
-  }
-
   async list(): Promise<TerraScaleResult<Models.RegionsResponse>> {
     const result = await this.#http.request<unknown>({
       method: "GET",
@@ -502,17 +485,6 @@ export class RegionsClient {
     return decodeRegionResult(result, decodeRegionsResponse);
   }
 
-  async get(
-    regionCode: TerraScaleRegionCode,
-  ): Promise<TerraScaleResult<Models.RegionDetails>> {
-    const exactRegionCode = parseRegionCode(regionCode, "regionCode");
-    const result = await this.#http.request<unknown>({
-      method: "GET",
-      path: `${apiRoot}/regions/${encodeURIComponent(exactRegionCode)}`,
-      routeName: "regions.get",
-    });
-    return decodeRegionResult(result, (value) => decodeRegionSummary(value, "region"));
-  }
 }
 
 export class OrganizationsClient {

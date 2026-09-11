@@ -14,42 +14,6 @@ const gru = {
 } as const;
 
 describe("RegionsClient", () => {
-  test("sends and returns the exact registered RegionCode", async () => {
-    const requests: Request[] = [];
-    const client = createTerraScaleClient({
-      apiBaseUrl: "https://api.terrascale.test",
-      fetch: async (input) => {
-        requests.push(input instanceof Request ? input : new Request(input));
-        return Response.json(gru);
-      },
-    });
-
-    const result = await client.regions.get("GRU");
-
-    assert.equal(result.ok, true);
-    if (result.ok) assert.deepEqual(result.value, gru);
-    assert.equal(requests.length, 1);
-    assert.equal(new URL(requests[0]!.url).pathname, "/api/v1/regions/GRU");
-  });
-
-  test("rejects invalid path codes before sending a request", async () => {
-    let requestCount = 0;
-    const client = createTerraScaleClient({
-      fetch: async () => {
-        requestCount++;
-        return Response.json(gru);
-      },
-    });
-
-    for (const code of ["gru", " GRU", "GRU ", "ABCDEFGHIJKLMNOPQ", "京", "ABC_"]) {
-      await assert.rejects(
-        client.regions.get(code as never),
-        /regionCode must be an uppercase Region code/u,
-      );
-    }
-    assert.equal(requestCount, 0);
-  });
-
   test("rejects invalid project selections before sending a request", () => {
     let requestCount = 0;
     const client = createTerraScaleClient({
@@ -113,35 +77,4 @@ describe("RegionsClient", () => {
     }
   });
 
-  test("rejects provider fields on a successful details body", async () => {
-    const body = { ...gru, ociRegionCode: "sa-saopaulo-1", clusterNodeTag: "A" };
-    const client = createTerraScaleClient({ fetch: async () => Response.json(body) });
-
-    const result = await client.regions.get("GRU");
-
-    assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.error.kind, "invalid-response");
-      assert.match(result.error.message, /forbidden provider field/u);
-    }
-  });
-
-  test("keeps HTTP error projection unchanged", async () => {
-    const client = createTerraScaleClient({
-      fetch: async () => Response.json(
-        { code: "region_not_found", message: "The Region does not exist." },
-        { status: 404 },
-      ),
-    });
-
-    const result = await client.regions.get("GRU");
-
-    assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.status, 404);
-      assert.equal(result.error.kind, "not-found");
-      assert.equal(result.error.code, "region_not_found");
-      assert.equal(result.error.message, "The Region does not exist.");
-    }
-  });
 });
