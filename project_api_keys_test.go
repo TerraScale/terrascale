@@ -78,3 +78,53 @@ func TestProjectAPIKeysRejectInvalidInputs(t *testing.T) {
 		t.Fatal("empty scopes accepted")
 	}
 }
+
+func TestProjectAPIKeySecretAuthenticatesPublicClient(t *testing.T) {
+	var publicRequest bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects/project-1/auth/api-keys":
+			if got := r.Header.Get("Authorization"); got != "Bearer dashboard-session" {
+				t.Errorf("dashboard authorization = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(ProjectAPIKeySecret{
+				APIKey: ProjectAPIKey{ID: "key-1", ProjectID: "project-1"},
+				Secret: "ts_created_secret",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/databases/db/collections/users/documents/ada":
+			publicRequest = true
+			if got := r.Header.Get("Authorization"); got != "Bearer ts_created_secret" {
+				t.Errorf("public authorization = %q", got)
+			}
+			_, _ = w.Write([]byte(`{"name":"Ada"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	dashboard, err := NewClient(Config{APIBaseURL: server.URL, AccessToken: "dashboard-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := dashboard.ProjectAPIKeys.Create(t.Context(), "project-1", CreateProjectAPIKeyRequest{
+		Name:   "qualification",
+		Scopes: []string{"database:read"},
+	}, WithIdempotencyKey("create-key-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	public, err := NewClient(Config{APIBaseURL: server.URL, AccessToken: created.Secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := public.Documents.Get(t.Context(), "db", "users", "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(document.Body) != `{"name":"Ada"}` || !publicRequest {
+		t.Fatalf("public API-key request did not authenticate: body=%s request=%t", document.Body, publicRequest)
+	}
+}
