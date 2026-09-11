@@ -108,11 +108,13 @@ fn projected_update(value: &std::collections::BTreeMap<String, Vec<u8>>, run: &s
 async fn seed(c: &Config) -> Result<()> {
     let sdk = client(c)?;
     sdk.documents()
-        .put(
+        .put_with_options(
             &DatabaseScope::in_project(c.database.clone(), c.project.clone()),
             "sdk_journey",
             &own_id(c),
             body(c, "rust"),
+            DocumentOperationOptions::default()
+                .with_idempotency_key(format!("{}-rust-seed", c.run)),
         )
         .await?;
     observation("seed", "passed", "put sdk_journey/<run>-rust");
@@ -142,9 +144,36 @@ async fn exercise(c: &Config) -> Result<()> {
     let sdk = client(c)?;
     let scope = DatabaseScope::in_project(c.database.clone(), c.project.clone());
     let id = own_id(c);
+    match sdk
+        .documents()
+        .get(&scope, "sdk_journey", &format!("{id}-missing"))
+        .await
+    {
+        Ok(_) => {
+            return Err(terrascale::Error::invalid_response(
+                "missing document unexpectedly succeeded",
+            ))
+        }
+        Err(error) if error.status == Some(404) => {
+            observation("exercise", "passed", "missing document returned 404");
+        }
+        Err(error) => {
+            return Err(terrascale::Error::invalid_response(format!(
+                "missing document returned unexpected status {:?}",
+                error.status
+            )))
+        }
+    }
     let first = sdk
         .documents()
-        .put(&scope, "sdk_journey", &id, body(c, "rust"))
+        .put_with_options(
+            &scope,
+            "sdk_journey",
+            &id,
+            body(c, "rust"),
+            DocumentOperationOptions::default()
+                .with_idempotency_key(format!("{}-rust-create", c.run)),
+        )
         .await?;
     if first.etag.is_none() {
         return Err(terrascale::Error::invalid_response("write omitted ETag"));
@@ -157,7 +186,7 @@ async fn exercise(c: &Config) -> Result<()> {
             "sdk_journey",
             &id,
             json!({"sdk":"rust","runId":c.run,"stale":true}),
-            stale,
+            stale.with_idempotency_key(format!("{}-rust-stale", c.run)),
         )
         .await
     {
@@ -223,7 +252,14 @@ async fn exercise(c: &Config) -> Result<()> {
         .await?;
     let update = json!({"sdk":"rust","runId":c.run,"reactive":true});
     sdk.documents()
-        .put(&scope, "sdk_journey", &id, update.clone())
+        .put_with_options(
+            &scope,
+            "sdk_journey",
+            &id,
+            update.clone(),
+            DocumentOperationOptions::default()
+                .with_idempotency_key(format!("{}-rust-update", c.run)),
+        )
         .await?;
     let cancel = CancellationToken::new();
     let mut observed = false;
@@ -301,7 +337,13 @@ async fn cleanup(c: &Config) -> Result<()> {
     let sdk = client(c)?;
     let scope = DatabaseScope::in_project(c.database.clone(), c.project.clone());
     sdk.documents()
-        .delete(&scope, "sdk_journey", &own_id(c))
+        .delete_with_options(
+            &scope,
+            "sdk_journey",
+            &own_id(c),
+            DocumentOperationOptions::default()
+                .with_idempotency_key(format!("{}-rust-cleanup", c.run)),
+        )
         .await?;
     observation("cleanup", "passed", "deleted only sdk_journey/<run>-rust");
     Ok(())
