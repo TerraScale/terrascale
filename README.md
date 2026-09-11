@@ -36,6 +36,17 @@ closed connection ends the subscription; an unexpected transport or protocol
 failure delivers a typed `ResetReconnect` update, after which the caller can
 create a new subscription using its last checkpoint.
 
+## Region discovery and member health
+
+`Regions.List` calls the edge-owned `GET /api/v1/regions` route and decodes
+the ordered `RegionCatalogResponse` (including regional hosts). A regional
+TerraBase member intentionally uses that same path for its health-shaped
+probe; it returns `HealthResponse`, not a catalog. `Regions.Health` and
+`Regions.Status` therefore call the member's `/api/v1/health` route. Keep the
+two producers separate when configuring a client: the edge contract is pinned
+in `contracts/edge/v1`, while the member contract is pinned in the TerraBase
+bundle. See TerraBase ADR 0043.
+
 SQL projection numbers in `SQLRow.Value` decode as `json.Number`. Use its
 `Int64` method for integer values; this preserves values above 2^53 without
 rounding them through `float64`.
