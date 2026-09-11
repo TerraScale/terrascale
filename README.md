@@ -87,6 +87,14 @@ adapter. Supply stable operation identities. Unknown commits return the typed
 error without automatic retries or callback replay; resolve using the same
 transaction and idempotency identities. Auth record values remain raw JSON.
 
+`ProjectAPIKeys` exposes the Dashboard's authenticated project API-key
+create/list/rotate/revoke routes. Construct a client with the Dashboard origin
+and an owner Dashboard session token, then use the one-time `Secret` returned
+by `Create` or `Rotate` as `AccessToken` on a separate public API client. These
+routes are not part of the producer contract and do not provide anonymous or
+no-account provisioning; the Dashboard session and project membership remain
+required.
+
 Document reads expose the exact response `ETag` and session token. Pass that
 ETag to `WithIfMatch` for conditional PUT, PATCH, or DELETE; `"*"` requires
 an existing document. Retain the same condition and `WithIdempotencyKey` when

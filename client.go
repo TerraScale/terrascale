@@ -128,6 +128,7 @@ type Client struct {
 	sessionToken string
 
 	AuthPersistence  *AuthPersistenceClient
+	ProjectAPIKeys   *ProjectAPIKeysClient
 	Operations       *OperationsClient
 	Documents        *DocumentsClient
 	Regions          *RegionsClient
@@ -249,6 +250,7 @@ func NewClient(cfg Config) (*Client, error) {
 		RequestTimeout:   requestTimeout,
 	}, http: httpClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
 	c.AuthPersistence = &AuthPersistenceClient{c: c}
+	c.ProjectAPIKeys = &ProjectAPIKeysClient{c: c}
 	c.Operations = &OperationsClient{c: c}
 	c.Documents = &DocumentsClient{c: c}
 	c.Regions = &RegionsClient{c: c}
