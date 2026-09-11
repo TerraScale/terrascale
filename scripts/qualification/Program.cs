@@ -26,7 +26,7 @@ using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = fal
 var client = new TerraScaleClient(http, new TerraScaleClientOptions { BaseAddress = api, ApiKey = key });
 const string collection = "sdk_journey";
 var own = $"{runId}-dotnet";
-var peers = new[] { "typescript", "go", "rust", "dotnet" }.Select(x => $"{runId}-{x}").ToArray();
+var peers = new[] { "typescript", "go", "rust", "dotnet", "cli" }.Select(x => $"{runId}-{x}").ToArray();
 var denyKey = Environment.GetEnvironmentVariable("TERRASCALE_DENY_API_KEY");
 var denyDatabase = Environment.GetEnvironmentVariable("TERRASCALE_DENY_DATABASE_ID");
 if (!string.IsNullOrWhiteSpace(denyKey) && string.Equals(key, denyKey.Trim(), StringComparison.Ordinal))
