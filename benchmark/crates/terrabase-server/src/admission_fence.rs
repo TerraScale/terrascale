@@ -346,9 +346,8 @@ impl AdmissionFenceStore {
                     file.write_all(&bytes[..bytes.len() / 2])?;
                     return Err(std::io::Error::other("injected partial fence write"));
                 }
-                Ok(())
+                file.write_all(&bytes)
             })
-            .and_then(|()| file.write_all(&bytes))
             .and_then(|()| self.checkpoint(2))
             .and_then(|()| file.sync_all())
             .and_then(|()| self.checkpoint(3))
