@@ -5,78 +5,63 @@ on:
 permissions:
   contents: read
 jobs:
-  baseline:
+  fj_help:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "true"
-  which_fj:
+      - run: "fj --help"
+  fj_version_cmd:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "command -v fj"
-  fj_version:
+      - run: "fj version"
+  fj_auth:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "fj --version"
-  fj_whoami:
+      - run: "fj auth list"
+  keys_home:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "fj -H git.terrascale.tech whoami"
-  fj_release:
+      - run: "test -f \"$HOME/.local/share/forgejo-cli/keys.json\""
+  api_self_github:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "fj -H git.terrascale.tech release list --repo TerraScale/ts-deploy"
-  path_usrbin:
+      - run: "curl -sf -H \"Authorization: token $GITHUB_TOKEN\" https://git.terrascale.tech/api/v1/repos/TerraScale/ts-docs"
+  api_self_forgejo:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "test -x /usr/bin/fj"
-  path_usrlocalbin:
+      - run: "curl -sf -H \"Authorization: token $FORGEJO_TOKEN\" https://git.terrascale.tech/api/v1/repos/TerraScale/ts-docs"
+  api_deploy_github:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "test -x /usr/local/bin/fj"
-  path_homelocal:
+      - run: "curl -sf -H \"Authorization: token $GITHUB_TOKEN\" https://git.terrascale.tech/api/v1/repos/TerraScale/ts-deploy"
+  api_deploy_forgejo:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "test -x \"$HOME/.local/bin/fj\""
-  path_cargo:
+      - run: "curl -sf -H \"Authorization: token $FORGEJO_TOKEN\" https://git.terrascale.tech/api/v1/repos/TerraScale/ts-deploy"
+  api_release_github:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "test -x \"$HOME/.cargo/bin/fj\""
-  path_nix:
+      - run: "curl -sf -H \"Authorization: token $GITHUB_TOKEN\" \"https://git.terrascale.tech/api/v1/repos/TerraScale/ts-deploy/releases/tags/v0.0.0-dev.73ab580df8907a52c6c2bbbc8f2d1bb0abdeafbc\""
+  api_release_forgejo:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "test -x /run/current-system/sw/bin/fj"
-  path_nixprofile:
+      - run: "curl -sf -H \"Authorization: token $FORGEJO_TOKEN\" \"https://git.terrascale.tech/api/v1/repos/TerraScale/ts-deploy/releases/tags/v0.0.0-dev.73ab580df8907a52c6c2bbbc8f2d1bb0abdeafbc\""
+  env_names:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "test -x /nix/var/nix/profiles/default/bin/fj"
-  path_cache_fj:
+      - run: "test -n \"$GITHUB_TOKEN\""
+  env_forgejo_token:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: "test -x /var/cache/terrascale/toolchains/fj/0.6.0/bin/fj"
-  in_container:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "test -f /.dockerenv -o -f /run/.containerenv"
-  has_curl:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "command -v curl"
-  has_token:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "test -n \"${FORGEJO_TOKEN:-${GITHUB_TOKEN:-${GITEA_TOKEN:-}}}\""
+      - run: "test -n \"$FORGEJO_TOKEN\""
