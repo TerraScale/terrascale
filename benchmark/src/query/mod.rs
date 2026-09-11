@@ -49,6 +49,8 @@ mod family_sources_tests;
 #[cfg(test)]
 mod includes_tests;
 #[cfg(test)]
+mod sql_empty_schema_tests;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
@@ -534,6 +536,7 @@ impl<'engine> QueryStore<'engine> {
                         text: runtime_text,
                         parameters,
                         tables: sql::table_names(&parsed),
+                        referenced_fields: sql::direct_single_base_referenced_fields(&parsed),
                         deadline,
                         cancellation,
                         operator,
@@ -582,6 +585,7 @@ impl<'engine> QueryStore<'engine> {
                 text: runtime_text,
                 parameters,
                 tables: sql::table_names(&parsed),
+                referenced_fields: Vec::new(),
                 deadline,
                 cancellation,
                 operator,

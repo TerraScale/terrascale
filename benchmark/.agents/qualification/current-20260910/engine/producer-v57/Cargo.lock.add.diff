@@ -1,0 +1,13 @@
+--- /home/mariogk/Projects/TerraScale/terrabase/.agents/qualification/current-20260910/engine/producer-v57/Cargo.lock.before	2026-09-10 21:30:17.811224289 -0300
++++ /home/mariogk/Projects/TerraScale/terrabase/.agents/qualification/current-20260910/engine/producer-v57/Cargo.lock.after-add	2026-09-10 21:31:29.887888992 -0300
+@@ -2602,8 +2602,10 @@
+ version = "0.1.0"
+ dependencies = [
+  "blake3",
++ "rcgen",
+  "rusqlite",
+  "rustix",
++ "rustls",
+  "serde",
+  "serde_json",
+  "terrabase",

@@ -1,0 +1,7 @@
+Overlay: /tmp/terrabase-runtime-filter-v52.iPGbui
+Focused command: nice -n 19 env CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/tmp/terrabase-runtime-filter-v52.iPGbui/target cargo test --locked engine::local_projection::tests::actual_selection_strips_restored_and_cross_file_controls_only --no-fail-fast -- --exact --nocapture
+Result: FAIL before assertion: 0 passed, 1 failed. Panic at src/engine/local_projection/tests.rs:157:69 while Fixture::cursor opens SourceCursor; Err(SourceUnavailable).
+The full 11-test selector was not run because the required focused selector failed during setup.
+This is a fixture/setup failure, not a metadata-filter assertion result. The fixture publishes exact restored-route/v1 and cross-file-active/v1 controls, then SourceCursor::open fails before derive_next.
+Binary SHA256: d06655ddf478b1e1daa8acb04c6a4d323b5e8b84cda5aa117b4278e15aa1f575.
+Shared source modified: no.

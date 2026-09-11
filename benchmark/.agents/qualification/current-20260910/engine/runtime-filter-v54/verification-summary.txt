@@ -1,0 +1,6 @@
+Overlay: /tmp/terrabase-runtime-filter-v54.8rGn4R, derived from green runtime-v50 overlay.
+Classifier selector: engine::local_projection::admitted_projection::classifier_tests::private_selector_strips_physical_controls_preserves_logical_payload_and_lineage — 1 passed, 0 failed.
+Full selector: engine::local_projection:: — 11 passed, 0 failed, 1365 filtered out; includes the classifier plus the ten byte-identical v50 Engine tests.
+Commands used nice -n 19, CARGO_BUILD_JOBS=2, --locked, isolated CARGO_TARGET_DIR.
+Binary SHA256: e306ba9bdc8cea1f4504bf0ad99f9c3d2715ec425684dcbc9cd94d0f0618f1c1.
+Shared source modified: no.

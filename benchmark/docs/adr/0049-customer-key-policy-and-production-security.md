@@ -30,6 +30,10 @@ only after it satisfies the same authenticated metadata, exact-scope, bounded
 lease, locked-memory, zeroization, rotation, and fail-closed requirements.
 Imported key material, arbitrary KMS endpoints, provider escrow, and customer
 cipher selection remain unsupported until separately implemented and qualified.
+The current customer-provider admission contract accepts AWS KMS references;
+the service-managed OCI Vault adapter is a separate path. Azure and other
+customer providers remain reserved until their adapters are independently
+qualified.
 
 The service-managed OCI path remains available where the customer selects it.
 The effective key policy is durable database state, is resolved from the
@@ -37,6 +41,19 @@ database owner, and is included in admission, rotation, backup, restore, and
 deletion operations. A policy change is not complete until the replacement
 provider has opened the required key versions and the relevant backup chain has
 been verified.
+
+### Control-plane persistence
+
+The authenticated orchestrator NATS journal may persist the validated BYOK
+provider references needed to rebuild an admission or provider client after a
+restart: provider, key identifier, region, endpoint, workload role, external
+identifier, and configuration revision. It may also persist wrapped database
+DEK ciphertext required for restart and recovery. NATS never receives customer
+provider credentials, imported key material, unwrapped DEKs, or other plaintext
+secrets. NATS TLS, NKeys, and subject permissions are required, but they do not
+change the replicated-history, snapshot, export, or operator-disk retention
+model; the references and ciphertext therefore remain subject to the journal's
+access controls and crypto-shred limitations.
 
 ## Production threat model
 

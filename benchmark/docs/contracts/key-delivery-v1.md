@@ -49,10 +49,11 @@ Renewal failure denies new key use; an expired entry is evicted and zeroed
 when its last operation reference is dropped. The active version is supplied
 by durable admission or rotation state, never guessed from the provider.
 
-The durable orchestrator catalog retains wrapped old versions for authorized
-reads during rotation. Rotation never changes the bytes behind an existing
-key version. Restart reloads wrappers and obtains fresh Vault authorization;
-missing or revoked records fail closed. A newly provisioned database is not
+The durable orchestrator catalog retains validated provider references and
+wrapped old versions for authorized reads during rotation. Rotation never
+changes the bytes behind an existing key version. Restart reloads references
+and wrappers, then obtains fresh provider authorization; missing or revoked
+records fail closed. A newly provisioned database is not
 admitted until every selected Region has a wrapper and a member successfully
 opens the requested key version. This transport's existence does not itself
 qualify provider IAM, database storage encryption or release readiness.

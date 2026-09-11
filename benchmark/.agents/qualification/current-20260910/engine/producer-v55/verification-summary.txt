@@ -1,0 +1,3 @@
+Overlay: /tmp/terrabase-producer-v55.IfpkjC, derived from immutable /tmp/terrabase-v47-snapshot.9HytIc/terrabase.
+Five numbered patches applied after dry-run success. Isolated Cargo.lock resolution added approved rcgen/rustls dev dependencies, but cargo generate-lockfile also refreshed many unrelated registry pins; Cargo.lock.before/after and diffs are preserved. A constrained offline cargo check then failed before producer tests at src/shard_split/adapters.rs:24: E0015, non-const MemberUlid equality in const fn.
+No producer test result is claimed because compilation was blocked. Failure log: lock-add-check.log. Shared source/manifest/lock untouched.

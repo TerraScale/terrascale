@@ -166,6 +166,7 @@ pub(crate) fn execute(
         snapshot.tenant().as_str(),
         snapshot.sequence().get(),
         &runtime.tables,
+        &runtime.referenced_fields,
         &control,
     )?;
     control.check()?;
@@ -283,7 +284,14 @@ pub(crate) fn execute_routed(
         .map_err(|_| QueryError::StorageFailure)?;
     let transaction = connection.unchecked_transaction().map_err(|_| QueryError::StorageFailure)?;
     check_input_bounds(&transaction, tenant.as_str(), sequence, &control)?;
-    create_collection_views(&transaction, tenant.as_str(), sequence, &runtime.tables, &control)?;
+    create_collection_views(
+        &transaction,
+        tenant.as_str(),
+        sequence,
+        &runtime.tables,
+        &runtime.referenced_fields,
+        &control,
+    )?;
     control.check()?;
     let mut statement = transaction
         .prepare_cached(&runtime.text)
@@ -690,12 +698,16 @@ fn create_collection_views(
     tenant: &str,
     sequence: u64,
     tables: &[String],
+    referenced_fields: &[String],
     control: &SqlControl,
 ) -> Result<(), QueryError> {
     let columns = storage_columns(transaction)?;
     for collection in tables {
         control.check()?;
-        let fields = collection_fields(transaction, tenant, sequence, collection)?;
+        let mut fields = collection_fields(transaction, tenant, sequence, collection)?;
+        if tables.len() == 1 {
+            fields.extend(referenced_fields.iter().cloned());
+        }
         let mut select = String::from(
             "SELECT d.id AS \"_id\",\n                   json_extract(CAST(d.body AS TEXT), '$.\"$value\"') AS \"body\",\n                   d.revision AS \"_rev\", d.hlc AS \"_hlc\",\n                   (SELECT MIN(created.committed_at) FROM documents created\n                    WHERE created.tenant = d.tenant AND created.collection = d.collection\n                      AND created.id = d.id AND created.commit_seq <= d.snapshot_seq) AS \"_created\",\n                   d.committed_at AS \"_updated\"",
         );
@@ -771,7 +783,8 @@ fn collection_fields(
                       ELSE '{}' END
              ) AS json_each
              WHERE documents.tenant = ?1 AND documents.collection = ?2
-               AND documents.commit_seq <= ?3",
+               AND documents.commit_seq <= ?3
+               AND documents.deleted = 0",
         )
         .map_err(|_| QueryError::StorageFailure)?;
     statement

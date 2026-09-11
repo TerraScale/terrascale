@@ -13,7 +13,7 @@
 //! - [`SqlError`] / [`SqlErrorClass`]: the typed refusals the endpoint and
 //!   the planner share.
 
-use std::ops::ControlFlow;
+use std::{collections::BTreeSet, ops::ControlFlow};
 
 use sqlparser::{
     ast::{
@@ -77,6 +77,9 @@ pub(crate) struct SqlRuntime {
     pub(crate) text: String,
     pub(crate) parameters: SqlParameters,
     pub(crate) tables: Vec<String>,
+    /// User identifiers referenced by a direct single-base execute-only
+    /// statement. This is transient execution metadata, not a schema.
+    pub(crate) referenced_fields: Vec<String>,
     pub(crate) deadline: Option<crate::types::Deadline>,
     pub(crate) cancellation: Option<crate::types::Cancellation>,
     pub(crate) operator: Option<&'static str>,
@@ -102,6 +105,117 @@ pub(crate) fn table_names(parsed: &ParsedSql) -> Vec<String> {
     let mut tables = Tables(Vec::new());
     let _ = parsed.statement().visit(&mut tables);
     tables.0
+}
+
+#[cfg(test)]
+#[path = "sql_alias_tests.rs"]
+mod sql_alias_tests;
+
+/// Collects user field identifiers for the bounded direct single-base
+/// execute-only adapter. Complex relation scopes deliberately return an empty
+/// list and continue through the existing SQLite path.
+pub(crate) fn direct_single_base_referenced_fields(parsed: &ParsedSql) -> Vec<String> {
+    let Some(query) = (match parsed.statement() {
+        Statement::Query(query) => Some(query),
+        Statement::Explain { statement, .. } => match statement.as_ref() {
+            Statement::Query(query) => Some(query),
+            _ => None,
+        },
+        _ => None,
+    }) else {
+        return Vec::new();
+    };
+    if query.with.is_some() || !matches!(query.body.as_ref(), SetExpr::Select(_)) {
+        return Vec::new();
+    }
+    let SetExpr::Select(select) = query.body.as_ref() else { return Vec::new() };
+    let [table] = select.from.as_slice() else { return Vec::new() };
+    if !table.joins.is_empty() || !matches!(&table.relation, TableFactor::Table { .. }) {
+        return Vec::new();
+    }
+
+    struct NestedQueryCount(usize);
+    impl Visitor for NestedQueryCount {
+        type Break = std::convert::Infallible;
+
+        fn pre_visit_query(&mut self, _query: &Query) -> ControlFlow<Self::Break> {
+            self.0 = self.0.saturating_add(1);
+            ControlFlow::Continue(())
+        }
+    }
+    let mut nested = NestedQueryCount(0);
+    let _ = parsed.statement().visit(&mut nested);
+    if nested.0 != 1 {
+        return Vec::new();
+    }
+
+    struct Fields<'a>(&'a mut BTreeSet<String>);
+    impl Visitor for Fields<'_> {
+        type Break = std::convert::Infallible;
+
+        fn pre_visit_expr(&mut self, expression: &Expr) -> ControlFlow<Self::Break> {
+            let name = match expression {
+                Expr::Identifier(identifier) => Some(identifier.value.clone()),
+                Expr::CompoundIdentifier(identifiers) =>
+                    identifiers.last().map(|identifier| identifier.value.clone()),
+                _ => None,
+            };
+            if let Some(name) = name
+                && valid_identifier(&name)
+                && !matches!(name.as_str(), "_id" | "body" | "_rev" | "_hlc" | "_created" | "_updated")
+            {
+                self.0.insert(name);
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let mut fields = BTreeSet::new();
+    let mut collect = |expression: &Expr| {
+        let _ = expression.visit(&mut Fields(&mut fields));
+    };
+    for item in &select.projection {
+        match item {
+            SelectItem::UnnamedExpr(expression) => collect(expression),
+            SelectItem::ExprWithAlias { expr: expression, .. } => collect(expression),
+            SelectItem::ExprWithAliases { expr: expression, .. } => collect(expression),
+            SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {}
+        }
+    }
+    if let Some(selection) = &select.selection {
+        collect(selection);
+    }
+    if let GroupByExpr::Expressions(expressions, _) = &select.group_by {
+        for expression in expressions {
+            collect(expression);
+        }
+    }
+    if let Some(having) = &select.having {
+        collect(having);
+    }
+    let mut aliases = BTreeSet::new();
+    for item in &select.projection {
+        match item {
+            SelectItem::ExprWithAlias { alias, .. } => {
+                aliases.insert(alias.value.as_str());
+            }
+            SelectItem::ExprWithAliases { aliases: names, .. } => {
+                aliases.extend(names.iter().map(|alias| alias.value.as_str()));
+            }
+            _ => {}
+        }
+    }
+    if let Some(order_by) = &query.order_by {
+        let OrderByKind::Expressions(expressions) = &order_by.kind else { return fields.into_iter().collect() };
+        for item in expressions {
+            if let Expr::Identifier(identifier) = &item.expr
+                && aliases.contains(identifier.value.as_str())
+            {
+                continue;
+            }
+            collect(&item.expr);
+        }
+    }
+    fields.into_iter().collect()
 }
 
 /// The fail-closed refusal classes of the SQL front end.

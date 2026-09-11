@@ -1,0 +1,5 @@
+Overlay: /tmp/terrabase-runtime-v50.9lI2Y6
+Command: nice -n 19 env CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/tmp/terrabase-runtime-v50.9lI2Y6/target cargo test --locked engine::local_projection::tests --no-fail-fast
+Result: PASS, 10 passed, 0 failed, 1365 filtered out; finished in 2.14s.
+Source packet: admitted replication d0830d7ef0c9fc0126bb21b5b028e66727fda009196228b9fa7c1c9674a9c8a4; tests f7ebe5649f4fb919c5839f577d30bf32ec6ea2db06b1fa1b5e6d8a32fd8348d0.
+Shared source modified: no.
