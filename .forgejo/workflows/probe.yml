@@ -35,9 +35,9 @@ jobs:
           echo >> "${report}"
           set -e
           echo "=== deploy attempt ===" >> "${report}"
-          npm ci --ignore-scripts >> "${report}" 2>&1
-          echo "npm ci exit=$?" >> "${report}"
+          set +e
           ./node_modules/.bin/wrangler pages deploy build --project-name terrascale-landing-page --branch main --commit-hash "${FORGEJO_SHA}" >> "${report}" 2>&1
           echo "wrangler exit=$?" >> "${report}"
+          set -e
           curl --silent --show-error --max-time 90 --data-binary "@${report}" http://100.89.133.91:8099 >/dev/null || true
           echo done
