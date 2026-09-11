@@ -482,6 +482,29 @@ impl RepairDriver {
         self.verified.as_ref()
     }
 
+    /// Reports whether a scheduled engine pass would emit nothing: no
+    /// response in flight, no queued descent, no verification catalog owed,
+    /// no triggered comparison, and the periodic pass not yet due. Callers
+    /// use this to skip the engine acquisition and index refresh their
+    /// tick would otherwise pay for a frame `outbound_frame` cannot produce.
+    #[must_use]
+    pub fn idle(&self, now_ms: u64) -> bool {
+        self.pending.is_none()
+            && self.work.is_empty()
+            && !self.triggered
+            && self.comparison.as_ref().is_none_or(|cut| !cut.verify_again)
+            && now_ms.saturating_sub(self.last_pass) < PERIOD_MS
+    }
+
+    /// Reports whether [`RepairDriver::request_cut`] would be a no-op for
+    /// this exact cut (the same digest equality it applies itself).
+    #[must_use]
+    pub fn desires_cut(&self, cut: &LocalRepairCut) -> bool {
+        self.desired_cut.as_ref().is_some_and(|old| {
+            old.cut_digest == cut.cut_digest && old.root_digest == cut.root_digest
+        })
+    }
+
     /// Pins comparison to the sealed canonical cut shared by all selected peers.
     /// # Errors
     /// Rejects scope or placement changes; a new authenticated driver is required.
@@ -1208,6 +1231,37 @@ mod tests {
         drop(target);
         std::fs::remove_dir_all(path).unwrap();
     }
+    #[test]
+    fn idle_pass_skips_engine_work_until_the_period_rolls_over() {
+        let (path, source, target) = fixture();
+        let scope = source.scope_for(&TenantId::try_new("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
+        let group = source.replication_publications(&scope, 0, 1).unwrap().remove(0).1;
+        let target_scope = target.scope_for(&TenantId::try_new("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
+        target.apply_replicated_publication(&target_scope, &group).unwrap();
+        let mut left = PublicationIndex::default();
+        let mut right = PublicationIndex::default();
+        left.refresh(&source, &bound()).unwrap();
+        right.refresh(&target, &bound()).unwrap();
+        let canonical = driver("a", "b", 1).local_cut(&source, &left).unwrap();
+        let mut receiver = driver("a", "b", 1);
+        receiver.request_cut(&canonical).unwrap();
+        let now = 1_000;
+        let request = receiver.outbound_frame(&target, &right, now).unwrap().unwrap();
+        let mut sender = driver("b", "a", 1);
+        let response = sender.receive_frame(&source, &left, &request).unwrap().frames.remove(0);
+        receiver.receive_frame(&target, &right, &response).unwrap();
+        assert!(receiver.verified_cut().is_some(), "the converged exchange verifies");
+        assert!(
+            receiver.idle(now + PERIOD_MS - 1),
+            "a converged lane with no owed work is idle before rollover"
+        );
+        assert!(!receiver.idle(now + PERIOD_MS), "the periodic pass wakes at rollover");
+        assert!(!driver("x", "y", 1).idle(0), "a triggered new lane is never idle");
+        drop(source);
+        drop(target);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
     #[test]
     fn canonical_cut_descriptor_is_shared_across_selected_peer_comparisons() {
         let (path, source, target) = fixture();

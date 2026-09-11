@@ -2297,16 +2297,11 @@ fn capture_plan(
     usage: CaptureBytes,
     base: Option<StorageSequence>,
     rotate: bool,
-    boundary: StorageSequence,
+    _boundary: StorageSequence,
     reader: Arc<dyn BackupReader + Send + Sync>,
 ) -> Result<BackupPlan, FleetError> {
     let CaptureBytes { active: bytes, total: total_bytes } = usage;
     let lease = stream.config.keys.lease().map_err(|_| FleetError::Capture)?;
-    let kind = match (base, rotate) {
-        (Some(_base), true) => super::BackupKind::Snapshot,
-        (Some(base), false) => super::BackupKind::Incremental { base },
-        (None, _) => super::BackupKind::Full,
-    };
     // A worker capture is an attempt, not the durable logical capture
     // identity.  The manifest identity is derived from the logical facts and
     // `run_backup` resolves an already-published matching point before

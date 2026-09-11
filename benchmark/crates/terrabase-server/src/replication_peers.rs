@@ -1134,6 +1134,19 @@ async fn session(
                         let causal = lane.causal.clone().ok_or("repair requires causal lane")?;
                         let now = millis(started);
                         let (frames, verified) = tokio::task::spawn_blocking(move || {
+                            let skip = {
+                                let repair = repair.lock().map_err(failure)?;
+                                repair.requested.is_empty()
+                                    && repair.driver.idle(now)
+                                    && selected_cut
+                                        .as_ref()
+                                        .is_none_or(|cut| repair.driver.desires_cut(cut))
+                            };
+                            if skip {
+                                let verified =
+                                    repair.lock().map_err(failure)?.driver.verified_cut().cloned();
+                                return Ok::<_, String>((Vec::new(), verified));
+                            }
                             let engine = worker.acquire_replication(&scope).map_err(failure)?;
                             let mut repair = repair.lock().map_err(failure)?;
                             let RepairLane { bound, driver, index, requested, indexed } = &mut *repair;
