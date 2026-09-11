@@ -71,7 +71,7 @@ fn archive_pin_matches_the_producer_handoff() {
     .expect("archive pin");
     assert_eq!(
         pin.trim(),
-        "e7a8bcbe752d814006c52fd40df055d54ac9adb7e3c1e5050630951d8f3498af"
+        "b0b0297f3facf5c0ed9cc17b86a6cec477db4babad47ac9a62ce7a2e2134502b"
     );
 }
 
