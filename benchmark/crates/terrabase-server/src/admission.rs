@@ -1,7 +1,7 @@
 //! Authenticated host admission with durable, immutable replay records.
 #[path = "admission_stop.rs"]
 mod stop;
-use crate::admission_fence::{AdmissionFenceStore, FenceOutcome};
+use crate::admission_fence::{AdmissionFenceStore, FenceRecord};
 pub use stop::{
     PrepareStopReceipt, PrepareStopRequest, StopPreflightReceipt, StopReceipt, StopRequest,
     StoragePrepareStop, StorageStop, StorageStopPreflight,
@@ -103,7 +103,16 @@ impl AdmissionHost {
         member_id: MemberUlid,
         admit_storage: StorageAdmission,
     ) -> Result<Self, String> {
-        let fence_store = AdmissionFenceStore::open(root)?;
+        let root = if root.is_absolute() {
+            root.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|_| "native admission working directory unavailable")?
+                .join(root)
+        };
+        let fence_store = AdmissionFenceStore::open(&root, |record| {
+            validate_record(&environment, &region.to_string(), &member_id.to_string(), record)
+        })?;
         let root = root.join("admissions");
         fs::create_dir_all(&root).map_err(|_| "admission directory unavailable")?;
         #[cfg(unix)]
@@ -131,9 +140,13 @@ impl AdmissionHost {
             preflight_stop_storage: None,
             fence_store,
         };
+        let mut loaded = BTreeMap::new();
+        let mut pending = Vec::new();
         for entry in fs::read_dir(&host.root).map_err(|_| "manifest unavailable")? {
             let entry = entry.map_err(|_| "manifest unavailable")?;
-            if entry.path().extension().is_none_or(|extension| extension != "json") {
+            let path = entry.path();
+            let extension = path.extension().and_then(|extension| extension.to_str());
+            if !matches!(extension, Some("json" | "pending")) {
                 continue;
             }
             let metadata =
@@ -146,17 +159,41 @@ impl AdmissionHost {
             )
             .map_err(|_| "invalid admission manifest")?;
             host.validate(&record)?;
-            if entry.file_name().to_str() != Some(&format!("{}.json", record.database_id)) {
+            if entry.file_name().to_str()
+                != Some(&format!("{}.{}", record.database_id, extension.unwrap()))
+            {
                 return Err("manifest identity mismatch".into());
             }
-            if host.fence_store.get(&record.database_id)?.is_none() {
-                (host.admit_storage)(&record)?;
+            if let Some(fence) = host.fence_store.get(&record.database_id)? {
+                if fence.record != record {
+                    return Err("fence admission identity conflict".into());
+                }
             }
-            host.records
-                .lock()
-                .map_err(|_| "admission lock poisoned")?
-                .insert(record.database_id.clone(), record);
+            if let Some(existing) = loaded.insert(record.database_id.clone(), record.clone()) {
+                if existing != record {
+                    return Err("pending admission identity conflict".into());
+                }
+            }
+            if extension == Some("pending") {
+                pending.push((path, record.database_id.clone()));
+            }
         }
+        for (path, database) in pending {
+            File::open(&path)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| "pending admission sync failed")?;
+            fs::rename(&path, host.root.join(format!("{database}.json")))
+                .map_err(|_| "pending admission publication failed")?;
+        }
+        File::open(&host.root)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| "admission directory sync failed")?;
+        for record in loaded.values() {
+            if host.fence_store.get(&record.database_id)?.is_none() {
+                (host.admit_storage)(record)?;
+            }
+        }
+        *host.records.lock().map_err(|_| "admission lock poisoned")? = loaded;
         Ok(host)
     }
 
@@ -174,55 +211,74 @@ impl AdmissionHost {
         record: &AdmissionRecord,
         deletion_operation_id: &str,
         project_fence_revision: u64,
-    ) -> Result<FenceOutcome, String> {
+    ) -> Result<FenceRecord, String> {
         self.validate(record)?;
-        let _records = self.records.lock().map_err(|_| "admission lock poisoned")?;
-        self.fence_store.fence_unadmitted(record, deletion_operation_id, project_fence_revision)
+        let records = self.records.lock().map_err(|_| "admission lock poisoned")?;
+        if records.get(&record.database_id).is_some_and(|existing| existing != record) {
+            return Err("immutable admission conflict".into());
+        }
+        self.fence_store.fence_unadmitted(
+            record,
+            deletion_operation_id,
+            project_fence_revision,
+            records.contains_key(&record.database_id),
+        )
     }
 
     fn validate(&self, record: &AdmissionRecord) -> Result<(), String> {
-        if record.created_at <= 0 {
-            return Err("invalid admission creation time".into());
-        }
-        TenantUlid::from_text(&record.tenant_id).map_err(|_| "invalid tenant")?;
-        ProjectUlid::from_text(&record.project_id).map_err(|_| "invalid project")?;
-        DatabaseUlid::from_text(&record.database_id).map_err(|_| "invalid database")?;
-        if let Some(parent) = &record.parent_database_id {
-            DatabaseUlid::from_text(parent).map_err(|_| "invalid parent database")?;
-            if parent == &record.database_id {
-                return Err("branch cannot be its own parent".into());
-            }
-        }
-        DatabaseKeyVersion::from_text(&record.key_version).map_err(|_| "invalid key version")?;
-        if record.environment != self.environment
-            || record.region != self.region
-            || record.member_id != self.member_id
-            || record.operation_id.is_empty()
-            || record.operation_id.len() > 256
-            || record.name.is_empty()
-            || record.name.len() > 256
-            || record.residency.is_empty()
-            || record.residency.len() > 128
-            || record.regions.is_empty()
-            || record.regions.len() > 32
-            || !record.regions.contains(&self.region)
-        {
-            return Err("invalid admission identity or placement".into());
-        }
-        let mut regions = std::collections::BTreeSet::new();
-        let mut parsed_regions = Vec::with_capacity(record.regions.len());
-        for region in &record.regions {
-            let parsed = region.parse::<RegionCode>().map_err(|_| "invalid region")?;
-            parsed_regions.push(parsed);
-            if !regions.insert(region) {
-                return Err("duplicate region".into());
-            }
-        }
-        crate::control::validate_admission_residency(&record.residency, &parsed_regions)
-            .map_err(|_| "residency violates placement")?;
-        Ok(())
+        validate_record(&self.environment, &self.region, &self.member_id, record)
     }
+}
 
+fn validate_record(
+    environment: &str,
+    host_region: &str,
+    member_id: &str,
+    record: &AdmissionRecord,
+) -> Result<(), String> {
+    if record.created_at <= 0 {
+        return Err("invalid admission creation time".into());
+    }
+    TenantUlid::from_text(&record.tenant_id).map_err(|_| "invalid tenant")?;
+    ProjectUlid::from_text(&record.project_id).map_err(|_| "invalid project")?;
+    DatabaseUlid::from_text(&record.database_id).map_err(|_| "invalid database")?;
+    if let Some(parent) = &record.parent_database_id {
+        DatabaseUlid::from_text(parent).map_err(|_| "invalid parent database")?;
+        if parent == &record.database_id {
+            return Err("branch cannot be its own parent".into());
+        }
+    }
+    DatabaseKeyVersion::from_text(&record.key_version).map_err(|_| "invalid key version")?;
+    if record.environment != environment
+        || record.region != host_region
+        || record.member_id != member_id
+        || record.operation_id.is_empty()
+        || record.operation_id.len() > 256
+        || record.name.is_empty()
+        || record.name.len() > 256
+        || record.residency.is_empty()
+        || record.residency.len() > 128
+        || record.regions.is_empty()
+        || record.regions.len() > 32
+        || !record.regions.iter().any(|region| region == host_region)
+    {
+        return Err("invalid admission identity or placement".into());
+    }
+    let mut regions = std::collections::BTreeSet::new();
+    let mut parsed_regions = Vec::with_capacity(record.regions.len());
+    for region in &record.regions {
+        let parsed = region.parse::<RegionCode>().map_err(|_| "invalid region")?;
+        parsed_regions.push(parsed);
+        if !regions.insert(region) {
+            return Err("duplicate region".into());
+        }
+    }
+    crate::control::validate_admission_residency(&record.residency, &parsed_regions)
+        .map_err(|_| "residency violates placement")?;
+    Ok(())
+}
+
+impl AdmissionHost {
     /// Persists an intent before storage admission; failed attempts remain replayable.
     ///
     /// # Errors
@@ -248,18 +304,26 @@ impl AdmissionHost {
                 use std::os::unix::fs::OpenOptionsExt;
                 options.mode(0o600);
             }
-            // A prior crash may leave an unpublished temporary file. Its content never grants admission.
-            if temporary.exists() {
-                fs::remove_file(&temporary).map_err(|_| "stale intent unavailable")?;
+            // Never discard an uncertain intent in-process. Restart validates and
+            // reconciles it before any callback can run.
+            let persisted = (|| -> Result<(), String> {
+                let mut file = options.open(&temporary).map_err(|_| "manifest unavailable")?;
+                file.write_all(&bytes)
+                    .and_then(|()| file.sync_all())
+                    .map_err(|_| "manifest persistence failed")?;
+                File::open(&self.root)
+                    .and_then(|directory| directory.sync_all())
+                    .map_err(|_| "manifest directory sync failed")?;
+                fs::rename(&temporary, &path).map_err(|_| "manifest publication failed")?;
+                File::open(&self.root)
+                    .and_then(|directory| directory.sync_all())
+                    .map_err(|_| "manifest directory sync failed")?;
+                Ok(())
+            })();
+            if let Err(error) = persisted {
+                self.fence_store.poison();
+                return Err(error);
             }
-            let mut file = options.open(&temporary).map_err(|_| "manifest unavailable")?;
-            file.write_all(&bytes)
-                .and_then(|()| file.sync_all())
-                .map_err(|_| "manifest persistence failed")?;
-            fs::rename(&temporary, &path).map_err(|_| "manifest publication failed")?;
-            File::open(&self.root)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|_| "manifest directory sync failed")?;
             records.insert(record.database_id.clone(), record.clone());
         }
         (self.admit_storage)(record)
@@ -425,6 +489,10 @@ impl AdmissionHost {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "admission_fence_tests.rs"]
+mod fence_tests;
 
 #[cfg(test)]
 mod tests {

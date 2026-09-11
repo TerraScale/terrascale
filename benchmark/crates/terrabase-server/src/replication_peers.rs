@@ -3,7 +3,7 @@ use crate::replication_cut::ReplicationCuts;
 use crate::replication_frontier::ReplicationRetentionFrontier;
 use crate::replication_proof::{ReadinessCutFrame, VerifiedReadinessCut};
 use crate::replication_runtime::ReplicationProgress;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;

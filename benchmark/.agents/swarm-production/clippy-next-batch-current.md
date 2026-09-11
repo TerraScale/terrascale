@@ -18,7 +18,7 @@ Captured 2026-09-11 for approved slices A and D from
 
 ```text
 0ee3904d049b91507cc607fdec2a15cbcfe1cf7bff73b29d9bfabfc7fa22c29b  crates/terrabase-server/src/schema_migration_runtime.rs
-da82abf8c2cf3e619903e68e7b358b9c3ead167b235d41622a40f5f9a952bade  crates/terrabase-server/src/replication_peers.rs
+d8eaddc29dda3b0fa37dd82e14bd016a114b5a1d21c49de7dcc9bb6dad7435e3  crates/terrabase-server/src/replication_peers.rs
 ```
 
 ## Validation and selectors
@@ -37,6 +37,13 @@ these focused existing selectors:
 
 The `too_many_lines` diagnostics remain intentionally deferred. The outer
 retention owner and engine-frontier acknowledgement paths were not modified.
+
+## Compile correction
+
+The consolidated no-run build reported `E0433` at the `BTreeSet::default()`
+use in `replication_peers.rs:594`. Added `BTreeSet` to the existing explicit
+`std::collections` import; no behavior changed. File-level rustfmt and diff
+checks pass; no Cargo command was run.
 
 ## Slice B — configuration and identity mechanics
 

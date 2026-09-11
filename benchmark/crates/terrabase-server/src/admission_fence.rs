@@ -38,9 +38,14 @@ pub(crate) struct AdmissionFenceStore {
 }
 
 impl AdmissionFenceStore {
-    pub(crate) fn open(root: &Path) -> Result<Self, String> {
-        if !root.is_absolute() {
-            return Err("native admission root must be absolute".into());
+    pub(crate) fn open(
+        root: &Path,
+        validate: impl Fn(&AdmissionRecord) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        if !root.is_absolute()
+            || root.components().any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err("unsafe native admission root components".into());
         }
         for ancestor in root.ancestors() {
             match fs::symlink_metadata(ancestor) {
@@ -60,7 +65,8 @@ impl AdmissionFenceStore {
             .open(lock_path)
             .map_err(|_| "native admission lock unavailable")?;
         let metadata = lock.metadata().map_err(|_| "native admission lock unavailable")?;
-        if !metadata.is_file() || metadata.nlink() != 1
+        if !metadata.is_file()
+            || metadata.nlink() != 1
             || metadata.uid() != rustix::process::geteuid().as_raw()
             || metadata.mode() & 0o022 != 0
         {
@@ -81,28 +87,39 @@ impl AdmissionFenceStore {
             #[cfg(test)]
             fault: std::sync::atomic::AtomicU8::new(0),
         };
-        store.recover_pending()?;
-        let loaded = store.load_all()?;
+        store.recover_pending(&validate)?;
+        let loaded = store.load_all(&validate)?;
         *store.fences.lock().map_err(|_| "fence lock poisoned")? = loaded;
         Ok(store)
     }
 
-    fn recover_pending(&self) -> Result<(), String> {
+    fn recover_pending(
+        &self,
+        validate: &impl Fn(&AdmissionRecord) -> Result<(), String>,
+    ) -> Result<(), String> {
         let dir = self.root.join("fences");
         for entry in fs::read_dir(&dir).map_err(|_| "fence directory unavailable")? {
             let entry = entry.map_err(|_| "fence directory unavailable")?;
             if entry.file_name().to_string_lossy().starts_with('.') {
                 let fence = read_fence(&entry.path(), true)?;
+                validate(&fence.record)?;
                 let final_path = dir.join(format!("{}.json", fence.record.database_id));
                 match fs::symlink_metadata(&final_path) {
                     Ok(_) => {
-                        if read_fence(&final_path, false)? != fence {
+                        let published = read_fence(&final_path, false)?;
+                        validate(&published.record)?;
+                        if published != fence {
                             return Err("pending fence identity conflict".into());
                         }
+                        fs::File::open(&final_path)
+                            .and_then(|file| file.sync_all())
+                            .map_err(|_| "fence recovery unavailable")?;
+                        sync_directory(&dir)?;
                         fs::remove_file(entry.path()).map_err(|_| "fence recovery unavailable")?;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        fs::File::open(entry.path()).and_then(|f| f.sync_all())
+                        fs::File::open(entry.path())
+                            .and_then(|f| f.sync_all())
                             .map_err(|_| "fence recovery unavailable")?;
                         fs::rename(entry.path(), final_path)
                             .map_err(|_| "fence recovery unavailable")?;
@@ -113,15 +130,24 @@ impl AdmissionFenceStore {
         }
         fs::File::open(dir)
             .and_then(|file| file.sync_all())
-            .map_err(|_| "fence recovery unavailable")
+            .map_err(|_| "fence recovery unavailable".into())
     }
 
-    pub(crate) fn load_all(&self) -> Result<BTreeMap<String, FenceRecord>, String> {
+    fn load_all(
+        &self,
+        validate: &impl Fn(&AdmissionRecord) -> Result<(), String>,
+    ) -> Result<BTreeMap<String, FenceRecord>, String> {
         let dir = self.root.join("fences");
         let mut result = BTreeMap::new();
         for entry in fs::read_dir(dir).map_err(|_| "fence directory unavailable")? {
             let entry = entry.map_err(|_| "fence directory unavailable")?;
             let record = read_fence(&entry.path(), false)?;
+            validate(&record.record)?;
+            if record.outcome == FenceOutcome::NoInstall
+                && has_disk_intent(&self.root, &record.record)?
+            {
+                return Err("no-install fence conflicts with admission intent".into());
+            }
             result.insert(record.record.database_id.clone(), record);
         }
         Ok(result)
@@ -167,10 +193,13 @@ impl AdmissionFenceStore {
         record: &AdmissionRecord,
         deletion_operation_id: &str,
         project_fence_revision: u64,
+        retained_admission: bool,
     ) -> Result<FenceRecord, String> {
         self.ensure_available()?;
-        if deletion_operation_id.is_empty() || deletion_operation_id.len() > 128
-            || deletion_operation_id.chars().any(char::is_control) || project_fence_revision == 0
+        if deletion_operation_id.is_empty()
+            || deletion_operation_id.len() > 128
+            || deletion_operation_id.chars().any(char::is_control)
+            || project_fence_revision == 0
         {
             return Err("invalid deletion operation".into());
         }
@@ -188,7 +217,8 @@ impl AdmissionFenceStore {
             }
             return Ok(existing.clone());
         }
-        let outcome = if has_disk_intent(&self.root, record)? {
+        let disk_intent = has_disk_intent(&self.root, record)?;
+        let outcome = if retained_admission || disk_intent {
             FenceOutcome::StopRequired
         } else {
             FenceOutcome::NoInstall
@@ -203,27 +233,32 @@ impl AdmissionFenceStore {
         let tmp = self.root.join("fences").join(format!(".{}.pending", record.database_id));
         let bytes = serde_json::to_vec(&fenced).map_err(|_| "fence encoding failed")?;
         let mut file =
-            fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp).map_err(|_| {
-                self.poison();
-                "fence persistence uncertain"
-            })?;
-        self.checkpoint(1).and_then(|()| file.write_all(&bytes))
+            fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp).map_err(
+                |_| {
+                    self.poison();
+                    "fence persistence uncertain"
+                },
+            )?;
+        self.checkpoint(1)
+            .and_then(|()| file.write_all(&bytes))
             .and_then(|()| self.checkpoint(2))
             .and_then(|()| file.sync_all())
             .and_then(|()| self.checkpoint(3))
             .and_then(|()| fs::File::open(self.root.join("fences"))?.sync_all())
             .map_err(|_| {
-            self.poison();
-            "fence persistence uncertain"
-        })?;
+                self.poison();
+                "fence persistence uncertain"
+            })?;
         self.checkpoint(4).and_then(|()| fs::rename(&tmp, &path)).map_err(|_| {
             self.poison();
             "fence persistence uncertain"
         })?;
-        self.checkpoint(5).and_then(|()| fs::File::open(self.root.join("fences"))?.sync_all()).map_err(|_| {
-            self.poison();
-            "fence persistence uncertain"
-        })?;
+        self.checkpoint(5)
+            .and_then(|()| fs::File::open(self.root.join("fences"))?.sync_all())
+            .map_err(|_| {
+                self.poison();
+                "fence persistence uncertain"
+            })?;
         fences.insert(record.database_id.clone(), fenced.clone());
         Ok(fenced)
     }
@@ -254,11 +289,15 @@ fn has_disk_intent(root: &Path, record: &AdmissionRecord) -> Result<bool, String
 
 fn protected_directory(path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink()
-            && metadata.uid() == rustix::process::geteuid().as_raw()
-            && metadata.mode() & 0o022 == 0 => {}
+        Ok(metadata)
+            if metadata.is_dir()
+                && !metadata.file_type().is_symlink()
+                && metadata.uid() == rustix::process::geteuid().as_raw()
+                && metadata.mode() & 0o022 == 0 => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::DirBuilder::new().mode(0o700).create(path)
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(path)
                 .map_err(|_| "admission directory unavailable")?;
         }
         _ => return Err("unsafe admission directory".into()),
@@ -268,7 +307,8 @@ fn protected_directory(path: &Path) -> Result<(), String> {
 }
 
 fn sync_directory(path: &Path) -> Result<(), String> {
-    fs::File::open(path).and_then(|f| f.sync_all())
+    fs::File::open(path)
+        .and_then(|f| f.sync_all())
         .map_err(|_| "admission directory sync failed".into())
 }
 
@@ -277,16 +317,22 @@ fn read_fence(path: &Path, pending: bool) -> Result<FenceRecord, String> {
     if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 32768 {
         return Err("unsafe fence".into());
     }
-    let fence: FenceRecord = serde_json::from_slice(&fs::read(path).map_err(|_| "fence unavailable")?)
-        .map_err(|_| "invalid fence")?;
+    let fence: FenceRecord =
+        serde_json::from_slice(&fs::read(path).map_err(|_| "fence unavailable")?)
+            .map_err(|_| "invalid fence")?;
     terrabase::identity::DatabaseUlid::from_text(&fence.record.database_id)
         .map_err(|_| "invalid fence database")?;
-    let expected = if pending { format!(".{}.pending", fence.record.database_id) }
-        else { format!("{}.json", fence.record.database_id) };
+    let expected = if pending {
+        format!(".{}.pending", fence.record.database_id)
+    } else {
+        format!("{}.json", fence.record.database_id)
+    };
     if path.file_name().and_then(|name| name.to_str()) != Some(&expected)
-        || fence.deletion_operation_id.is_empty() || fence.deletion_operation_id.len() > 128
+        || fence.deletion_operation_id.is_empty()
+        || fence.deletion_operation_id.len() > 128
         || fence.deletion_operation_id.chars().any(char::is_control)
-        || fence.project_fence_revision == 0 || fence.outcome == FenceOutcome::Unknown
+        || fence.project_fence_revision == 0
+        || fence.outcome == FenceOutcome::Unknown
     {
         return Err("fence identity mismatch".into());
     }
@@ -320,29 +366,24 @@ mod tests {
     #[test]
     fn fence_is_durable_idempotent_and_detects_intent() {
         let root = std::env::temp_dir().join(format!("native-fence-{}", DatabaseUlid::generate()));
-        let store = AdmissionFenceStore::open(&root).unwrap();
+        let store = AdmissionFenceStore::open(&root, |_| Ok(())).unwrap();
         let record = record();
         assert_eq!(
-            store.fence_unadmitted(&record, "delete-1", 4).unwrap(),
+            store.fence_unadmitted(&record, "delete-1", 4, false).unwrap().outcome,
             FenceOutcome::NoInstall
         );
         assert_eq!(
-            store.fence_unadmitted(&record, "delete-1", 4).unwrap(),
+            store.fence_unadmitted(&record, "delete-1", 4, false).unwrap().outcome,
             FenceOutcome::NoInstall
         );
-        assert!(store.fence_unadmitted(&record, "delete-2", 4).is_err());
-        let intent = store.root.join(format!("{}.pending", record.database_id));
-        fs::write(intent, b"pending").unwrap();
-        assert_eq!(
-            store.fence_unadmitted(&record, "delete-1", 5).unwrap(),
-            FenceOutcome::StopRequired
-        );
+        assert!(store.fence_unadmitted(&record, "delete-2", 4, false).is_err());
+        assert!(store.fence_unadmitted(&record, "delete-1", 5, false).is_err());
         drop(store);
-        let reopened = AdmissionFenceStore::open(&root).unwrap();
+        let reopened = AdmissionFenceStore::open(&root, |_| Ok(())).unwrap();
         assert!(reopened.get(&record.database_id).unwrap().is_some());
         assert_eq!(
-            reopened.fence_unadmitted(&record, "delete-1", 5).unwrap(),
-            FenceOutcome::StopRequired
+            reopened.fence_unadmitted(&record, "delete-1", 4, false).unwrap().outcome,
+            FenceOutcome::NoInstall
         );
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
@@ -352,10 +393,10 @@ mod tests {
     fn native_lifetime_lock_is_exclusive_until_owner_drops() {
         let root =
             std::env::temp_dir().join(format!("native-fence-lock-{}", DatabaseUlid::generate()));
-        let first = AdmissionFenceStore::open(&root).unwrap();
-        assert!(AdmissionFenceStore::open(&root).is_err());
+        let first = AdmissionFenceStore::open(&root, |_| Ok(())).unwrap();
+        assert!(AdmissionFenceStore::open(&root, |_| Ok(())).is_err());
         drop(first);
-        let second = AdmissionFenceStore::open(&root).unwrap();
+        let second = AdmissionFenceStore::open(&root, |_| Ok(())).unwrap();
         drop(second);
         fs::remove_dir_all(root).unwrap();
     }
