@@ -31,6 +31,8 @@ pub(crate) const ENCRYPTED_MANIFEST_FILE: &str = "manifest.tbv3e";
 
 /// The manifest format header and version.
 ///
+/// Version 4 authenticates the capture class, distinguishing complete
+/// standalone points from physical participants of a routed envelope.
 /// Version 3 binds database, partition, and tenant scope identities in
 /// addition to the facts already covered by Version 2. It also keeps the
 /// Version 2 length-prefix for the `tenant` line. Version 1
@@ -40,6 +42,11 @@ pub(crate) const ENCRYPTED_MANIFEST_FILE: &str = "manifest.tbv3e";
 /// the line is unambiguous for every representable tenant name.
 pub(crate) const HEADER: &str = "terrabase-backup-manifest 4";
 
+/// Authenticated scope of the data captured by a backup manifest.
+///
+/// This class is included in the manifest identity. Moving an encrypted
+/// participant artifact into a standalone path cannot make it a complete
+/// database recovery point.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackupCaptureKind {
     /// A standalone capture containing the complete database.
@@ -322,12 +329,12 @@ impl BackupManifest {
         self.captured_unix_millis
     }
 
-    #[must_use]
     /// Returns the authenticated provenance class of this recovery point.
     ///
     /// `WholeDatabase` points may be resolved from the standalone namespace;
     /// `RoutedShardParticipant` points are valid only as members of a routed
     /// envelope.
+    #[must_use]
     pub fn capture_kind(&self) -> BackupCaptureKind {
         self.capture_kind
     }

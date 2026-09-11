@@ -176,7 +176,7 @@ fn persist_encoded(
             &target.branch,
             &target.collection,
             Some(expected),
-            &bytes,
+            bytes,
         )
         .map_err(|_| "schema status staging failed".to_owned())?;
     match transaction.commit(LocalDurability::Synced) {
@@ -355,7 +355,7 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
     // Commit the saved generation and the latest core cursor before admitting
     // another page.  If the process died after a core page commit, this first
     // publication repairs the stale envelope before work is retried.
-    let mut persisted_expected = expected.to_vec();
+    let mut persisted_expected = expected.clone();
     if record.migration_plan.is_some() {
         if let Err(message) = checkpoint_before_batch(engine, &mut record) {
             if let Some(migration) = record.document.migration.as_mut() {
@@ -365,9 +365,8 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
             let _ = persist(engine, &expected, &record);
             return Some(collection);
         }
-        let checkpoint_bytes = match serde_json::to_vec(&record) {
-            Ok(bytes) => bytes,
-            Err(_) => return Some(collection),
+        let Ok(checkpoint_bytes) = serde_json::to_vec(&record) else {
+            return Some(collection);
         };
         if !persist_encoded(engine, &persisted_expected, &record, &checkpoint_bytes, false)
             .is_ok_and(|persisted| persisted)
@@ -402,7 +401,7 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
     // preceding checkpoint.  In particular, the no-plan path still has the
     // original envelope as its expected value while `advance` mutates the
     // in-memory projection.
-    let final_bytes = serde_json::to_vec(&record).unwrap_or_else(|_| expected.to_vec());
+    let final_bytes = serde_json::to_vec(&record).unwrap_or_else(|_| expected.clone());
     let _ = persist_encoded(engine, &persisted_expected, &record, &final_bytes, false);
     Some(collection)
 }

@@ -417,7 +417,13 @@ mod tests {
             let archive = workspace.join(format!("archive-{shard}"));
             let encryption =
                 BackupEncryption::from_database_key_lease(lease, source_owner.region(), 0).unwrap();
-            let plan = BackupPlan::full(encryption).with_snapshot_routes(routes.clone()).unwrap();
+            let mut plan = BackupPlan::snapshot_at(
+                source.journaled_high_water().unwrap().unwrap(),
+                encryption,
+            )
+            .with_snapshot_routes(routes.clone())
+            .unwrap();
+            plan.capture_kind = crate::backup::BackupCaptureKind::RoutedShardParticipant;
             let manifest = run_backup(&source, plan, &archive).unwrap().manifest().clone();
             let shard = u64::try_from(shard).unwrap();
             let participant_id = format!("shard-{shard:016x}");

@@ -1,6 +1,7 @@
 //! Authenticated host admission with durable, immutable replay records.
 #[path = "admission_stop.rs"]
 mod stop;
+use crate::admission_fence::{AdmissionFenceStore, FenceOutcome};
 pub use stop::{
     PrepareStopReceipt, PrepareStopRequest, StopPreflightReceipt, StopReceipt, StopRequest,
     StoragePrepareStop, StorageStop, StorageStopPreflight,
@@ -69,6 +70,7 @@ pub struct AdmissionHost {
     stop_storage: Option<StorageStop>,
     prepare_stop_storage: Option<StoragePrepareStop>,
     preflight_stop_storage: Option<StorageStopPreflight>,
+    fence_store: AdmissionFenceStore,
 }
 
 impl AdmissionHost {
@@ -101,6 +103,7 @@ impl AdmissionHost {
         member_id: MemberUlid,
         admit_storage: StorageAdmission,
     ) -> Result<Self, String> {
+        let fence_store = AdmissionFenceStore::open(root)?;
         let root = root.join("admissions");
         fs::create_dir_all(&root).map_err(|_| "admission directory unavailable")?;
         #[cfg(unix)]
@@ -126,6 +129,7 @@ impl AdmissionHost {
             stop_storage: None,
             prepare_stop_storage: None,
             preflight_stop_storage: None,
+            fence_store,
         };
         for entry in fs::read_dir(&host.root).map_err(|_| "manifest unavailable")? {
             let entry = entry.map_err(|_| "manifest unavailable")?;
@@ -145,7 +149,9 @@ impl AdmissionHost {
             if entry.file_name().to_str() != Some(&format!("{}.json", record.database_id)) {
                 return Err("manifest identity mismatch".into());
             }
-            (host.admit_storage)(&record)?;
+            if host.fence_store.get(&record.database_id)?.is_none() {
+                (host.admit_storage)(&record)?;
+            }
             host.records
                 .lock()
                 .map_err(|_| "admission lock poisoned")?
@@ -160,6 +166,17 @@ impl AdmissionHost {
             .lock()
             .map(|records| records.clone())
             .map_err(|_| "admission lock poisoned".into())
+    }
+
+    /// Durably fences an admission for deletion before native readback/stop.
+    pub(crate) fn fence(
+        &self,
+        record: &AdmissionRecord,
+        deletion_operation_id: &str,
+        project_fence_revision: u64,
+    ) -> Result<FenceOutcome, String> {
+        self.validate(record)?;
+        self.fence_store.fence_unadmitted(record, deletion_operation_id, project_fence_revision)
     }
 
     fn validate(&self, record: &AdmissionRecord) -> Result<(), String> {
@@ -211,6 +228,9 @@ impl AdmissionHost {
     /// Returns a refusal for conflicting retries or storage/durability failures.
     pub fn admit(&self, record: &AdmissionRecord) -> Result<(), String> {
         self.validate(record)?;
+        if self.fence_store.get(&record.database_id)?.is_some() {
+            return Err("admission is fenced for deletion".into());
+        }
         let mut records = self.records.lock().map_err(|_| "admission lock poisoned")?;
         if let Some(existing) = records.get(&record.database_id) {
             if existing != record {
@@ -319,6 +339,33 @@ impl AdmissionHost {
                 _ => StatusCode::CONFLICT.into_response(),
             }
         }
+        async fn fence(
+            State(host): State<Arc<AdmissionHost>>,
+            body: axum::body::Bytes,
+        ) -> axum::response::Response {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Request {
+                record: AdmissionRecord,
+                deletion_operation_id: String,
+                project_fence_revision: u64,
+            }
+            let Ok(request) = serde_json::from_slice::<Request>(&body) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
+            match tokio::task::spawn_blocking(move || {
+                host.fence(
+                    &request.record,
+                    &request.deletion_operation_id,
+                    request.project_fence_revision,
+                )
+            })
+            .await
+            {
+                Ok(Ok(outcome)) => axum::Json(outcome).into_response(),
+                _ => StatusCode::CONFLICT.into_response(),
+            }
+        }
         async fn stop(
             State(host): State<Arc<AdmissionHost>>,
             body: axum::body::Bytes,
@@ -340,6 +387,7 @@ impl AdmissionHost {
             self.usage_delivery.clone().map(super::usage_admission::UsageAdmissionJournal::router);
         let router = Router::new()
             .route("/internal/v1/databases/admit", post(admit))
+            .route("/internal/v1/databases/fence", post(fence))
             .route("/internal/v1/databases/stop", post(stop))
             .route("/internal/v1/databases/delete/prepare", post(prepare_stop))
             .route("/internal/v1/databases/delete/preflight", post(preflight_stop))

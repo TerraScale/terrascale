@@ -1231,6 +1231,7 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "document_history" => Some("HistoryResponse"),
         "execute_sql" => Some("SqlResultResponse"),
         "list_backups" => Some("BackupStatusResponse"),
+        "list_backup_points" => Some("BackupPointPage"),
         "attach_view" => Some("AttachViewResponse"),
         "authorization_lease" => Some("Lease"),
         _ => None,
@@ -1271,7 +1272,7 @@ fn openapi_schemas() -> serde_json::Value {
         "SqlRequest": { "type": "object", "required": ["sql"], "properties": { "sql": { "type": "string" }, "parameters": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/JsonValue" } }, "explain": { "type": "boolean" }, "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 30000 }, "cancelled": { "type": "boolean" } } },
         "SqlResponse": { "type": "object", "required": ["matched", "rows"], "properties": { "matched": { "type": "integer", "format": "int64" }, "rows": { "type": "array", "items": { "type": "object", "required": ["id", "value"], "properties": { "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
         "BackupStatusResponse": { "type": "object", "required": ["ready", "streaming"], "properties": { "ready": { "type": "boolean" }, "streaming": { "type": "boolean" } } },
-        "BackupPoint": { "type": "object", "required": ["point_id", "source_database_id", "captured_at_unix_millis", "retain_until_unix_millis", "logical_checksum", "logical_documents"], "properties": { "point_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "source_database_id": { "type": "string" }, "captured_at_unix_millis": { "type": "integer", "format": "int64", "minimum": 0 }, "retain_until_unix_millis": { "type": "integer", "format": "int64", "minimum": 0 }, "logical_checksum": { "type": "string", "pattern": "^[0-9a-f]+$" }, "logical_documents": { "type": "string", "pattern": "^[0-9]+$" } } },
+        "BackupPoint": { "type": "object", "additionalProperties": false, "required": ["point_id", "source_database_id", "captured_at_unix_millis", "retain_until_unix_millis", "logical_checksum", "logical_documents"], "properties": { "point_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "source_database_id": { "type": "string" }, "captured_at_unix_millis": { "type": "integer", "format": "uint64", "minimum": 0 }, "retain_until_unix_millis": { "type": "integer", "format": "uint64", "minimum": 0 }, "logical_checksum": { "type": "string", "pattern": "^[0-9a-f]+$" }, "logical_documents": { "type": "string", "pattern": "^[0-9]+$" } } },
         "BackupPointPage": { "type": "object", "required": ["points"], "properties": { "points": { "type": "array", "items": { "$ref": "#/components/schemas/BackupPoint" } }, "next_cursor": { "type": ["string", "null"] } } },
         "CreateDatabaseRequest": { "type": "object", "required": ["name", "placement", "residency", "operation_id"], "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.", "properties": { "operation_id": { "type": "string" }, "name": { "type": "string" }, "placement": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "residency": { "type": "string" } } },
         "CreateIndexRequest": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" } } },
@@ -5159,7 +5160,7 @@ struct BackupPointQuery {
 }
 
 /// Lists authenticated native logical recovery points in bounded keyset pages.
-#[utoipa::path(get, path = "/api/v1/databases/{name}/backups/points", params(("limit" = Option<usize>, Query, description = "Page size, default 50, maximum 100"), ("cursor" = Option<String>, Query, description = "Opaque source-bound continuation cursor")), responses((status = 200, description = "Retained backup points")))]
+#[utoipa::path(get, path = "/api/v1/databases/{name}/backups/points", params(("limit" = Option<usize>, Query, description = "Page size, default 50, maximum 100"), ("cursor" = Option<String>, Query, description = "Opaque source-bound continuation cursor")), responses((status = 200, description = "Retained backup points", body = crate::backup_point_catalog::BackupPointPage)))]
 async fn list_backup_points(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
@@ -6391,7 +6392,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(operation_count, 64, "registered route count changed");
+        assert_eq!(operation_count, 65, "registered route count changed");
     }
 
     #[test]
@@ -8027,6 +8028,33 @@ mod tests {
                 .expect("answers");
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
         }
+    }
+
+    #[test]
+    fn openapi_describes_backup_points_and_strict_restore_selectors() {
+        let document: serde_json::Value = serde_json::from_str(&openapi_json()).expect("JSON");
+        assert_eq!(
+            document["paths"]["/api/v1/databases/{name}/backups/points"]["get"]["responses"]["200"]
+                ["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/BackupPointPage"
+        );
+        assert_eq!(
+            document["components"]["schemas"]["BackupPoint"]["properties"]["captured_at_unix_millis"]
+                ["format"],
+            "uint64"
+        );
+        assert_eq!(
+            document["components"]["schemas"]["BackupPoint"]["properties"]["logical_documents"]["type"],
+            "string"
+        );
+        assert_eq!(
+            document["components"]["schemas"]["RestoreRequest"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            document["components"]["schemas"]["RestoreRequest"]["properties"]["point_id"]["pattern"],
+            "^[0-9a-f]{64}$"
+        );
     }
 
     #[tokio::test]

@@ -444,6 +444,20 @@ pub(super) fn discover_encrypted_points(
     destination: &Path,
     cipher: &dyn BackupReader,
 ) -> Result<Vec<BackupManifest>, BackupError> {
+    discover_encrypted_points_for_capture(
+        destination,
+        cipher,
+        crate::backup::BackupCaptureKind::WholeDatabase,
+    )
+}
+
+/// Capture retry discovery is scoped to the producer's authenticated class.
+/// Standalone restore and inventory always use the WholeDatabase wrapper above.
+pub(super) fn discover_encrypted_points_for_capture(
+    destination: &Path,
+    cipher: &dyn BackupReader,
+    capture_kind: crate::backup::BackupCaptureKind,
+) -> Result<Vec<BackupManifest>, BackupError> {
     let entries = std::fs::read_dir(destination).map_err(|_| BackupError::ChainIncomplete)?;
     let mut points = Vec::new();
     for entry in entries {
@@ -474,9 +488,7 @@ pub(super) fn discover_encrypted_points(
         let bytes =
             cipher.open_backup_envelope(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
         let manifest = BackupManifest::decode(&bytes)?;
-        if manifest.identity() != identity
-            || manifest.capture_kind() != crate::backup::manifest::BackupCaptureKind::WholeDatabase
-        {
+        if manifest.identity() != identity || manifest.capture_kind() != capture_kind {
             return Err(BackupError::ManifestInvalid);
         }
         points.push(manifest);
@@ -1813,7 +1825,10 @@ impl StableConfiguredTarget {
             )
             .map_err(|_| BackupError::DestinationUnavailable)?;
             let directory = std::fs::File::from(descriptor);
-            let path = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
+            // Inspect the pinned directory itself, not the procfs magic-link
+            // entry: Engine ownership validation rejects symlink locations.
+            // The descriptor remains the authority even if `target` is renamed.
+            let path = PathBuf::from(format!("/proc/self/fd/{}/.", directory.as_raw_fd()));
             Ok(Self { directory, path })
         }
 
@@ -3100,10 +3115,18 @@ mod publication_tests {
         let target = root.join("target");
         let outside = root.join("outside");
         let retired = root.join("retired");
-        std::fs::create_dir_all(&target).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
-        std::fs::write(target.join("state"), b"serving database").unwrap();
         std::fs::write(outside.join("state"), b"attacker destination").unwrap();
+
+        let owner = crate::storage::DatabaseOwner::local_development();
+        let config = EngineConfig::durable(&target)
+            .unwrap()
+            .with_owner(owner.clone())
+            .with_storage_keys(crate::engine::test_storage_keys(&owner, 72));
+        let engine = Engine::open(config.clone()).unwrap();
+        let tenant = TenantId::try_new(&owner.tenant().to_text()).unwrap();
+        engine.lifecycle_pause(&engine.scope_for(&tenant), "pinned-target").unwrap();
+        drop(engine);
 
         let stable = Arc::new(StableConfiguredTarget::open(&target).unwrap());
         let barrier = Arc::new(Barrier::new(2));
@@ -3119,8 +3142,11 @@ mod publication_tests {
         barrier.wait();
         swapper.join().unwrap();
 
-        assert_eq!(std::fs::read(stable.path().join("state")).unwrap(), b"serving database");
+        let pinned = Engine::open(config.at_location(stable.path())).unwrap();
+        assert!(pinned.lifecycle_state(&pinned.scope_for(&tenant)).unwrap().paused);
+        assert_eq!(std::fs::read(outside.join("state")).unwrap(), b"attacker destination");
         assert_eq!(ensure_configured_target_directory(&target), Err(BackupError::TargetNotEmpty));
+        drop(pinned);
         drop(stable);
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -373,23 +373,23 @@ impl JwtSignatureVerifier for AwsLcJwtVerifier {
     }
 }
 
-fn der_len(length: usize) -> Vec<u8> {
+fn der_len(length: usize) -> Option<Vec<u8>> {
     if length < 128 {
-        vec![length as u8]
+        Some(vec![u8::try_from(length).ok()?])
     } else {
-        let bytes = (length as u32).to_be_bytes();
+        let bytes = u32::try_from(length).ok()?.to_be_bytes();
         let first = bytes.iter().position(|b| *b != 0).unwrap_or(3);
-        let mut out = vec![0x80 | (4 - first) as u8];
+        let mut out = vec![0x80 | u8::try_from(4 - first).ok()?];
         out.extend_from_slice(&bytes[first..]);
-        out
+        Some(out)
     }
 }
 
-fn der(tag: u8, value: &[u8]) -> Vec<u8> {
+fn der(tag: u8, value: &[u8]) -> Option<Vec<u8>> {
     let mut out = vec![tag];
-    out.extend(der_len(value.len()));
+    out.extend(der_len(value.len())?);
     out.extend_from_slice(value);
-    out
+    Some(out)
 }
 
 fn rsa_spki(key: &JwkKey) -> Option<Vec<u8>> {
@@ -401,20 +401,20 @@ fn rsa_spki(key: &JwkKey) -> Option<Vec<u8>> {
         der(2, &v)
     };
     let rsa = {
-        let mut v = integer(n);
-        v.extend(integer(e));
-        der(0x30, &v)
+        let mut v = integer(n)?;
+        v.extend(integer(e)?);
+        der(0x30, &v)?
     };
     let algorithm = {
         let oid = [0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
         let null = [0x05, 0];
         let mut v = oid.to_vec();
         v.extend_from_slice(&null);
-        der(0x30, &v)
+        der(0x30, &v)?
     };
     let mut bit = vec![0];
     bit.extend_from_slice(&rsa);
     let mut value = algorithm;
-    value.extend(der(3, &bit));
-    Some(der(0x30, &value))
+    value.extend(der(3, &bit)?);
+    der(0x30, &value)
 }

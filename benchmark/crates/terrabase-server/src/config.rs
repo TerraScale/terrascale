@@ -1190,7 +1190,7 @@ impl ServerConfig {
                     for (index, destination) in backup
                         .destinations
                         .into_iter()
-                        .chain(backup.historical_destinations.into_iter())
+                        .chain(backup.historical_destinations)
                         .enumerate()
                     {
                         let provider = match destination.provider.as_str() {
@@ -2029,7 +2029,7 @@ fn validate_public_api_paths(section: &FilePublicApi, production: bool) -> Resul
 }
 
 fn public_api_path(path: &Path, production: bool) -> Result<PathBuf, ConfigError> {
-    if production { production_path(path) } else { absolute(path).map(|_| path.to_path_buf()) }
+    if production { production_path(path) } else { absolute(path).map(|()| path.to_path_buf()) }
 }
 
 fn append_public_api_paths(paths: &mut Vec<PathBuf>, public_api: &PublicApiConfig) {

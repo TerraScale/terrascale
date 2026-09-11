@@ -14,24 +14,29 @@ pub const MAX_LIMIT: usize = 100;
 const MAX_CURSOR_BYTES: usize = 512;
 
 /// The management representation of one authenticated logical recovery point.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct BackupPoint {
     /// Exact lowercase hexadecimal recovery-point identity.
+    #[schema(pattern = "^[0-9a-f]{64}$")]
     pub point_id: String,
     /// Canonical source database ULID.
     pub source_database_id: String,
     /// Capture wall-clock timestamp.
+    #[schema(format = "uint64", minimum = 0)]
     pub captured_at_unix_millis: u64,
     /// Immutable retention deadline.
+    #[schema(format = "uint64", minimum = 0)]
     pub retain_until_unix_millis: u64,
     /// Logical content checksum.
+    #[schema(pattern = "^[0-9a-f]+$")]
     pub logical_checksum: String,
     /// Logical document count encoded as a decimal string.
+    #[schema(pattern = "^[0-9]+$")]
     pub logical_documents: String,
 }
 
 /// One bounded keyset page of retained logical points.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct BackupPointPage {
     /// Points in newest-first keyset order.
     pub points: Vec<BackupPoint>,

@@ -3592,21 +3592,24 @@ mod tests {
         let lease = config.keys.lease().unwrap();
         let make_point = |clock| {
             let reader: Arc<dyn BackupReader + Send + Sync> = config.keys.clone();
+            let mut plan = BackupPlan::snapshot_at(
+                boundary,
+                BackupEncryption::from_database_key_lease(
+                    &lease,
+                    engine.database_owner().region(),
+                    0,
+                )
+                .unwrap(),
+            )
+            .with_snapshot_routes(vec![crate::shard_split::ShardRoute::new(1, None, None).unwrap()])
+            .unwrap();
+            plan.capture_kind = super::super::BackupCaptureKind::RoutedShardParticipant;
             run_backup(
                 engine,
-                BackupPlan::snapshot_at(
-                    boundary,
-                    BackupEncryption::from_database_key_lease(
-                        &lease,
-                        engine.database_owner().region(),
-                        0,
-                    )
-                    .unwrap(),
-                )
-                .with_retention_days(1)
-                .unwrap()
-                .with_capture_unix_millis(clock)
-                .with_reader(reader),
+                plan.with_retention_days(1)
+                    .unwrap()
+                    .with_capture_unix_millis(clock)
+                    .with_reader(reader),
                 &config.staging.join(&namespace),
             )
             .unwrap()
@@ -3836,7 +3839,11 @@ mod tests {
             })
             .unwrap();
 
-        let manifest = fleet.capture_snapshot(&database).await.unwrap();
+        // Capture a normal point to exercise the stream, then create the
+        // envelope member through the routed producer so its authenticated
+        // capture kind matches the envelope contract.
+        let standalone = fleet.capture_snapshot(&database).await.unwrap();
+        let lease = fleet.streams[&database].config.keys.lease().unwrap();
         let incarnation = u128::from_be_bytes(engine.database_id().as_bytes());
         let physical = crate::shard_split::FileShardIdentity {
             database_incarnation: incarnation,
@@ -3846,8 +3853,15 @@ mod tests {
         };
         let physical_staging = staging.join(participant_namespace(physical));
         std::fs::create_dir_all(&physical_staging).unwrap();
-        let point_name = format!("rp-{}", manifest.identity());
-        std::fs::rename(staging.join(&point_name), physical_staging.join(&point_name)).unwrap();
+        let mut plan = BackupPlan::snapshot_at(
+            standalone.boundary_sequence(),
+            BackupEncryption::from_database_key_lease(&lease, engine.database_owner().region(), 0)
+                .unwrap(),
+        )
+        .with_snapshot_routes(vec![crate::shard_split::ShardRoute::new(1, None, None).unwrap()])
+        .unwrap();
+        plan.capture_kind = super::super::BackupCaptureKind::RoutedShardParticipant;
+        let manifest = run_backup(&engine, plan, &physical_staging).unwrap().manifest().clone();
         let envelope = single_file_envelope(
             &database,
             &database,

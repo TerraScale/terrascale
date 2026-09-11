@@ -163,7 +163,7 @@ impl Session {
                 }
                 let mut response = super::attach_response(active, &self.state.capability_keys);
                 // A view-only socket cannot widen its credential or extend its lease.
-                response.capability = credential.clone();
+                response.capability.clone_from(credential);
                 return Ok((response, view.clone()));
             }
         };

@@ -1,10 +1,23 @@
 //! Durable member outbox; the host polls this authenticated Unix control route.
-use super::*;
+use super::{
+    AllocationBindingResolver, Arc, Deserialize, IntoResponse, Json, OptionalExtension, Serialize,
+    State, StatusCode, TransactionBehavior, UsageAdmissionJournal, params, unix_millis,
+};
 use terrabase::usage::{BudgetConsumption, VerifiedAllocation};
 use terrabase_cluster::wal_driver::WalEngineHandle;
 
+type PoolEngineResolver = dyn Fn(&str) -> Result<Arc<dyn WalEngineHandle>, String> + Send + Sync;
+
+fn allocation_units(local_units: i64) -> Result<u64, String> {
+    u64::try_from(local_units).map_err(|_| "allocation units invalid".into())
+}
+
+fn signed_pool_units(units: u64) -> Result<i64, String> {
+    i64::try_from(units).map_err(|_| "pool units exceed signed budget range".into())
+}
+
 pub(crate) struct PoolRuntime {
-    pub engines: Arc<dyn Fn(&str) -> Result<Arc<dyn WalEngineHandle>, String> + Send + Sync>,
+    pub engines: Arc<PoolEngineResolver>,
     pub databases: Arc<dyn Fn() -> Result<Vec<String>, String> + Send + Sync>,
     pub limits: PoolLimits,
 }
@@ -136,9 +149,10 @@ impl UsageAdmissionJournal {
                 }
                 continue;
             }
-            if units > allocation.local_units() as u64 {
+            if units > allocation_units(allocation.local_units())? {
                 continue;
             }
+            let signed_units = signed_pool_units(units)?;
             if let Some(runtime) = &self.pool_runtime {
                 self.install_pool_credit(&allocation)?;
                 let handle = (runtime.engines)(database)?;
@@ -153,7 +167,7 @@ impl UsageAdmissionJournal {
                     )
                     .map_err(|_| "pool credit read failed")?
                     .unwrap_or(0)
-                    < units as i64
+                    < signed_units
                 {
                     continue;
                 }
@@ -258,10 +272,10 @@ impl UsageAdmissionJournal {
         )
         .ok_or("pool expiry invalid")?
         .to_rfc3339();
-        let pool_id = allocations
-            .last()
-            .map(|a| a.grant().pool_id.clone())
-            .unwrap_or_else(|| format!("{holder}/{database}/{writer_epoch}/{placement}"));
+        let pool_id = allocations.last().map_or_else(
+            || format!("{holder}/{database}/{writer_epoch}/{placement}"),
+            |a| a.grant().pool_id.clone(),
+        );
         let work = PoolWork {
             request: RefillRequest {
                 refill_operation_id: terrabase::identity::DatabaseUlid::generate().to_text(),
@@ -270,8 +284,7 @@ impl UsageAdmissionJournal {
                 database_id: database.clone(),
                 branch_id: allocations
                     .last()
-                    .map(|a| a.grant().branch_id.clone())
-                    .unwrap_or_else(|| "main".into()),
+                    .map_or_else(|| "main".into(), |a| a.grant().branch_id.clone()),
                 holder_id: holder,
                 region: self.region.to_ascii_lowercase(),
                 selected_regions: regions,
@@ -305,7 +318,7 @@ impl UsageAdmissionJournal {
             work: Some(serde_json::from_slice(&bytes).map_err(|_| "pool journal corrupt")?),
         })
     }
-    fn acknowledge_pool(&self, ack: Ack) -> Result<(), String> {
+    fn acknowledge_pool(&self, ack: &Ack) -> Result<(), String> {
         let mut connection = self.connection.lock().map_err(|_| "pool journal lock unavailable")?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -348,8 +361,22 @@ pub(super) async fn ack(
     State(journal): State<Arc<UsageAdmissionJournal>>,
     Json(ack): Json<Ack>,
 ) -> StatusCode {
-    match tokio::task::spawn_blocking(move || journal.acknowledge_pool(ack)).await {
+    match tokio::task::spawn_blocking(move || journal.acknowledge_pool(&ack)).await {
         Ok(Ok(())) => StatusCode::OK,
         _ => StatusCode::CONFLICT,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{allocation_units, signed_pool_units};
+
+    #[test]
+    fn pool_unit_boundaries_preserve_signed_budget_contract() {
+        let max = u64::try_from(i64::MAX).unwrap();
+        assert_eq!(signed_pool_units(max), Ok(i64::MAX));
+        assert!(signed_pool_units(max + 1).is_err());
+        assert_eq!(allocation_units(0), Ok(0));
+        assert!(allocation_units(-1).is_err());
     }
 }

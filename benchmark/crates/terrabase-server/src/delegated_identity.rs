@@ -147,7 +147,7 @@ impl IdentityVerifier {
             service_key_file: None,
             tls,
             permits: tokio::sync::Semaphore::new(32),
-            authorization: Default::default(),
+            authorization: crate::authorization_leases::AuthorizationLeases::default(),
             authorization_started: std::sync::atomic::AtomicBool::new(false),
         })
     }
@@ -163,7 +163,7 @@ impl IdentityVerifier {
             region,
             path,
         )
-        .map_err(|_| IdentityError::Configuration)?;
+        .map_err(|()| IdentityError::Configuration)?;
         Ok(self)
     }
 
@@ -180,7 +180,7 @@ impl IdentityVerifier {
         {
             return Err(IdentityError::Denied);
         }
-        self.authorization.install(lease, now, true).map_err(|_| IdentityError::Denied)?;
+        self.authorization.install(lease, now, true).map_err(|()| IdentityError::Denied)?;
         Ok(scope)
     }
 
@@ -207,7 +207,7 @@ impl IdentityVerifier {
         let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
         let body = serde_json::to_vec(&serde_json::json!({"token":"identity-key-adoption-probe",
             "audience":self.audience,"organizationId":"probe","projectId":"probe",
-            "databaseId":"probe","action":"read","region":self.authorization.region().map_err(|_| IdentityError::Configuration)?}))
+            "databaseId":"probe","action":"read","region":self.authorization.region().map_err(|()| IdentityError::Configuration)?}))
         .map_err(|_| IdentityError::Unavailable)?;
         let response: Admission = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
             .await
@@ -246,7 +246,7 @@ impl IdentityVerifier {
         };
         let scope = format!("database:{action}");
         let mut input = serde_json::json!({"token":token,"audience":self.audience,
-            "organizationId":organization,"projectId":project,"databaseId":database,"action":action,"region":self.authorization.region().map_err(|_| IdentityError::Configuration)?});
+            "organizationId":organization,"projectId":project,"databaseId":database,"action":action,"region":self.authorization.region().map_err(|()| IdentityError::Configuration)?});
         if let Some(collection) = collection {
             input["collection"] = collection.into();
         }
@@ -327,7 +327,7 @@ impl IdentityVerifier {
             "projectId": project,
             "databaseId": database,
             "action": action,
-            "region": self.authorization.region().map_err(|_| IdentityError::Configuration)?,
+            "region": self.authorization.region().map_err(|()| IdentityError::Configuration)?,
         });
         if let Some(collection) = collection {
             input["collection"] = collection.into();
@@ -460,6 +460,8 @@ impl IdentityVerifier {
     }
 
     pub(crate) async fn refresh_authorization(&self) -> Result<(), IdentityError> {
+        use futures_util::StreamExt as _;
+
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct Reply {
@@ -472,7 +474,6 @@ impl IdentityVerifier {
             .as_secs();
         let tenants = self.authorization.active_tenants(now);
         // Bounded control work per tenant batch, independent of subscriber count.
-        use futures_util::StreamExt as _;
         let batches = tenants.chunks(32).map(ToOwned::to_owned).collect::<Vec<_>>();
         let outcomes = futures_util::stream::iter(batches)
             .map(|batch| async move {
@@ -483,7 +484,7 @@ impl IdentityVerifier {
                     "region": self
                         .authorization
                         .region()
-                        .map_err(|_| IdentityError::Configuration)?,
+                        .map_err(|()| IdentityError::Configuration)?,
                     "tenantIds": batch,
                 }))
                 .map_err(|_| IdentityError::Unavailable)?;

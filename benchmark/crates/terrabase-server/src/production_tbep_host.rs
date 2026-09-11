@@ -29,7 +29,7 @@ impl ProductionTbepHost {
         let database = self
             .registry
             .resolve_serving(&scope.database)
-            .map_err(|error| terrabase_tbep::HostingError::Refused(error.to_owned()))?
+            .map_err(|error| terrabase_tbep::HostingError::Refused(error.clone()))?
             .ok_or_else(|| {
                 terrabase_tbep::HostingError::Refused("database is not serving".into())
             })?;
@@ -57,7 +57,7 @@ impl ProductionTbepHost {
         self.registry
             .retained_snapshot()
             .map(|entries| entries.into_iter().map(|entry| entry.database).collect())
-            .map_err(|error| terrabase_tbep::HostingError::Refused(error.to_owned()))
+            .map_err(|error| terrabase_tbep::HostingError::Refused(error.clone()))
     }
 
     fn combined(a: registry::HealthState, b: registry::HealthState) -> registry::HealthState {
@@ -197,7 +197,7 @@ impl TbepHost for ProductionTbepHost {
     ) -> Result<registry::SupervisionShutdownResponse, terrabase_tbep::HostingError> {
         self.registry
             .begin_drain()
-            .map_err(|error| terrabase_tbep::HostingError::Refused(error.to_owned()))?;
+            .map_err(|error| terrabase_tbep::HostingError::Refused(error.clone()))?;
         // The runtime owns reverse-order teardown of replication and native
         // listeners. Retained MemberHost instances must remain available for
         // those drains; fencing the registry is the only action owned here.

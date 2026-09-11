@@ -9,6 +9,7 @@
 #![recursion_limit = "256"]
 
 pub mod admission;
+pub(crate) mod admission_fence;
 pub mod admitted_databases;
 pub mod api;
 pub mod api_keys;

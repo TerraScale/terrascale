@@ -297,7 +297,7 @@ impl ReplicationPeers {
                 dispatcher,
                 retention: retention.clone(),
             },
-            runtime_handle,
+            &runtime_handle,
         );
         Ok(Self {
             stop,
@@ -578,7 +578,7 @@ struct PeerOwnerContext {
 
 fn spawn_peer_owner(
     context: PeerOwnerContext,
-    runtime_handle: tokio::runtime::Handle,
+    runtime_handle: &tokio::runtime::Handle,
 ) -> tokio::task::JoinHandle<Result<(), String>> {
     runtime_handle.spawn(async move {
         let PeerOwnerContext { runtime, progress, validated, stopped, worker_stop, worker_lifecycle, worker_observations, worker_cuts, dispatcher, retention } = context;
@@ -591,7 +591,7 @@ fn spawn_peer_owner(
             workers.spawn(peer_worker(PeerWorkerContext {
                 runtime: runtime.clone(), progress: progress.clone(), id: id.clone(), lanes,
                 incoming: receiver, stopped: stopped.clone(), observations: worker_observations.clone(),
-                new_lanes: PeerInbox { receiver: Some(new_lanes), peer: id.as_str().to_owned(), worker_id, live_workers: worker_lifecycle.clone(), progress: progress.clone(), observations: worker_observations.clone(), retirement: None, suspended: Default::default() },
+                new_lanes: PeerInbox { receiver: Some(new_lanes), peer: id.as_str().to_owned(), worker_id, live_workers: worker_lifecycle.clone(), progress: progress.clone(), observations: worker_observations.clone(), retirement: None, suspended: BTreeSet::default() },
                 cuts: worker_cuts.clone(), worker_id,
                 retention: retention.clone(),
             }));
@@ -681,7 +681,7 @@ fn validate_peer_lanes(
         return Err("replication database lane limit exceeded".into());
     }
     peers.iter().try_for_each(|(name, lanes)| {
-        let id = MemberId::try_new(&name).map_err(failure)?;
+        let id = MemberId::try_new(name).map_err(failure)?;
         if endpoint.config().peer(&id).is_none() {
             return Err("replication peer is not admitted".into());
         }

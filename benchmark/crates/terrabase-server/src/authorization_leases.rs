@@ -236,7 +236,7 @@ impl AuthorizationLeases {
     }
     pub fn admits(&self, scope: &str, now: u64) -> bool {
         let Some(scope) = parse_scope(scope) else { return false };
-        self.state.read().ok().is_some_and(|state| {
+        self.state.read().is_ok_and(|state| {
             state.tenants.get(scope.tenant).is_some_and(|cached| {
                 cached.retain_until > now
                     && cached.lease.valid_until > now

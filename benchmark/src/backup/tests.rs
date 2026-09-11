@@ -543,6 +543,57 @@ fn assert_encrypted_restore_rejects_unavailable_key(
 }
 
 #[test]
+fn encrypted_participant_retry_preserves_provenance_and_rejects_root_relocation() {
+    use crate::backup::BackupCaptureKind;
+
+    let (_source_dir, source) = open_engine("participant-retry-source");
+    let owner = source.database_owner();
+    committed(put(
+        &source,
+        &owner.tenant().to_text(),
+        "participant-retry-put",
+        "doc-1",
+        "users",
+        text("participant"),
+        LocalDurability::Synced,
+    ));
+    let encryption = local_backup_encryption(owner, owner.region());
+    let boundary = source.journaled_high_water().unwrap().unwrap();
+    let mut plan = BackupPlan::snapshot_at(boundary, encryption.clone())
+        .with_snapshot_routes(vec![crate::shard_split::ShardRoute::new(1, None, None).unwrap()])
+        .unwrap()
+        .with_capture_unix_millis(source.backup_boundary_unix_millis(boundary).unwrap());
+    plan.capture_kind = BackupCaptureKind::RoutedShardParticipant;
+    let participants = location("participant-retry-points");
+    let first = run_backup(&source, plan.clone(), &participants).unwrap();
+    let retry = run_backup(&source, plan.clone(), &participants).unwrap();
+    assert_eq!(retry.manifest(), first.manifest());
+    assert_eq!(retry.manifest().capture_kind(), BackupCaptureKind::RoutedShardParticipant);
+
+    // A capture of the other class cannot reuse this participant's facts.
+    plan.capture_kind = BackupCaptureKind::WholeDatabase;
+    let whole = run_backup(&source, plan.clone(), &location("participant-retry-whole")).unwrap();
+    assert!(!super::same_capture_facts(first.manifest(), whole.manifest()));
+    assert!(matches!(run_backup(&source, plan, &participants), Err(BackupError::ManifestInvalid)));
+
+    let root = location("participant-relocated-root");
+    let point_name = format!("rp-{}", first.manifest().identity());
+    let relocated = root.join(&point_name);
+    std::fs::create_dir_all(&relocated).unwrap();
+    for entry in std::fs::read_dir(participants.join(&point_name)).unwrap() {
+        let entry = entry.unwrap();
+        assert!(entry.file_type().unwrap().is_file());
+        std::fs::copy(entry.path(), relocated.join(entry.file_name())).unwrap();
+    }
+    first.manifest().verify(&root).unwrap();
+    let cipher = encryption.cipher.lock().unwrap();
+    assert_eq!(
+        super::restore::discover_encrypted_points(&root, &*cipher),
+        Err(BackupError::ManifestInvalid)
+    );
+}
+
+#[test]
 fn encrypted_restore_authenticates_the_native_backup_archive() {
     let owner = DatabaseOwner::local_development();
     let source_dir = location("encrypted-restore-source");

@@ -191,9 +191,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use manifest::{
-    BackupCaptureKind, ENCRYPTED_MANIFEST_FILE, MANIFEST_FILE, ManifestFacts, point_directory,
-};
+use manifest::{ENCRYPTED_MANIFEST_FILE, MANIFEST_FILE, ManifestFacts, point_directory};
 pub mod object_store;
 pub mod workload_identity_delivery;
 use records::{MemberWriter, Record};
@@ -1710,10 +1708,18 @@ fn find_existing_capture(
     let points = match encryption {
         Some(cipher) => {
             if let Some(reader) = reader {
-                restore::discover_encrypted_points(destination, reader)?
+                restore::discover_encrypted_points_for_capture(
+                    destination,
+                    reader,
+                    expected.capture_kind(),
+                )?
             } else {
                 let cipher = cipher.lock().map_err(|_| BackupError::DestinationUnavailable)?;
-                restore::discover_encrypted_points(destination, &*cipher)?
+                restore::discover_encrypted_points_for_capture(
+                    destination,
+                    &*cipher,
+                    expected.capture_kind(),
+                )?
             }
         }
         None => discover_points(destination)?,
@@ -1726,6 +1732,7 @@ fn same_capture_facts(left: &BackupManifest, right: &BackupManifest) -> bool {
         && left.partition_id() == right.partition_id()
         && left.tenant_scope_digest() == right.tenant_scope_digest()
         && left.kind() == right.kind()
+        && left.capture_kind() == right.capture_kind()
         && left.boundary_sequence() == right.boundary_sequence()
         && left.boundary_unix_millis() == right.boundary_unix_millis()
         && left.captured_unix_millis() == right.captured_unix_millis()
