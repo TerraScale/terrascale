@@ -1149,10 +1149,7 @@ impl ServerConfig {
                     || !byok.backup_role_arn.starts_with("arn:")
                     || byok.backup_role_arn.len() > 512
                     || !valid_provider
-                    || byok.key_id.is_empty()
-                    || byok.key_id.len() > 512
-                    || byok.key_region.is_empty()
-                    || byok.key_region.len() > 64
+                    || !valid_aws_kms_key_arn(&byok.key_id, &byok.key_region)
                     || byok.key_endpoint.as_deref().is_some_and(|value| !valid_endpoint(value))
                     || byok
                         .backup_external_id
@@ -1516,6 +1513,41 @@ impl ServerConfig {
             shutdown_grace: bounded_duration(file.transport.shutdown_grace_millis, 100, 300_000)?,
         })
     }
+}
+
+fn valid_aws_kms_key_arn(value: &str, region: &str) -> bool {
+    let Some(rest) = value.strip_prefix("arn:aws:kms:") else {
+        return false;
+    };
+    let Some((arn_region, rest)) = rest.split_once(':') else {
+        return false;
+    };
+    if arn_region != region
+        || arn_region.is_empty()
+        || arn_region.len() > 32
+        || !arn_region.chars().enumerate().all(|(index, character)| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || (index > 0 && character == '-')
+        })
+    {
+        return false;
+    }
+    let Some((account, key)) = rest.split_once(":key/") else {
+        return false;
+    };
+    if account.len() != 12 || !account.chars().all(|character| character.is_ascii_digit()) {
+        return false;
+    }
+    let parts: Vec<&str> = key.split('-').collect();
+    let lengths = [8, 4, 4, 4, 12];
+    parts.len() == lengths.len()
+        && parts.iter().zip(lengths).all(|(part, length)| {
+            part.len() == length
+                && part.chars().all(|character| {
+                    character.is_ascii_hexdigit() && !character.is_ascii_uppercase()
+                })
+        })
 }
 
 fn absolute(path: &Path) -> Result<(), ConfigError> {
@@ -2352,7 +2384,7 @@ historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.sto
             .replace("encryption_provider = \"oci-vault\"", "encryption_provider = \"customer-kms\"")
             .replace(
                 "[databases.backup]\n",
-                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nbackup_external_id = \"external-123\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/abcd1234\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
+                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nbackup_external_id = \"external-123\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
             )
             .replace(
                 "{ provider = \"oci\", endpoint = \"https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com\", signing_region = \"sa-saopaulo-1\", bucket = \"backup-a\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
@@ -2378,7 +2410,7 @@ historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.sto
             .replace("encryption_provider = \"oci-vault\"", "encryption_provider = \"customer-kms\"")
             .replace(
                 "[databases.backup]\n",
-                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/abcd1234\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
+                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
             )
             .replace(
                 "{ provider = \"oci\", endpoint = \"https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com\", signing_region = \"sa-saopaulo-1\", bucket = \"backup-a\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
@@ -2396,6 +2428,18 @@ historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.sto
         assert!(ServerConfig::parse(&valid).is_ok(), "AWS KMS BYOK rejected");
         for invalid in [
             valid.replace("key_provider = \"aws-kms\"", "key_provider = \"unimplemented\""),
+            valid.replace(
+                "key_id = \"arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012\"",
+                "key_id = \"12345678-1234-1234-1234-123456789012\"",
+            ),
+            valid.replace(
+                "key_id = \"arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012\"",
+                "key_id = \"arn:aws:kms:us-east-1:123456789012:alias/customer\"",
+            ),
+            valid.replace(
+                "key_region = \"us-east-1\"",
+                "key_region = \"eu-west-1\"",
+            ),
             valid.replace("provider = \"customer-s3\"", "provider = \"unimplemented\""),
             valid.replace(
                 "backup_endpoint = \"https://s3.customer.example\"",
