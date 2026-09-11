@@ -5,63 +5,22 @@ on:
 permissions:
   contents: read
 jobs:
-  fj_help:
+  token_fj:
     runs-on: terrascale-builder
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - run: "fj --help"
-  fj_version_cmd:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "fj version"
-  fj_auth:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "fj auth list"
-  keys_home:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "test -f \"$HOME/.local/share/forgejo-cli/keys.json\""
-  api_self_github:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "curl -sf -H \"Authorization: token $GITHUB_TOKEN\" https://git.terrascale.tech/api/v1/repos/TerraScale/ts-docs"
-  api_self_forgejo:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "curl -sf -H \"Authorization: token $FORGEJO_TOKEN\" https://git.terrascale.tech/api/v1/repos/TerraScale/ts-docs"
-  api_deploy_github:
+      - run: |
+          set -eu
+          TS="${FORGEJO_TOKEN:-$GITHUB_TOKEN}"
+          test -n "$TS"
+          fj auth add-token "$TS" --host git.terrascale.tech
+          fj -H git.terrascale.tech whoami
+          fj -H git.terrascale.tech release view v0.0.0-dev.73ab580df8907a52c6c2bbbc8f2d1bb0abdeafbc --repo TerraScale/ts-deploy >/dev/null
+          fj -H git.terrascale.tech release asset download v0.0.0-dev.73ab580df8907a52c6c2bbbc8f2d1bb0abdeafbc ts-deploy-linux-amd64 --repo TerraScale/ts-deploy --output /tmp/ts-deploy
+          chmod +x /tmp/ts-deploy
+          /tmp/ts-deploy version
+  api_deploy_jobtoken:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
       - run: "curl -sf -H \"Authorization: token $GITHUB_TOKEN\" https://git.terrascale.tech/api/v1/repos/TerraScale/ts-deploy"
-  api_deploy_forgejo:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "curl -sf -H \"Authorization: token $FORGEJO_TOKEN\" https://git.terrascale.tech/api/v1/repos/TerraScale/ts-deploy"
-  api_release_github:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "curl -sf -H \"Authorization: token $GITHUB_TOKEN\" \"https://git.terrascale.tech/api/v1/repos/TerraScale/ts-deploy/releases/tags/v0.0.0-dev.73ab580df8907a52c6c2bbbc8f2d1bb0abdeafbc\""
-  api_release_forgejo:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "curl -sf -H \"Authorization: token $FORGEJO_TOKEN\" \"https://git.terrascale.tech/api/v1/repos/TerraScale/ts-deploy/releases/tags/v0.0.0-dev.73ab580df8907a52c6c2bbbc8f2d1bb0abdeafbc\""
-  env_names:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "test -n \"$GITHUB_TOKEN\""
-  env_forgejo_token:
-    runs-on: terrascale-builder
-    timeout-minutes: 5
-    steps:
-      - run: "test -n \"$FORGEJO_TOKEN\""
