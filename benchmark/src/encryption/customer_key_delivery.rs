@@ -139,7 +139,7 @@ impl CustomerKmsAdapter for CustomerKmsKeyDelivery {
         ];
         let mut request = MAGIC.to_vec();
         for (index, field) in fields.into_iter().enumerate() {
-            if !valid_field(field) && !(index == 3 && field.is_empty()) {
+            if !(valid_field(field) || index == 3 && field.is_empty()) {
                 return Err(EncryptionError::InvalidKeyMetadata);
             }
             let length = u16::try_from(field.len()).map_err(unavailable)?;
