@@ -335,7 +335,7 @@ test('Public Alpha claims and customer links stay within the launch contract', a
 
 test('footer roadmap and API reference links keep their canonical documentation targets', async ({ page }) => {
   const expectedFooterLinks = {
-    roadmap: 'https://docs.terrascale.tech',
+    roadmap: 'https://docs.terrascale.tech/changelog/',
     apiReference: 'https://docs.terrascale.tech/getting-started/',
   }
 
@@ -343,4 +343,6 @@ test('footer roadmap and API reference links keep their canonical documentation 
   for (const href of Object.values(expectedFooterLinks)) {
     await expect(page.locator(`footer a[href="${href}"]`)).toBeVisible()
   }
+  expect(expectedFooterLinks.roadmap).not.toBe(expectedFooterLinks.apiReference)
+  await expect(page.locator('footer a[href="https://docs.terrascale.tech"]')).toBeVisible()
 })

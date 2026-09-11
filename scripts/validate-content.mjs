@@ -70,6 +70,7 @@ for (const url of [
   'https://docs.terrascale.tech/legal/dpa/',
   'https://docs.terrascale.tech/legal/support/',
   'https://docs.terrascale.tech',
+  'https://docs.terrascale.tech/changelog/',
 ]) {
   if (!site.includes(url)) failures.push(`site.ts: missing customer link ${url}`)
 }
@@ -88,6 +89,28 @@ if (actualPolicyLinks.length !== expectedPolicyLinks.length || actualPolicyLinks
 if (new Set(actualPolicyLinks.map(([, href]) => href)).size !== actualPolicyLinks.length) {
   failures.push('site.ts: policy links must point to distinct canonical destinations.')
 }
+
+export function validateProductFooterLinks(siteSource) {
+  const productFailures = []
+  const expectedProductLinks = [
+    ['roadmap', 'https://docs.terrascale.tech/changelog/'],
+    ['documentation', 'https://docs.terrascale.tech'],
+  ]
+  const productColumn = siteSource.match(/key:\s*'product'[\s\S]*?links:\s*\[([\s\S]*?)\n\s*\],/)?.[1] ?? ''
+  const actualProductLinks = [...productColumn.matchAll(/\{\s*key:\s*'([^']+)'\s*,\s*href:\s*'([^']+)'\s*\}/g)].map(([, key, href]) => [key, href])
+  for (const [key, href] of expectedProductLinks) {
+    if (!actualProductLinks.some(([actualKey, actualHref]) => actualKey === key && actualHref === href)) {
+      productFailures.push(`site.ts: product footer link ${key} must use ${href}.`)
+    }
+  }
+  const productExternalLinks = actualProductLinks.filter(([, href]) => /^https:\/\//.test(href)).map(([, href]) => href)
+  if (new Set(productExternalLinks).size !== productExternalLinks.length) {
+    productFailures.push('site.ts: product footer links must point to distinct canonical destinations.')
+  }
+  return productFailures
+}
+
+failures.push(...validateProductFooterLinks(site))
 
 const redirects = fs.readFileSync(path.join(root, 'static/_redirects'), 'utf8')
 if (!redirects.includes('/signup https://dash.terrascale.tech/register 308')) {
