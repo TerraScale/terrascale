@@ -40,7 +40,6 @@ export const es: Messages = {
           features: 'Características',
           pricing: 'Precios',
           changelog: 'Changelog',
-          roadmap: 'Roadmap',
           documentation: 'Documentación',
         },
       },

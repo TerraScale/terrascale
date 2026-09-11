@@ -40,7 +40,6 @@ export const ptBr: Messages = {
           features: 'Recursos',
           pricing: 'Preços',
           changelog: 'Changelog',
-          roadmap: 'Roadmap',
           documentation: 'Documentação',
         },
       },

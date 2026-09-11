@@ -11,6 +11,7 @@ import {
   validateRedirectRules,
 } from '../scripts/validate-redirect-contract.mjs'
 import { validateProductFooterLinks } from '../scripts/validate-content.mjs'
+import { validateLegalPolicySource } from '../scripts/validate-legal-source.mjs'
 import { extractAttributes, extractStructuredDataUrls, probeExternalLinks, requiredLinks } from '../scripts/validate-links.mjs'
 import { validateRenderedLinks } from '../scripts/validate-links.mjs'
 import { findProhibitedClaims, scanProhibitedClaims, walk as walkClaimFiles } from '../scripts/validate-claims.mjs'
@@ -18,24 +19,38 @@ import { findProhibitedClaims, scanProhibitedClaims, walk as walkClaimFiles } fr
 test('required external destinations remain distinct', () => {
   assert.equal(new Set(requiredLinks).size, requiredLinks.length)
   assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/terms/'))
-  assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/acceptable-use/'))
+  assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/terms/#acceptable-use'))
   assert.ok(requiredLinks.includes('https://docs.terrascale.tech'))
   assert.ok(requiredLinks.includes('https://docs.terrascale.tech/changelog/'))
   assert.notEqual('https://docs.terrascale.tech/changelog/', 'https://docs.terrascale.tech')
 })
 
-test('product footer validator rejects duplicate roadmap and documentation destinations', () => {
+test('product footer validator rejects duplicate changelog and documentation destinations', () => {
   const failures = validateProductFooterLinks(`
     export const footerColumns = [{
       key: 'product',
       links: [
-        { key: 'roadmap', href: 'https://docs.terrascale.tech' },
+        { key: 'changelog', href: 'https://docs.terrascale.tech' },
         { key: 'documentation', href: 'https://docs.terrascale.tech' },
       ],
     }]
   `)
-  assert.match(failures.join('\n'), /roadmap must use https:\/\/docs\.terrascale\.tech\/changelog\//)
+  assert.match(failures.join('\n'), /changelog must use https:\/\/docs\.terrascale\.tech\/changelog\//)
   assert.match(failures.join('\n'), /product footer links must point to distinct canonical destinations/)
+})
+
+test('legal policy validator requires the source file and Acceptable use heading', () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'landing-policy-'))
+  const termsPath = path.join(fixtureRoot, 'terms.md')
+  try {
+    assert.match(validateLegalPolicySource(path.join(fixtureRoot, 'missing.md')).join('\n'), /source file is missing/)
+    writeFileSync(termsPath, '# Terms\n')
+    assert.match(validateLegalPolicySource(termsPath).join('\n'), /missing the Acceptable use heading/)
+    writeFileSync(termsPath, '# Terms\n\n## Acceptable use\n')
+    assert.deepEqual(validateLegalPolicySource(termsPath), [])
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true })
+  }
 })
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
