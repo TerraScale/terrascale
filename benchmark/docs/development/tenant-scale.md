@@ -24,9 +24,12 @@ hard failure. Start the Rust member with `nice -n 19` (as required by the
 repository rules); the qualification command does not silently apply a weaker
 envelope.
 
-The live lane first checks the real member `/api/v1/health`,
-`/api/v1/regions`, and private `/internal/metrics` endpoints. The API and
-metrics URLs must identify the same private member host. It then creates
+The live lane first checks the real member `/api/v1/health`, the member's
+health-shaped `/api/v1/regions` probe, and private `/internal/metrics`
+endpoints. This `/api/v1/regions` check is against a regional TerraBase
+origin, not the edge-owned public region catalog served by `ts-proxy` at the
+same path (see ADR 0043). The API and metrics URLs must identify the same
+private member host. It then creates
 exactly 100,000 uniquely named databases using `POST /api/v1/databases` with
 SQLite-backed member state. Every create must return 201 with the requested
 record, and a subsequent member `GET /api/v1/databases` must contain all

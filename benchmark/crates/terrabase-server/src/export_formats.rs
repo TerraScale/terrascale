@@ -14,11 +14,20 @@ use std::{
 
 /// Supported import/export interchange formats.
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    utoipa::ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum TransferFormat {
     /// TerraBase native bundle members, including history and causal metadata.
+    #[default]
     Native,
     /// One envelope per line.
     Jsonl,
@@ -28,32 +37,29 @@ pub enum TransferFormat {
     MongoJson,
     /// Cosmos DB JSON documents.
     CosmosJson,
-    /// DynamoDB JSON export envelopes.
+    /// `DynamoDB` JSON export envelopes.
     DynamoJson,
 }
 
 /// Logical record scope for an export.
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    utoipa::ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ExportScope {
     /// Include current documents and retained history.
+    #[default]
     All,
     /// Include current documents only.
     Documents,
-}
-
-impl Default for ExportScope {
-    fn default() -> Self {
-        Self::All
-    }
-}
-
-impl Default for TransferFormat {
-    fn default() -> Self {
-        Self::Native
-    }
 }
 
 /// Stable artifact suffix for the selected encoding.
@@ -63,8 +69,9 @@ pub const fn extension(format: TransferFormat) -> &'static str {
         TransferFormat::Native => "tbx",
         TransferFormat::Jsonl => "jsonl",
         TransferFormat::Csv => "csv",
-        TransferFormat::MongoJson | TransferFormat::CosmosJson => "json",
-        TransferFormat::DynamoJson => "json",
+        TransferFormat::MongoJson | TransferFormat::CosmosJson | TransferFormat::DynamoJson => {
+            "json"
+        }
     }
 }
 
@@ -117,6 +124,11 @@ impl std::error::Error for CodecError {}
 
 /// Decodes bounded records. `max_record` is checked before parsing each
 /// record, so hostile input cannot make the parser allocate an unbounded value.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] when any record is malformed or exceeds
+/// `max_record`, or when the input cannot be consumed.
 pub fn decode(
     input: &[u8],
     format: TransferFormat,
@@ -134,6 +146,11 @@ pub fn decode(
 /// after each complete record with its exclusive source byte offset, so a
 /// caller can checkpoint only after the matching engine commit. At most one
 /// bounded line is retained in memory.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] when the input is malformed, oversized, or the
+/// consumer rejects a decoded record.
 pub fn decode_jsonl_reader<R: Read, F>(
     input: R,
     format: TransferFormat,
@@ -150,6 +167,11 @@ where
 /// is exclusive: it includes the record terminator (newline, CSV row ending,
 /// or the comma/closing bracket following an array element). This makes the
 /// offset safe to persist after the corresponding write commits.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] when the input is malformed, oversized, or the
+/// consumer rejects a decoded record.
 pub fn decode_reader<R: Read, F>(
     input: R,
     format: TransferFormat,
@@ -350,7 +372,7 @@ fn decode_json_array_reader<R: BufRead, F: FnMut(u64, ImportRecord) -> io::Resul
     let mut offset = 0u64;
     loop {
         match next_byte(input, &mut offset)? {
-            Some(b) if b.is_ascii_whitespace() => continue,
+            Some(b) if b.is_ascii_whitespace() => {}
             Some(b'[') => break,
             _ => return Err(CodecError::Malformed),
         }
@@ -401,7 +423,7 @@ fn decode_json_array_reader<R: BufRead, F: FnMut(u64, ImportRecord) -> io::Resul
             }
         }
         let parsed: Value = serde_json::from_slice(&value).map_err(|_| CodecError::Malformed)?;
-        let record = decode_value(parsed, format, max_record)?;
+        let record = decode_value(&parsed, format, max_record)?;
         while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) {
             let _ = next_byte(input, &mut offset)?;
         }
@@ -428,6 +450,11 @@ fn decode_json_array_reader<R: BufRead, F: FnMut(u64, ImportRecord) -> io::Resul
 
 /// Encodes records into the selected format. Values must already be canonical
 /// JSON; they are validated without converting them into a storage object.
+///
+/// # Errors
+///
+/// Returns [`CodecError::Malformed`] when a record value cannot be encoded as
+/// valid JSON, or [`CodecError::Utf8`] when CSV output is not UTF-8.
 pub fn encode(records: &[ImportRecord], format: TransferFormat) -> Result<Vec<u8>, CodecError> {
     let mut out = Vec::new();
     if format == TransferFormat::Csv {
@@ -472,7 +499,7 @@ pub fn encode(records: &[ImportRecord], format: TransferFormat) -> Result<Vec<u8
         }
     }
     if matches!(format, TransferFormat::MongoJson | TransferFormat::CosmosJson) {
-        out.splice(0..0, [b'[']);
+        out.splice(0..0, *b"[");
         out.push(b']');
     }
     Ok(out)
@@ -480,6 +507,11 @@ pub fn encode(records: &[ImportRecord], format: TransferFormat) -> Result<Vec<u8
 
 /// Encodes current document records produced by the export source. History
 /// remains in the dedicated history member and is intentionally not flattened.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] when a document value cannot be encoded in the
+/// selected format.
 pub fn encode_documents(
     records: &[crate::export_api::ExportRecord],
     format: TransferFormat,
@@ -520,11 +552,11 @@ fn decode_one(line: &[u8], format: TransferFormat, max: usize) -> Result<ImportR
                 .map_err(|_| CodecError::Malformed)?,
         });
     }
-    decode_value(value, format, max)
+    decode_value(&value, format, max)
 }
 
 fn decode_value(
-    value: Value,
+    value: &Value,
     format: TransferFormat,
     max: usize,
 ) -> Result<ImportRecord, CodecError> {
