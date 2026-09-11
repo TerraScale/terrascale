@@ -414,6 +414,52 @@ test("organization creation assigns the authenticated Better Auth user as owner"
   });
 });
 
+test("legacy placeholder-owned records become manageable by the authenticated session user", async () => {
+  await withTempRuntime(async (runtime) => {
+    const address = await started(runtime);
+    try {
+      // A pre-migration workspace records the placeholder local user as owner.
+      const legacyClient = runtime.createClient({
+        idempotencyKeyFactory: () => `legacy-${runtime.databasePath}`,
+      });
+      const legacy = expectOk(await legacyClient.organizations.create({ name: "Legacy" }));
+      assert.ok(legacy.ownerUserIds.map(String).includes("01ARZ3NDEKTSV4RRFFQ69G5FAV"));
+
+      const auth = createLocalBetterAuthHttpOperations({ baseUrl: address.apiBaseUrl });
+      const created = expectOk(
+        await auth.insertUnique({
+          model: "user",
+          data: { email: "legacy-owner@example.test", name: "Legacy Owner" },
+          idempotencyKey: "legacy-user",
+        }),
+      );
+      const userId = (created as unknown as { readonly id: string }).id;
+      const token = "local-legacy-session-0123456789-abcdefghijk";
+      expectOk(
+        await auth.insertUnique({
+          model: "session",
+          data: {
+            token,
+            userId,
+            expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+          },
+          idempotencyKey: "legacy-session",
+        }),
+      );
+
+      const client = runtime.createClient({ accessToken: token });
+      const organizations = expectOk(await client.organizations.list({ skip: 0, take: 100 }));
+      const migrated = organizations.find(
+        (organization) => organization.organizationId === legacy.organizationId,
+      );
+      assert.ok(migrated !== undefined);
+      assert.ok(migrated.ownerUserIds.map(String).includes(userId));
+    } finally {
+      await runtime.stop();
+    }
+  });
+});
+
 test("a rebuilt runtime does not replay idempotency records from a previous process", async () => {
   const directory = await mkdtemp(join(tmpdir(), "terrascale-local-generation-"));
   const databasePath = join(directory, "idempotency.sqlite");

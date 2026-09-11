@@ -28,7 +28,9 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
 
   let match = matchLocalRoute(context, "GET", "/api/v1/organizations");
   if (match !== undefined) {
-    return jsonResponse(await records<Models.Organization>(store, "organizations"));
+    const actor = localActor(context);
+    const organizations = await records<Models.Organization>(store, "organizations");
+    return jsonResponse(organizations.map((organization) => withSessionOwner(organization, actor)));
   }
   if (matchLocalRoute(context, "POST", "/api/v1/organizations") !== undefined) {
     const name = nonBlank(body.name);
@@ -57,7 +59,7 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
 
   match = matchLocalRoute(context, "GET", "/api/v1/organizations/{organizationId}");
   if (match !== undefined) {
-    return getOrganization(store, match.organizationId!);
+    return getOrganization(store, match.organizationId!, localActor(context));
   }
   match = matchLocalRoute(context, "PATCH", "/api/v1/organizations/{organizationId}");
   if (match !== undefined) {
@@ -106,8 +108,13 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
   if (match !== undefined) {
     const organizationId = match.organizationId!;
     if (await get<Models.Organization>(store, "organizations", organizationId) === undefined) return notFound("organization");
+    const actor = localActor(context);
     const all = await records<Models.Project>(store, "projects");
-    return jsonResponse(all.filter((project) => project.organizationId === organizationId));
+    return jsonResponse(
+      all
+        .filter((project) => project.organizationId === organizationId)
+        .map((project) => withSessionOwner(project, actor)),
+    );
   }
   match = matchLocalRoute(context, "POST", "/api/v1/organizations/{organizationId}/projects");
   if (match !== undefined) {
@@ -210,7 +217,7 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
   }
 
   match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}");
-  if (match !== undefined) return getProject(store, match.projectId!);
+  if (match !== undefined) return getProject(store, match.projectId!, localActor(context));
   match = matchLocalRoute(context, "PATCH", "/api/v1/projects/{projectId}");
   if (match !== undefined) {
     const project = await get<Models.Project>(store, "projects", match.projectId!);
@@ -316,14 +323,40 @@ async function invitationAction(
   return jsonResponse(updated);
 }
 
-async function getOrganization(store: TerraScaleSqliteStore, id: string): Promise<Response> {
+async function getOrganization(
+  store: TerraScaleSqliteStore,
+  id: string,
+  actor: LocalActor,
+): Promise<Response> {
   const item = await get<Models.Organization>(store, "organizations", id);
-  return item === undefined ? notFound("organization") : jsonResponse(item);
+  return item === undefined
+    ? notFound("organization")
+    : jsonResponse(withSessionOwner(item, actor));
 }
 
-async function getProject(store: TerraScaleSqliteStore, id: string): Promise<Response> {
+async function getProject(
+  store: TerraScaleSqliteStore,
+  id: string,
+  actor: LocalActor,
+): Promise<Response> {
   const item = await get<Models.Project>(store, "projects", id);
-  return item === undefined ? notFound("project") : jsonResponse(item);
+  return item === undefined ? notFound("project") : jsonResponse(withSessionOwner(item, actor));
+}
+
+/**
+ * Local databases written before ownership became session-scoped stored the
+ * placeholder local user as the owner. Treat those records as owned by the
+ * authenticated caller so an existing development workspace stays manageable
+ * after the ownership migration.
+ */
+function withSessionOwner<T extends { readonly ownerUserIds: readonly UserId[] }>(
+  record: T,
+  actor: LocalActor,
+): T {
+  if (actor.userId === LOCAL_USER_ID) return record;
+  if (!record.ownerUserIds.includes(LOCAL_USER_ID)) return record;
+  if (record.ownerUserIds.includes(actor.userId)) return record;
+  return { ...record, ownerUserIds: [...record.ownerUserIds, actor.userId] };
 }
 
 function ownerMember(
