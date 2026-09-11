@@ -157,9 +157,7 @@ impl Engine {
         transaction.schema_envelopes = schema_envelopes;
         transaction.replication_fingerprint = Some(fingerprint);
         transaction.replication_publication = Some(group);
-        let outcome = transaction.commit(LocalDurability::Written);
-        eprintln!("replication outcome {:?} origin_seq {} records {}", outcome, publication.origin_sequence, publication.records.len());
-        match outcome {
+        match transaction.commit(LocalDurability::Written) {
             CommitOutcome::Committed(receipt) => {
                 let replayed = receipt.sequence() <= snapshot_sequence;
                 Ok(AppliedReplication::new(receipt, replayed))

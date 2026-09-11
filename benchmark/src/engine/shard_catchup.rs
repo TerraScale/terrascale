@@ -158,11 +158,9 @@ fn range_publication(
             .any(|prefix| entry.key.starts_with(prefix))
         });
         if metadata.len() != before {
-            selected.private_payload = if metadata.is_empty() && schemas.is_empty() {
-                Vec::new()
-            } else {
-                crate::storage::encode_private_changes(&metadata, &schemas)
-            };
+            // Keep the versioned empty envelope so the publication still
+            // advances the source frontier after all controls are filtered.
+            selected.private_payload = crate::storage::encode_private_changes(&metadata, &schemas);
         }
     }
     Ok(selected)

@@ -55,6 +55,15 @@ change the replicated-history, snapshot, export, or operator-disk retention
 model; the references and ciphertext therefore remain subject to the journal's
 access controls and crypto-shred limitations.
 
+The current orchestrator runtime wires one AWS KMS authority tuple per process
+from the host workload-identity boundary. It verifies every admitted reference
+against that tuple and fails closed on a mismatch; it does not silently reuse
+one customer's role or key for another database. Supporting multiple distinct
+customer authorities in one process requires a separately approved credential-
+source mapping and host-install contract. Until that contract is qualified,
+deployments must either use a single admitted customer authority per process or
+keep additional customer-provider databases out of production admission.
+
 ## Production threat model
 
 Assets are customer documents and indexes, WAL and native backup artifacts,

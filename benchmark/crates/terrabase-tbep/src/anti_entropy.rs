@@ -32,7 +32,6 @@ use terrabase_replication_core::anti_entropy::{
     RowSummary,
 };
 
-use crate::engine_host::EngineHost;
 use crate::host::HostingError;
 use crate::registry::BoundScope;
 
@@ -546,4 +545,3 @@ where
     }
     Ok(proof)
 }
-
