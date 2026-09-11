@@ -5,76 +5,78 @@ on:
 permissions:
   contents: read
 jobs:
-  plain:
+  baseline:
     runs-on: terrascale-builder
     timeout-minutes: 5
     steps:
-      - run: |
-          set -eu
-          echo "plain ok"
-          uname -m
-          command -v fj
-          fj -H git.terrascale.tech whoami
-  remote:
-    runs-on: terrascale-builder
-    timeout-minutes: 10
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-      - run: test -f .forgejo/actions/ts-deploy/action.yml
-  vars:
+      - run: "true"
+  which_fj:
     runs-on: terrascale-builder
     timeout-minutes: 5
-    env:
-      TS_DEPLOY_VERSION: ${{ vars.TS_DEPLOY_VERSION }}
-      TS_DEPLOY_SHA256: ${{ vars.TS_DEPLOY_SHA256 }}
-      TS_DEPLOY_SIGNATURE_SHA256: ${{ vars.TS_DEPLOY_SIGNATURE_SHA256 }}
     steps:
-      - run: |
-          set -eu
-          test -n "${TS_DEPLOY_VERSION}"
-          test "${#TS_DEPLOY_SHA256}" -eq 64
-          test "${#TS_DEPLOY_SIGNATURE_SHA256}" -eq 64
-          echo "vars ok ${TS_DEPLOY_VERSION}"
-  install:
+      - run: "command -v fj"
+  fj_version:
     runs-on: terrascale-builder
-    timeout-minutes: 10
-    env:
-      TS_DEPLOY_VERSION: ${{ vars.TS_DEPLOY_VERSION }}
-      TS_DEPLOY_SHA256: ${{ vars.TS_DEPLOY_SHA256 }}
-      TS_DEPLOY_SIGNATURE_SHA256: ${{ vars.TS_DEPLOY_SIGNATURE_SHA256 }}
+    timeout-minutes: 5
     steps:
-      - run: |
-          set -eu
-          case "$(uname -m)" in
-            aarch64|arm64) asset=ts-deploy-linux-arm64 ;;
-            x86_64|amd64) asset=ts-deploy-linux-amd64 ;;
-          esac
-          fj release view "${TS_DEPLOY_VERSION}" --repo TerraScale/ts-deploy >/dev/null
-          fj release asset download "${TS_DEPLOY_VERSION}" "${asset}" --repo TerraScale/ts-deploy --output /tmp/ts-deploy
-          fj release asset download "${TS_DEPLOY_VERSION}" "${asset}.sig" --repo TerraScale/ts-deploy --output /tmp/ts-deploy.sig
-          printf '%s  %s\n' "${TS_DEPLOY_SHA256}" /tmp/ts-deploy | sha256sum --check --strict -
-          printf '%s  %s\n' "${TS_DEPLOY_SIGNATURE_SHA256}" /tmp/ts-deploy.sig | sha256sum --check --strict -
-          chmod +x /tmp/ts-deploy
-          /tmp/ts-deploy version
-  action:
+      - run: "fj --version"
+  fj_whoami:
     runs-on: terrascale-builder
-    timeout-minutes: 20
-    env:
-      TS_DEPLOY_VERSION: ${{ vars.TS_DEPLOY_VERSION }}
-      TS_DEPLOY_SHA256: ${{ vars.TS_DEPLOY_SHA256 }}
-      TS_DEPLOY_SIGNATURE_SHA256: ${{ vars.TS_DEPLOY_SIGNATURE_SHA256 }}
+    timeout-minutes: 5
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-      - uses: ./.forgejo/actions/ts-deploy
-        with:
-          repo: ts-docs
+      - run: "fj -H git.terrascale.tech whoami"
+  fj_release:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "fj -H git.terrascale.tech release list --repo TerraScale/ts-deploy"
+  path_usrbin:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "test -x /usr/bin/fj"
+  path_usrlocalbin:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "test -x /usr/local/bin/fj"
+  path_homelocal:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "test -x \"$HOME/.local/bin/fj\""
+  path_cargo:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "test -x \"$HOME/.cargo/bin/fj\""
+  path_nix:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "test -x /run/current-system/sw/bin/fj"
+  path_nixprofile:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "test -x /nix/var/nix/profiles/default/bin/fj"
+  path_cache_fj:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "test -x /var/cache/terrascale/toolchains/fj/0.6.0/bin/fj"
+  in_container:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "test -f /.dockerenv -o -f /run/.containerenv"
+  has_curl:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "command -v curl"
+  has_token:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: "test -n \"${FORGEJO_TOKEN:-${GITHUB_TOKEN:-${GITEA_TOKEN:-}}}\""
