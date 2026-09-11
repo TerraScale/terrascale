@@ -71,7 +71,7 @@ impl ImportCipher for ImportLeaseCipher {
         output.extend(
             cipher
                 .seal(plaintext)
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "import encryption failed"))?,
+                .map_err(|_| io::Error::other("import encryption failed"))?,
         );
         Ok(output)
     }
@@ -324,7 +324,7 @@ impl<C: ImportCipher> Read for ImportPlaintextReader<C> {
 mod tests {
     use super::*;
     use crate::test_keys;
-    use terrabase::{encryption::DatabaseKeySource, member::DatabaseScope, regions::RegionCode};
+    use terrabase::{member::DatabaseScope, regions::RegionCode};
 
     fn leased_cipher() -> ImportLeaseCipher {
         let scope = DatabaseScope::new(
@@ -421,6 +421,17 @@ mod tests {
                 .read_all(&digest, length)
                 .is_err()
         );
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn reader_rejects_oversized_declared_chunk_before_allocating() {
+        let root = test_root();
+        let path = root.join("operation.upload");
+        std::fs::write(&path, u64::MAX.to_be_bytes()).expect("header");
+        let reader =
+            ImportInputReader::open(&path, "operation", Arc::new(leased_cipher())).expect("reader");
+        assert!(reader.read_all("", 0).is_err());
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 }

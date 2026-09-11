@@ -28,6 +28,12 @@
 //! every release gate builds and tests the daemon. The cluster's dependency
 //! on `terrabase-member-transport` records ADR 0041's ownership of bounded
 //! QUIC replication lanes; both edges point strictly down the frozen layers.
+//!
+//! Review note (2026-09-11, ADR 0047): strict auth persistence is now a
+//! workspace crate. `terrabase-auth` consumes the engine's storage/public
+//! contracts and the authenticated member-transport seam; `terrabase-server`
+//! composes both auth and transport at the production boundary. These four
+//! edges are intentional and point strictly down the frozen layer order.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -47,6 +53,7 @@ const LAYERS: &[(&str, u32)] = &[
     ("terrabase-sync-core", 3),
     ("terrabase-member-transport", 3),
     ("terrabase-replication-core", 4),
+    ("terrabase-auth", 4),
     ("terrabase-cluster", 5),
     ("terrabase-tbep", 6),
     ("terrabase-server", 7),
@@ -122,6 +129,8 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-replication-core", "terrabase-causal"),
     ("terrabase-cluster", "terrabase"),
     ("terrabase-cluster", "terrabase-member-transport"),
+    ("terrabase-auth", "terrabase"),
+    ("terrabase-auth", "terrabase-member-transport"),
     ("terrabase-tbep", "terrabase"),
     ("terrabase-tbep", "terrabase-sync-core"),
     ("terrabase-tbep", "terrabase-cluster"),
@@ -129,6 +138,8 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-tbep", "terrabase-replication-core"),
     ("terrabase-server", "terrabase"),
     ("terrabase-server", "terrabase-cluster"),
+    ("terrabase-server", "terrabase-auth"),
+    ("terrabase-server", "terrabase-member-transport"),
     ("terrabase-server", "terrabase-tbep"),
     ("terrabase-server", "terrabase-sync-core"),
 ];

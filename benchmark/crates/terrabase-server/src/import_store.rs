@@ -4,8 +4,25 @@
 //! `input_length` describe encrypted staged bytes; callers must use an
 //! import-purpose `ArtifactCrypto` lease before invoking `commit_input`.
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Row, params, types::Type};
 use std::{path::Path, sync::Mutex, time::Duration};
+
+fn read_u64(row: &Row<'_>, index: usize) -> rusqlite::Result<u64> {
+    let value = row.get::<_, i64>(index)?;
+    u64::try_from(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(index, Type::Integer, Box::new(error))
+    })
+}
+
+fn read_optional_u64(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u64>> {
+    row.get::<_, Option<i64>>(index)?
+        .map(|value| {
+            u64::try_from(value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(index, Type::Integer, Box::new(error))
+            })
+        })
+        .transpose()
+}
 
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
@@ -44,6 +61,38 @@ pub(crate) struct ImportJob {
 /// Separate durable import owner; it never reads or writes `export_jobs`.
 pub(crate) struct ImportStore {
     connection: Mutex<Connection>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_root() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-import-store-{}-{}",
+            std::process::id(),
+            terrabase::identity::generate()
+        ));
+        std::fs::create_dir_all(&root).expect("root");
+        root
+    }
+
+    #[test]
+    fn get_rejects_negative_unsigned_counters() {
+        let root = test_root();
+        let store = ImportStore::open(&root).expect("store");
+        store
+            .connection
+            .lock()
+            .expect("lock")
+            .execute(
+                "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state,durability,key_version,cursor) VALUES('op','tenant','project','database','json','queued','strong','v1',-1)",
+                [],
+            )
+            .expect("malformed row");
+        assert!(store.get("op").is_err());
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
 }
 
 impl ImportStore {
@@ -101,11 +150,11 @@ impl ImportStore {
             |row| Ok(ImportJob {
                 operation_id: row.get(0)?, tenant_id: row.get(1)?, project_id: row.get(2)?,
                 database_id: row.get(3)?, format: row.get(4)?, durability: row.get(13)?, key_version: row.get(17)?,
-                pending_operation: row.get(14)?, pending_cursor: row.get(15)?, pending_records: row.get(16)?, input_digest: row.get(5)?,
-                input_length: row.get(6)?,
+                pending_operation: row.get(14)?, pending_cursor: read_optional_u64(row, 15)?, pending_records: read_optional_u64(row, 16)?, input_digest: row.get(5)?,
+                input_length: read_optional_u64(row, 6)?,
                 input_path: row.get(7)?,
-                input_committed: row.get::<_, i64>(8)? != 0, cursor: row.get(9)?,
-                committed_records: row.get(10)?, state: row.get(11)?, error: row.get(12)?,
+                input_committed: row.get::<_, i64>(8)? != 0, cursor: read_u64(row, 9)?,
+                committed_records: read_u64(row, 10)?, state: row.get(11)?, error: row.get(12)?,
             }),
         ).optional()
     }
@@ -289,11 +338,10 @@ impl ImportStore {
             if let Some(path) = path {
                 match std::fs::symlink_metadata(path) {
                     Ok(metadata) if metadata.is_file() => {
-                        std::fs::remove_file(path).map_err(|_| rusqlite::Error::InvalidQuery)?
+                        std::fs::remove_file(path).map_err(|_| rusqlite::Error::InvalidQuery)?;
                     }
-                    Ok(_) => return Err(rusqlite::Error::InvalidQuery),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => return Err(rusqlite::Error::InvalidQuery),
+                    _ => return Err(rusqlite::Error::InvalidQuery),
                 }
             }
         }

@@ -15,7 +15,8 @@
 //!    the mechanical proxy for catch-all module ownership).
 //! 3. No unsafe code outside an audited boundary (GOAL.md 'Dependency
 //!    direction': "Unsafe code remains denied unless a separately accepted
-//!    and audited record names the exact boundary").
+//!    and audited record names the exact boundary" — the audited records
+//!    are `AUDITED_UNSAFE_BOUNDARIES` below).
 //! 4. Every workspace crate denies unsafe code by lint or attribute, with
 //!    any gap recorded in the reviewed list below.
 //! 5. The engine core, native codecs, sync core, and replication core are Loro-free (AGENTS.md
@@ -185,6 +186,18 @@ fn no_catch_all_module_ownership() {
     }
 }
 
+/// Source files that hold an audited unsafe boundary. Each entry names the
+/// exact file and its review record; adding an entry requires a new review
+/// note, and shrinking this list is always allowed.
+///
+/// 2026-09-11 (ADR 0047 source review): `src/storage/sqlite/encrypted_vfs.rs`
+/// is the sole SQLite VFS ABI boundary. Its callbacks pass pointers and
+/// function tables to SQLite, which guarantees their validity and callback
+/// lifetimes; the module converts callback panics to SQLite I/O errors and
+/// keeps Rust file state behind its mutex. The module's own lint allowance is
+/// limited to this ABI boundary. Record: ADR 0047, "Source review".
+const AUDITED_UNSAFE_BOUNDARIES: &[&str] = &["src/storage/sqlite/encrypted_vfs.rs"];
+
 /// Collects the unsafe usages (`unsafe fn`, `unsafe {`, `unsafe impl`,
 /// `unsafe trait`) of one text.
 fn unsafe_usages(text: &str) -> Vec<String> {
@@ -220,12 +233,21 @@ fn unsafe_usages(text: &str) -> Vec<String> {
 fn no_unsafe_code_outside_audited_boundaries() {
     for root in crate_roots() {
         for file in fsx::rust_files(&root.sources) {
+            let relative = file
+                .strip_prefix(fsx::repo_root())
+                .unwrap_or(file.as_path())
+                .to_string_lossy()
+                .into_owned();
+            if AUDITED_UNSAFE_BOUNDARIES.contains(&relative.as_str()) {
+                continue;
+            }
             let text = fs::read_to_string(&file)
                 .unwrap_or_else(|error| panic!("cannot read {}: {error}", file.display()));
             let usages = unsafe_usages(&fsx::strip_line_comments(&text));
             assert!(
                 usages.is_empty(),
-                "{} contains unsafe usages {usages:?}; TerraBase has no audited unsafe boundary",
+                "{} contains unsafe usages {usages:?}; unsafe code needs an entry in \
+                 AUDITED_UNSAFE_BOUNDARIES with a review record",
                 file.display(),
             );
         }
