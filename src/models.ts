@@ -47,6 +47,13 @@ export type RegionsResponse = {
   readonly hosts: Readonly<Record<string, string>>;
 };
 
+/** The serving member's own region, liveness, and immutable build identity. */
+export type HealthResponse = {
+  readonly region: TerraScaleRegionCode;
+  readonly healthy: boolean;
+  readonly version: string;
+};
+
 export type Page<TItem> = {
   readonly items: readonly TItem[];
   readonly totalCount?: number;

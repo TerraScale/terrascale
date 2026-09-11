@@ -30,6 +30,7 @@ export type TerraScaleRouteName =
   | `notifications.${string}`
   | `onboarding.${string}`
   | `organizations.${string}`
+  | `health.${string}`
   | `regions.${string}`
   | `savedQueries.${string}`
   | `settings.${string}`
@@ -206,6 +207,14 @@ export class TerraScaleHttp {
               );
             }
 
+            return ok(options.routeName, response.status, response.headers, body.value as TResponse);
+          }
+
+          // A member reports degraded liveness as HTTP 503 while retaining
+          // the canonical HealthResponse body. Keep that typed observation so
+          // callers can distinguish an unhealthy member from a transport or
+          // API error, matching the other SDKs.
+          if (response.status === 503 && options.routeName === "health.health" && body.ok) {
             return ok(options.routeName, response.status, response.headers, body.value as TResponse);
           }
 

@@ -70,7 +70,10 @@ test("public HTTP clients consume the pinned producer response and error corpus"
         assert.ok(expected);
         assert.equal(result.status, expected.status, routeName);
         for (const [name, value] of Object.entries(expected.headers ?? {})) assert.equal(result.headers?.get(name), value, `${routeName}: ${name}`);
-        assert.equal(result.ok, status === undefined, routeName);
+        // Member health uses a typed HealthResponse body even when the
+        // liveness verdict is HTTP 503; all SDKs expose that observation.
+        const typedUnhealthyHealth = routeName === "health.health" && expected.status === 503;
+        assert.equal(result.ok, status === undefined || typedUnhealthyHealth, routeName);
         if (result.ok) {
           const expectedValue = expected.status === 204 ? undefined
             : expected.mediaType === "application/octet-stream"

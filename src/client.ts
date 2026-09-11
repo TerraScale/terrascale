@@ -485,6 +485,16 @@ export class RegionsClient {
     return decodeRegionResult(result, decodeRegionsResponse);
   }
 
+  /** Returns the serving member's health-shaped response. */
+  async health(): Promise<TerraScaleResult<Models.HealthResponse>> {
+    const result = await this.#http.request<unknown>({
+      method: "GET",
+      path: `${apiRoot}/health`,
+      routeName: "health.health",
+    });
+    return decodeHealthResult(result, decodeHealthResponse);
+  }
+
 }
 
 export class OrganizationsClient {
@@ -1789,6 +1799,31 @@ function decodeRegionsResponse(value: unknown): Models.RegionsResponse {
     }
   }
   return { regions, hosts: decodedHosts };
+}
+
+function decodeHealthResponse(value: unknown): Models.HealthResponse {
+  const response = requireRecord(value, "response");
+  const region = parseRegionCode(response.region, "response.region");
+  if (typeof response.healthy !== "boolean") {
+    throw new TypeError("response.healthy must be a boolean.");
+  }
+  const version = requireString(response.version, "response.version");
+  if (version.length === 0) {
+    throw new TypeError("response.version must not be empty.");
+  }
+  return { region, healthy: response.healthy, version };
+}
+
+function decodeHealthResult(
+  result: TerraScaleResult<unknown>,
+  decoder: (value: unknown) => Models.HealthResponse,
+): TerraScaleResult<Models.HealthResponse> {
+  if (!result.ok) return result;
+  try {
+    return { ...result, value: decoder(result.value) };
+  } catch (error) {
+    return invalidRegionResponse(result, error);
+  }
 }
 
 function decodeRegionSummary(value: unknown, path: string): Models.RegionSummary {

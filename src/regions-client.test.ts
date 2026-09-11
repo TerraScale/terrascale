@@ -122,4 +122,35 @@ describe("RegionsClient", () => {
     if (result.ok) assert.deepEqual(result.value.regions, [boundaryRegion]);
   });
 
+  test("decodes the member health contract, including unhealthy HTTP 503", async () => {
+    const client = createTerraScaleClient({
+      fetch: async () => Response.json(
+        { region: "GRU", healthy: false, version: "terrabase-1.2.3" },
+        { status: 503 },
+      ),
+    });
+    const result = await client.regions.health();
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.status, 503);
+      assert.deepEqual(result.value, {
+        region: "GRU",
+        healthy: false,
+        version: "terrabase-1.2.3",
+      });
+    }
+  });
+
+  test("rejects health responses without the required build identity", async () => {
+    const client = createTerraScaleClient({
+      fetch: async () => Response.json({ region: "GRU", healthy: true, version: "" }),
+    });
+    const result = await client.regions.health();
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.kind, "invalid-response");
+      assert.match(result.error.message, /version must not be empty/u);
+    }
+  });
+
 });

@@ -18,7 +18,6 @@ export const expectedContractGapRouteNames = [
   "databases.authorizationLease",
   "databases.rollbackSchema",
   "databases.websocket",
-  "health.health",
 ] as const;
 
 /** Operations exercised by the real reactive TCP journey. */
@@ -420,5 +419,9 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "regions", operation: "list", routeName: "regions.list",
     invoke: (client) => client.regions.list(),
+  },
+  {
+    client: "health", operation: "health", routeName: "health.health",
+    invoke: (client) => client.regions.health(),
   },
 ];
