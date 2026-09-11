@@ -1064,7 +1064,7 @@ pub struct DurableSchemaRecord {
 pub struct SchemaRollback {
     /// Caller-supplied idempotency identity.
     pub idempotency_key: String,
-    /// Strong ETag required when the rollback was admitted.
+    /// Strong `ETag` required when the rollback was admitted.
     pub generation: u64,
 }
 

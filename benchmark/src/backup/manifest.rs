@@ -896,8 +896,7 @@ mod tests {
             assert_eq!(
                 parse_manifest(&candidate),
                 Err(BackupError::ManifestInvalid),
-                "replacement {:?}",
-                replacement
+                "replacement {replacement:?}"
             );
         }
     }

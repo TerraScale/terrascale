@@ -176,7 +176,7 @@ async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
     )
     .await
     .unwrap();
-    let mut chunk = std::fs::read_dir(&staging)
+    let chunk = std::fs::read_dir(&staging)
         .unwrap()
         .find(|entry| entry.as_ref().unwrap().file_name().to_string_lossy().starts_with("chunk-"))
         .unwrap()

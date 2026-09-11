@@ -164,16 +164,14 @@ impl AdmissionHost {
             {
                 return Err("manifest identity mismatch".into());
             }
-            if let Some(fence) = host.fence_store.published(&record.database_id)? {
-                if fence.record != record {
+            if let Some(fence) = host.fence_store.published(&record.database_id)?
+                && fence.record != record {
                     return Err("fence admission identity conflict".into());
                 }
-            }
-            if let Some(existing) = loaded.insert(record.database_id.clone(), record.clone()) {
-                if existing != record {
+            if let Some(existing) = loaded.insert(record.database_id.clone(), record.clone())
+                && existing != record {
                     return Err("pending admission identity conflict".into());
                 }
-            }
             if extension == Some("pending") {
                 pending.push((path, record.database_id.clone()));
             }

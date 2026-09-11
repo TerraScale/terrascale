@@ -190,7 +190,7 @@ pub fn admitted_fixture() -> AdmittedFixture {
             DatabaseSpec::scoped(
                 DatabaseScope::new("production", *tenant, *project, *database, RegionCode::GRU)
                     .unwrap(),
-                &database.to_string(),
+                database.to_string(),
             )
         })
         .collect();

@@ -239,7 +239,7 @@ impl NativeBackupRuntime {
         let errors = tokio::task::spawn_blocking(move || {
             let _gate = gate;
             let mut fleet = fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-            Ok::<_, NativeBackupRuntimeError>(block_on_worker(fleet.sync_once())?)
+            block_on_worker(fleet.sync_once())
         })
         .await
         .map_err(|_| NativeBackupRuntimeError::Unavailable)??;
@@ -629,7 +629,7 @@ impl NativeBackupRuntime {
     /// Returns whether this owner still has an admitted stream.
     #[must_use]
     pub fn contains(&self, database: &str) -> bool {
-        self.databases.lock().map(|databases| databases.contains_key(database)).unwrap_or(false)
+        self.databases.lock().is_ok_and(|databases| databases.contains_key(database))
     }
 
     /// Returns whether a canonical admitted database has a native stream.

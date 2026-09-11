@@ -234,7 +234,7 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
             match journal.accepted() {
                 Ok(_) => Some(journal),
                 Err(terrabase_tbep::placement::PlacementError::NotFound) => {
-                    let accepted = serve_pending_placement_control(&config, production)
+                    let accepted = serve_pending_placement_control(config, production)
                         .await
                         .map_err(|error| {
                             Box::new(DaemonError::ProductionStartup(error))
@@ -401,10 +401,10 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
         let dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher> = auth
             .clone()
             .map(|auth| auth as Arc<dyn crate::replication_peers::PeerControlDispatcher>)
-            .ok_or_else(|| DaemonError::ProductionConfigurationMissing)?;
+            .ok_or(DaemonError::ProductionConfigurationMissing)?;
         let admission_config = production.clone();
         let admission_journal =
-            journal.clone().ok_or_else(|| DaemonError::ProductionConfigurationMissing)?;
+            journal.clone().ok_or(DaemonError::ProductionConfigurationMissing)?;
         let mut admission = crate::production_data_runtime::ProductionAdmissionRuntime::new(
             Arc::clone(&member),
             member_for_admission,
@@ -451,7 +451,7 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
             .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
         let admission = Arc::new(admission);
         serve_admitted_production(
-            &config,
+            config,
             production,
             AdmittedProduction {
                 member,
@@ -527,13 +527,10 @@ impl AdmissionListener {
         let Some(mut task) = self.task.take() else {
             return Ok(());
         };
-        let result = match tokio::time::timeout(grace, &mut task).await {
-            Ok(Ok(Ok(()))) => Ok(()),
-            Ok(_) | Err(_) => {
-                task.abort();
-                let _ = task.await;
-                Err(())
-            }
+        let result = if let Ok(Ok(Ok(()))) = tokio::time::timeout(grace, &mut task).await { Ok(()) } else {
+            task.abort();
+            let _ = task.await;
+            Err(())
         };
         let _ = std::fs::remove_file(&self.path);
         result
@@ -1046,7 +1043,7 @@ async fn serve_admitted_production(
         let restart = listener_outcome?;
         public_result.map_err(|_| DaemonError::ShutdownTimeout)?;
         metrics_result.map_err(|_| DaemonError::ShutdownTimeout)?;
-        admission_result.map_err(|_| DaemonError::ShutdownTimeout)?;
+        admission_result.map_err(|()| DaemonError::ShutdownTimeout)?;
         grpc_result
             .map_err(|_| DaemonError::ShutdownTimeout)?
             .map_err(|_| DaemonError::ShutdownTimeout)?;
@@ -1055,7 +1052,7 @@ async fn serve_admitted_production(
         let _ = recovery_worker.await_completion().await;
         let _ = native_stop.send(true);
         let native_task = native_task.take().ok_or(DaemonError::ShutdownTimeout)?;
-        let _ = native_task
+        let () = native_task
             .await
             .map_err(|_| DaemonError::ShutdownTimeout)?
             .map_err(|_| DaemonError::ShutdownTimeout)?;
@@ -1123,9 +1120,7 @@ fn parts_root_for_recovery(production: &crate::config::ProductionConfig) -> std:
     production
         .databases
         .iter()
-        .find(|database| database.enabled)
-        .map(|database| database.location.join("recovery"))
-        .unwrap_or_else(|| std::env::temp_dir().join("terrabase-recovery"))
+        .find(|database| database.enabled).map_or_else(|| std::env::temp_dir().join("terrabase-recovery"), |database| database.location.join("recovery"))
 }
 
 /// Runs authenticated control intent and lifecycle observations while admission is

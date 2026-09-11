@@ -825,7 +825,15 @@ check_edge_components() {
       warn "proxy Worker dev mode FAILED: '${body:-no body}'"
       failures=$((failures + 1)) ;;
   esac
-  body="$(curl -sfL --max-time 5 "http://127.0.0.1:$DASHBOARD_PORT/" 2>/dev/null || true)"
+  # Cold vite dep-optimization can delay the worker by ~1 min; retry to a
+  # bounded deadline instead of failing on the first silent probe.
+  local deadline=$((SECONDS + 90))
+  body=""
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    body="$(curl -sfL --max-time 5 "http://127.0.0.1:$DASHBOARD_PORT/" 2>/dev/null || true)"
+    [ -n "$body" ] && break
+    sleep 2
+  done
   if [ -n "$body" ]; then
     log "dashboard workerd: ok (127.0.0.1:$DASHBOARD_PORT)"
   else

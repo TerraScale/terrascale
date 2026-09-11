@@ -43,7 +43,7 @@ where
                     stopping = true;
                     deadline = Some(received.unwrap_or_else(|_| tokio::time::Instant::now() + DRAIN_DEADLINE));
                 },
-                _ = notify.notified() => {}
+                () = notify.notified() => {}
             }
         }
         if let Some(until) = deadline
@@ -77,7 +77,7 @@ where
                     tokio::time::sleep(delay).await;
                 } else {
                     tokio::select! {
-                        _ = tokio::time::sleep(delay) => {}
+                        () = tokio::time::sleep(delay) => {}
                         received = &mut stop => {
                             stopping = true;
                             deadline = Some(received.unwrap_or_else(|_| tokio::time::Instant::now() + DRAIN_DEADLINE));

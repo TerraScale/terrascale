@@ -452,7 +452,7 @@ pub(super) fn discover_encrypted_points(
 }
 
 /// Capture retry discovery is scoped to the producer's authenticated class.
-/// Standalone restore and inventory always use the WholeDatabase wrapper above.
+/// Standalone restore and inventory always use the `WholeDatabase` wrapper above.
 pub(super) fn discover_encrypted_points_for_capture(
     destination: &Path,
     cipher: &dyn BackupReader,

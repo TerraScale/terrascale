@@ -146,9 +146,7 @@ impl RestoreReservation {
         registry.publish(self.record.clone(), lease, location.clone(), instance)?;
         self.rollback = None;
         if activated {
-            if let Err(error) = registry.activate(&[database_id]) {
-                return Err(error);
-            }
+            registry.activate(&[database_id])?;
         }
         // Dropping the owned permit releases the exclusion only after the
         // admitted host has been republished (and activated when required).
@@ -162,12 +160,11 @@ impl RestoreReservation {
 
 impl Drop for RestoreReservation {
     fn drop(&mut self) {
-        if let Some((member, registry)) = self.rollback.take() {
-            if let Ok(lease) = self.reacquire(&member) {
+        if let Some((member, registry)) = self.rollback.take()
+            && let Ok(lease) = self.reacquire(&member) {
                 // Publication remains fenced until this drop releases the permit.
                 let _ = registry.publish(self.record.clone(), lease, self.location.clone(), 1);
             }
-        }
         if let Ok(mut paths) = self.path_guard.lock() {
             paths.remove(&self.location);
         }
@@ -585,8 +582,8 @@ impl AdmittedDatabaseRegistry {
             return Ok(None);
         }
         let mut databases = self.databases.write().map_err(|_| "admitted registry unavailable")?;
-        if let Some(entry) = databases.get(database) {
-            if let Some(host) = entry
+        if let Some(entry) = databases.get(database)
+            && let Some(host) = entry
                 .host
                 .refreshed_serving_host()
                 .map_err(|_| "shard serving refresh unavailable")?
@@ -598,7 +595,6 @@ impl AdmittedDatabaseRegistry {
                 });
                 databases.insert(database.to_owned(), replacement);
             }
-        }
         let entry = databases.get(database).cloned();
         drop(databases);
         if let Some(entry) = &entry {
@@ -1050,7 +1046,7 @@ pub(crate) mod tests {
         ));
         let lease = reservation.reacquire(&member).unwrap();
         reservation.complete(&registry, lease, 2).unwrap();
-        registry.activate(&[database.clone()]).unwrap();
+        registry.activate(std::slice::from_ref(database)).unwrap();
         // Republication retains the durable pause until the lifecycle owner
         // explicitly resumes the restored target.
         registry.resume(database, "restore-resume").unwrap();

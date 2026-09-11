@@ -80,8 +80,8 @@ pub(super) fn validate(
     {
         return Err(NativeRecoveryError::VerificationFailed);
     }
-    if let Some(facts) = &state.facts {
-        if facts.source_database_id != source
+    if let Some(facts) = &state.facts
+        && (facts.source_database_id != source
             || facts.recovery_point_id.is_empty()
             || facts.recovery_point_id.len() > 256
             || blake3::Hash::from_hex(&facts.checksum).is_err()
@@ -89,10 +89,9 @@ pub(super) fn validate(
             || facts.placement.iter().any(|region| {
                 region.is_empty() || region.len() > 128 || region.chars().any(char::is_control)
             })
-            || facts.retained_until_millis < facts.captured_at_millis
+            || facts.retained_until_millis < facts.captured_at_millis)
         {
             return Err(NativeRecoveryError::VerificationFailed);
         }
-    }
     Ok(())
 }

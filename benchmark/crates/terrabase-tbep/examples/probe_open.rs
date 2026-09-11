@@ -1,5 +1,5 @@
 //! Local debugging probe (not shipped): open the engine at the exact failing
-//! stack path and print the typed EngineOpenError.
+//! stack path and print the typed `EngineOpenError`.
 fn main() {
     let path = std::path::Path::new(
         "/home/mariogk/Projects/TerraScale/terrabase/.terrascale/stack/gru/data/terrabase-local/local/local",

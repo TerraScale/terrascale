@@ -222,7 +222,7 @@ impl ArtifactWriter for BeforeCommitWriter {
             Ok(fact)
         })
     }
-    fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
+    fn existing_facts(&mut self) -> ExportFuture<'_, Vec<ArtifactFact>> {
         Box::pin(async move { self.inner.existing_facts().await })
     }
     fn commit(self: Box<Self>, _: &ArtifactFact) -> ExportFuture<'static, ()> {

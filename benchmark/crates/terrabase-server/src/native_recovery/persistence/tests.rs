@@ -141,7 +141,7 @@ fn update_abort_preserves_phase_record_and_checkpoint_atomically() {
         })
         .unwrap();
     c.execute_batch("CREATE TRIGGER reject_measure BEFORE UPDATE ON native_recovery_operations WHEN NEW.phase='measuring' BEGIN SELECT RAISE(ABORT, 'blocked'); END;").unwrap();
-    let mut next = operation(NativeRecoveryPhase::Measuring);
+    let next = operation(NativeRecoveryPhase::Measuring);
     assert_eq!(save(&c, &next, Some(&point())), Err(NativeRecoveryError::Unavailable));
     let after: (String, Vec<u8>, Option<Vec<u8>>) = c
         .query_row("SELECT phase,record,checkpoint FROM native_recovery_operations", [], |r| {

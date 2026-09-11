@@ -220,6 +220,7 @@ pub struct HttpsJwksFetcher {
 
 impl HttpsJwksFetcher {
     /// Uses the platform root store and AWS-LC crypto provider.
+    #[must_use]
     pub fn new() -> Self {
         let roots: rustls::RootCertStore = webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect();
         let tls = rustls::ClientConfig::builder_with_provider(Arc::new(

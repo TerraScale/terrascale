@@ -2299,7 +2299,7 @@ mod tests {
                 Ok(fact(path, plaintext))
             })
         }
-        fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
+        fn existing_facts(&mut self) -> ExportFuture<'_, Vec<ArtifactFact>> {
             Box::pin(async move {
                 Ok(self
                     .members

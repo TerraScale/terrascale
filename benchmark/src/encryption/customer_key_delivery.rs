@@ -231,7 +231,7 @@ mod tests {
             "aws-kms",
             "arn:aws:kms:sa-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
             "sa-east-1",
-            Option::<String>::None.unwrap_or_default(),
+            String::default(),
         )
         .unwrap();
         let capture = std::thread::spawn(move || {

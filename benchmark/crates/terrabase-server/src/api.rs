@@ -2403,11 +2403,10 @@ async fn list_indexes(
     } else {
         None
     };
-    if let Some(session) = &mut session {
-        if let Err(error) = session.read_snapshot() {
+    if let Some(session) = &mut session
+        && let Err(error) = session.read_snapshot() {
             return session_error(error).into_response();
         }
-    }
     match engine.index_descriptors() {
         Ok(descriptors) => {
             let mut body = String::from("{\"indexes\":[");
@@ -3092,11 +3091,10 @@ async fn batch_documents(
             Err((code, message)) => return batch_refusal(index, code, message),
         }
     }
-    if has_idempotency_key(&headers) {
-        if let Err(error) = transaction.bind_batch_request(fingerprint, operations.len()) {
+    if has_idempotency_key(&headers)
+        && let Err(error) = transaction.bind_batch_request(fingerprint, operations.len()) {
             return document_request_error(error).into_response();
         }
-    }
     if let Err(error) = attach_write_budget(
         &state,
         &mut transaction,
@@ -3339,7 +3337,7 @@ fn stage_batch_operation(
             transaction.delete_in_collection(collection, id, ExpectedVersion::Any);
             Ok(1)
         }
-        _ => return Err(("unknown_op", "op must be put, patch, or delete")),
+        _ => Err(("unknown_op", "op must be put, patch, or delete")),
     }
 }
 
@@ -4241,11 +4239,10 @@ async fn put_document(
         }
         .into_response();
     }
-    if has_idempotency_key(&headers) {
-        if let Err(error) = transaction.bind_document_request(fingerprint) {
+    if has_idempotency_key(&headers)
+        && let Err(error) = transaction.bind_document_request(fingerprint) {
             return document_request_error(error).into_response();
         }
-    }
     if let Err(error) = durability.guard(
         &mut transaction,
         host.engine_host(),
@@ -4473,11 +4470,10 @@ async fn patch_document(
         }
         .into_response();
     }
-    if has_idempotency_key(&headers) {
-        if let Err(error) = transaction.bind_document_request(fingerprint) {
+    if has_idempotency_key(&headers)
+        && let Err(error) = transaction.bind_document_request(fingerprint) {
             return document_request_error(error).into_response();
         }
-    }
     if let Err(error) = durability.guard(
         &mut transaction,
         host.engine_host(),
@@ -4769,11 +4765,10 @@ async fn delete_document(
     // existence, and this route read the target above); the commit's
     // conflict rejection is the version check.
     transaction.delete_in_collection(&collection, id.clone(), expected);
-    if has_idempotency_key(&headers) {
-        if let Err(error) = transaction.bind_document_request(fingerprint) {
+    if has_idempotency_key(&headers)
+        && let Err(error) = transaction.bind_document_request(fingerprint) {
             return document_request_error(error).into_response();
         }
-    }
     if let Err(error) = durability.guard(
         &mut transaction,
         host.engine_host(),
@@ -5452,8 +5447,8 @@ async fn restore_or_branch(
         }
         .into_response();
     };
-    if let Some(operation) = request.get("operation_id") {
-        if operation.as_str().is_none_or(|operation| !valid_restore_operation_id(operation)) {
+    if let Some(operation) = request.get("operation_id")
+        && operation.as_str().is_none_or(|operation| !valid_restore_operation_id(operation)) {
             return ApiError {
                 status: StatusCode::BAD_REQUEST,
                 code: "invalid_operation_id",
@@ -5464,7 +5459,6 @@ async fn restore_or_branch(
             }
             .into_response();
         }
-    }
     let at = match restore_at_millis(request.get("at")) {
         Ok(at) => at,
         Err(()) => return invalid_at("it must be a non-negative integer or null"),
@@ -5702,8 +5696,7 @@ pub(crate) fn commit_on_runtime(
     durability: LocalDurability,
 ) -> CommitOutcome {
     let multi_thread = tokio::runtime::Handle::try_current()
-        .map(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
-        .unwrap_or(false);
+        .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
     if multi_thread {
         tokio::task::block_in_place(|| transaction.commit(durability))
     } else {
@@ -5719,8 +5712,7 @@ where
     F: FnOnce() -> T,
 {
     let multi_thread = tokio::runtime::Handle::try_current()
-        .map(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
-        .unwrap_or(false);
+        .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
     if multi_thread { tokio::task::block_in_place(work) } else { work() }
 }
 

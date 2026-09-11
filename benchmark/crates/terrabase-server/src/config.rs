@@ -122,7 +122,7 @@ pub struct ProductionBackupDestination {
     pub provider: Provider,
     /// HTTPS S3-compatible endpoint.
     pub endpoint: String,
-    /// SigV4 signing region.
+    /// `SigV4` signing region.
     pub signing_region: String,
     /// Object bucket name.
     pub bucket: String,

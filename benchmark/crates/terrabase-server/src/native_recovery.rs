@@ -101,22 +101,19 @@ impl NativeRecoveryWorker {
         *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         let _ = self.stop.send(deadline);
-        let join = tokio::spawn(async move { self.join.await });
-        let deadline = match tokio::time::timeout(std::time::Duration::from_secs(5), join).await {
-            Ok(result) => result
-                .map_err(|_| NativeRecoveryError::Unavailable)?
-                .map_err(|_| NativeRecoveryError::Unavailable)?,
-            Err(_) => {
-                // The waiter retains the JoinHandle and worker lease while
-                // an uncancellable provider call is still active.
-                *self
-                    .runtime
-                    .worker_error
-                    .lock()
-                    .map_err(|_| NativeRecoveryError::Unavailable)? =
-                    Some(NativeRecoveryError::Unavailable);
-                return Err(NativeRecoveryError::Unavailable);
-            }
+        let join = tokio::spawn(self.join);
+        let deadline = if let Ok(result) = tokio::time::timeout(std::time::Duration::from_secs(5), join).await { result
+        .map_err(|_| NativeRecoveryError::Unavailable)?
+        .map_err(|_| NativeRecoveryError::Unavailable)? } else {
+            // The waiter retains the JoinHandle and worker lease while
+            // an uncancellable provider call is still active.
+            *self
+                .runtime
+                .worker_error
+                .lock()
+                .map_err(|_| NativeRecoveryError::Unavailable)? =
+                Some(NativeRecoveryError::Unavailable);
+            return Err(NativeRecoveryError::Unavailable);
         };
         if deadline {
             *self.runtime.worker_error.lock().map_err(|_| NativeRecoveryError::Unavailable)? =
@@ -458,8 +455,8 @@ impl NativeRecoveryRuntime {
         }
         let (keys, destinations, point_limit) = {
             let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-            let stream = fleet.stream_recovery_point_config(source).map_err(map_fleet_error)?;
-            stream
+            
+            fleet.stream_recovery_point_config(source).map_err(map_fleet_error)?
         };
         terrabase::backup::worker::NativeBackupFleet::resolve_recovery_point_with_config(
             source,
@@ -598,13 +595,13 @@ impl NativeRecoveryRuntime {
         let worker_runtime = Arc::clone(&runtime);
         let notify = Arc::clone(&runtime.notify);
         let join = executor.spawn(async move {
-            let result =
-                lifecycle::supervise::<NativeRecoveryError, _, _>(stopped, notify, move || {
+            
+            lifecycle::supervise::<NativeRecoveryError, _, _>(stopped, notify, move || {
                     let runtime = Arc::clone(&worker_runtime);
                     let observed = Arc::clone(&runtime);
                     async move {
                         let result = runtime.process_pending().await;
-                        if let Ok(_) = result {
+                        if result.is_ok() {
                             *observed
                                 .worker_error
                                 .lock()
@@ -618,8 +615,7 @@ impl NativeRecoveryRuntime {
                         result
                     }
                 })
-                .await;
-            result
+                .await
         });
         runtime.notify.notify_one();
         Ok((runtime.clone(), NativeRecoveryWorker { runtime, stop, join }))
@@ -1101,15 +1097,12 @@ impl NativeRecoveryRuntime {
         }
         operation.phase = NativeRestorePhase::Restoring;
         self.save_restore(&operation)?;
-        let receipt = match self.restore_executor.execute(request).await {
-            Ok(outcome) => outcome.receipt,
-            Err(_) => {
-                operation.phase = NativeRestorePhase::Uncertain;
-                operation.error =
-                    Some("native restore remains repairable; retry the operation".into());
-                self.save_restore(&operation)?;
-                return Ok(true);
-            }
+        let receipt = if let Ok(outcome) = self.restore_executor.execute(request).await { outcome.receipt } else {
+            operation.phase = NativeRestorePhase::Uncertain;
+            operation.error =
+                Some("native restore remains repairable; retry the operation".into());
+            self.save_restore(&operation)?;
+            return Ok(true);
         };
         operation.phase = NativeRestorePhase::Verifying;
         operation.receipt = Some(receipt);
@@ -1162,11 +1155,10 @@ impl NativeRecoveryRuntime {
         if engine.database_id().to_text() != request.target_database_id {
             return Err(NativeRecoveryError::VerificationFailed);
         }
-        if let NativeRestoreSelection::PointId(point) = &request.selection {
-            if point != &request.recovery_point_id {
+        if let NativeRestoreSelection::PointId(point) = &request.selection
+            && point != &request.recovery_point_id {
                 return Err(NativeRecoveryError::VerificationFailed);
             }
-        }
         let journal_cut =
             request.journal_cut.parse().map_err(|_| NativeRecoveryError::VerificationFailed)?;
         let identity = terrabase::backup::RestoreIdentity {

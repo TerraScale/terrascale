@@ -876,7 +876,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             .lock()
             .map_err(|_| "native backup fleet poisoned")?
             .pause(&assignment.database)
-            .map(|_| {
+            .map(|()| {
                 NativeLifecycleReceipt::Backup(terrabase::backup::worker::LifecycleReceipt {
                     operation_id: _operation.to_owned(),
                     database: assignment.database.clone(),

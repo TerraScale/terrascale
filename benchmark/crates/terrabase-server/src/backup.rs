@@ -831,14 +831,11 @@ impl BackupStreams {
         // exclusive; an existing target is checked without following links
         // and must be empty.
         let created_target = prepare_restore_target(location)?;
-        let config = match terrabase::EngineConfig::durable(location) {
-            Ok(config) => config,
-            Err(_) => {
-                if created_target {
-                    let _ = std::fs::remove_dir(location);
-                }
-                return Err(RestoreError::Spawn(io::Error::other("restore target unavailable")));
+        let config = if let Ok(config) = terrabase::EngineConfig::durable(location) { config } else {
+            if created_target {
+                let _ = std::fs::remove_dir(location);
             }
+            return Err(RestoreError::Spawn(io::Error::other("restore target unavailable")));
         };
         let parent = location
             .parent()

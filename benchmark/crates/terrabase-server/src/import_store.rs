@@ -63,38 +63,6 @@ pub(crate) struct ImportStore {
     connection: Mutex<Connection>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_root() -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "terrabase-import-store-{}-{}",
-            std::process::id(),
-            terrabase::identity::generate()
-        ));
-        std::fs::create_dir_all(&root).expect("root");
-        root
-    }
-
-    #[test]
-    fn get_rejects_negative_unsigned_counters() {
-        let root = test_root();
-        let store = ImportStore::open(&root).expect("store");
-        store
-            .connection
-            .lock()
-            .expect("lock")
-            .execute(
-                "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state,durability,key_version,cursor) VALUES('op','tenant','project','database','json','queued','strong','v1',-1)",
-                [],
-            )
-            .expect("malformed row");
-        assert!(store.get("op").is_err());
-        std::fs::remove_dir_all(root).expect("cleanup");
-    }
-}
-
 impl ImportStore {
     pub(crate) fn open(root: impl AsRef<Path>) -> rusqlite::Result<Self> {
         let path = root.as_ref().join("imports.sqlite");
@@ -351,5 +319,37 @@ impl ImportStore {
         )?;
         transaction.commit()?;
         Ok(removed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_root() -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-import-store-{}-{}",
+            std::process::id(),
+            terrabase::identity::generate()
+        ));
+        std::fs::create_dir_all(&root).expect("root");
+        root
+    }
+
+    #[test]
+    fn get_rejects_negative_unsigned_counters() {
+        let root = test_root();
+        let store = ImportStore::open(&root).expect("store");
+        store
+            .connection
+            .lock()
+            .expect("lock")
+            .execute(
+                "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state,durability,key_version,cursor) VALUES('op','tenant','project','database','json','queued','strong','v1',-1)",
+                [],
+            )
+            .expect("malformed row");
+        assert!(store.get("op").is_err());
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 }
