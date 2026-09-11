@@ -126,6 +126,38 @@ func TestNewProducerManagementRoutes(t *testing.T) {
 	}
 }
 
+func TestExportRejectsMissingOrMismatchedResponseIdentity(t *testing.T) {
+	for name, body := range map[string]string{
+		"missing create identity":    `{"status_path":"/api/v1/databases/demo/exports/job-1"}`,
+		"mismatched get identity":    `{"job_id":"other","status":"Running"}`,
+		"mismatched resume identity": `{"job_id":"other","status":"Running"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			client, err := NewClient(Config{APIBaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var callErr error
+			switch name {
+			case "missing create identity":
+				_, callErr = client.Databases.CreateExport(t.Context(), "demo", "export-1")
+			case "mismatched get identity":
+				_, callErr = client.Databases.GetExport(t.Context(), "demo", "job-1")
+			default:
+				_, callErr = client.Databases.ResumeExport(t.Context(), "demo", "job-1", "cursor-1", WithIdempotencyKey("resume-1"))
+			}
+			if callErr == nil || !strings.Contains(callErr.Error(), "identity") {
+				t.Fatalf("error=%v, want identity validation", callErr)
+			}
+		})
+	}
+}
+
 func TestNewManagementRoutesValidateBeforeHTTP(t *testing.T) {
 	client, err := NewClient(Config{APIBaseURL: "http://127.0.0.1:1"})
 	if err != nil {

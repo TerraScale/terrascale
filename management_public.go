@@ -137,6 +137,9 @@ func (d *DatabasesClient) CreateExport(ctx context.Context, database, idempotenc
 	if err := d.c.do(ctx, "POST", path+"/exports", nil, body, &out, "create_export", opts...); err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(out.JobID) == "" {
+		return nil, &ValidationError{Field: "job_id", Message: "create_export response must return the durable job identity"}
+	}
 	return &out, nil
 }
 func (d *DatabasesClient) GetExport(ctx context.Context, database, jobID string, opts ...RequestOption) (*ExportStatus, error) {
@@ -147,6 +150,9 @@ func (d *DatabasesClient) GetExport(ctx context.Context, database, jobID string,
 	var out ExportStatus
 	if err := d.c.do(ctx, "GET", path, nil, nil, &out, "get_export", opts...); err != nil {
 		return nil, err
+	}
+	if out.JobID != jobID {
+		return nil, &ValidationError{Field: "job_id", Message: "get_export response identity does not match the requested export"}
 	}
 	return &out, nil
 }
@@ -169,6 +175,9 @@ func (d *DatabasesClient) ResumeExport(ctx context.Context, database, jobID, cur
 	var out ExportStatus
 	if err := d.c.do(ctx, "POST", path+"/resume", nil, body, &out, "resume_export", opts...); err != nil {
 		return nil, err
+	}
+	if out.JobID != jobID {
+		return nil, &ValidationError{Field: "job_id", Message: "resume_export response identity does not match the requested export"}
 	}
 	return &out, nil
 }

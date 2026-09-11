@@ -1,6 +1,7 @@
 .PHONY: check contracts edge-contracts
 
 CONTRACT_VERSION ?= $(shell sed -e 's/[[:space:]]//g' CONTRACT_VERSION)
+CONTRACT_ARCHIVE_SHA256 ?= $(shell sed -e 's/[[:space:]]//g' CONTRACT_ARCHIVE_SHA256)
 EDGE_CONTRACT_SOURCE ?= contracts/edge/v1
 # CONTRACT_URL is an immutable terrabase package URL and is required by
 # default/CI. CONTRACT_SOURCE is an explicit pre-publication escape hatch.
@@ -13,7 +14,7 @@ check:
 	go test -race ./...
 
 contracts:
-	@CONTRACT_VERSION="$(CONTRACT_VERSION)" CONTRACT_URL="$(CONTRACT_URL)" CONTRACT_SOURCE="$(CONTRACT_SOURCE)" python3 scripts/contracts.py --version "$(CONTRACT_VERSION)"
+	@CONTRACT_VERSION="$(CONTRACT_VERSION)" CONTRACT_URL="$(CONTRACT_URL)" CONTRACT_SOURCE="$(CONTRACT_SOURCE)" CONTRACT_ARCHIVE_SHA256="$(CONTRACT_ARCHIVE_SHA256)" python3 scripts/contracts.py --version "$(CONTRACT_VERSION)"
 
 edge-contracts:
 	@EDGE_CONTRACT_SOURCE="$(EDGE_CONTRACT_SOURCE)" python3 scripts/edge_contracts.py

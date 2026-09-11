@@ -81,6 +81,9 @@ func (d *DatabasesClient) CreateImport(ctx context.Context, database string, for
 	if err := d.c.do(ctx, http.MethodPost, path+"/imports", nil, body, &out, "create_import", opts...); err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(out.OperationID) == "" {
+		return nil, &ValidationError{Field: "operation_id", Message: "create_import response must return the durable operation identity"}
+	}
 	return &out, nil
 }
 
@@ -93,6 +96,9 @@ func (d *DatabasesClient) GetImport(ctx context.Context, database, id string, op
 	var out ImportJob
 	if err := d.c.do(ctx, http.MethodGet, path, nil, nil, &out, "get_import", opts...); err != nil {
 		return nil, err
+	}
+	if out.OperationID != id {
+		return nil, &ValidationError{Field: "operation_id", Message: "get_import response identity does not match the requested import"}
 	}
 	return &out, nil
 }
@@ -138,6 +144,9 @@ func (d *DatabasesClient) ResumeImport(ctx context.Context, database, id string,
 	var out ImportJob
 	if err := d.c.do(ctx, http.MethodPost, path+"/resume", nil, nil, &out, "resume_import", opts...); err != nil {
 		return nil, err
+	}
+	if out.OperationID != id {
+		return nil, &ValidationError{Field: "operation_id", Message: "resume_import response identity does not match the requested import"}
 	}
 	return &out, nil
 }

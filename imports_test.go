@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +85,37 @@ func TestCreateImportValidatesFormatAndIdentityBeforeHTTP(t *testing.T) {
 	}
 	if _, err := client.Databases.CreateImport(ctx, "demo", TransferFormatJSONL, ""); err == nil {
 		t.Fatal("blank import identity was accepted")
+	}
+}
+
+func TestImportRejectsMissingOrMismatchedResponseIdentity(t *testing.T) {
+	for name, body := range map[string]string{
+		"missing create identity":    `{"state":"uploading"}`,
+		"mismatched get identity":    `{"operation_id":"other","state":"running"}`,
+		"mismatched resume identity": `{"operation_id":"other","state":"running"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			client, err := NewClient(Config{APIBaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var callErr error
+			switch name {
+			case "missing create identity":
+				_, callErr = client.Databases.CreateImport(t.Context(), "demo", TransferFormatJSONL, "import-1")
+			case "mismatched get identity":
+				_, callErr = client.Databases.GetImport(t.Context(), "demo", "import-1")
+			default:
+				_, callErr = client.Databases.ResumeImport(t.Context(), "demo", "import-1")
+			}
+			if callErr == nil || !strings.Contains(callErr.Error(), "identity") {
+				t.Fatalf("error=%v, want identity validation", callErr)
+			}
+		})
 	}
 }
