@@ -107,6 +107,12 @@ const LAYERS: &[(&str, u32)] = &[
 /// result-view state to check the specified replication and sync invariants.
 /// Its four provider edges point down from the qualification layer; production
 /// crates never depend on the simulation harness.
+///
+/// Review note (2026-09-10, dead-code deletion): `terrabase-replication-core`
+/// lost its unwired `progress` and `dependency` modules (the crate now owns
+/// the range-reconciliation kernel only) and `terrabase-sync-core` lost its
+/// superseded pre-MessagePack `protocol` module. No dependency edges
+/// changed; ADR 0044 §5 is the accepting record.
 const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-sim", "terrabase"),
     ("terrabase-sim", "terrabase-member-transport"),

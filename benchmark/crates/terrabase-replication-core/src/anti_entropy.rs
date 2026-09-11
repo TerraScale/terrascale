@@ -6,13 +6,11 @@
 //! mismatching ranges, and exchanges an exact id list only at leaf ranges.
 //! The kernel owns no connection state, transport, or storage.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Bound;
 
-use terrabase_causal::{CanonicalEncode, CausalContext, DatabaseId, TenantId};
-
-use crate::{GapRange, ReplicationProgress};
+use terrabase_causal::CanonicalEncode;
 
 /// The native digest width used for journal-row hashes.
 pub type Hash32 = [u8; 32];
@@ -626,50 +624,6 @@ impl ReconciliationPlan {
     }
 }
 
-/// Missing contiguous and selective ranges discovered from two progress summaries.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProgressRepairPlan {
-    /// Ranges the receiver may safely request from the source.
-    pub ranges: Vec<GapRange>,
-    /// Source contiguous prefix used when the plan was made.
-    pub source_through: u64,
-}
-
-/// Computes a bounded-prefix/gap repair request from source and receiver progress.
-///
-/// # Errors
-///
-/// Returns an error when the range budget is zero or exceeded.
-pub fn plan_progress_repair(
-    receiver: &ReplicationProgress,
-    source: &ReplicationProgress,
-    max_ranges: usize,
-) -> Result<ProgressRepairPlan, RepairError> {
-    if max_ranges == 0 {
-        return Err(RepairError::InvalidBounds);
-    }
-    let mut ranges = BTreeSet::new();
-    for range in receiver.missing_ranges(source.through()) {
-        ranges.insert(range);
-    }
-    for available in source.gaps() {
-        for missing in receiver.missing_ranges(available.last()) {
-            let first = missing.first().max(available.first());
-            let last = missing.last().min(available.last());
-            if first <= last {
-                ranges.insert(GapRange::new(first, last).map_err(|_| RepairError::InvalidRange)?);
-            }
-        }
-    }
-    if ranges.len() > max_ranges {
-        return Err(RepairError::RangeBudgetExceeded { ranges: ranges.len(), max_ranges });
-    }
-    Ok(ProgressRepairPlan {
-        ranges: ranges.into_iter().collect(),
-        source_through: source.through(),
-    })
-}
-
 /// Typed anti-entropy failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RepairError {
@@ -690,19 +644,6 @@ pub enum RepairError {
         /// Maximum accepted differences.
         max_differences: usize,
     },
-    /// The progress-range budget was exhausted.
-    RangeBudgetExceeded {
-        /// Missing ranges found.
-        ranges: usize,
-        /// Maximum accepted ranges.
-        max_ranges: usize,
-    },
-    /// Queue capacity has been reached.
-    QueueFull,
-    /// A stable acknowledgement was attempted without verification.
-    NotVerified,
-    /// The supplied proof differs from the expected proof.
-    VerificationMismatch,
     /// One source supplied the same journal identity more than once.
     DuplicateRowIdentity,
 }
@@ -718,296 +659,12 @@ impl fmt::Display for RepairError {
             Self::RepairBudgetExceeded { .. } => {
                 formatter.write_str("row difference budget exceeded")
             }
-            Self::RangeBudgetExceeded { .. } => {
-                formatter.write_str("progress range budget exceeded")
-            }
-            Self::QueueFull => formatter.write_str("anti-entropy queue is full"),
-            Self::NotVerified => formatter.write_str("frontier is not verified"),
-            Self::VerificationMismatch => formatter.write_str("verification proof mismatch"),
             Self::DuplicateRowIdentity => formatter.write_str("duplicate journal row identity"),
         }
     }
 }
 
 impl std::error::Error for RepairError {}
-
-/// A trigger that requests an anti-entropy exchange.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum AntiEntropyTrigger {
-    /// Deterministic periodic exchange.
-    Periodic,
-    /// Peer connection was re-established.
-    Reconnect,
-    /// Process or disk recovery completed.
-    Recovery,
-    /// A verified snapshot was installed.
-    SnapshotInstalled,
-    /// Region membership changed.
-    MembershipChanged,
-    /// A range fingerprint mismatch was observed.
-    FingerprintMismatch,
-    /// An authorized operator requested repair.
-    OperatorRequest,
-}
-
-/// Bounded trigger state; repeated triggers coalesce without being lost.
-#[derive(Clone, Debug)]
-pub struct TriggerState {
-    pending: BTreeSet<AntiEntropyTrigger>,
-    next_periodic: u64,
-    interval: u64,
-}
-
-impl TriggerState {
-    /// Creates a schedule with a nonzero deterministic interval.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RepairError::InvalidBounds`] for a zero interval.
-    pub fn new(now: u64, interval: u64) -> Result<Self, RepairError> {
-        if interval == 0 {
-            return Err(RepairError::InvalidBounds);
-        }
-        Ok(Self { pending: BTreeSet::new(), next_periodic: now.saturating_add(interval), interval })
-    }
-
-    /// Creates a schedule with deterministic peer-specific jitter.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RepairError::InvalidBounds`] for a zero interval.
-    pub fn new_with_jitter(now: u64, interval: u64, seed: u64) -> Result<Self, RepairError> {
-        if interval == 0 {
-            return Err(RepairError::InvalidBounds);
-        }
-        let digest = hash("anti-entropy-jitter", &seed.to_be_bytes());
-        let span = (interval / 4).max(1);
-        let jitter = u64::from_be_bytes([
-            digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
-        ]) % span;
-        Ok(Self {
-            pending: BTreeSet::new(),
-            next_periodic: now.saturating_add(interval).saturating_add(jitter),
-            interval,
-        })
-    }
-
-    /// Records one trigger.
-    pub fn trigger(&mut self, trigger: AntiEntropyTrigger) {
-        self.pending.insert(trigger);
-    }
-
-    /// Adds `Periodic` when its deterministic deadline has elapsed.
-    pub fn poll(&mut self, now: u64) {
-        if now >= self.next_periodic {
-            self.pending.insert(AntiEntropyTrigger::Periodic);
-            let elapsed = now.saturating_sub(self.next_periodic);
-            let periods = (elapsed / self.interval).saturating_add(1);
-            self.next_periodic =
-                self.next_periodic.saturating_add(periods.saturating_mul(self.interval));
-        }
-    }
-
-    /// Drains coalesced triggers in canonical order.
-    pub fn drain(&mut self) -> Vec<AntiEntropyTrigger> {
-        let drained = self.pending.iter().copied().collect::<Vec<_>>();
-        self.pending.clear();
-        drained
-    }
-
-    /// Reports whether work is pending.
-    #[must_use]
-    pub fn is_pending(&self) -> bool {
-        !self.pending.is_empty()
-    }
-}
-
-/// Tenant/database/Region fairness key.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct QueueKey {
-    /// Tenant identity.
-    pub tenant: TenantId,
-    /// Database identity.
-    pub database: DatabaseId,
-    /// Region catalog name.
-    pub region: String,
-}
-
-impl QueueKey {
-    /// Creates a queue key.
-    #[must_use]
-    pub fn new(tenant: TenantId, database: DatabaseId, region: impl Into<String>) -> Self {
-        Self { tenant, database, region: region.into() }
-    }
-}
-
-/// One bounded repair work item.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RepairWork {
-    /// Fairness key charged for this item.
-    pub key: QueueKey,
-    /// Trigger that caused the work.
-    pub trigger: AntiEntropyTrigger,
-    /// Bounded byte charge.
-    pub bytes: usize,
-    /// Optional journal range to reconcile.
-    pub range: Option<JournalRange>,
-}
-
-/// A bounded round-robin scheduler across database/Region pairs.
-#[derive(Clone, Debug)]
-pub struct FairRepairQueue {
-    queues: BTreeMap<QueueKey, VecDeque<RepairWork>>,
-    order: VecDeque<QueueKey>,
-    capacity: usize,
-    len: usize,
-}
-
-impl FairRepairQueue {
-    /// Creates a queue with an item bound.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RepairError::InvalidBounds`] for zero capacity.
-    pub fn new(capacity: usize) -> Result<Self, RepairError> {
-        if capacity == 0 {
-            return Err(RepairError::InvalidBounds);
-        }
-        Ok(Self { queues: BTreeMap::new(), order: VecDeque::new(), capacity, len: 0 })
-    }
-
-    /// Enqueues work, coalescing exact duplicate ranges for a key.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RepairError::QueueFull`] when capacity is exhausted.
-    pub fn push(&mut self, work: RepairWork) -> Result<(), RepairError> {
-        if self.queues.get(&work.key).is_some_and(|queue| {
-            queue
-                .iter()
-                .any(|existing| existing.range == work.range && existing.trigger == work.trigger)
-        }) {
-            return Ok(());
-        }
-        if self.len >= self.capacity {
-            return Err(RepairError::QueueFull);
-        }
-        let queue = self.queues.entry(work.key.clone()).or_default();
-        if queue.is_empty() {
-            self.order.push_back(work.key.clone());
-        }
-        queue.push_back(work);
-        self.len += 1;
-        Ok(())
-    }
-
-    /// Pops one work item using bounded fair scheduling.
-    pub fn pop(&mut self) -> Option<RepairWork> {
-        let key = self.order.pop_front()?;
-        let queue = self.queues.get_mut(&key)?;
-        let work = queue.pop_front()?;
-        self.len = self.len.saturating_sub(1);
-        if queue.is_empty() {
-            self.queues.remove(&key);
-        } else {
-            self.order.push_back(key);
-        }
-        Some(work)
-    }
-
-    /// Returns the number of queued items.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// Reports whether no work is queued.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-}
-
-/// A verified position suitable for stable-frontier acknowledgement.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VerifiedFrontier {
-    /// Member identity in the required set.
-    pub member: u64,
-    /// Monotonic generation of the verification.
-    pub generation: u64,
-    /// Contiguous journal prefix.
-    pub through: u64,
-    /// Verified whole-database range proof.
-    pub proof: RangeFingerprint,
-}
-
-/// Stable frontier that admits only equality-proven observations.
-#[derive(Clone, Debug)]
-pub struct VerifiedStableFrontier {
-    required: BTreeSet<u64>,
-    observations: BTreeMap<u64, VerifiedFrontier>,
-    floor: u64,
-}
-
-impl VerifiedStableFrontier {
-    /// Creates a stable frontier for required members.
-    #[must_use]
-    pub fn new(required: impl IntoIterator<Item = u64>) -> Self {
-        Self { required: required.into_iter().collect(), observations: BTreeMap::new(), floor: 0 }
-    }
-
-    /// Records a member only after its range proof matches the expected proof.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if proofs differ or the member is not required.
-    pub fn acknowledge(
-        &mut self,
-        observation: VerifiedFrontier,
-        expected: RangeFingerprint,
-    ) -> Result<(), RepairError> {
-        if observation.proof != expected {
-            return Err(RepairError::VerificationMismatch);
-        }
-        if !self.required.contains(&observation.member) {
-            return Err(RepairError::NotVerified);
-        }
-        let replace = self
-            .observations
-            .get(&observation.member)
-            .is_none_or(|current| observation.generation >= current.generation);
-        if replace {
-            self.observations.insert(observation.member, observation);
-        }
-        Ok(())
-    }
-
-    /// Advances to the minimum verified contiguous prefix.
-    pub fn advance(&mut self) -> u64 {
-        let candidate = self
-            .required
-            .iter()
-            .map(|member| {
-                self.observations.get(member).map_or(0, |observation| observation.through)
-            })
-            .min()
-            .unwrap_or(0);
-        self.floor = self.floor.max(candidate);
-        self.floor
-    }
-
-    /// Returns the stable contiguous prefix.
-    #[must_use]
-    pub const fn through(&self) -> u64 {
-        self.floor
-    }
-
-    /// Reports whether a counter is safe to collect.
-    #[must_use]
-    pub const fn can_collect(&self, counter: u64) -> bool {
-        counter != 0 && counter <= self.floor
-    }
-}
 
 /// Domain-separated additive contribution of one immutable publication identity and hash.
 #[must_use]
@@ -1044,18 +701,6 @@ fn put_bytes(output: &mut Vec<u8>, bytes: &[u8]) {
 #[must_use]
 pub fn row_hash(bytes: &[u8]) -> Hash32 {
     hash("range-reconciliation-journal-row", bytes)
-}
-
-/// Hashes one causal context for callers constructing a canonical row payload.
-#[must_use]
-pub fn causal_hash(context: &CausalContext) -> Hash32 {
-    hash("range-reconciliation-causal-state", &context.canonical_bytes())
-}
-
-/// Hashes canonical materialized bytes for callers constructing a row payload.
-#[must_use]
-pub fn materialized_hash(bytes: &[u8]) -> Hash32 {
-    hash("range-reconciliation-materialized-state", bytes)
 }
 
 #[cfg(test)]

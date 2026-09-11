@@ -118,14 +118,9 @@ impl ShardJournalCatchUp {
                 return Err(ShardCatchUpError::SequenceRegressed);
             }
             let selected = range_publication(publication, self.lower.as_deref(), &self.upper)?;
-            if !selected.records.is_empty() || !selected.private_payload.is_empty() {
-                self.target
-                    .apply_replicated_publication(&self.target_scope, &selected)
-                    .map_err(|error| {
-                        eprintln!("catch-up target apply failed: {error:?}; publication={selected:?}");
-                        ShardCatchUpError::TargetFailed
-                    })?;
-            }
+            self.target
+                .apply_replicated_publication(&self.target_scope, &selected)
+                .map_err(|_| ShardCatchUpError::TargetFailed)?;
             previous = *cursor;
         }
         self.applied_through = previous;

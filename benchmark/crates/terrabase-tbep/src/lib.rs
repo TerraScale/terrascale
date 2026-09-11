@@ -92,8 +92,7 @@ pub mod proto {
 }
 
 pub use anti_entropy::{
-    DurableJournalRow, JournalRowSource, RepairDecision, SnapshotBootstrap, journal_end,
-    reconcile_journal_rows, repair_once, repair_once_bounded, snapshot_bootstrap,
+    DurableJournalRow, JournalRowSource, RepairDecision, reconcile_journal_rows,
 };
 pub use grpc::TbepGrpcServer;
 pub use host::HostingError;

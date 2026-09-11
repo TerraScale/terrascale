@@ -238,9 +238,9 @@ webhooks consume the same revisions.
 
 ## 5. Consequences
 
-- `terrabase-replication-core` keeps progress kernels and gains the
-  range-summary aggregate and reconciliation state machine; the former tree
-  comparison and repair planner are deleted.
+- `terrabase-replication-core` keeps the range-summary aggregate and the
+  reconciliation kernel only; the progress kernels, the former tree
+  comparison, and the repair planner are deleted.
 - The SQL planner tags each plan `live` or `execute-only` from the operator
   table in 3.2; that tag is the whole `NotSubscribable` decision.
 - The `session token` format is public SDK contract (opaque bytes, but

@@ -1,23 +1,12 @@
 //! Qualification cases for range-based journal set reconciliation.
 
-use terrabase_causal::{DatabaseId, TenantId};
-use terrabase_replication_core::ReplicationProgress;
 use terrabase_replication_core::anti_entropy::{
-    AntiEntropyTrigger, FairRepairQueue, JournalRowId, QueueKey, RangeSummaryTable,
-    ReconciliationMessage, RepairError, RepairWork, RowDifference, RowSummary, TriggerState,
-    VerifiedFrontier, VerifiedStableFrontier, row_hash,
+    JournalRowId, RangeSummaryTable, ReconciliationMessage, RepairError, RowDifference, RowSummary,
+    row_hash,
 };
 
 fn row(origin: &str, sequence: u64, value: &[u8]) -> RowSummary {
     RowSummary::new(JournalRowId::new(origin, sequence).unwrap(), row_hash(value))
-}
-
-fn key(id: u8) -> QueueKey {
-    QueueKey::new(
-        TenantId::from_bytes([id; 16]),
-        DatabaseId::from_bytes([id; 16]),
-        format!("region-{id}"),
-    )
 }
 
 #[test]
@@ -119,72 +108,4 @@ fn replacement_and_removal_update_the_maintained_proof() {
     assert_eq!(table.remove(&id), Some(row_hash(b"new")));
     assert!(table.is_empty());
     assert_eq!(table.proof().count, 0);
-}
-
-#[test]
-fn repair_queue_is_bounded_and_fair_across_databases() {
-    let mut queue = FairRepairQueue::new(3).unwrap();
-    let first = key(1);
-    let second = key(2);
-    let work = |key, trigger, bytes| RepairWork { key, trigger, bytes, range: None };
-    queue.push(work(first.clone(), AntiEntropyTrigger::Reconnect, 1)).unwrap();
-    queue.push(work(first, AntiEntropyTrigger::Recovery, 2)).unwrap();
-    queue.push(work(second.clone(), AntiEntropyTrigger::Reconnect, 3)).unwrap();
-    assert_eq!(
-        queue.push(work(second, AntiEntropyTrigger::Recovery, 4)),
-        Err(RepairError::QueueFull)
-    );
-    assert_eq!(queue.pop().unwrap().key.region, "region-1");
-    assert_eq!(queue.pop().unwrap().key.region, "region-2");
-}
-
-#[test]
-fn triggers_coalesce_and_periodic_work_uses_its_deadline() {
-    let mut state = TriggerState::new(10, 100).unwrap();
-    for trigger in [
-        AntiEntropyTrigger::Reconnect,
-        AntiEntropyTrigger::Recovery,
-        AntiEntropyTrigger::MembershipChanged,
-        AntiEntropyTrigger::FingerprintMismatch,
-        AntiEntropyTrigger::SnapshotInstalled,
-    ] {
-        state.trigger(trigger);
-        state.trigger(trigger);
-    }
-    state.poll(109);
-    assert!(!state.drain().contains(&AntiEntropyTrigger::Periodic));
-    state.poll(110);
-    assert!(state.drain().contains(&AntiEntropyTrigger::Periodic));
-}
-
-#[test]
-fn stable_frontier_waits_for_every_member_with_the_same_proof() {
-    let mut rows = RangeSummaryTable::new();
-    rows.insert(&row("gru", 1, b"one"));
-    let proof = rows.proof();
-    let mut stable = VerifiedStableFrontier::new([1, 2]);
-    stable
-        .acknowledge(VerifiedFrontier { member: 1, generation: 1, through: 10, proof }, proof)
-        .unwrap();
-    assert_eq!(stable.advance(), 0);
-    stable
-        .acknowledge(VerifiedFrontier { member: 2, generation: 1, through: 7, proof }, proof)
-        .unwrap();
-    assert_eq!(stable.advance(), 7);
-    assert!(stable.can_collect(7));
-    assert!(!stable.can_collect(8));
-}
-
-#[test]
-fn progress_repair_never_infers_source_gaps() {
-    let mut receiver = ReplicationProgress::default();
-    receiver.record(1).unwrap();
-    let mut source = ReplicationProgress::default();
-    source.record(1).unwrap();
-    source.record(3).unwrap();
-    let plan =
-        terrabase_replication_core::anti_entropy::plan_progress_repair(&receiver, &source, 4)
-            .unwrap();
-    assert_eq!(plan.ranges.len(), 1);
-    assert_eq!(plan.ranges[0].first(), 3);
 }

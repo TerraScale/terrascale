@@ -1,12 +1,11 @@
-# `terrabase-replication-core` — replication support kernels for the
+# `terrabase-replication-core` — replication support kernel for the
 # SQLite storage plane (ADR 0044; GOAL.md D-35/D-36/D-37/D-45). Intra-region
 # replication is a physical WAL-frame follower and cross-region is a
 # journal tailer over document-level causal metadata, so no per-field
 # CRDT model lives here (issue #130 deleted it). The crate owns the
-# transport- and storage-independent kernels both planes reuse:
-# durable counter-stream progress with retention guards, and the
-# range-based set reconciliation, repair scheduling, and progress kernels.
-# Hashes go through the native causal codec's
+# transport- and storage-independent kernel both planes reuse:
+# the range-based set reconciliation over per-origin journal sequence
+# ranges. Hashes go through the native causal codec's
 # domain-separated BLAKE3 helper; no second crypto dependency.
 
 [package]
@@ -15,7 +14,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
-description = "TerraBase replication kernels for durable progress and range-based set reconciliation"
+description = "TerraBase replication kernel for range-based set reconciliation"
 publish = false
 
 [lints.rust]

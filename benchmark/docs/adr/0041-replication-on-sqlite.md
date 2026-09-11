@@ -49,9 +49,9 @@ the orchestrator.
 - Cross-region conflicts are surfaced per document in history (D-37):
   uniqueness and conditional writes are enforced within a region only.
 - `terrabase-replication-core` keeps only the transport- and
-  storage-independent kernels the follower and tailer reuse: durable
-  counter-stream progress with retention guards (`progress`), and the
-  range-summary comparison, repair planning, and scheduling kernels
-  (`anti_entropy`).
+  storage-independent kernel the repair path reuses: the range-summary
+  comparison and reconciliation kernel (`anti_entropy`). The durable
+  counter-stream `progress` kernels are deleted (ADR 0044); the follower
+  and tailer own their progress directly.
 - The frame format stays shippable to a browser/mobile SQLite-WASM
   client later (D-57): no member-only assumptions in the frame.

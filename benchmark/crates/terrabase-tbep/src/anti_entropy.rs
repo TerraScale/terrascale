@@ -1,5 +1,5 @@
 //! Journal-independent catch-up over range-based set reconciliation (D-45):
-//! state comparison, bounded repair, and snapshot bootstrap.
+//! state comparison and bounded repair.
 //!
 //! The journal tailer ([`crate::replication`], [`crate::production_causal`])
 //! converges members while the publication journal still holds the writes.
@@ -19,27 +19,14 @@
 //!   over those stable identities. `EngineHost` now supplies the persisted
 //!   rows; missing-row application remains snapshot-gated until the repair
 //!   transfer carries the source mutation and source dot.
-//! - **Snapshot bootstrap**: [`snapshot_bootstrap`] copies the peer's
-//!   quiesced durable file set into a fresh location — the in-process form
-//!   of installing the region-local backup snapshot (production reads
-//!   the snapshot artifact from its own region's object storage via the
-//!   S-06 `BackupStreams::restore_to_location` path, which lands the
-//!   identical file set). The tailer's cursor resumes from
-//!   [`journal_end`] past the snapshot, so pre-snapshot rows never re-ship.
 //!
 //! Composition barrier, stated exactly:
 //!
-//! - Snapshot bootstrap assumes quiescent members — no commit wave in flight
-//!   on either side — the same barrier the WAL fold and follower bootstrap
-//!   already take.
 //! - A tombstone remains a durable row in the source set. Its identity and
 //!   hash differ from complete absence, so a missing tombstone is always a
 //!   repair difference rather than an accidental no-op.
 
-use std::path::Path;
-
 use terrabase::engine::ReplicatedRecord;
-use terrabase::streaming::ChangeCheckpoint;
 use terrabase_replication_core::anti_entropy::{
     Hash32, JournalRowId, RangeFingerprint, RangeSummaryTable, ReconciliationPlan, RepairError,
     RowSummary,
@@ -48,11 +35,6 @@ use terrabase_replication_core::anti_entropy::{
 use crate::engine_host::EngineHost;
 use crate::host::HostingError;
 use crate::registry::BoundScope;
-
-/// The bounded count of key ranges one repair pass may ship. Past this
-/// budget the members diverge by more than a catch-up pass should move and
-/// the caller bootstraps from a snapshot instead.
-pub const MAX_REPAIR_RANGES: usize = 64;
 
 /// One leaf's maximum row span.  A repair pass never needs to retain more
 /// than this many exact rows for a differing leaf; the journal scan uses the
@@ -80,7 +62,8 @@ pub enum RepairDecision {
         repaired: usize,
     },
     /// The divergence exceeds the range budget: bootstrap the lagging
-    /// member from a snapshot ([`snapshot_bootstrap`]) instead of repairing.
+    /// member from a snapshot (the production restore path) instead of
+    /// repairing.
     NeedsSnapshot {
         /// Differing ranges the plan found.
         ranges: usize,
@@ -327,36 +310,6 @@ pub fn reconcile_journal_rows(
     table(local)?.reconcile(&table(peer)?, max_differences)
 }
 
-/// One repair pass between two members of the same database.
-///
-/// # Errors
-///
-/// The host compares its persisted journal rows. A divergent row set is
-/// reported as snapshot work until the transfer path carries reconstructable
-/// mutations and source dots.
-pub fn repair_once(
-    local: &EngineHost,
-    peer: &EngineHost,
-    scope: &BoundScope,
-) -> Result<RepairDecision, HostingError> {
-    repair_once_bounded(local, peer, scope, MAX_REPAIR_RANGES)
-}
-
-/// One repair pass under an explicit range budget.
-///
-/// # Errors
-///
-/// Returns [`HostingError::Invalid`] for a zero budget, and an explicit
-/// unavailable-source error until the host is wired to a journal source.
-pub fn repair_once_bounded(
-    local: &EngineHost,
-    peer: &EngineHost,
-    scope: &BoundScope,
-    max_ranges: usize,
-) -> Result<RepairDecision, HostingError> {
-    repair_once_sources_bounded(local, peer, scope, max_ranges)
-}
-
 /// Runs a bounded pass against two journal sources. This seam is useful for
 /// transports and for proving that a source read failure cannot be mistaken
 /// for an empty, converged journal.
@@ -542,30 +495,6 @@ where
     }
 }
 
-/// The journal cursor past everything the member's journal currently holds:
-/// the position a link adopts after a snapshot bootstrap so pre-snapshot
-/// rows never re-ship (the copied file set already serves them).
-///
-/// # Errors
-///
-/// Returns [`HostingError`] when the durable journal cannot be replayed
-/// under the bound scope.
-pub fn journal_end(
-    host: &EngineHost,
-    scope: &BoundScope,
-) -> Result<Option<ChangeCheckpoint>, HostingError> {
-    let mut cursor = None;
-    loop {
-        let batch = host.replay_sync_journal(scope, cursor)?;
-        if batch.next_checkpoint().is_some() {
-            cursor = batch.next_checkpoint();
-        }
-        if batch.drained() {
-            return Ok(cursor);
-        }
-    }
-}
-
 /// The post-copy proof required before a snapshot cursor may be trusted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SnapshotProof {
@@ -577,9 +506,10 @@ pub struct SnapshotProof {
 
 /// Reconciles both complete journal sets after a snapshot copy.
 ///
-/// Callers must invoke this before advancing a replication cursor to
-/// [`journal_end`].  An incomplete or unavailable summary is an error, never
-/// permission to trust the copied bytes.
+/// Callers must invoke this before advancing a replication cursor past the
+/// copied file set, so pre-snapshot rows never re-ship. An incomplete or
+/// unavailable summary is an error, never permission to trust the copied
+/// bytes.
 ///
 /// # Errors
 ///
@@ -617,148 +547,3 @@ where
     Ok(proof)
 }
 
-/// What a snapshot bootstrap installed.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SnapshotBootstrap {
-    /// Location files copied, in copy order.
-    pub files_copied: Vec<String>,
-    /// Whether the peer held a WAL beside its database file.
-    pub had_wal: bool,
-}
-
-/// Installs the peer's snapshot into a fresh location: copies the quiesced
-/// durable file set (the ownership record when present, `terrabase.sqlite3`,
-/// and its `-wal` when present) so opening the target
-/// serves the peer's state byte-identically — the in-process form of
-/// installing the region-local backup snapshot. The caller owns the
-/// barrier: the peer must be quiescent (no commit wave or checkpoint in
-/// flight), exactly the bootstrap contract [`wal_follower`](crate::wal_follower)
-/// documents. The target directory must not hold a live engine.
-///
-/// Production placement verifies the restored publication cut before serving.
-///
-/// # Errors
-///
-/// Returns [`HostingError::Invalid`] when the target is not a fresh
-/// directory, and [`HostingError::EngineFailure`] when a file cannot be
-/// copied durably.
-pub fn snapshot_bootstrap(
-    peer_location: &Path,
-    target_location: &Path,
-) -> Result<SnapshotBootstrap, HostingError> {
-    reject_snapshot_path(peer_location, false)?;
-    reject_snapshot_path(target_location, true)?;
-    if peer_location == target_location {
-        return Err(HostingError::Invalid("the snapshot source and target must differ".into()));
-    }
-    if target_location.exists() && !is_empty_dir(target_location) {
-        return Err(HostingError::Invalid("the snapshot target must be a fresh directory".into()));
-    }
-    std::fs::create_dir_all(target_location).map_err(|_| {
-        HostingError::EngineFailure("the snapshot target refused to initialize".into())
-    })?;
-    let mut files_copied = Vec::new();
-    if copy_optional(peer_location, target_location, "owner.tbv1")? {
-        files_copied.push("owner.tbv1".to_owned());
-    }
-    copy_required(peer_location, target_location, "terrabase.sqlite3")?;
-    files_copied.push("terrabase.sqlite3".to_owned());
-    let had_wal = copy_optional(peer_location, target_location, "terrabase.sqlite3-wal")?;
-    if had_wal {
-        files_copied.push("terrabase.sqlite3-wal".to_owned());
-    }
-    std::fs::File::open(target_location).and_then(|directory| directory.sync_all()).map_err(
-        |_| HostingError::EngineFailure("the snapshot target could not be made durable".into()),
-    )?;
-    Ok(SnapshotBootstrap { files_copied, had_wal })
-}
-
-/// Reports whether the path names an empty directory: the snapshot target
-/// a bootstrap may populate.
-fn is_empty_dir(path: &Path) -> bool {
-    std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
-}
-
-/// Snapshot placement is immutable: source and target directories, and every
-/// copied file, must be ordinary filesystem entries. Following a symlink here
-/// could install bytes from a different residency domain after the placement
-/// was admitted.
-fn reject_snapshot_path(path: &Path, target: bool) -> Result<(), HostingError> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(HostingError::Invalid(
-            if target {
-                "the snapshot target must not be a symlink"
-            } else {
-                "the snapshot source must not be a symlink"
-            }
-            .into(),
-        )),
-        Ok(metadata) if !metadata.is_dir() && (target || path.exists()) => {
-            Err(HostingError::Invalid("the snapshot location must be a directory".into()))
-        }
-        Ok(_) => Ok(()),
-        Err(error) if target && error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => {
-            Err(HostingError::EngineFailure("the snapshot location could not be inspected".into()))
-        }
-    }
-}
-
-/// Copies one required location file, fsyncing the copy by content before
-/// returning. Permissions travel with the bytes.
-fn copy_required(peer: &Path, target: &Path, name: &str) -> Result<(), HostingError> {
-    let source = peer.join(name);
-    reject_snapshot_file(&source)?;
-    let permissions = std::fs::metadata(&source)
-        .map_err(|_| HostingError::EngineFailure("the snapshot source is incomplete".into()))?
-        .permissions();
-    let mut reader = std::fs::File::open(&source)
-        .map_err(|_| HostingError::EngineFailure("the snapshot source is incomplete".into()))?;
-    let mut writer = std::fs::File::create(target.join(name)).map_err(|_| {
-        HostingError::EngineFailure("the snapshot target refused to initialize".into())
-    })?;
-    std::io::copy(&mut reader, &mut writer)
-        .map_err(|_| HostingError::EngineFailure("the snapshot copy failed".into()))?;
-    writer
-        .sync_all()
-        .map_err(|_| HostingError::EngineFailure("the snapshot copy failed".into()))?;
-    drop(writer);
-    std::fs::set_permissions(target.join(name), permissions)
-        .map_err(|_| HostingError::EngineFailure("the snapshot copy failed".into()))?;
-    Ok(())
-}
-
-/// Copies one optional location file, reporting whether it existed.
-fn copy_optional(peer: &Path, target: &Path, name: &str) -> Result<bool, HostingError> {
-    match std::fs::metadata(peer.join(name)) {
-        Ok(permissions) => {
-            reject_snapshot_file(&peer.join(name))?;
-            let mut reader = std::fs::File::open(peer.join(name)).map_err(|_| {
-                HostingError::EngineFailure("the snapshot source is incomplete".into())
-            })?;
-            let mut writer = std::fs::File::create(target.join(name)).map_err(|_| {
-                HostingError::EngineFailure("the snapshot target refused to initialize".into())
-            })?;
-            std::io::copy(&mut reader, &mut writer)
-                .map_err(|_| HostingError::EngineFailure("the snapshot copy failed".into()))?;
-            writer
-                .sync_all()
-                .map_err(|_| HostingError::EngineFailure("the snapshot copy failed".into()))?;
-            drop(writer);
-            std::fs::set_permissions(target.join(name), permissions.permissions())
-                .map_err(|_| HostingError::EngineFailure("the snapshot copy failed".into()))?;
-            Ok(true)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(_) => Err(HostingError::EngineFailure("the snapshot source is incomplete".into())),
-    }
-}
-
-fn reject_snapshot_file(path: &Path) -> Result<(), HostingError> {
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|_| HostingError::EngineFailure("the snapshot source is incomplete".into()))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(HostingError::Invalid("the snapshot source contains an invalid file".into()));
-    }
-    Ok(())
-}

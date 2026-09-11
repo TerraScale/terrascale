@@ -75,9 +75,10 @@ impl Engine {
             storage::decode_private_changes(&publication.private_payload)
                 .ok_or(EngineError::InvalidDocument)?
         };
-        if publication.records.is_empty() && metadata.is_empty() && schema_envelopes.is_empty() {
-            return Err(EngineError::InvalidDocument);
-        }
+        // A filtered shard catch-up page may intentionally carry no customer
+        // records or private metadata. Committing that source identity still
+        // advances the origin frontier, preserving causal continuity for the
+        // next retained publication whose records are in range.
         let (snapshot, plans) = {
             let storage = self.lock_storage()?;
             let bound = storage
@@ -156,7 +157,9 @@ impl Engine {
         transaction.schema_envelopes = schema_envelopes;
         transaction.replication_fingerprint = Some(fingerprint);
         transaction.replication_publication = Some(group);
-        match transaction.commit(LocalDurability::Written) {
+        let outcome = transaction.commit(LocalDurability::Written);
+        eprintln!("replication outcome {:?} origin_seq {} records {}", outcome, publication.origin_sequence, publication.records.len());
+        match outcome {
             CommitOutcome::Committed(receipt) => {
                 let replayed = receipt.sequence() <= snapshot_sequence;
                 Ok(AppliedReplication::new(receipt, replayed))

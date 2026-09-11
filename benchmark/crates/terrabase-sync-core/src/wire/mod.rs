@@ -1,7 +1,6 @@
 //! The bounded MessagePack codec for `terrascale.sync.v1`.
 //!
-//! This module is deliberately independent from the older [`crate::protocol`]
-//! frame format. The public wire is one indexed MessagePack envelope:
+//! The public wire is one indexed MessagePack envelope:
 //! `[major, minor, features, tag, correlation, causation, body]`. Maps,
 //! extensions, floats, unknown protocol values, and trailing bytes are not
 //! part of this contract.
