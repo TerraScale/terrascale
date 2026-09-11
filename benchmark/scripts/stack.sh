@@ -140,6 +140,11 @@ stop_all() {
     fi
   done <"$PIDS_FILE"
   rm -f "$PIDS_FILE"
+  # Litestream children live in their member's process group, so a member
+  # that died without this script leaves them orphaned — a later up would
+  # double-stream the same replica. Reap any survivor bound to this stack's
+  # data directory before it can collide with a fresh member.
+  pkill -f "litestream.*${STACK_DIR}/data" 2>/dev/null || true
 }
 
 stop_on_failure() {
@@ -536,12 +541,20 @@ check_member() {
     warn "$region control catalog FAILED"
     failures=$((failures + 1))
   fi
-  body="$(curl -sf --max-time 5 -H "Authorization: Bearer $(bootstrap_key)" \
-    "http://127.0.0.1:$(api_port "$region")/api/v1/databases/local/backups" 2>/dev/null || true)"
-  case "$body" in
-    *'"ready":true'*'"streaming":true'*) log "$region backup readiness: ok" ;;
-    *) warn "$region backup readiness FAILED: '${body:-no body}'"; failures=$((failures + 1)) ;;
-  esac
+  # Backup readiness is required for EVERY database the member hosts, not
+  # just the seeded one; a database whose WAL silently stopped streaming is a
+  # restart-durability failure.
+  local databases="" database=""
+  databases="$(curl -sf --max-time 5 -H "Authorization: Bearer $(bootstrap_key)" \
+    "http://127.0.0.1:$(api_port "$region")/api/v1/databases" 2>/dev/null || true)"
+  for database in $(printf '%s' "$databases" | grep -o '"name":"[^"]*"' | cut -d'"' -f4); do
+    body="$(curl -sf --max-time 5 -H "Authorization: Bearer $(bootstrap_key)" \
+      "http://127.0.0.1:$(api_port "$region")/api/v1/databases/$database/backups" 2>/dev/null || true)"
+    case "$body" in
+      *'"ready":true'*'"streaming":true'*) log "$region backup readiness ($database): ok" ;;
+      *) warn "$region backup readiness FAILED for '$database': '${body:-no body}'"; failures=$((failures + 1)) ;;
+    esac
+  done
   return "$failures"
 }
 
@@ -611,12 +624,17 @@ start_proxy() {
   # resolves wrangler.toml from the process cwd. A shifted instance gets a
   # generated sibling config whose DEV_ORIGINS point at this stack's members
   # (wrangler CLI --var does not override env-section vars).
-  local config="wrangler.toml"
-  if [ "$STACK_PORT_OFFSET" != "0" ]; then
-    config="wrangler.stack.toml"
-    sed "s#^DEV_ORIGINS = .*#DEV_ORIGINS = '{\"GRU\":\"http://127.0.0.1:$(api_port GRU)\",\"SFO\":\"http://127.0.0.1:$(api_port SFO)\",\"FRA\":\"http://127.0.0.1:$(api_port FRA)\"}'#" \
-      "$PROXY_DIR/wrangler.toml" >"$PROXY_DIR/$config"
-  fi
+  # Always run a generated sibling config: a shifted instance needs its own
+  # DEV_ORIGINS, and every local stack needs a regions-health staleness window
+  # longer than the stack's own lifetime — the seed is written once per boot,
+  # so the product's 60 s window would mark every region unavailable for the
+  # rest of the run. Production keeps publishing fresh health (M3-3).
+  local config="wrangler.stack.toml"
+  {
+    echo 's#^STALE_AFTER_S = .*#STALE_AFTER_S = "86400"#'
+    [ "$STACK_PORT_OFFSET" = "0" ] ||
+      echo "s#^DEV_ORIGINS = .*#DEV_ORIGINS = '{\"GRU\":\"http://127.0.0.1:$(api_port GRU)\",\"SFO\":\"http://127.0.0.1:$(api_port SFO)\",\"FRA\":\"http://127.0.0.1:$(api_port FRA)\"}'#"
+  } | sed -f - "$PROXY_DIR/wrangler.toml" >"$PROXY_DIR/$config"
   # CI=true plus a closed stdin keep wrangler's interactive watcher from
   # exiting the dev session when the spawning shell goes away.
   nohup setsid sh -c "cd '$PROXY_DIR' && CI=true WRANGLER_SEND_METRICS=false npm exec -- wrangler dev --env dev --config '$config' --name ts-proxy --port '$PROXY_PORT'" </dev/null >>"$LOG_DIR/proxy.log" 2>&1 &
@@ -820,7 +838,13 @@ check_edge_components() {
   body="$(curl -sfL --max-time 5 "http://127.0.0.1:$PROXY_PORT/api/v1/regions" 2>/dev/null || true)"
   case "$body" in
     *'"hosts"'*"127.0.0.1:$(api_port GRU)"*"127.0.0.1:$(api_port SFO)"*"127.0.0.1:$(api_port FRA)"*)
-      log "proxy Worker dev mode: ok ($body)" ;;
+      case "$body" in
+        *'"available":false'*)
+          warn "proxy Worker dev mode FAILED: a region is unavailable: $body"
+          failures=$((failures + 1)) ;;
+        *)
+          log "proxy Worker dev mode: ok ($body)" ;;
+      esac ;;
     *)
       warn "proxy Worker dev mode FAILED: '${body:-no body}'"
       failures=$((failures + 1)) ;;
