@@ -86,16 +86,10 @@ impl Engine {
                 .replication_fingerprint(scope.tenant(), &operation)
                 .map_err(|()| EngineError::StorageFailure)?;
             if bound.is_some_and(|value| value != fingerprint) {
-                if std::env::var_os("TB_SIM_TRACE").is_some() {
-                    eprintln!("[engine] branch: bound fingerprint mismatch");
-                }
                 return Err(EngineError::OperationIdReuse { operation_id: operation });
             }
             if let Some(resolution) = storage.port.resolve_operation(scope.tenant(), &operation) {
                 if bound != Some(fingerprint) {
-                    if std::env::var_os("TB_SIM_TRACE").is_some() {
-                        eprintln!("[engine] branch: resolved without matching fingerprint (bound={bound:?})");
-                    }
                     return Err(EngineError::StorageFailure);
                 }
                 return match resolution {
@@ -105,12 +99,7 @@ impl Engine {
                             true,
                         ))
                     }
-                    storage::OperationResolution::Rejected(_) => {
-                        if std::env::var_os("TB_SIM_TRACE").is_some() {
-                            eprintln!("[engine] branch: resolution Rejected");
-                        }
-                        Err(EngineError::StorageFailure)
-                    }
+                    storage::OperationResolution::Rejected(_) => Err(EngineError::StorageFailure),
                 };
             }
             let snapshot = ReadSnapshot::new(
@@ -135,15 +124,7 @@ impl Engine {
                     );
                     let schema = storage.port.merge_schema(&record.collection);
                     let plan =
-                        match plan_record(record, current.as_ref(), context.as_deref(), schema.as_ref()) {
-                            Ok(plan) => plan,
-                            Err(error) => {
-                                if std::env::var_os("TB_SIM_TRACE").is_some() {
-                                    eprintln!("[engine] branch: plan_record error {error:?}");
-                                }
-                                return Err(error);
-                            }
-                        };
+                        plan_record(record, current.as_ref(), context.as_deref(), schema.as_ref())?;
                     Ok((plan, schema.map(|schema| schema.to_canonical_string())))
                 })
                 .collect::<Result<Vec<_>, EngineError>>()?;
@@ -185,12 +166,7 @@ impl Engine {
             CommitOutcome::Rejected(CommitError::OperationIdReuse) => {
                 Err(EngineError::OperationIdReuse { operation_id: operation })
             }
-            other => {
-                if std::env::var_os("TB_SIM_TRACE").is_some() {
-                    eprintln!("[engine] branch: commit outcome {other:?}");
-                }
-                Err(EngineError::StorageFailure)
-            }
+            _ => Err(EngineError::StorageFailure),
         }
     }
 }
@@ -294,29 +270,20 @@ fn plan_record(
     let Some(current) = current else {
         return Ok((Some(record.clone()), None));
     };
-    let decoded_current = merge::decode_context(context.unwrap_or_default());
     let current_version = merge::DocumentVersion::new(
-        decoded_current.clone().ok_or(EngineError::StorageFailure)?,
+        merge::decode_context(context.unwrap_or_default()).ok_or(EngineError::StorageFailure)?,
         merge::DocumentDot::new(current.origin.clone(), current.origin_sequence),
     );
     let incoming_version = merge::DocumentVersion::new(
         merge::decode_context(&record.context).ok_or(EngineError::InvalidDocument)?,
         merge::DocumentDot::new(record.origin.clone(), record.origin_sequence),
     );
-    if !current_version.is_well_formed() {
-        if std::env::var_os("TB_SIM_TRACE").is_some() {
-            eprintln!(
-                "[engine] plan_record: current not well-formed: origin={} seq={} context={:?} incoming_well={} incoming_dot=({},{})",
-                current.origin,
-                current.origin_sequence,
-                context.unwrap_or_default(),
-                incoming_version.is_well_formed(),
-                record.origin,
-                record.origin_sequence
-            );
-        }
-        return Err(EngineError::StorageFailure);
-    }
+    // The stored version may legitimately carry a context that already
+    // contains its own dot: a recorded merge stores the winner under
+    // `joined_context`, which folds in both competing dots so a discarded
+    // loser cannot reappear. `is_well_formed` is a wire-shape rule for
+    // incoming publications, not a rule of durable merged state — rejecting
+    // it here would wedge every document that has survived one merge.
     if incoming_version.context().contains(current_version.dot()) {
         return Ok((Some(record.clone()), None));
     }

@@ -2948,6 +2948,46 @@ fn replicated_publication_missing_dependency_binds_nothing_and_retries() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// One concurrent publication per origin writing the same key: each merge
+/// stores its winner under the joined context, which contains the winner's
+/// own dot. A later concurrent writer must still merge against that stored
+/// state instead of failing the stored-version shape check forever.
+#[test]
+fn merged_document_keeps_merging_across_successive_concurrent_writers() {
+    fn concurrent(origin: &str, stamp: u64) -> super::ReplicatedPublication {
+        let mut publication = replicated_group(&["merge-key"], stamp);
+        publication.origin = origin.into();
+        publication.commit_ulid = format!("{origin}-source");
+        for record in &mut publication.records {
+            record.origin = origin.into();
+            record.commit_ulid = publication.commit_ulid.clone();
+        }
+        publication
+    }
+    let (dir, engine) = open_engine("merged-context-reapply");
+    let scope = tenant_scope(&engine, "tenant-a");
+    engine.apply_replicated_publication(&scope, &concurrent("peer-a", 100)).unwrap();
+    engine.apply_replicated_publication(&scope, &concurrent("peer-b", 200)).unwrap();
+    assert_eq!(
+        read_document(&engine, "tenant-a", "merge-key").unwrap().value(),
+        &DocumentValue::Integer(200)
+    );
+    engine.apply_replicated_publication(&scope, &concurrent("peer-c", 300)).unwrap();
+    assert_eq!(
+        read_document(&engine, "tenant-a", "merge-key").unwrap().value(),
+        &DocumentValue::Integer(300)
+    );
+    let mut fourth = concurrent("peer-d", 400).records.remove(0);
+    fourth.body = DocumentValue::Integer(400);
+    engine.apply_replicated(&scope, &fourth).unwrap();
+    assert_eq!(
+        read_document(&engine, "tenant-a", "merge-key").unwrap().value(),
+        &DocumentValue::Integer(400)
+    );
+    engine.shutdown().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 pub(crate) fn test_storage_keys(
     owner: &crate::storage::DatabaseOwner,
     byte: u8,

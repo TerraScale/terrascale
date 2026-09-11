@@ -2733,9 +2733,10 @@ impl Engine {
             current_context.clone(),
             merge::DocumentDot::new(current.origin.clone(), current.origin_sequence),
         );
-        if !current_version.is_well_formed() {
-            return Err(EngineError::StorageFailure);
-        }
+        // Durable merged state may carry a context containing its own dot
+        // (`joined_context` records both competing dots so a discarded loser
+        // cannot reappear); `is_well_formed` governs incoming wire versions
+        // only, and rejecting merged state here would wedge the document.
         // Causal precedence is decided from durable contexts before HLC
         // conflict ordering. A later event may cleanly overwrite an older
         // body without parsing either side; a dominated delivery is an
