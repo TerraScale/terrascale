@@ -2,3 +2,4 @@ target/
 
 # Private generated CI release candidates and signatures
 /.terrascale-develop-release/
+__pycache__/
