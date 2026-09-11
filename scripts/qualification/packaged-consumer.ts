@@ -95,11 +95,14 @@ if (phase === "seed") { const result = await client.documents.put(databaseId, "s
 if (phase === "verify") { for (const id of ids) { const result = await client.documents.get(databaseId, "sdk_journey", id); observe("verify:" + id, result); const sdk = id.slice(runId.length + 1); assert.deepEqual(ok(result, "verify:" + id), { sdk, runId }); } }
 if (phase === "exercise") {
   const createKey = own + "-create";
-  const created = ok(await client.documents.put(databaseId, "sdk_journey", own, body, { idempotencyKey: createKey }), "create");
+  const createdResult = await client.documents.put(databaseId, "sdk_journey", own, body, { idempotencyKey: createKey });
+  const created = ok(createdResult, "create");
   const replay = await client.documents.put(databaseId, "sdk_journey", own, body, { idempotencyKey: createKey }); observe("idempotency-replay", replay);
   const replayed = ok(replay, "idempotency-replay");
+  assert.equal(createdResult.ok, true, "create must return a success receipt");
+  assert.equal(replay.ok, true, "idempotency replay must return a success receipt");
   assert.equal(replayed.revision, created.revision, "idempotent replay must retain the revision");
-  assert.equal(replayed.headers.get("etag"), created.headers.get("etag"), "idempotent replay must retain the ETag");
+  assert.equal(replay.headers.get("etag"), createdResult.headers.get("etag"), "idempotent replay must retain the ETag");
   const stale = await client.documents.patch(databaseId, "sdk_journey", own, { stale: true }, { ifMatch: '"stale-revision"', idempotencyKey: own + "-stale" }); observe("stale-if-match", stale); assert.equal(stale.ok, false); assert.equal(stale.status, 412);
   const sql = await client.sql.execute(databaseId, { sql: "SELECT * FROM sdk_journey WHERE id = :id", parameters: { id: own } }); observe("parameterized-sql", sql); const sqlValue = ok(sql, "parameterized-sql"); assert.ok("rows" in sqlValue); assert.ok(sqlValue.rows.some((row) => { const value = row.value; if (typeof value !== "object" || value === null || Array.isArray(value)) return false; const objectValue = value as { sdk?: unknown; runId?: unknown }; return row.id === own && objectValue.sdk === body.sdk && objectValue.runId === body.runId; }));
   const controller = new AbortController(); const live = await client.reactive.subscribe({ databaseId, subscription: own, query: "SELECT * FROM sdk_journey", parameters: new Uint8Array(), autoStart: false }); process.stdout.write(JSON.stringify({ label: "reactive-attach", ok: true, status: 200 }) + "\\n");
