@@ -30,4 +30,8 @@ chain verification; authenticated routed envelopes use their participant
 path instead. Added test: `encrypted_chain_rejects_participant_and_mixed_capture_kinds`.
 
 Updated restore source SHA-256:
-`49adbfd7252a837d161e4e5869edc55ef9ea674755e5bef1b7a6a71970b8d71e`
+`ccbab329867598009aef78c868db9d352c96abddd18d533560687fde8e032eef`
+
+Compile follow-up: the singleton participant assertion now uses
+`std::slice::from_ref`, avoiding a test-only move before the mixed-kind
+assertion. Production ownership is unchanged.

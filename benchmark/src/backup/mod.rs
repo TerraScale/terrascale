@@ -613,6 +613,19 @@ impl BackupPlan {
         }
     }
 
+    /// Creates an encrypted routed-participant plan for integration fixtures.
+    ///
+    /// This test-support-only seam retains the normal encrypted `run_backup`
+    /// path and cannot alter capture provenance in production plans.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn for_integration_tests_routed_shard_participant(encryption: BackupEncryption) -> Self {
+        let mut plan = Self::full(encryption);
+        plan.capture_kind = BackupCaptureKind::RoutedShardParticipant;
+        plan
+    }
+
     /// Creates a plaintext full plan for in-crate unit tests only.
     #[cfg(test)]
     pub(crate) fn local_test_full_plaintext() -> Self {

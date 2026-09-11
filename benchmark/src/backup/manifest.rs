@@ -42,7 +42,9 @@ pub(crate) const HEADER: &str = "terrabase-backup-manifest 4";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackupCaptureKind {
+    /// A standalone capture containing the complete database.
     WholeDatabase,
+    /// A participant capture authenticated inside a routed envelope.
     RoutedShardParticipant,
 }
 
@@ -251,6 +253,7 @@ impl BackupManifest {
             tenant_scope,
             identity: String::new(),
             kind,
+            capture_kind,
             boundary,
             boundary_unix_millis,
             captured_unix_millis,
@@ -320,6 +323,11 @@ impl BackupManifest {
     }
 
     #[must_use]
+    /// Returns the authenticated provenance class of this recovery point.
+    ///
+    /// `WholeDatabase` points may be resolved from the standalone namespace;
+    /// `RoutedShardParticipant` points are valid only as members of a routed
+    /// envelope.
     pub fn capture_kind(&self) -> BackupCaptureKind {
         self.capture_kind
     }
@@ -870,7 +878,7 @@ mod tests {
 
     #[test]
     fn capture_kind_is_required_and_strictly_parsed() {
-        let encoded = sample().encode();
+        let encoded = sample().render();
         for replacement in [
             ("capture_kind whole_database\n", ""),
             ("capture_kind whole_database", "capture_kind unknown"),

@@ -431,7 +431,7 @@ fn encrypted_chain_rejects_participant_and_mixed_capture_kinds() {
     let whole = point(BackupCaptureKind::WholeDatabase);
     let participant = point(BackupCaptureKind::RoutedShardParticipant);
     assert_eq!(
-        resolve_encrypted_points_chain(&[participant], &Selection::Latest),
+        resolve_encrypted_points_chain(std::slice::from_ref(&participant), &Selection::Latest),
         Err(BackupError::ManifestInvalid)
     );
     assert_eq!(

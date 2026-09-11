@@ -680,6 +680,7 @@ fn routed_fixture(
     Vec<AdmissionRecord>,
     std::path::PathBuf,
     crate::test_keys::KeyDeliveryFixture,
+    terrabase::backup::BackupManifest,
 ) {
     let root = std::env::temp_dir().join(format!("routed-native-{}", DatabaseUlid::generate()));
     std::fs::create_dir_all(&root).unwrap();
@@ -724,8 +725,14 @@ fn routed_fixture(
         let archive = root.join(format!("seed-archive-{shard}"));
         let encryption =
             BackupEncryption::from_database_key_lease(&lease, RegionCode::GRU, 0).unwrap();
-        let manifest =
-            run_backup(&engine, BackupPlan::full(encryption), &archive).unwrap().manifest().clone();
+        let manifest = run_backup(
+            &engine,
+            BackupPlan::for_integration_tests_routed_shard_participant(encryption),
+            &archive,
+        )
+        .unwrap()
+        .manifest()
+        .clone();
         let participant_id = format!("shard-{shard:016x}");
         archives.push((participant_id.clone(), archive));
         participants.push(BackupEnvelopeParticipant {
@@ -750,6 +757,25 @@ fn routed_fixture(
     let source_config = config(&records[0], &root.join(&records[0].database_id), mode);
     let source = terrabase::Engine::open(source_config.clone()).unwrap();
     let tenant = TenantId::try_new(&records[0].tenant_id).unwrap();
+    source.activate_origin_epoch(1).unwrap();
+    assert!(source.load_shard_router(&source.scope_for(&tenant)).unwrap().is_none());
+    put(&source, "before-routing", 9);
+    let historical_keys =
+        fixture_keys(&scope(&records[0]), terrabase::encryption::KeyPurpose::Backup, mode);
+    let historical_lease = historical_keys.current_lease().unwrap();
+    let historical = run_backup(
+        &source,
+        BackupPlan::full(
+            BackupEncryption::from_database_key_lease(&historical_lease, RegionCode::GRU, 0)
+                .unwrap(),
+        ),
+        &root.join("before-routing"),
+    )
+    .unwrap()
+    .manifest()
+    .clone();
+    assert_eq!(historical.capture_kind(), terrabase::backup::BackupCaptureKind::WholeDatabase);
+    assert_eq!(historical.logical_documents(), 1);
     source.lifecycle_pause(&source.scope_for(&tenant), "fixture-pause").unwrap();
     drop(source);
     RestorePlan::restore_envelope_encrypted_with_config(
@@ -801,7 +827,7 @@ fn routed_fixture(
     registry
         .activate(&records.iter().map(|record| record.database_id.clone()).collect::<Vec<_>>())
         .unwrap();
-    (registry, member, records, root, delivery)
+    (registry, member, records, root, delivery, historical)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -816,7 +842,7 @@ async fn routed_paused_native_backup_recomposes_after_fresh_member() {
 
 async fn native_capture_restores_all_admitted_files(restart_paused: bool) {
     let mode = KeyMode::Managed;
-    let (registry, member, records, root, delivery) = routed_fixture(mode);
+    let (registry, member, records, root, delivery, _historical) = routed_fixture(mode);
     let source = registry.resolve(&records[0].database_id).unwrap().unwrap();
     assert_eq!(
         source.host.engine_host().admitted_shard_read_cut().unwrap().unwrap().participants.len(),
@@ -1059,7 +1085,7 @@ async fn routed_production_lifecycle_capture_restore_and_reopen() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn routed_production_admission_selects_managed_and_customer_keys() {
     for mode in [KeyMode::Managed, KeyMode::Customer] {
-        let (registry, member, records, root, _delivery) = routed_fixture(mode);
+        let (registry, member, records, root, _delivery, _historical) = routed_fixture(mode);
         let keys = crate::test_keys::key_delivery();
         let (admission, journal, remote) =
             production_owner(registry.clone(), member.clone(), &records, &root, &keys, mode, false)
@@ -1074,7 +1100,7 @@ async fn routed_production_admission_selects_managed_and_customer_keys() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn routed_production_admission_denies_provider_declaration_mismatch() {
     for mode in [KeyMode::Managed, KeyMode::Customer] {
-        let (registry, member, records, root, _delivery) = routed_fixture(mode);
+        let (registry, member, records, root, _delivery, _historical) = routed_fixture(mode);
         let keys = crate::test_keys::key_delivery();
         let (admission, journal, remote) =
             production_owner(registry.clone(), member.clone(), &records, &root, &keys, mode, true)
@@ -1102,7 +1128,7 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
     };
     use terrabase_tbep::lifecycle::{LifecycleGrantAction, LifecycleOperationGrant};
     use terrabase_tbep::proto::terrabase::v1::{RestoreProvider, RestoreToTargetRequest};
-    let (registry, member, records, root, _delivery) = routed_fixture(mode);
+    let (registry, member, records, root, _delivery, standalone) = routed_fixture(mode);
     let keys = crate::test_keys::key_delivery();
     let (admission, journal, remote) =
         production_owner(registry.clone(), member.clone(), &records, &root, &keys, mode, false)
@@ -1110,15 +1136,23 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
     // This crosses the real production input admission for an installed route.
     // Only the external object transport is controlled.
     let mut input = admission.resolve_native_backup_input(&records[0].database_id).unwrap();
-    input.destinations = vec![(
+    let store = Arc::new(object_store::memory::InMemory::new());
+    let destination = Arc::new(ObjectDestination::for_test(
         Provider::Oci,
-        Arc::new(ObjectDestination::for_test(
-            Provider::Oci,
-            Arc::new(object_store::memory::InMemory::new()),
-            4 * 1024 * 1024,
-            16 * 1024 * 1024,
-        )),
-    )];
+        store.clone(),
+        4 * 1024 * 1024,
+        16 * 1024 * 1024,
+    ));
+    let staging = input.staging.clone();
+    let historical_name = format!("rp-{}", standalone.identity());
+    let historical_prefix = format!("{}/{historical_name}", records[0].database_id);
+    destination
+        .upload_point(&root.join("before-routing").join(&historical_name), &historical_prefix)
+        .await
+        .unwrap();
+    std::fs::create_dir_all(&staging).unwrap();
+    destination.download_point(&historical_prefix, &staging.join(&historical_name)).await.unwrap();
+    input.destinations = vec![(Provider::Oci, destination.clone())];
     input.historical_destinations.clear();
     let backups = Arc::new(
         NativeBackupRuntime::new(
@@ -1132,11 +1166,8 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         )
         .unwrap(),
     );
-    // Retain a real whole-database point before publishing the routed capture.
-    // The catalog must preserve this historical point alongside the later
-    // envelope rather than projecting a participant as a standalone point.
-    let standalone =
-        backups.capture(&records[0].database_id, "lifecycle-standalone-capture").await.unwrap();
+    // The fixture captured this whole point while the same source had no
+    // route catalog. Its authenticated archive survives the later route install.
     let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
     let executor = Arc::new(ObservedExecutor {
         inner: crate::production_data_runtime::ProductionRestoreExecutor::new(
@@ -1218,6 +1249,20 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         .unwrap();
     assert_eq!(latest.0.digest(), envelope.digest());
     assert_eq!(latest.1, Provider::Oci);
+    assert!(standalone.captured_unix_millis() <= envelope.captured_unix_millis());
+    assert_eq!(historical.logical_documents(), 1);
+    assert!(
+        recovery
+            .resolve_recovery_envelope(
+                &records[0].database_id,
+                "point_id",
+                standalone.identity(),
+                &records[0].regions,
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert!(envelope.route_generation() > 0);
     assert_eq!(
         envelope.database_incarnation(),
@@ -1433,6 +1478,15 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         assert!(target.database.host.engine_host().admitted_shard_read_cut().is_err());
         assert!(registry.resolve(&request.target_database_id).unwrap().is_none());
     }
+    assert_relocated_participant_is_not_standalone(
+        &backups,
+        &reopened,
+        &records[0],
+        &envelope,
+        &staging,
+        (&destination, store.as_ref()),
+    )
+    .await;
     worker.shutdown().await.unwrap();
     drop(reopened);
     backups.drain().unwrap();
@@ -1440,4 +1494,116 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
     drop((admission, backups, journal, remote, registry));
     member.close(std::time::Duration::from_secs(2)).unwrap();
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// Relocate complete, already authenticated output from the native routed
+/// capture. No manifests, ciphertext, checksums, or provider indexes are edited.
+async fn assert_relocated_participant_is_not_standalone(
+    backups: &NativeBackupRuntime,
+    recovery: &crate::native_recovery::NativeRecoveryRuntime,
+    source: &AdmissionRecord,
+    envelope: &BackupEnvelope,
+    staging: &std::path::Path,
+    transport: (&ObjectDestination, &object_store::memory::InMemory),
+) {
+    use crate::native_backup_runtime::{FleetError, NativeBackupRuntimeError};
+    use futures_util::TryStreamExt as _;
+    use object_store::ObjectStore as _;
+
+    let (destination, store) = transport;
+    let participant = &envelope.participants()[0];
+    assert_eq!(
+        participant.manifest.capture_kind(),
+        terrabase::backup::BackupCaptureKind::RoutedShardParticipant
+    );
+    let physical = participant.file_identity;
+    let namespace = format!(
+        "participants/{:032x}/{:016x}/{:032x}",
+        physical.database_incarnation, physical.shard_id, physical.origin_lane_incarnation
+    );
+    let name = format!("rp-{}", participant.manifest.identity());
+    let original_prefix = format!("{}/{namespace}/{name}", source.database_id);
+    // Download the entire provider-authenticated point into the ordinary root
+    // staging namespace, including every encrypted member.
+    destination.download_point(&original_prefix, &staging.join(&name)).await.unwrap();
+    participant.manifest.verify(staging).unwrap();
+    let original_manifest =
+        std::fs::read(staging.join(&namespace).join(&name).join("manifest.tbv3e")).unwrap();
+    assert_eq!(
+        std::fs::read(staging.join(&name).join("manifest.tbv3e")).unwrap(),
+        original_manifest
+    );
+    assert!(matches!(
+        crate::backup_point_catalog::list_backup_points(
+            backups,
+            &source.database_id,
+            Some(10),
+            None,
+            0,
+        )
+        .await,
+        Err(crate::backup_point_catalog::BackupPointCatalogError::Runtime(
+            NativeBackupRuntimeError::Fleet(FleetError::Capture)
+        ))
+    ));
+
+    // Copy the original objects, including the authenticated transport index,
+    // through the same retained store used by the runtime's destination.
+    let prefix = object_store::path::Path::from(original_prefix.clone());
+    let objects: Vec<_> = store.list(Some(&prefix)).try_collect().await.unwrap();
+    assert!(objects.len() > 1, "copy must include manifest and archive members");
+    let relocated_prefix = format!("{}/{name}", source.database_id);
+    for object in objects {
+        let suffix = object.location.as_ref().strip_prefix(&original_prefix).unwrap();
+        let relocated = object_store::path::Path::from(format!("{relocated_prefix}{suffix}"));
+        store.copy(&object.location, &relocated).await.unwrap();
+        assert_eq!(
+            store.get(&object.location).await.unwrap().bytes().await.unwrap(),
+            store.get(&relocated).await.unwrap().bytes().await.unwrap()
+        );
+    }
+    assert!(matches!(
+        recovery
+            .resolve_recovery_point(
+                &source.database_id,
+                "point_id",
+                participant.manifest.identity(),
+                &source.regions,
+            )
+            .await,
+        Err(crate::native_recovery::NativeRecoveryError::Unavailable)
+    ));
+    // Valid provenance remains usable in its original envelope even while the
+    // misplaced copies cause standalone discovery to fail closed.
+    let (original, provider) = recovery
+        .resolve_recovery_envelope(
+            &source.database_id,
+            "point_id",
+            envelope.digest(),
+            &source.regions,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(original, *envelope);
+    assert_eq!(provider, Provider::Oci);
+    let roots: Vec<_> = envelope
+        .participants()
+        .iter()
+        .map(|participant| {
+            let file = participant.file_identity;
+            (
+                participant.participant_id.clone(),
+                staging.join(format!(
+                    "participants/{:032x}/{:016x}/{:032x}",
+                    file.database_incarnation, file.shard_id, file.origin_lane_incarnation
+                )),
+            )
+        })
+        .collect();
+    envelope
+        .verify_staged(
+            &roots.iter().map(|(id, path)| (id.clone(), path.as_path())).collect::<Vec<_>>(),
+        )
+        .unwrap();
 }

@@ -467,12 +467,12 @@ mod tests {
         }
     }
 
-    fn manifest(boundary: u64) -> BackupManifest {
+    fn manifest(boundary: u64, capture_kind: BackupCaptureKind) -> BackupManifest {
         BackupManifest::assemble(ManifestFacts {
             database_id: database(),
             partition_id: "partition-000000".into(),
             kind: super::super::BackupKind::Full,
-            capture_kind: BackupCaptureKind::RoutedShardParticipant,
+            capture_kind,
             boundary: StorageSequence::new(boundary),
             boundary_unix_millis: boundary,
             captured_unix_millis: boundary,
@@ -499,8 +499,8 @@ mod tests {
 
     #[test]
     fn accepts_participants_with_independent_local_boundaries() {
-        let first = manifest(7);
-        let second = manifest(8);
+        let first = manifest(7, BackupCaptureKind::RoutedShardParticipant);
+        let second = manifest(8, BackupCaptureKind::RoutedShardParticipant);
         let participants = vec![
             BackupEnvelopeParticipant {
                 file_identity: identity(1),
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn rejects_participant_boundary_mismatch() {
-        let point = manifest(7);
+        let point = manifest(7, BackupCaptureKind::RoutedShardParticipant);
         let participant = BackupEnvelopeParticipant {
             file_identity: identity(1),
             is_root: true,
@@ -574,11 +574,7 @@ mod tests {
 
     #[test]
     fn rejects_whole_database_manifest_as_routed_participant() {
-        let mut point = manifest(7);
-        point.capture_kind = BackupCaptureKind::WholeDatabase;
-        point.identity = String::new();
-        point.identity =
-            hex::encode(digest(&SHA256, point.body_lines().join("\n").as_bytes()).as_ref());
+        let point = manifest(7, BackupCaptureKind::WholeDatabase);
         let participant = BackupEnvelopeParticipant {
             file_identity: identity(1),
             is_root: true,
