@@ -33,7 +33,7 @@ nuspec="$(unzip -Z1 "$TERRASCALE_SDK_NUPKG" | awk '/\.nuspec$/ { print; exit }')
 metadata="$(unzip -p "$TERRASCALE_SDK_NUPKG" "$nuspec")"
 grep -Eq '<id>TerraScale\.DotNet</id>' <<<"$metadata" || { echo 'SDK nupkg has unexpected package ID' >&2; exit 1; }
 grep -Eq '<version>0\.1\.0</version>' <<<"$metadata" || { echo 'SDK nupkg has unexpected package version' >&2; exit 1; }
-tmp="$(mktemp -d /tmp/terrascale-dotnet-live.XXXXXX)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/terrascale-dotnet-live.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 feed="$tmp/feed"; mkdir -p "$feed"; cp -- "$TERRASCALE_SDK_NUPKG" "$feed/TerraScale.DotNet.0.1.0.nupkg"
 copied="$(sha256sum "$feed/TerraScale.DotNet.0.1.0.nupkg" | awk '{print $1}')"
