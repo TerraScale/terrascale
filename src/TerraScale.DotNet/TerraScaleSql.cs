@@ -1039,13 +1039,24 @@ internal static class TerraScaleSqlValidation
         ArgumentNullException.ThrowIfNull(parameters);
         var tokens = ValidateSqlShape(text);
         var used = new HashSet<string>(StringComparer.Ordinal);
+        // A bare `?` takes the next ordinal no explicit `?n` marker claims;
+        // it must not skip past supplied bindings.
+        var explicitNumbers = new HashSet<int>();
+        foreach (var token in tokens)
+        {
+            if (token.StartsWith('?') && token.Length > 1
+                && int.TryParse(token[1..], NumberStyles.None, CultureInfo.InvariantCulture, out var claimed))
+            {
+                explicitNumbers.Add(claimed);
+            }
+        }
         var next = 1;
         foreach (var token in tokens)
         {
             string? name = null;
             if (token == "?")
             {
-                while (parameters.ContainsKey(next.ToString(CultureInfo.InvariantCulture))) next++;
+                while (explicitNumbers.Contains(next)) next++;
                 name = next++.ToString(CultureInfo.InvariantCulture);
             }
             else if (token.StartsWith("?") && token.Length > 1)
