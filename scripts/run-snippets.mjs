@@ -114,9 +114,11 @@ function canonicalEnvelope(bytes) {
   const [major, minor, features, tag, correlation, causation, body] = value;
   // u64 fields decode as BigInt or as a compact safe integer depending on
   // the producer's width; both spell the same non-negative u64.
-  const asU64 = (field) => typeof field === "bigint" ? field : BigInt(Number.isSafeInteger(field) && field >= 0 ? field : Number.NaN);
+  const asU64 = (field) => typeof field === "bigint"
+    ? field
+    : Number.isSafeInteger(field) && field >= 0 ? BigInt(field) : undefined;
   const [correlationU64, causationU64] = [asU64(correlation), asU64(causation)];
-  if (major !== 1 || minor !== 0 || features !== 0 || !Number.isSafeInteger(tag) || Number.isNaN(correlationU64) || Number.isNaN(causationU64)) {
+  if (major !== 1 || minor !== 0 || features !== 0 || !Number.isSafeInteger(tag) || correlationU64 === undefined || causationU64 === undefined) {
     throw new Error("pending canonical reactive contract: expected protocol 1.0 indexed envelope");
   }
   const messages = { 3: "snapshot", 4: "delta", 5: "reset", 6: "heartbeat", 8: "authorization_changed", 9: "region_route_change", 10: "error", 11: "backpressure" };
@@ -135,18 +137,19 @@ function canonicalFields(fields) {
 
 function canonicalMessage(envelope) {
   const body = envelope.body;
-  // u64 fields may arrive as compact safe integers; normalize to BigInt.
-  const asU64 = (field) => typeof field === "bigint" ? field : BigInt(Number.isSafeInteger(field) && field >= 0 ? field : Number.NaN);
+  const asU64 = (field) => typeof field === "bigint"
+    ? field
+    : Number.isSafeInteger(field) && field >= 0 ? BigInt(field) : undefined;
   if (envelope.kind === "snapshot") {
     if (body.length !== 2 || typeof body[0] !== "string" || !Array.isArray(body[1])) throw new Error("pending canonical reactive contract: invalid snapshot");
     const snapshot = body[1];
     const generations = [asU64(snapshot[0]), asU64(snapshot[1]), asU64(snapshot[2])];
-    if (snapshot.length !== 6 || generations.some(Number.isNaN) || !Array.isArray(snapshot[3])) throw new Error("pending canonical reactive contract: invalid snapshot body");
+    if (snapshot.length !== 6 || generations.some((field) => field === undefined) || !Array.isArray(snapshot[3])) throw new Error("pending canonical reactive contract: invalid snapshot body");
     return { kind: "snapshot", subscription: body[0], snapshot: { view_generation: generations[0], authorization_generation: generations[1], revision: generations[2], items: snapshot[3].map((item) => ({ identity: item[0], fields: canonicalFields(item[1]) })), digest: snapshot[4], checkpoint: snapshot[5] } };
   }
   if (envelope.kind === "delta") {
     const revisions = [asU64(body[1]), asU64(body[2]), asU64(body[3])];
-    if (body.length !== 7 || typeof body[0] !== "string" || revisions.some(Number.isNaN) || !Array.isArray(body[4])) throw new Error("pending canonical reactive contract: invalid delta");
+    if (body.length !== 7 || typeof body[0] !== "string" || revisions.some((field) => field === undefined) || !Array.isArray(body[4])) throw new Error("pending canonical reactive contract: invalid delta");
     body[1] = revisions[0];
     body[2] = revisions[1];
     body[3] = revisions[2];
@@ -216,6 +219,9 @@ export function createRemoteSandbox() {
   let session;
   let preferredRegion;
   let writeNumber = 0;
+  // Idempotency keys must never repeat across runs: a replay returns the
+  // original outcome without recreating a document an earlier run deleted.
+  const runTag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   // Reactive delivery (log/snapshot) never crosses the API origin: the edge
   // refuses it by design. Production serves it from the sync origin; a local
   // composition serves it from the member that holds the view, which the
@@ -239,9 +245,6 @@ export function createRemoteSandbox() {
     }
     return normalizeSandboxOrigin(host);
   };
-  // Idempotency keys must never repeat across runs: a replay returns the
-  // original outcome without recreating a document an earlier run deleted.
-  const runTag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const headers = {
     accept: "application/json",
     "content-type": "application/json",
@@ -404,13 +407,11 @@ export function createRemoteSandbox() {
       const syncOrigin = await syncOriginFor(preferredRegion ?? "");
       const logUrl = resolveSandboxUrl(rawLogUrl, syncOrigin, "reactive log");
       const snapshotUrls = snapshots.map((snapshotUrl) => resolveSandboxUrl(snapshotUrl, syncOrigin, "reactive snapshot"));
-      const state = { collection: query.match(/FROM\s+([A-Za-z_][A-Za-z0-9_]*)/iu)?.[1], subscription: view, capability, logUrl, revision: 0, items: [], listeners: new Set(), closed: false };
+      const state = { collection: query.match(/FROM\s+([A-Za-z_][A-Za-z0-9_]*)/iu)?.[1], subscription: view, capability, logUrl, revision: Number(value.offset ?? 0), items: [], listeners: new Set(), closed: false };
       subscriptions.add(state);
       for (const snapshotUrl of snapshotUrls) {
-        // The capability authorizes the view. A composition without a
-        // proof-signing edge (the local stack) still requires member
-        // admission, so the bearer rides along; the production sync origin
-        // verifies the capability alone.
+        // The capability is the only credential accepted by the reactive
+        // cache path; API credentials never cross this boundary.
         const response = await fetch(snapshotUrl, { headers: { accept: "application/msgpack", authorization: `Bearer ${key}`, [VIEW_CAPABILITY_HEADER]: capability } });
         if (!response.ok) throw new Error(`remote snapshot failed: ${response.status}`);
         consume(state, new Uint8Array(await response.arrayBuffer()));
