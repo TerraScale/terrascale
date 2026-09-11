@@ -44,6 +44,10 @@ async fn api_key_is_normalized_once_before_authorization_header_is_added() {
         ("raw-key", "Bearer raw-key"),
         ("Bearer prefixed-key", "Bearer prefixed-key"),
         ("bEaReR   spaced-key", "Bearer spaced-key"),
+        (
+            "BEARER\u{2003}unicode-space-key",
+            "Bearer unicode-space-key",
+        ),
     ] {
         let mock = Mock::new([document_response()]);
         let sdk = TerraScaleClient::with_transport(
@@ -71,7 +75,16 @@ async fn api_key_is_normalized_once_before_authorization_header_is_added() {
 
 #[test]
 fn api_key_rejects_empty_whitespace_and_control_characters() {
-    for configured in ["", "   ", "Bearer", "Bearer   ", "key\nvalue", "key\rvalue"] {
+    for configured in [
+        "",
+        "   ",
+        "Bearer",
+        "Bearer   ",
+        "key value",
+        "key\u{2003}value",
+        "key\nvalue",
+        "key\rvalue",
+    ] {
         let error = ClientConfig::builder()
             .api_key(configured)
             .build()

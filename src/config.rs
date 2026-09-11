@@ -242,11 +242,7 @@ pub(crate) fn normalize_api_key(value: &str) -> Result<String> {
             let rest = value
                 .get(6..)
                 .expect("an ASCII prefix ends on a UTF-8 character boundary");
-            if rest
-                .chars()
-                .next()
-                .is_some_and(|character| character.is_ascii_whitespace())
-            {
+            if rest.chars().next().is_some_and(char::is_whitespace) {
                 rest.trim()
             } else {
                 value
@@ -260,6 +256,13 @@ pub(crate) fn normalize_api_key(value: &str) -> Result<String> {
             ErrorKind::Validation,
             "invalid_api_key",
             "API keys cannot be empty.",
+        ));
+    }
+    if value.chars().any(char::is_whitespace) {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_api_key",
+            "API keys cannot contain whitespace characters.",
         ));
     }
     Ok(value.to_owned())
