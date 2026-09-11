@@ -1699,7 +1699,7 @@ mod tests {
             progress: progress.clone(),
             observations: observations.clone(),
             retirement: None,
-            suspended: Default::default(),
+            suspended: std::collections::BTreeSet::default(),
         };
         drop(sender);
         drop(inbox);

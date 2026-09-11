@@ -1462,7 +1462,6 @@ mod delete_owned_data_tests {
             authority_lease: "lease".into(),
             authority_signature: b"signature".to_vec(),
             operation_grant: b"grant".to_vec(),
-            ..Default::default()
         }
     }
 

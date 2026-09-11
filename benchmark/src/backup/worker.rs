@@ -15,7 +15,7 @@ mod remote;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -57,6 +57,65 @@ pub(super) fn open_staging_temporary(path: &Path) -> Result<File, FleetError> {
         options.custom_flags(0o400_000); // O_NOFOLLOW
     }
     options.open(path).map_err(|_| FleetError::Capture)
+}
+
+/// Admit a staging root without resolving any attacker-controlled symlink.
+///
+/// Native members run on Linux and staging paths are absolute.  Walking from
+/// an open root descriptor means every component is opened (or created) with
+/// `O_NOFOLLOW` relative to the already-admitted parent.  In particular,
+/// `create_dir_all` must not be used here: it follows a symlink in either the
+/// root or an intermediate component.  A component replacement racing the
+/// walk is consequently rejected by the descriptor open rather than being
+/// followed outside the configured path.
+#[cfg(target_os = "linux")]
+fn admit_staging_root(path: &Path) -> Result<(), FleetError> {
+    use std::os::fd::OwnedFd;
+
+    if !path.is_absolute() {
+        return Err(FleetError::Configuration);
+    }
+    let components = path.components().collect::<Vec<_>>();
+    if components.is_empty()
+        || components
+            .iter()
+            .any(|component| !matches!(component, Component::RootDir | Component::Normal(_)))
+        || !components.iter().any(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(FleetError::Configuration);
+    }
+    let directory_flags = rustix::fs::OFlags::PATH
+        | rustix::fs::OFlags::DIRECTORY
+        | rustix::fs::OFlags::NOFOLLOW
+        | rustix::fs::OFlags::CLOEXEC;
+    let mut parent: OwnedFd = rustix::fs::open("/", directory_flags, rustix::fs::Mode::empty())
+        .map_err(|_| FleetError::Capture)?;
+    for component in components {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        let child =
+            match rustix::fs::openat(&parent, name, directory_flags, rustix::fs::Mode::empty()) {
+                Ok(child) => child,
+                Err(rustix::io::Errno::NOENT) => {
+                    rustix::fs::mkdirat(&parent, name, rustix::fs::Mode::from_raw_mode(0o700))
+                        .map_err(|_| FleetError::Capture)?;
+                    rustix::fs::openat(&parent, name, directory_flags, rustix::fs::Mode::empty())
+                        .map_err(|_| FleetError::Capture)?
+                }
+                Err(_) => return Err(FleetError::Capture),
+            };
+        parent = child;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn admit_staging_root(path: &Path) -> Result<(), FleetError> {
+    if !path.is_absolute() {
+        return Err(FleetError::Configuration);
+    }
+    std::fs::create_dir_all(path).map_err(|_| FleetError::Capture)
 }
 
 /// Retains the admitted engine owner for the complete backup worker lifetime.
@@ -542,11 +601,11 @@ impl NativeBackupFleet {
         }
         let stream = self.streams.get(&first.database_id).ok_or(FleetError::Configuration)?;
         let catalog = stream.config.staging.join("envelopes");
-        std::fs::create_dir_all(&catalog).map_err(|_| FleetError::Capture)?;
+        admit_staging_root(&catalog)?;
         let name = format!("env-{}", envelope.digest());
         let temporary = catalog.join(format!(".{name}.staging"));
         let published = catalog.join(&name);
-        std::fs::create_dir_all(&temporary).map_err(|_| FleetError::Capture)?;
+        admit_staging_root(&temporary)?;
         let bytes = envelope.encode().map_err(|_| FleetError::Capture)?;
         let marker = temporary.join("envelope.tbv1");
         std::fs::write(&marker, bytes).map_err(|_| FleetError::Capture)?;
@@ -670,7 +729,7 @@ async fn purge_retained_parts(
     if retained_destinations.is_empty() || retained_destinations.len() > 64 {
         return Err(FleetError::Configuration);
     }
-    std::fs::create_dir_all(staging).map_err(|_| FleetError::Capture)?;
+    admit_staging_root(staging)?;
     let retained = inventory_points_for(staging, keys, retention_days)?;
     let mut removed = 0;
     for destination in retained_destinations {
@@ -933,7 +992,7 @@ impl NativeBackupFleet {
         if lifecycle.access_revoked() {
             return Err(FleetError::Configuration);
         }
-        std::fs::create_dir_all(&config.staging).map_err(|_| FleetError::Capture)?;
+        admit_staging_root(&config.staging)?;
         // Reconcile crash-left ephemeral work before admission can account it
         // against the staging budget. This also makes a reopened fleet safe
         // before its first scheduled tick or explicit capture.
@@ -2796,6 +2855,51 @@ mod tests {
 
         std::fs::remove_dir_all(directory).unwrap();
         std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn staging_root_admission_rejects_symlink_root_and_components() {
+        let base = location("backup-staging-admission-symlink");
+        let outside = location("backup-staging-admission-outside");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let root_link = base.join("root-link");
+        std::os::unix::fs::symlink(&outside, &root_link).unwrap();
+        assert!(matches!(
+            admit_staging_root(&root_link.join("database")),
+            Err(FleetError::Capture)
+        ));
+        assert!(!outside.join("database").exists());
+
+        let admitted = base.join("admitted");
+        admit_staging_root(&admitted.join("database").join("points")).unwrap();
+        let component_link = admitted.join("database-link");
+        std::os::unix::fs::symlink(&outside, &component_link).unwrap();
+        assert!(matches!(
+            admit_staging_root(&component_link.join("points")),
+            Err(FleetError::Capture)
+        ));
+        assert!(!outside.join("points").exists());
+
+        std::fs::remove_dir_all(base).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn staging_root_admission_rejects_root_relative_and_parent_paths() {
+        let base = location("backup-staging-admission-shape");
+        assert!(matches!(
+            admit_staging_root(Path::new("relative/staging")),
+            Err(FleetError::Configuration)
+        ));
+        assert!(matches!(admit_staging_root(Path::new("/")), Err(FleetError::Configuration)));
+        assert!(matches!(
+            admit_staging_root(&base.join("staging/../escape")),
+            Err(FleetError::Configuration)
+        ));
     }
 
     #[derive(Debug)]

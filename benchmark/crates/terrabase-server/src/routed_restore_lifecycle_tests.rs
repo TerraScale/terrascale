@@ -721,7 +721,7 @@ fn routed_fixture(
             terrabase::Engine::open(config(seed, &root.join(format!("seed-{shard}")), mode))
                 .unwrap();
         engine.activate_origin_epoch(1).unwrap();
-        put(&engine, id, shard as i64);
+        put(&engine, id, i64::try_from(shard).expect("fixture shard fits in i64"));
         let archive = root.join(format!("seed-archive-{shard}"));
         let encryption =
             BackupEncryption::from_database_key_lease(&lease, RegionCode::GRU, 0).unwrap();

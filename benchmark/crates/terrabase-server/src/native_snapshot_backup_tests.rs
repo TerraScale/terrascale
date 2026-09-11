@@ -142,7 +142,7 @@ async fn fixture() -> (
     )
     .unwrap();
     let follower_binding = WalReplicaBinding::new(
-        scope.clone(),
+        scope,
         &follower_placement,
         MemberWorkloadIdentity::try_new("prod", "cluster", writer).unwrap(),
         MemberWorkloadIdentity::try_new("prod", "cluster", follower).unwrap(),
