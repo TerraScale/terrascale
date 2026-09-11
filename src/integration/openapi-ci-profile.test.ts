@@ -22,6 +22,6 @@ test("the CI workflow delegates contract and verification gates to ts-deploy", a
   );
   assert.doesNotMatch(workflow, /ts-dashboard\.git|path:\s*Dashboard/u);
 
-  const invocations = workflow.match(/\b(?:\.\/)?ts-deploy ci --repo ts-typescript\b/gu) ?? [];
-  assert.equal(invocations.length, 1);
+  assert.match(workflow, /uses:\s+\.\/\.forgejo\/actions\/ts-deploy\b/u);
+  assert.match(workflow, /with:\s*\r?\n\s+repo:\s+ts-typescript\b/u);
 });

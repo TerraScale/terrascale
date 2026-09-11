@@ -23,6 +23,7 @@ type PackedRouteManifest = {
 
 test("workflow delegates host-mode verification to the Deploy CLI", async () => {
   const workflow = await readFile(path.join(repositoryRoot, ".forgejo", "workflows", "ci.yml"), "utf8");
+  const deployAction = await readFile(path.join(repositoryRoot, ".forgejo", "actions", "ts-deploy", "action.yml"), "utf8");
 
   assert.doesNotMatch(workflow, /(?:container:|\bimage:|docker|podman|REGISTRY_|DEPLOY_CLI_READ_TOKEN)/iu);
   assert.match(workflow, /runs-on: terrascale-builder/u);
@@ -30,16 +31,17 @@ test("workflow delegates host-mode verification to the Deploy CLI", async () => 
   assert.match(workflow, /TS_DEPLOY_VERSION: \$\{\{ vars\.TS_DEPLOY_VERSION \}\}/u);
   assert.match(workflow, /TS_DEPLOY_SHA256: \$\{\{ vars\.TS_DEPLOY_SHA256 \}\}/u);
   assert.match(workflow, /TS_DEPLOY_SIGNATURE_SHA256: \$\{\{ vars\.TS_DEPLOY_SIGNATURE_SHA256 \}\}/u);
-  assert.match(workflow, /case "\$\(uname -m\)" in[\s\S]*aarch64\|arm64\) asset=ts-deploy-linux-arm64[\s\S]*x86_64\|amd64\) asset=ts-deploy-linux-amd64/u);
-  assert.match(workflow, /release="\$\{TS_DEPLOY_VERSION:\?TS_DEPLOY_VERSION is required\}"/u);
-  assert.match(workflow, /case "\$\{release\}" in[\s\S]*v\[0-9\]\*\.\[0-9\]\*\.\[0-9\]\*\)/u);
-  assert.match(workflow, /fj release view "\$\{release\}" --repo TerraScale\/ts-deploy/u);
-  assert.match(workflow, /fj release asset download "\$\{release\}" "\$\{asset\}" --repo TerraScale\/ts-deploy --output ts-deploy/u);
-  assert.match(workflow, /fj release asset download "\$\{release\}" "\$\{asset\}\.sig" --repo TerraScale\/ts-deploy --output ts-deploy\.sig/u);
-  assert.match(workflow, /TS_DEPLOY_SHA256.*sha256sum --check --strict/u);
-  assert.match(workflow, /TS_DEPLOY_SIGNATURE_SHA256.*sha256sum --check --strict/u);
-  assert.match(workflow, /chmod \+x ts-deploy/u);
-  assert.match(workflow, /\.\/ts-deploy ci --repo ts-typescript/u);
+  assert.match(workflow, /uses:\s+\.\/\.forgejo\/actions\/ts-deploy\b/u);
+  assert.match(deployAction, /case "\$\(uname -m\)" in[\s\S]*aarch64\|arm64\) asset=ts-deploy-linux-arm64[\s\S]*x86_64\|amd64\) asset=ts-deploy-linux-amd64/u);
+  assert.match(deployAction, /release="\$\{TS_DEPLOY_VERSION:\?TS_DEPLOY_VERSION is required\}"/u);
+  assert.match(deployAction, /case "\$\{release\}" in[\s\S]*v\[0-9\]\*\.\[0-9\]\*\.\[0-9\]\*\)/u);
+  assert.match(deployAction, /fj release view "\$\{release\}" --repo TerraScale\/ts-deploy/u);
+  assert.match(deployAction, /fj release asset download "\$\{release\}" "\$\{asset\}" --repo TerraScale\/ts-deploy --output/u);
+  assert.match(deployAction, /fj release asset download "\$\{release\}" "\$\{asset\}\.sig" --repo TerraScale\/ts-deploy --output/u);
+  assert.match(deployAction, /TS_DEPLOY_SHA256.*sha256sum --check --strict/u);
+  assert.match(deployAction, /TS_DEPLOY_SIGNATURE_SHA256.*sha256sum --check --strict/u);
+  assert.match(deployAction, /chmod \+x/u);
+  assert.match(deployAction, /exec "\$\{TS_DEPLOY_CLI\}" ci --repo "\$\{TS_DEPLOY_REPO\}"/u);
 });
 
 test("release E2E configuration guard fails closed before skip-capable tests", async () => {
