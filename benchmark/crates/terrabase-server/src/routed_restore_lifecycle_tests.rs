@@ -1108,8 +1108,8 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
     let (admission, journal, remote) =
         production_owner(registry.clone(), member.clone(), &records, &root, &keys, mode, false)
             .await;
-    // This must cross the real production input admission, including its
-    // routed-support guard. Only the external object transport is controlled.
+    // This crosses the real production input admission for an installed route.
+    // Only the external object transport is controlled.
     let mut input = admission.resolve_native_backup_input(&records[0].database_id).unwrap();
     input.destinations = vec![(
         Provider::Oci,
@@ -1179,6 +1179,23 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         .unwrap();
     assert_eq!(provider, Provider::Oci);
     assert_eq!(envelope.logical_documents(), 2);
+    assert!(!envelope.digest().is_empty());
+    assert!(envelope.route_generation() > 0);
+    assert_eq!(
+        envelope.database_incarnation(),
+        u128::from_be_bytes(
+            records[0].database_id.parse::<DatabaseUlid>().unwrap().as_bytes()
+        )
+    );
+    assert!(envelope
+        .participants()
+        .windows(2)
+        .all(|pair| pair[0].participant_id < pair[1].participant_id));
+    assert!(envelope.participants().iter().all(|participant| {
+        participant.database_incarnation == envelope.database_incarnation()
+            && participant.route_generation == envelope.route_generation()
+            && participant.boundary == participant.manifest.boundary_sequence().get()
+    }));
     let restore = identity(&envelope, &records[1], "production-routed-restore");
     let wire = RestoreToTargetRequest {
         operation_id: restore.operation_id.clone(),

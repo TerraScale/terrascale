@@ -1364,6 +1364,7 @@ impl RestorePlan {
             return Err(BackupError::PlacementMismatch);
         }
         let chain = resolve_timestamp_chain(destination, cipher, requested_unix_millis)?;
+        let _reservation = RestoreTargetReservation::acquire(target)?;
         admit_target(target)?;
         let staging = StagingDir::create(target)?;
         let outcome = build_and_verify_encrypted(
@@ -1430,6 +1431,7 @@ fn execute_restore(
     selection: &Selection,
 ) -> Result<RecoveryReceipt, BackupError> {
     let chain = resolve_chain(destination, selection)?;
+    let _reservation = RestoreTargetReservation::acquire(target)?;
     admit_target(target)?;
     reconcile_staging(target)?;
     let staging = StagingDir::create(target)?;
@@ -1453,6 +1455,7 @@ fn execute_restore_encrypted(
     cipher: &dyn BackupReader,
 ) -> Result<RecoveryReceipt, BackupError> {
     let chain = resolve_encrypted_chain(destination, cipher, selection)?;
+    let _reservation = RestoreTargetReservation::acquire(target)?;
     admit_target(target)?;
     reconcile_staging(target)?;
     let staging = StagingDir::create(target)?;
@@ -1490,6 +1493,7 @@ fn execute_configured_restore(
     {
         return Err(BackupError::DestinationUnavailable);
     }
+    let _reservation = RestoreTargetReservation::acquire(target.location())?;
     let replace_existing = path.exists()
         && std::fs::read_dir(path)
             .map_err(|_| BackupError::DestinationUnavailable)?
@@ -1591,6 +1595,56 @@ fn admit_target(target: &Path) -> Result<(), BackupError> {
     }
     let empty = target.read_dir().map_err(|_| BackupError::TargetNotEmpty)?.next().is_none();
     if empty { Ok(()) } else { Err(BackupError::TargetNotEmpty) }
+}
+
+/// Cross-process reservation for one restore target.
+///
+/// The reservation covers the complete prepare/replay/verify/publish window.
+/// In particular, it is acquired before inspecting an existing target, so two
+/// restore workers cannot both validate the same paused serving tree and then
+/// race their directory exchanges. The lock inode is retained after failure;
+/// `flock` releases ownership when the process exits without reopening a new
+/// lock domain.
+struct RestoreTargetReservation {
+    #[cfg(unix)]
+    file: std::fs::File,
+}
+
+impl RestoreTargetReservation {
+    fn acquire(target: &Path) -> Result<Self, BackupError> {
+        let parent = target.parent().unwrap_or_else(|| Path::new("."));
+        let name = target.file_name().ok_or(BackupError::DestinationUnavailable)?;
+        std::fs::create_dir_all(parent).map_err(|_| BackupError::DestinationUnavailable)?;
+        let parent = parent.canonicalize().map_err(|_| BackupError::DestinationUnavailable)?;
+        let lock_path = parent.join(format!(".{}.restore.lock", name.to_string_lossy()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .mode(0o600)
+                .open(lock_path)
+                .map_err(|_| BackupError::DestinationUnavailable)?;
+            rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
+                .map_err(|_| BackupError::DestinationUnavailable)?;
+            Ok(Self { file })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = lock_path;
+            Err(BackupError::DestinationUnavailable)
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RestoreTargetReservation {
+    fn drop(&mut self) {
+        let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock);
+    }
 }
 
 /// One restore's staging directory: a sibling of the target, never under a
@@ -2742,6 +2796,23 @@ mod publication_tests {
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
         ))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn target_restore_reservation_is_exclusive_and_reusable() {
+        let root = test_root("target-reservation");
+        let target = root.join("database");
+        std::fs::create_dir_all(&root).unwrap();
+        let first = RestoreTargetReservation::acquire(&target).unwrap();
+        assert!(matches!(
+            RestoreTargetReservation::acquire(&target),
+            Err(BackupError::DestinationUnavailable)
+        ));
+        drop(first);
+        let second = RestoreTargetReservation::acquire(&target).unwrap();
+        drop(second);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

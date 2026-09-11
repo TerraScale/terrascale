@@ -1125,15 +1125,12 @@ impl ProductionAdmissionRuntime {
             if lifecycle.paused {
                 return Err("active database lifecycle is paused".into());
             }
-            let read_cut = snapshot
+            snapshot
                 .database
                 .host
                 .engine_host()
                 .admitted_shard_read_cut()
                 .map_err(|_| "admitted shard inventory unavailable")?;
-            ensure_native_backup_shard_capture_supported(
-                read_cut.as_ref().and_then(|cut| cut.route_generation),
-            )?;
         } else if !allow_paused || !lifecycle.paused {
             return Err("database is not actively admitted".into());
         }
@@ -1970,17 +1967,6 @@ impl ProductionAdmissionRuntime {
     }
 }
 
-/// Keep routed streams fail-closed until the real production lifecycle test
-/// proves envelope capture and restore end-to-end.
-fn ensure_native_backup_shard_capture_supported(
-    route_generation: Option<u64>,
-) -> Result<(), String> {
-    if route_generation.is_some() {
-        return Err("native backup shard envelope capture is unavailable".into());
-    }
-    Ok(())
-}
-
 fn record_scope(record: &crate::admission::AdmissionRecord) -> Result<DatabaseRouteScope, String> {
     DatabaseRouteScope::try_new(&record.tenant_id, &record.project_id, &record.database_id)
         .map_err(failure)
@@ -2089,15 +2075,6 @@ impl terrabase::member::DatabaseRoleAuthority for VerifiedRole {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
-
-    #[test]
-    fn native_backup_startup_rejects_installed_shard_routes() {
-        assert_eq!(ensure_native_backup_shard_capture_supported(None), Ok(()));
-        assert_eq!(
-            ensure_native_backup_shard_capture_supported(Some(7)),
-            Err("native backup shard envelope capture is unavailable".into())
-        );
-    }
 
     #[tokio::test]
     async fn readiness_inventory_preserves_outages_but_revokes_invalid_authority() {

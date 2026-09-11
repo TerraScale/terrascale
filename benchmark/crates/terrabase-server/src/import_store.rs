@@ -7,7 +7,15 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{path::Path, sync::Mutex, time::Duration};
 
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |value| value.as_millis().min(i64::MAX as u128) as i64)
+}
+
 const MAX_INPUT_BYTES: u64 = 1 << 30;
+/// Import input and its progress record are temporary operation data.
+pub(crate) const IMPORT_RETENTION_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct ImportJob {
@@ -57,14 +65,20 @@ impl ImportStore {
                state TEXT NOT NULL, error TEXT
              ) WITHOUT ROWID;",
         )?;
+        // Keep the timestamp in the durable store rather than deriving expiry
+        // from filesystem metadata (which changes on restore/copy).
+        let _ = connection.execute(
+            "ALTER TABLE import_jobs ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         Ok(Self { connection: Mutex::new(connection) })
     }
 
     pub(crate) fn admit(&self, job: &ImportJob) -> rusqlite::Result<()> {
         let connection = self.connection.lock().expect("import store lock");
         connection.execute(
-            "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state,durability,key_version)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+            "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state,durability,key_version,created_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
              ON CONFLICT(operation_id) DO NOTHING",
             params![
                 job.operation_id,
@@ -72,7 +86,7 @@ impl ImportStore {
                 job.project_id,
                 job.database_id,
                 job.format,
-                job.state, job.durability, job.key_version
+                job.state, job.durability, job.key_version, now_millis()
             ],
         )?;
         Ok(())
@@ -248,5 +262,39 @@ impl ImportStore {
             ));
         }
         Ok(())
+    }
+
+    /// Removes terminal jobs whose durable creation timestamp is past the
+    /// supplied cutoff. Unknown/running jobs are never eligible: an
+    /// unresolved engine operation must remain recoverable.
+    pub(crate) fn purge_expired(&self, now_millis: u64) -> rusqlite::Result<usize> {
+        let cutoff = now_millis.saturating_sub(IMPORT_RETENTION_MILLIS) as i64;
+        let connection = self.connection.lock().expect("import store lock");
+        let mut statement = connection.prepare(
+            "SELECT operation_id,input_path FROM import_jobs
+             WHERE created_at > 0 AND created_at <= ?1
+             AND state IN ('completed','failed')",
+        )?;
+        let rows = statement
+            .query_map([cutoff], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        let transaction = connection.unchecked_transaction()?;
+        for (_, path) in &rows {
+            if let Some(path) = path {
+                match std::fs::symlink_metadata(path) {
+                    Ok(metadata) if metadata.is_file() => std::fs::remove_file(path).map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    Ok(_) => return Err(rusqlite::Error::InvalidQuery),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return Err(rusqlite::Error::InvalidQuery),
+                }
+            }
+        }
+        let removed = transaction.execute(
+            "DELETE FROM import_jobs WHERE created_at > 0 AND created_at <= ?1 AND state IN ('completed','failed')",
+            [cutoff],
+        )?;
+        transaction.commit()?;
+        Ok(removed)
     }
 }

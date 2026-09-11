@@ -33,6 +33,14 @@ impl ImportRuntime {
         std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
         let store = Arc::new(ImportStore::open(&root).map_err(|e| e.to_string())?);
         store.recover().map_err(|e| e.to_string())?;
+        // Expiry is evaluated from durable admission time. Run this before
+        // recovery so old terminal input cannot survive a restart merely by
+        // being present on disk.
+        let _ = store.purge_expired(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |value| value.as_millis().min(u64::MAX as u128) as u64),
+        );
         for job in store.list().map_err(|e| e.to_string())? {
             if !job.input_committed {
                 for suffix in ["upload.part", "upload"] {
@@ -846,6 +854,11 @@ pub(crate) fn recover_imports(state: &Arc<ApiState>) -> Result<(), String> {
     let Some(runtime) = &state.imports else {
         return Ok(());
     };
+    let _ = runtime.store.purge_expired(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |value| value.as_millis().min(u64::MAX as u128) as u64),
+    );
     for job in runtime.store.list().map_err(|e| e.to_string())? {
         if job.state == "queued" {
             if let Ok(host) = super::document_host(state, &job.database_id) {

@@ -11,6 +11,14 @@ use crate::export_api::{
 
 const MAX_STATE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PROGRESS_BYTES: usize = 256 * 1024;
+/// Export control records and staged artifacts are temporary operation data.
+pub(crate) const EXPORT_RETENTION_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |value| value.as_millis().min(i64::MAX as u128) as i64)
+}
 
 /// `SQLite` control records and cancellation flags for resumable exports.
 /// Job leases use persistent lock files, released by the OS on process exit.
@@ -48,7 +56,8 @@ impl SqliteExportStore {
                  job_id TEXT PRIMARY KEY NOT NULL,
                  state BLOB NOT NULL CHECK(length(state) <= 33554432),
                  progress BLOB NOT NULL CHECK(length(progress) <= 262144),
-                 cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1))
+                 cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
+                 created_at INTEGER NOT NULL DEFAULT 0
              ) WITHOUT ROWID;",
             )
             .map_err(io_error)?;
@@ -152,7 +161,7 @@ impl ExportStore for SqliteExportStore {
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(io_error)?;
-        transaction.execute("INSERT INTO export_jobs(job_id,state,progress) VALUES (?1,?2,?3) ON CONFLICT(job_id) DO NOTHING", params![state.job_id, bytes, progress]).map_err(io_error)?;
+        transaction.execute("INSERT INTO export_jobs(job_id,state,progress,created_at) VALUES (?1,?2,?3,?4) ON CONFLICT(job_id) DO NOTHING", params![state.job_id, bytes, progress, now_millis()]).map_err(io_error)?;
         let stored: Vec<u8> = transaction
             .query_row(
                 "SELECT length(state),state FROM export_jobs WHERE job_id=?1",
@@ -275,6 +284,32 @@ impl ExportStore for SqliteExportStore {
 
     fn clear_cancel(&self, job_id: &str) -> Result<(), ExportError> {
         self.update_cancel(job_id, false)
+    }
+}
+
+impl SqliteExportStore {
+    /// Deletes only terminal export records after their durable retention
+    /// window. Active or failed-resumable jobs remain available to recovery.
+    /// The returned IDs let the runtime remove local artifact directories
+    /// owned by this database without exposing paths through the store API.
+    pub(crate) fn purge_expired(&self, now_millis: u64) -> Result<Vec<String>, ExportError> {
+        let cutoff = now_millis.saturating_sub(EXPORT_RETENTION_MILLIS) as i64;
+        let connection = self.connection.lock().map_err(io_error)?;
+        let mut statement = connection
+            .prepare("SELECT job_id FROM export_jobs WHERE created_at > 0 AND created_at <= ?1 AND json_extract(CAST(progress AS TEXT), '$.status') IN ('Complete','Cancelled','Failed')")
+            .map_err(io_error)?;
+        let ids = statement
+            .query_map([cutoff], |row| row.get::<_, String>(0))
+            .map_err(io_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(io_error)?;
+        drop(statement);
+        let tx = connection.unchecked_transaction().map_err(io_error)?;
+        for id in &ids {
+            tx.execute("DELETE FROM export_jobs WHERE job_id=?1", [id]).map_err(io_error)?;
+        }
+        tx.commit().map_err(io_error)?;
+        Ok(ids)
     }
 }
 

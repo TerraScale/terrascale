@@ -2,9 +2,9 @@
 
 use super::{
     BackupError, BackupReader, CollectionName, DocumentId, Engine, EngineConfig, Path, PathBuf,
-    Replay, RestoreIdentity, RestoreMarker, RestorePlan, StagingDir, TenantId, admit_target,
-    publish_with_identity, read_restore_marker, reconcile_staging, verify_manifest_logical_facts,
-    verify_storage, write_marker,
+    Replay, RestoreIdentity, RestoreMarker, RestorePlan, RestoreTargetReservation, StagingDir,
+    TenantId, admit_target, publish_with_identity, read_restore_marker, reconcile_staging,
+    verify_manifest_logical_facts, verify_storage, write_marker,
 };
 use crate::backup::BackupEnvelope;
 use crate::member::AdmittedShardReadCut;
@@ -201,6 +201,7 @@ impl RestorePlan {
         let envelope = BackupEnvelope::decode(&envelope.encode()?)?;
         let _cut = validate_envelope_request(&envelope, archives, target, identity)?;
         let path = target.location();
+        let _reservation = RestoreTargetReservation::acquire(path)?;
         let replace = path.exists()
             && std::fs::read_dir(path)
                 .map_err(|_| BackupError::DestinationUnavailable)?

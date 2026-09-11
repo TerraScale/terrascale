@@ -112,6 +112,7 @@ impl ExportRuntime {
     ) -> Result<(), ExportError> {
         let identity = blake3::hash(database_id.as_bytes()).to_hex().to_string();
         let store = SqliteExportStore::open(self.root.join(identity))?;
+        let _ = store.purge_expired(unix_millis());
         let mut after: Option<String> = None;
         loop {
             if self.stop_requested.load(Ordering::Acquire) {
@@ -163,6 +164,12 @@ impl ExportRuntime {
     pub(crate) fn destination(&self) -> ExportDestination {
         self.destination.clone()
     }
+}
+
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |value| value.as_millis().min(u64::MAX as u128) as u64)
 }
 
 impl ExportRuntime {
