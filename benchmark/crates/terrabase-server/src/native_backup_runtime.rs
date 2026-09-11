@@ -364,15 +364,14 @@ impl NativeBackupRuntime {
         tokio::task::spawn_blocking(move || {
             let _gate = gate;
             let mut fleet = fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-            handle
-                .block_on(fleet.restore_from_provider(
-                    &database,
-                    provider,
-                    point.as_deref(),
-                    &target,
-                    &identity,
-                ))
-                .map_err(NativeBackupRuntimeError::Fleet)
+            block_on_worker(fleet.restore_from_provider(
+                &database,
+                provider,
+                point.as_deref(),
+                &target,
+                &identity,
+            ))
+            .and_then(|result| result.map_err(NativeBackupRuntimeError::Fleet))
         })
         .await
         .map_err(|_| NativeBackupRuntimeError::Unavailable)?
@@ -398,7 +397,6 @@ impl NativeBackupRuntime {
         let identity = identity.clone();
         tokio::task::spawn_blocking(move || {
             let _gate = gate;
-            let handle = tokio::runtime::Handle::current();
             let mut fleet = fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
             let is_envelope = fleet
                 .retained_envelopes(&database)
@@ -407,9 +405,9 @@ impl NativeBackupRuntime {
                 .any(|envelope| envelope.digest() == point);
             if is_envelope {
                 let receipt = block_on_worker(fleet.restore_envelope_from_provider(
-                        &database, provider, &point, &target, &identity,
-                    ))?
-                    .map_err(NativeBackupRuntimeError::Fleet)?;
+                    &database, provider, &point, &target, &identity,
+                ))
+                .and_then(|result| result.map_err(NativeBackupRuntimeError::Fleet))?;
                 let envelope = receipt.envelope;
                 let encoded = String::from_utf8(
                     envelope.encode().map_err(|_| NativeBackupRuntimeError::Envelope)?,
@@ -429,13 +427,13 @@ impl NativeBackupRuntime {
                 });
             }
             let receipt = block_on_worker(fleet.restore_from_provider(
-                    &database,
-                    provider,
-                    Some(&point),
-                    &target,
-                    &identity,
-                ))?
-                .map_err(NativeBackupRuntimeError::Fleet)?;
+                &database,
+                provider,
+                Some(&point),
+                &target,
+                &identity,
+            ))
+            .and_then(|result| result.map_err(NativeBackupRuntimeError::Fleet))?;
             Ok(native_restore_receipt(&receipt))
         })
         .await
@@ -465,9 +463,9 @@ impl NativeBackupRuntime {
             let _gate = gate;
             let mut fleet = fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
             block_on_worker(
-                    fleet.restore_at_from_provider(&database, provider, millis, &target, &identity),
-                )?
-                .map_err(NativeBackupRuntimeError::Fleet)
+                fleet.restore_at_from_provider(&database, provider, millis, &target, &identity),
+            )
+            .and_then(|result| result.map_err(NativeBackupRuntimeError::Fleet))
         })
         .await
         .map_err(|_| NativeBackupRuntimeError::Unavailable)?
@@ -495,11 +493,9 @@ impl NativeBackupRuntime {
             let _gate = gate;
             let mut fleet = fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
             block_on_worker(
-                    fleet.restore_at_from_provider(
-                        &database, provider, at_millis, &target, &identity,
-                    ),
-                )?
-                .map_err(NativeBackupRuntimeError::Fleet)
+                fleet.restore_at_from_provider(&database, provider, at_millis, &target, &identity),
+            )
+            .and_then(|result| result.map_err(NativeBackupRuntimeError::Fleet))
         })
         .await
         .map_err(|_| NativeBackupRuntimeError::Unavailable)?
@@ -696,11 +692,13 @@ where
         tokio::runtime::RuntimeFlavor::MultiThread => {
             Ok(tokio::runtime::Handle::current().block_on(future))
         }
-        tokio::runtime::RuntimeFlavor::CurrentThread => tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| NativeBackupRuntimeError::Unavailable)
-            .map(|runtime| runtime.block_on(future)),
+        tokio::runtime::RuntimeFlavor::CurrentThread => {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|_| NativeBackupRuntimeError::Unavailable)
+                .map(|runtime| runtime.block_on(future))
+        }
         _ => Err(NativeBackupRuntimeError::Unavailable),
     }
 }
