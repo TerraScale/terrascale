@@ -34,30 +34,34 @@ npm run preview
 npm run check
 npm run lint
 npm run icons:sync
-npm run cf:pages:verify
 npm run cf:pages:dev
-npm run cf:deploy
-npm run cf:deploy:preview
 ```
 
 ## Deployment
 
-- Target: future Cloudflare Pages Git-integrated delivery (Direct Upload retired)
-- Build command: `npm run build`
-- Output directory: `build`
-- CLI: Wrangler (`npm run cf:*`)
+The site is deployed by `ts-deploy` from this repository's Forgejo Actions
+workflow. A push to `develop` runs `./ts-deploy ci --repo ts-landing`, which
+verifies the checkout with `make check`, builds the site, signs one immutable
+candidate archive, publishes it to the Forgejo release, and only then deploys
+the extracted, byte-verified candidate to Cloudflare Pages.
 
-This repo is intentionally configured for static output only. Do not assume Cloudflare Functions, Workers, or SSR are part of the deployment flow unless the repo instructions change.
+- Pages project: `terrascale-landing-page`
+- Production branch: `main`
+- Build output: `build/`
+- Pages client: the Wrangler pinned in `package-lock.json`
 
-### Cloudflare Pages delivery
+There is no separate deploy command to remember and no deployment credential in
+this repository. The workflow binds `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` from Forgejo Actions secrets, and `ts-deploy` resolves
+them at deploy time only; a missing value fails closed before Wrangler starts.
+The project name, production branch, and output directory live in
+`ts-deploy`'s site kind, which is the single source of truth for the
+destination. A `wrangler.toml` in this working tree is a local development
+convenience only and plays no part in deployment.
 
-`cf:deploy`, `cf:deploy:preview`, and `cf:project:create` are intentionally retired and always fail before any network or Wrangler invocation. Cloudflare documents Direct Upload with a Cloudflare Pages **Edit** token, while its Pages API identifies deployment creation as requiring **Pages Write**; that permission cannot be safely restricted to deployment-only and can affect project state. [Direct Upload with CI](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/) and [Pages API permissions](https://developers.cloudflare.com/pages/configuration/api/) describe these capabilities.
-
-`npm run cf:pages:verify` is an optional, non-authorizing diagnostic only. It reads Pages metadata from the fixed Cloudflare API origin using `CLOUDFLARE_ACCOUNT_ID` and a separate `CLOUDFLARE_PAGES_READ_TOKEN`; it never accepts or sends a Pages Write token.
-
-The safe future design is a **new** Git-integrated Pages project connected to a supported hosted GitHub or GitLab mirror, with its source production branch protected. Cloudflare supports GitHub and GitLab integrations, but not self-hosted GitHub/GitLab instances, so Forgejo cannot connect directly. See [Git integration](https://developers.cloudflare.com/pages/configuration/git-integration/). Creating, migrating, or retargeting a Pages project is not authorized by this repository workflow.
-
-Release candidates remain verified artifacts: they package the static site and test evidence, but they are not a deployment. Activation requires explicit authorization to provision a new Git-integrated Pages project, connect a supported hosted mirror, protect its production branch, and record the resulting deployment endpoint before replacing the blocked promotion workflow.
+This repo is intentionally configured for static output only. Do not assume
+Cloudflare Functions, Workers, or SSR are part of the deployment flow unless the
+repo instructions change.
 
 ### Local Pages Preview
 
@@ -67,11 +71,14 @@ To verify the static build through the Cloudflare Pages CLI locally:
 npm run cf:pages:dev
 ```
 
-That builds the site and serves the generated `build/` output through `wrangler pages dev`.
+That builds the site and serves the generated `build/` output through
+`wrangler pages dev`.
 
 ### CI credentials
 
-Normal CI must not receive a Cloudflare Pages Write token. If read-only metadata diagnostics are needed, provide only `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_PAGES_READ_TOKEN` to the explicit diagnostic command; the normal test/build pipeline needs neither.
+The deployment workflow receives exactly two Cloudflare Actions secrets,
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. No other credential, and no
+Cloudflare credential in any other repository, is needed to publish this site.
 
 ## Icons
 

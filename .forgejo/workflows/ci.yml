@@ -1,229 +1,49 @@
-name: TerraScale delivery
+name: ts-landing CI
 
 on:
-  workflow_dispatch:
-  pull_request:
-    branches: [develop, main]
   push:
-    branches: [develop, main]
+    branches: [develop]
 
-concurrency:
-  group: ${{ forgejo.event_name == 'pull_request' && format('pr-{0}-{1}', forgejo.repository, forgejo.event.pull_request.number) || format('delivery-{0}-{1}', forgejo.repository, forgejo.ref) }}
-  cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
-
-env:
-  TERRASCALE_TOOLBOX_REVISION: "2026.08.26"
-  REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-  FORGEJO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-  TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
-  TERRASCALE_AUTH_API_BASE_URL: ${{ vars.TERRASCALE_AUTH_API_BASE_URL }}
+permissions:
+  contents: read
 
 jobs:
-  bootstrap:
+  ci:
+    runs-on: terrascale-builder
     timeout-minutes: 30
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    outputs:
-      version: ${{ steps.cli.outputs.version }}
-    steps:
-      - name: Resolve newest stable Deploy CLI once
-        id: cli
-        shell: bash
-        run: |
-          set -euo pipefail
-          config="$(mktemp -d)"
-          dotnet new nugetconfig --output "${config}" --force >/dev/null
-          dotnet nuget add source https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json --name terrascale --username forgejo-actions --password "${REGISTRY_TOKEN}" --store-password-in-clear-text --configfile "${config}/nuget.config" >/dev/null
-          dotnet tool install TerraScale.Deploy.Cli --tool-path .tools --configfile "${config}/nuget.config"
-          .tools/terrascale-deploy ci resolve-cli
-      - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
-        with: { name: deploy-cli, path: .tools }
-
-  pr-policy:
-    name: pr/policy
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'develop' }}
-    timeout-minutes: 30
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    needs: bootstrap
-    steps:
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: deploy-cli, path: .tools }
-      - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci policy
-
-  release-policy:
-    name: release/policy
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' }}
-    timeout-minutes: 30
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    needs: bootstrap
-    steps:
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: deploy-cli, path: .tools }
-      - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci policy
-
-  plan:
-    timeout-minutes: 30
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    needs: bootstrap
-    outputs:
-      test_matrix: ${{ steps.plan.outputs.test_matrix }}
-      build_matrix: ${{ steps.plan.outputs.build_matrix }}
-      tree: ${{ steps.plan.outputs.tree }}
+    env:
+      TS_DEPLOY_VERSION: ${{ vars.TS_DEPLOY_VERSION }}
+      TS_DEPLOY_SHA256: ${{ vars.TS_DEPLOY_SHA256 }}
+      TS_DEPLOY_SIGNATURE_SHA256: ${{ vars.TS_DEPLOY_SIGNATURE_SHA256 }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: deploy-cli, path: .tools }
-      - id: plan
-        run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci plan --repository-root . --output artifacts/plan.json
-
-  pr-static:
-    name: pr/static
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'develop' }}
-    needs: [bootstrap, pr-policy, plan]
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech" }
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: deploy-cli, path: .tools }
-      - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root . --profile static
-
-  pr-build:
-    name: pr/build
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'develop' }}
-    needs: [bootstrap, pr-policy, plan]
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech" }
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: deploy-cli, path: .tools }
-      - run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root . --profile build
-
-  release-tests:
-    name: release/tests (${{ matrix.profile }})
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
-    needs: [bootstrap, release-policy, plan]
-    strategy:
-      fail-fast: true
-      matrix: { include: "${{ fromJSON(needs.plan.outputs.test_matrix) }}" }
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: deploy-cli, path: .tools }
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
       - run: |
-          chmod +x .tools/terrascale-deploy
-          mkdir -p artifacts/candidate/test-results
-          .tools/terrascale-deploy ci release-test --repository-root . --profile "${{ matrix.profile }}" --result artifacts/candidate/test-results/release-e2e.test-result.json
-      # upload-artifact@v3 receives one concrete file under one concrete artifact name.
-      - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
-        with: { name: release-test-result-release-e2e, path: artifacts/candidate/test-results/release-e2e.test-result.json, if-no-files-found: error }
-
-  release-artifacts:
-    name: release/artifacts (${{ matrix.profile }})
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
-    needs: [bootstrap, release-policy, plan]
-    strategy:
-      fail-fast: true
-      matrix: { include: "${{ fromJSON(needs.plan.outputs.build_matrix) }}" }
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: deploy-cli, path: .tools }
-      - run: |
-          chmod +x .tools/terrascale-deploy
-          npm run build
-          .tools/terrascale-deploy ci build-candidate --repository-root . --target "${{ matrix.profile }}"
-          npm run candidate:stage
-      - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
-        with: { name: candidate-pages, path: artifacts/candidate, if-no-files-found: error }
-
-  candidate:
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' && forgejo.head_ref == 'develop' }}
-    needs: [bootstrap, plan, release-tests, release-artifacts]
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: deploy-cli, path: .tools }
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: candidate-pages, path: artifacts/candidate }
-      # download-artifact@v3 selects the concrete name and writes it to this exact directory; no glob contract is used.
-      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: release-test-result-release-e2e, path: artifacts/candidate/test-results }
-      - run: |
-          chmod +x .tools/terrascale-deploy
-          test_results_directory="artifacts/candidate/test-results"
-          test_results="${test_results_directory}/release-e2e.test-result.json"
-          test -f "${test_results}"
-          test "$(find "${test_results_directory}" -type f | wc -l)" -eq 1
-          .tools/terrascale-deploy ci candidate-manifest --repository-root . --artifacts artifacts/candidate --test-results "${test_results_directory}" --version "0.0.0-candidate.${FORGEJO_RUN_NUMBER}"
-          test_result_digest="$(sha256sum "${test_results}" | awk '{print $1}')"
-          bundle_entry="test-results/release-e2e.test-result.json"
-          unzip -Z1 artifacts/candidate.zip | grep -Fx "${bundle_entry}"
-          test "$(unzip -p artifacts/candidate.zip "${bundle_entry}" | sha256sum | awk '{print $1}')" = "${test_result_digest}"
-          .tools/terrascale-deploy ci candidate-store upload --tree "${{ needs.plan.outputs.tree }}" --file artifacts/release-candidate.json
-          .tools/terrascale-deploy ci candidate-store upload --tree "${{ needs.plan.outputs.tree }}" --file artifacts/candidate.zip
-
-  promote:
-    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - run: |
-          echo "Promotion blocked: Git-integrated Pages migration is required and external provisioning is not authorized." >&2
-          exit 1
+          set -eu
+          case "$(uname -m)" in
+            aarch64|arm64) asset=ts-deploy-linux-arm64 ;;
+            x86_64|amd64) asset=ts-deploy-linux-amd64 ;;
+            *) echo "unsupported runner architecture" >&2; exit 1 ;;
+          esac
+          release="${TS_DEPLOY_VERSION:?TS_DEPLOY_VERSION is required}"
+          case "${release}" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "invalid ts-deploy release" >&2; exit 1 ;;
+          esac
+          test "${#TS_DEPLOY_SHA256}" -eq 64
+          case "${TS_DEPLOY_SHA256}" in *[!0-9a-fA-F]*) echo "invalid ts-deploy artifact checksum" >&2; exit 1 ;; esac
+          test "${#TS_DEPLOY_SIGNATURE_SHA256}" -eq 64
+          case "${TS_DEPLOY_SIGNATURE_SHA256}" in *[!0-9a-fA-F]*) echo "invalid ts-deploy signature checksum" >&2; exit 1 ;; esac
+          fj release view "${release}" --repo TerraScale/ts-deploy >/dev/null
+          fj release asset download "${release}" "${asset}" --repo TerraScale/ts-deploy --output ts-deploy
+          fj release asset download "${release}" "${asset}.sig" --repo TerraScale/ts-deploy --output ts-deploy.sig
+          printf '%s  %s\n' "${TS_DEPLOY_SHA256}" ts-deploy | sha256sum --check --strict -
+          printf '%s  %s\n' "${TS_DEPLOY_SIGNATURE_SHA256}" ts-deploy.sig | sha256sum --check --strict -
+          chmod +x ts-deploy
+      - run: ./ts-deploy ci --repo ts-landing
