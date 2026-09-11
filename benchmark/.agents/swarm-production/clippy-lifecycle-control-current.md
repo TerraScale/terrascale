@@ -23,7 +23,7 @@ Approved cohort HEAD: `7f576d8a8af3967e639ed7325a06c39c15ef87a2`.
 Post-edit SHA-256:
 
 ```text
-7272366abfaede82596e5342d39277fcb811b3e458559e783ef5d2d5ddbb7909  crates/terrabase-server/src/production_lifecycle_control.rs
+48c1adea5e10c764620a5ec73d7e9690710b35119aa859cf72d766f14887ab25  crates/terrabase-server/src/production_lifecycle_control.rs
 ```
 
 ## Validation and build-owner handoff
@@ -42,3 +42,16 @@ focused lifecycle selectors (discover exact binary names before execution):
 - `provider_purge_success_is_applied_and_replay_remains_applied`
 
 No public API, concrete error type, receipt, or fencing semantics were changed.
+
+## Corrective follow-up
+
+The frozen compile caught an incorrect unit-pattern substitution in the
+`invoke` mappings and native backup pause mapping: those successful values are
+`NativeLifecycleReceipt`, not `()`. Receipt-returning mappings now retain
+`|_|`; explicit `|()|` remains only for `verify_snapshot_placement` and
+`delete_owned_data`, whose success type is unit. This records the recurring
+lesson: clippy's unit-pattern suggestion must be applied from the full
+`Result<Ok, Err>` type, not from the adjacent `map_err` or operation intent.
+
+Follow-up validation: rustfmt and `git diff --check` passed; no Cargo command
+was run. Re-submit the corrected source hash to `terrabase_clippy_batch`.

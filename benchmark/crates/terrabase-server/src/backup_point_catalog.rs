@@ -49,6 +49,7 @@ struct Cursor {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Errors returned while inspecting or paginating authenticated backup points.
 pub enum BackupPointCatalogError {
     /// The source is not a canonical database ULID.
     InvalidDatabase,

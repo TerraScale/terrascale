@@ -179,7 +179,6 @@ pub type PeerObservations =
     Arc<std::sync::Mutex<BTreeMap<(String, DatabaseRouteScope), PeerFacts>>>;
 /// Owns the shared endpoint, bounded workers, and shutdown signal.
 pub struct ReplicationPeers {
-    retention: Arc<ReplicationRetentionFrontier>,
     cuts: Arc<ReplicationCuts>,
     progress: Arc<ReplicationProgress>,
     admissions: BTreeMap<String, mpsc::Sender<PeerCommand>>,
@@ -316,7 +315,6 @@ impl ReplicationPeers {
             admitted: std::sync::Mutex::new(admitted),
             cuts,
             progress: retained_progress,
-            retention,
         })
     }
 

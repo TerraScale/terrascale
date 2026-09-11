@@ -31,33 +31,36 @@ async fn restore_route_forwards_each_selector_to_provisioning_authority() {
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(
                         TokioIo::new(stream),
-                        hyper::service::service_fn(move |request| {
-                            let requests = Arc::clone(&requests);
-                            let tenant = tenant.clone();
-                            let project = project.clone();
-                            async move {
-                                let body = request.into_body().collect().await.unwrap().to_bytes();
-                                let request: serde_json::Value =
-                                    serde_json::from_slice(&body).unwrap();
-                                let operation_id = request["operation_id"].clone();
-                                let name = request["name"].clone();
-                                requests.lock().unwrap().push(request);
-                                let response = serde_json::json!({
-                                    "environment":"production", "tenant_id":tenant,
-                                    "project_id":project, "operation_id":operation_id,
-                                    "database_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV",
-                                    "key_version":"01ARZ3NDEKTSV4RRFFQ69G5FAV", "name":name,
-                                    "regions":["GRU"],
-                                    "residency":"global", "state":"accepted"
-                                });
-                                Ok::<_, std::convert::Infallible>(
-                                    hyper::Response::builder()
-                                        .status(hyper::StatusCode::ACCEPTED)
-                                        .body(Full::new(Bytes::from(response.to_string())))
-                                        .unwrap(),
-                                )
-                            }
-                        }),
+                        hyper::service::service_fn(
+                            move |request: hyper::Request<hyper::body::Incoming>| {
+                                let requests = Arc::clone(&requests);
+                                let tenant = tenant.clone();
+                                let project = project.clone();
+                                async move {
+                                    let body =
+                                        request.into_body().collect().await.unwrap().to_bytes();
+                                    let request: serde_json::Value =
+                                        serde_json::from_slice(&body).unwrap();
+                                    let operation_id = request["operation_id"].clone();
+                                    let name = request["name"].clone();
+                                    requests.lock().unwrap().push(request);
+                                    let response = serde_json::json!({
+                                        "environment":"production", "tenant_id":tenant,
+                                        "project_id":project, "operation_id":operation_id,
+                                        "database_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                                        "key_version":"01ARZ3NDEKTSV4RRFFQ69G5FAV", "name":name,
+                                        "regions":["GRU"],
+                                        "residency":"global", "state":"accepted"
+                                    });
+                                    Ok::<_, std::convert::Infallible>(
+                                        hyper::Response::builder()
+                                            .status(hyper::StatusCode::ACCEPTED)
+                                            .body(Full::new(Bytes::from(response.to_string())))
+                                            .unwrap(),
+                                    )
+                                }
+                            },
+                        ),
                     )
                     .await;
             });
@@ -136,5 +139,107 @@ async fn restore_route_forwards_each_selector_to_provisioning_authority() {
         assert_eq!(request["source_database_id"], source.database_id);
         assert_eq!(request["tenant_id"], source.tenant_id);
         assert_eq!(request["project_id"], source.project_id);
+    }
+}
+
+#[tokio::test]
+async fn backup_points_route_uses_native_catalog_and_enforces_scope() {
+    use crate::native_backup_runtime::{
+        AdmittedBackupEngine, NativeBackupInput, NativeBackupRuntime,
+    };
+    use object_store::ObjectStore;
+    use terrabase::backup::object_store::{ObjectDestination, Provider};
+    use terrabase::backup::worker::{CustomerKmsBackupKeys, FleetLimits};
+    let (registry, _, records, root) = crate::admitted_databases::tests::fixture();
+    let source = records.first().expect("fixture source").clone();
+    let snapshot = registry
+        .retained_snapshot()
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.database.record.database_id == source.database_id)
+        .expect("source snapshot");
+    let scope = terrabase::member::DatabaseScope::new(
+        &source.environment,
+        source.tenant_id.parse().unwrap(),
+        source.project_id.parse().unwrap(),
+        source.database_id.parse().unwrap(),
+        source.region.parse().unwrap(),
+    )
+    .unwrap();
+    let store = Arc::new(object_store::memory::InMemory::new());
+    let runtime = NativeBackupRuntime::new(
+        FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
+            inventory_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 2,
+        },
+        [NativeBackupInput {
+            engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&snapshot.database.host))),
+            keys: Arc::new(
+                CustomerKmsBackupKeys::new(crate::test_keys::backup_keys(&scope)).unwrap(),
+            ),
+            destinations: vec![(
+                Provider::Oci,
+                Arc::new(ObjectDestination::for_test(
+                    Provider::Oci,
+                    Arc::clone(&store) as Arc<dyn ObjectStore>,
+                    4 * 1024 * 1024,
+                    8 * 1024 * 1024,
+                )),
+            )],
+            historical_destinations: Vec::new(),
+            policy_revision: "api-points-test".into(),
+            retention_days: 1,
+            staging: root.join("points-staging"),
+            placement: terrabase::backup::PlacementLock::explicit([source.region.parse().unwrap()])
+                .unwrap(),
+        }],
+    )
+    .unwrap();
+    let mut state = crate::api::tests::state_with_keys_and_control();
+    Arc::get_mut(&mut state).unwrap().admitted_databases = Some(Arc::new(registry));
+    Arc::get_mut(&mut state).unwrap().native_backups = Some(Arc::new(runtime));
+    let path = format!("/api/v1/databases/{}/backups/points", source.database_id);
+    let response = crate::api::router(Arc::clone(&state))
+        .oneshot(
+            Request::get(&path)
+                .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                .header("x-terrascale-tenant-id", &source.tenant_id)
+                .header("x-terrascale-project-id", &source.project_id)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    let page: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(page["points"].is_array());
+    let response = crate::api::router(Arc::clone(&state))
+        .oneshot(
+            Request::get(&path)
+                .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                .header("x-terrascale-tenant-id", "foreign")
+                .header("x-terrascale-project-id", "foreign")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    for query in ["?unknown=true", "?limit=101", "?cursor=bad"] {
+        let response = crate::api::router(Arc::clone(&state))
+            .oneshot(
+                Request::get(format!("{path}{query}"))
+                    .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .header("x-terrascale-tenant-id", &source.tenant_id)
+                    .header("x-terrascale-project-id", &source.project_id)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
     }
 }

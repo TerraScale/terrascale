@@ -289,17 +289,17 @@ impl TbepLifecycleControl {
                 .control
                 .close_database(&assignment, action, operation, signature, grant)
                 .await
-                .map(|()| terrabase_tbep::lifecycle::applied(operation)),
+                .map(|_| terrabase_tbep::lifecycle::applied(operation)),
             LifecycleGrantAction::StopNativeBackup => self
                 .control
                 .stop_native_backup(&assignment, action, operation, signature, grant)
                 .await
-                .map(|()| terrabase_tbep::lifecycle::applied(operation)),
+                .map(|_| terrabase_tbep::lifecycle::applied(operation)),
             LifecycleGrantAction::Reactivate => self
                 .control
                 .reactivate(&assignment, action, operation, signature, grant)
                 .await
-                .map(|()| terrabase_tbep::lifecycle::applied(operation)),
+                .map(|_| terrabase_tbep::lifecycle::applied(operation)),
             LifecycleGrantAction::DeleteOwnedData => self
                 .control
                 .delete_owned_data(&assignment, action, operation, signature, grant)
@@ -876,7 +876,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             .lock()
             .map_err(|_| "native backup fleet poisoned")?
             .pause(&assignment.database)
-            .map(|()| {
+            .map(|_| {
                 NativeLifecycleReceipt::Backup(terrabase::backup::worker::LifecycleReceipt {
                     operation_id: _operation.to_owned(),
                     database: assignment.database.clone(),

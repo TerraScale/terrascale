@@ -2,7 +2,7 @@
 
 Source packet HEAD: `7f576d8a8af3967e639ed7325a06c39c15ef87a2`.
 Updated source SHA-256:
-`bd741734bade63da3d55af2d0778d630cd667c49dd2812b6988424cd686ca6e7`
+`efaa3034d117f64669d94a19d284d0006b7ec41502bb20940759cb5ca53bdd37`
 
 Applied only the approved Slice B mechanics in
 `crates/terrabase-server/src/api_operations.rs`:
@@ -26,3 +26,7 @@ Validation passed:
 Cargo compilation/tests were not run; `terrabase_clippy_batch` owns those
 checks.
 
+Frozen compile follow-up: restored `member_id(&state)` at the outer
+`list_operations` handler (line 285), where `state` is `Arc<ApiState>`;
+inner helper calls retain direct `&ApiState` borrows. Formatting and diff
+checks remain clean.

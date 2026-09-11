@@ -282,7 +282,7 @@ pub(super) async fn list_operations(
             token,
             &scope.tenant_id,
             &scope.project_id,
-            member_id(state),
+            member_id(&state),
         )
         .is_ok()
     {

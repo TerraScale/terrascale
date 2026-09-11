@@ -5260,7 +5260,7 @@ async fn restore_backup(
             project_id: source.record.project_id.clone(),
         };
         return match authority
-            .restore(&scope, &source.record.database_id, target, selection, operation)
+            .restore(&scope, &source.record.database_id, &target, selection, &operation)
             .await
         {
             Ok(value) => json_response(
