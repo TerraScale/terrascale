@@ -567,6 +567,9 @@ impl NativeRecoveryRuntime {
         let worker_lease = File::options()
             .create(true)
             .write(true)
+            // This is a persistent advisory-lock inode. Never clear its
+            // contents when reopening it after a clean or unclean restart.
+            .truncate(false)
             .open(root.join("recovery.worker.lock"))
             .map_err(|_| NativeRecoveryError::Unavailable)?;
         worker_lease.try_lock().map_err(|_| NativeRecoveryError::Unavailable)?;
