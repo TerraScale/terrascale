@@ -19,11 +19,10 @@ const MAX_TTL_SECONDS: u64 = 3600;
 
 /// Exact destination facts bound into a broker credential request.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkloadIdentityScope {
     /// Customer role or workload identity being assumed.
     pub role: String,
-    /// Optional external identifier required by the role trust policy.
-    pub external_id: Option<String>,
     /// Canonical HTTPS destination endpoint.
     pub endpoint: String,
     /// Destination bucket.
@@ -86,7 +85,6 @@ impl UnixWorkloadIdentityProvider {
             ]
             .into_iter()
             .any(|value| !valid_scope_field(value))
-            || scope.external_id.as_deref().is_some_and(|value| !valid_scope_field(value))
         {
             return Err(WorkloadIdentityError::Invalid);
         }
@@ -213,7 +211,6 @@ mod tests {
     fn scope() -> WorkloadIdentityScope {
         WorkloadIdentityScope {
             role: "role".into(),
-            external_id: None,
             endpoint: "https://example.invalid".into(),
             bucket: "bucket".into(),
             region: "region".into(),
@@ -252,10 +249,18 @@ mod tests {
     }
 
     #[test]
-    fn constructor_rejects_unbounded_or_controlled_external_id() {
-        for external_id in [Some("bad\nexternal".into()), Some("x".repeat(129))] {
+    fn wire_rejects_retired_external_id() {
+        let mut value = serde_json::to_value(scope()).unwrap();
+        assert!(value.get("external_id").is_none());
+        value["external_id"] = serde_json::json!("external-id");
+        assert!(serde_json::from_value::<WorkloadIdentityScope>(value).is_err());
+    }
+
+    #[test]
+    fn constructor_rejects_unbounded_or_controlled_role() {
+        for role in ["bad\nrole".into(), "x".repeat(129)] {
             let mut candidate = scope();
-            candidate.external_id = external_id;
+            candidate.role = role;
             assert!(matches!(
                 UnixWorkloadIdentityProvider::new(PathBuf::from("/run/broker.sock"), candidate),
                 Err(WorkloadIdentityError::Invalid)

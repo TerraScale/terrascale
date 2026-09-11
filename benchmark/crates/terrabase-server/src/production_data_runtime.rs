@@ -1242,7 +1242,6 @@ impl ProductionAdmissionRuntime {
                     key_config.socket.clone(),
                     terrabase::backup::workload_identity_delivery::WorkloadIdentityScope {
                         role: byok.backup_role_arn.clone(),
-                        external_id: byok.backup_external_id.clone(),
                         endpoint: byok.backup_endpoint.clone(),
                         bucket: byok.backup_bucket.clone(),
                         region: byok.backup_region.clone(),

@@ -104,8 +104,6 @@ pub struct ProductionByokConfig {
     pub backup_region: String,
     /// IAM role assumed for customer-managed backup access.
     pub backup_role_arn: String,
-    /// Optional external identifier bound to the assumed role.
-    pub backup_external_id: Option<String>,
     /// Key management provider identity.
     pub key_provider: String,
     /// Customer-managed encryption key identifier.
@@ -771,8 +769,6 @@ struct FileProductionByok {
     backup_bucket: String,
     backup_region: String,
     backup_role_arn: String,
-    #[serde(default)]
-    backup_external_id: Option<String>,
     key_provider: String,
     key_id: String,
     key_region: String,
@@ -1151,10 +1147,6 @@ impl ServerConfig {
                     || !valid_provider
                     || !valid_aws_kms_key_arn(&byok.key_id, &byok.key_region)
                     || byok.key_endpoint.as_deref().is_some_and(|value| !valid_endpoint(value))
-                    || byok
-                        .backup_external_id
-                        .as_deref()
-                        .is_some_and(|value| value.is_empty() || value.len() > 128)
                 {
                     return Err(ConfigError::InvalidProductionBoundary);
                 }
@@ -1306,7 +1298,6 @@ impl ServerConfig {
                     backup_bucket: byok.backup_bucket,
                     backup_region: byok.backup_region,
                     backup_role_arn: byok.backup_role_arn,
-                    backup_external_id: byok.backup_external_id,
                     key_provider: byok.key_provider,
                     key_id: byok.key_id,
                     key_region: byok.key_region,
@@ -2384,7 +2375,7 @@ historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.sto
             .replace("encryption_provider = \"oci-vault\"", "encryption_provider = \"customer-kms\"")
             .replace(
                 "[databases.backup]\n",
-                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nbackup_external_id = \"external-123\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
+                "[databases.byok]\nbackup_endpoint = \"https://s3.customer.example\"\nbackup_bucket = \"customer-backups\"\nbackup_region = \"us-east-1\"\nbackup_role_arn = \"arn:aws:iam::123456789012:role/TerraScaleBackup\"\nkey_provider = \"aws-kms\"\nkey_id = \"arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012\"\nkey_region = \"us-east-1\"\nkey_endpoint = \"https://kms.us-east-1.amazonaws.com\"\n\n[databases.backup]\n",
             )
             .replace(
                 "{ provider = \"oci\", endpoint = \"https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com\", signing_region = \"sa-saopaulo-1\", bucket = \"backup-a\", verified_geography = \"br\", permitted_geographies = [\"br\"], placement_revision = \"placement-4\", access_key_file = \"/run/secrets/backup-access\", secret_key_file = \"/run/secrets/backup-secret\", max_artifact_bytes = 16777216, max_point_bytes = 4294967296 }",
@@ -2427,6 +2418,10 @@ historical_destinations = [{ provider = \"tigris\", endpoint = \"https://fly.sto
         }
         assert!(ServerConfig::parse(&valid).is_ok(), "AWS KMS BYOK rejected");
         for invalid in [
+            valid.replace(
+                "[databases.byok]\n",
+                "[databases.byok]\nbackup_external_id = \"external-id\"\n",
+            ),
             valid.replace("key_provider = \"aws-kms\"", "key_provider = \"unimplemented\""),
             valid.replace(
                 "key_id = \"arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012\"",

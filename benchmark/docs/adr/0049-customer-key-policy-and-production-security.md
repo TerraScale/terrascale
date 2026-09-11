@@ -48,8 +48,10 @@ been verified.
 
 The authenticated orchestrator NATS journal may persist the validated BYOK
 provider references needed to rebuild an admission or provider client after a
-restart: provider, key identifier, region, endpoint, workload role, external
-identifier, and configuration revision. It may also persist wrapped database
+restart: provider, key identifier, region, endpoint, backup bucket, workload
+role, and configuration revision. AWS web identity uses the workload token's
+subject; external IDs are not accepted in admission, renewal, or host
+configuration. It may also persist wrapped database
 DEK ciphertext required for restart and recovery. NATS never receives customer
 provider credentials, imported key material, unwrapped DEKs, or other plaintext
 secrets. NATS TLS, NKeys, and subject permissions are required, but they do not

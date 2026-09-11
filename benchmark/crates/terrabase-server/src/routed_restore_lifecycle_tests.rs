@@ -472,7 +472,6 @@ async fn production_owner_with_identity(
                     backup_bucket: "routed-fixture".into(),
                     backup_region: "sa-east-1".into(),
                     backup_role_arn: "arn:aws:iam::123456789012:role/fixture".into(),
-                    backup_external_id: None,
                     key_provider: "aws-kms".into(),
                     key_id: "fixture-key".into(),
                     key_region: "sa-east-1".into(),
