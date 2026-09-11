@@ -190,7 +190,8 @@ impl AdmissionHost {
             .map_err(|_| "admission directory sync failed")?;
         for record in loaded.values() {
             if !host.fence_store.is_uncertain(&record.database_id)?
-                && host.fence_store.published(&record.database_id)?.is_none() {
+                && host.fence_store.published(&record.database_id)?.is_none()
+            {
                 (host.admit_storage)(record)?;
             }
         }

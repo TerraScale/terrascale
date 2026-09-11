@@ -1147,6 +1147,13 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         4 * 1024 * 1024,
         16 * 1024 * 1024,
     ));
+    let empty_store = Arc::new(object_store::memory::InMemory::new());
+    let empty_destination = Arc::new(ObjectDestination::for_test(
+        Provider::Tigris,
+        empty_store,
+        4 * 1024 * 1024,
+        16 * 1024 * 1024,
+    ));
     let staging = input.staging.clone();
     let historical_name = format!("rp-{}", standalone.identity());
     let historical_prefix = format!("{}/{historical_name}", records[0].database_id);
@@ -1156,7 +1163,8 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         .unwrap();
     std::fs::create_dir_all(&staging).unwrap();
     destination.download_point(&historical_prefix, &staging.join(&historical_name)).await.unwrap();
-    input.destinations = vec![(Provider::Oci, destination.clone())];
+    input.destinations =
+        vec![(Provider::Tigris, empty_destination), (Provider::Oci, destination.clone())];
     input.historical_destinations.clear();
     let backups = Arc::new(
         NativeBackupRuntime::new(
@@ -1491,6 +1499,39 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         (&destination, store.as_ref()),
     )
     .await;
+    // Retained local metadata must not make an unavailable remote point
+    // resolvable: remove only this fixture's standalone objects.
+    use futures_util::TryStreamExt as _;
+    use object_store::ObjectStore as _;
+    let historical_objects: Vec<_> = store
+        .list(Some(&object_store::path::Path::from(historical_prefix.clone())))
+        .try_collect()
+        .await
+        .unwrap();
+    assert!(!historical_objects.is_empty());
+    for object in historical_objects {
+        store.delete(&object.location).await.unwrap();
+    }
+    assert!(staging.join(&historical_name).join("manifest.tbv3e").is_file());
+    assert!(
+        store
+            .list(Some(&object_store::path::Path::from(historical_prefix)))
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(matches!(
+        reopened
+            .resolve_recovery_point(
+                &records[0].database_id,
+                "point_id",
+                standalone.identity(),
+                &records[0].regions
+            )
+            .await,
+        Err(crate::native_recovery::NativeRecoveryError::Unavailable)
+    ));
     worker.shutdown().await.unwrap();
     drop(reopened);
     backups.drain().unwrap();

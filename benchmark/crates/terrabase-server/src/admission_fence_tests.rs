@@ -226,8 +226,8 @@ async fn fence_waits_for_callback_after_admission_client_timeout_and_suppresses_
 #[tokio::test]
 async fn every_uncertain_fence_write_refuses_admission_and_recovers_or_refuses_restart() {
     // 1: interrupted write; 2: file fsync; 3: pending directory fsync;
-    // 4: rename; 5: published directory fsync.
-    for stage in 1..=5 {
+    // 4: rename; 5: published directory fsync; 6: actual partial write.
+    for stage in 1..=6 {
         let fixture = Fixture::new();
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
@@ -254,25 +254,63 @@ async fn every_uncertain_fence_write_refuses_admission_and_recovers_or_refuses_r
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         server.stop().await;
         drop(host);
-        let reopened = fixture.open(callback);
-        if stage == 1 {
-            assert!(reopened.is_err(), "partial pending frame must never prove absence");
+        let reopened = Arc::new(fixture.open(callback).unwrap());
+        if stage == 1 || stage == 6 {
+            assert!(
+                reopened.fence_store.get(&fixture.record.database_id).is_err(),
+                "partial pending frame must not prove absence"
+            );
+            let pending = fs::read_dir(fixture.root.join("admissions/fences"))
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            let original = fs::read(&pending).unwrap();
+            assert_eq!(original.is_empty(), stage == 1, "stage 6 must write a real prefix");
+            let server = Listener::start(reopened.clone(), &fixture.root);
+            for field in ["deletion_operation_id", "project_fence_revision", "record"] {
+                let mut changed = fixture.request();
+                changed[field] = match field {
+                    "deletion_operation_id" => serde_json::json!("delete-other"),
+                    "project_fence_revision" => serde_json::json!(8),
+                    _ => {
+                        let mut record = fixture.record.clone();
+                        record.project_id = ProjectUlid::generate().to_string();
+                        serde_json::to_value(record).unwrap()
+                    }
+                };
+                assert_eq!(request(&server.socket, "fence", &changed).await.0, 409);
+                assert_eq!(fs::read(&pending).unwrap(), original);
+            }
+            assert_eq!(
+                request(&server.socket, "admit", &serde_json::to_value(&fixture.record).unwrap())
+                    .await
+                    .0,
+                409
+            );
+            let mut other = fixture.record.clone();
+            other.database_id = DatabaseUlid::generate().to_string();
+            assert_eq!(
+                request(&server.socket, "admit", &serde_json::to_value(other).unwrap()).await.0,
+                200,
+                "unrelated database must remain live"
+            );
+            let (status, body) = request(&server.socket, "fence", &fixture.request()).await;
+            assert_eq!(status, 200);
+            receipt(&body, &fixture.record, FenceOutcome::NoInstall);
+            assert!(!pending.exists());
+            server.stop().await;
         } else {
-            let reopened = reopened.unwrap();
             assert_eq!(
                 reopened.fence(&fixture.record, "delete-1", 7).unwrap().outcome,
                 FenceOutcome::NoInstall
             );
             assert!(reopened.admit(&fixture.record).is_err());
-            assert!(
-                !fixture
-                    .root
-                    .join("admissions/fences")
-                    .join(format!(".{}.pending", fixture.record.database_id))
-                    .exists()
-            );
+            assert_eq!(fs::read_dir(fixture.root.join("admissions/fences")).unwrap().count(), 1);
         }
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(reopened.admit(&fixture.record).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), usize::from(stage == 1 || stage == 6));
     }
 }
 
@@ -431,4 +469,202 @@ fn host_lock_inode_survives_restart_and_unsafe_paths_are_refused() {
     std::os::unix::fs::symlink(fixture.root.join("other-lock"), &lock).unwrap();
     assert!(fixture.open(Arc::new(|_| Ok(()))).is_err());
     assert!(!fixture.root.join("other-lock").exists());
+}
+
+#[tokio::test]
+async fn digest_pending_conflicts_preserve_final_authority_and_unrelated_liveness() {
+    for kind in ["same", "conflicting-final", "wrong-digest", "inconsistent-prefix", "multiple"] {
+        let fixture = Fixture::new();
+        let host = fixture.open(Arc::new(|_| Ok(()))).unwrap();
+        let published = host.fence(&fixture.record, "delete-1", 7).unwrap();
+        drop(host);
+        let dir = fixture.root.join("admissions/fences");
+        let final_path = dir.join(format!("{}.json", fixture.record.database_id));
+        let final_bytes = fs::read(&final_path).unwrap();
+        let inode = fs::metadata(&final_path).unwrap().ino();
+        let mut candidate = published.clone();
+        if kind == "conflicting-final" {
+            candidate.project_fence_revision += 1;
+        }
+        let mut name = crate::admission_fence::pending_name(&candidate).unwrap();
+        if kind == "wrong-digest" {
+            name = format!(".{}.{}.pending", fixture.record.database_id, "0".repeat(64));
+        }
+        let pending = dir.join(name);
+        let pending_bytes = if kind == "inconsistent-prefix" {
+            b"not-a-prefix".to_vec()
+        } else {
+            serde_json::to_vec(&candidate).unwrap()
+        };
+        fs::write(&pending, &pending_bytes).unwrap();
+        if kind == "multiple" {
+            candidate.project_fence_revision += 1;
+            fs::write(dir.join(crate::admission_fence::pending_name(&candidate).unwrap()), b"")
+                .unwrap();
+        }
+        let host = Arc::new(fixture.open(Arc::new(|_| Ok(()))).unwrap());
+        assert_eq!(
+            host.fence_store.published(&fixture.record.database_id).unwrap(),
+            Some(published.clone())
+        );
+        let server = Listener::start(host.clone(), &fixture.root);
+        if kind == "same" {
+            assert!(!pending.exists());
+            let (status, body) = request(&server.socket, "fence", &fixture.request()).await;
+            assert_eq!(status, 200);
+            assert_eq!(receipt(&body, &fixture.record, FenceOutcome::NoInstall), published);
+        } else {
+            assert_eq!(request(&server.socket, "fence", &fixture.request()).await.0, 409, "{kind}");
+            assert_eq!(
+                request(&server.socket, "admit", &serde_json::to_value(&fixture.record).unwrap())
+                    .await
+                    .0,
+                409
+            );
+            assert_eq!(fs::read(&pending).unwrap(), pending_bytes);
+        }
+        let mut other = fixture.record.clone();
+        other.database_id = DatabaseUlid::generate().to_string();
+        assert_eq!(
+            request(&server.socket, "admit", &serde_json::to_value(other).unwrap()).await.0,
+            200
+        );
+        assert_eq!(fs::read(&final_path).unwrap(), final_bytes);
+        assert_eq!(
+            fs::metadata(&final_path).unwrap().ino(),
+            inode,
+            "published inode must not be replaced"
+        );
+        server.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn partial_stop_required_retry_preserves_outcome_and_gates_all_stop_entrypoints() {
+    let fixture = Fixture::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let callback: StorageAdmission = Arc::new(move |_| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    });
+    let host = fixture.open(callback.clone()).unwrap();
+    host.admit(&fixture.record).unwrap();
+    host.fence_store.fail_at(6);
+    assert!(host.fence(&fixture.record, "delete-1", 7).is_err());
+    drop(host);
+    let stop_calls = Arc::new(AtomicUsize::new(0));
+    let stop_count = stop_calls.clone();
+    let prepare_count = stop_calls.clone();
+    let preflight_count = stop_calls.clone();
+    let host = Arc::new(
+        fixture
+            .open(callback)
+            .unwrap()
+            .with_storage_stop(Arc::new(move |_, _| {
+                stop_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }))
+            .with_storage_prepare_stop(Arc::new(move |_, _| {
+                prepare_count.fetch_add(1, Ordering::SeqCst);
+                Ok(1)
+            }))
+            .with_storage_stop_preflight(Arc::new(move |_, _| {
+                preflight_count.fetch_add(1, Ordering::SeqCst);
+                Ok((false, None))
+            })),
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "uncertain database must not replay");
+    let prepare = PrepareStopRequest {
+        environment: fixture.record.environment.clone(),
+        organization_id: fixture.record.tenant_id.clone(),
+        project_id: fixture.record.project_id.clone(),
+        database_id: fixture.record.database_id.clone(),
+        parent_database_id: None,
+        operation_id: "delete-1".into(),
+        region: fixture.record.region.clone(),
+        member_id: fixture.record.member_id.clone(),
+    };
+    let stop = StopRequest {
+        environment: prepare.environment.clone(),
+        organization_id: prepare.organization_id.clone(),
+        project_id: prepare.project_id.clone(),
+        database_id: prepare.database_id.clone(),
+        parent_database_id: None,
+        operation_id: prepare.operation_id.clone(),
+        region: prepare.region.clone(),
+        member_id: prepare.member_id.clone(),
+        cutoff: "2026-09-05T00:00:00.123Z".into(),
+        retain_until: None,
+    };
+    assert!(host.stop(stop.clone()).is_err());
+    assert!(host.prepare_stop(prepare.clone()).is_err());
+    assert!(host.preflight_stop(prepare.clone()).is_err());
+    let server = Listener::start(host.clone(), &fixture.root);
+    for (route, body) in [
+        ("stop", serde_json::to_value(&stop).unwrap()),
+        ("delete/prepare", serde_json::to_value(&prepare).unwrap()),
+        ("delete/preflight", serde_json::to_value(&prepare).unwrap()),
+    ] {
+        assert_eq!(request(&server.socket, route, &body).await.0, 409);
+    }
+    assert_eq!(stop_calls.load(Ordering::SeqCst), 0);
+    let (status, body) = request(&server.socket, "fence", &fixture.request()).await;
+    assert_eq!(status, 200);
+    receipt(&body, &fixture.record, FenceOutcome::StopRequired);
+    assert_eq!(
+        host.records_snapshot().unwrap().get(&fixture.record.database_id),
+        Some(&fixture.record)
+    );
+    host.stop(stop).unwrap();
+    host.prepare_stop(prepare.clone()).unwrap();
+    host.preflight_stop(prepare).unwrap();
+    assert_eq!(
+        stop_calls.load(Ordering::SeqCst),
+        3,
+        "valid final retains authorized stop behavior"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "retry cannot install fresh storage");
+    server.stop().await;
+}
+
+#[test]
+fn malformed_final_is_never_repaired_by_digest_pending() {
+    let fixture = Fixture::new();
+    let host = fixture.open(Arc::new(|_| Ok(()))).unwrap();
+    let receipt = host.fence(&fixture.record, "delete-1", 7).unwrap();
+    drop(host);
+    let dir = fixture.root.join("admissions/fences");
+    let final_path = dir.join(format!("{}.json", fixture.record.database_id));
+    fs::write(&final_path, b"malformed").unwrap();
+    let pending = dir.join(crate::admission_fence::pending_name(&receipt).unwrap());
+    fs::write(&pending, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    assert!(fixture.open(Arc::new(|_| panic!("malformed final cannot replay"))).is_err());
+    assert_eq!(fs::read(&final_path).unwrap(), b"malformed");
+    assert!(pending.exists());
+}
+
+#[tokio::test]
+async fn exact_retry_cannot_reclassify_no_install_after_admission_evidence_appears() {
+    let fixture = Fixture::new();
+    let host = fixture.open(Arc::new(|_| panic!("no storage expected"))).unwrap();
+    host.fence_store.fail_at(6);
+    assert!(host.fence(&fixture.record, "delete-1", 7).is_err());
+    drop(host);
+    let dir = fixture.root.join("admissions/fences");
+    let pending = fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+    let prefix = fs::read(&pending).unwrap();
+    fs::write(
+        fixture.root.join("admissions").join(format!("{}.json", fixture.record.database_id)),
+        serde_json::to_vec(&fixture.record).unwrap(),
+    )
+    .unwrap();
+    let host =
+        Arc::new(fixture.open(Arc::new(|_| panic!("uncertain intent must not replay"))).unwrap());
+    let server = Listener::start(host.clone(), &fixture.root);
+    assert_eq!(request(&server.socket, "fence", &fixture.request()).await.0, 409);
+    assert!(host.admit(&fixture.record).is_err());
+    assert_eq!(fs::read(pending).unwrap(), prefix);
+    assert!(!dir.join(format!("{}.json", fixture.record.database_id)).exists());
+    server.stop().await;
 }

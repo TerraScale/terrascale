@@ -244,13 +244,11 @@ impl AdmissionHost {
         &self,
         request: PrepareStopRequest,
     ) -> Result<StopPreflightReceipt, String> {
-        let record = self
-            .records
-            .lock()
-            .map_err(|_| "admission lock poisoned")?
-            .get(&request.database_id)
-            .cloned()
-            .ok_or("database not admitted")?;
+        let record = {
+            let records = self.records.lock().map_err(|_| "admission lock poisoned")?;
+            self.fence_store.ensure_database_available(&request.database_id)?;
+            records.get(&request.database_id).cloned().ok_or("database not admitted")?
+        };
         if request.environment != record.environment
             || request.organization_id != record.tenant_id
             || request.project_id != record.project_id
