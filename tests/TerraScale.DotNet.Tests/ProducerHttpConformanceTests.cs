@@ -90,6 +90,13 @@ public sealed class ProducerHttpConformanceTests
             foreach (var fixture in operation.GetProperty("errors").EnumerateArray())
             {
                 var body = fixture.GetProperty("body");
+                if (operation.GetProperty("operationId").GetString() == "health" && fixture.GetProperty("status").GetInt32() == 503)
+                {
+                    await Assert.That(body.GetProperty("healthy").GetBoolean()).IsFalse();
+                    await Assert.That(body.GetProperty("region").GetString()).IsEqualTo("sample");
+                    await Assert.That(body.GetProperty("version").GetString()).IsEqualTo("sample");
+                    continue;
+                }
                 var error = body.GetProperty("error");
                 using var response = new HttpResponseMessage((HttpStatusCode)fixture.GetProperty("status").GetInt32())
                 {

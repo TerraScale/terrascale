@@ -50,6 +50,19 @@ public sealed class TerraScaleRegionsClientTests
     }
 
     [Test]
+    public async Task HealthAsync_DecodesTypedUnhealthyResponseOn503()
+    {
+        using var handler = new RecordingHandler("{\"region\":\"GRU\",\"healthy\":false,\"version\":\"test\"}", HttpStatusCode.ServiceUnavailable);
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var status = await client.Regions.HealthAsync();
+
+        await Assert.That(status.Region).IsEqualTo("GRU");
+        await Assert.That(status.Healthy).IsFalse();
+    }
+
+    [Test]
     public async Task CatalogAcceptsAdmittedRegionBeyondLaunchSet()
     {
         using var handler = new RecordingHandler("{\"regions\":[{\"code\":\"IAD\",\"name\":\"Ashburn\",\"country\":\"US\",\"latitude\":38.9,\"longitude\":-77,\"available\":true}],\"hosts\":{\"IAD\":\"iad.api.terrascale.tech\"}}");
@@ -67,7 +80,7 @@ public sealed class TerraScaleRegionsClientTests
         ApiKey = "test-key"
     });
 
-    private sealed class RecordingHandler(string responseBody) : HttpMessageHandler
+    private sealed class RecordingHandler(string responseBody, HttpStatusCode statusCode = HttpStatusCode.OK) : HttpMessageHandler
     {
         public string? Request { get; private set; }
         public string? Authorization { get; private set; }
@@ -76,7 +89,7 @@ public sealed class TerraScaleRegionsClientTests
         {
             Request = request.RequestUri?.ToString();
             Authorization = request.Headers.Authorization?.ToString();
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody, Encoding.UTF8, "application/json") });
+            return Task.FromResult(new HttpResponseMessage(statusCode) { Content = new StringContent(responseBody, Encoding.UTF8, "application/json") });
         }
     }
 }
