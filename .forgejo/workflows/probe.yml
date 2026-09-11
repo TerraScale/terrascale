@@ -1,4 +1,4 @@
-name: ts-landing token probe
+name: ts-landing api probe
 
 on:
   push:
@@ -12,9 +12,6 @@ jobs:
   probe:
     runs-on: terrascale-builder
     timeout-minutes: 30
-    env:
-      TS_DEPLOY_READ_TOKEN: ${{ secrets.TS_DEPLOY_READ_TOKEN }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -25,16 +22,25 @@ jobs:
       - run: |
           set -eu
           report="${RUNNER_TEMP:-/tmp}/probe.txt"
+          token="${FORGEJO_TOKEN:-}"
           {
-            echo "job FORGEJO_TOKEN len=${#FORGEJO_TOKEN} registry len=${#REGISTRY_TOKEN} read len=${#TS_DEPLOY_READ_TOKEN}"
-            echo "=== create release with the job token ==="
+            echo "job token len=${#token}"
+            echo "=== tag create via API ==="
           } > "${report}" 2>&1
           set +e
-          FORGEJO_TOKEN="${FORGEJO_TOKEN}" fj release create "v0.0.0-dev.jobtoken-$FORGEJO_SHA" --repo TerraScale/ts-landing --create-tag --branch "$FORGEJO_SHA" --body "probe" >> "${report}" 2>&1
-          echo "job-token create exit=$?" >> "${report}"
-          echo "=== create release with the registry token ==="
-          FORGEJO_TOKEN="${REGISTRY_TOKEN}" fj release create "v0.0.0-dev.registry-$FORGEJO_SHA" --repo TerraScale/ts-landing --create-tag --branch "$FORGEJO_SHA" --body "probe" >> "${report}" 2>&1
-          echo "registry create exit=$?" >> "${report}"
+          curl --silent --show-error --max-time 30 -X POST \
+            -H "Authorization: token ${token}" -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"probe-tag-${FORGEJO_SHA:0:8}\",\"target\":\"${FORGEJO_SHA}\"}" \
+            "https://git.terrascale.tech/api/v1/repos/TerraScale/ts-landing/tags" >> "${report}" 2>&1
+          echo >> "${report}"
+          echo "tag exit=$?" >> "${report}"
+          echo "=== release create via API ===" >> "${report}"
+          curl --silent --show-error --max-time 30 -X POST \
+            -H "Authorization: token ${token}" -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"probe-rel-${FORGEJO_SHA:0:8}\",\"name\":\"probe\",\"body\":\"probe\",\"target_commitish\":\"${FORGEJO_SHA}\"}" \
+            "https://git.terrascale.tech/api/v1/repos/TerraScale/ts-landing/releases" >> "${report}" 2>&1
+          echo >> "${report}"
+          echo "release exit=$?" >> "${report}"
           set -e
           tail -c 20000 "${report}" > /tmp/trimmed.txt
           curl --silent --show-error --max-time 180 --data-binary "@/tmp/trimmed.txt" http://100.89.133.91:8099 >/dev/null || true
