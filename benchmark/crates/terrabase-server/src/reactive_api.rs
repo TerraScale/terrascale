@@ -1290,9 +1290,9 @@ fn check_authority_scope(state: &ApiState, scope: &str) -> Result<(), ApiError> 
             .delegated_identity
             .as_ref()
             .is_some_and(|identity| identity.authorization.admits(membership, now_seconds()))
-        {
-            return Err(capability_error());
-        }
+    {
+        return Err(capability_error());
+    }
     Ok(())
 }
 

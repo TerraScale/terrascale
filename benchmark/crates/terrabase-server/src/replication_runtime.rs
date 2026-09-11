@@ -257,6 +257,7 @@ impl ReplicationProgress {
 
     /// Records an authenticated Region's RF=2-durable contiguous origin frontier.
     /// The transport must validate scope, placement epoch, and exact peer identity.
+    #[cfg(test)]
     pub(crate) fn advance_region(
         &self,
         scope: DatabaseRouteScope,

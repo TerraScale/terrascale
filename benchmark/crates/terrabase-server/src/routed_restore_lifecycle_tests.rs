@@ -42,7 +42,11 @@ impl KeyMode {
 }
 
 #[allow(clippy::items_after_statements)]
-#[allow(clippy::match_wildcard_for_single_variant, reason = "fixture rejects every non-data/backup purpose")]fn fixture_keys(
+#[allow(
+    clippy::match_wildcard_for_single_variants,
+    reason = "fixture rejects every non-data/backup purpose"
+)]
+fn fixture_keys(
     scope: &DatabaseScope,
     purpose: terrabase::encryption::KeyPurpose,
     mode: KeyMode,
@@ -397,7 +401,7 @@ async fn production_owner(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::items_after_statements)]
 async fn production_owner_with_identity(
     registry: Arc<AdmittedDatabaseRegistry>,
     member: Member,
@@ -448,7 +452,6 @@ async fn production_owner_with_identity(
     production.placement.generation = 7;
     production.placement.epoch = 7;
     let template = production.databases[0].clone();
-    #[allow(clippy::items_after_statements)]
     use std::os::unix::fs::PermissionsExt as _;
     let access = root.join("object-access.fixture");
     let secret = root.join("object-secret.fixture");
@@ -681,7 +684,7 @@ fn identity(
 
 /// Only setup uses a manually assembled authenticated envelope. The source
 /// subsequently enters production Member admission; no cut is fabricated.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::items_after_statements)]
 fn routed_fixture(
     mode: KeyMode,
 ) -> (
@@ -694,7 +697,6 @@ fn routed_fixture(
 ) {
     let root = std::env::temp_dir().join(format!("routed-native-{}", DatabaseUlid::generate()));
     std::fs::create_dir_all(&root).unwrap();
-    #[allow(clippy::items_after_statements)]
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     let tenant = TenantUlid::generate();
@@ -1133,7 +1135,7 @@ async fn routed_paused_marker_reconciles_after_lost_result_and_restart() {
     production_lifecycle_capture_restore_and_reopen(KeyMode::Managed, true).await;
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::items_after_statements)]
 async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_result: bool) {
     use crate::native_recovery::{
         NativeRecoveryLimits, NativeRecoveryPhase, NativeRecoveryRuntime, NativeRestorePhase,
@@ -1510,9 +1512,7 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
     .await;
     // Retained local metadata must not make an unavailable remote point
     // resolvable: remove only this fixture's standalone objects.
-    #[allow(clippy::items_after_statements)]
     use futures_util::TryStreamExt as _;
-    #[allow(clippy::items_after_statements)]
     use object_store::ObjectStore as _;
     let historical_objects: Vec<_> = store
         .list(Some(&object_store::path::Path::from(historical_prefix.clone())))

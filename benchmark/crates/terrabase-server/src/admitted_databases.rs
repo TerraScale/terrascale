@@ -168,10 +168,11 @@ impl RestoreReservation {
 impl Drop for RestoreReservation {
     fn drop(&mut self) {
         if let Some((member, registry)) = self.rollback.take()
-            && let Ok(lease) = self.reacquire(&member) {
-                // Publication remains fenced until this drop releases the permit.
-                let _ = registry.publish(self.record.clone(), lease, self.location.clone(), 1);
-            }
+            && let Ok(lease) = self.reacquire(&member)
+        {
+            // Publication remains fenced until this drop releases the permit.
+            let _ = registry.publish(self.record.clone(), lease, self.location.clone(), 1);
+        }
         if let Ok(mut paths) = self.path_guard.lock() {
             paths.remove(&self.location);
         }
@@ -441,7 +442,10 @@ impl AdmittedDatabaseRegistry {
         self.publish_inner(record, lease, location, instance, scope)
     }
 
-    #[allow(clippy::needless_pass_by_value, reason = "instance ordinal is Copy; by value keeps the publish call sites flat")]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "instance ordinal is Copy; by value keeps the publish call sites flat"
+    )]
     fn publish_inner(
         &self,
         record: AdmissionRecord,
@@ -607,14 +611,14 @@ impl AdmittedDatabaseRegistry {
                 .host
                 .refreshed_serving_host()
                 .map_err(|_| "shard serving refresh unavailable")?
-            {
-                let replacement = Arc::new(AdmittedDatabase {
-                    activity: entry.activity.clone(),
-                    record: entry.record.clone(),
-                    host: Arc::new(host),
-                });
-                databases.insert(database.to_owned(), replacement);
-            }
+        {
+            let replacement = Arc::new(AdmittedDatabase {
+                activity: entry.activity.clone(),
+                record: entry.record.clone(),
+                host: Arc::new(host),
+            });
+            databases.insert(database.to_owned(), replacement);
+        }
         let entry = databases.get(database).cloned();
         drop(databases);
         if let Some(entry) = &entry {

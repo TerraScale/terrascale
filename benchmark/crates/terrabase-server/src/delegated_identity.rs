@@ -302,6 +302,9 @@ impl IdentityVerifier {
     /// producer's linked-account membership authority. The caller supplies
     /// no raw third-party token; issuer and subject came from local JWT
     /// verification and are sent only alongside server-owned route scope.
+    ///
+    /// # Errors
+    /// Returns an error when the identity inputs are malformed or the producer authority denies the subject.
     #[allow(clippy::too_many_arguments, reason = "explicit BYO admission scope")]
     pub async fn admit_verified_byo(
         &self,

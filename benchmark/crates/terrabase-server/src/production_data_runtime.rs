@@ -1532,7 +1532,10 @@ impl ProductionAdmissionRuntime {
     /// fleet and operation identity; this method never opens a source engine
     /// by path or falls back to a local provider.
     #[allow(clippy::too_many_arguments, reason = "one restore workflow, every fact explicit")]
-    #[allow(clippy::too_many_lines, reason = "one restore reservation through receipt verification")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one restore reservation through receipt verification"
+    )]
     async fn restore_native_to_target(
         &self,
         backups: &crate::native_backup_runtime::NativeBackupRuntime,

@@ -831,7 +831,7 @@ impl BackupStreams {
         // exclusive; an existing target is checked without following links
         // and must be empty.
         let created_target = prepare_restore_target(location)?;
-        let config = if let Ok(config) = terrabase::EngineConfig::durable(location) { config } else {
+        let Ok(config) = terrabase::EngineConfig::durable(location) else {
             if created_target {
                 let _ = std::fs::remove_dir(location);
             }

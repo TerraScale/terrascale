@@ -50,6 +50,7 @@ fn service(
     Ok((service, scope))
 }
 
+#[allow(clippy::result_large_err, reason = "axum Response refusal is the error channel")]
 async fn resolve(
     state: Arc<ApiState>,
     name: String,

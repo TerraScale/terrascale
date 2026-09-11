@@ -170,11 +170,7 @@ where
         checkpoint = Some(capture()?);
         validate(checkpoint.as_ref(), &state.source_database_id, placement)?;
     }
-    if matches!(state.phase, NativeRecoveryPhase::Accepted) {
-        state.phase = NativeRecoveryPhase::Measuring;
-        state.error = None;
-        persist(state, checkpoint.as_ref())?;
-    } else if matches!(state.phase, NativeRecoveryPhase::Capturing) {
+    if matches!(state.phase, NativeRecoveryPhase::Accepted | NativeRecoveryPhase::Capturing) {
         state.phase = NativeRecoveryPhase::Measuring;
         state.error = None;
         persist(state, checkpoint.as_ref())?;

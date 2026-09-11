@@ -579,10 +579,7 @@ mod tests {
         // member restart must still revalidate and reopen the location.
         let sidecar = path.join(litestream_sidecar_name());
         fs::create_dir_all(sidecar.join("ltx").join("0")).expect("sidecar");
-        assert_eq!(
-            load_existing(&path, Some(&owner), OwnershipMode::LocalDevelopment),
-            Ok(owner)
-        );
+        assert_eq!(load_existing(&path, Some(&owner), OwnershipMode::LocalDevelopment), Ok(owner));
         // The sidecar is only valid as the backup child's directory shape;
         // a plain file with that name is still foreign.
         fs::remove_dir_all(&sidecar).unwrap();

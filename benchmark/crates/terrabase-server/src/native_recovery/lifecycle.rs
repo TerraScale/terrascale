@@ -55,7 +55,6 @@ where
             Ok(true) => {
                 backoff = Duration::from_millis(25);
                 immediate = true;
-                continue;
             }
             Ok(false) if stopping => return false,
             Ok(false) => {

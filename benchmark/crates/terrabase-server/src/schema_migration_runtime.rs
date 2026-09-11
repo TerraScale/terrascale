@@ -406,6 +406,7 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
     Some(collection)
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "the None arm documents the disabled runtime")]
 pub(super) fn spawn(state: &Arc<ApiState>) -> Option<tokio::task::JoinHandle<()>> {
     let state = Arc::downgrade(state);
     Some(tokio::spawn(async move {

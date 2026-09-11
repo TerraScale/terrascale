@@ -400,7 +400,10 @@ impl NativeBackupRuntime {
     /// # Errors
     /// Returns an error if the operation ID or placement is rejected, a runtime
     /// mutex is poisoned, the fleet rejects the restore, or the blocking worker aborts.
-    #[allow(clippy::too_many_arguments, reason = "explicit restore target, identity, and placement ownership")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit restore target, identity, and placement ownership"
+    )]
     pub async fn restore_from_provider(
         &self,
         database: &str,
@@ -508,7 +511,10 @@ impl NativeBackupRuntime {
     /// Returns an error if the operation ID or placement is rejected, the
     /// timestamp overflows, the fleet rejects the restore, or the blocking
     /// worker aborts.
-    #[allow(clippy::too_many_arguments, reason = "explicit restore target, identity, and placement ownership")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit restore target, identity, and placement ownership"
+    )]
     pub async fn restore_at_seconds(
         &self,
         database: &str,
@@ -544,7 +550,10 @@ impl NativeBackupRuntime {
     /// # Errors
     /// Returns an error if the operation ID or placement is rejected, a runtime
     /// mutex is poisoned, the fleet rejects the restore, or the blocking worker aborts.
-    #[allow(clippy::too_many_arguments, reason = "explicit restore target, identity, and placement ownership")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit restore target, identity, and placement ownership"
+    )]
     pub async fn restore_at_millis(
         &self,
         database: &str,

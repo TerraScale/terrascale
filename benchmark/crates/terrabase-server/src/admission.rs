@@ -168,13 +168,15 @@ impl AdmissionHost {
                 return Err("manifest identity mismatch".into());
             }
             if let Some(fence) = host.fence_store.published(&record.database_id)?
-                && fence.record != record {
-                    return Err("fence admission identity conflict".into());
-                }
+                && fence.record != record
+            {
+                return Err("fence admission identity conflict".into());
+            }
             if let Some(existing) = loaded.insert(record.database_id.clone(), record.clone())
-                && existing != record {
-                    return Err("pending admission identity conflict".into());
-                }
+                && existing != record
+            {
+                return Err("pending admission identity conflict".into());
+            }
             if extension == Some("pending") {
                 pending.push((path, record.database_id.clone()));
             }
@@ -201,6 +203,9 @@ impl AdmissionHost {
     }
 
     /// Returns the immutable admissions loaded during startup for composition-owned workers.
+    ///
+    /// # Errors
+    /// Returns an error if the admission lock is poisoned.
     pub fn records_snapshot(&self) -> Result<BTreeMap<String, AdmissionRecord>, String> {
         self.records
             .lock()
@@ -355,6 +360,9 @@ impl AdmissionHost {
     ///
     /// The listener is closed before this method returns, allowing the runtime
     /// owner to join the task before releasing the admitted storage owners.
+    ///
+    /// # Errors
+    /// Returns an error when accepting or serving a private admission connection fails.
     #[allow(clippy::too_many_lines, reason = "one accept loop per admitted connection")]
     pub async fn serve_until<F>(
         self: Arc<Self>,

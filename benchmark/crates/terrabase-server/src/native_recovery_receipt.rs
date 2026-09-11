@@ -235,13 +235,13 @@ impl NativeRecoveryReceiptStore {
             rusqlite::params![tenant, project, request.operation_id], |row| Ok((row.get(0)?, row.get(1)?))
         ).optional().map_err(|_| invalid)?;
         if let Some((payload, envelope)) = stored {
+            use aws_lc_rs::signature::KeyPair as _;
             let previous: NativeRecoveryReceipt =
                 serde_json::from_slice(&payload).map_err(|_| invalid)?;
             facts.completed_at_millis = previous.completed_at_millis;
             if facts != previous {
                 return Err(NativeRecoveryReceiptError::RequestMismatch);
             }
-            use aws_lc_rs::signature::KeyPair as _;
             verify_receipt(&envelope, &self.signer.key_id, self.signer.key.public_key().as_ref())?
                 .matches_request(&facts)?;
             return Ok(envelope);

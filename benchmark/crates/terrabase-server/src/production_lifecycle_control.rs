@@ -533,6 +533,7 @@ pub struct RegistryLifecycleWorker {
 }
 
 #[async_trait::async_trait]
+#[allow(clippy::too_many_lines, reason = "one native fleet operation per method; async-trait drops fn-level allows")]
 impl NativeLifecycleWorker for RegistryLifecycleWorker {
     async fn resolve_recovery_point(
         &self,

@@ -528,7 +528,9 @@ impl AdmissionListener {
         let Some(mut task) = self.task.take() else {
             return Ok(());
         };
-        let result = if let Ok(Ok(Ok(()))) = tokio::time::timeout(grace, &mut task).await { Ok(()) } else {
+        let result = if let Ok(Ok(Ok(()))) = tokio::time::timeout(grace, &mut task).await {
+            Ok(())
+        } else {
             task.abort();
             let _ = task.await;
             Err(())
@@ -1120,10 +1122,10 @@ async fn cleanup_failed_production_startup(
 }
 
 fn parts_root_for_recovery(production: &crate::config::ProductionConfig) -> std::path::PathBuf {
-    production
-        .databases
-        .iter()
-        .find(|database| database.enabled).map_or_else(|| std::env::temp_dir().join("terrabase-recovery"), |database| database.location.join("recovery"))
+    production.databases.iter().find(|database| database.enabled).map_or_else(
+        || std::env::temp_dir().join("terrabase-recovery"),
+        |database| database.location.join("recovery"),
+    )
 }
 
 /// Runs authenticated control intent and lifecycle observations while admission is

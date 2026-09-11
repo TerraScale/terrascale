@@ -3,7 +3,7 @@ use super::state_with_keys_and_control;
 
 use axum::body::Body;
 use axum::http::{HeaderValue, Request, StatusCode};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use terrabase::SessionToken;
 use tower::util::ServiceExt;
 

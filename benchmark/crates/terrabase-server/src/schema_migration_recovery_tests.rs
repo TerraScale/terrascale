@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 use crate::schema_api::{
     CollectionSchema, DatabaseIdentity, DurableSchemaRecord, SchemaDocument, SchemaTarget,
 };
@@ -30,7 +31,7 @@ fn record(previous_schema: Option<CollectionSchema>, schema_version: u64) -> Dur
         previous_schema,
         migration_plan: None,
         rollback: Some(SchemaRollback { idempotency_key: "rollback-1".into(), generation: 2 }),
-        idempotency: Default::default(),
+        idempotency: BTreeMap::default(),
     }
 }
 

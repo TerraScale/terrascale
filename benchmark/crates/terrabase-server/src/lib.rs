@@ -74,10 +74,10 @@ pub mod native_snapshot_backup;
 mod native_snapshot_backup_tests;
 pub mod production_lifecycle_control;
 
+pub mod backup_point_catalog;
 pub(crate) mod export_artifact_crypto;
 /// Shared production composition for the native backup fleet.
 pub mod native_backup_runtime;
-pub mod backup_point_catalog;
 #[cfg(test)]
 mod native_backup_runtime_tests;
 pub mod native_recovery;

@@ -8,19 +8,8 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request};
-use terrabase::encryption::{
-    DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, KeyPurpose, KeyScope,
-    KeyVersionMetadata,
-};
-use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
-use terrabase::member::{
-    AcceptedDatabaseRole, AdmissionLimits, DatabaseRole, DatabaseRoleAuthority, DatabaseScope,
-    DatabaseSpec, Member,
-};
 use terrabase::observability::MetricsRegistry;
 use terrabase::regions::RegionCode;
-use terrabase_server::admission::AdmissionRecord;
-use terrabase_server::admitted_databases::AdmittedDatabaseRegistry;
 use terrabase_server::api::{ApiState, router};
 use terrabase_server::api_keys::{KeyStore, Scope, Verbs};
 use terrabase_server::backup::{BackupStreams, TimeTravelCache};
@@ -36,48 +25,6 @@ pub struct Fixture {
     root: PathBuf,
     /// The state shared by the router and test callers.
     pub state: Arc<ApiState>,
-    admitted_member: Option<Member>,
-    admitted_root: Option<PathBuf>,
-}
-
-/// A real production registry populated with accepted Member leases.
-pub struct AdmittedFixture {
-    pub registry: Arc<AdmittedDatabaseRegistry>,
-    pub records: Vec<AdmissionRecord>,
-    member: Member,
-    root: PathBuf,
-}
-
-struct Writer;
-impl DatabaseRoleAuthority for Writer {
-    fn accepted_role(&self, _: &terrabase::member::DatabaseId) -> Option<AcceptedDatabaseRole> {
-        Some(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer })
-    }
-}
-
-#[derive(Debug)]
-struct StaticKey(KeyVersionMetadata);
-impl DatabaseKeySource for StaticKey {
-    fn current_lease(
-        &self,
-    ) -> Result<Arc<DatabaseKeyLease>, terrabase::encryption::EncryptionError> {
-        self.lease(self.0.version())
-    }
-
-    fn lease(
-        &self,
-        version: DatabaseKeyVersion,
-    ) -> Result<Arc<DatabaseKeyLease>, terrabase::encryption::EncryptionError> {
-        if version != self.0.version() {
-            return Err(terrabase::encryption::EncryptionError::InvalidKeyMetadata);
-        }
-        DatabaseKeyLease::test_oci_vault(
-            self.0.clone(),
-            DatabaseKey::from_bytes([29; 32]),
-            Duration::from_secs(60),
-        )
-        .map(Arc::new)
-    }
 }
 
 impl Fixture {
@@ -133,15 +80,7 @@ impl Fixture {
                     .expect("capability keys"),
             ),
         });
-        Self { root, state, admitted_member: None, admitted_root: None }
-    }
-
-    /// Installs a real admitted registry on this public-router fixture.
-    pub fn install_admitted(&mut self, admitted: AdmittedFixture) {
-        let state = Arc::get_mut(&mut self.state).expect("fixture state is unique");
-        state.admitted_databases = Some(admitted.registry);
-        self.admitted_member = Some(admitted.member);
-        self.admitted_root = Some(admitted.root);
+        Self { root, state }
     }
 
     /// Returns the real Axum public router.
@@ -165,88 +104,8 @@ impl Drop for Fixture {
         if let Some(state) = Arc::get_mut(&mut self.state) {
             state.admitted_databases = None;
         }
-        if let Some(member) = self.admitted_member.take() {
-            let _ = member.close(Duration::from_secs(1));
-        }
-        if let Some(root) = self.admitted_root.take() {
-            let _ = std::fs::remove_dir_all(root);
-        }
         let _ = std::fs::remove_dir_all(&self.root);
     }
-}
-
-/// Builds two independently owned databases through the production admission path.
-pub fn admitted_fixture() -> AdmittedFixture {
-    let root =
-        std::env::temp_dir().join(format!("terrabase-e17-admitted-{}", DatabaseUlid::generate()));
-    std::fs::create_dir_all(&root).expect("admitted fixture root");
-    let version = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap();
-    let owners: Vec<_> = (0..2)
-        .map(|_| (TenantUlid::generate(), ProjectUlid::generate(), DatabaseUlid::generate()))
-        .collect();
-    let specs: Vec<_> = owners
-        .iter()
-        .map(|(tenant, project, database)| {
-            DatabaseSpec::scoped(
-                DatabaseScope::new("production", *tenant, *project, *database, RegionCode::GRU)
-                    .unwrap(),
-                database.to_string(),
-            )
-        })
-        .collect();
-    let keys = owners
-        .iter()
-        .map(|(tenant, project, database)| {
-            let scope = KeyScope::new_with_project(
-                "production",
-                *tenant,
-                *project,
-                *database,
-                KeyPurpose::Data,
-            )
-            .unwrap();
-            (
-                (*database).into(),
-                Arc::new(StaticKey(KeyVersionMetadata::new(scope, version)))
-                    as Arc<dyn DatabaseKeySource>,
-            )
-        })
-        .collect();
-    let member = Member::open_production(&root, specs, AdmissionLimits::new(8, 4), keys)
-        .expect("production member opens");
-    for (_, _, database) in &owners {
-        member.accept_database_role(&(*database).into(), &Writer).expect("database role accepted");
-    }
-    let records: Vec<_> = owners
-        .iter()
-        .map(|(tenant, project, database)| AdmissionRecord {
-            created_at: 1,
-            environment: "production".into(),
-            tenant_id: tenant.to_string(),
-            project_id: project.to_string(),
-            database_id: database.to_string(),
-            parent_database_id: None,
-            key_version: version.to_string(),
-            name: "same-name".into(),
-            regions: vec!["GRU".into()],
-            residency: "GRU".into(),
-            operation_id: DatabaseUlid::generate().to_string(),
-            region: "GRU".into(),
-            member_id: MemberUlid::generate().to_string(),
-        })
-        .collect();
-    let registry = Arc::new(AdmittedDatabaseRegistry::new(Arc::new(|| true)));
-    for record in &records {
-        let id = terrabase::member::DatabaseId::try_new(&record.database_id).unwrap();
-        let lease = member.acquire(&id).expect("admitted lease");
-        registry
-            .publish(record.clone(), lease, root.join(&record.database_id), 1)
-            .expect("registry publication");
-    }
-    registry
-        .activate(&records.iter().map(|record| record.database_id.clone()).collect::<Vec<_>>())
-        .expect("registry activation");
-    AdmittedFixture { registry, records, member, root }
 }
 
 /// Builds a request for the real Axum router.
