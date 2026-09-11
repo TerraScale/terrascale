@@ -747,6 +747,7 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(execute_sql))
         .routes(routes!(crate::reactive_api::websocket))
         .routes(routes!(list_backups))
+        .routes(routes!(list_backup_points))
         .routes(routes!(restore_backup))
         .routes(routes!(list_branches, create_branch))
         .routes(routes!(crate::authorization_leases::authorization_lease))
@@ -1270,6 +1271,8 @@ fn openapi_schemas() -> serde_json::Value {
         "SqlRequest": { "type": "object", "required": ["sql"], "properties": { "sql": { "type": "string" }, "parameters": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/JsonValue" } }, "explain": { "type": "boolean" }, "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 30000 }, "cancelled": { "type": "boolean" } } },
         "SqlResponse": { "type": "object", "required": ["matched", "rows"], "properties": { "matched": { "type": "integer", "format": "int64" }, "rows": { "type": "array", "items": { "type": "object", "required": ["id", "value"], "properties": { "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
         "BackupStatusResponse": { "type": "object", "required": ["ready", "streaming"], "properties": { "ready": { "type": "boolean" }, "streaming": { "type": "boolean" } } },
+        "BackupPoint": { "type": "object", "required": ["point_id", "source_database_id", "captured_at_unix_millis", "retain_until_unix_millis", "logical_checksum", "logical_documents"], "properties": { "point_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "source_database_id": { "type": "string" }, "captured_at_unix_millis": { "type": "integer", "format": "int64", "minimum": 0 }, "retain_until_unix_millis": { "type": "integer", "format": "int64", "minimum": 0 }, "logical_checksum": { "type": "string", "pattern": "^[0-9a-f]+$" }, "logical_documents": { "type": "string", "pattern": "^[0-9]+$" } } },
+        "BackupPointPage": { "type": "object", "required": ["points"], "properties": { "points": { "type": "array", "items": { "$ref": "#/components/schemas/BackupPoint" } }, "next_cursor": { "type": ["string", "null"] } } },
         "CreateDatabaseRequest": { "type": "object", "required": ["name", "placement", "residency", "operation_id"], "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.", "properties": { "operation_id": { "type": "string" }, "name": { "type": "string" }, "placement": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "residency": { "type": "string" } } },
         "CreateIndexRequest": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" } } },
         "BatchRequest": { "type": "object", "required": ["operations"], "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 1000, "items": { "type": "object", "required": ["op", "id"], "properties": { "op": { "type": "string", "enum": ["put", "patch", "delete"] }, "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
@@ -5146,6 +5149,64 @@ async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<Strin
         return error.into_response();
     }
     json_response(StatusCode::OK, body)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BackupPointQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+/// Lists authenticated native logical recovery points in bounded keyset pages.
+#[utoipa::path(get, path = "/api/v1/databases/{name}/backups/points", params(("limit" = Option<usize>, Query, description = "Page size, default 50, maximum 100"), ("cursor" = Option<String>, Query, description = "Opaque source-bound continuation cursor")), responses((status = 200, description = "Retained backup points")))]
+async fn list_backup_points(
+    State(state): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+    Extension(principal): Extension<crate::api_keys::Principal>,
+    extract::Query(query): extract::Query<BackupPointQuery>,
+) -> Response {
+    if !principal.scope().admits_database(Verbs::ADMIN, &name) {
+        return ApiError::forbidden("backup point listing").into_response();
+    }
+    let Some(registry) = &state.admitted_databases else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let source = match registry.resolve_serving(&name) {
+        Ok(Some(value)) => value,
+        Ok(None) => return ApiError::database_not_found(&name).into_response(),
+        Err(_) => return ApiError::storage_failure().into_response(),
+    };
+    let Some((tenant, project)) = principal.owner() else {
+        return ApiError::forbidden("backup point listing requires a project credential")
+            .into_response();
+    };
+    if source.record.tenant_id != tenant || source.record.project_id != project {
+        return ApiError::forbidden("backup source is outside credential scope").into_response();
+    }
+    let Some(runtime) = &state.native_backups else {
+        return ApiError::backup("native backup point catalog unavailable").into_response();
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis().min(u128::from(u64::MAX)) as u64);
+    match crate::backup_point_catalog::list_backup_points(
+        runtime,
+        &source.record.database_id,
+        query.limit,
+        query.cursor.as_deref(),
+        now,
+    )
+    .await
+    {
+        Ok(page) => json_response(StatusCode::OK, serde_json::to_string(&page).unwrap_or_default()),
+        Err(
+            crate::backup_point_catalog::BackupPointCatalogError::InvalidLimit
+            | crate::backup_point_catalog::BackupPointCatalogError::InvalidCursor,
+        ) => provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
+            .into_response(),
+        Err(error) => ApiError::backup(error).into_response(),
+    }
 }
 
 /// `POST /databases/{name}/backups/restore` — restores to a NEW database

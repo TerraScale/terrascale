@@ -169,10 +169,17 @@ impl TbepLifecycleControl {
     /// Restore dispatch is reserved for the native composition owner. The
     /// authenticated RPC reaches this boundary; no local path fallback is
     /// permitted while that owner is absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted lifecycle or control failure when the request,
+    /// authority proof, restore operation, or completed receipt is invalid.
     pub async fn restore_to_target(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
     ) -> Result<terrabase_tbep::proto::terrabase::v1::LifecycleControlResponse, String> {
+        use crate::native_recovery::NativeRestorePhase;
+        use terrabase_tbep::proto::terrabase::v1::{LifecycleControlResponse, LifecycleStatus};
         let context = request.context.as_ref().ok_or("restore context is missing")?;
         if request.target_database != context.database
             || request.target_owner != format!("{}/{}", context.tenant, context.project)
@@ -189,8 +196,6 @@ impl TbepLifecycleControl {
             Some(&restore_request_digest(request)?),
         )?;
         let operation = self.control.worker.restore_to_target(request).await?;
-        use crate::native_recovery::NativeRestorePhase;
-        use terrabase_tbep::proto::terrabase::v1::{LifecycleControlResponse, LifecycleStatus};
         match operation.phase {
             NativeRestorePhase::Complete => {
                 let signed_completed_receipt = self
@@ -279,27 +284,27 @@ impl TbepLifecycleControl {
                 .control
                 .verify_snapshot_placement(&assignment, action, operation, signature, grant)
                 .await
-                .map(|_| terrabase_tbep::lifecycle::applied(operation)),
+                .map(|()| terrabase_tbep::lifecycle::applied(operation)),
             LifecycleGrantAction::CloseDatabase => self
                 .control
                 .close_database(&assignment, action, operation, signature, grant)
                 .await
-                .map(|_| terrabase_tbep::lifecycle::applied(operation)),
+                .map(|()| terrabase_tbep::lifecycle::applied(operation)),
             LifecycleGrantAction::StopNativeBackup => self
                 .control
                 .stop_native_backup(&assignment, action, operation, signature, grant)
                 .await
-                .map(|_| terrabase_tbep::lifecycle::applied(operation)),
+                .map(|()| terrabase_tbep::lifecycle::applied(operation)),
             LifecycleGrantAction::Reactivate => self
                 .control
                 .reactivate(&assignment, action, operation, signature, grant)
                 .await
-                .map(|_| terrabase_tbep::lifecycle::applied(operation)),
+                .map(|()| terrabase_tbep::lifecycle::applied(operation)),
             LifecycleGrantAction::DeleteOwnedData => self
                 .control
                 .delete_owned_data(&assignment, action, operation, signature, grant)
                 .await
-                .map(|_| terrabase_tbep::lifecycle::applied(operation)),
+                .map(|()| terrabase_tbep::lifecycle::applied(operation)),
             LifecycleGrantAction::RestoreToTarget => {
                 Err("restore requires its typed request".into())
             }
@@ -871,7 +876,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             .lock()
             .map_err(|_| "native backup fleet poisoned")?
             .pause(&assignment.database)
-            .map(|_| {
+            .map(|()| {
                 NativeLifecycleReceipt::Backup(terrabase::backup::worker::LifecycleReceipt {
                     operation_id: _operation.to_owned(),
                     database: assignment.database.clone(),
@@ -943,6 +948,11 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
 /// Authority verifier for signed accepted placement proofs.
 pub trait LifecycleAuthority: Send + Sync {
     /// Verifies proof against currently retained accepted state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted control failure when the proof is invalid or the
+    /// accepted lifecycle state does not authorize the requested operation.
     fn verify(
         &self,
         assignment: &AcceptedLifecycleAssignment,
@@ -964,6 +974,11 @@ pub struct ProductionLifecycleControl {
 
 impl ProductionLifecycleControl {
     /// Resolves a retained source point only after accepted lifecycle authority verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted lifecycle or control failure when context authority
+    /// verification or source-point resolution fails.
     pub async fn resolve_recovery_point(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::ResolveRecoveryPointRequest,
@@ -982,6 +997,11 @@ impl ProductionLifecycleControl {
     }
 
     /// Returns durable restore progress for the authorized request.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted lifecycle or control failure when authorization,
+    /// receipt decoding, or restore-progress retrieval fails.
     pub async fn restore_stats(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest,
@@ -1030,6 +1050,11 @@ impl ProductionLifecycleControl {
         })
     }
     /// Ensures a complete snapshot after verifying accepted authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted lifecycle or control failure when authority
+    /// verification or snapshot capture fails.
     pub async fn ensure_snapshot(
         &self,
         assignment: &AcceptedLifecycleAssignment,
@@ -1043,6 +1068,11 @@ impl ProductionLifecycleControl {
     }
 
     /// Closes serving after verifying accepted authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted lifecycle or control failure when authority
+    /// verification or serving closure fails.
     pub async fn close_database(
         &self,
         assignment: &AcceptedLifecycleAssignment,
@@ -1056,6 +1086,11 @@ impl ProductionLifecycleControl {
     }
 
     /// Stops one native backup stream after verifying accepted authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted lifecycle or control failure when authority
+    /// verification or backup stopping fails.
     pub async fn stop_native_backup(
         &self,
         assignment: &AcceptedLifecycleAssignment,
@@ -1069,6 +1104,11 @@ impl ProductionLifecycleControl {
     }
 
     /// Verifies accepted authority before resuming the same retained database.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted lifecycle or control failure when authority
+    /// verification or reactivation fails.
     pub async fn reactivate(
         &self,
         assignment: &AcceptedLifecycleAssignment,
@@ -1082,6 +1122,11 @@ impl ProductionLifecycleControl {
     }
 
     /// Verifies snapshot authority against accepted placement.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted lifecycle or control failure when authority
+    /// verification or placement verification fails.
     pub async fn verify_snapshot_placement(
         &self,
         assignment: &AcceptedLifecycleAssignment,
@@ -1095,6 +1140,11 @@ impl ProductionLifecycleControl {
     }
 
     /// Deletes owned data after validating lifecycle authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted lifecycle or control failure when authority
+    /// verification or owned-data deletion fails.
     pub async fn delete_owned_data(
         &self,
         assignment: &AcceptedLifecycleAssignment,

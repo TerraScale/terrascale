@@ -63,6 +63,11 @@ pub struct UsageRegistration {
 /// currently admitted.
 pub trait AllocationBindingResolver: Send + Sync {
     /// Returns organization, holder, placement revision, writer epoch, and accepted Regions.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted resolver failure when the database is not currently
+    /// admitted or its accepted placement cannot be read.
     fn binding(
         &self,
         database_id: &str,
@@ -74,7 +79,7 @@ pub trait AllocationBindingResolver: Send + Sync {
 pub struct AllocationVerifierConfig {
     /// Lowercase SHA-256 SPKI key identity.
     pub key_id: String,
-    /// Pinned ECDSA P-256 SubjectPublicKeyInfo bytes.
+    /// Pinned `ECDSA P-256 SubjectPublicKeyInfo` bytes.
     pub public_key_spki: Vec<u8>,
     /// Current policy epoch.
     pub policy_epoch: u64,
@@ -212,6 +217,11 @@ impl UsageAdmissionJournal {
 
     /// Installs the owner-provided pinned budget verifier before the listener
     /// is composed. An absent verifier keeps allocation delivery closed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects incomplete verifier configuration or an unavailable verifier
+    /// lock.
     pub fn with_allocation_verifier(
         self,
         config: AllocationVerifierConfig,
@@ -228,6 +238,13 @@ impl UsageAdmissionJournal {
         Ok(self)
     }
     /// Verifies and durably installs one signed regional allocation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unavailable verifier or storage, malformed or unverifiable
+    /// signed allocations, binding/placement/epoch mismatches, and failed
+    /// durable persistence. Error text is redacted and contains no key or
+    /// allocation payload material.
     pub fn admit_allocation(
         &self,
         signed_bytes: &[u8],
@@ -341,6 +358,12 @@ impl UsageAdmissionJournal {
     /// it against the current runtime binding. A missing row is a closed
     /// billing stream; stale rows are rejected by the same epoch/expiry
     /// checks used at delivery time.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid identities, unavailable verifier or storage, corrupt or
+    /// conflicting persisted allocations, and allocations that no longer
+    /// verify against the current runtime binding.
     pub fn resolve_allocation(
         &self,
         operation_id: &str,
@@ -552,6 +575,11 @@ impl UsageAdmissionJournal {
     /// residency spelling alongside its partition. The residency is retained
     /// as an admission identity so callers cannot substitute another valid
     /// spelling of the same geographic constraint.
+    ///
+    /// # Errors
+    ///
+    /// Rejects host or epoch mismatches, unavailable storage, corrupt rows, and
+    /// mismatched persisted admission identity or placement proof.
     pub fn resolve_with_residency(
         &self,
         r: &crate::admission::AdmissionRecord,

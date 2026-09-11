@@ -20,6 +20,10 @@ use terrabase::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
 };
 
+fn saturating_millis(value: std::time::Duration) -> u64 {
+    u64::try_from(value.as_millis()).unwrap_or(u64::MAX)
+}
+
 /// Process owner for durable import metadata and encrypted uploads.
 pub struct ImportRuntime {
     pub(crate) store: Arc<ImportStore>,
@@ -39,7 +43,7 @@ impl ImportRuntime {
         let _ = store.purge_expired(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |value| value.as_millis().min(u64::MAX as u128) as u64),
+                .map_or(0, saturating_millis),
         );
         for job in store.list().map_err(|e| e.to_string())? {
             if !job.input_committed {
@@ -56,7 +60,7 @@ impl ImportRuntime {
         Ok(Self {
             store,
             root,
-            tasks: Default::default(),
+            tasks: std::sync::Mutex::default(),
             cancellation: Arc::new(AtomicBool::new(false)),
             permits: Arc::new(tokio::sync::Semaphore::new(4)),
         })
@@ -151,7 +155,7 @@ impl EngineImportWriteTarget {
 impl ImportWriteTarget for EngineImportWriteTarget {
     fn resolve_import_batch(&self, operation: &str, records: u64) -> Result<ImportCommit, String> {
         let engine = self.engine.engine();
-        let scope = document_scope(engine).map_err(|_| "document scope unavailable")?;
+        let scope = document_scope(engine).map_err(|()| "document scope unavailable")?;
         let operation = OperationId::try_new(operation).map_err(|_| "invalid operation")?;
         match engine.resolve_commit(&scope, operation).map_err(|_| "resolution unavailable")? {
             terrabase::DurableResolution::Committed(receipt) => {
@@ -208,7 +212,7 @@ impl ImportWriteTarget for EngineImportWriteTarget {
         {
             return Err("import owner does not match the admitted engine".into());
         }
-        let scope = document_scope(engine).map_err(|_| "document scope unavailable".to_owned())?;
+        let scope = document_scope(engine).map_err(|()| "document scope unavailable".to_owned())?;
         let durability = self
             .runtime
             .block_on(super::WriteDurability::prepare(&self.state, engine, &scope, &self.headers))
@@ -485,8 +489,7 @@ fn commit_batch<T: ImportWriteTarget>(
     // uncertain attempt keeps its pending identity until resolution proves
     // whether it committed or was rejected.
     let operation = replay_operation
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("import-batch-{}", terrabase::identity::generate()));
+        .map_or_else(|| format!("import-batch-{}", terrabase::identity::generate()), str::to_owned);
     let count = batch.len() as u64;
     let outcome = if replay_operation.is_some() {
         target
@@ -512,12 +515,13 @@ fn commit_batch<T: ImportWriteTarget>(
             batch.clear();
             Ok((cursor, total))
         }
-        ImportCommit::Committed { .. } => Err(ImportExecutionError::Unknown(operation)),
+        ImportCommit::Committed { .. } | ImportCommit::Unknown => {
+            Err(ImportExecutionError::Unknown(operation))
+        }
         ImportCommit::Rejected => {
             let _ = store.clear_rejected(&job.operation_id);
             Err(ImportExecutionError::Rejected("import batch rejected".into()))
         }
-        ImportCommit::Unknown => Err(ImportExecutionError::Unknown(operation)),
     }
 }
 
@@ -597,7 +601,7 @@ fn cipher(
     version: &str,
 ) -> Result<crate::import_runtime::ImportLeaseCipher, String> {
     let engine = host.engine();
-    let scope = document_scope(engine).map_err(|_| "import scope unavailable")?;
+    let scope = document_scope(engine).map_err(|()| "import scope unavailable")?;
     let source = engine.artifact_key_source(&scope).map_err(|_| "import key source unavailable")?;
     let version = terrabase::encryption::DatabaseKeyVersion::from_text(version)
         .map_err(|_| "invalid import key version")?;
@@ -726,15 +730,14 @@ pub(super) async fn upload_import(
     if job.input_committed {
         return refusal(StatusCode::CONFLICT, "import input already committed");
     }
-    let cipher = match cipher(&host, &job.key_version) {
-        Ok(cipher) => cipher,
-        Err(_) => return refusal(StatusCode::SERVICE_UNAVAILABLE, "import key lease unavailable"),
+    let Ok(cipher) = cipher(&host, &job.key_version) else {
+        return refusal(StatusCode::SERVICE_UNAVAILABLE, "import key lease unavailable");
     };
-    let mut writer =
-        match crate::import_runtime::ImportInputWriter::create(&runtime.root, &id, cipher) {
-            Ok(writer) => writer,
-            Err(_) => return refusal(StatusCode::CONFLICT, "import upload is already in progress"),
-        };
+    let Ok(mut writer) =
+        crate::import_runtime::ImportInputWriter::create(&runtime.root, &id, cipher)
+    else {
+        return refusal(StatusCode::CONFLICT, "import upload is already in progress");
+    };
     while let Some(chunk) = body.frame().await {
         let chunk = match chunk {
             Ok(frame) => match frame.into_data() {
@@ -833,15 +836,14 @@ fn launch(
     let owner = Arc::clone(runtime);
     let task = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        if execute_import(&owner.store, &job, reader, &target, &owner.cancellation).is_err() {
-            if let Ok(Some(current)) = owner.store.get(&job.operation_id) {
-                if current.pending_operation.is_some() {
-                    let _ = owner.store.hold(&job.operation_id);
-                } else {
-                    let _ = owner
-                        .store
-                        .fail(&job.operation_id, "import stopped; inspect input and resume");
-                }
+        if execute_import(&owner.store, &job, reader, &target, &owner.cancellation).is_err()
+            && let Ok(Some(current)) = owner.store.get(&job.operation_id)
+        {
+            if current.pending_operation.is_some() {
+                let _ = owner.store.hold(&job.operation_id);
+            } else {
+                let _ =
+                    owner.store.fail(&job.operation_id, "import stopped; inspect input and resume");
             }
         }
     });
@@ -857,13 +859,13 @@ pub(crate) fn recover_imports(state: &Arc<ApiState>) -> Result<(), String> {
     let _ = runtime.store.purge_expired(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |value| value.as_millis().min(u64::MAX as u128) as u64),
+            .map_or(0, saturating_millis),
     );
     for job in runtime.store.list().map_err(|e| e.to_string())? {
-        if job.state == "queued" {
-            if let Ok(host) = super::document_host(state, &job.database_id) {
-                let _ = launch(state, runtime, host, &job.operation_id);
-            }
+        if job.state == "queued"
+            && let Ok(host) = super::document_host(state, &job.database_id)
+        {
+            let _ = launch(state, runtime, host, &job.operation_id);
         }
     }
     Ok(())

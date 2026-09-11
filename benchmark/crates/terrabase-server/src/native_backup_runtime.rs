@@ -1150,6 +1150,24 @@ mod restore_tests {
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[tokio::test]
+    async fn catalog_lists_an_authenticated_standalone_capture() {
+        let (runtime, registry, member, root, database) = runtime_fixture("catalog-standalone");
+        runtime.capture(&database, "catalog-standalone-capture").await.unwrap();
+        let page =
+            crate::backup_point_catalog::list_backup_points(&runtime, &database, None, None, 0)
+                .await
+                .unwrap();
+        assert_eq!(page.points.len(), 1);
+        assert_eq!(page.points[0].source_database_id, database);
+        assert!(page.points[0].logical_documents.parse::<u64>().is_ok());
+        assert!(page.next_cursor.is_none());
+        runtime.drain().unwrap();
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn restore_suspension_releases_real_admitted_host_and_rebinds_after_cancellation() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();

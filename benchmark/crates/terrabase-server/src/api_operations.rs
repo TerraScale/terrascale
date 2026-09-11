@@ -29,7 +29,6 @@ fn export_phase(phase: crate::export_api::ExportPhase) -> &'static str {
 fn recovery_state(phase: &str) -> &'static str {
     match phase {
         "accepted" => "queued",
-        "capturing" | "measuring" => "running",
         "complete" => "succeeded",
         "failed" => "failed",
         _ => "running",
@@ -277,26 +276,21 @@ pub(super) async fn list_operations(
     };
     // A member cursor is self-authenticating and takes precedence over the
     // authority cursor once the provisioning phase has been exhausted.
-    if let (Some(exports), Some(token)) = (&state.exports, query.after.as_deref()) {
-        if DiscoveryCursor::open(
+    if let (Some(exports), Some(token)) = (&state.exports, query.after.as_deref())
+        && DiscoveryCursor::open(
             exports,
             token,
             &scope.tenant_id,
             &scope.project_id,
-            member_id(&state),
+            member_id(state),
         )
         .is_ok()
+    {
+        return match list_member_operations(&state, &scope, Some(token), query.limit.unwrap_or(50))
         {
-            return match list_member_operations(
-                &state,
-                &scope,
-                Some(token),
-                query.limit.unwrap_or(50),
-            ) {
-                Ok(page) => crate::export_api::json_response(StatusCode::OK, &page),
-                Err(_) => ApiError::control_unavailable().into_response(),
-            };
-        }
+            Ok(page) => crate::export_api::json_response(StatusCode::OK, &page),
+            Err(()) => ApiError::control_unavailable().into_response(),
+        };
     }
     let Some(authority) = &state.provisioning else {
         return match list_member_operations(
@@ -306,7 +300,7 @@ pub(super) async fn list_operations(
             query.limit.unwrap_or(50),
         ) {
             Ok(page) => crate::export_api::json_response(StatusCode::OK, &page),
-            Err(_) => ApiError::control_unavailable().into_response(),
+            Err(()) => ApiError::control_unavailable().into_response(),
         };
     };
     match authority.list_operations(&scope, query.after.as_deref(), query.limit.unwrap_or(50)).await
@@ -323,14 +317,10 @@ pub(super) async fn list_operations(
                         Err(()) => return ApiError::control_unavailable().into_response(),
                     };
                 } else {
-                    let local = match list_member_operations(
-                        &state,
-                        &scope,
-                        None,
-                        limit - page.operations.len(),
-                    ) {
-                        Ok(local) => local,
-                        Err(()) => return ApiError::control_unavailable().into_response(),
+                    let Ok(local) =
+                        list_member_operations(&state, &scope, None, limit - page.operations.len())
+                    else {
+                        return ApiError::control_unavailable().into_response();
                     };
                     page.operations.extend(local.operations);
                     page.next_cursor = local.next_cursor;
@@ -389,13 +379,13 @@ fn list_member_operations(
             token,
             &scope.tenant_id,
             &scope.project_id,
-            member_id(&state),
+            member_id(state),
         )
         .map_err(|_| ())?,
         None => DiscoveryCursor {
             version: 1,
             phase: "member".into(),
-            member_id: member_id(&state).into(),
+            member_id: member_id(state).into(),
             db_after: String::new(),
             current_db: None,
             owner_after: String::new(),
@@ -429,7 +419,7 @@ fn list_member_operations(
                 )
                 .map_err(|_| ())?;
             for row in rows {
-                owner_after = row.job_id.clone();
+                owner_after.clone_from(&row.job_id);
                 operations.push(OperationSummary {
                     operation_id: row.job_id,
                     kind: "export".into(),
@@ -463,7 +453,7 @@ fn list_member_operations(
                     )
                     .map_err(|_| ())?;
                 for row in rows {
-                    owner_after = row.operation_id.clone();
+                    owner_after.clone_from(&row.operation_id);
                     operations.push(OperationSummary {
                         operation_id: row.operation_id,
                         kind: "recovery".into(),
@@ -498,7 +488,7 @@ fn list_member_operations(
                 covered_kinds: vec!["export".into(), "recovery".into()],
             });
         }
-        db_after = database.record.database_id.clone();
+        db_after.clone_from(&database.record.database_id);
         owner_after.clear();
         current_db = None;
         phase = "member".into();
@@ -508,12 +498,12 @@ fn list_member_operations(
             DiscoveryCursor {
                 version: 1,
                 phase: "member".into(),
-                member_id: member_id(&state).into(),
+                member_id: member_id(state).into(),
                 db_after,
                 current_db: None,
                 owner_after: String::new(),
             }
-            .seal(exports, &scope.tenant_id, &scope.project_id, member_id(&state))
+            .seal(exports, &scope.tenant_id, &scope.project_id, member_id(state))
             .map_err(|_| ())
         })
         .transpose()?;
