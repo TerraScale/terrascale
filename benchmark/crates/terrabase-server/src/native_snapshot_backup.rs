@@ -298,11 +298,12 @@ pub async fn restore_snapshot(
             WalSnapshotSink::begin_local(binding, manifest, target, max_bytes, Some(keys))
                 .await
                 .map_err(|_| SnapshotBackupError::Snapshot)?;
-        for (slot, length) in lengths.into_iter().enumerate() {
+        for (slot_index, length) in lengths.into_iter().enumerate() {
+            let slot = u8::try_from(slot_index).map_err(|_| SnapshotBackupError::Snapshot)?;
             let mut offset = 0;
             while offset < length {
                 let envelope = read_bounded(
-                    &staging.join(format!("chunk-{slot}-{offset:020}")),
+                    &staging.join(format!("chunk-{slot_index}-{offset:020}")),
                     2 * 1024 * 1024,
                 )?;
                 let mut plaintext = reader
@@ -313,7 +314,7 @@ pub async fn restore_snapshot(
                 if chunk.request().scope != manifest_scope
                     || chunk.request().replica_epoch != manifest_epoch
                     || chunk.request().identity != manifest_identity
-                    || chunk.request().file != slot as u8
+                    || chunk.request().file != slot
                     || chunk.request().offset != offset
                 {
                     plaintext.fill(0);

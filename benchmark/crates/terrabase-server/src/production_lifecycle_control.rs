@@ -62,10 +62,12 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
             .journal
             .verify_lifecycle_grant(operation_grant)
             .map_err(|_| "lifecycle operation grant is invalid")?;
-        let now = std::time::SystemTime::now()
+        let now: i64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "lifecycle operation clock is invalid")?
-            .as_millis() as i64;
+            .as_millis()
+            .try_into()
+            .map_err(|_| "lifecycle operation timestamp is out of range")?;
         grant.validate(now).map_err(|_| "lifecycle operation grant is expired or malformed")?;
         let digest = self
             .journal
@@ -150,7 +152,8 @@ pub(crate) fn restore_request_digest(
         bytes.extend_from_slice(value.as_bytes());
     }
     bytes.extend_from_slice(&request.restore_epoch.to_be_bytes());
-    bytes.extend_from_slice(&(request.provider as u32).to_be_bytes());
+    let provider = u32::try_from(request.provider).map_err(|_| "restore provider is invalid")?;
+    bytes.extend_from_slice(&provider.to_be_bytes());
     let mut input = b"terrascale-restore-request-v1\0".to_vec();
     input.extend_from_slice(&bytes);
     Ok(hex::encode(digest(&SHA256, &input).as_ref()))
@@ -906,10 +909,12 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             .map_err(|_| "lifecycle state unavailable")?;
         let intent = state.deletion.as_ref().ok_or("durable deletion intent is missing")?;
         let retain_until = intent.retain_until.ok_or("deletion retention cutoff is unknown")?;
-        let now = std::time::SystemTime::now()
+        let now: u64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "system clock unavailable")?
-            .as_millis() as u64;
+            .as_millis()
+            .try_into()
+            .map_err(|_| "lifecycle timestamp is out of range")?;
         if !state.access_revoked() || retain_until > now {
             return Err("durable deletion retention boundary has not elapsed".into());
         }
