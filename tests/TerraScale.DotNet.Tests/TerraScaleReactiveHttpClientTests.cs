@@ -117,7 +117,7 @@ public sealed class TerraScaleReactiveHttpClientTests
         using var serverDone = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var eventFrame = Envelope(4, body: Delta("view-1", 3, 0, 1, "Y3AtMQ=="));
-        var server = ServeWebSocketAsync(listener, "capability", "terrascale.sync.v1", serverDone.Token, sendFrame: true, responseFrame: eventFrame, expectedPath: "/api/v1/reactive/views/view-1/3/websocket", expectSubscribe: true);
+        var server = ServeWebSocketAsync(listener, "capability", "terrascale.sync.v1", serverDone.Token, sendFrame: true, responseFrame: eventFrame, expectedPath: "/api/v1/reactive/views/view-1/3/websocket", expectSubscribe: true, expectedWireView: "view-1");
         using var handler = new ReactiveHandler(subscription: "orders", view: "view-1", websocketLog: $"http://127.0.0.1:{port}/wrong-log?offset=0");
         using var httpClient = new HttpClient(handler);
         var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { BaseAddress = new Uri($"http://127.0.0.1:{port}") });
@@ -141,6 +141,24 @@ public sealed class TerraScaleReactiveHttpClientTests
         await subscription.DisposeAsync();
         await Assert.That(subscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Closed);
         await Assert.ThrowsAsync<ObjectDisposedException>(() => subscription.ReadNextAsync(serverDone.Token));
+    }
+
+    [Test]
+    public async Task ReattachKeepsClientSubscriptionForAttachAndUsesNewCanonicalView()
+    {
+        using var handler = new ReactiveHandler(subscription: "orders", view: "view-1", secondView: "view-2", pollStatus: HttpStatusCode.Conflict);
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+
+        await using var subscription = await client.SubscribeAsync("db", "orders", "SELECT * FROM orders");
+        var result = await subscription.ReadNextAsync();
+
+        await Assert.That(result!.Frame).IsTypeOf<TerraScaleReactiveReset>();
+        await Assert.That(subscription.Attachment.Subscription).IsEqualTo("orders");
+        await Assert.That(subscription.Attachment.View).IsEqualTo("view-2");
+        await Assert.That(handler.AttachBodies).Count().IsEqualTo(2);
+        var reattach = JsonSerializer.Deserialize<JsonElement>(handler.AttachBodies[1]);
+        await Assert.That(reattach.GetProperty("subscription").GetString()).IsEqualTo("orders");
     }
 
     [Test]
@@ -477,11 +495,12 @@ public sealed class TerraScaleReactiveHttpClientTests
         await Assert.That(regionSubscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Live);
     }
 
-    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false, bool staleReattachAuthorization = false, string? websocketLog = null, Func<HttpRequestMessage, HttpResponseMessage>? pollResponseFactory = null, string capabilityHeader = "X-TerraScale-Capability", string? view = null, string? wireSubscription = null) : HttpMessageHandler
+    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false, bool staleReattachAuthorization = false, string? websocketLog = null, Func<HttpRequestMessage, HttpResponseMessage>? pollResponseFactory = null, string capabilityHeader = "X-TerraScale-Capability", string? view = null, string? wireSubscription = null, string? secondView = null) : HttpMessageHandler
     {
         public List<RequestObservation> Requests { get; } = [];
         public TaskCompletionSource PollStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string? AttachBody { get; private set; }
+        public List<string> AttachBodies { get; } = [];
         private int attachCount;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -492,13 +511,15 @@ public sealed class TerraScaleReactiveHttpClientTests
             {
                 attachCount++;
                 AttachBody = await request.Content!.ReadAsStringAsync(cancellationToken);
-                var attachedView = view ?? subscription;
+                AttachBodies.Add(AttachBody);
+                var attachedView = attachCount > 1 ? secondView ?? view ?? subscription : view ?? subscription;
                 return Json($"{{\"view\":\"{attachedView}\",\"generation\":3,\"snapshot_chunks\":[\"/api/v1/reactive/views/{attachedView}/3/snapshot/0?cut=0\"],\"log\":\"{websocketLog ?? $"/api/v1/reactive/views/{attachedView}/3/log?offset=0"}\",\"checkpoint\":\"Y3AtMA==\",\"capability\":\"capability\",\"capability_header\":\"{capabilityHeader}\",\"offset\":0}}", HttpStatusCode.Created);
             }
             if (request.RequestUri!.AbsolutePath.EndsWith("/snapshot/0", StringComparison.Ordinal))
             {
                 var auth = staleReattachAuthorization && attachCount > 1 ? 0u : 1u;
-                var response = Binary(Envelope(3, 0, SnapshotMessage(wireSubscription ?? view ?? subscription, Snapshot(3, 0, auth, "Y3AtMA=="))));
+                var snapshotView = attachCount > 1 ? secondView ?? view ?? subscription : view ?? subscription;
+                var response = Binary(Envelope(3, 0, SnapshotMessage(wireSubscription ?? snapshotView, Snapshot(3, 0, auth, "Y3AtMA=="))));
                 if (weakSnapshotEtag) response.Headers.ETag = new EntityTagHeaderValue("\"snapshot-0\"", isWeak: true);
                 else if (wildcardSnapshotEtag) response.Headers.ETag = EntityTagHeaderValue.Any;
                 else response.Headers.ETag = new EntityTagHeaderValue("\"snapshot-0\"");
@@ -534,7 +555,7 @@ public sealed class TerraScaleReactiveHttpClientTests
 
     private sealed record RequestObservation(HttpMethod Method, Uri Uri, IReadOnlyDictionary<string, string> Headers);
 
-    private static async Task ServeWebSocketAsync(TcpListener listener, string capability, string? selectedProtocol, CancellationToken cancellationToken, bool sendFrame, byte[]? responseFrame = null, string? expectedPath = null, bool expectSubscribe = false)
+    private static async Task ServeWebSocketAsync(TcpListener listener, string capability, string? selectedProtocol, CancellationToken cancellationToken, bool sendFrame, byte[]? responseFrame = null, string? expectedPath = null, bool expectSubscribe = false, string? expectedWireView = null)
     {
         using var connection = await listener.AcceptTcpClientAsync(cancellationToken);
         await using var stream = connection.GetStream();
@@ -564,6 +585,12 @@ public sealed class TerraScaleReactiveHttpClientTests
                 var frame = await ReadWebSocketFrameAsync(stream, cancellationToken);
                 await Assert.That(frame.Length > 40).IsTrue();
                 await Assert.That(frame.AsSpan(0, 7).SequenceEqual(new byte[] { 0x97, 0x01, 0x00, 0x00, 0x01, 0x01, 0x00 })).IsTrue();
+                if (expectedWireView is not null)
+                {
+                    var expected = Encoding.UTF8.GetBytes(expectedWireView);
+                    await Assert.That(frame[8]).IsEqualTo((byte)(0xa0 | expected.Length));
+                    await Assert.That(frame.AsSpan(9, expected.Length).SequenceEqual(expected)).IsTrue();
+                }
             }
             var payload = responseFrame ?? new byte[] { 0x90 };
             if (payload.Length > 125) throw new InvalidOperationException("Test frame helper only supports short payloads.");

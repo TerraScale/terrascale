@@ -271,13 +271,13 @@ public sealed class TerraScaleReactiveHttpClient
         catch (FormatException) { throw new TerraScaleReactiveProtocolException("The reactive checkpoint is not valid base64."); }
     }
 
-    private static byte[] EncodeSubscribe(string subscription, string statement, ReadOnlySpan<byte> parameters, ReadOnlySpan<byte> checkpoint)
+    private static byte[] EncodeSubscribe(string wireView, string statement, ReadOnlySpan<byte> parameters, ReadOnlySpan<byte> checkpoint)
     {
         var writer = new ArrayBufferWriter<byte>();
         WriteArrayHeader(writer, 7);
         WriteUInt(writer, 1); WriteUInt(writer, 0); WriteUInt(writer, 0); WriteUInt(writer, 1); WriteUInt(writer, 1); WriteUInt(writer, 0);
         WriteArrayHeader(writer, 4);
-        WriteString(writer, subscription); WriteString(writer, statement); WriteBinary(writer, parameters); WriteBinary(writer, checkpoint);
+        WriteString(writer, wireView); WriteString(writer, statement); WriteBinary(writer, parameters); WriteBinary(writer, checkpoint);
         return writer.WrittenMemory.ToArray();
     }
 
@@ -522,9 +522,9 @@ public sealed class TerraScaleReactiveHttpClient
         ReactiveWireBackpressure backpressure => new TerraScaleReactiveBackpressure(backpressure.Mode == 1 ? TerraScaleReactiveBackpressureMode.Pause : TerraScaleReactiveBackpressureMode.Resume),
         _ => throw new TerraScaleReactiveProtocolException("The reactive frame is not recognized."),
     };
-    private static TerraScaleReactiveSnapshot ConvertSnapshot(string view, ReactiveWireSnapshotValue value, TerraScaleReactiveAttachment attachment) { if (view != attachment.View) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another view."); if (value.Generation != attachment.Generation) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another view generation."); attachment.ValidateCheckpoint(value.Checkpoint); return new TerraScaleReactiveSnapshot(value.Generation, value.AuthorizationGeneration, value.Revision, value.Items, value.Digest, value.Checkpoint); }
+    private static TerraScaleReactiveSnapshot ConvertSnapshot(string wireView, ReactiveWireSnapshotValue value, TerraScaleReactiveAttachment attachment) { if (wireView != attachment.View) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another view."); if (value.Generation != attachment.Generation) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another view generation."); attachment.ValidateCheckpoint(value.Checkpoint); return new TerraScaleReactiveSnapshot(value.Generation, value.AuthorizationGeneration, value.Revision, value.Items, value.Digest, value.Checkpoint); }
     private static TerraScaleReactiveSnapshot ConvertAuthorizationChanged(ReactiveWireAuthorizationChanged changed, TerraScaleReactiveAttachment attachment) { if (changed.AuthorizationGeneration != changed.Snapshot.AuthorizationGeneration) throw new TerraScaleReactiveProtocolException("The authorization change generation does not match its snapshot."); return ConvertSnapshot(changed.Subscription, changed.Snapshot, attachment); }
-    private static TerraScaleReactiveSnapshotFrame ConvertSnapshotFrame(string subscription, ReactiveWireSnapshotValue value, TerraScaleReactiveAttachment attachment) => new(ConvertSnapshot(subscription, value, attachment));
+    private static TerraScaleReactiveSnapshotFrame ConvertSnapshotFrame(string wireView, ReactiveWireSnapshotValue value, TerraScaleReactiveAttachment attachment) => new(ConvertSnapshot(wireView, value, attachment));
     private static void CheckArray(ref ReactiveMsgpackReader reader, int expected) { if (reader.Array(expected) != expected) throw new TerraScaleReactiveProtocolException("The reactive frame has an invalid shape."); }
     private static void CheckArrayCount(int actual, int expected) { if (actual != expected) throw new TerraScaleReactiveProtocolException("The reactive operation has an invalid shape."); }
     private static TerraScaleReactiveErrorCode MapErrorCode(uint code) => code switch { 1 => TerraScaleReactiveErrorCode.UnsupportedVersion, 2 => TerraScaleReactiveErrorCode.MalformedFrame, 3 => TerraScaleReactiveErrorCode.AuthenticationExpired, 4 => TerraScaleReactiveErrorCode.PermissionDenied, 5 => TerraScaleReactiveErrorCode.CheckpointRefused, 6 => TerraScaleReactiveErrorCode.SlowConsumer, 7 => TerraScaleReactiveErrorCode.Overloaded, 8 => TerraScaleReactiveErrorCode.Unavailable, _ => throw new TerraScaleReactiveProtocolException("The reactive error code is unknown."), };
@@ -600,7 +600,7 @@ public sealed record TerraScaleReactiveHttpClientOptions
 /// <summary>Immutable metadata returned when a view is attached.</summary>
 public sealed record TerraScaleReactiveAttachment
 {
-    internal TerraScaleReactiveAttachment(string databaseId, string view, string subscription, string statement, ReadOnlyMemory<byte> parameters, TerraScaleReactiveTransport transport, ulong generation, ulong offset, IReadOnlyList<Uri> chunks, Uri log, TerraScaleViewCheckpoint checkpoint, string capability, string capabilityHeader) { DatabaseId = databaseId; View = view; Subscription = subscription; Statement = statement; Parameters = parameters.ToArray(); Transport = transport; Generation = generation; Offset = offset; SnapshotChunks = new ReadOnlyCollection<Uri>(chunks.ToArray()); Log = log; Checkpoint = checkpoint; Capability = capability; CapabilityHeader = capabilityHeader; }
+    internal TerraScaleReactiveAttachment(string databaseId, string wireView, string clientSubscription, string statement, ReadOnlyMemory<byte> parameters, TerraScaleReactiveTransport transport, ulong generation, ulong offset, IReadOnlyList<Uri> chunks, Uri log, TerraScaleViewCheckpoint checkpoint, string capability, string capabilityHeader) { DatabaseId = databaseId; View = wireView; Subscription = clientSubscription; Statement = statement; Parameters = parameters.ToArray(); Transport = transport; Generation = generation; Offset = offset; SnapshotChunks = new ReadOnlyCollection<Uri>(chunks.ToArray()); Log = log; Checkpoint = checkpoint; Capability = capability; CapabilityHeader = capabilityHeader; }
     public string DatabaseId { get; }
     public string View { get; }
     public string Subscription { get; }
