@@ -41,7 +41,7 @@
 
     <div class="detailed__docs-wrap">
       <ExternalLink
-        href="https://docs.terrascale.tech/en/reference/pricing/"
+        href="https://docs.terrascale.tech/pricing/"
         target="_blank"
         class="detailed__docs"
       >

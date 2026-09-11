@@ -11,32 +11,32 @@ const defaultRoot = path.resolve(path.dirname(scriptPath), '..')
 export const claimInventory = [
   {
     id: 'regions',
-    source: 'https://docs.terrascale.tech/en/guides/public-alpha-data-contract/',
+    source: 'https://docs.terrascale.tech/guides/public-alpha-data-contract/',
     patterns: [/São Paulo/, /San Francisco/, /Falkenstein/],
   },
   {
     id: 'routing',
-    source: 'https://docs.terrascale.tech/en/guides/public-alpha-data-contract/',
+    source: 'https://docs.terrascale.tech/guides/public-alpha-data-contract/',
     patterns: [/nearest healthy selected region/i, /strict regional endpoints/i],
   },
   {
     id: 'replication',
-    source: 'https://docs.terrascale.tech/en/reference/replication/',
+    source: 'https://docs.terrascale.tech/concepts/replication/',
     patterns: [/asynchronous replication/i, /replication .*selected regions happens later/i],
   },
   {
     id: 'availability-and-latency',
-    source: 'https://docs.terrascale.tech/en/about/status-and-incidents/',
+    source: 'https://docs.terrascale.tech/about/status-and-incidents/',
     patterns: [/no uptime percentage or SLA/i, /measured API latency/i, /geographic latency estimates/i],
   },
   {
     id: 'security-and-residency',
-    source: 'https://docs.terrascale.tech/en/security/',
+    source: 'https://docs.terrascale.tech/legal/security/',
     patterns: [/Customer content stays in selected regions/i, /TLS 1\.2 or newer/i, /qualified encryption/i, /every request still requires authorization/i],
   },
   {
     id: 'support',
-    source: 'https://docs.terrascale.tech/en/support/',
+    source: 'https://docs.terrascale.tech/legal/support/',
     patterns: [/two business days/i, /one business day/i, /Enterprise (?:is )?unavailable/i],
   },
 ]
