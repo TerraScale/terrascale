@@ -1236,7 +1236,8 @@ mod tests {
         let (path, source, target) = fixture();
         let scope = source.scope_for(&TenantId::try_new("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
         let group = source.replication_publications(&scope, 0, 1).unwrap().remove(0).1;
-        let target_scope = target.scope_for(&TenantId::try_new("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
+        let target_scope =
+            target.scope_for(&TenantId::try_new("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
         target.apply_replicated_publication(&target_scope, &group).unwrap();
         let mut left = PublicationIndex::default();
         let mut right = PublicationIndex::default();

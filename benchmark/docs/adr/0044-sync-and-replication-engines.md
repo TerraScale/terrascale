@@ -41,7 +41,20 @@ Noria): the live subset needs three operators, written by hand; Convex-style
 read-set re-execution as the primary strategy (cost scales with views ×
 writes; kept only as the fallback that emits `Reset`); ConflictSync
 digest-driven state sync (2025): designed for state-based CRDTs without a
-journal, we have a journal.
+journal, we have a journal; Plumtree/HyParView gossip broadcast (Leitão et
+al., SRDS 2007): duplicate-copy suppression and membership sampling for a
+large epidemic overlay, while ours is a fixed authenticated full mesh of at
+most 5 peers (`PRODUCTION_MAX_PEERS`), fan-out is already exactly n−1 unicast
+payload copies, graft is already covered by the bounded requested
+`(origin, seq)` repair window plus RBSR, and membership is
+orchestrator-owned and fail-closed (ADR 0041), so there is no lazy branch to
+add, nothing to prune, and no overlay to sample.
+
+Plumtree is revisited only if active Regions approach the transport mesh
+limit (full mesh at `PRODUCTION_MAX_PEERS` = 5, far under `REGION_CEILING` =
+20) or a push-broadcast fan-out requirement appears (e.g., D-57
+whole-database client replicas), where eager payload on tree branches with
+lazy message-IDs elsewhere would beat n−1 unicast copies per receiver.
 
 ## 2. Replication engine
 
