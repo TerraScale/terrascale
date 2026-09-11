@@ -2,6 +2,7 @@
 
 CONTRACT_VERSION_FILE := CONTRACT_VERSION
 CONTRACT_VERSION := $(shell tr -d '[:space:]' < "$(CONTRACT_VERSION_FILE)" 2>/dev/null)
+CONTRACT_ARCHIVE_SHA256 := $(shell tr -d '[:space:]' < CONTRACT_ARCHIVE_SHA256 2>/dev/null)
 CONTRACT_DIR := contracts/$(CONTRACT_VERSION)
 GENERATED_DIR := src/TerraScale.DotNet/Generated
 

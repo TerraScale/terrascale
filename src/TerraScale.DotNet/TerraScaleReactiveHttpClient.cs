@@ -135,7 +135,9 @@ public sealed class TerraScaleReactiveHttpClient
         if (!subscription.WebSocketSubscribed)
         {
             var checkpoint = DecodeCheckpoint(subscription.CurrentSnapshot.Checkpoint.Token);
-            var subscribe = EncodeSubscribe(subscription.Attachment.Subscription, subscription.Attachment.Statement, subscription.Attachment.Parameters.Span, checkpoint);
+            // The wire identity is the canonical view issued by attach. The
+            // caller's subscription name is local bookkeeping only.
+            var subscribe = EncodeSubscribe(subscription.Attachment.View, subscription.Attachment.Statement, subscription.Attachment.Parameters.Span, checkpoint);
             await socket.SendAsync(subscribe, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken).ConfigureAwait(false);
             subscription.MarkWebSocketSubscribed();
         }
@@ -508,11 +510,11 @@ public sealed class TerraScaleReactiveHttpClient
     private static TerraScaleReactiveFrame ConvertMessage(ReactiveWireEnvelope envelope, TerraScaleReactiveAttachment attachment) => envelope.Message switch
     {
         ReactiveWireSnapshot snapshot => ConvertSnapshotFrame(snapshot.Subscription, snapshot.Snapshot, attachment),
-        ReactiveWireDelta delta when delta.Subscription == attachment.Subscription && delta.Generation == attachment.Generation => new TerraScaleReactiveDelta(delta.Generation, delta.From, delta.To, delta.Operations, delta.Digest, delta.Checkpoint),
+        ReactiveWireDelta delta when delta.Subscription == attachment.View && delta.Generation == attachment.Generation => new TerraScaleReactiveDelta(delta.Generation, delta.From, delta.To, delta.Operations, delta.Digest, delta.Checkpoint),
         ReactiveWireDelta => throw new TerraScaleReactiveProtocolException("The reactive delta belongs to another view or generation."),
-        ReactiveWireReset reset when reset.Subscription == attachment.Subscription => new TerraScaleReactiveReset(reset.Reason, ConvertSnapshot(reset.Subscription, reset.Snapshot, attachment)),
+        ReactiveWireReset reset when reset.Subscription == attachment.View => new TerraScaleReactiveReset(reset.Reason, ConvertSnapshot(reset.Subscription, reset.Snapshot, attachment)),
         ReactiveWireReset => throw new TerraScaleReactiveProtocolException("The reactive reset belongs to another subscription."),
-        ReactiveWireAuthorizationChanged changed when changed.Subscription == attachment.Subscription => new TerraScaleReactiveReset(TerraScaleReactiveResetReason.PermissionChanged, ConvertAuthorizationChanged(changed, attachment)),
+        ReactiveWireAuthorizationChanged changed when changed.Subscription == attachment.View => new TerraScaleReactiveReset(TerraScaleReactiveResetReason.PermissionChanged, ConvertAuthorizationChanged(changed, attachment)),
         ReactiveWireAuthorizationChanged => throw new TerraScaleReactiveProtocolException("The authorization change belongs to another subscription."),
         ReactiveWireHeartbeat => new TerraScaleReactiveHeartbeat(),
         ReactiveWireRegion region => new TerraScaleReactiveRouteChange(region.Region),
@@ -520,7 +522,7 @@ public sealed class TerraScaleReactiveHttpClient
         ReactiveWireBackpressure backpressure => new TerraScaleReactiveBackpressure(backpressure.Mode == 1 ? TerraScaleReactiveBackpressureMode.Pause : TerraScaleReactiveBackpressureMode.Resume),
         _ => throw new TerraScaleReactiveProtocolException("The reactive frame is not recognized."),
     };
-    private static TerraScaleReactiveSnapshot ConvertSnapshot(string subscription, ReactiveWireSnapshotValue value, TerraScaleReactiveAttachment attachment) { if (subscription != attachment.Subscription) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another subscription."); if (value.Generation != attachment.Generation) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another view generation."); attachment.ValidateCheckpoint(value.Checkpoint); return new TerraScaleReactiveSnapshot(value.Generation, value.AuthorizationGeneration, value.Revision, value.Items, value.Digest, value.Checkpoint); }
+    private static TerraScaleReactiveSnapshot ConvertSnapshot(string view, ReactiveWireSnapshotValue value, TerraScaleReactiveAttachment attachment) { if (view != attachment.View) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another view."); if (value.Generation != attachment.Generation) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another view generation."); attachment.ValidateCheckpoint(value.Checkpoint); return new TerraScaleReactiveSnapshot(value.Generation, value.AuthorizationGeneration, value.Revision, value.Items, value.Digest, value.Checkpoint); }
     private static TerraScaleReactiveSnapshot ConvertAuthorizationChanged(ReactiveWireAuthorizationChanged changed, TerraScaleReactiveAttachment attachment) { if (changed.AuthorizationGeneration != changed.Snapshot.AuthorizationGeneration) throw new TerraScaleReactiveProtocolException("The authorization change generation does not match its snapshot."); return ConvertSnapshot(changed.Subscription, changed.Snapshot, attachment); }
     private static TerraScaleReactiveSnapshotFrame ConvertSnapshotFrame(string subscription, ReactiveWireSnapshotValue value, TerraScaleReactiveAttachment attachment) => new(ConvertSnapshot(subscription, value, attachment));
     private static void CheckArray(ref ReactiveMsgpackReader reader, int expected) { if (reader.Array(expected) != expected) throw new TerraScaleReactiveProtocolException("The reactive frame has an invalid shape."); }
