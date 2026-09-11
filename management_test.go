@@ -208,7 +208,7 @@ func TestRegionsStatusUsesMemberHealthRoute(t *testing.T) {
 			t.Fatalf("request = %s %s, want GET /api/v1/health", r.Method, r.URL)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"region":"GRU","healthy":true}`))
+		_, _ = w.Write([]byte(`{"region":"GRU","healthy":true,"version":"test"}`))
 	}))
 	defer server.Close()
 	client, err := NewClient(Config{APIBaseURL: server.URL})

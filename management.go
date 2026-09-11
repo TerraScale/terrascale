@@ -103,6 +103,7 @@ func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
 type HealthResponse struct {
 	Region  RegionCode `json:"region"`
 	Healthy bool       `json:"healthy"`
+	Version string     `json:"version"`
 }
 
 // ValidationError identifies an invalid management argument.  Management
@@ -495,6 +496,9 @@ func (r *RegionsClient) Status(ctx context.Context, opts ...RequestOption) (*Hea
 	if _, err := ParseRegionCode(string(out.Region)); err != nil {
 		return nil, err
 	}
+	if out.Version == "" {
+		return nil, fmt.Errorf("sdk: health response version is required")
+	}
 	return &out, nil
 }
 
@@ -506,6 +510,9 @@ func (r *RegionsClient) Health(ctx context.Context, opts ...RequestOption) (*Hea
 	}
 	if _, err := ParseRegionCode(string(out.Region)); err != nil {
 		return nil, err
+	}
+	if out.Version == "" {
+		return nil, fmt.Errorf("sdk: health response version is required")
 	}
 	return &out, nil
 }
