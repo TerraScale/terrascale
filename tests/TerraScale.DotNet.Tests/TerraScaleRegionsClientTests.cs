@@ -36,7 +36,7 @@ public sealed class TerraScaleRegionsClientTests
     [Test]
     public async Task HealthAsync_UsesSeparateMemberHealthRoute()
     {
-        using var handler = new RecordingHandler("{\"region\":\"GRU\",\"healthy\":true}");
+        using var handler = new RecordingHandler("{\"region\":\"GRU\",\"healthy\":true,\"version\":\"test\"}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
@@ -46,6 +46,7 @@ public sealed class TerraScaleRegionsClientTests
         await Assert.That(handler.Authorization).IsEqualTo("Bearer test-key");
         await Assert.That(status.Region).IsEqualTo("GRU");
         await Assert.That(status.Healthy).IsTrue();
+        await Assert.That(status.Version).IsEqualTo("test");
     }
 
     [Test]

@@ -68,13 +68,14 @@ public sealed record TerraScaleRegionCatalog(
 
 public sealed record TerraScaleRegionHealth(
     [property: JsonPropertyName("region"), JsonRequired] string Region,
-    [property: JsonPropertyName("healthy"), JsonRequired] bool Healthy) : IJsonOnDeserialized
+    [property: JsonPropertyName("healthy"), JsonRequired] bool Healthy,
+    [property: JsonPropertyName("version"), JsonRequired] string Version) : IJsonOnDeserialized
 {
     internal void Validate()
     {
-        if (Region is null)
+        if (Region is null || string.IsNullOrWhiteSpace(Version))
         {
-            throw new JsonException("TerraScale region responses require a non-null region field.");
+            throw new JsonException("TerraScale health responses require non-null region and version fields.");
         }
     }
 
