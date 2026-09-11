@@ -39,8 +39,14 @@ describe("TenantsClient", () => {
     assert.throws(() => client.get("acme"), TenantContractGapError);
     await assert.rejects(() => client.list({ limit: 10 }), TenantContractGapError);
     assert.throws(() => client.delete("acme", { confirm: true }), TenantContractGapError);
-    assert.throws(() => client.createKey("acme"), TenantContractGapError);
-    assert.throws(() => client.createBranch("acme", { reason: "reproduce incident" }), TenantContractGapError);
+    assert.throws(
+      () => client.createKey("acme"),
+      (error: unknown) => error instanceof TenantContractGapError && error.operation === "tenants.keys.create",
+    );
+    assert.throws(
+      () => client.createBranch("acme", { reason: "reproduce incident" }),
+      (error: unknown) => error instanceof TenantContractGapError && error.operation === "tenants.branches.create",
+    );
     assert.equal(requests.length, 0);
   });
 

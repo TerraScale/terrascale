@@ -87,3 +87,54 @@ test("retains only published request and routing observations alongside a fix", 
   assert.equal("operatorHost" in result, false);
   assert.equal("url" in result.error, false);
 });
+
+test("redacts secret-bearing fields, query values, and URLs from hostile error bodies", async () => {
+  const apiKey = "ts_api_key_canary_123";
+  const session = "session_canary_456";
+  const querySecret = "query_secret_canary_789";
+  const body = {
+    error: {
+      code: "invalid_query",
+      message: `authorization: Bearer ${apiKey}; see https://logs.example.test/failure?access_token=${apiKey}`,
+      apiKey,
+      authorization: `Bearer ${apiKey}`,
+      sessionToken: session,
+      query: querySecret,
+      nested: { callbackUrl: `https://example.test/callback?token=${session}` },
+    },
+    diagnostics: [`query=${querySecret}`, { password: "password_canary" }],
+  };
+  const result = await new TerraScaleHttp({
+    apiBaseUrl: "https://api.terrascale.test",
+    fetch: async () => Response.json(body, { status: 400 }),
+  }).request({ method: "GET", path: "/api/v1/regions", routeName: "regions.list" });
+
+  assert.equal(result.ok, false);
+  const serialized = JSON.stringify(result);
+  for (const secret of [apiKey, session, querySecret, "password_canary"]) {
+    assert.equal(serialized.includes(secret), false, `result leaked ${secret}`);
+  }
+  assert.match(serialized, /\[redacted\]/u);
+  assert.equal(result.ok ? undefined : result.error.code, "invalid_query");
+});
+
+test("redacts secrets from rejecting fetch errors and preserves a typed transport failure", async () => {
+  const apiKey = "fetch_api_key_canary";
+  const session = "fetch_session_canary";
+  const http = new TerraScaleHttp({
+    apiBaseUrl: "https://api.terrascale.test",
+    fetch: async () => {
+      throw new Error(`request failed: https://proxy.example.test/?api_key=${apiKey} authorization=Bearer ${session}`);
+    },
+  });
+
+  const result = await http.request({ method: "GET", path: "/api/v1/regions", routeName: "regions.list" });
+  assert.equal(result.ok, false);
+  if (result.ok) throw new Error("expected a transport failure");
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes(apiKey), false);
+  assert.equal(serialized.includes(session), false);
+  assert.equal(result.error.kind, "transport");
+  assert.ok(result.error.details);
+  assert.match(result.error.message, /\[redacted URL\]/u);
+});

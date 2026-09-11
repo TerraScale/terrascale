@@ -97,10 +97,100 @@ export function err(
     routeName,
     status,
     headers,
-    error,
-    body,
+    error: sanitizeDiagnostic(error) as TerraScaleError,
+    ...(body === undefined ? {} : { body: sanitizeDiagnostic(body) }),
     ...(routing === undefined ? {} : { routing }),
   };
+}
+
+const redactedDiagnostic = "[redacted]";
+const redactedUrl = "[redacted URL]";
+const sensitiveKeyPattern = /(?:^|[._-])(api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|authorization|bearer|password|passwd|secret|credential|cookie|private[._-]?key)(?:$|[._-])/iu;
+const sensitiveQueryKeyPattern = /^(?:api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|token|authorization|bearer|password|passwd|secret|credential|cookie|query|sql|statement|parameters?)$/iu;
+const bearerPattern = /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/giu;
+const keyValuePattern = /((?:api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|authorization|bearer|password|passwd|secret|credential|cookie|query|sql|statement|parameters?)\s*[:=]\s*)(["']?)([^\s,;)}\]"']+)/giu;
+const urlPattern = /https?:\/\/[^\s<>"']+/giu;
+
+/**
+ * Makes values safe to retain in a public result. Error bodies and transport
+ * failures are producer-controlled and may contain credentials even when the
+ * published error contract does not. Keep this deliberately conservative:
+ * sensitive fields are replaced and secret-bearing URLs are never preserved.
+ */
+export function sanitizeDiagnostic(value: unknown): unknown {
+  return sanitizeDiagnosticValue(value, "", new WeakSet<object>(), 0);
+}
+
+function sanitizeDiagnosticValue(
+  value: unknown,
+  key: string,
+  seen: WeakSet<object>,
+  depth: number,
+): unknown {
+  if (isSensitiveKey(key)) return redactedDiagnostic;
+  if (typeof value === "string") return sanitizeDiagnosticText(value);
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= 12) return redactedDiagnostic;
+  if (seen.has(value)) return redactedDiagnostic;
+  seen.add(value);
+
+  if (value instanceof Error) {
+    return {
+      name: sanitizeDiagnosticText(value.name),
+      message: sanitizeDiagnosticText(value.message),
+    };
+  }
+  if (value instanceof URL) return sanitizeUrl(value);
+  if (value instanceof Headers) {
+    const headers: Record<string, unknown> = {};
+    value.forEach((entry, name) => {
+      headers[name] = sanitizeDiagnosticValue(entry, name, seen, depth + 1);
+    });
+    return headers;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeDiagnosticValue(entry, "", seen, depth + 1));
+  }
+
+  const output: Record<string, unknown> = {};
+  for (const [entryKey, entryValue] of Object.entries(value)) {
+    try {
+      output[entryKey] = sanitizeDiagnosticValue(entryValue, entryKey, seen, depth + 1);
+    } catch {
+      output[entryKey] = redactedDiagnostic;
+    }
+  }
+  return output;
+}
+
+function isSensitiveKey(key: string): boolean {
+  return sensitiveKeyPattern.test(key) || sensitiveQueryKeyPattern.test(key);
+}
+
+function sanitizeDiagnosticText(value: string): string {
+  const withUrls = value.replace(urlPattern, (candidate) => {
+    try {
+      const url = new URL(candidate.replace(/[).,;]+$/u, ""));
+      return hasSensitiveUrlPart(url) ? redactedUrl : candidate;
+    } catch {
+      return candidate;
+    }
+  });
+  return withUrls
+    .replace(bearerPattern, "$1 [redacted]")
+    .replace(keyValuePattern, "$1$2[redacted]");
+}
+
+function sanitizeUrl(url: URL): string {
+  return hasSensitiveUrlPart(url) ? redactedUrl : url.toString();
+}
+
+function hasSensitiveUrlPart(url: URL): boolean {
+  if (url.username !== "" || url.password !== "") return true;
+  for (const key of url.searchParams.keys()) {
+    if (sensitiveQueryKeyPattern.test(key)) return true;
+  }
+  return false;
 }
 
 function routingFrom(headers: Headers): TerraScaleRoutingObservation | undefined {

@@ -138,7 +138,7 @@ export class TenantsClient {
     _request: CreateTenantKeyRequest = {},
     _options: TenantOperationOptions = {},
   ): Promise<TerraScaleResult<TenantApiKey>> {
-    return tenantContractGap("tenants.createKey");
+    return tenantContractGap("tenants.keys.create");
   }
 
   /** Create a support/debug branch while retaining the tenant's placement lock. */
@@ -147,7 +147,7 @@ export class TenantsClient {
     _request: CreateTenantBranchRequest = {},
     _options: TenantOperationOptions = {},
   ): Promise<TerraScaleResult<TenantBranch>> {
-    return tenantContractGap("tenants.createBranch");
+    return tenantContractGap("tenants.branches.create");
   }
 
 }

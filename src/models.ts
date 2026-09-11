@@ -71,12 +71,22 @@ export type Organization = {
   readonly ownerUserIds: readonly UserId[];
   readonly createdByUserId?: UserId | null;
   readonly status: OrganizationStatus;
+  /** Billing projection, present when the control plane exposes organization billing metadata. */
+  readonly activePlan?: "free" | "starter" | "pro" | "scale" | "business" | "enterprise";
+  readonly pendingPlan?:
+    | "free"
+    | "starter"
+    | "pro"
+    | "scale"
+    | "business"
+    | "enterprise"
+    | null;
   readonly deletionRequestedAt?: Timestamp | null;
   readonly deletionRequestedByUserId?: UserId | null;
   readonly createdAt: Timestamp;
 };
 
-export type OrganizationStatus = "Active" | "DeletionPending";
+export type OrganizationStatus = "Active" | "BillingPending" | "DeletionPending";
 
 export type OrganizationMemberRole = "Member" | "OrganizationOwner";
 
@@ -94,7 +104,11 @@ export type CreateOrganizationRequest = {
 };
 
 export type UpdateOrganizationRequest = {
-  readonly name: string;
+  readonly name?: string;
+  /** Billing projection fields are written by the authenticated onboarding producer. */
+  readonly status?: OrganizationStatus;
+  readonly activePlan?: NonNullable<Organization["activePlan"]>;
+  readonly pendingPlan?: Organization["pendingPlan"];
 };
 
 export type RequestOrganizationDeletionRequest = {

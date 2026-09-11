@@ -563,12 +563,17 @@ export class OrganizationsClient {
   update(
     organizationId: string,
     request: Models.UpdateOrganizationRequest,
+    options?: Models.OrganizationMutationOptions,
   ): Promise<TerraScaleResult<Models.Organization>> {
+    const mutation = options === undefined ? undefined : organizationMutationOptions(options);
     return this.#http.request({
       method: "PATCH",
       path: `${apiRoot}/organizations/${idPathSegment(organizationId)}`,
       routeName: "organizations.update",
       body: request,
+      ...(mutation === undefined
+        ? {}
+        : { idempotencyKey: mutation.idempotencyKey, signal: mutation.signal }),
     });
   }
 
