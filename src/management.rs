@@ -1615,6 +1615,7 @@ pub struct RegionCatalogResponse {
 pub struct HealthResponse {
     pub region: String,
     pub healthy: bool,
+    pub version: String,
 }
 #[derive(Debug, Clone)]
 pub struct Regions {

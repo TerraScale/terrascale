@@ -554,7 +554,7 @@ async fn region_pinning_and_421_repair() {
     // Strict affinity pins REST to the regional hostname.
     let mock = Mock::new(vec![Response::json(
         200,
-        &json!({"region": "GRU", "healthy": true}),
+        &json!({"region": "GRU", "healthy": true, "version": "test"}),
     )]);
     let transport: Arc<dyn HttpTransport> = mock.clone();
     let strict = TerraScaleClient::with_transport(
