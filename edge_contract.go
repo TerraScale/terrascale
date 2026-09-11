@@ -3,9 +3,10 @@ package sdk
 
 // EdgeContractRoute identifies an origin-qualified edge operation.
 type EdgeContractRoute struct {
-	OperationID string
-	Method      string
-	Path        string
+	OperationID   string
+	Method        string
+	Path          string
+	ResponseModel string
 }
 
 const (
@@ -14,5 +15,5 @@ const (
 )
 
 var EdgeContractRoutes = []EdgeContractRoute{
-	{OperationID: "regions.list", Method: "GET", Path: "/api/v1/regions"},
+	{OperationID: "regions.list", Method: "GET", Path: "/api/v1/regions", ResponseModel: "RegionCatalogResponse"},
 }

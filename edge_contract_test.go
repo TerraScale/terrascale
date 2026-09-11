@@ -51,7 +51,22 @@ func TestEdgeContractPinAndRouteManifest(t *testing.T) {
 	if got := hex.EncodeToString(digest[:]); got != openapiDigest || got != EdgeContractOpenAPISHA256 {
 		t.Fatalf("edge OpenAPI SHA-256 = %s, manifest=%s generated=%s", got, openapiDigest, EdgeContractOpenAPISHA256)
 	}
-	if len(EdgeContractRoutes) != 1 || EdgeContractRoutes[0] != (EdgeContractRoute{OperationID: "regions.list", Method: "GET", Path: "/api/v1/regions"}) {
+	if len(EdgeContractRoutes) != 1 || EdgeContractRoutes[0] != (EdgeContractRoute{OperationID: "regions.list", Method: "GET", Path: "/api/v1/regions", ResponseModel: "RegionCatalogResponse"}) {
 		t.Fatalf("edge routes = %+v", EdgeContractRoutes)
+	}
+}
+
+func TestMemberAndEdgeRegionsUseDistinctContracts(t *testing.T) {
+	var memberResponse string
+	for _, operation := range ContractOperations {
+		if operation.OperationID == "regions" {
+			memberResponse = operation.ResponseModel
+		}
+	}
+	if memberResponse != "HealthResponse" {
+		t.Fatalf("member regions response model = %q, want HealthResponse", memberResponse)
+	}
+	if EdgeContractRoutes[0].ResponseModel != "RegionCatalogResponse" {
+		t.Fatalf("edge regions response model = %q, want RegionCatalogResponse", EdgeContractRoutes[0].ResponseModel)
 	}
 }
