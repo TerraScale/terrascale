@@ -697,7 +697,10 @@ seed_proxy_regions_kv() {
   local doc
   doc=$(printf '{"v":1,"updated":%s,"regions":{"GRU":{"ok":true,"lat":-23.43,"lon":-46.47},"SFO":{"ok":true,"lat":37.77,"lon":-122.42},"FRA":{"ok":true,"lat":50.11,"lon":8.68}},"catalog":[{"code":"GRU","name":"Sao Paulo","country":"BR","lat":-23.43,"lon":-46.47},{"code":"SFO","name":"San Francisco","country":"US","lat":37.77,"lon":-122.42},{"code":"FRA","name":"Frankfurt","country":"DE","lat":50.11,"lon":8.68}]}' "$(date +%s)")
   printf '%s' "$doc" >"$STACK_DIR/regions-health.json"
-  (cd "$PROXY_DIR" && npm exec -- wrangler kv key put regions --namespace-id=00000000000000000000000000000001 --local --path "$STACK_DIR/regions-health.json") >>"$LOG_DIR/proxy-kv.log" 2>&1 || warn "local regions KV seed failed; see $LOG_DIR/proxy-kv.log"
+  # Wrangler can keep its local persistence RPC open when another dev session
+  # owns the same namespace. Bound the best-effort seed so startup cannot hang
+  # forever; the warning leaves an exact diagnostic in proxy-kv.log.
+  (cd "$PROXY_DIR" && timeout 30s npm exec -- wrangler kv key put regions --namespace-id=00000000000000000000000000000001 --local --path "$STACK_DIR/regions-health.json") >>"$LOG_DIR/proxy-kv.log" 2>&1 || warn "local regions KV seed failed; see $LOG_DIR/proxy-kv.log"
 }
 
 start_webhooks() {
@@ -800,7 +803,10 @@ print_summary() {
 wait_for_http() {
   local name="$1" url="$2" deadline=$((SECONDS + 90))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if curl -sfL --max-time 2 "$url" >/dev/null 2>&1; then
+    # A dashboard root request legitimately returns an auth redirect (307).
+    # Probe listener readiness without following that redirect into an
+    # unauthenticated route that may return 401/404.
+    if curl -sf --max-time 2 "$url" >/dev/null 2>&1; then
       log "$name: ready ($url)"
       return 0
     fi
