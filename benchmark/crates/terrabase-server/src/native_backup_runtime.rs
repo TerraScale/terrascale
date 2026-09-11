@@ -943,13 +943,18 @@ mod restore_tests {
             Arc::clone(&store) as Arc<dyn object_store::ObjectStore>,
         );
         let (shutdown, receiver) = tokio::sync::watch::channel(false);
-        let task = tokio::spawn(
+        let mut task = tokio::spawn(
             Arc::clone(&runtime).supervise(std::time::Duration::from_millis(1), receiver),
         );
-        store.entered.notified().await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), store.entered.notified())
+            .await
+            .expect("provider tick must enter the blocking upload");
         assert_eq!(store.puts.load(Ordering::Relaxed), 1);
         shutdown.send(true).unwrap();
-        assert!(!task.is_finished());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut task).await.is_err(),
+            "supervisor must remain pending while provider upload is blocked"
+        );
         assert!(runtime.contains(&database));
         store.release.notify_one();
         task.await.unwrap().unwrap();

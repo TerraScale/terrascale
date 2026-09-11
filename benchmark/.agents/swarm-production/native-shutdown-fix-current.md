@@ -1,6 +1,6 @@
 # Native backup shutdown hang — current diagnosis
 
-Source cohort: `185ba400` (before the fixture correction).
+Source cohort: `185ba400` (before the fixture correction and pending-state assertion hardening).
 
 ## Reproduction
 
@@ -49,11 +49,16 @@ Adjacent lifecycle regression also passed with the same isolated target:
 `pre_signalled_supervisor_does_not_tick_and_drain_releases_host_lease` — exit
 `0`; `1 passed`, `0 failed`, `604 filtered out`; test time `0.64s`.
 
+The final test additionally bounds entry notification to five seconds and
+polls the mutable supervisor `JoinHandle` for 50 ms after shutdown is sent;
+the pending assertion therefore observes a real in-flight provider operation,
+not an immediate pre-poll state.
+
 ## Current source hashes after removing temporary tracing and applying the
 ## fixture correction
 
 ```text
-25b3843ef46f53cdc07331af46d4739a97e6277ac550417f816e7372ce7d5736  crates/terrabase-server/src/native_backup_runtime.rs
+dc7c587da2f8ee337565930a9d53a1eba32fbf0fbf03868d21fdd85494cbb1d7  crates/terrabase-server/src/native_backup_runtime.rs
 104c59803aef7951b04f87f8166d07196780167cfe8ab3a5b78733247cd0ea4c  src/backup/worker.rs
 ```
 
