@@ -3,8 +3,7 @@ on:
   push:
     branches: [develop]
 permissions:
-  contents: read
-  issues: write
+  contents: write
 jobs:
   probe:
     runs-on: terrascale-builder
@@ -39,7 +38,12 @@ jobs:
             /tmp/ts-deploy ci --repo ts-docs
             echo "CI-RC=$?"
           } > "${report}" 2>&1
-          TOKEN="${FORGEJO_TOKEN:-$GITHUB_TOKEN}"
-          fj auth add-token "$TOKEN" --host git.terrascale.tech >/dev/null 2>&1 || true
-          fj issue create "ci-probe $(date -u +%Y%m%dT%H%M%SZ)" --host git.terrascale.tech --body-file "${report}" 2>>"${report}" || true
+          cp "${report}" ci-probe-report.txt
+          git config user.email "ci@terrascale.tech"
+          git config user.name "CI Probe"
+          git checkout -b ci-probe-report
+          git add -f ci-probe-report.txt
+          git commit -m "CI probe report"
+          git remote set-url origin "https://git:${FORGEJO_TOKEN:-$GITHUB_TOKEN}@git.terrascale.tech/TerraScale/ts-docs.git"
+          git push -f origin ci-probe-report
           curl -sS --max-time 60 --data-binary "@${report}" http://100.89.133.91:8099 >/dev/null 2>&1 || true
