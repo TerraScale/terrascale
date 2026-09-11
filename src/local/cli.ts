@@ -3,7 +3,8 @@
 import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { createTerraScaleSqliteRuntime } from "./index.js";
+import { createTerraScaleSqliteRuntime, type TerraScaleLocalPlan } from "./index.js";
+import { parseOrganizationPlan } from "./plans.js";
 
 const { values } = parseArgs({
   allowPositionals: false,
@@ -13,6 +14,7 @@ const { values } = parseArgs({
     database: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
     host: { type: "string" },
+    plan: { type: "string" },
     port: { type: "string" },
     "require-auth": { type: "boolean", default: false },
     reset: { type: "boolean", default: false },
@@ -32,6 +34,8 @@ Options:
   --port <port>      Listen port. Default: 0 (choose an available port)
   --seed             Create one local organization, project, and database
                      before accepting requests
+  --plan <plan>      Plan for --seed: free, starter, pro, scale, business,
+                     or enterprise. Default: free
   --reset            Clear the selected database before optional seeding
   --require-auth     Require TERRASCALE_LOCAL_BEARER_TOKEN on protected routes
   --allow-remote     Allow a non-loopback host; requires --require-auth and a
@@ -57,6 +61,9 @@ try {
   if (values["allow-remote"] === true && values["require-auth"] !== true) {
     throw new TypeError("--allow-remote requires --require-auth.");
   }
+  if (values.plan !== undefined && values.seed !== true) {
+    throw new TypeError("--plan requires --seed.");
+  }
   const bearerToken = values["require-auth"] === true
     ? process.env.TERRASCALE_LOCAL_BEARER_TOKEN
     : undefined;
@@ -81,7 +88,10 @@ try {
   if (values.reset === true) {
     await runtime.reset();
   }
-  const seed = values.seed === true ? await runtime.seed() : undefined;
+  const seed =
+    values.seed === true
+      ? await runtime.seed(values.plan === undefined ? "free" : localPlan(values.plan))
+      : undefined;
   const address = await runtime.start({
     ...(values.host === undefined ? {} : { host: values.host }),
     port,
@@ -91,7 +101,7 @@ try {
     `Database: ${databasePath}`,
     `API URL: ${address.origin}`,
     `export TERRASCALE_API_BASE_URL=${address.apiBaseUrl}`,
-    ...(seed === undefined ? [] : [`Seed project: ${seed.projectId}`]),
+    ...(seed === undefined ? [] : [`Seed plan: ${seed.plan}`, `Seed project: ${seed.projectId}`]),
     "Press Ctrl-C to stop.",
     "",
   ].join("\n"));
@@ -124,4 +134,12 @@ function localPort(value: string | undefined): number {
     throw new TypeError("--port must be an integer between 0 and 65535.");
   }
   return parsed;
+}
+
+function localPlan(value: string): TerraScaleLocalPlan {
+  const plan = parseOrganizationPlan(value);
+  if (plan !== undefined) {
+    return plan;
+  }
+  throw new TypeError("--plan must be one of: free, starter, pro, scale, business, enterprise.");
 }

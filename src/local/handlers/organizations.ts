@@ -9,6 +9,7 @@ import {
   type LocalHandler,
   type LocalRequestContext,
 } from "../context.js";
+import { parseOrganizationPlan } from "../plans.js";
 import type { TerraScaleSqliteStore } from "../store.js";
 
 /*
@@ -35,6 +36,10 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
   if (matchLocalRoute(context, "POST", "/api/v1/organizations") !== undefined) {
     const name = nonBlank(body.name);
     if (name === undefined) return problemResponse(400, "invalid_request", "name is required.");
+    if (body.plan !== undefined && parseOrganizationPlan(body.plan) === undefined) {
+      return problemResponse(400, "invalid_request", "plan is invalid.");
+    }
+    const plan = parseOrganizationPlan(body.plan);
     const actor = localActor(context);
     const organizationId = (await store.nextUlid()) as OrganizationId;
     const organization: Models.Organization = {
@@ -43,6 +48,8 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
       ownerUserIds: [actor.userId],
       createdByUserId: actor.userId,
       status: "Active",
+      activePlan: plan ?? "free",
+      pendingPlan: null,
       deletionRequestedAt: null,
       deletionRequestedByUserId: null,
       createdAt: context.now,
@@ -70,10 +77,25 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
     const status = body.status === undefined ? organization.status : body.status;
     if (status !== "Active" && status !== "DeletionPending")
       return problemResponse(400, "invalid_request", "status is invalid.");
+    if (body.activePlan !== undefined && parseOrganizationPlan(body.activePlan) === undefined) {
+      return problemResponse(400, "invalid_request", "activePlan is invalid.");
+    }
+    if (
+      Object.hasOwn(body, "pendingPlan") &&
+      body.pendingPlan !== null &&
+      parseOrganizationPlan(body.pendingPlan) === undefined
+    ) {
+      return problemResponse(400, "invalid_request", "pendingPlan is invalid.");
+    }
+    const activePlan = parseOrganizationPlan(body.activePlan);
     const updated = {
       ...organization,
       name,
       status,
+      ...(activePlan === undefined ? {} : { activePlan }),
+      ...(Object.hasOwn(body, "pendingPlan")
+        ? { pendingPlan: body.pendingPlan as Models.OrganizationPlan | null }
+        : {}),
     } as Models.Organization;
     await put(store, "organizations", match.organizationId!, updated);
     return jsonResponse(updated);

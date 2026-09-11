@@ -156,6 +156,7 @@ test("typed data survives SQLite close/reopen over the real HTTP server", async 
         organizationId: organization.organizationId,
         projectId: project.projectId,
         databaseId: database.databaseId,
+        plan: "free",
       };
       expectOk(
         await scopedRoot.databases.get(database.databaseId),

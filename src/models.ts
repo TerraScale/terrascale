@@ -74,12 +74,22 @@ export type Organization = {
   readonly ownerUserIds: readonly UserId[];
   readonly createdByUserId?: UserId | null;
   readonly status: OrganizationStatus;
+  readonly activePlan?: OrganizationPlan | null;
+  readonly pendingPlan?: OrganizationPlan | null;
   readonly deletionRequestedAt?: Timestamp | null;
   readonly deletionRequestedByUserId?: UserId | null;
   readonly createdAt: Timestamp;
 };
 
 export type OrganizationStatus = "Active" | "DeletionPending";
+
+export type OrganizationPlan =
+  | "free"
+  | "starter"
+  | "pro"
+  | "scale"
+  | "business"
+  | "enterprise";
 
 export type OrganizationMemberRole = "Member" | "OrganizationOwner";
 
@@ -93,12 +103,14 @@ export type OrganizationMember = {
 
 export type CreateOrganizationRequest = {
   readonly name: string;
-  readonly plan?: "free" | "starter" | "pro" | "scale";
+  readonly plan?: OrganizationPlan;
 };
 
 export type UpdateOrganizationRequest = {
   readonly name?: string;
   readonly status?: OrganizationStatus;
+  readonly activePlan?: OrganizationPlan;
+  readonly pendingPlan?: OrganizationPlan | null;
 };
 
 export type RequestOrganizationDeletionRequest = {

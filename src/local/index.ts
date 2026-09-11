@@ -13,8 +13,10 @@ import type {
   OrganizationId,
   ProjectId,
 } from "../ids.js";
+import type { OrganizationPlan } from "../models.js";
 import { normalizeLocalBearerToken } from "./authentication.js";
 import { assertLocalSqliteEnvironment } from "./environment.js";
+import { parseOrganizationPlan } from "./plans.js";
 import { clearLocalAdminState } from "./handlers/admin.js";
 import { clearLocalPlatformState } from "./handlers/platform.js";
 import { TerraScaleLocalRouter, type LocalAuthenticationMode } from "./router.js";
@@ -43,14 +45,18 @@ export type TerraScaleLocalClientOptions = Omit<
   "apiBaseUrl" | "fetch" | "sqlite"
 >;
 
+export type TerraScaleLocalPlan = OrganizationPlan;
+
 export type TerraScaleLocalSeed = {
   readonly databaseId: DatabaseId;
   readonly organizationId: OrganizationId;
   readonly projectId: ProjectId;
+  readonly plan: TerraScaleLocalPlan;
 };
 
 export type TerraScaleLocalResetOptions = {
   readonly seed?: boolean;
+  readonly plan?: TerraScaleLocalPlan;
 };
 
 export { type LocalAuthenticationMode, type LocalServerAddress };
@@ -158,20 +164,24 @@ export class TerraScaleSqliteRuntime {
     this.#assertOpen();
     this.#clearTransientState();
     this.#store.reset();
-    return options.seed === true ? this.seed() : undefined;
+    return options.seed === true ? this.seed(options.plan ?? "free") : undefined;
   }
 
-  async seed(): Promise<TerraScaleLocalSeed> {
+  async seed(plan: TerraScaleLocalPlan = "free"): Promise<TerraScaleLocalSeed> {
     this.#assertOpen();
+    const selectedPlan = assertLocalPlan(plan);
     const client = this.createClient({
       idempotencyKeyFactory: () => `local-seed-${this.#store.nextUlid()}`,
     });
     const organization = requireValue(
-      await client.organizations.create({ name: "Local development" }),
+      await client.organizations.create({
+        name: `Local development (${selectedPlan})`,
+        plan: selectedPlan,
+      }),
     );
     const project = requireValue(
       await client.organizations.createProject(organization.organizationId, {
-        name: "Local project",
+        name: `Local project (${selectedPlan})`,
         regions: ["GRU"],
         backupRegion: "GRU",
       }),
@@ -180,12 +190,27 @@ export class TerraScaleSqliteRuntime {
       projectId: project.projectId,
       idempotencyKeyFactory: () => `local-seed-${this.#store.nextUlid()}`,
     });
-    const database = requireValue(await scoped.databases.create({ name: "Local database" }));
+    const database = requireValue(
+      await scoped.databases.create({ name: `Local database (${selectedPlan})` }),
+    );
     return {
       organizationId: organization.organizationId,
       projectId: project.projectId,
       databaseId: database.databaseId,
+      plan: selectedPlan,
     };
+  }
+
+  seedStarter(): Promise<TerraScaleLocalSeed> {
+    return this.seed("starter");
+  }
+
+  seedPro(): Promise<TerraScaleLocalSeed> {
+    return this.seed("pro");
+  }
+
+  seedBusiness(): Promise<TerraScaleLocalSeed> {
+    return this.seed("business");
   }
 
   async close(): Promise<void> {
@@ -225,4 +250,12 @@ function requireValue<T>(result: {
     return result.value;
   }
   throw new Error(result.error?.message ?? "The local seed request failed.");
+}
+
+function assertLocalPlan(value: unknown): TerraScaleLocalPlan {
+  const plan = parseOrganizationPlan(value);
+  if (plan !== undefined) {
+    return plan;
+  }
+  throw new TypeError("plan must be one of: free, starter, pro, scale, business, enterprise.");
 }
