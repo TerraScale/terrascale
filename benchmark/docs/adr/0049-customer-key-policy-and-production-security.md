@@ -55,7 +55,9 @@ provider credentials, imported key material, unwrapped DEKs, or other plaintext
 secrets. NATS TLS, NKeys, and subject permissions are required, but they do not
 change the replicated-history, snapshot, export, or operator-disk retention
 model; the references and ciphertext therefore remain subject to the journal's
-access controls and crypto-shred limitations.
+access controls and crypto-shred limitations. For AWS KMS, the endpoint
+reference is optional; when omitted, the regional SDK endpoint is used. The
+admitted region and canonical key ARN remain mandatory and must match.
 
 The current orchestrator runtime wires one AWS KMS authority tuple per process
 from the host workload-identity boundary. It verifies every admitted reference
