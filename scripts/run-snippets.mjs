@@ -341,8 +341,9 @@ export function createRemoteSandbox() {
     while (!state.closed && Date.now() < deadline) {
       const url = new URL(state.logUrl);
       url.searchParams.set("offset", String(state.revision));
-      // Reactive delivery is a capability-gated CDN request. Do not forward
-      // the API bearer, session, or JSON headers to the sync origin.
+      // Reactive delivery is a capability-gated CDN request; the capability
+      // authorizes the view and the bearer only satisfies member admission
+      // where no proof-signing edge exists.
       const response = await fetch(url, { headers: { accept: "application/msgpack", authorization: `Bearer ${key}`, [VIEW_CAPABILITY_HEADER]: state.capability } });
       if (!response.ok) throw new Error(`remote GET ${url.pathname} failed: ${response.status}`);
       if (response.status !== 204 && response.status !== 304) {
