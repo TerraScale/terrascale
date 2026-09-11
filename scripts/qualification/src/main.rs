@@ -85,9 +85,13 @@ fn observation(phase: &str, outcome: &str, detail: &str) {
 }
 
 fn redacted(detail: String, key: &str) -> String {
-    detail
+    let mut result = detail
         .replace(key, "[REDACTED]")
-        .replace("Bearer ", "Bearer [REDACTED]")
+        .replace("Bearer ", "Bearer [REDACTED]");
+    while result.contains("[REDACTED][REDACTED]") {
+        result = result.replace("[REDACTED][REDACTED]", "[REDACTED]");
+    }
+    result
 }
 
 fn projected_update(value: &std::collections::BTreeMap<String, Vec<u8>>, run: &str) -> bool {
@@ -343,7 +347,7 @@ async fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{projected_update, valid_run_id};
+    use super::{projected_update, redacted, valid_run_id};
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -371,5 +375,18 @@ mod tests {
         assert!(!valid_run_id("../escape"));
         assert!(!valid_run_id("-leading"));
         assert!(!valid_run_id(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn error_observations_redact_all_supplied_credentials() {
+        let detail = redacted(
+            "Bearer primary-secret; key=secondary-secret".to_owned(),
+            "primary-secret",
+        );
+        let detail = redacted(detail, "secondary-secret");
+        assert!(!detail.contains("primary-secret"));
+        assert!(!detail.contains("secondary-secret"));
+        assert!(detail.contains("Bearer [REDACTED]"));
+        assert_eq!(detail, "Bearer [REDACTED]; key=[REDACTED]");
     }
 }
