@@ -13,7 +13,8 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "qualify:browser": "node qualification/browser-journey.mjs"
+    "qualify:browser": "node qualification/browser-journey.mjs",
+    "qualify:sdk-fixture": "node qualification/sdk-journey-fixture.mjs"
   },
   "engines": {
     "node": ">=20"
