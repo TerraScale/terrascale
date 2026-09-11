@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn restore_route_forwards_each_selector_to_provisioning_authority() {
     let (registry, _, records, root) = crate::admitted_databases::tests::fixture();
     let source = records.first().expect("fixture source").clone();
@@ -158,6 +159,7 @@ async fn restore_route_forwards_each_selector_to_provisioning_authority() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn backup_points_route_uses_native_catalog_and_enforces_scope() {
     use crate::native_backup_runtime::{
         AdmittedBackupEngine, NativeBackupInput, NativeBackupRuntime,

@@ -59,6 +59,9 @@ pub struct ProvisioningOperation {
 
 impl ProvisioningClient {
     /// Submits an idempotent restore operation to the durable authority.
+    ///
+    /// # Errors
+    /// Refuses invalid requests, unavailable transport, or a rejected operation.
     pub async fn restore(
         &self,
         scope: &crate::delegated_identity::VerifiedProjectScope,
@@ -326,6 +329,14 @@ impl ProvisioningClient {
         after: Option<&str>,
         limit: usize,
     ) -> Result<crate::api::operations::OperationPage, ProvisioningError> {
+        #[derive(Deserialize)]
+        struct ScopedPage {
+            environment: String,
+            tenant_id: String,
+            project_id: String,
+            #[serde(flatten)]
+            page: crate::api::operations::OperationPage,
+        }
         if !(1..=50).contains(&limit) || after.is_some_and(|value| value.len() > 256) {
             return Err(ProvisioningError::InvalidRequest);
         }
@@ -335,14 +346,6 @@ impl ProvisioningClient {
             "project_id":scope.project_id,"after":after.unwrap_or(""),"limit":limit,
         }))
         .map_err(|_| ProvisioningError::Unavailable)?;
-        #[derive(Deserialize)]
-        struct ScopedPage {
-            environment: String,
-            tenant_id: String,
-            project_id: String,
-            #[serde(flatten)]
-            page: crate::api::operations::OperationPage,
-        }
         let result: ScopedPage = tokio::time::timeout(
             Duration::from_secs(10),
             self.exchange("/internal/v1/operations/list", body, hyper::StatusCode::OK),

@@ -501,6 +501,7 @@ async fn authority_revocation_closes_active_socket(revoked_scope: &str) {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn collection_bearer_attaches_only_its_parsed_query_and_delivers_immutable_results() {
     let (identity, reply, authority_task) =
         crate::delegated_identity::tests::authority_for_collection(

@@ -714,6 +714,7 @@ struct PeerWorkerExit {
     restart: bool,
 }
 
+#[allow(clippy::too_many_lines, reason = "one loop over the peer session states")]
 async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
     let PeerWorkerContext {
         runtime,
@@ -881,6 +882,7 @@ struct SessionContext<'a> {
     retention: &'a Arc<ReplicationRetentionFrontier>,
 }
 
+#[allow(clippy::too_many_lines, reason = "one handshake-to-stream sequence per session")]
 async fn session(
     connection: ProductionConnection,
     lanes: &mut Vec<PeerDatabase>,
@@ -1335,6 +1337,7 @@ fn observe(
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "one frame per descriptor stage")]
 async fn snapshot_frame(
     lane: &mut PeerDatabase,
     peer: &WalAuthenticatedPeer,

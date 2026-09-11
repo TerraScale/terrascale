@@ -94,6 +94,9 @@ impl ProductionDataLifecycle {
     }
 
     /// Durably pauses one admitted database while retaining its identity and data.
+    ///
+    /// # Errors
+    /// Returns an error if the lifecycle is draining or the registry refuses the pause.
     pub fn pause_database(
         &self,
         database: &str,
@@ -106,6 +109,9 @@ impl ProductionDataLifecycle {
     }
 
     /// Resumes one previously paused admitted database using its retained identity.
+    ///
+    /// # Errors
+    /// Returns an error if the lifecycle is draining or the registry refuses the resume.
     pub fn reactivate_database(
         &self,
         database: &str,
@@ -746,6 +752,7 @@ impl ProductionAdmissionRuntime {
     /// # Errors
     /// Refuses missing encryption delivery, conflicting records, or unsafe storage.
     #[allow(clippy::too_many_arguments, reason = "explicit production dependency ownership")]
+    #[allow(clippy::too_many_lines, reason = "one admission replay from durable records")]
     pub fn new(
         runtime: Arc<ProductionMemberRuntime>,
         member: terrabase::member::Member,
@@ -1058,6 +1065,9 @@ impl ProductionAdmissionRuntime {
     ///
     /// Every input is resolved from the admitted registry and the effective
     /// per-database policy; no engine or destination is opened by location.
+    ///
+    /// # Errors
+    /// Returns an error if the retained snapshot, any backup input, or final composition fails.
     pub fn compose_native_backup(
         &self,
         limits: FleetLimits,
@@ -1092,6 +1102,9 @@ impl ProductionAdmissionRuntime {
     /// Resolves one already-serving database into the native backup owner input.
     /// The caller must supply the accepted database identity; pending entries
     /// and unknown identities fail closed.
+    ///
+    /// # Errors
+    /// Returns an error if the identity is pending or unknown, or its admission facts are unusable.
     pub fn resolve_native_backup_input(
         &self,
         database: &str,
@@ -1110,6 +1123,7 @@ impl ProductionAdmissionRuntime {
         self.resolve_native_backup_input_with_mode(database, true)
     }
 
+    #[allow(clippy::too_many_lines, reason = "one admission check chain per backup input")]
     fn resolve_native_backup_input_with_mode(
         &self,
         database: &str,
@@ -1307,6 +1321,7 @@ impl ProductionAdmissionRuntime {
     /// Returns the narrow source-bound resolver used by native backup
     /// composition. The closure retains this admission authority so callers
     /// cannot construct backup inputs from configuration alone.
+    #[allow(clippy::type_complexity, reason = "one closure over the admission resolver")]
     pub fn native_backup_input_resolver(
         self: &Arc<Self>,
     ) -> Arc<
@@ -1319,6 +1334,7 @@ impl ProductionAdmissionRuntime {
     }
 
     /// Returns the narrow resolver for an already admitted paused target.
+    #[allow(clippy::type_complexity, reason = "one closure over the restore-target resolver")]
     pub fn native_restore_target_resolver(
         self: &Arc<Self>,
     ) -> Arc<
@@ -1340,6 +1356,9 @@ impl ProductionAdmissionRuntime {
     /// location, placement, and data key version all come from the durable
     /// admission/configuration pair. No source key or generated identity is
     /// reused.
+    ///
+    /// # Errors
+    /// Returns an error if the target is not retained or its tenant, lifecycle, keys, or placement are unusable.
     pub fn resolve_native_restore_target(
         &self,
         database: &str,
@@ -1412,6 +1431,7 @@ impl ProductionAdmissionRuntime {
         Ok((target, placement))
     }
 
+    #[allow(clippy::too_many_arguments, reason = "one restore workflow, every fact explicit")]
     async fn restore_native_with_workers(
         &self,
         backups: &crate::native_backup_runtime::NativeBackupRuntime,
@@ -1511,6 +1531,8 @@ impl ProductionAdmissionRuntime {
     /// durably paused. The caller supplies the already authenticated source
     /// fleet and operation identity; this method never opens a source engine
     /// by path or falls back to a local provider.
+    #[allow(clippy::too_many_arguments, reason = "one restore workflow, every fact explicit")]
+    #[allow(clippy::too_many_lines, reason = "one restore reservation through receipt verification")]
     async fn restore_native_to_target(
         &self,
         backups: &crate::native_backup_runtime::NativeBackupRuntime,
@@ -1734,6 +1756,7 @@ impl ProductionAdmissionRuntime {
         result
     }
 
+    #[allow(clippy::type_complexity, reason = "one assignment tuple published per database")]
     fn prepare_active_database(
         &self,
         record: &crate::admission::AdmissionRecord,
@@ -1749,6 +1772,7 @@ impl ProductionAdmissionRuntime {
         self.build_database_assignment(record, proposal, proof_digest, local_member)
     }
 
+    #[allow(clippy::type_complexity, reason = "one assignment tuple published per database")]
     fn build_database_assignment(
         &self,
         record: &crate::admission::AdmissionRecord,

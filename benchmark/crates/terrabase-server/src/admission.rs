@@ -96,6 +96,9 @@ impl AdmissionHost {
     ///
     /// # Errors
     /// Refuses malformed manifests, identity conflicts, or failed storage replay.
+    ///
+    /// # Panics
+    /// Never in practice: the manifest extension is checked before the unwrap.
     pub fn open(
         root: &Path,
         environment: String,
@@ -206,6 +209,9 @@ impl AdmissionHost {
     }
 
     /// Durably fences an admission for deletion before native readback/stop.
+    ///
+    /// # Errors
+    /// Returns an error if the record fails validation or durable fencing fails.
     pub(crate) fn fence(
         &self,
         record: &AdmissionRecord,
@@ -349,6 +355,7 @@ impl AdmissionHost {
     ///
     /// The listener is closed before this method returns, allowing the runtime
     /// owner to join the task before releasing the admitted storage owners.
+    #[allow(clippy::too_many_lines, reason = "one accept loop per admitted connection")]
     pub async fn serve_until<F>(
         self: Arc<Self>,
         listener: tokio::net::UnixListener,

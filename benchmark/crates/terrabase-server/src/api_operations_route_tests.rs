@@ -75,6 +75,7 @@ async fn operation(
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn production_handler_paginates_authority_export_recovery_after_restart() {
     use bytes::Bytes;
     use http_body_util::Full;

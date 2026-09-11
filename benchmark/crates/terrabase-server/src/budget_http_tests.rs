@@ -422,6 +422,7 @@ fn public_write(batch: bool, key: &str, name: &str) -> Request<Body> {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn public_writes_consume_signed_included_and_paid_allocations_once() {
     for (paid, batch) in [(false, false), (true, false), (false, true), (true, true)] {
         let operation = if batch { "api-batch-idem-budget" } else { "api-document-idem-budget" };

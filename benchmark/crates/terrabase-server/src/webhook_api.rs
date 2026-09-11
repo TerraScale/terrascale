@@ -355,6 +355,9 @@ pub trait WebhookStorage: Send + Sync + 'static {
         limit: usize,
     ) -> Result<Vec<DeliveryRecord>, StorageError>;
     /// Atomically claims one due delivery before its network effect.
+    ///
+    /// # Errors
+    /// Returns a storage failure or a lost race against a concurrent claim.
     fn claim_delivery(
         &self,
         scope: &TenantScope,

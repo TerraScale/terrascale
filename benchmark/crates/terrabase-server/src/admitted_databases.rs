@@ -99,6 +99,7 @@ pub struct RestoreReservation {
 
 impl RestoreReservation {
     /// Restores registry admission when the async restore future is cancelled.
+    #[must_use]
     pub fn rollback_on_drop(
         mut self,
         member: terrabase::member::Member,
@@ -122,6 +123,9 @@ impl RestoreReservation {
 
     /// Reacquires the target through the owning Member while retaining the
     /// exclusion. Only this reservation may cross the restore boundary.
+    ///
+    /// # Errors
+    /// Returns an error if the restore identity is invalid, the permit was released, or the Member refuses reacquisition.
     pub fn reacquire(&self, member: &terrabase::member::Member) -> Result<DatabaseLease, String> {
         let id = terrabase::member::DatabaseId::try_new(&self.record.database_id)
             .map_err(|_| "restore target identity is invalid")?;
@@ -134,6 +138,9 @@ impl RestoreReservation {
     }
 
     /// Reinstalls the same admitted identity after a successful restore.
+    ///
+    /// # Errors
+    /// Returns an error if republishing the admitted record or reactivating it fails.
     pub fn complete(
         mut self,
         registry: &AdmittedDatabaseRegistry,
@@ -184,6 +191,12 @@ impl AdmittedDatabaseRegistry {
     /// Fences one paused database and transfers its host lease exclusively.
     /// Restore callers must complete the reservation with a freshly acquired
     /// lease after installing bytes; no open Engine survives this boundary.
+    ///
+    /// # Errors
+    /// Returns an error if registry state is unavailable, the target is serving, not admitted, not exclusively referenced, or already reserved.
+    ///
+    /// # Panics
+    /// Panics if a registry entry disappears while the registry write lock is held.
     pub fn reserve_restore(&self, database: &str) -> Result<RestoreReservation, String> {
         let mut serving = self.serving.write().map_err(|_| "admitted activation unavailable")?;
         let mut databases = self.databases.write().map_err(|_| "admitted registry unavailable")?;
@@ -271,6 +284,9 @@ impl AdmittedDatabaseRegistry {
         Ok(result)
     }
     /// Durably pauses one admitted database while retaining its host and data.
+    ///
+    /// # Errors
+    /// Returns an error if registry state is unavailable, the Member is not ready, the database is not admitted, or the pause transition fails.
     pub fn pause(
         &self,
         database: &str,
@@ -301,6 +317,9 @@ impl AdmittedDatabaseRegistry {
     }
 
     /// Resumes one paused admitted database without replacing its identity.
+    ///
+    /// # Errors
+    /// Returns an error if registry state is unavailable, the Member is not ready, the database is not admitted, or the resume transition fails.
     pub fn resume(
         &self,
         database: &str,
@@ -422,6 +441,7 @@ impl AdmittedDatabaseRegistry {
         self.publish_inner(record, lease, location, instance, scope)
     }
 
+    #[allow(clippy::needless_pass_by_value, reason = "instance ordinal is Copy; by value keeps the publish call sites flat")]
     fn publish_inner(
         &self,
         record: AdmissionRecord,
@@ -615,6 +635,9 @@ impl AdmittedDatabaseRegistry {
     /// Resolves an already activated database while the control-plane
     /// readiness gate is degraded. This preserves local reads for retained
     /// leases; publication and new admission still require `ready`.
+    ///
+    /// # Errors
+    /// Returns an error if serving or registry state is unavailable, or the admitted tenant or lifecycle state is invalid.
     pub fn resolve_degraded_serving(
         &self,
         database: &str,
@@ -675,6 +698,9 @@ impl AdmittedDatabaseRegistry {
 
     /// Resolves a retained database for lifecycle authority checks, including
     /// paused entries that are intentionally absent from serving resolution.
+    ///
+    /// # Errors
+    /// Returns an error when the Member is not ready or the admitted registry is unavailable.
     pub fn resolve_lifecycle(
         &self,
         database: &str,

@@ -140,6 +140,9 @@ impl ControlPlane {
     /// Opens the registry with the authoritative orchestrator Region catalog.
     /// The catalog is supplied by the caller so future admitted Regions are
     /// accepted without changing this control-plane code.
+    ///
+    /// # Errors
+    /// Returns [`ControlError::Registry`] when the engine cannot open the location or the registry tenant is invalid.
     pub fn open_with_catalog(root: &Path, catalog: RegionCatalog) -> Result<Self, ControlError> {
         let engine = Engine::open(
             EngineConfig::durable(root.join("control-plane"))

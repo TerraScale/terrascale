@@ -53,6 +53,7 @@ async fn complete(app: &Router, path: &str) -> ExportStatus {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn http_export_reads_real_documents_and_recovers_after_runtime_restart() {
     let mut state = super::super::tests::state_with_keys_and_control();
     let root = state.backup_root.with_file_name("exports");

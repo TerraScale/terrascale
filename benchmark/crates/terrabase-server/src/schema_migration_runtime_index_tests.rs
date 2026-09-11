@@ -161,6 +161,7 @@ async fn replacement_index_keeps_old_unique_constraint_until_publish() {
 /// when it has no pending schema envelope, because maintenance runs before
 /// the metadata early exit in `drive_database`.
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn production_tick_completes_large_descriptor_without_schema_record() {
     const ROWS: usize = 10_001;
 

@@ -133,6 +133,7 @@ fn endpoints(ids: &[MemberWorkloadIdentity]) -> Vec<Arc<ProductionQuicEndpoint>>
         .collect()
 }
 
+#[allow(clippy::too_many_lines)]
 async fn create() -> Fixture {
     let root = std::env::temp_dir().join(format!("terrabase-auth-four-{}", Ulid::new()));
     std::fs::create_dir_all(&root).unwrap();

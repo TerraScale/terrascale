@@ -153,6 +153,9 @@ impl IdentityVerifier {
     }
 
     /// Configures the separate producer lease verification ring and serving region.
+    ///
+    /// # Errors
+    /// Returns an error if the authorization lease key file cannot be read or parsed.
     pub fn with_authorization_lease_keys(
         mut self,
         region: terrabase::regions::RegionCode,
@@ -299,6 +302,7 @@ impl IdentityVerifier {
     /// producer's linked-account membership authority. The caller supplies
     /// no raw third-party token; issuer and subject came from local JWT
     /// verification and are sent only alongside server-owned route scope.
+    #[allow(clippy::too_many_arguments, reason = "explicit BYO admission scope")]
     pub async fn admit_verified_byo(
         &self,
         issuer: &str,
@@ -382,6 +386,9 @@ impl IdentityVerifier {
     }
 
     /// Project-wide variant of [`Self::admit_verified_byo`].
+    ///
+    /// # Errors
+    /// Returns the same failures as `admit_verified_byo`, or when the delegated principal lacks an expiry.
     pub async fn admit_verified_byo_project(
         &self,
         issuer: &str,
@@ -613,6 +620,7 @@ pub(crate) mod tests {
         authority_for_collection(organization, project, database, action, None).await
     }
 
+    #[allow(clippy::too_many_lines, reason = "one authority fixture, one assertion block")]
     pub(crate) async fn authority_for_collection(
         organization: &str,
         project: &str,

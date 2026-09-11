@@ -31,6 +31,9 @@ pub enum ProductionBackupFactoryError {
 
 /// Resolves one configured destination without placing secret bytes in the
 /// typed configuration, journals, or diagnostics.
+///
+/// # Errors
+/// Returns an error if a credential reference is unreadable or the destination refuses admission.
 pub fn destination_from_config(
     config: &ProductionBackupDestination,
     database_region: RegionCode,
@@ -66,6 +69,9 @@ pub fn destination_from_config(
 /// This is the production path for customer-owned S3. The provider is called
 /// lazily by the object store for each request, allowing expiry and revocation
 /// to take effect without rebuilding the destination.
+///
+/// # Errors
+/// Returns an error if the destination refuses admission.
 pub fn destination_from_config_with_workload_identity(
     config: &ProductionBackupDestination,
     database_region: RegionCode,
@@ -78,12 +84,12 @@ pub fn destination_from_config_with_workload_identity(
             endpoint: config.endpoint.clone(),
             signing_region: config.signing_region.clone(),
             database_region: match config.provider {
-                terrabase::backup::object_store::Provider::Oci => config.signing_region.clone(),
+                terrabase::backup::object_store::Provider::Oci
+                | terrabase::backup::object_store::Provider::CustomerS3 => {
+                    config.signing_region.clone()
+                }
                 terrabase::backup::object_store::Provider::Tigris => {
                     database_region.as_str().to_owned()
-                }
-                terrabase::backup::object_store::Provider::CustomerS3 => {
-                    config.signing_region.clone()
                 }
             },
             bucket: config.bucket.clone(),

@@ -69,6 +69,7 @@ impl terrabase::member::DatabaseRoleAuthority for Writer {
     }
 }
 
+#[allow(clippy::type_complexity, reason = "one customer key-source resolver closure")]
 fn register_storage(
     member: &Member,
     provider: &OciVaultKeyDelivery,
@@ -161,6 +162,8 @@ pub fn storage_admission_with_replay(
 }
 
 /// Constructs storage admission with customer key-source resolution for BYOK records.
+#[allow(clippy::too_many_arguments, reason = "explicit production dependency ownership")]
+#[allow(clippy::type_complexity, reason = "one customer key-source resolver closure")]
 pub fn storage_admission_with_replay_and_key_source(
     member: Member,
     registry: Arc<AdmittedDatabaseRegistry>,
@@ -210,6 +213,8 @@ fn storage_admission_inner(
     )
 }
 
+#[allow(clippy::too_many_arguments, reason = "explicit production dependency ownership")]
+#[allow(clippy::type_complexity, reason = "one customer key-source resolver closure")]
 fn storage_admission_inner_with_customer(
     member: Member,
     registry: Arc<AdmittedDatabaseRegistry>,
@@ -404,6 +409,7 @@ mod tests {
         TenantId::try_new(&scope.tenant().to_text()).unwrap()
     }
 
+    #[allow(clippy::too_many_lines, reason = "one replay case from open through fenced restart")]
     fn replay_case(accepted: bool) {
         let root = std::env::temp_dir()
             .join(format!("terrabase-admission-host-replay-{}", DatabaseUlid::generate()));
@@ -529,6 +535,9 @@ mod tests {
         );
     }
 
+    #[allow(clippy::too_many_lines, reason = "one replay case from open through deletion")]
+    #[allow(clippy::too_many_arguments, reason = "one replay scenario, every fixture explicit")]
+    #[allow(clippy::needless_pass_by_value, reason = "fixture identity is passed through by value")]
     fn replay_after_restart(
         accepted: bool,
         root: &std::path::Path,
@@ -718,6 +727,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[allow(clippy::needless_pass_by_value, reason = "fixture identities borrowed at call sites")]
     fn prepare_fenced_database(
         root: &std::path::Path,
         specs: &[DatabaseSpec; 2],

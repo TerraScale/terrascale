@@ -131,6 +131,9 @@ impl NativeBackupRuntime {
     /// This seam performs no publication: the caller
     /// must invoke [`BackupEnvelope::verify_staged`] for every participant and
     /// atomically publish the envelope only after all staged files verify.
+    ///
+    /// # Errors
+    /// Returns an error if the participant manifests fail validation for the read cut.
     pub fn assemble_shard_envelope(
         &self,
         cut: &terrabase::member::AdmittedShardReadCut,
@@ -143,6 +146,11 @@ impl NativeBackupRuntime {
     /// Captures every admitted physical participant at its retained serving
     /// cut and publishes one durable envelope catalog entry. Participant
     /// points are never reported as a complete logical point independently.
+    ///
+    /// # Errors
+    /// Returns an error if the read cut has no routed participants, a runtime
+    /// mutex is poisoned, a participant capture or publication fails, or the
+    /// blocking worker aborts.
     pub async fn capture_shard_envelope(
         &self,
         cut: &terrabase::member::AdmittedShardReadCut,
@@ -174,6 +182,9 @@ impl NativeBackupRuntime {
     /// input is rejected, the partially admitted fleet is dropped and no
     /// runtime is returned.  The caller must retry after correcting the
     /// accepted assignment or provider/key state.
+    ///
+    /// # Errors
+    /// Returns an error if fleet construction or any stream admission rejects an input.
     pub fn new(
         limits: FleetLimits,
         inputs: impl IntoIterator<Item = NativeBackupInput>,
@@ -219,6 +230,9 @@ impl NativeBackupRuntime {
 
     /// Reports whether the authenticated local envelope catalog contains the
     /// selected logical recovery point.
+    ///
+    /// # Errors
+    /// Returns an error if the fleet mutex is poisoned or the catalog cannot be read.
     pub fn has_retained_envelope(
         &self,
         database: &str,
@@ -233,6 +247,10 @@ impl NativeBackupRuntime {
     }
 
     /// Executes one bounded asynchronous fleet tick.
+    ///
+    /// # Errors
+    /// Returns an error if a runtime mutex is poisoned or the blocking worker
+    /// aborts; provider failures are returned as tick incidents.
     pub async fn tick(&self) -> Result<Vec<(String, FleetError)>, NativeBackupRuntimeError> {
         let gate = Arc::clone(&self.async_fleet).lock_owned().await;
         let fleet = Arc::clone(&self.fleet);
@@ -258,6 +276,9 @@ impl NativeBackupRuntime {
     /// Runs recurring fleet synchronization until the caller signals shutdown.
     /// Each tick is serialized by the fleet owner; provider failures are
     /// retained as incidents and do not alter admitted write ownership.
+    ///
+    /// # Errors
+    /// Returns an error if any recurring fleet tick fails.
     pub async fn supervise(
         self: Arc<Self>,
         period: std::time::Duration,
@@ -284,6 +305,9 @@ impl NativeBackupRuntime {
     }
 
     /// Returns provider failures observed by recurring synchronization.
+    ///
+    /// # Errors
+    /// Returns an error if the incidents mutex is poisoned.
     pub fn incidents(&self) -> Result<Vec<(String, FleetError)>, NativeBackupRuntimeError> {
         self.incidents
             .lock()
@@ -294,6 +318,10 @@ impl NativeBackupRuntime {
     /// Captures one point after validating the caller's operation identity and
     /// verifies its complete chain. Operation lifecycle persistence belongs to
     /// `NativeRecoveryRuntime`; this low-level seam does not retain the ID.
+    ///
+    /// # Errors
+    /// Returns an error if the operation ID is malformed, a runtime mutex is
+    /// poisoned, the fleet rejects the capture, or the blocking worker aborts.
     pub async fn capture(
         &self,
         database: &str,
@@ -314,6 +342,9 @@ impl NativeBackupRuntime {
     }
 
     /// Returns the authenticated retained chain for one admitted database.
+    ///
+    /// # Errors
+    /// Returns an error if the fleet mutex is poisoned or the retained chain cannot be read.
     pub fn retained_points(
         &self,
         database: &str,
@@ -323,6 +354,9 @@ impl NativeBackupRuntime {
     }
 
     /// Async retained-chain observation serialized with provider operations.
+    ///
+    /// # Errors
+    /// Returns an error if the retained-chain lookup fails.
     pub async fn retained_points_async(
         &self,
         database: &str,
@@ -332,6 +366,9 @@ impl NativeBackupRuntime {
     }
 
     /// Async authenticated envelope observation serialized with fleet work.
+    ///
+    /// # Errors
+    /// Returns an error if the fleet mutex is poisoned or the envelope catalog cannot be read.
     pub async fn retained_envelopes_async(
         &self,
         database: &str,
@@ -342,17 +379,28 @@ impl NativeBackupRuntime {
     }
 
     /// Async readiness observation serialized with provider operations.
+    ///
+    /// # Errors
+    /// Returns an error if the readiness lookup fails.
     pub async fn is_ready_async(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
         let _gate = self.async_fleet.lock().await;
         self.is_ready(database)
     }
 
     /// Converts a public Unix-second timestamp to the native millisecond unit.
+    ///
+    /// # Errors
+    /// Returns an error if the timestamp overflows the millisecond unit.
     pub fn unix_seconds_to_millis(seconds: u64) -> Result<u64, NativeBackupRuntimeError> {
         seconds.checked_mul(1_000).ok_or(NativeBackupRuntimeError::Unavailable)
     }
 
     /// Restores a selected encrypted point into a caller-validated new target.
+    ///
+    /// # Errors
+    /// Returns an error if the operation ID or placement is rejected, a runtime
+    /// mutex is poisoned, the fleet rejects the restore, or the blocking worker aborts.
+    #[allow(clippy::too_many_arguments, reason = "explicit restore target, identity, and placement ownership")]
     pub async fn restore_from_provider(
         &self,
         database: &str,
@@ -388,6 +436,10 @@ impl NativeBackupRuntime {
     }
 
     /// Restores through an inclusive Unix-second timestamp using one provider.
+    ///
+    /// # Errors
+    /// Returns an error if the operation ID or placement is rejected, the fleet
+    /// rejects the restore, or envelope encoding fails.
     pub async fn restore_logical_from_provider(
         &self,
         database: &str,
@@ -451,6 +503,12 @@ impl NativeBackupRuntime {
     }
 
     /// Restores through an inclusive Unix-second timestamp using one provider.
+    ///
+    /// # Errors
+    /// Returns an error if the operation ID or placement is rejected, the
+    /// timestamp overflows, the fleet rejects the restore, or the blocking
+    /// worker aborts.
+    #[allow(clippy::too_many_arguments, reason = "explicit restore target, identity, and placement ownership")]
     pub async fn restore_at_seconds(
         &self,
         database: &str,
@@ -482,6 +540,11 @@ impl NativeBackupRuntime {
     }
 
     /// Restores through an inclusive Unix-millisecond timestamp without rounding.
+    ///
+    /// # Errors
+    /// Returns an error if the operation ID or placement is rejected, a runtime
+    /// mutex is poisoned, the fleet rejects the restore, or the blocking worker aborts.
+    #[allow(clippy::too_many_arguments, reason = "explicit restore target, identity, and placement ownership")]
     pub async fn restore_at_millis(
         &self,
         database: &str,
@@ -512,6 +575,9 @@ impl NativeBackupRuntime {
     }
 
     /// Dynamically admits one accepted stream under the shared fleet lock.
+    ///
+    /// # Errors
+    /// Returns an error if a runtime mutex is poisoned or the fleet rejects the stream.
     pub fn attach(&self, input: NativeBackupInput) -> Result<(), NativeBackupRuntimeError> {
         let database = input.engine.engine().database_id().to_string();
         let placement = input.placement.clone();
@@ -536,6 +602,9 @@ impl NativeBackupRuntime {
     }
 
     /// Async admission path coordinated with captures and synchronization.
+    ///
+    /// # Errors
+    /// Returns an error if stream admission fails.
     pub async fn attach_async(
         &self,
         input: NativeBackupInput,
@@ -545,6 +614,9 @@ impl NativeBackupRuntime {
     }
 
     /// Releases target engine references under the serialized native fleet lock.
+    ///
+    /// # Errors
+    /// Returns an error if the fleet mutex is poisoned or the fleet rejects the suspension.
     pub fn suspend_for_restore(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
         self.fleet
             .lock()
@@ -554,6 +626,9 @@ impl NativeBackupRuntime {
     }
 
     /// Suspends a stream while coordinating with active fleet work.
+    ///
+    /// # Errors
+    /// Returns an error if the suspension fails.
     pub async fn suspend_for_restore_async(
         &self,
         database: &str,
@@ -563,6 +638,9 @@ impl NativeBackupRuntime {
     }
 
     /// Restores the same backup policy with the reopened admitted target engine.
+    ///
+    /// # Errors
+    /// Returns an error if the fleet mutex is poisoned or the fleet rejects the resumed policy.
     pub fn resume_after_restore(
         &self,
         database: &str,
@@ -581,6 +659,9 @@ impl NativeBackupRuntime {
     }
 
     /// Rebinds a restored host while coordinating with active fleet work.
+    ///
+    /// # Errors
+    /// Returns an error if the rebinding fails.
     pub async fn resume_after_restore_async(
         &self,
         database: &str,
@@ -592,6 +673,9 @@ impl NativeBackupRuntime {
     }
 
     /// Detaches one stream while retaining its staged and remote artifacts.
+    ///
+    /// # Errors
+    /// Returns an error if a runtime mutex is poisoned.
     pub fn detach(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet.detach(database);
@@ -600,6 +684,9 @@ impl NativeBackupRuntime {
     }
 
     /// Detaches a stream without blocking an executor thread on the fleet lock.
+    ///
+    /// # Errors
+    /// Returns an error if the detachment fails.
     pub async fn detach_async(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
         let _gate = self.async_fleet.lock().await;
         self.detach(database)
@@ -621,6 +708,9 @@ impl NativeBackupRuntime {
     }
 
     /// Fences and detaches every stream without blocking an executor thread.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime state mutex is poisoned.
     pub async fn drain_async(&self) -> Result<(), NativeBackupRuntimeError> {
         let _gate = self.async_fleet.lock().await;
         self.drain()
@@ -634,6 +724,9 @@ impl NativeBackupRuntime {
 
     /// Returns whether a canonical admitted database has a native stream.
     /// Unknown identities are unavailable rather than silently treated as off.
+    ///
+    /// # Errors
+    /// Returns an error if the database identity is empty or the registry mutex is poisoned.
     pub fn attached(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
         if database.is_empty() {
             return Err(NativeBackupRuntimeError::Unavailable);
@@ -646,6 +739,9 @@ impl NativeBackupRuntime {
     }
 
     /// Async attachment observation serialized with provider operations.
+    ///
+    /// # Errors
+    /// Returns an error if the attachment lookup fails.
     pub async fn attached_async(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
         let _gate = self.async_fleet.lock().await;
         self.attached(database)
@@ -653,6 +749,10 @@ impl NativeBackupRuntime {
 
     /// Reads current protection from every configured provider and the source
     /// journal frontier; cached scheduler health is never sufficient.
+    ///
+    /// # Errors
+    /// Returns an error if the database has no admitted stream, a runtime
+    /// mutex is poisoned, or provider protection cannot be read.
     pub fn is_ready(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
         if !self
             .databases
@@ -979,6 +1079,7 @@ mod restore_tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    #[allow(clippy::too_many_lines, reason = "one fleet lifecycle scenario per test")]
     async fn one_native_fleet_captures_two_encrypted_databases_and_restores_content() {
         use terrabase::operations::{QueryInput, SqlQueryText};
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();

@@ -126,6 +126,7 @@ fn cursor_decode(
     Ok(cursor)
 }
 
+#[allow(clippy::needless_pass_by_value, reason = "cursor is only borrowed for encoding")]
 fn cursor_encode(cursor: Cursor) -> Result<String, BackupPointCatalogError> {
     let bytes = serde_json::to_vec(&cursor).map_err(|_| BackupPointCatalogError::InvalidCursor)?;
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
@@ -136,6 +137,9 @@ fn cursor_encode(cursor: Cursor) -> Result<String, BackupPointCatalogError> {
 }
 
 /// Lists authenticated root manifests and complete routed envelopes.
+///
+/// # Errors
+/// Refuses invalid limits, cursors, or conflicting retained points, and returns runtime failures.
 pub async fn list_backup_points(
     runtime: &NativeBackupRuntime,
     database: &str,

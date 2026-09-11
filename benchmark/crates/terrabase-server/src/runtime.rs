@@ -215,6 +215,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     Ok(())
 }
 
+#[allow(clippy::too_many_lines, reason = "one startup pass over the production owners")]
 async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Error + Send + Sync>> {
     let production =
         config.production.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
@@ -612,6 +613,7 @@ fn start_admission_listener(
 
 // This boundary owns every task created after native recovery composition.
 // Startup errors must join these owners before the ledger can be reopened.
+#[allow(clippy::too_many_lines, reason = "one owner per admitted production block")]
 async fn serve_admitted_production(
     config: &ServerConfig,
     production: &crate::config::ProductionConfig,
@@ -699,6 +701,7 @@ async fn serve_admitted_production(
         )
         .await
         .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+        #[allow(clippy::type_complexity, reason = "restore target builder mirrors the engine-open signature")]
         let native_restore_target: Arc<
             dyn Fn(
                     &str,
@@ -1246,6 +1249,7 @@ async fn drain_listener<E>(
     }
 }
 
+#[allow(clippy::cast_possible_truncation, reason = "secret sizes fit usize on 64-bit OCI hosts")]
 fn read_private_receipt_key(
     control: &crate::config::ProductionControl,
 ) -> Result<Vec<u8>, DaemonError> {
@@ -1648,6 +1652,7 @@ async fn wait_for_shutdown() -> Result<(), std::io::Error> {
 ///
 /// Returns the serve task and its drain signal; both `None` when the
 /// deployment binds no public surface.
+#[allow(clippy::too_many_lines, reason = "one listener per public surface, one drain")]
 async fn serve_public_api(
     config: &ServerConfig,
     metrics: Arc<terrabase::observability::MetricsRegistry>,
@@ -2130,6 +2135,7 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    #[allow(clippy::too_many_lines)]
     async fn exercise_production_startup_cleanup(before_listeners: bool) {
         use crate::native_backup_runtime::{
             AdmittedBackupEngine, NativeBackupInput, NativeBackupRuntime,

@@ -288,6 +288,7 @@ pub(crate) mod admitted_fixture {
         create_with_limits(limits).await
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn create_with_limits(transport_limits: ProductionTransportLimits) -> Fixture {
         let root = std::env::temp_dir().join(format!("terrabase-auth-http-{}", Ulid::new()));
         std::fs::create_dir_all(&root).unwrap();
@@ -644,6 +645,7 @@ fn openapi_registers_transactional_record_get() {
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)]
 async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let fixture = admitted_fixture::create().await;
     let auth = format!("Bearer {}", fixture.key);
@@ -877,6 +879,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     exercise_concurrent_and_rollback(&fixture, &auth).await;
 }
 
+#[allow(clippy::too_many_lines)]
 async fn exercise_concurrent_and_rollback(fixture: &admitted_fixture::Fixture, auth: &str) {
     // Exercise both admitted authorities concurrently. The elected follower
     // routes its operations over authenticated member transport.
@@ -1114,6 +1117,7 @@ async fn admitted_quic_client_response_completes_after_runtime_dispatch() {
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)]
 async fn lost_consume_response_replays_the_same_public_operation() {
     use terrabase_member_transport::production::ProductionConnectionClass;
 

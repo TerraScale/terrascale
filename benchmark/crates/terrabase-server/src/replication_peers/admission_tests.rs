@@ -440,6 +440,7 @@ async fn real_worker_suspension_releases_engine_and_rebinds_same_assignment() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn real_session_io_failure_fences_old_session_before_restart() {
     use crate::production::tests::{AcceptedMembership, Writer, opened_bootstrap, transport_pair};
     use terrabase_cluster::wal_driver::{

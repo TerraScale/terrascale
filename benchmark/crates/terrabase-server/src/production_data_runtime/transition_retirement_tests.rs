@@ -335,6 +335,7 @@ fn cancelled_retirement_retains_barrier_until_queued_fencing_finishes() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn restore_authority_separates_placement_lifecycle_and_restore_epochs() {
     use crate::native_recovery::{NativeRestoreRequest, NativeRestoreSelection};
     use terrabase_tbep::lifecycle::{LifecycleGrantAction, LifecycleOperationGrant};

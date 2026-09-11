@@ -33,6 +33,7 @@ impl DatabaseKeySource for StaticKeys {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn fixture() -> (
     WalSnapshotSource,
     WalReplicaBinding,
@@ -152,6 +153,7 @@ async fn fixture() -> (
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn encrypted_snapshot_upload_round_trip_and_retry_validation() {
     let (source, _binding, follower_binding, lease, data_lease, root) = fixture().await;
     let store = Arc::new(object_store::memory::InMemory::new());

@@ -404,6 +404,9 @@ impl KeyStore {
     }
 
     /// Admits a key only when its immutable owner matches the accepted route.
+    ///
+    /// # Errors
+    /// Returns an error when the key is not admitted or its owner does not match the accepted route.
     pub fn admit_for_owner(
         &self,
         key: &str,

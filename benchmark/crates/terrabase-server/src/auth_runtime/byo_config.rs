@@ -150,6 +150,9 @@ pub struct FileTenantJwtConfig {
 }
 
 /// Builds the production object-safe admission handoff for one issuer.
+///
+/// # Errors
+/// Returns an error if the file configuration resolves to an invalid BYO-JWT policy.
 pub fn build_admission<H>(
     file: &FileTenantJwtConfig,
     hook: Arc<H>,
@@ -170,6 +173,9 @@ where
 
 /// Builds the signature-only stage for callers that perform live membership
 /// admission in the request path with the original verified context.
+///
+/// # Errors
+/// Returns an error if the file configuration resolves to an invalid BYO-JWT policy.
 pub fn build_signature_admission(
     file: &FileTenantJwtConfig,
 ) -> Result<Arc<dyn ByoJwtSignatureAdmission>, String> {
@@ -184,6 +190,9 @@ pub fn build_signature_admission(
 
 impl FileTenantJwtConfig {
     /// Converts and validates the file representation before readiness.
+    ///
+    /// # Errors
+    /// Returns an error for unsupported algorithms or an invalid JWKS endpoint or policy.
     pub fn resolve(&self) -> Result<TenantJwtConfig, String> {
         let algorithms = self
             .algorithms
@@ -220,6 +229,9 @@ pub struct HttpsJwksFetcher {
 
 impl HttpsJwksFetcher {
     /// Uses the platform root store and AWS-LC crypto provider.
+    ///
+    /// # Panics
+    /// Never in practice: AWS-LC always provides safe default protocol versions.
     #[must_use]
     pub fn new() -> Self {
         let roots: rustls::RootCertStore = webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect();
