@@ -1,11 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { journeySource } from "./packaged-consumer.ts";
+
+test("emitted standalone consumer compiles against the installed public SDK declarations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ts-generated-typecheck-"));
+  const dashboard = new URL("../../../ts-dashboard/", import.meta.url).pathname;
+  try {
+    await mkdir(join(root, "node_modules", "@terrascale"), { recursive: true });
+    await symlink(join(dashboard, "node_modules", "@terrascale", "sdk"), join(root, "node_modules", "@terrascale", "sdk"));
+    await symlink(join(dashboard, "node_modules", "@types"), join(root, "node_modules", "@types"));
+    await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
+    const file = join(root, "journey.ts");
+    await writeFile(file, journeySource("exercise"));
+    await promisify(execFile)(join(dashboard, "node_modules", ".bin", "tsc"), ["--ignoreConfig", "--types", "node", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--strict", "--skipLibCheck", "--noEmit", file], { cwd: root });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 // Executes the generated standalone producer with a module-boundary fixture;
 // this tests generation/peer assertions, never claims live SDK qualification.
