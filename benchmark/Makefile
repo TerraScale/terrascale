@@ -1,4 +1,4 @@
-.PHONY: check contracts stack stack-check stack-test stack-config-test stack-pre-engine stack-down
+.PHONY: check contracts contract-archive stack stack-check stack-test stack-config-test stack-pre-engine stack-down
 
 stack:
 	./scripts/stack.sh up
@@ -50,3 +50,15 @@ contracts:
 	else \
 		./scripts/validate-release-contracts.sh --version "$(CONTRACT_VERSION)"; \
 	fi
+
+# Package the producer-owned bundle once, with deterministic tar metadata.
+# Consumers receive the archive and its SHA-256 sidecar; they never infer a
+# source from a sibling checkout. Existing output is immutable and is only
+# accepted again when its bytes and metadata are identical.
+CONTRACT_ARCHIVE_DIR ?= contract-archives
+CONTRACT_ARCHIVE := $(CONTRACT_ARCHIVE_DIR)/$(CONTRACT_VERSION).tar
+
+contract-archive: contracts
+	python3 scripts/package-contract-archive.py \
+		--source contracts --version "$(CONTRACT_VERSION)" \
+		--output "$(CONTRACT_ARCHIVE)"

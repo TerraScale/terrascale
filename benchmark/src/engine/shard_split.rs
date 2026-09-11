@@ -177,7 +177,8 @@ impl ScopedShardEngine {
         let mut tx = target.begin(&scope, target.read_snapshot(&scope)?, operation)?;
         tx.internal_maintenance = true;
         tx.put_private_metadata(TARGET_VERIFICATION_KEY, value(&receipt))?;
-        match tx.commit(LocalDurability::Synced) {
+        let outcome = tx.commit(LocalDurability::Synced);
+        match outcome {
             CommitOutcome::Committed(_) => {
                 target.install_split_target_catalog(&scope, &state, target_generation)
             }
@@ -290,12 +291,23 @@ impl ScopedShardEngine {
             .map_err(|_| EngineError::InvalidDocument)?;
         let mut tx = target.begin(scope, target.read_snapshot(scope)?, operation)?;
         tx.internal_maintenance = true;
-        tx.put_private_metadata(
-            &crate::engine::shard_split::file_shard_key(file_identity.database_incarnation),
-            value(&crate::engine::shard_split::encode_file_identity(file_identity)),
-        )?;
+        let file_key =
+            crate::engine::shard_split::file_shard_key(file_identity.database_incarnation);
+        let file_present = target
+            .lock_storage()?
+            .port
+            .private_metadata_at(scope.tenant(), &file_key, tx.snapshot_sequence)
+            .map_err(|()| EngineError::StorageFailure)?
+            .is_some();
+        if !file_present {
+            tx.put_private_metadata(
+                &file_key,
+                value(&crate::engine::shard_split::encode_file_identity(file_identity)),
+            )?;
+        }
         tx.put_private_metadata(target_identity_key(), value(identity))?;
-        match tx.commit(LocalDurability::Synced) {
+        let outcome = tx.commit(LocalDurability::Synced);
+        match outcome {
             CommitOutcome::Committed(_) => Ok(()),
             CommitOutcome::Rejected(CommitError::Conflict | CommitError::OperationIdReuse) => {
                 Err(EngineError::Conflict)
@@ -324,7 +336,9 @@ impl ScopedShardEngine {
         for (collection, envelope) in records {
             tx.stage_schema_metadata(&database, "main", &collection, None, &envelope)?;
         }
-        match tx.commit(LocalDurability::Synced) {
+        let outcome = tx.commit(LocalDurability::Synced);
+        eprintln!("DEBUG copy outcome={outcome:?}");
+        match outcome {
             CommitOutcome::Committed(_)
             | CommitOutcome::Rejected(CommitError::OperationIdReuse) => Ok(()),
             CommitOutcome::Rejected(CommitError::Conflict) => Err(EngineError::Conflict),
@@ -385,12 +399,13 @@ impl SplitEngineAdapter for ScopedShardEngine {
             Some(_) => Err(EngineError::Conflict),
             None => {
                 // The staging target inherits only an admitted, still-open
-                // source writer epoch. Owned Engine creation starts fenced;
-                // writing its identity before this admission always conflicts.
+                // source writer epoch. Admit the target before its first
+                // durable metadata transaction.
                 let (epoch, fenced) = self.engine.origin_epoch()?;
                 if epoch == 0 || fenced {
                     return Err(EngineError::Conflict);
                 }
+                target.activate_origin_epoch(epoch)?;
                 Self::persist_target_identity(
                     &target,
                     &target_scope,
@@ -398,7 +413,6 @@ impl SplitEngineAdapter for ScopedShardEngine {
                     &identity,
                     file_identity,
                 )?;
-                target.activate_origin_epoch(epoch)?;
                 if let Some(placement) = self
                     .engine
                     .usage_placement(&self.scope)
@@ -641,6 +655,7 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
             return Ok(());
         }
         if self.engine.shard_catalog_exists(&self.scope)? {
+            eprintln!("DEBUG target catalog exists");
             return Err(EngineError::Conflict);
         }
         // Bind import identities to the durable split, keys and source versions.
@@ -660,7 +675,7 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
         digest.update(identity.as_bytes());
         for entry in batch.entries() {
             let document = crate::storage::decode_document_body(entry.value())
-                .ok_or(EngineError::InvalidDocument)?;
+                .ok_or_else(|| { eprintln!("DEBUG decode fail"); EngineError::InvalidDocument })?;
             digest.update(&(entry.key().len() as u64).to_be_bytes());
             digest.update(entry.key());
             digest.update(&document.metadata().version().to_be_bytes());
@@ -682,7 +697,7 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
             if document.collection() != &collection || document.id() != &id {
                 return Err(EngineError::Conflict);
             }
-            tx.put(document, ExpectedVersion::Any)?;
+            tx.put(document, ExpectedVersion::Any).map_err(|e| { eprintln!("DEBUG tx.put err={e:?}"); e })?;
         }
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
