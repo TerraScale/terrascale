@@ -39,6 +39,49 @@ fn document_response() -> Response {
 }
 
 #[tokio::test]
+async fn api_key_is_normalized_once_before_authorization_header_is_added() {
+    for (configured, expected) in [
+        ("raw-key", "Bearer raw-key"),
+        ("Bearer prefixed-key", "Bearer prefixed-key"),
+        ("bEaReR   spaced-key", "Bearer spaced-key"),
+    ] {
+        let mock = Mock::new([document_response()]);
+        let sdk = TerraScaleClient::with_transport(
+            ClientConfig::builder()
+                .api_key(configured)
+                .build()
+                .expect("config"),
+            Arc::clone(&mock) as Arc<dyn HttpTransport>,
+        );
+        sdk.documents()
+            .get(&DatabaseScope::new("database"), "users", "doc")
+            .await
+            .expect("get");
+        let requests = mock.requests.lock().expect("request mutex");
+        assert_eq!(
+            requests[0]
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                .map(|(_, value)| value.as_str()),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn api_key_rejects_empty_whitespace_and_control_characters() {
+    for configured in ["", "   ", "Bearer", "Bearer   ", "key\nvalue", "key\rvalue"] {
+        let error = ClientConfig::builder()
+            .api_key(configured)
+            .build()
+            .expect_err("invalid API key");
+        assert_eq!(error.kind, terrascale::ErrorKind::Validation);
+        assert_eq!(error.code, "invalid_api_key");
+    }
+}
+
+#[tokio::test]
 async fn documents_propagate_authoritative_etag_and_require_json_success_media() {
     let get = Response {
         status: 200,

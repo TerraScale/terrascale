@@ -158,6 +158,10 @@ impl ClientConfigBuilder {
 
     /// Validate and build the config.
     pub fn build(self) -> Result<ClientConfig> {
+        let api_key = self
+            .api_key
+            .map(|api_key| normalize_api_key(&api_key))
+            .transpose()?;
         for (name, value) in [
             ("tenant_id", &self.tenant_id),
             ("project_id", &self.project_id),
@@ -204,7 +208,7 @@ impl ClientConfigBuilder {
         Ok(ClientConfig {
             api_base_url,
             sync_base_url,
-            api_key: self.api_key,
+            api_key,
             project_id: self.project_id,
             tenant_id: self.tenant_id,
             preferred_region: self.preferred_region,
@@ -213,4 +217,39 @@ impl ClientConfigBuilder {
             retry_delay_ms,
         })
     }
+}
+
+/// Normalize the caller credential once at configuration time so every
+/// transport receives the same token and can add its own auth scheme prefix.
+pub(crate) fn normalize_api_key(value: &str) -> Result<String> {
+    if value.chars().any(char::is_control) {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_api_key",
+            "API keys cannot contain control characters.",
+        ));
+    }
+
+    let value = value.trim();
+    let value = if value.eq_ignore_ascii_case("bearer") {
+        ""
+    } else if value.len() >= 6
+        && value[..6].eq_ignore_ascii_case("bearer")
+        && value[6..]
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_whitespace())
+    {
+        value[6..].trim()
+    } else {
+        value
+    };
+    if value.is_empty() {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_api_key",
+            "API keys cannot be empty.",
+        ));
+    }
+    Ok(value.to_owned())
 }
