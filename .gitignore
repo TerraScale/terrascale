@@ -13,6 +13,9 @@ dist-ssr
 .svelte-kit
 build
 .wrangler
+# Local development convenience only; the deployment destination lives in
+# ts-deploy's site kind.
+wrangler.toml
 *.local
 
 # Playwright
