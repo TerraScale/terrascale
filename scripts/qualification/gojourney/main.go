@@ -27,8 +27,8 @@ type observation struct {
 }
 
 type config struct {
-	apiURL, _authURL, project, database, key, runID, collection string
-	denyKey                                                     string
+	apiURL, project, database, key, runID, collection string
+	denyKey                                           string
 }
 
 func getenv(name string) (string, error) {
@@ -43,9 +43,6 @@ func loadConfig() (config, error) {
 	var c config
 	var err error
 	if c.apiURL, err = getenv("TERRASCALE_API_URL"); err != nil {
-		return c, err
-	}
-	if c._authURL, err = getenv("TERRASCALE_AUTH_URL"); err != nil {
 		return c, err
 	}
 	if c.project, err = getenv("TERRASCALE_PROJECT_ID"); err != nil {

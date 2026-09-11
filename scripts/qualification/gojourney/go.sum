@@ -6,3 +6,5 @@ github.com/zeebo/blake3 v0.2.4 h1:KYQPkhpRtcqh0ssGYcKLG1JYvddkEA8QwCM/yBqhaZI=
 github.com/zeebo/blake3 v0.2.4/go.mod h1:7eeQ6d2iXWRGF6npfaxl2CU+xy2Fjo2gxeyZGCRUjcE=
 terrascale.tech/sdk v0.0.0-20260909163507-032e579b645e h1:JY19OMOYv7+6Dl7hNL4bDUPfM1PhMTkLpN2LrMMIh14=
 terrascale.tech/sdk v0.0.0-20260909163507-032e579b645e/go.mod h1:CBgIEfw0wTY2UDGAo1hmt1COj0872PnfTUNB3o0/3io=
+terrascale.tech/sdk v0.0.0-20260910000829-658d897f69a5 h1:AzKsIGdSVtNby7hN/Uh8xuMyEaqEOrh/G2sQWKpB3K0=
+terrascale.tech/sdk v0.0.0-20260910000829-658d897f69a5/go.mod h1:CBgIEfw0wTY2UDGAo1hmt1COj0872PnfTUNB3o0/3io=
