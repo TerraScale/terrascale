@@ -31,7 +31,13 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
   if (match !== undefined) {
     const actor = localActor(context);
     const organizations = await records<Models.Organization>(store, "organizations");
-    return jsonResponse(organizations.map((organization) => withSessionOwner(organization, actor)));
+    const visible: Models.Organization[] = [];
+    for (const organization of organizations) {
+      if (await actorBelongsToOrganization(store, organization, actor)) {
+        visible.push(organization);
+      }
+    }
+    return jsonResponse(visible);
   }
   if (matchLocalRoute(context, "POST", "/api/v1/organizations") !== undefined) {
     const name = nonBlank(body.name);
@@ -379,6 +385,24 @@ function withSessionOwner<T extends { readonly ownerUserIds: readonly UserId[] }
   if (!record.ownerUserIds.includes(LOCAL_USER_ID)) return record;
   if (record.ownerUserIds.includes(actor.userId)) return record;
   return { ...record, ownerUserIds: [...record.ownerUserIds, actor.userId] };
+}
+
+/**
+ * Only organizations the caller owns or was added to as a member are returned
+ * by the list endpoint. Membership records are written when an organization is
+ * created and when an invitation is accepted, so this covers both cases.
+ */
+async function actorBelongsToOrganization(
+  store: TerraScaleSqliteStore,
+  organization: Models.Organization,
+  actor: LocalActor,
+): Promise<boolean> {
+  if (organization.ownerUserIds.includes(actor.userId)) return true;
+  return (await get<Models.OrganizationMember>(
+    store,
+    "organization-members",
+    memberKey(organization.organizationId, actor.userId),
+  )) !== undefined;
 }
 
 function ownerMember(

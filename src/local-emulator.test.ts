@@ -449,12 +449,62 @@ test("legacy placeholder-owned records become manageable by the authenticated se
       );
 
       const client = runtime.createClient({ accessToken: token });
-      const organizations = expectOk(await client.organizations.list({ skip: 0, take: 100 }));
-      const migrated = organizations.find(
-        (organization) => organization.organizationId === legacy.organizationId,
-      );
-      assert.ok(migrated !== undefined);
+      const migrated = expectOk(await client.organizations.get(legacy.organizationId));
       assert.ok(migrated.ownerUserIds.map(String).includes(userId));
+    } finally {
+      await runtime.stop();
+    }
+  });
+});
+
+test("organization list only returns organizations the caller owns or joined", async () => {
+  await withTempRuntime(async (runtime) => {
+    const address = await started(runtime);
+    try {
+      const auth = createLocalBetterAuthHttpOperations({ baseUrl: address.apiBaseUrl });
+      const createSession = async (
+        slug: string,
+      ): Promise<{ readonly userId: string; readonly token: string }> => {
+        const created = expectOk(
+          await auth.insertUnique({
+            model: "user",
+            data: { email: `${slug}@example.test`, name: slug },
+            idempotencyKey: `${slug}-user`,
+          }),
+        );
+        const userId = (created as unknown as { readonly id: string }).id;
+        const token = `local-${slug}-session-0123456789-abcdefghijk`;
+        expectOk(
+          await auth.insertUnique({
+            model: "session",
+            data: { token, userId, expiresAt: new Date(Date.now() + 86_400_000).toISOString() },
+            idempotencyKey: `${slug}-session`,
+          }),
+        );
+        return { userId, token };
+      };
+      const alice = await createSession("alice");
+      const bob = await createSession("bob");
+
+      const aliceClient = runtime.createClient({ accessToken: alice.token });
+      const bobClient = runtime.createClient({ accessToken: bob.token });
+      const aliceOrganization = expectOk(
+        await aliceClient.organizations.create({ name: "Alice organization" }),
+      );
+      const bobOrganization = expectOk(
+        await bobClient.organizations.create({ name: "Bob organization" }),
+      );
+
+      const aliceList = expectOk(await aliceClient.organizations.list({ skip: 0, take: 100 }));
+      assert.deepEqual(
+        aliceList.map((organization) => organization.organizationId),
+        [aliceOrganization.organizationId],
+      );
+      const bobList = expectOk(await bobClient.organizations.list({ skip: 0, take: 100 }));
+      assert.deepEqual(
+        bobList.map((organization) => organization.organizationId),
+        [bobOrganization.organizationId],
+      );
     } finally {
       await runtime.stop();
     }
