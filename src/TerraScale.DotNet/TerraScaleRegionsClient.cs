@@ -42,17 +42,6 @@ public sealed class TerraScaleRegionsClient
         return response;
     }
 
-    /// <summary>
-    /// Gets the public catalog details for one TerraScale deployment region.
-    /// </summary>
-    public Task<TerraScaleRegionDetails> GetAsync(
-        string regionCode,
-        CancellationToken cancellationToken = default)
-    {
-        TerraScaleRegionCodes.Validate(regionCode, nameof(regionCode));
-        return Task.FromException<TerraScaleRegionDetails>(new TerraScaleContractGapException("regions.get"));
-    }
-
 }
 
 /// <summary>The edge-published global catalog and host addresses.</summary>

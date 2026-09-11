@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/SDK/">
     <Project Path="src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+    <Project Path="src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj" />
+    <Project Path="tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj" />
   </Folder>
 </Solution>

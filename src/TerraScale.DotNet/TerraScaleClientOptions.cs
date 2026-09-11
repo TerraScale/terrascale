@@ -112,6 +112,16 @@ public sealed record TerraScaleClientOptions
         var hasStaticBearerToken = !string.IsNullOrWhiteSpace(BearerToken);
         var hasBearerTokenProvider = BearerTokenProvider is not null;
 
+        if (hasApiKey)
+        {
+            ValidateAuthToken(ApiKey!, nameof(ApiKey));
+        }
+
+        if (hasStaticBearerToken)
+        {
+            ValidateAuthToken(BearerToken!, nameof(BearerToken));
+        }
+
         if (hasApiKey && (hasStaticBearerToken || hasBearerTokenProvider))
         {
             throw new ArgumentException("Configure either project API-key authentication or bearer-token authentication, not both.");
@@ -153,6 +163,14 @@ public sealed record TerraScaleClientOptions
         if (string.IsNullOrWhiteSpace(value) || value.Length > 255 || value.Any(character => character < 33 || character > 126))
             throw new ArgumentException("Scope selectors must contain 1 to 255 visible ASCII characters.", name);
         return value;
+    }
+
+    private static void ValidateAuthToken(string value, string name)
+    {
+        if (value.Any(char.IsControl))
+        {
+            throw new ArgumentException($"{name} must contain printable characters and no control characters.", name);
+        }
     }
 
     private static void ValidateEndpoint(Uri endpoint, string name)

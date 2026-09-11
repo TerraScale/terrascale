@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>TerraScale.EntityFrameworkCore</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Entity Framework Core integration for TerraScale public database APIs.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
+    <ProjectReference Include="..\TerraScale.DotNet\TerraScale.DotNet.csproj" />
+  </ItemGroup>
+</Project>

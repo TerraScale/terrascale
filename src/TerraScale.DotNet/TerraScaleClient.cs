@@ -63,7 +63,6 @@ public sealed class TerraScaleClient
         Regions = new TerraScaleRegionsClient(this);
         Backups = new TerraScaleBackupsClient(this);
         Management = new TerraScaleManagementClient(this);
-        Tenants = new TerraScaleTenantsClient(this);
         Sql = new TerraScaleSqlClient(this);
         Reactive = new TerraScaleReactiveHttpClient(
             httpClient,
@@ -117,9 +116,6 @@ public sealed class TerraScaleClient
 
     /// <summary>The composed management surface over this client.</summary>
     public TerraScaleManagementClient Management { get; }
-
-    /// <summary>Database-per-tenant lifecycle operations over this client.</summary>
-    public TerraScaleTenantsClient Tenants { get; }
 
     /// <summary>Typed-builder and raw parameterized read-only SQL operations.</summary>
     public TerraScaleSqlClient Sql { get; }

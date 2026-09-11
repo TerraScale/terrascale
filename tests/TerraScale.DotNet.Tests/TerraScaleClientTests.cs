@@ -19,7 +19,6 @@ public sealed class TerraScaleClientTests
             });
 
         await Assert.That(client.Management).IsNotNull();
-        await Assert.That(client.Tenants).IsNotNull();
         await Assert.That(client.Sql).IsNotNull();
         await Assert.That(client.Reactive).IsNotNull();
         await Assert.That(ReferenceEquals(client.Management.Databases, client.Databases)).IsTrue();
@@ -72,6 +71,37 @@ public sealed class TerraScaleClientTests
                 return Task.CompletedTask;
             });
         }
+    }
+
+    [Test]
+    [Arguments("ApiKey", "project-key\r\nX-Injected: true")]
+    [Arguments("ApiKey", "project-key\u0000")]
+    [Arguments("BearerToken", "caller-token\r\nX-Injected: true")]
+    [Arguments("BearerToken", "caller-token\u007f")]
+    public async Task AuthenticationTokensRejectControlCharactersAtConstruction(string optionName, string token)
+    {
+        using var httpClient = new HttpClient(new RecordingHandler("[]"));
+        var options = new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"),
+        };
+
+        if (optionName == nameof(TerraScaleClientOptions.ApiKey))
+        {
+            options.ApiKey = token;
+        }
+        else
+        {
+            options.BearerToken = token;
+        }
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+        {
+            _ = new TerraScaleClient(httpClient, options);
+            return Task.CompletedTask;
+        });
+
+        await Assert.That(exception!.ParamName).IsEqualTo(optionName);
     }
 
     [Test]

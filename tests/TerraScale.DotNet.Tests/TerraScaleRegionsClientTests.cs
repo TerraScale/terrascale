@@ -59,19 +59,6 @@ public sealed class TerraScaleRegionsClientTests
         await Assert.That(catalog.Regions[0].Code).IsEqualTo("IAD");
     }
 
-    [Test]
-    public async Task GetAsync_RemainsExplicitContractGap()
-    {
-        using var handler = new RecordingHandler("{}");
-        using var httpClient = new HttpClient(handler);
-        var client = CreateClient(httpClient);
-
-        var exception = await Assert.ThrowsAsync<ArgumentException>(() => client.Regions.GetAsync("gru"));
-
-        await Assert.That(exception).IsNotNull();
-        await Assert.That(handler.Request).IsNull();
-    }
-
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),

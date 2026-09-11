@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" Version="1.56.18" />
+    <ProjectReference Include="../../src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
+  </ItemGroup>
+</Project>
