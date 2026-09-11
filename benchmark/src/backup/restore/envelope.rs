@@ -417,10 +417,8 @@ mod tests {
             let archive = workspace.join(format!("archive-{shard}"));
             let encryption =
                 BackupEncryption::from_database_key_lease(lease, source_owner.region(), 0).unwrap();
-            let manifest = run_backup(&source, BackupPlan::full(encryption), &archive)
-                .unwrap()
-                .manifest()
-                .clone();
+            let plan = BackupPlan::full(encryption).with_snapshot_routes(routes.clone()).unwrap();
+            let manifest = run_backup(&source, plan, &archive).unwrap().manifest().clone();
             let shard = u64::try_from(shard).unwrap();
             let participant_id = format!("shard-{shard:016x}");
             archives.push((participant_id.clone(), archive));

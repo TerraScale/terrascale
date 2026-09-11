@@ -180,7 +180,7 @@ pub mod worker;
 pub use worker::FleetError;
 
 pub use envelope::{BackupEnvelope, BackupEnvelopeParticipant};
-pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
+pub use manifest::{BackupCaptureKind, BackupManifest, BackupMember, BackupTenantCount};
 pub use restore::{
     EnvelopeRecoveryReceipt, RecoveryReceipt, RestoreChainLink, RestoreMarkerFacts, RestoredTenant,
     read_restore_marker, verify_envelope_restore, verify_latest_chain_encrypted,
