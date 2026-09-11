@@ -31,6 +31,8 @@ type config struct {
 	denyKey                                           string
 }
 
+var journeyPeers = [...]string{"typescript", "go", "rust", "dotnet", "cli"}
+
 func getenv(name string) (string, error) {
 	v := strings.TrimSpace(os.Getenv(name))
 	if v == "" {
@@ -178,7 +180,7 @@ func seed(ctx context.Context, c *sdk.Client, cfg config) error {
 }
 
 func verify(ctx context.Context, c *sdk.Client, cfg config) error {
-	for _, sdkName := range []string{"typescript", "go", "rust", "dotnet"} {
+	for _, sdkName := range journeyPeers {
 		d, err := c.Documents.Get(ctx, cfg.database, cfg.collection, id(cfg, sdkName))
 		if err != nil {
 			emit(observation{Phase: "verify", Action: "get-" + sdkName, OK: false, Detail: err.Error()})
