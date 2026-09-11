@@ -1893,10 +1893,7 @@ fn parse_public_api(
     {
         return Err(ConfigError::InvalidListenAddress);
     }
-    public_api_path(&section.data_root, production)?;
     if let Some(publisher) = &section.lifecycle_publication {
-        public_api_path(&publisher.key_file, production)?;
-        public_api_path(&publisher.outbox_path, production)?;
         let uri: axum::http::Uri =
             publisher.endpoint.parse().map_err(|_| ConfigError::InvalidBound)?;
         if uri.scheme_str() != Some("https")
@@ -1936,6 +1933,14 @@ fn parse_public_api(
 }
 
 fn validate_public_api_paths(section: &FilePublicApi, production: bool) -> Result<(), ConfigError> {
+    let mut paths = Vec::new();
+    paths.push(public_api_path(&section.data_root, production)?);
+    if let Some(publisher) = &section.lifecycle_publication {
+        paths.extend([
+            public_api_path(&publisher.key_file, production)?,
+            public_api_path(&publisher.outbox_path, production)?,
+        ]);
+    }
     for key_file in [
         section.bootstrap_key_file.as_ref(),
         section.origin_proof_key_file.as_ref(),
@@ -1946,10 +1951,10 @@ fn validate_public_api_paths(section: &FilePublicApi, production: bool) -> Resul
     .into_iter()
     .flatten()
     {
-        public_api_path(key_file, production)?;
+        paths.push(public_api_path(key_file, production)?);
     }
     if let Some(provisioning) = &section.provisioning {
-        public_api_path(&provisioning.socket, production)?;
+        paths.push(public_api_path(&provisioning.socket, production)?);
         if provisioning.environment.is_empty()
             || provisioning.environment.len() > 128
             || !provisioning
@@ -1961,8 +1966,10 @@ fn validate_public_api_paths(section: &FilePublicApi, production: bool) -> Resul
         }
     }
     if let Some(identity) = &section.identity {
-        public_api_path(&identity.service_key_file, production)?;
-        public_api_path(&identity.authorization_lease_keys_file, production)?;
+        paths.extend([
+            public_api_path(&identity.service_key_file, production)?,
+            public_api_path(&identity.authorization_lease_keys_file, production)?,
+        ]);
         for endpoint in [&identity.endpoint, &identity.issuer, &identity.audience] {
             let uri: axum::http::Uri =
                 endpoint.parse().map_err(|_| ConfigError::InvalidIdentityAuthority)?;
@@ -1977,9 +1984,11 @@ fn validate_public_api_paths(section: &FilePublicApi, production: bool) -> Resul
         }
     }
     if let Some(rotation) = &section.credential_rotation {
-        public_api_path(&rotation.socket, production)?;
-        public_api_path(&rotation.state_file, production)?;
-        public_api_path(&rotation.token_file, production)?;
+        paths.extend([
+            public_api_path(&rotation.socket, production)?,
+            public_api_path(&rotation.state_file, production)?,
+            public_api_path(&rotation.token_file, production)?,
+        ]);
         if rotation.socket == rotation.state_file
             || rotation.socket == rotation.token_file
             || rotation.state_file == rotation.token_file
@@ -1988,7 +1997,10 @@ fn validate_public_api_paths(section: &FilePublicApi, production: bool) -> Resul
         }
     }
     if let Some(billing) = &section.billing_closure {
-        public_api_path(&billing.key_file, production)?;
+        paths.push(public_api_path(&billing.key_file, production)?);
+    }
+    if production {
+        reject_nested_paths(&paths)?;
     }
     Ok(())
 }
@@ -2549,6 +2561,57 @@ key_file = "/run/secrets/billing-closure"
             "data_root = \"/var/lib/terrabase/db-a/public-api\"",
         );
         assert!(matches!(ServerConfig::parse(&overlap), Err(ConfigError::DuplicateProductionPath)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn production_public_api_paths_reject_symlinks_and_writable_components() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let base = std::env::current_dir()
+            .expect("test working directory")
+            .join(format!(".terrabase-public-api-paths-{}", std::process::id()));
+        std::fs::create_dir(&base).expect("public API test directory creates");
+
+        let target = base.join("target");
+        std::fs::write(&target, b"key").expect("public API target creates");
+        let symlink = base.join("symlink");
+        std::os::unix::fs::symlink(&target, &symlink).expect("public API symlink creates");
+        let public_api = r#"
+
+[public_api]
+listen = "127.0.0.1:8443"
+data_root = "/var/lib/terrabase/public-api"
+bootstrap_key_file = "/run/secrets/public-bootstrap"
+"#;
+        let symlink_config = (production_valid() + public_api).replace(
+            "/run/secrets/public-bootstrap",
+            symlink.to_str().expect("symlink path is UTF-8"),
+        );
+        assert!(matches!(
+            ServerConfig::parse(&symlink_config),
+            Err(ConfigError::UnsafeProductionPath)
+        ));
+
+        let writable = base.join("writable");
+        std::fs::create_dir(&writable).expect("writable test directory creates");
+        std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o777))
+            .expect("writable test directory permissions set");
+        let writable_config = (production_valid() + public_api).replace(
+            "/run/secrets/public-bootstrap",
+            writable.join("key").to_str().expect("key path is UTF-8"),
+        );
+        assert!(matches!(
+            ServerConfig::parse(&writable_config),
+            Err(ConfigError::UnsafeProductionPath)
+        ));
+
+        std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o755))
+            .expect("writable test directory cleanup permissions set");
+        std::fs::remove_file(&symlink).expect("public API symlink removes");
+        std::fs::remove_file(&target).expect("public API target removes");
+        std::fs::remove_dir(&writable).expect("writable test directory removes");
+        std::fs::remove_dir(&base).expect("public API test directory removes");
     }
 
     #[test]

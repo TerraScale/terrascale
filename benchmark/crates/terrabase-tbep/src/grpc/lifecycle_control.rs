@@ -68,13 +68,21 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         self.authenticate_lifecycle(&request)?;
         let request = request.into_inner();
         if request.operation_id.is_empty()
+            || request.operation_id.len() > 128
             || request.target_owner.is_empty()
+            || request.target_owner.len() > 320
             || request.target_database.is_empty()
+            || request.target_database.len() > 255
             || request.journal_cut.is_empty()
             || request.restore_epoch == 0
         {
             return Err(Status::invalid_argument("restore stats request is incomplete"));
         }
+        validate_restore_target_context(
+            request.context.as_ref(),
+            &request.target_owner,
+            &request.target_database,
+        )?;
         let Some(owner) = self.lifecycle.as_ref() else {
             return Err(Status::unavailable("native restore stats owner is not composed"));
         };
@@ -99,6 +107,7 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         self.authenticate_lifecycle(&request)?;
         let request = request.into_inner();
         if request.operation_id.is_empty()
+            || request.operation_id.len() > 128
             || request.restore_epoch == 0
             || !valid_owner(&request.source_owner)
             || request.source_database.is_empty()
@@ -111,6 +120,11 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         {
             return Err(Status::invalid_argument("restore request is incomplete"));
         }
+        validate_restore_target_context(
+            request.context.as_ref(),
+            &request.target_owner,
+            &request.target_database,
+        )?;
         let Some(owner) = self.lifecycle.as_ref() else {
             return Ok(Response::new(lifecycle::unavailable(&request.operation_id)));
         };
@@ -194,6 +208,24 @@ fn valid_owner(value: &str) -> bool {
         && !project.contains('/')
         && tenant.len() <= 64
         && project.len() <= 255
+}
+
+fn validate_restore_target_context(
+    context: Option<&pb::LifecycleControlContext>,
+    target_owner: &str,
+    target_database: &str,
+) -> Result<(), Status> {
+    let context = context.ok_or_else(|| Status::invalid_argument("restore context is missing"))?;
+    if context.database != target_database
+        || context.tenant.is_empty()
+        || context.project.is_empty()
+        || target_owner != format!("{}/{}", context.tenant, context.project)
+    {
+        return Err(Status::permission_denied(
+            "restore target is outside the admitted lifecycle scope",
+        ));
+    }
+    Ok(())
 }
 
 impl TbepGrpcServer {
