@@ -337,7 +337,6 @@ impl ScopedShardEngine {
             tx.stage_schema_metadata(&database, "main", &collection, None, &envelope)?;
         }
         let outcome = tx.commit(LocalDurability::Synced);
-        eprintln!("DEBUG copy outcome={outcome:?}");
         match outcome {
             CommitOutcome::Committed(_)
             | CommitOutcome::Rejected(CommitError::OperationIdReuse) => Ok(()),
@@ -655,7 +654,6 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
             return Ok(());
         }
         if self.engine.shard_catalog_exists(&self.scope)? {
-            eprintln!("DEBUG target catalog exists");
             return Err(EngineError::Conflict);
         }
         // Bind import identities to the durable split, keys and source versions.
@@ -675,7 +673,7 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
         digest.update(identity.as_bytes());
         for entry in batch.entries() {
             let document = crate::storage::decode_document_body(entry.value())
-                .ok_or_else(|| { eprintln!("DEBUG decode fail"); EngineError::InvalidDocument })?;
+                .ok_or(EngineError::InvalidDocument)?;
             digest.update(&(entry.key().len() as u64).to_be_bytes());
             digest.update(entry.key());
             digest.update(&document.metadata().version().to_be_bytes());
@@ -697,7 +695,7 @@ impl RangeCopyTarget for ScopedShardRangeTarget {
             if document.collection() != &collection || document.id() != &id {
                 return Err(EngineError::Conflict);
             }
-            tx.put(document, ExpectedVersion::Any).map_err(|e| { eprintln!("DEBUG tx.put err={e:?}"); e })?;
+            tx.put(document, ExpectedVersion::Any)?;
         }
         match tx.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
