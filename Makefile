@@ -3,7 +3,7 @@
 CONTRACT_VERSION ?= v1
 CONTRACT_SOURCE ?=
 CONTRACT_URL ?=
-CONTRACT_ARCHIVE_SHA256 ?=
+CONTRACT_ARCHIVE_SHA256 ?= $(shell tr -d '[:space:]' < CONTRACT_ARCHIVE_SHA256)
 
 check: contracts fmt clippy test
 

@@ -63,6 +63,13 @@ fn generated_contract_is_pinned_to_the_committed_bundle() {
 }
 
 #[test]
+fn archive_pin_matches_the_producer_handoff() {
+    let pin = fs::read_to_string(format!("{}/CONTRACT_ARCHIVE_SHA256", env!("CARGO_MANIFEST_DIR")))
+        .expect("archive pin");
+    assert_eq!(pin.trim(), "e7a8bcbe752d814006c52fd40df055d54ac9adb7e3c1e5050630951d8f3498af");
+}
+
+#[test]
 fn generated_conformance_digests_match_the_frozen_bundle() {
     let root = format!("{}/contracts/v1", env!("CARGO_MANIFEST_DIR"));
     for (path, expected) in [
