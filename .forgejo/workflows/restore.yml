@@ -1,0 +1,28 @@
+name: ts-landing restore
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: terrascale-builder
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: |
+          set -eu
+          npm ci --ignore-scripts
+          npm run build
+          test -f build/index.html
+          ./node_modules/.bin/wrangler pages deploy build --project-name terrascale-landing-page --branch main --commit-hash "${FORGEJO_SHA}"
