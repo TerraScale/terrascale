@@ -27,7 +27,18 @@ fn required(name: &str) -> std::result::Result<String, String> {
         })
 }
 
+fn valid_run_id(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric())
+        && value.len() <= 64
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 fn config() -> std::result::Result<Config, String> {
+    let run = required("TERRASCALE_JOURNEY_RUN_ID")?;
+    if !valid_run_id(&run) {
+        return Err("TERRASCALE_JOURNEY_RUN_ID must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}".into());
+    }
     Ok(Config {
         api: required("TERRASCALE_API_URL")?,
         _auth: required("TERRASCALE_AUTH_URL")?,
@@ -37,7 +48,7 @@ fn config() -> std::result::Result<Config, String> {
         deny_key: env::var("TERRASCALE_DENY_API_KEY")
             .ok()
             .filter(|v| !v.trim().is_empty()),
-        run: required("TERRASCALE_JOURNEY_RUN_ID")?,
+        run,
     })
 }
 
@@ -332,7 +343,7 @@ async fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::projected_update;
+    use super::{projected_update, valid_run_id};
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -352,5 +363,13 @@ mod tests {
         assert!(projected_update(&fields("r", true), "r"));
         assert!(!projected_update(&fields("wrong", true), "r"));
         assert!(!projected_update(&fields("r", false), "r"));
+    }
+
+    #[test]
+    fn journey_run_id_uses_shared_safe_format() {
+        assert!(valid_run_id("run-2026_09"));
+        assert!(!valid_run_id("../escape"));
+        assert!(!valid_run_id("-leading"));
+        assert!(!valid_run_id(&"a".repeat(65)));
     }
 }
