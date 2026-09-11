@@ -523,6 +523,10 @@ impl ObjectDestination {
     }
 
     /// Deletes one opaque member after validating its bounded key.
+    ///
+    /// # Errors
+    /// Returns [`TransferError`] when the key is invalid or the provider
+    /// rejects the deletion.
     pub async fn delete_member(&self, key: &str) -> Result<(), TransferError> {
         if key.is_empty() || key.len() > 1024 {
             return Err(TransferError::InvalidPoint);

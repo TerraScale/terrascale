@@ -348,6 +348,7 @@ pub enum BackupKind {
 /// after an uncertain result for the same boundary must reuse the artifact
 /// key, while a different boundary must receive a different key so ordinal
 /// zero is never reused under one artifact key.
+#[cfg(test)]
 pub(crate) fn capture_artifact_id(
     database: DatabaseUlid,
     kind: BackupKind,

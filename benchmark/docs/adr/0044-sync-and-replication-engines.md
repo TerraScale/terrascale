@@ -71,9 +71,10 @@ from one origin is FIFO by construction. Cross-origin causality uses the row's
 `context` (dotted causal context, ADR 0022): a receiver applies a row only
 when every dot in its context is already applied locally (COPS dependency
 check, cheap here because contexts summarize to a per-Region frontier vector
-`{origin → seq}`). Rows waiting on dependencies sit in a bounded per-lane
-queue; the queue overflowing triggers anti-entropy against the missing
-origin, never a skip.
+`{origin → seq}`). A frame with an unsatisfied dependency is dropped and
+reported as deferred; it is not queued. The bounded RepairDriver then
+reconciles the missing source-backed publication through anti-entropy, after
+which the sender may replay the deferred frame, never a skip.
 
 Apply rule per row (D-36):
 

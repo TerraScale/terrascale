@@ -545,10 +545,10 @@ fn open_confined_member(
     if !metadata.file_type().is_file() {
         return Err(BackupError::ChainIncomplete);
     }
-    if let Some(expected_len) = expected_len {
-        if metadata.len() != expected_len {
-            return Err(BackupError::ChecksumMismatch);
-        }
+    if let Some(expected_len) = expected_len
+        && metadata.len() != expected_len
+    {
+        return Err(BackupError::ChecksumMismatch);
     }
     Ok(file)
 }
@@ -557,6 +557,7 @@ fn open_confined_member(
 /// that the pathname still refers to the opened inode. The descriptor remains
 /// the source of bytes after this check, so a later pathname replacement cannot
 /// redirect the restore.
+#[cfg(test)]
 fn open_stable_regular(path: &Path) -> Result<File, BackupError> {
     let path_metadata =
         std::fs::symlink_metadata(path).map_err(|_| BackupError::ChainIncomplete)?;
@@ -583,14 +584,14 @@ fn open_stable_regular(path: &Path) -> Result<File, BackupError> {
     Ok(file)
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
 
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
-#[cfg(not(unix))]
+#[cfg(all(test, not(unix)))]
 fn same_file_identity(_left: &std::fs::Metadata, _right: &std::fs::Metadata) -> bool {
     true
 }

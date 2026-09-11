@@ -6,6 +6,7 @@ use terrabase::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, TenantId,
 };
+use terrabase_member_transport::identity::MemberId;
 use terrabase_replication_core::anti_entropy::{
     JournalRowId, RepairError, RowDifference, RowSummary, row_hash,
 };
@@ -15,6 +16,8 @@ use terrabase_tbep::anti_entropy::{
 };
 use terrabase_tbep::engine_host::EngineHost;
 use terrabase_tbep::host::HostingError;
+use terrabase_tbep::production_causal::{CausalDriver, CausalReceive};
+use terrabase_tbep::production_repair::{PublicationIndex, RepairDriver};
 use terrabase_tbep::registry::BoundScope;
 use terrabase_tbep::replication::replicate_once;
 
@@ -223,6 +226,112 @@ fn stable_journal_identity_is_used_verbatim() {
     assert!(plan.differences().iter().any(|difference| {
         matches!(difference, RowDifference::MissingLocal(row) if row.id.sequence() == 42)
     }));
+}
+
+#[test]
+fn repair_driver_recovers_a_dropped_deferred_causal_gap() {
+    let suffix =
+        format!("{}-{}", std::process::id(), std::thread::current().name().unwrap_or("test"));
+    let source_location = std::env::temp_dir().join(format!("terrabase-deferred-source-{suffix}"));
+    let target_location = std::env::temp_dir().join(format!("terrabase-deferred-target-{suffix}"));
+    let _ = std::fs::remove_dir_all(&source_location);
+    let _ = std::fs::remove_dir_all(&target_location);
+    let source =
+        EngineHost::open(&source_location, 1, "tenant-a", "project-a", "database-a").unwrap();
+    let target =
+        EngineHost::open(&target_location, 2, "tenant-a", "project-a", "database-a").unwrap();
+    let tenant = TenantId::try_new("tenant-a").unwrap();
+    let source_scope = source.engine().scope_for(&tenant);
+    for (operation, id) in [("deferred-first", "first"), ("deferred-second", "second")] {
+        let mut transaction = source
+            .engine()
+            .begin(
+                &source_scope,
+                source.engine().read_snapshot(&source_scope).unwrap(),
+                OperationId::try_new(operation).unwrap(),
+            )
+            .unwrap();
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new(id).unwrap(),
+                    CollectionName::try_new("orders").unwrap(),
+                    DocumentValue::Integer(1),
+                ),
+                ExpectedVersion::Any,
+            )
+            .unwrap();
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    }
+    let publications = source.engine().replication_publications(&source_scope, 0, 2).unwrap();
+    assert_eq!(publications.len(), 2);
+    let bound = scope();
+    let mut causal = CausalDriver::new(
+        MemberId::try_new("target").unwrap(),
+        MemberId::try_new("source").unwrap(),
+        source.engine().replication_origin().unwrap(),
+        target.engine().replication_origin().unwrap(),
+        bound.clone(),
+        1,
+        1,
+    )
+    .unwrap();
+    let deferred = causal.publication_frame(&publications[1].1, 0).unwrap();
+    assert!(matches!(
+        causal.receive_frame(target.engine(), &deferred, 0).unwrap(),
+        CausalReceive::Deferred
+    ));
+    let target_scope = target.engine().scope_for(&tenant);
+    assert!(target.engine().replication_publications(&target_scope, 0, 10).unwrap().is_empty());
+
+    let mut source_index = PublicationIndex::default();
+    let mut target_index = PublicationIndex::default();
+    source_index.refresh(source.engine(), &bound).unwrap();
+    target_index.refresh(target.engine(), &bound).unwrap();
+    let mut sender = RepairDriver::new(
+        MemberId::try_new("source").unwrap(),
+        MemberId::try_new("target").unwrap(),
+        bound.clone(),
+        1,
+        1,
+    )
+    .unwrap();
+    let mut receiver = RepairDriver::new(
+        MemberId::try_new("target").unwrap(),
+        MemberId::try_new("source").unwrap(),
+        bound,
+        1,
+        1,
+    )
+    .unwrap();
+    let mut repaired = 0;
+    for tick in 0..64 {
+        let Some(request) = receiver.outbound_frame(target.engine(), &target_index, tick).unwrap()
+        else {
+            break;
+        };
+        let response = sender.receive_frame(source.engine(), &source_index, &request).unwrap();
+        for frame in response.frames {
+            let effects = receiver.receive_frame(target.engine(), &target_index, &frame).unwrap();
+            for (origin, sequence) in effects.requested {
+                let publication =
+                    source_index.publication(source.engine(), &scope(), &origin, sequence).unwrap();
+                target.engine().apply_replicated_publication(&target_scope, &publication).unwrap();
+                repaired += 1;
+            }
+            target_index.refresh(target.engine(), &scope()).unwrap();
+        }
+    }
+    assert_eq!(repaired, 1);
+    assert!(matches!(
+        causal.receive_frame(target.engine(), &deferred, 0).unwrap(),
+        CausalReceive::Applied { .. }
+    ));
+    assert_eq!(target.engine().replication_publications(&target_scope, 0, 10).unwrap().len(), 2);
+    drop(source);
+    drop(target);
+    let _ = std::fs::remove_dir_all(source_location);
+    let _ = std::fs::remove_dir_all(target_location);
 }
 
 #[test]
