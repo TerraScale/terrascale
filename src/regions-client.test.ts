@@ -52,9 +52,18 @@ describe("RegionsClient", () => {
 
   test("turns hostile successful list bodies into typed invalid-response failures", async () => {
     const hostileBodies = [
+      { regions: [], hosts: {} },
       { regions: [{ ...gru, code: "gru" }] },
       { regions: [{ ...gru, code: "ABC_" }] },
       { regions: [gru, { ...gru }] },
+      { regions: [{ ...gru, name: "" }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
+      { regions: [{ ...gru, name: "x".repeat(129) }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
+      { regions: [{ ...gru, country: "usa" }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
+      { regions: [{ ...gru, country: "U" }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
+      { regions: [{ ...gru, latitude: -90.001 }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
+      { regions: [{ ...gru, latitude: 90.001 }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
+      { regions: [{ ...gru, longitude: -180.001 }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
+      { regions: [{ ...gru, longitude: 180.001 }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
       { regions: [{ ...gru, available: "yes" }] },
       { regions: [{ ...gru, ociRegionCode: "sa-saopaulo-1" }] },
       { regions: [{ ...gru, clusterNodeTag: "A" }] },
@@ -91,6 +100,26 @@ describe("RegionsClient", () => {
     const result = await client.regions.list();
     assert.equal(result.ok, true);
     if (result.ok) assert.deepEqual(result.value.hosts, { GRU: "https://gru.api.terrascale.tech" });
+  });
+
+  test("accepts the published inclusive region bounds", async () => {
+    const boundaryRegion = {
+      ...gru,
+      name: "x".repeat(128),
+      country: "AZ",
+      latitude: -90,
+      longitude: 180,
+    };
+    const client = createTerraScaleClient({
+      fetch: async () => Response.json({
+        regions: [boundaryRegion],
+        hosts: { GRU: "https://gru.api.terrascale.tech" },
+      }),
+    });
+
+    const result = await client.regions.list();
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(result.value.regions, [boundaryRegion]);
   });
 
 });

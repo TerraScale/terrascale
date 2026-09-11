@@ -1761,6 +1761,9 @@ function decodeRegionsResponse(value: unknown): Models.RegionsResponse {
   if (!Array.isArray(response.regions)) {
     throw new TypeError("response.regions must be an array.");
   }
+  if (response.regions.length < 1) {
+    throw new TypeError("response.regions must contain at least 1 region.");
+  }
   if (response.regions.length > 20) {
     throw new TypeError("response.regions must contain at most 20 regions.");
   }
@@ -1798,9 +1801,15 @@ function decodeRegionSummary(value: unknown, path: string): Models.RegionSummary
 
   const code = parseRegionCode(region.code, `${path}.code`);
   const name = requireString(region.name, `${path}.name`);
+  if ([...name].length < 1 || [...name].length > 128) {
+    throw new TypeError(`${path}.name must contain between 1 and 128 characters.`);
+  }
   const country = requireString(region.country, `${path}.country`);
-  const latitude = requireFiniteNumber(region.latitude, `${path}.latitude`);
-  const longitude = requireFiniteNumber(region.longitude, `${path}.longitude`);
+  if (!/^[A-Z]{2}$/u.test(country)) {
+    throw new TypeError(`${path}.country must contain exactly two uppercase letters.`);
+  }
+  const latitude = requireBoundedNumber(region.latitude, `${path}.latitude`, -90, 90);
+  const longitude = requireBoundedNumber(region.longitude, `${path}.longitude`, -180, 180);
   if (typeof region.available !== "boolean") {
     throw new TypeError(`${path}.available must be a boolean.`);
   }
@@ -1827,4 +1836,12 @@ function requireFiniteNumber(value: unknown, path: string): number {
     throw new TypeError(`${path} must be a finite number.`);
   }
   return value;
+}
+
+function requireBoundedNumber(value: unknown, path: string, minimum: number, maximum: number): number {
+  const number = requireFiniteNumber(value, path);
+  if (number < minimum || number > maximum) {
+    throw new TypeError(`${path} must be between ${minimum} and ${maximum}.`);
+  }
+  return number;
 }
