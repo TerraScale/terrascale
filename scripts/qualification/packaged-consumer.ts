@@ -10,6 +10,7 @@ const required = [
   "TERRASCALE_DATABASE_ID", "TERRASCALE_API_KEY", "TERRASCALE_JOURNEY_RUN_ID",
   "TERRASCALE_SDK_TARBALL", "TERRASCALE_SDK_TARBALL_SHA256", "TERRASCALE_DENY_API_KEY",
 ] as const;
+const journeyPeers = ["typescript", "go", "rust", "dotnet", "cli"] as const;
 type Config = Record<(typeof required)[number], string>;
 type Phase = "seed" | "verify" | "exercise" | "cleanup";
 
@@ -87,7 +88,7 @@ const denyKey = required("TERRASCALE_DENY_API_KEY");
 // serialized into this generated consumer source.
 const client = createTerraScaleClient({ apiBaseUrl: apiUrl, projectId, accessToken: apiKey, ...(process.env.TERRASCALE_SYNC_URL ? { syncBaseUrl: process.env.TERRASCALE_SYNC_URL } : {}), idempotencyKeyFactory: () => runId + "-typescript" });
 const own = runId + "-typescript";
-const ids = ["typescript", "go", "rust", "dotnet"].map((sdk) => runId + "-" + sdk);
+const ids = journeyPeers.map((sdk) => runId + "-" + sdk);
 const body = { sdk: "typescript", runId };
 function ok<T>(result: TerraScaleResult<T>, label: string): T { assert.equal(result.ok, true, label + ": " + JSON.stringify(result.ok ? undefined : result.error)); if (!result.ok) throw new Error(label); return result.value; }
 function observe<T>(label: string, result: TerraScaleResult<T>): void { const out = { label, ok: result.ok, status: result.status, code: result.ok ? undefined : result.error.code }; process.stdout.write(JSON.stringify(out) + "\\n"); }
