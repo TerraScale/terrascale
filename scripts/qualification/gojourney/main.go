@@ -4,13 +4,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,8 +26,8 @@ type observation struct {
 }
 
 type config struct {
-	apiURL, authURL, project, database, key, runID, collection string
-	denyKey                                                    string
+	apiURL, project, database, key, runID, collection string
+	denyKey                                           string
 }
 
 func getenv(name string) (string, error) {
@@ -41,9 +42,6 @@ func loadConfig() (config, error) {
 	var c config
 	var err error
 	if c.apiURL, err = getenv("TERRASCALE_API_URL"); err != nil {
-		return c, err
-	}
-	if c.authURL, err = getenv("TERRASCALE_AUTH_URL"); err != nil {
 		return c, err
 	}
 	if c.project, err = getenv("TERRASCALE_PROJECT_ID"); err != nil {
@@ -66,29 +64,56 @@ func loadConfig() (config, error) {
 	if strings.ContainsAny(c.runID, "/\\\x00\r\n") {
 		return c, fmt.Errorf("JOURNEY_RUN_ID contains a path/control character")
 	}
-	if c.apiURL == c.authURL {
-		return c, fmt.Errorf("TERRASCALE_API_URL and TERRASCALE_AUTH_URL must be distinct authority inputs")
-	}
-	auth, err := url.Parse(c.authURL)
-	if err != nil || auth.Host == "" || auth.User != nil || auth.RawQuery != "" || auth.Fragment != "" {
-		return c, fmt.Errorf("TERRASCALE_AUTH_URL must be an absolute URL without credentials, query, or fragment")
-	}
-	if auth.Scheme != "https" && !(auth.Scheme == "http" && localAuthority(auth.Hostname())) {
-		return c, fmt.Errorf("TERRASCALE_AUTH_URL must use HTTPS except literal localhost/loopback authorities")
-	}
 	return c, nil
 }
 
-func localAuthority(host string) bool {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	if host == "localhost" {
-		return true
+func verifySourceInputs(root string) error {
+	raw, err := os.ReadFile(filepath.Join(root, "source-input-sha256.txt"))
+	if err != nil {
+		return fmt.Errorf("read source input manifest: %w", err)
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	seen := make(map[string]struct{})
+	entries := 0
+	for lineNumber, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 || len(fields[0]) != sha256.Size*2 {
+			return fmt.Errorf("invalid source input manifest line %d", lineNumber+1)
+		}
+		if _, err := hex.DecodeString(fields[0]); err != nil {
+			return fmt.Errorf("invalid source input digest on line %d: %w", lineNumber+1, err)
+		}
+		name := filepath.Clean(fields[1])
+		if name != fields[1] || name == "." || filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("invalid source input path %q", fields[1])
+		}
+		if _, ok := seen[name]; ok {
+			return fmt.Errorf("duplicate source input %q", name)
+		}
+		seen[name] = struct{}{}
+		entries++
+		contents, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			return fmt.Errorf("read source input %q: %w", name, err)
+		}
+		digest := sha256.Sum256(contents)
+		if got := hex.EncodeToString(digest[:]); got != fields[0] {
+			return fmt.Errorf("source input %q hash mismatch: manifest=%s current=%s", name, fields[0], got)
+		}
+	}
+	if entries == 0 {
+		return errors.New("source input manifest is empty")
+	}
+	return nil
 }
 
 func main() {
+	if err := verifySourceInputs("."); err != nil {
+		fail(err)
+	}
 	phase := flag.String("phase", "", "seed, verify, exercise, or cleanup")
 	flag.Parse()
 	if flag.NArg() != 0 || !map[string]bool{"seed": true, "verify": true, "exercise": true, "cleanup": true}[*phase] {
