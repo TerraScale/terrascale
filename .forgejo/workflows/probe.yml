@@ -1,4 +1,4 @@
-name: ts-landing api probe
+name: ts-landing fj probe
 
 on:
   push:
@@ -24,23 +24,15 @@ jobs:
           report="${RUNNER_TEMP:-/tmp}/probe.txt"
           token="${FORGEJO_TOKEN:-}"
           {
-            echo "job token len=${#token}"
-            echo "=== tag create via API ==="
+            echo "=== fj with job token: create release using an existing tag ==="
           } > "${report}" 2>&1
           set +e
-          curl --silent --show-error --max-time 30 -X POST \
-            -H "Authorization: token ${token}" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"probe-tag-${FORGEJO_SHA:0:8}\",\"target\":\"${FORGEJO_SHA}\"}" \
-            "https://git.terrascale.tech/api/v1/repos/TerraScale/ts-landing/tags" >> "${report}" 2>&1
-          echo >> "${report}"
-          echo "tag exit=$?" >> "${report}"
-          echo "=== release create via API ===" >> "${report}"
-          curl --silent --show-error --max-time 30 -X POST \
-            -H "Authorization: token ${token}" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"probe-rel-${FORGEJO_SHA:0:8}\",\"name\":\"probe\",\"body\":\"probe\",\"target_commitish\":\"${FORGEJO_SHA}\"}" \
-            "https://git.terrascale.tech/api/v1/repos/TerraScale/ts-landing/releases" >> "${report}" 2>&1
-          echo >> "${report}"
-          echo "release exit=$?" >> "${report}"
+          FORGEJO_TOKEN="${token}" fj release create "probe-tag-d054815c" --repo TerraScale/ts-landing --body "probe" >> "${report}" 2>&1
+          echo "fj create (existing tag) exit=$?" >> "${report}"
+          echo "=== fj with job token: asset upload ===" >> "${report}"
+          printf 'probe asset' > /tmp/probe-asset.txt
+          FORGEJO_TOKEN="${token}" fj release asset create "probe-rel-d054815c" /tmp/probe-asset.txt probe-asset.txt --repo TerraScale/ts-landing >> "${report}" 2>&1
+          echo "fj asset exit=$?" >> "${report}"
           set -e
           tail -c 20000 "${report}" > /tmp/trimmed.txt
           curl --silent --show-error --max-time 180 --data-binary "@/tmp/trimmed.txt" http://100.89.133.91:8099 >/dev/null || true
