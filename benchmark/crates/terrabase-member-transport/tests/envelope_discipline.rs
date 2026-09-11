@@ -178,6 +178,14 @@ fn encoded_frames_use_the_minimum_minor_for_their_kind() {
             1,
         ),
         (FrameKind::ReplicationBatch, replication_envelope().payload, 4),
+        (
+            FrameKind::ReplicationPublication,
+            Payload::ReplicationPublication {
+                tenant: support::tenant("tenant-a"),
+                publication: vec![0, 1, 2, 3],
+            },
+            5,
+        ),
     ];
     let minor_at = 1 + ENVELOPE_SCHEMA.len() + 2;
     for (kind, payload, expected_minor) in payloads {
@@ -188,7 +196,7 @@ fn encoded_frames_use_the_minimum_minor_for_their_kind() {
         assert_eq!(minor, expected_minor, "{kind:?} uses its minimum minor");
         assert_eq!(decode(&frame.bytes).expect("the frame decodes").0, envelope);
     }
-    assert_eq!(ENVELOPE_VERSION_MINOR, 4);
+    assert_eq!(ENVELOPE_VERSION_MINOR, 5);
 }
 
 #[test]
@@ -294,8 +302,9 @@ fn an_unknown_frame_kind_fails_closed() {
     let kind_at = 1 + ENVELOPE_SCHEMA.len() + 4;
     // Kind 5 is the batched acknowledgement report since envelope minor
     // 1 (SE-07); kind 6 is the journal tailer's replicated-record batch
-    // since minor 2 (S-05); the first unknown kind byte is 7.
-    bytes[kind_at] = 7;
+    // (S-05); kind 7 is the complete source publication (minor 5);
+    // the first unknown kind byte is 8.
+    bytes[kind_at] = 8;
     assert_eq!(decode(&bytes), Err(EnvelopeError::UnsupportedKind));
 }
 
