@@ -3636,10 +3636,13 @@ pub(crate) fn reattach_member_backups(state: &ApiState) {
     let Some(control) = state.control.clone() else { return };
     let Some(catalog) = state.catalog.clone() else { return };
     let Some(backups) = state.backups.clone() else { return };
-    let Ok(records) = control.list() else { error } => {
-        eprintln!("backup reattach skipped; control catalog unreadable: {error}");
-        return;
-    }};
+    let records = match control.list() {
+        Ok(records) => records,
+        Err(error) => {
+            eprintln!("backup reattach skipped; control catalog unreadable: {error:?}");
+            return;
+        }
+    };
     for record in records {
         if record.deleted || !record.placement.contains(&state.region) {
             continue;
