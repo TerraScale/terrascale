@@ -26,14 +26,22 @@ public sealed class TerraScaleEntityFrameworkCoreOptions
 
     internal TerraScaleEntityFrameworkCoreOptions Clone() => new()
     {
-        BaseAddress = BaseAddress, ApiKey = ApiKey, BearerToken = BearerToken,
-        BearerTokenProvider = BearerTokenProvider, ProjectId = ProjectId, DatabaseName = DatabaseName,
-        JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerOptions), CollectionNameResolver = CollectionNameResolver
+        BaseAddress = BaseAddress,
+        ApiKey = ApiKey,
+        BearerToken = BearerToken,
+        BearerTokenProvider = BearerTokenProvider,
+        ProjectId = ProjectId,
+        DatabaseName = DatabaseName,
+        JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerOptions),
+        CollectionNameResolver = CollectionNameResolver
     };
 
     internal TerraScaleClientOptions ToClientOptions() => new()
     {
-        BaseAddress = BaseAddress, ApiKey = ApiKey, BearerToken = BearerToken,
-        BearerTokenProvider = BearerTokenProvider, ProjectId = ProjectId
+        BaseAddress = BaseAddress,
+        ApiKey = ApiKey,
+        BearerToken = BearerToken,
+        BearerTokenProvider = BearerTokenProvider,
+        ProjectId = ProjectId
     };
 }
