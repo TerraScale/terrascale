@@ -14,7 +14,7 @@ export const requiredLinks = [
   'https://status.terrascale.tech',
   'https://docs.terrascale.tech/legal/security/',
   'https://docs.terrascale.tech/legal/terms/',
-  'https://docs.terrascale.tech/legal/terms/#acceptable-use',
+  'https://docs.terrascale.tech/legal/acceptable-use/',
   'https://docs.terrascale.tech/legal/privacy/',
   'https://docs.terrascale.tech/legal/dpa/',
   'https://docs.terrascale.tech/legal/support/',
