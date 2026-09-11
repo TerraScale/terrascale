@@ -409,8 +409,8 @@ export function createRemoteSandbox() {
       const state = { collection: query.match(/FROM\s+([A-Za-z_][A-Za-z0-9_]*)/iu)?.[1], subscription: view, capability, logUrl, revision: Number(value.offset ?? 0), items: [], listeners: new Set(), closed: false };
       subscriptions.add(state);
       for (const snapshotUrl of snapshotUrls) {
-        // The capability is the only credential accepted by the reactive
-        // cache path; API credentials never cross this boundary.
+        // The capability authorizes the view; the bearer only satisfies
+        // member admission where no proof-signing edge exists.
         const response = await fetch(snapshotUrl, { headers: { accept: "application/msgpack", authorization: `Bearer ${key}`, [VIEW_CAPABILITY_HEADER]: capability } });
         if (!response.ok) throw new Error(`remote snapshot failed: ${response.status}`);
         consume(state, new Uint8Array(await response.arrayBuffer()));
