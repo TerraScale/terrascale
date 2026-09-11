@@ -240,10 +240,9 @@ export function createRemoteSandbox() {
       regionHosts = catalog?.hosts && typeof catalog.hosts === "object" ? catalog.hosts : null;
     }
     const host = regionHosts?.[region];
-    if (typeof host !== "string" || host.length === 0) {
-      throw new Error(`no sync origin for region ${region}; set TERRASCALE_SYNC_URL`);
-    }
-    return normalizeSandboxOrigin(host);
+    if (typeof host === "string" && host.length > 0) return normalizeSandboxOrigin(host);
+    // A member-direct sandbox (no edge in front) serves delivery itself.
+    return base;
   };
   const headers = {
     accept: "application/json",

@@ -61,7 +61,7 @@ assert.ok(read("create-terrascale-app/template/package.json").includes('"@terras
 assert.ok(read("create-terrascale-app/template/terrascale.schema.json").includes('"historyRetentionDays": 7'), "starter schema uses canonical JSON shape");
 assert.ok(read("scripts/run-snippets.mjs").includes("TERRASCALE_API_KEY"), "remote runner is credential-gated");
 assert.ok(read("scripts/run-snippets.mjs").includes("launch gate not passed"), "missing real sandbox is an explicit failed launch gate");
-assert.ok(read("scripts/run-snippets.mjs").includes("x-terrascale-view-capability"), "reactive requests carry the view capability");
+assert.ok(read("scripts/run-snippets.mjs").includes("x-terrascale-capability"), "reactive requests carry the view capability");
 assert.ok(!read("scripts/run-snippets.mjs").includes("frame.t"), "remote runner does not decode legacy JSON frame fields");
 
 for (const [page, needles] of [
