@@ -69,9 +69,7 @@ impl ImportCipher for ImportLeaseCipher {
             })?;
         let mut output = nonce.to_vec();
         output.extend(
-            cipher
-                .seal(plaintext)
-                .map_err(|_| io::Error::other("import encryption failed"))?,
+            cipher.seal(plaintext).map_err(|_| io::Error::other("import encryption failed"))?,
         );
         Ok(output)
     }

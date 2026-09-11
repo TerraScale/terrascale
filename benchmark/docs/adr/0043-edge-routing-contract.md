@@ -56,10 +56,14 @@ not `421`, so callers can distinguish "wrong region" from "gone".
 
 ### 3. `GET /api/v1/regions`
 
-On a member: `{ "region": "FRA", "ok": true, "lag_ms": { "GRU": 120, "SFO": 210 } }`
-— this member's own view. On `api.terrascale.tech` the edge answers the
-client-relative ordered list (ts-proxy design §7). The SDK uses the edge
-form; the member form exists for probes and `terrascale doctor`.
+On a member, the route returns the member health shape used by
+`/api/v1/health`, for example
+`{ "region": "FRA", "healthy": true, "version": "terrabase-0.1.0" }`.
+The `version` field is required and identifies the served member build. On
+`api.terrascale.tech` the edge answers the client-relative ordered
+`RegionCatalogResponse` list (ts-proxy design §7). These are separate
+producers despite sharing the path; the SDK uses the edge form, while the
+member form exists for probes and `terrascale doctor`.
 
 ## SDK behaviour (normative for `@terrascale/sdk`)
 

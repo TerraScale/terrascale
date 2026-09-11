@@ -1139,7 +1139,7 @@ mod tests {
             tx.commit(LocalDurability::Synced),
             terrabase::engine::CommitOutcome::Committed(_)
         ));
-        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
         runtime.block_on(async {
             let source =
                 WalSnapshotSource::capture(binding(writer_id), engine.clone(), root.join("source"))

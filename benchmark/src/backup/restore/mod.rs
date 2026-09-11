@@ -1563,14 +1563,24 @@ fn execute_configured_restore(
     }
     let _reservation = RestoreTargetReservation::acquire(target.location())?;
     let replace_existing = configured_target_is_nonempty(path)?;
+    // Keep the descriptor alive through the complete existing-target open and
+    // pause sequence.  A pathname check alone is not sufficient: an
+    // uncooperating writer can replace `path` with a symlink between that
+    // check and Engine::open.  The descriptor-backed location makes every
+    // subsequent engine open resolve the admitted directory inode instead.
+    let stable_existing_target =
+        if replace_existing { Some(StableConfiguredTarget::open(path)?) } else { None };
     if replace_existing {
         // Keep the no-follow check adjacent to the open. The target
         // reservation prevents cooperating restores from changing the path,
         // while this check prevents a destination-controlled symlink from
         // being followed if the pathname was replaced before the open.
         ensure_configured_target_directory(path)?;
+        let existing_config = stable_existing_target
+            .as_ref()
+            .map_or_else(|| target.clone(), |stable| target.clone().at_location(stable.path()));
         let existing =
-            Engine::open(target.clone()).map_err(|_| BackupError::DestinationUnavailable)?;
+            Engine::open(existing_config).map_err(|_| BackupError::DestinationUnavailable)?;
         let tenant = TenantId::try_new(existing.database_owner().tenant().to_text().as_str())
             .map_err(|_| BackupError::DestinationUnavailable)?;
         let state = existing
@@ -1630,6 +1640,12 @@ fn execute_configured_restore(
                 .map_err(|_| BackupError::DestinationUnavailable)?;
         }
         drop(reopened);
+        if replace_existing {
+            // EXCHANGE never follows the destination entry, but reject a
+            // symlink that appeared while replay was running rather than
+            // publishing across a changed pathname contract.
+            ensure_configured_target_directory(path)?;
+        }
         publish_with_identity(&staging, path, replace_existing)?;
         Ok(facts)
     })();
@@ -1694,6 +1710,54 @@ fn ensure_configured_target_directory(target: &Path) -> Result<(), BackupError> 
         return Err(BackupError::TargetNotEmpty);
     }
     Ok(())
+}
+
+/// Pins an existing configured target directory so a pathname replacement
+/// cannot redirect the engine open.  Production TerraBase runs on Linux; on
+/// other Unix targets the final no-follow check still protects publication,
+/// but there is no portable descriptor-relative `EngineConfig` location.
+struct StableConfiguredTarget {
+    #[cfg(unix)]
+    directory: std::fs::File,
+    path: PathBuf,
+}
+
+impl StableConfiguredTarget {
+    fn open(target: &Path) -> Result<Self, BackupError> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+
+            let descriptor = rustix::fs::open(
+                target,
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::NOFOLLOW
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+            .map_err(|_| BackupError::DestinationUnavailable)?;
+            let directory = std::fs::File::from(descriptor);
+            let path = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
+            return Ok(Self { directory, path });
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            // Keep the same call shape on non-Linux builds.  Those targets
+            // retain the adjacent no-follow checks, but use the pathname
+            // because they do not expose Linux's descriptor path.
+            Ok(Self { path: target.to_owned() })
+        }
+    }
+
+    fn path(&self) -> &Path {
+        // Keep the descriptor field observable to the compiler and alive for
+        // as long as the descriptor-backed path is used.
+        #[cfg(unix)]
+        let _ = &self.directory;
+        &self.path
+    }
 }
 
 /// Cross-process reservation for one restore target.
@@ -2948,6 +3012,41 @@ mod publication_tests {
 
         assert_eq!(configured_target_is_nonempty(&target), Err(BackupError::TargetNotEmpty));
         assert_eq!(admit_target(&target), Err(BackupError::TargetNotEmpty));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stable_existing_target_survives_concurrent_symlink_swap() {
+        use std::os::unix::fs::symlink;
+        use std::sync::{Arc, Barrier};
+
+        let root = test_root("stable-target-symlink-swap");
+        let target = root.join("target");
+        let outside = root.join("outside");
+        let retired = root.join("retired");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(target.join("state"), b"serving database").unwrap();
+        std::fs::write(outside.join("state"), b"attacker destination").unwrap();
+
+        let stable = Arc::new(StableConfiguredTarget::open(&target).unwrap());
+        let barrier = Arc::new(Barrier::new(2));
+        let swap_barrier = Arc::clone(&barrier);
+        let swap_target = target.clone();
+        let swap_retired = retired.clone();
+        let swap_outside = outside.clone();
+        let swapper = std::thread::spawn(move || {
+            swap_barrier.wait();
+            std::fs::rename(&swap_target, &swap_retired).unwrap();
+            symlink(&swap_outside, &swap_target).unwrap();
+        });
+        barrier.wait();
+        swapper.join().unwrap();
+
+        assert_eq!(std::fs::read(stable.path().join("state")).unwrap(), b"serving database");
+        assert_eq!(ensure_configured_target_directory(&target), Err(BackupError::TargetNotEmpty));
+        drop(stable);
         std::fs::remove_dir_all(root).unwrap();
     }
 

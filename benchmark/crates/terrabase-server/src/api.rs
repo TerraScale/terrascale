@@ -1945,7 +1945,14 @@ async fn regions(State(state): State<Arc<ApiState>>) -> Response {
     let admission_ready =
         state.admitted_databases.as_ref().is_none_or(|registry| registry.admission_ready());
     let healthy = local_serving && replication_serving && admission_ready;
-    let body = format!("{{\"region\":\"{}\",\"healthy\":{healthy}}}", state.region);
+    // Keep the member route's body identical in shape to `/api/v1/health`.
+    // The edge-owned `/api/v1/regions` catalog is a different producer and
+    // is described by its own RegionCatalogResponse contract.
+    let body = format!(
+        "{{\"region\":\"{}\",\"healthy\":{healthy},\"version\":\"terrabase-{}\"}}",
+        state.region,
+        env!("CARGO_PKG_VERSION")
+    );
     let mut response = body.into_response();
     response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     if let Ok(region) = HeaderValue::from_str(state.region.as_str()) {
@@ -6014,12 +6021,12 @@ mod tests {
         state.metrics.transition_service(ServiceState::Serving).expect("serving");
         let response = super::regions(axum::extract::State(Arc::clone(&state))).await;
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
-        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":true}"#);
+        assert_member_regions_body(&body, true);
 
         state.metrics.transition_service(ServiceState::Draining).expect("draining");
         let response = super::regions(axum::extract::State(state)).await;
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
-        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":false}"#);
+        assert_member_regions_body(&body, false);
     }
 
     #[tokio::test]
@@ -6029,7 +6036,7 @@ mod tests {
         state.replication_progress.as_ref().expect("rf2 progress").fence();
         let response = super::regions(axum::extract::State(state)).await;
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
-        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":false}"#);
+        assert_member_regions_body(&body, false);
     }
 
     #[tokio::test]
@@ -6046,15 +6053,22 @@ mod tests {
 
         let response = super::regions(axum::extract::State(Arc::clone(&state))).await;
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
-        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":true}"#);
+        assert_member_regions_body(&body, true);
 
         // The same gate that rejects new publication may degrade discovery;
         // degraded serving remains available through resolve_degraded_serving.
         ready.store(false, std::sync::atomic::Ordering::Release);
         let response = super::regions(axum::extract::State(state)).await;
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
-        assert_eq!(body.as_ref(), br#"{"region":"GRU","healthy":false}"#);
+        assert_member_regions_body(&body, false);
         assert!(!registry.admission_ready());
+    }
+
+    fn assert_member_regions_body(body: &[u8], healthy: bool) {
+        let value: serde_json::Value = serde_json::from_slice(body).expect("member regions JSON");
+        assert_eq!(value["region"], "GRU");
+        assert_eq!(value["healthy"], healthy);
+        assert_eq!(value["version"], format!("terrabase-{}", env!("CARGO_PKG_VERSION")));
     }
 
     #[tokio::test]
@@ -6127,6 +6141,17 @@ mod tests {
             components.get("schemas").and_then(serde_json::Value::as_object).expect("schemas");
         assert!(schemas.contains_key("SqlExplainResponse"));
         assert!(schemas.contains_key("SqlResultResponse"));
+        assert_eq!(
+            document["paths"]["/api/v1/regions"]["get"]["responses"]["200"]["content"]["application/json"]
+                ["schema"]["$ref"],
+            "#/components/schemas/HealthResponse",
+            "member regions remains the health-shaped producer"
+        );
+        assert!(
+            schemas["HealthResponse"]["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|field| field == "version"))
+        );
         assert!(
             document["paths"]
                 .get("/api/v1/databases/{database}/auth/records/{model}/{id}")
