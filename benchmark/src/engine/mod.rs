@@ -1466,9 +1466,7 @@ impl Engine {
         config: &EngineConfig,
         admission_guard: Arc<admission::EngineAdmissionGuard>,
     ) -> Result<Self, EngineOpenError> {
-        if !admission_guard.matches(config.location()) {
-            return Err(EngineOpenError::InvalidConfig);
-        }
+        admission_guard.bind_directory(config.location())?;
         let location = config.location().clone();
         let owner = config.open_owner()?;
         let metrics = Arc::new(MetricsRegistry::new());

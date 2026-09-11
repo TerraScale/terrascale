@@ -37,3 +37,27 @@ these focused existing selectors:
 
 The `too_many_lines` diagnostics remain intentionally deferred. The outer
 retention owner and engine-frontier acknowledgement paths were not modified.
+
+## Slice B — configuration and identity mechanics
+
+Changed only the approved mechanical items in `config.rs`,
+`delegated_identity.rs`, `auth_runtime/byo_config.rs`,
+`authorization_leases.rs`, `production_tbep_host.rs`, and
+`reactive_api/socket.rs`: explicit unit error patterns, default construction,
+checked DER key length conversions (oversized lengths fail closed as `None`),
+`String::clone`, `clone_from`, and direct `Result::is_ok_and`.
+
+No BYOK/auth architecture or runtime semantics changed. `rustfmt` and
+`git diff --check` passed; Cargo verification is assigned to the consolidated
+`project_capacity_acceptance_fixer`/`terrabase_clippy_batch` owner.
+
+Source hashes:
+
+```text
+e61e9709afe6a4e40610de43b9c84cddc2a2481eac5cd8a7e782cca2f08ce47a  crates/terrabase-server/src/config.rs
+ea31d60c27e740cecfc41f5d5fb3420d20bc29c9b2e28f15a7bd04e11ffca236  crates/terrabase-server/src/delegated_identity.rs
+1dfdca3dcd7387de595d8c9279e2c69ce5541a9f55d0b212aa30906fa1dad156  crates/terrabase-server/src/auth_runtime/byo_config.rs
+3d4009b65ceacc037cc6f8b3c18d3326a266488eb07d329a890143843a6d8bb3  crates/terrabase-server/src/authorization_leases.rs
+9cc470ee5ee25eeab334cf5ddbbdb21dc6b3c12e086f46144bdc16bb349fbd81  crates/terrabase-server/src/production_tbep_host.rs
+5ae95891567ad64532cf248a82e7c795c22765b7d43b6b21310f0d4eae25c2f4  crates/terrabase-server/src/reactive_api/socket.rs
+```

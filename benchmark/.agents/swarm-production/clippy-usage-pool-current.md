@@ -23,5 +23,9 @@ No Cargo commands were run; `project_capacity_acceptance_fixer` owns the
 consolidated build and focused selectors.
 
 Source SHA-256:
-`445eccea49fd83bb581d144d54d21fb222ab70ef49bd47a68b313b6591696e8c`
+`f35fee58f1097a202c68354dd07218a05a0f9808f15fb8a947f34513280bc71d`
 
+Added focused test `pool_unit_boundaries_preserve_signed_budget_contract`.
+It verifies `i64::MAX` remains representable, values above it fail closed,
+zero remains accepted by the existing allocation-unit guard, and negative
+allocation values are rejected before any pool work/reservation path.

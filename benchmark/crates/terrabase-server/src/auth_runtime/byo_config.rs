@@ -418,3 +418,16 @@ fn rsa_spki(key: &JwkKey) -> Option<Vec<u8>> {
     value.extend(der(3, &bit)?);
     der(0x30, &value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::der_len;
+
+    #[test]
+    fn der_length_encoding_rejects_unrepresentable_lengths() {
+        assert_eq!(der_len(127), Some(vec![127]));
+        assert_eq!(der_len(128), Some(vec![0x81, 0x80]));
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(der_len(usize::MAX), None);
+    }
+}

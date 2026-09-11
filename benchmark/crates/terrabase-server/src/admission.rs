@@ -176,6 +176,7 @@ impl AdmissionHost {
         project_fence_revision: u64,
     ) -> Result<FenceOutcome, String> {
         self.validate(record)?;
+        let _records = self.records.lock().map_err(|_| "admission lock poisoned")?;
         self.fence_store.fence_unadmitted(record, deletion_operation_id, project_fence_revision)
     }
 
@@ -228,10 +229,10 @@ impl AdmissionHost {
     /// Returns a refusal for conflicting retries or storage/durability failures.
     pub fn admit(&self, record: &AdmissionRecord) -> Result<(), String> {
         self.validate(record)?;
+        let mut records = self.records.lock().map_err(|_| "admission lock poisoned")?;
         if self.fence_store.get(&record.database_id)?.is_some() {
             return Err("admission is fenced for deletion".into());
         }
-        let mut records = self.records.lock().map_err(|_| "admission lock poisoned")?;
         if let Some(existing) = records.get(&record.database_id) {
             if existing != record {
                 return Err("immutable admission conflict".into());
