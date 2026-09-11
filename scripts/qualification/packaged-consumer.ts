@@ -14,6 +14,9 @@ const journeyPeers = ["typescript", "go", "rust", "dotnet", "cli"] as const;
 type Config = Record<(typeof required)[number], string>;
 type Phase = "seed" | "verify" | "exercise" | "cleanup";
 
+if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) await main();
+
+async function main() {
 const phase = parsePhase(process.argv.slice(2));
 const config = readConfig();
 const work = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-consumer-"));
@@ -40,6 +43,7 @@ try {
   process.stdout.write(result.stdout);
 } finally {
   await rm(work, { recursive: true, force: true });
+}
 }
 
 function safeError(error: unknown, ...secrets: (string | undefined)[]): string {
@@ -73,7 +77,7 @@ function readConfig(): Config {
   return values as Config;
 }
 
-function journeySource(phase: Phase): string {
+export function journeySource(phase: Phase): string {
   return `import assert from "node:assert/strict";
 import { createTerraScaleClient, type TerraScaleResult } from "@terrascale/sdk";
 const phase: string = ${JSON.stringify(phase)};
@@ -88,6 +92,7 @@ const denyKey = required("TERRASCALE_DENY_API_KEY");
 // serialized into this generated consumer source.
 const client = createTerraScaleClient({ apiBaseUrl: apiUrl, projectId, accessToken: apiKey, ...(process.env.TERRASCALE_SYNC_URL ? { syncBaseUrl: process.env.TERRASCALE_SYNC_URL } : {}), idempotencyKeyFactory: () => runId + "-typescript" });
 const own = runId + "-typescript";
+const journeyPeers = ${JSON.stringify(journeyPeers)};
 const ids = journeyPeers.map((sdk) => runId + "-" + sdk);
 const body = { sdk: "typescript", runId };
 function ok<T>(result: TerraScaleResult<T>, label: string): T { assert.equal(result.ok, true, label + ": " + JSON.stringify(result.ok ? undefined : result.error)); if (!result.ok) throw new Error(label); return result.value; }
