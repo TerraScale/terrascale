@@ -329,6 +329,13 @@ public sealed class TerraScaleClient
         string? idempotencyKey = null) =>
         SendTypedJsonAsync<object, TResponse>(method, requestUri, body: null, requestTypeInfo: null, responseTypeInfo, cancellationToken, idempotencyKey);
 
+    internal Task<TResponse> SendHealthJsonAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken) =>
+        SendTypedJsonAsync<object, TResponse>(method, requestUri, body: null, requestTypeInfo: null, responseTypeInfo, cancellationToken, allowUnhealthyHealthResponse: true);
+
     internal Task<TResponse> SendJsonAsync<TRequest, TResponse>(
         HttpMethod method,
         TerraScaleBoundRoute route,
@@ -396,7 +403,8 @@ public sealed class TerraScaleClient
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken,
         string? idempotencyKeyOverride = null,
-        bool allowUnkeyedPutRetry = true)
+        bool allowUnkeyedPutRetry = true,
+        bool allowUnhealthyHealthResponse = false)
     {
         using var activity = StartActivity(method, requestUri);
         Func<HttpContent?> contentFactory;
@@ -423,7 +431,7 @@ public sealed class TerraScaleClient
             allowUnkeyedPutRetry).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
-        return await ReadJsonResponseAsync(response, responseTypeInfo, activity, cancellationToken).ConfigureAwait(false);
+        return await ReadJsonResponseAsync(response, responseTypeInfo, activity, cancellationToken, allowUnhealthyHealthResponse).ConfigureAwait(false);
     }
 
     internal Task<TResponse> SendWithIdempotencyKeyAsync<TResponse>(
@@ -788,9 +796,10 @@ public sealed class TerraScaleClient
         HttpResponseMessage response,
         JsonTypeInfo<TResponse> responseTypeInfo,
         Activity? activity,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowUnhealthyHealthResponse = false)
     {
-        if (!response.IsSuccessStatusCode)
+        if (!response.IsSuccessStatusCode && !(allowUnhealthyHealthResponse && response.StatusCode == HttpStatusCode.ServiceUnavailable))
         {
             activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
             throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);

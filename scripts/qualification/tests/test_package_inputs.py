@@ -16,7 +16,8 @@ class PackageInputs(unittest.TestCase):
                ("API_URL", "AUTH_URL", "PROJECT_ID", "DATABASE_ID", "API_KEY")},
                "TERRASCALE_SDK_NUPKG": str(package), "TERRASCALE_SDK_NUPKG_SHA256": digest,
                "TERRASCALE_JOURNEY_RUN_ID": run_id}
-        command = ["bash", str(RUNNER), "--regression" if regression else "--phase", "seed"] if not regression else ["bash", str(RUNNER), "--regression"]
+        command = (["bash", str(RUNNER), "--regression"] if regression else
+                   ["bash", str(RUNNER), "--phase", "seed"])
         return subprocess.run(command, env=env,
                               capture_output=True, text=True, timeout=5)
 
