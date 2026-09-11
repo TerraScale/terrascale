@@ -149,18 +149,25 @@ impl NativeBackupRuntime {
         if cut.participants.is_empty() || cut.route_generation.is_none() {
             return Err(NativeBackupRuntimeError::Envelope);
         }
-        let _async_fleet = self.async_fleet.lock().await;
-        let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        let manifests = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(fleet.capture_participants_at(cut))
+        let gate = Arc::clone(&self.async_fleet).lock_owned().await;
+        let fleet = Arc::clone(&self.fleet);
+        let cut = cut.clone();
+        tokio::task::spawn_blocking(move || {
+            let _gate = gate;
+            let handle = tokio::runtime::Handle::current();
+            let mut fleet = fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+            let manifests = handle
+                .block_on(fleet.capture_participants_at(&cut))
+                .map_err(NativeBackupRuntimeError::Fleet)?;
+            let envelope = BackupEnvelope::from_read_cut(&cut, manifests)
+                .map_err(|_| NativeBackupRuntimeError::Envelope)?;
+            handle
+                .block_on(fleet.publish_envelope(&envelope))
+                .map_err(NativeBackupRuntimeError::Fleet)?;
+            Ok(envelope)
         })
-        .map_err(NativeBackupRuntimeError::Fleet)?;
-        let envelope = self.assemble_shard_envelope(cut, manifests)?;
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(fleet.publish_envelope(&envelope))
-        })
-        .map_err(NativeBackupRuntimeError::Fleet)?;
-        Ok(envelope)
+        .await
+        .map_err(|_| NativeBackupRuntimeError::Unavailable)?
     }
 
     /// Creates and admits the complete accepted stream set.
@@ -229,11 +236,16 @@ impl NativeBackupRuntime {
 
     /// Executes one bounded asynchronous fleet tick.
     pub async fn tick(&self) -> Result<Vec<(String, FleetError)>, NativeBackupRuntimeError> {
-        let _async_fleet = self.async_fleet.lock().await;
-        let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        let errors = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(fleet.sync_once())
-        });
+        let gate = Arc::clone(&self.async_fleet).lock_owned().await;
+        let fleet = Arc::clone(&self.fleet);
+        let errors = tokio::task::spawn_blocking(move || {
+            let _gate = gate;
+            let handle = tokio::runtime::Handle::current();
+            let mut fleet = fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+            Ok::<_, NativeBackupRuntimeError>(handle.block_on(fleet.sync_once()))
+        })
+        .await
+        .map_err(|_| NativeBackupRuntimeError::Unavailable)??;
         if !errors.is_empty() {
             let mut incidents =
                 self.incidents.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
@@ -268,12 +280,7 @@ impl NativeBackupRuntime {
                     if *shutdown.borrow() {
                         return Ok(());
                     }
-                    let runtime = Arc::clone(&self);
-                    tokio::task::spawn_blocking(move || {
-                        tokio::runtime::Handle::current().block_on(runtime.tick())
-                    })
-                    .await
-                    .map_err(|_| NativeBackupRuntimeError::Unavailable)??;
+                    Arc::clone(&self).tick().await?;
                 }
             }
         }
@@ -296,12 +303,19 @@ impl NativeBackupRuntime {
         operation_id: &str,
     ) -> Result<terrabase::backup::BackupManifest, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
-        let _async_fleet = self.async_fleet.lock().await;
-        let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(fleet.capture_snapshot(database))
+        let gate = Arc::clone(&self.async_fleet).lock_owned().await;
+        let fleet = Arc::clone(&self.fleet);
+        let database = database.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let _gate = gate;
+            let handle = tokio::runtime::Handle::current();
+            let mut fleet = fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+            handle
+                .block_on(fleet.capture_snapshot(&database))
+                .map_err(NativeBackupRuntimeError::Fleet)
         })
-        .map_err(NativeBackupRuntimeError::Fleet)
+        .await
+        .map_err(|_| NativeBackupRuntimeError::Unavailable)?
     }
 
     /// Returns the authenticated retained chain for one admitted database.
@@ -346,13 +360,28 @@ impl NativeBackupRuntime {
     ) -> Result<terrabase::backup::RecoveryReceipt, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
         self.validate_restore_placement(database, placement)?;
-        let _async_fleet = self.async_fleet.lock().await;
-        let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(fleet.restore_from_provider(database, provider, point, target, identity))
+        let gate = Arc::clone(&self.async_fleet).lock_owned().await;
+        let fleet = Arc::clone(&self.fleet);
+        let database = database.to_owned();
+        let point = point.map(str::to_owned);
+        let target = target.clone();
+        let identity = identity.clone();
+        tokio::task::spawn_blocking(move || {
+            let _gate = gate;
+            let handle = tokio::runtime::Handle::current();
+            let mut fleet = fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+            handle
+                .block_on(fleet.restore_from_provider(
+                    &database,
+                    provider,
+                    point.as_deref(),
+                    &target,
+                    &identity,
+                ))
+                .map_err(NativeBackupRuntimeError::Fleet)
         })
-        .map_err(NativeBackupRuntimeError::Fleet)
+        .await
+        .map_err(|_| NativeBackupRuntimeError::Unavailable)?
     }
 
     /// Restores through an inclusive Unix-second timestamp using one provider.

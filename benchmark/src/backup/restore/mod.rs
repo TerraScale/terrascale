@@ -1602,52 +1602,17 @@ fn execute_configured_restore(
     let staging = StagingDir::create(path)?;
     let config = target.clone().at_location(staging.path());
     let outcome = (|| {
-        let engine =
-            Engine::open(config.clone()).map_err(|_| BackupError::DestinationUnavailable)?;
-        // Archives describe one database. Never combine foreign tenant scopes
-        // into a target or inherit source ownership/authentication metadata.
-        if chain.iter().any(|link| {
-            link.tenants().iter().any(|tenant| {
-                tenant.tenant().as_str() != engine.database_owner().tenant().to_text().as_str()
-            })
-        }) {
-            return Err(BackupError::ManifestInvalid);
-        }
-        let mut replay = Replay::new();
-        replay.cutoff = cutoff;
-        replay.chain(&engine, destination, chain, Some(cipher))?;
-        drop(engine);
-        let reopened = Engine::open(config).map_err(|_| BackupError::DestinationUnavailable)?;
-        let guard = reopened.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
-        let verification = verify_storage(guard.port.as_ref(), &replay)?;
-        verify_manifest_logical_facts(chain, cutoff, &verification)?;
-        drop(guard);
-        let facts = replay.into_facts(verification);
-        let selected = chain.last().ok_or(BackupError::ChainIncomplete)?;
-        write_restore_metadata(&reopened, identity, &facts, selected)?;
-        verify_restore_metadata(&reopened, identity, &facts, selected)?;
-        if replace_existing {
-            reopened
-                .activate_origin_epoch(identity.restore_epoch)
-                .map_err(|_| BackupError::DestinationUnavailable)?;
-            let tenant = TenantId::try_new(reopened.database_owner().tenant().to_text().as_str())
-                .map_err(|_| BackupError::DestinationUnavailable)?;
-            reopened
-                .lifecycle_pause(
-                    &reopened.scope_for(&tenant),
-                    &format!("restore-pause-{}", identity.operation_id),
-                )
-                .map_err(|_| BackupError::DestinationUnavailable)?;
-        }
-        drop(reopened);
-        if replace_existing {
-            // EXCHANGE never follows the destination entry, but reject a
-            // symlink that appeared while replay was running rather than
-            // publishing across a changed pathname contract.
-            ensure_configured_target_directory(path)?;
-        }
-        publish_with_identity(&staging, path, replace_existing)?;
-        Ok(facts)
+        let (reopened, facts) =
+            build_configured_restore(config, destination, chain, cutoff, cipher)?;
+        finish_configured_restore(
+            reopened,
+            &staging,
+            path,
+            chain,
+            identity,
+            facts,
+            replace_existing,
+        )
     })();
     match outcome {
         Ok(facts) => {
@@ -1663,6 +1628,71 @@ fn execute_configured_restore(
             Err(error)
         }
     }
+}
+
+fn build_configured_restore(
+    config: EngineConfig,
+    destination: &Path,
+    chain: &[BackupManifest],
+    cutoff: Option<u64>,
+    cipher: &dyn BackupReader,
+) -> Result<(Engine, RunFacts), BackupError> {
+    let engine = Engine::open(config.clone()).map_err(|_| BackupError::DestinationUnavailable)?;
+    // Archives describe one database. Never combine foreign tenant scopes
+    // into a target or inherit source ownership/authentication metadata.
+    if chain.iter().any(|link| {
+        link.tenants().iter().any(|tenant| {
+            tenant.tenant().as_str() != engine.database_owner().tenant().to_text().as_str()
+        })
+    }) {
+        return Err(BackupError::ManifestInvalid);
+    }
+    let mut replay = Replay::new();
+    replay.cutoff = cutoff;
+    replay.chain(&engine, destination, chain, Some(cipher))?;
+    drop(engine);
+    let reopened = Engine::open(config).map_err(|_| BackupError::DestinationUnavailable)?;
+    let guard = reopened.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
+    let verification = verify_storage(guard.port.as_ref(), &replay)?;
+    verify_manifest_logical_facts(chain, cutoff, &verification)?;
+    drop(guard);
+    Ok((reopened, replay.into_facts(verification)))
+}
+
+fn finish_configured_restore(
+    reopened: Engine,
+    staging: &StagingDir,
+    path: &Path,
+    chain: &[BackupManifest],
+    identity: &RestoreIdentity,
+    facts: RunFacts,
+    replace_existing: bool,
+) -> Result<RunFacts, BackupError> {
+    let selected = chain.last().ok_or(BackupError::ChainIncomplete)?;
+    write_restore_metadata(&reopened, identity, &facts, selected)?;
+    verify_restore_metadata(&reopened, identity, &facts, selected)?;
+    if replace_existing {
+        reopened
+            .activate_origin_epoch(identity.restore_epoch)
+            .map_err(|_| BackupError::DestinationUnavailable)?;
+        let tenant = TenantId::try_new(reopened.database_owner().tenant().to_text().as_str())
+            .map_err(|_| BackupError::DestinationUnavailable)?;
+        reopened
+            .lifecycle_pause(
+                &reopened.scope_for(&tenant),
+                &format!("restore-pause-{}", identity.operation_id),
+            )
+            .map_err(|_| BackupError::DestinationUnavailable)?;
+    }
+    drop(reopened);
+    if replace_existing {
+        // EXCHANGE never follows the destination entry, but reject a
+        // symlink that appeared while replay was running rather than
+        // publishing across a changed pathname contract.
+        ensure_configured_target_directory(path)?;
+    }
+    publish_with_identity(staging, path, replace_existing)?;
+    Ok(facts)
 }
 
 /// Refuses a target that is not a fresh, empty engine location.
@@ -1739,7 +1769,7 @@ impl StableConfiguredTarget {
             .map_err(|_| BackupError::DestinationUnavailable)?;
             let directory = std::fs::File::from(descriptor);
             let path = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
-            return Ok(Self { directory, path });
+            Ok(Self { directory, path })
         }
 
         #[cfg(not(target_os = "linux"))]

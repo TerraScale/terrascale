@@ -167,7 +167,7 @@ fn digest_regular_file(path: &std::path::Path) -> io::Result<(u64, String)> {
     let file = open_regular_file(path)?;
     let length = file.metadata()?.len();
     let mut hasher = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
-    let mut buffer = [0_u8; 64 * 1024];
+    let mut buffer = vec![0_u8; 64 * 1024];
     let mut read_length = 0_u64;
     let mut file = file;
     loop {
