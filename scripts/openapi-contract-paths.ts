@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = (await readFile(path.join(repositoryRoot, "CONTRACT_VERSION"), "utf8")).trim();
+const committedArchiveSha256 = (await readFile(path.join(repositoryRoot, "CONTRACT_ARCHIVE_SHA256"), "utf8")).trim();
 const versionPattern = /^v[1-9][0-9]*$/u;
 const hexPattern = /^[0-9a-f]{64}$/iu;
 
@@ -49,13 +50,14 @@ export async function resolveContractBundle(): Promise<ContractBundle> {
   if (!url) throw new Error(`contracts: pinned terrabase ${version} is not published; set CONTRACT_SOURCE=../terrabase/contracts for local development or CONTRACT_URL with CONTRACT_ARCHIVE_SHA256 for the immutable registry bundle.`);
   const archiveSha256 = process.env.CONTRACT_ARCHIVE_SHA256 ?? process.env.TERRASCALE_CONTRACT_ARCHIVE_SHA256
     ?? process.env.CONTRACT_BUNDLE_SHA256 ?? process.env.TERRASCALE_CONTRACT_BUNDLE_SHA256;
-  if (!archiveSha256 || !hexPattern.test(archiveSha256)) throw new Error("contracts: CONTRACT_URL requires a 64-character CONTRACT_ARCHIVE_SHA256.");
+  const expectedArchiveSha256 = archiveSha256 ?? committedArchiveSha256;
+  if (!hexPattern.test(expectedArchiveSha256)) throw new Error("contracts: CONTRACT_URL requires a 64-character CONTRACT_ARCHIVE_SHA256.");
   if (!/^https?:$/u.test(new URL(url).protocol)) throw new Error("contracts: CONTRACT_URL must use http or https.");
   const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`contracts: failed to download ${url}: HTTP ${response.status}.`);
   const payload = new Uint8Array(await response.arrayBuffer());
   const actualSha256 = createHash("sha256").update(payload).digest("hex");
-  if (actualSha256 !== archiveSha256.toLowerCase()) throw new Error(`contracts: archive SHA-256 mismatch (${actualSha256} != ${archiveSha256}).`);
+  if (actualSha256 !== expectedArchiveSha256.toLowerCase()) throw new Error(`contracts: archive SHA-256 mismatch (${actualSha256} != ${expectedArchiveSha256}).`);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "terrascale-contract-"));
   try {
     const archivePath = path.join(temporary, "contract.tar");
