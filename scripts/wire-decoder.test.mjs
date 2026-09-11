@@ -93,11 +93,11 @@ test("remote runner attaches the configured database and follows the server view
     if (url.pathname === "/api/v1/reactive/views") {
       assert.equal(JSON.parse(options.body).databaseId, "demo");
       assert.equal(headers.get("authorization"), "Bearer test-api-token");
-      return Response.json({ view, generation: 1, capability: "test-capability", capability_header: "X-TerraScale-View-Capability", log: "/log", snapshot_chunks: ["/snapshot"] });
+      return Response.json({ view, generation: 1, capability: "test-capability", capability_header: "X-TerraScale-Capability", log: "/log", snapshot_chunks: ["/snapshot"] });
     }
     if (url.pathname === "/snapshot" || url.pathname === "/log") {
       assert.equal(headers.get("authorization"), null);
-      assert.equal(headers.get("x-terrascale-view-capability"), "test-capability");
+      assert.equal(headers.get("x-terrascale-capability"), "test-capability");
       const body = url.pathname === "/snapshot"
         ? [3, [view, [1n, 1n, 0n, [], "0".repeat(64), new Uint8Array()]]]
         : [4, [view, 1n, 0n, 1n, [[1, "e-1", 0, []]], "0".repeat(64), new Uint8Array()]];

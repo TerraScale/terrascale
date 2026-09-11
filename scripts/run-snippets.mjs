@@ -150,7 +150,7 @@ function canonicalMessage(envelope) {
 
 export { canonicalEnvelope, canonicalMessage };
 
-const VIEW_CAPABILITY_HEADER = "x-terrascale-view-capability";
+const VIEW_CAPABILITY_HEADER = "x-terrascale-capability";
 const MAX_REACTIVE_URL_LENGTH = 4096;
 
 function normalizeSandboxOrigin(raw) {
