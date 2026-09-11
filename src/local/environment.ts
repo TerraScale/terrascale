@@ -34,6 +34,34 @@ export const localSqlitePresenceIndicators = [
   "TERRASCALE_QUALIFICATION",
 ] as const;
 
+/**
+ * Explicit opt-in for a hosted development environment.
+ *
+ * Hosting platforms set a presence indicator on every workload, including
+ * development environments, so the SDK cannot tell a hosted dev environment
+ * from production by presence alone. Setting this variable to a true value
+ * relaxes *platform* indicators only: CI, qualification, and every stage
+ * indicator (`NODE_ENV=production`, `STAGE=staging`, …) still refuse.
+ */
+export const localSqliteHostedOptIn = "TERRASCALE_LOCAL_SQLITE_ALLOW_HOSTED";
+
+/** Presence indicators the opt-in never relaxes. */
+export const localSqliteUnrelaxableIndicators: ReadonlySet<string> = new Set([
+  "CI",
+  "CONTINUOUS_INTEGRATION",
+  "GITHUB_ACTIONS",
+  "GITLAB_CI",
+  "FORGEJO_ACTIONS",
+  "GITEA_ACTIONS",
+  "TF_BUILD",
+  "BUILDKITE",
+  "CIRCLECI",
+  "JENKINS_URL",
+  "TEAMCITY_VERSION",
+  "TERRASCALE_DEPLOYMENT",
+  "TERRASCALE_QUALIFICATION",
+]);
+
 export const localSqliteStageIndicators = [
   "NODE_ENV",
   "APP_ENV",
@@ -46,17 +74,24 @@ export const localSqliteStageIndicators = [
   "VERCEL_ENV",
 ] as const;
 
-const FORBIDDEN_STAGE_PATTERN = /(?:^|[-_.])(?:prod(?:uction)?|stag(?:e|ing)|preview|deploy(?:ed|ment)?|qualif(?:ication|ying|y)|ci)(?:$|[-_.])/iu;
+const FORBIDDEN_STAGE_PATTERN =
+  /(?:^|[-_.])(?:prod(?:uction)?|stag(?:e|ing)|preview|deploy(?:ed|ment)?|qualif(?:ication|ying|y)|ci)(?:$|[-_.])/iu;
 const FALSE_INDICATOR_VALUES = new Set(["0", "false", "no", "off"]);
+const OPT_IN_VALUES = new Set(["1", "true", "yes", "on", "enabled"]);
 
 export function assertLocalSqliteEnvironment(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void {
+  const hostedOptIn = OPT_IN_VALUES.has(
+    (environment[localSqliteHostedOptIn] ?? "").trim().toLowerCase(),
+  );
+
   for (const name of localSqlitePresenceIndicators) {
     const value = environment[name]?.trim();
-    if (value !== undefined && value.length > 0 && !FALSE_INDICATOR_VALUES.has(value.toLowerCase())) {
-      throw new TypeError(`SQLite local development mode is disabled when ${name} is set.`);
-    }
+    if (value === undefined || value.length === 0) continue;
+    if (FALSE_INDICATOR_VALUES.has(value.toLowerCase())) continue;
+    if (hostedOptIn && !localSqliteUnrelaxableIndicators.has(name)) continue;
+    throw new TypeError(`SQLite local development mode is disabled when ${name} is set.`);
   }
 
   for (const name of localSqliteStageIndicators) {
