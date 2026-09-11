@@ -3628,6 +3628,26 @@ fn attach_backup(
     backups.attach_with_config(database, region, config)
 }
 
+/// Reattaches one backup stream for every database this member already hosts.
+/// Creation attaches a stream from the database's first moment; a restart must
+/// restore the same coverage for databases that predate the process, or their
+/// WAL never streams again.
+pub(crate) fn reattach_member_backups(state: &ApiState) {
+    let Some(control) = state.control.clone() else { return };
+    let Some(catalog) = state.catalog.clone() else { return };
+    let Some(backups) = state.backups.clone() else { return };
+    let Ok(records) = control.list() else { return };
+    for record in records {
+        if record.deleted || !record.placement.contains(&state.region) {
+            continue;
+        }
+        let name = record.name.clone();
+        let location = catalog.location_for(&state.scope.0, &state.scope.1, &name);
+        let plan = backups.plan_for(&name);
+        let _ = attach_backup(&backups, &name, &location, &state.backup_root, &plan, state.region);
+    }
+}
+
 /// The typed refusal for a malformed collection or identifier path.
 fn invalid_identifier(kind: &str, value: &str) -> ApiError {
     ApiError {

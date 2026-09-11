@@ -1813,6 +1813,9 @@ async fn serve_public_api(
     });
     let dispatcher = crate::api::spawn_webhook_dispatcher(&state);
     let schema_migrations = crate::api::spawn_schema_migrations(&state);
+    // Databases that predate this process lose their stream coverage unless
+    // the member reattaches them at boot; creation only attaches new ones.
+    crate::api::reattach_member_backups(&state);
     let export_runtime = state.exports.clone();
     let router = crate::api::router(state);
     let task = tokio::spawn(async move {
