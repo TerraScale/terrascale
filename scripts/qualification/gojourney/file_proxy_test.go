@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -43,5 +44,18 @@ func TestFileProxyMatchesPinnedSDK(t *testing.T) {
 	got := hex.EncodeToString(gotSum[:])
 	if got != want[0] {
 		t.Fatalf("SDK ZIP SHA-256 = %s, want %s (%s)", got, want[0], fmt.Sprint(want[1]))
+	}
+	archive, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	for _, entry := range archive.File {
+		if entry.FileInfo().IsDir() {
+			t.Fatalf("SDK ZIP contains directory entry %q; Go module verification hashes files only", entry.Name)
+		}
+		if !strings.HasPrefix(entry.Name, "terrascale.tech/sdk@"+version+"/") {
+			t.Fatalf("SDK ZIP entry %q has wrong module prefix", entry.Name)
+		}
 	}
 }
