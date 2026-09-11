@@ -65,7 +65,7 @@ for (const url of [
   'https://status.terrascale.tech',
   'https://docs.terrascale.tech/legal/security/',
   'https://docs.terrascale.tech/legal/terms/',
-  'https://docs.terrascale.tech/legal/terms/#acceptable-use',
+  'https://docs.terrascale.tech/legal/acceptable-use/',
   'https://docs.terrascale.tech/legal/privacy/',
   'https://docs.terrascale.tech/legal/dpa/',
   'https://docs.terrascale.tech/legal/support/',
@@ -78,7 +78,7 @@ for (const url of [
 const expectedPolicyLinks = [
   ['terms', 'https://docs.terrascale.tech/legal/terms/'],
   ['privacy', 'https://docs.terrascale.tech/legal/privacy/'],
-  ['acceptableUse', 'https://docs.terrascale.tech/legal/terms/#acceptable-use'],
+  ['acceptableUse', 'https://docs.terrascale.tech/legal/acceptable-use/'],
   ['dataProcessingTerms', 'https://docs.terrascale.tech/legal/dpa/'],
 ]
 const registrationPolicyBlock = site.match(/export const registrationPolicyLinks = \[([\s\S]*?)\] as const/)?.[1] ?? ''
