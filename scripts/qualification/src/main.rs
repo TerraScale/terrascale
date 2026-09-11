@@ -82,6 +82,8 @@ fn peer_id(c: &Config, sdk: &str) -> String {
     format!("{}-{sdk}", c.run)
 }
 
+const JOURNEY_PEERS: [&str; 5] = ["typescript", "go", "rust", "dotnet", "cli"];
+
 fn observation(phase: &str, outcome: &str, detail: &str) {
     let bounded: String = detail.chars().take(240).collect();
     println!(
@@ -130,7 +132,7 @@ async fn seed(c: &Config) -> Result<()> {
 async fn verify(c: &Config) -> Result<()> {
     let sdk = client(c)?;
     let scope = DatabaseScope::in_project(c.database.clone(), c.project.clone());
-    for peer in ["typescript", "go", "rust", "dotnet"] {
+    for peer in JOURNEY_PEERS {
         let got = sdk
             .documents()
             .get(&scope, "sdk_journey", &peer_id(c, peer))
@@ -142,7 +144,7 @@ async fn verify(c: &Config) -> Result<()> {
             )));
         }
     }
-    observation("verify", "passed", "all four SDK bodies matched exactly");
+    observation("verify", "passed", "all five consumer bodies matched exactly");
     Ok(())
 }
 
