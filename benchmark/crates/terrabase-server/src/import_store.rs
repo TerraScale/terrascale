@@ -273,17 +273,21 @@ impl ImportStore {
         let mut statement = connection.prepare(
             "SELECT operation_id,input_path FROM import_jobs
              WHERE created_at > 0 AND created_at <= ?1
-             AND state IN ('completed','failed')",
+             AND state = 'completed'",
         )?;
         let rows = statement
-            .query_map([cutoff], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?
+            .query_map([cutoff], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         drop(statement);
         let transaction = connection.unchecked_transaction()?;
         for (_, path) in &rows {
             if let Some(path) = path {
                 match std::fs::symlink_metadata(path) {
-                    Ok(metadata) if metadata.is_file() => std::fs::remove_file(path).map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    Ok(metadata) if metadata.is_file() => {
+                        std::fs::remove_file(path).map_err(|_| rusqlite::Error::InvalidQuery)?
+                    }
                     Ok(_) => return Err(rusqlite::Error::InvalidQuery),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(_) => return Err(rusqlite::Error::InvalidQuery),
@@ -291,7 +295,7 @@ impl ImportStore {
             }
         }
         let removed = transaction.execute(
-            "DELETE FROM import_jobs WHERE created_at > 0 AND created_at <= ?1 AND state IN ('completed','failed')",
+            "DELETE FROM import_jobs WHERE created_at > 0 AND created_at <= ?1 AND state = 'completed'",
             [cutoff],
         )?;
         transaction.commit()?;

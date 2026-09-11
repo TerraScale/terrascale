@@ -1183,14 +1183,14 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
     assert!(envelope.route_generation() > 0);
     assert_eq!(
         envelope.database_incarnation(),
-        u128::from_be_bytes(
-            records[0].database_id.parse::<DatabaseUlid>().unwrap().as_bytes()
-        )
+        u128::from_be_bytes(records[0].database_id.parse::<DatabaseUlid>().unwrap().as_bytes())
     );
-    assert!(envelope
-        .participants()
-        .windows(2)
-        .all(|pair| pair[0].participant_id < pair[1].participant_id));
+    assert!(
+        envelope
+            .participants()
+            .windows(2)
+            .all(|pair| pair[0].participant_id < pair[1].participant_id)
+    );
     assert!(envelope.participants().iter().all(|participant| {
         participant.database_incarnation == envelope.database_incarnation()
             && participant.route_generation == envelope.route_generation()

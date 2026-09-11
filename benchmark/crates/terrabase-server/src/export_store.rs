@@ -296,7 +296,7 @@ impl SqliteExportStore {
         let cutoff = now_millis.saturating_sub(EXPORT_RETENTION_MILLIS) as i64;
         let connection = self.connection.lock().map_err(io_error)?;
         let mut statement = connection
-            .prepare("SELECT job_id FROM export_jobs WHERE created_at > 0 AND created_at <= ?1 AND json_extract(CAST(progress AS TEXT), '$.status') IN ('Complete','Cancelled','Failed')")
+            .prepare("SELECT job_id FROM export_jobs WHERE created_at > 0 AND created_at <= ?1 AND json_extract(CAST(progress AS TEXT), '$.status') IN ('Complete','Cancelled')")
             .map_err(io_error)?;
         let ids = statement
             .query_map([cutoff], |row| row.get::<_, String>(0))
