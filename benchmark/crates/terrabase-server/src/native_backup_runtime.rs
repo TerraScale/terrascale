@@ -1155,7 +1155,9 @@ mod restore_tests {
     async fn catalog_lists_an_authenticated_standalone_capture() {
         let (runtime, registry, member, root, database) = runtime_fixture("catalog-standalone");
         runtime.capture(&database, "catalog-standalone-capture").await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         runtime.capture(&database, "catalog-standalone-capture-2").await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         runtime.capture(&database, "catalog-standalone-capture-3").await.unwrap();
         let page =
             crate::backup_point_catalog::list_backup_points(&runtime, &database, Some(2), None, 0)

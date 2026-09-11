@@ -483,7 +483,11 @@ async fn production_owner_with_identity(
                 retention_days: 1,
                 historical_destinations: vec![],
                 destinations: vec![crate::config::ProductionBackupDestination {
-                    provider: Provider::Oci,
+                    provider: if matches!(mode, KeyMode::Customer) {
+                        Provider::CustomerS3
+                    } else {
+                        Provider::Oci
+                    },
                     endpoint: "https://fixture.compat.objectstorage.sa-saopaulo-1.oraclecloud.com"
                         .into(),
                     signing_region: "sa-saopaulo-1".into(),
