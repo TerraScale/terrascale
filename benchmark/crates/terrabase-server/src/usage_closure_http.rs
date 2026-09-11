@@ -378,7 +378,7 @@ mod tests {
         use terrabase::types::{
             CollectionName, Document, DocumentId, DocumentValue, LocalDurability, OperationId,
         };
-        let (registry, _member, records, root) = crate::admitted_databases::tests::fixture();
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let record = &records[0];
         let admitted = registry.resolve(&record.database_id).unwrap().unwrap();
         let engine = admitted.host.engine();
@@ -450,7 +450,7 @@ mod tests {
         // Establish the frozen sequence on an actual physical follower before
         // allowing the authenticated regional receipt endpoint to report it.
         let follower_path = root.join("closure-follower");
-        let (_follower, _) =
+        let (bootstrapped_follower, _) =
             terrabase_cluster::wal_follower::WalFollower::bootstrap_engine(engine, &follower_path)
                 .unwrap();
         let follower = terrabase::storage::open_physical_sqlite(
@@ -546,9 +546,9 @@ mod tests {
             StatusCode::SERVICE_UNAVAILABLE
         );
         drop(follower);
-        drop(_follower);
+        drop(bootstrapped_follower);
         drop(admitted);
-        _member.close(Duration::from_secs(1)).unwrap();
+        member.close(Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 

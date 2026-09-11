@@ -1,8 +1,8 @@
 use super::*;
-use std::collections::BTreeMap;
 use crate::schema_api::{
     CollectionSchema, DatabaseIdentity, DurableSchemaRecord, SchemaDocument, SchemaTarget,
 };
+use std::collections::BTreeMap;
 
 fn record(previous_schema: Option<CollectionSchema>, schema_version: u64) -> DurableSchemaRecord {
     let schema: CollectionSchema = serde_json::from_value(serde_json::json!({

@@ -216,7 +216,10 @@ impl AdmissionFenceStore {
     }
 
     #[allow(clippy::unused_self, reason = "test fault injection reads the store handle")]
-    #[allow(clippy::unnecessary_wraps, reason = "test fault injection returns the injected failure")]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "test fault injection returns the injected failure"
+    )]
     fn checkpoint(&self, stage: u8) -> std::io::Result<()> {
         #[cfg(test)]
         if self.fault.load(std::sync::atomic::Ordering::SeqCst) == stage {
