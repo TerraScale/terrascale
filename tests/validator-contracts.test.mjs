@@ -16,7 +16,9 @@ import { findProhibitedClaims, scanProhibitedClaims, walk as walkClaimFiles } fr
 
 test('required external destinations remain distinct', () => {
   assert.equal(new Set(requiredLinks).size, requiredLinks.length)
-  assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/acceptable-use/'))
+  assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/terms/'))
+  assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/terms/#acceptable-use'))
+  assert.ok(requiredLinks.includes('https://docs.terrascale.tech'))
 })
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')

@@ -76,7 +76,7 @@ export type PublicAlphaPlanSlug = (typeof publicAlphaCatalog)[number]['slug']
 export const registrationPolicyLinks = [
   { key: 'terms', href: 'https://docs.terrascale.tech/legal/terms/' },
   { key: 'privacy', href: 'https://docs.terrascale.tech/legal/privacy/' },
-  { key: 'acceptableUse', href: 'https://docs.terrascale.tech/legal/acceptable-use/' },
+  { key: 'acceptableUse', href: 'https://docs.terrascale.tech/legal/terms/#acceptable-use' },
   { key: 'dataProcessingTerms', href: 'https://docs.terrascale.tech/legal/dpa/' },
 ] as const
 
@@ -129,7 +129,7 @@ export const footerColumns: FooterColumn[] = [
     links: [
       { key: 'terms', href: 'https://docs.terrascale.tech/legal/terms/' },
       { key: 'privacy', href: 'https://docs.terrascale.tech/legal/privacy/' },
-      { key: 'acceptableUse', href: 'https://docs.terrascale.tech/legal/acceptable-use/' },
+      { key: 'acceptableUse', href: 'https://docs.terrascale.tech/legal/terms/#acceptable-use' },
       { key: 'dataProcessingTerms', href: 'https://docs.terrascale.tech/legal/dpa/' },
       { key: 'support', href: 'https://docs.terrascale.tech/legal/support/' },
     ],
