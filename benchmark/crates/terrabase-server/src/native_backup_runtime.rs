@@ -748,6 +748,20 @@ mod restore_tests {
         }
     }
 
+    /// Supervisor tests exercise the standalone provider path. The production
+    /// admitted handle reports routed state (or its conflict) explicitly;
+    /// this fixture keeps the real host lease while selecting the standalone
+    /// stream contract used by the blocking provider assertions.
+    struct StandaloneSupervisorEngine {
+        host: Arc<MemberHost>,
+    }
+
+    impl BackupEngineHandle for StandaloneSupervisorEngine {
+        fn engine(&self) -> &Engine {
+            self.host.engine()
+        }
+    }
+
     #[async_trait::async_trait]
     impl object_store::ObjectStore for BlockingStore {
         async fn put_opts(
@@ -863,7 +877,9 @@ mod restore_tests {
                 points_per_stream: 4,
             },
             [NativeBackupInput {
-                engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&target.database.host))),
+                engine: Arc::new(StandaloneSupervisorEngine {
+                    host: Arc::clone(&target.database.host),
+                }),
                 keys: Arc::new(
                     terrabase::backup::worker::CustomerKmsBackupKeys::new(
                         crate::test_keys::backup_keys(&scope),
