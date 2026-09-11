@@ -86,6 +86,10 @@ impl ProductionBudgetRuntime {
     /// usage fact context to an origin transaction. The operation and scope
     /// come from the authenticated request; holder, placement, epochs and
     /// grant identity come only from the verified persisted allocation.
+    ///
+    /// # Errors
+    /// Returns an error if no persisted allocation covers this operation.
+    #[allow(clippy::too_many_arguments, reason = "explicit transaction admission scope")]
     pub fn attach(
         &self,
         transaction: &mut Transaction<'_>,

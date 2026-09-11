@@ -558,6 +558,10 @@ pub struct ApiState {
     /// Native recovery worker owner retained until bounded shutdown completes.
     pub native_recovery: Option<Arc<crate::native_recovery::NativeRecoveryRuntime>>,
     /// Production resolver for an already admitted, paused restore target.
+    #[allow(
+        clippy::type_complexity,
+        reason = "the restore-target resolver closure is spelled once"
+    )]
     pub native_restore_target: Option<
         Arc<
             dyn Fn(
@@ -640,6 +644,10 @@ impl ApiState {
     /// it never opens a second catalog, engine, backup fleet, or credential
     /// store while assembling the public API.
     #[allow(clippy::too_many_arguments, reason = "production ownership is explicit")]
+    #[allow(
+        clippy::type_complexity,
+        reason = "the restore-target resolver closure is spelled once"
+    )]
     pub fn production(
         native_backups: Arc<crate::native_backup_runtime::NativeBackupRuntime>,
         native_recovery: Arc<crate::native_recovery::NativeRecoveryRuntime>,
@@ -1218,8 +1226,7 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "list_branches" => Some("BranchListResponse"),
         "create_database" | "create_branch" | "restore_backup" => Some("ProvisioningOperation"),
         "get_provisioning_operation" => Some("OperationSummary"),
-        "delete_database" => Some("DeletionOperation"),
-        "deletion_status" => Some("DeletionOperation"),
+        "delete_database" | "deletion_status" => Some("DeletionOperation"),
         "get_database" | "restore_database" => Some("DatabaseRecord"),
         "list_collections" => Some("CollectionsResponse"),
         "list_indexes" => Some("IndexListResponse"),
@@ -1492,6 +1499,10 @@ async fn placement_headers(
 /// Product credentials require a fresh TLS-authenticated identity authority
 /// result bound to the member-owned tenant/project and requested database.
 /// Credential claims never select an authority endpoint or widen permissions.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one middleware admits the credential and enforces scope per route"
+)]
 async fn authenticate(
     State(state): State<Arc<ApiState>>,
     mut request: Request,
@@ -1539,9 +1550,8 @@ async fn authenticate(
     let attach_scope =
         if request.method() == Method::POST && request.uri().path() == "/api/v1/reactive/views" {
             let body = std::mem::replace(request.body_mut(), axum::body::Body::empty());
-            let bytes = match axum::body::to_bytes(body, 65_536).await {
-                Ok(bytes) => bytes,
-                Err(_) => return ApiError::unauthorized().into_response(),
+            let Ok(bytes) = axum::body::to_bytes(body, 65_536).await else {
+                return ApiError::unauthorized().into_response();
             };
             let parsed = serde_json::from_slice::<crate::reactive_api::AttachRequest>(&bytes);
             *request.body_mut() = axum::body::Body::from(bytes);
@@ -1654,6 +1664,10 @@ async fn authenticate(
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one pass resolves the route owner, admits the credential, and verifies scope"
+)]
 async fn admit_bearer(
     state: &ApiState,
     method: &Method,
@@ -2404,9 +2418,10 @@ async fn list_indexes(
         None
     };
     if let Some(session) = &mut session
-        && let Err(error) = session.read_snapshot() {
-            return session_error(error).into_response();
-        }
+        && let Err(error) = session.read_snapshot()
+    {
+        return session_error(error).into_response();
+    }
     match engine.index_descriptors() {
         Ok(descriptors) => {
             let mut body = String::from("{\"indexes\":[");
@@ -2982,6 +2997,10 @@ fn merge_patch(base: &mut DocumentValue, patch: &DocumentValue) {
 /// delete) in a single engine transaction: every op commits together or
 /// the typed refusal names the offending op and nothing lands.
 #[utoipa::path(post, path = "/api/v1/databases/{name}/collections/{collection}/documents/batch", responses((status = 200, description = "Batch result")))]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one batch transaction replays by fingerprint and answers"
+)]
 async fn batch_documents(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
@@ -3033,9 +3052,8 @@ async fn batch_documents(
         Ok(None) => {}
         Err(error) => return error.into_response(),
     }
-    let engine = match host.engine_host().batch_coordinator(&collection, &ids) {
-        Ok(engine) => engine,
-        Err(_) => return ApiError::control_unavailable().into_response(),
+    let Ok(engine) = host.engine_host().batch_coordinator(&collection, &ids) else {
+        return ApiError::control_unavailable().into_response();
     };
     let scope = engine.scope_for(scope.tenant());
     let durability = match BatchDurability::prepare(
@@ -3092,9 +3110,10 @@ async fn batch_documents(
         }
     }
     if has_idempotency_key(&headers)
-        && let Err(error) = transaction.bind_batch_request(fingerprint, operations.len()) {
-            return document_request_error(error).into_response();
-        }
+        && let Err(error) = transaction.bind_batch_request(fingerprint, operations.len())
+    {
+        return document_request_error(error).into_response();
+    }
     if let Err(error) = attach_write_budget(
         &state,
         &mut transaction,
@@ -3167,6 +3186,7 @@ async fn batch_documents(
     }
 }
 
+#[allow(clippy::result_large_err, reason = "every refusal is a ready-to-send Response")]
 fn batch_route_ids(operations: &[serde_json::Value]) -> Result<Vec<DocumentId>, Response> {
     let mut ids = Vec::with_capacity(operations.len());
     for (index, item) in operations.iter().enumerate() {
@@ -3197,6 +3217,7 @@ fn batch_request_fingerprint(
     *hash.finalize().as_bytes()
 }
 
+#[allow(clippy::too_many_arguments, reason = "replay mirrors the batch request it answers")]
 async fn replay_batch_request(
     state: &ApiState,
     host: &terrabase_tbep::engine_host::EngineHost,
@@ -3712,6 +3733,7 @@ fn document_request_fingerprint(
     *hash.finalize().as_bytes()
 }
 
+#[allow(clippy::needless_pass_by_value, reason = "callers hand over the rejected engine error")]
 fn document_request_error(error: terrabase::EngineError) -> ApiError {
     match error {
         terrabase::EngineError::OperationIdReuse { .. } => ApiError {
@@ -3820,6 +3842,10 @@ fn routed_live_revision(
 /// throwaway point-in-time restore (S-06 time-travel, cached per
 /// (database, second) with a bounded budget).
 #[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document")))]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one read path resolves the participant, guards, and answers"
+)]
 async fn get_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
@@ -3840,11 +3866,11 @@ async fn get_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
-    let engine =
-        match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
-            Ok(engine) => engine,
-            Err(_) => return ApiError::control_unavailable().into_response(),
-        };
+    let Ok(engine) =
+        host.engine_host().document_participant(&collection, std::slice::from_ref(&id))
+    else {
+        return ApiError::control_unavailable().into_response();
+    };
     let scope = engine.scope_for(scope.tenant());
 
     if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
@@ -4091,11 +4117,11 @@ async fn put_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
-    let engine =
-        match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
-            Ok(engine) => engine,
-            Err(_) => return ApiError::control_unavailable().into_response(),
-        };
+    let Ok(engine) =
+        host.engine_host().document_participant(&collection, std::slice::from_ref(&id))
+    else {
+        return ApiError::control_unavailable().into_response();
+    };
     let scope = engine.scope_for(scope.tenant());
 
     let value: serde_json::Value = match serde_json::from_str(&body) {
@@ -4240,9 +4266,10 @@ async fn put_document(
         .into_response();
     }
     if has_idempotency_key(&headers)
-        && let Err(error) = transaction.bind_document_request(fingerprint) {
-            return document_request_error(error).into_response();
-        }
+        && let Err(error) = transaction.bind_document_request(fingerprint)
+    {
+        return document_request_error(error).into_response();
+    }
     if let Err(error) = durability.guard(
         &mut transaction,
         host.engine_host(),
@@ -4325,6 +4352,10 @@ async fn put_document(
 /// `null` deletes a field, anything else replaces the whole value. The
 /// read-modify-write is one engine transaction against the snapshot.
 #[utoipa::path(patch, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document patched")))]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one read-modify-write transaction merges the patch and answers"
+)]
 async fn patch_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
@@ -4344,11 +4375,11 @@ async fn patch_document(
         Err(error) => return error.into_response(),
     };
 
-    let engine =
-        match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
-            Ok(engine) => engine,
-            Err(_) => return ApiError::control_unavailable().into_response(),
-        };
+    let Ok(engine) =
+        host.engine_host().document_participant(&collection, std::slice::from_ref(&id))
+    else {
+        return ApiError::control_unavailable().into_response();
+    };
     let scope = engine.scope_for(scope.tenant());
     if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
         return ApiError::control_unavailable().into_response();
@@ -4471,9 +4502,10 @@ async fn patch_document(
         .into_response();
     }
     if has_idempotency_key(&headers)
-        && let Err(error) = transaction.bind_document_request(fingerprint) {
-            return document_request_error(error).into_response();
-        }
+        && let Err(error) = transaction.bind_document_request(fingerprint)
+    {
+        return document_request_error(error).into_response();
+    }
     if let Err(error) = durability.guard(
         &mut transaction,
         host.engine_host(),
@@ -4626,6 +4658,10 @@ async fn document_history(
 
 /// Deletes one document (tombstone; the history route can explain it).
 #[utoipa::path(delete, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document deleted")))]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one delete tombstones the document in a single transaction"
+)]
 async fn delete_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
@@ -4645,11 +4681,11 @@ async fn delete_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
-    let engine =
-        match host.engine_host().document_participant(&collection, std::slice::from_ref(&id)) {
-            Ok(engine) => engine,
-            Err(_) => return ApiError::control_unavailable().into_response(),
-        };
+    let Ok(engine) =
+        host.engine_host().document_participant(&collection, std::slice::from_ref(&id))
+    else {
+        return ApiError::control_unavailable().into_response();
+    };
     let scope = engine.scope_for(scope.tenant());
 
     if engine.validate_document_shard_route(&scope, &collection, &id).is_err() {
@@ -4766,9 +4802,10 @@ async fn delete_document(
     // conflict rejection is the version check.
     transaction.delete_in_collection(&collection, id.clone(), expected);
     if has_idempotency_key(&headers)
-        && let Err(error) = transaction.bind_document_request(fingerprint) {
-            return document_request_error(error).into_response();
-        }
+        && let Err(error) = transaction.bind_document_request(fingerprint)
+    {
+        return document_request_error(error).into_response();
+    }
     if let Err(error) = durability.guard(
         &mut transaction,
         host.engine_host(),
@@ -5183,6 +5220,10 @@ async fn list_backup_points(
     let Some(runtime) = &state.native_backups else {
         return ApiError::backup("native backup point catalog unavailable").into_response();
     };
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "millis are clamped to u64::MAX before the cast"
+    )]
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis().min(u128::from(u64::MAX)) as u64);
@@ -5219,9 +5260,8 @@ async fn restore_backup(
         return ApiError::forbidden("database restore").into_response();
     }
     if let Some(authority) = &state.provisioning {
-        let registry = match &state.admitted_databases {
-            Some(registry) => registry,
-            None => return ApiError::control_unavailable().into_response(),
+        let Some(registry) = &state.admitted_databases else {
+            return ApiError::control_unavailable().into_response();
         };
         let source = match registry.resolve_serving(&name) {
             Ok(Some(value)) => value,
@@ -5244,12 +5284,9 @@ async fn restore_backup(
                     .into_response();
             }
         };
-        let (target, operation, selection) = match parse_restore_request(&value) {
-            Ok(request) => request,
-            Err(()) => {
-                return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
-                    .into_response();
-            }
+        let Ok((target, operation, selection)) = parse_restore_request(&value) else {
+            return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
+                .into_response();
         };
         let scope = crate::delegated_identity::VerifiedProjectScope {
             tenant_id: source.record.tenant_id.clone(),
@@ -5412,6 +5449,7 @@ fn valid_restore_operation_id(value: &str) -> bool {
     clippy::needless_pass_by_value,
     reason = "the axum handlers move owned state, name, body, and flavor into this shared path"
 )]
+#[allow(clippy::unused_async, reason = "mirrors the async handler surface it serves")]
 async fn restore_or_branch(
     state: Arc<ApiState>,
     name: String,
@@ -5448,20 +5486,19 @@ async fn restore_or_branch(
         .into_response();
     };
     if let Some(operation) = request.get("operation_id")
-        && operation.as_str().is_none_or(|operation| !valid_restore_operation_id(operation)) {
-            return ApiError {
-                status: StatusCode::BAD_REQUEST,
-                code: "invalid_operation_id",
-                message: "the operation_id must be printable ASCII text of at most 128 bytes"
-                    .into(),
-                fix: "send a stable non-empty operation_id, or omit it on a local member".into(),
-                placement: None,
-            }
-            .into_response();
+        && operation.as_str().is_none_or(|operation| !valid_restore_operation_id(operation))
+    {
+        return ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_operation_id",
+            message: "the operation_id must be printable ASCII text of at most 128 bytes".into(),
+            fix: "send a stable non-empty operation_id, or omit it on a local member".into(),
+            placement: None,
         }
-    let at = match restore_at_millis(request.get("at")) {
-        Ok(at) => at,
-        Err(()) => return invalid_at("it must be a non-negative integer or null"),
+        .into_response();
+    }
+    let Ok(at) = restore_at_millis(request.get("at")) else {
+        return invalid_at("it must be a non-negative integer or null");
     };
     let placement = [state.region];
     let registered = match flavor {
@@ -6691,6 +6728,7 @@ mod tests {
     /// the live read serves the new one. Skips when the external backup
     /// executable is not packaged on this machine.
     #[tokio::test]
+    #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
     async fn document_time_travel_at_returns_the_old_value() {
         use crate::backup::BackupStreams;
         if BackupStreams::discover().is_none() {

@@ -47,6 +47,8 @@ pub(crate) fn validate_residency(
 ///
 /// # Errors
 /// Rejects missing providers, expired keys, oversized snapshots and failed uploads.
+#[allow(clippy::too_many_arguments, reason = "snapshot upload takes the full production context")]
+#[allow(clippy::too_many_lines, reason = "one provider validation pass, one upload fan-out")]
 pub async fn upload_snapshot(
     source: &WalSnapshotSource,
     source_region: RegionCode,

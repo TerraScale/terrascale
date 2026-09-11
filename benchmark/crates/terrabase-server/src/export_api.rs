@@ -1221,6 +1221,7 @@ impl Worker {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "one export state machine per stream chunk")]
     async fn run_inner(
         &self,
         state: &mut ExportJobState,

@@ -39,6 +39,7 @@ pub(crate) struct AdmissionFenceStore {
 }
 
 impl AdmissionFenceStore {
+    #[allow(clippy::cast_possible_wrap, reason = "OFlags bits are the platform open(2) flag set")]
     pub(crate) fn open(
         root: &Path,
         validate: impl Fn(&AdmissionRecord) -> Result<(), String>,
@@ -223,6 +224,9 @@ impl AdmissionFenceStore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines, reason = "one fence pass over pending and retained evidence")]
+    #[allow(clippy::cast_possible_wrap, reason = "OFlags bits are the platform open(2) flag set")]
+    #[allow(clippy::similar_names, reason = "fences indexes the store, fenced is the built record")]
     pub(crate) fn fence_unadmitted(
         &self,
         record: &AdmissionRecord,
@@ -428,6 +432,7 @@ fn sync_directory(path: &Path) -> Result<(), String> {
         .map_err(|_| "admission directory sync failed".into())
 }
 
+#[allow(clippy::cast_possible_wrap, reason = "OFlags bits are the platform open(2) flag set")]
 fn read_fence(path: &Path, pending: bool) -> Result<FenceRecord, String> {
     let mut file = fs::OpenOptions::new()
         .read(true)

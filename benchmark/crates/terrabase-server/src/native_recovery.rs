@@ -66,6 +66,9 @@ pub struct NativeRecoveryLimits {
 
 impl NativeRecoveryLimits {
     /// Validates finite bounds accepted by the worker.
+    ///
+    /// # Errors
+    /// Returns an error if a bound falls outside accepted limits or pending exceeds retained.
     pub fn validate(self) -> Result<Self, NativeRecoveryError> {
         if !(1..=10_000).contains(&self.pending_operations)
             || self.pending_operations > self.retained_operations
@@ -89,6 +92,9 @@ impl NativeRecoveryWorker {
     ///
     /// This is reserved for owned shutdown paths, where releasing the Member
     /// lease must wait for any uncancellable provider operation to finish.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime mutex is poisoned or the worker task fails to join.
     pub async fn await_completion(self) -> Result<(), NativeRecoveryError> {
         *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;
         let _ = self.stop.send(tokio::time::Instant::now());
@@ -97,21 +103,24 @@ impl NativeRecoveryWorker {
     }
 
     /// Signals the worker and waits for its owned task to finish.
+    ///
+    /// # Errors
+    /// Returns an error if runtime state is poisoned, the worker misses its deadline, or the worker task failed.
     pub async fn shutdown(self) -> Result<(), NativeRecoveryError> {
         *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         let _ = self.stop.send(deadline);
         let join = tokio::spawn(self.join);
-        let deadline = if let Ok(result) = tokio::time::timeout(std::time::Duration::from_secs(5), join).await { result
-        .map_err(|_| NativeRecoveryError::Unavailable)?
-        .map_err(|_| NativeRecoveryError::Unavailable)? } else {
+        let deadline = if let Ok(result) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), join).await
+        {
+            result
+                .map_err(|_| NativeRecoveryError::Unavailable)?
+                .map_err(|_| NativeRecoveryError::Unavailable)?
+        } else {
             // The waiter retains the JoinHandle and worker lease while
             // an uncancellable provider call is still active.
-            *self
-                .runtime
-                .worker_error
-                .lock()
-                .map_err(|_| NativeRecoveryError::Unavailable)? =
+            *self.runtime.worker_error.lock().map_err(|_| NativeRecoveryError::Unavailable)? =
                 Some(NativeRecoveryError::Unavailable);
             return Err(NativeRecoveryError::Unavailable);
         };
@@ -333,6 +342,9 @@ impl NativeRecoveryRuntime {
     /// Resolves a published multi-participant envelope without projecting it
     /// through one participant manifest. `None` means this database has only
     /// ordinary single-participant points.
+    ///
+    /// # Errors
+    /// Returns an error if the source is unverified, the fleet is unreachable, or no retained provider copy exists.
     pub async fn resolve_recovery_envelope(
         &self,
         source: &str,
@@ -374,6 +386,10 @@ impl NativeRecoveryRuntime {
         {
             return Ok(None);
         }
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "unix millis cannot exceed u64 in practice"
+        )]
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| NativeRecoveryError::Unavailable)?
@@ -417,13 +433,16 @@ impl NativeRecoveryRuntime {
                     terrabase::backup::worker::FleetError::Capture
                     | terrabase::backup::worker::FleetError::Upload
                     | terrabase::backup::worker::FleetError::StagingFull,
-                ) => continue,
+                ) => (),
             }
         }
         Err(NativeRecoveryError::Unavailable)
     }
 
     /// Resolves an authenticated retained manifest without creating recovery state.
+    ///
+    /// # Errors
+    /// Returns an error if the source is unverified, no providers are configured, or fleet resolution fails.
     pub async fn resolve_recovery_point(
         &self,
         source: &str,
@@ -455,7 +474,7 @@ impl NativeRecoveryRuntime {
         }
         let (keys, destinations, point_limit) = {
             let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-            
+
             fleet.stream_recovery_point_config(source).map_err(map_fleet_error)?
         };
         terrabase::backup::worker::NativeBackupFleet::resolve_recovery_point_with_config(
@@ -525,6 +544,9 @@ impl NativeRecoveryRuntime {
     }
 
     /// Opens recovery while sharing the backup owner's async fleet gate.
+    ///
+    /// # Errors
+    /// Returns an error for invalid limits, unsafe paths, SQLite failures, or a held worker lease.
     pub fn new_with_fleet_gate(
         root: &Path,
         fleet: Arc<Mutex<NativeBackupFleet>>,
@@ -595,27 +617,26 @@ impl NativeRecoveryRuntime {
         let worker_runtime = Arc::clone(&runtime);
         let notify = Arc::clone(&runtime.notify);
         let join = executor.spawn(async move {
-            
             lifecycle::supervise::<NativeRecoveryError, _, _>(stopped, notify, move || {
-                    let runtime = Arc::clone(&worker_runtime);
-                    let observed = Arc::clone(&runtime);
-                    async move {
-                        let result = runtime.process_pending().await;
-                        if result.is_ok() {
-                            *observed
-                                .worker_error
-                                .lock()
-                                .map_err(|_| NativeRecoveryError::Unavailable)? = None;
-                        } else if let Err(error) = result {
-                            *observed
-                                .worker_error
-                                .lock()
-                                .map_err(|_| NativeRecoveryError::Unavailable)? = Some(error);
-                        }
-                        result
+                let runtime = Arc::clone(&worker_runtime);
+                let observed = Arc::clone(&runtime);
+                async move {
+                    let result = runtime.process_pending().await;
+                    if result.is_ok() {
+                        *observed
+                            .worker_error
+                            .lock()
+                            .map_err(|_| NativeRecoveryError::Unavailable)? = None;
+                    } else if let Err(error) = result {
+                        *observed
+                            .worker_error
+                            .lock()
+                            .map_err(|_| NativeRecoveryError::Unavailable)? = Some(error);
                     }
-                })
-                .await
+                    result
+                }
+            })
+            .await
         });
         runtime.notify.notify_one();
         Ok((runtime.clone(), NativeRecoveryWorker { runtime, stop, join }))
@@ -701,6 +722,18 @@ impl NativeRecoveryRuntime {
 
     /// Atomically admits or replays one restore identity. Provider effects are
     /// performed only by the restore worker after target resolution.
+    ///
+    /// # Errors
+    /// Returns an error for invalid requests, replay mismatches, or an unavailable ledger.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one admission validates, replays, and bounds the ledger"
+    )]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "owned replay identity compared against durable rows"
+    )]
+    #[allow(clippy::cast_possible_wrap, reason = "ledger limits are validated to at most 10_000")]
     pub fn admit_restore(
         &self,
         request: NativeRestoreRequest,
@@ -816,6 +849,9 @@ impl NativeRecoveryRuntime {
     }
 
     /// Reads one durable restore operation without starting provider work.
+    ///
+    /// # Errors
+    /// Returns an error if durable storage is unavailable or the row fails verification.
     pub fn restore_status(
         &self,
         operation_id: &str,
@@ -842,6 +878,9 @@ impl NativeRecoveryRuntime {
     }
 
     /// Returns the original admitted request after checking its target grant.
+    ///
+    /// # Errors
+    /// Returns an error if the durable row is unreadable or the target grant does not match.
     pub fn restore_request(
         &self,
         operation_id: &str,
@@ -860,6 +899,9 @@ impl NativeRecoveryRuntime {
     /// Explicitly retries authenticated target readback for an uncertain
     /// restore. Provider execution is retried only after authenticated readback
     /// proves the paused target has no publication marker.
+    ///
+    /// # Errors
+    /// Returns an error if shutdown has begun, the operation is missing, or the durable save fails.
     pub fn retry_restore_readback(
         &self,
         operation_id: &str,
@@ -883,6 +925,14 @@ impl NativeRecoveryRuntime {
 
     /// Reads source facts from the authenticated selected archive manifest.
     /// No target measurements or current source snapshot are substituted.
+    ///
+    /// # Errors
+    /// Returns an error if the operation is missing, unbound, incomplete, or lacks a published marker.
+    #[allow(clippy::unused_async, reason = "public async surface; callers already await this path")]
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "public async surface; callers already await this path"
+    )]
     pub async fn verified_restore_source_facts(
         &self,
         request: &NativeRestoreRequest,
@@ -911,6 +961,9 @@ impl NativeRecoveryRuntime {
     }
 
     /// Returns facts only for a complete restore with exact identity binding.
+    ///
+    /// # Errors
+    /// Returns an error if the durable row is unreadable or fails verification.
     pub fn verified_restore_stats(
         &self,
         operation_id: &str,
@@ -964,9 +1017,8 @@ impl NativeRecoveryRuntime {
         let Some((source, operation)) = pending else {
             return Ok(false);
         };
-        let admitted = match self.registry.resolve(&source) {
-            Ok(Some(admitted)) => admitted,
-            Ok(None) | Err(_) => return Err(NativeRecoveryError::Unavailable),
+        let Ok(Some(admitted)) = self.registry.resolve(&source) else {
+            return Err(NativeRecoveryError::Unavailable);
         };
         if admitted.host.engine().database_id().to_text() != source {
             let connection =
@@ -1097,10 +1149,11 @@ impl NativeRecoveryRuntime {
         }
         operation.phase = NativeRestorePhase::Restoring;
         self.save_restore(&operation)?;
-        let receipt = if let Ok(outcome) = self.restore_executor.execute(request).await { outcome.receipt } else {
+        let receipt = if let Ok(outcome) = self.restore_executor.execute(request).await {
+            outcome.receipt
+        } else {
             operation.phase = NativeRestorePhase::Uncertain;
-            operation.error =
-                Some("native restore remains repairable; retry the operation".into());
+            operation.error = Some("native restore remains repairable; retry the operation".into());
             self.save_restore(&operation)?;
             return Ok(true);
         };
@@ -1156,9 +1209,10 @@ impl NativeRecoveryRuntime {
             return Err(NativeRecoveryError::VerificationFailed);
         }
         if let NativeRestoreSelection::PointId(point) = &request.selection
-            && point != &request.recovery_point_id {
-                return Err(NativeRecoveryError::VerificationFailed);
-            }
+            && point != &request.recovery_point_id
+        {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
         let journal_cut =
             request.journal_cut.parse().map_err(|_| NativeRecoveryError::VerificationFailed)?;
         let identity = terrabase::backup::RestoreIdentity {
@@ -1223,6 +1277,10 @@ impl NativeRecoveryRuntime {
         persistence::save(&connection, operation, checkpoint)
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "caller hands over the cloned placement for checkpoint building"
+    )]
     fn run_capture(
         &self,
         host: &MemberHost,
@@ -1674,6 +1732,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one contract test walks admission, pruning, and reopen"
+    )]
     #[tokio::test]
     async fn restore_admission_bounds_survive_concurrency_pruning_failure_and_reopen() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
@@ -1796,6 +1858,10 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one contract test covers every uncertainty transition"
+    )]
     #[tokio::test]
     async fn uncertain_restore_requires_explicit_readback_retry() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
@@ -1916,6 +1982,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one contract test walks the full readback and replay path"
+    )]
     #[tokio::test]
     async fn original_restore_rpc_reaches_readback_without_source_and_rejects_changed_request() {
         use crate::production_lifecycle_control::*;

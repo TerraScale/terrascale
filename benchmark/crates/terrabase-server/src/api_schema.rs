@@ -192,6 +192,7 @@ mod tests {
     const TARGET: &str = "/api/v1/databases/demo/collections/orders/schema";
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn schema_http_persists_replays_and_checks_authorization_and_etags() {
         let state = super::super::tests::state_with_keys_and_control();
         state

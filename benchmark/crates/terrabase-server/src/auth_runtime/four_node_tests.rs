@@ -231,6 +231,7 @@ async fn create() -> Fixture {
     ]);
     let placement = BTreeSet::from([ProductionRegion::Gru, ProductionRegion::Sfo]);
     let mut authorities = Vec::new();
+    #[allow(clippy::needless_range_loop, reason = "index pairs voters with endpoints")]
     for i in 1..4 {
         let store = SqliteStore::open_encrypted(
             &root.join(format!("voter-{i}.sqlite")),
@@ -288,8 +289,7 @@ async fn create() -> Fixture {
                 while requests.try_join_next().is_some() {}
                 let connection = match endpoint.accept().await {
                     Ok(Some(c)) => c,
-                    Ok(None) => break,
-                    Err(ProductionTransportError::Draining) => break,
+                    Ok(None) | Err(ProductionTransportError::Draining) => break,
                     Err(_) => continue,
                 };
                 let network =

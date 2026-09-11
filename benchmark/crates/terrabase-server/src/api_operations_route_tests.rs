@@ -87,9 +87,8 @@ async fn production_handler_paginates_authority_export_recovery_after_restart() 
     let exports = Arc::new(
         crate::export_api::ExportRuntime::local(&exports_root, terrabase::RegionCode::GRU).unwrap(),
     );
-    let job_root = exports_root
-        .join("jobs")
-        .join(blake3::hash(record.database_id.as_bytes()).to_hex());
+    let job_root =
+        exports_root.join("jobs").join(blake3::hash(record.database_id.as_bytes()).to_hex());
     let store = crate::export_store::SqliteExportStore::open(&job_root).unwrap();
     let connection = rusqlite::Connection::open(job_root.join("exports.sqlite")).unwrap();
     for id in ['a', 'b'] {

@@ -503,6 +503,7 @@ pub trait NativeLifecycleWorker: Send + Sync {
         Err("native snapshot placement verifier is unavailable".into())
     }
     /// Deletes data owned by this member after durable authority admission.
+    #[allow(clippy::too_many_lines, reason = "one deletion pass over every owned surface")]
     async fn delete_owned_data(
         &self,
         _assignment: &AcceptedLifecycleAssignment,

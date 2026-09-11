@@ -22,6 +22,7 @@ pub struct ProductionRuntime {
     tbep: TbepServingStatus,
 }
 
+#[allow(clippy::fn_params_excessive_bools, reason = "one fact per serving surface")]
 fn complete_member_host(
     admitted: bool,
     encrypted: bool,

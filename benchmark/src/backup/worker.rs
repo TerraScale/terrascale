@@ -3796,6 +3796,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn envelope_catalog_is_not_published_when_a_provider_fails() {
         use object_store::ObjectStore;
 

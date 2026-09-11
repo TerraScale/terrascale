@@ -248,6 +248,7 @@ fn signed_for_regions(
     (sign_allocation(&key, &key_id, &payload), spki, key)
 }
 
+#[allow(clippy::cast_possible_truncation, reason = "ECDSA signatures are far below u16::MAX")]
 fn sign_allocation(key: &EcdsaKeyPair, key_id: &str, payload: &[u8]) -> Value {
     let mut message = terrabase::usage::ALLOCATION_SIGNING_DOMAIN.to_vec();
     message.extend_from_slice(payload);

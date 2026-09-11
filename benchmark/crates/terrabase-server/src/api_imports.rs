@@ -271,6 +271,8 @@ impl ImportWriteTarget for EngineImportWriteTarget {
 }
 
 #[derive(Debug)]
+// Payloads keep variant fidelity; messages are scrubbed at the API boundary.
+#[allow(dead_code)]
 pub(crate) enum ImportExecutionError {
     Input(io::Error),
     Codec(export_formats::CodecError),
@@ -290,6 +292,7 @@ impl From<io::Error> for ImportExecutionError {
 /// durably staged operation identity, and its cursor is persisted only after
 /// the write target reports a proven commit. A failed or cancelled operation
 /// remains resumable from its last checkpoint.
+#[allow(clippy::too_many_lines, reason = "one resumable batch loop over the durable cursor")]
 pub(crate) fn execute_import<C, T>(
     store: &ImportStore,
     job: &ImportJob,
@@ -474,6 +477,7 @@ where
         .ok_or_else(|| ImportExecutionError::Store("import operation disappeared".into()))
 }
 
+#[allow(clippy::too_many_arguments, reason = "explicit batch commit identity and ledger")]
 fn commit_batch<T: ImportWriteTarget>(
     store: &ImportStore,
     target: &T,
@@ -559,6 +563,7 @@ fn refusal(status: StatusCode, message: &'static str) -> Response {
         .into_response()
 }
 
+#[allow(clippy::result_large_err, reason = "axum Response refusal is the error channel")]
 fn resolve(
     state: &ApiState,
     name: &str,
@@ -578,6 +583,7 @@ fn resolve(
     Ok((runtime, host))
 }
 
+#[allow(clippy::result_large_err, reason = "axum Response refusal is the error channel")]
 fn owned_job(
     runtime: &ImportRuntime,
     host: &terrabase_tbep::member_host::MemberHost,
@@ -1139,7 +1145,7 @@ mod tests {
         .unwrap();
         writer.write_chunk(b"{\"collection\":\"items\",\"id\":\"one\",\"value\":{}}\n").unwrap();
         writer.finish_and_commit(&runtime.store).unwrap();
-        let target = RejectionLedgerTarget { attempts: Default::default() };
+        let target = RejectionLedgerTarget { attempts: std::sync::Mutex::default() };
         assert!(runtime.store.claim(&job.operation_id).unwrap());
         let current = runtime.store.get(&job.operation_id).unwrap().unwrap();
         let reader = ImportInputReader::open(

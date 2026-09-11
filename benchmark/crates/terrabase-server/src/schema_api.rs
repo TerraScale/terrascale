@@ -1167,6 +1167,7 @@ pub struct SchemaService {
     store: Option<Arc<dyn SchemaDurablePort>>,
 }
 
+#[allow(clippy::large_enum_variant, reason = "short-lived two-variant preparation enum")]
 enum ApplyPreparation {
     Ready {
         request: ApplySchemaRequest,
@@ -1177,6 +1178,7 @@ enum ApplyPreparation {
     Replay(ApplySchemaResponse),
 }
 
+#[allow(clippy::large_enum_variant, reason = "short-lived two-variant preparation enum")]
 enum BackfillPreparation {
     Ready { current: DurableSchemaRecord, migration: MigrationStatus, digest: String },
     Replay(SchemaDocument),
@@ -1387,7 +1389,7 @@ impl SchemaService {
         };
         migration.total = progress.total;
         migration.completed = progress.completed;
-        migration.next_cursor = progress.next_cursor.clone();
+        migration.next_cursor.clone_from(&progress.next_cursor);
         migration.state = if progress.failed {
             MigrationState::Failed
         } else if progress.completed == progress.total {

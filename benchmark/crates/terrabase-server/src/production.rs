@@ -175,6 +175,10 @@ impl ProductionCatalogBootstrap {
     /// Returns a typed error whenever the catalog is empty, paths are unsafe,
     /// quotas cannot be represented without weakening them, storage refuses
     /// an entry, or placement does not cover every enabled database Region.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one catalog pass validates and admits every destination"
+    )]
     pub fn open(config: &ProductionConfig) -> Result<Self, ProductionCatalogError> {
         let CatalogInputs { enabled, locations, root, limits } = catalog_inputs(config)?;
         let mut specs = Vec::with_capacity(enabled.len());

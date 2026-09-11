@@ -111,6 +111,7 @@ fn storage_intervals_value(
     Ok(output)
 }
 
+#[allow(clippy::too_many_lines, reason = "one closure freeze over every usage fact family")]
 async fn close(
     State(service): State<Arc<Service>>,
     Path(name): Path<String>,
@@ -372,6 +373,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn authenticated_closure_exposes_exact_frozen_timeline_after_later_writes() {
         use terrabase::types::{
             CollectionName, Document, DocumentId, DocumentValue, LocalDurability, OperationId,

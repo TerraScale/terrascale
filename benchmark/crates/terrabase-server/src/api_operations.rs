@@ -354,6 +354,7 @@ fn member_start(
 /// Reads the local member journals through the admitted registry. This is an
 /// explicitly local projection: fleet completeness belongs to the authority
 /// owner and is never inferred from a member page.
+#[allow(clippy::too_many_lines, reason = "one local journal projection per page")]
 fn list_member_operations(
     state: &ApiState,
     scope: &crate::delegated_identity::VerifiedProjectScope,

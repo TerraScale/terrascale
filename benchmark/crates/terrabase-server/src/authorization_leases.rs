@@ -42,6 +42,8 @@ impl Lease {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+// `key_id`/`key` are the wire-format field names of the lease file.
+#[allow(clippy::struct_field_names)]
 struct Key {
     key_id: String,
     key: String,

@@ -1,5 +1,8 @@
 //! Public discovery of durable database deletion work.
-use super::{State, Path, Extension, Arc, ApiState, Response, Verbs, IntoResponse, ApiError, database_owner_scope, json_response, StatusCode, provisioning_error};
+use super::{
+    ApiError, ApiState, Arc, Extension, IntoResponse, Path, Response, State, StatusCode, Verbs,
+    database_owner_scope, json_response, provisioning_error,
+};
 
 /// Reads the durable deletion operation while local access remains revoked.
 #[utoipa::path(get, path = "/api/v1/databases/{name}/deletions/{operation_id}", responses((status = 200, description = "Authoritative deletion progress including regional stop receipts", body = serde_json::Value)))]

@@ -46,11 +46,13 @@ pub fn destination_from_config(
         endpoint: config.endpoint.clone(),
         signing_region: config.signing_region.clone(),
         database_region: match config.provider {
-            terrabase::backup::object_store::Provider::Oci => config.signing_region.clone(),
+            terrabase::backup::object_store::Provider::Oci
+            | terrabase::backup::object_store::Provider::CustomerS3 => {
+                config.signing_region.clone()
+            }
             terrabase::backup::object_store::Provider::Tigris => {
                 database_region.as_str().to_owned()
             }
-            terrabase::backup::object_store::Provider::CustomerS3 => config.signing_region.clone(),
         },
         bucket: config.bucket.clone(),
         verified_geography: config.verified_geography.clone(),
@@ -107,6 +109,13 @@ pub fn destination_from_config_with_workload_identity(
 }
 
 /// Resolves all destinations through one explicit workload identity authority.
+///
+/// # Errors
+/// Returns the first destination admission failure, discarding partial clients.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "shared identity authority is cloned per destination"
+)]
 pub fn destinations_from_config_with_workload_identity(
     configs: &[ProductionBackupDestination],
     database_region: RegionCode,
@@ -132,6 +141,9 @@ pub fn destinations_from_config_with_workload_identity(
 
 /// Resolves the single customer-owned destination and binds every credential
 /// request to its durable role, endpoint, bucket, region, and placement.
+///
+/// # Errors
+/// Returns an error if the resolved destination refuses admission.
 pub fn customer_destination_from_config(
     byok: &ProductionByokConfig,
     policy: &ProductionBackupDestination,
@@ -163,6 +175,9 @@ pub fn customer_destination_from_config(
 /// Resolves every selected destination in configuration order. A failure
 /// discards all already-created clients, so callers cannot publish a partial
 /// provider policy.
+///
+/// # Errors
+/// Returns the first failure, discarding all already-created clients.
 pub fn destinations_from_config(
     configs: &[ProductionBackupDestination],
     database_region: RegionCode,
@@ -177,6 +192,10 @@ pub fn destinations_from_config(
     Ok(destinations)
 }
 
+/// Reads one credential reference from disk.
+///
+/// # Errors
+/// Returns an error if the reference is missing, unsafe, oversized, or not UTF-8.
 fn read_secret_reference(path: &Path) -> Result<String, ProductionBackupFactoryError> {
     let metadata =
         fs::symlink_metadata(path).map_err(|_| ProductionBackupFactoryError::Credential)?;
@@ -204,6 +223,9 @@ fn read_secret_reference(path: &Path) -> Result<String, ProductionBackupFactoryE
 /// Inputs are ordered by canonical database identity before admission. The
 /// runtime constructor is all-or-nothing, so no partially configured owner is
 /// returned when a stream, destination, or backup key is refused.
+///
+/// # Errors
+/// Returns an error when the runtime constructor refuses a stream, destination, or backup key.
 pub fn compose_native_backup(
     limits: FleetLimits,
     mut inputs: Vec<NativeBackupInput>,

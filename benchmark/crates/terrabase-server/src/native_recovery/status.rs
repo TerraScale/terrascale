@@ -90,8 +90,8 @@ pub(super) fn validate(
                 region.is_empty() || region.len() > 128 || region.chars().any(char::is_control)
             })
             || facts.retained_until_millis < facts.captured_at_millis)
-        {
-            return Err(NativeRecoveryError::VerificationFailed);
-        }
+    {
+        return Err(NativeRecoveryError::VerificationFailed);
+    }
     Ok(())
 }

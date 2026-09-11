@@ -478,6 +478,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn served_rename_resumes_saved_plan_and_core_cursor_after_reopen() {
         let state = super::super::tests::state_with_keys_and_control();
         state.control.as_ref().unwrap().create("demo", &[RegionCode::GRU], None).unwrap();

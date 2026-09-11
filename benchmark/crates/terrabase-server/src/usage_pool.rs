@@ -1,7 +1,7 @@
 //! Durable member outbox; the host polls this authenticated Unix control route.
 use super::{
-    AllocationBindingResolver, Arc, Deserialize, IntoResponse, Json, OptionalExtension, Serialize,
-    State, StatusCode, TransactionBehavior, UsageAdmissionJournal, params, unix_millis,
+    Arc, Deserialize, IntoResponse, Json, OptionalExtension, Serialize, State, StatusCode,
+    TransactionBehavior, UsageAdmissionJournal, params, unix_millis,
 };
 use terrabase::usage::{BudgetConsumption, VerifiedAllocation};
 use terrabase_cluster::wal_driver::WalEngineHandle;
@@ -176,6 +176,7 @@ impl UsageAdmissionJournal {
         }
         Ok(None)
     }
+    #[allow(clippy::too_many_lines)]
     fn poll_pool(&self, after: &str) -> Result<PollReply, String> {
         let runtime = self.pool_runtime.as_ref().ok_or("pool runtime unavailable")?;
         let mut databases = (runtime.databases)()?;
