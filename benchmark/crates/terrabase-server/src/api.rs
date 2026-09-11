@@ -3644,7 +3644,11 @@ pub(crate) fn reattach_member_backups(state: &ApiState) {
         let name = record.name.clone();
         let location = catalog.location_for(&state.scope.0, &state.scope.1, &name);
         let plan = backups.plan_for(&name);
-        let _ = attach_backup(&backups, &name, &location, &state.backup_root, &plan, state.region);
+        if let Err(error) =
+            attach_backup(&backups, &name, &location, &state.backup_root, &plan, state.region)
+        {
+            eprintln!("backup reattach failed for '{name}': {error}");
+        }
     }
 }
 
