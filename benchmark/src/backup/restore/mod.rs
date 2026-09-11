@@ -1561,12 +1561,13 @@ fn execute_configured_restore(
         return Err(BackupError::DestinationUnavailable);
     }
     let _reservation = RestoreTargetReservation::acquire(target.location())?;
-    let replace_existing = path.exists()
-        && std::fs::read_dir(path)
-            .map_err(|_| BackupError::DestinationUnavailable)?
-            .next()
-            .is_some();
+    let replace_existing = configured_target_is_nonempty(path)?;
     if replace_existing {
+        // Keep the no-follow check adjacent to the open. The target
+        // reservation prevents cooperating restores from changing the path,
+        // while this check prevents a destination-controlled symlink from
+        // being followed if the pathname was replaced before the open.
+        ensure_configured_target_directory(path)?;
         let existing =
             Engine::open(target.clone()).map_err(|_| BackupError::DestinationUnavailable)?;
         let tenant = TenantId::try_new(existing.database_owner().tenant().to_text().as_str())
@@ -1654,14 +1655,44 @@ fn execute_configured_restore(
 /// Returns [`BackupError::TargetNotEmpty`] when the target exists as a
 /// file, or as a directory holding anything at all.
 fn admit_target(target: &Path) -> Result<(), BackupError> {
-    if !target.exists() {
-        return Ok(());
-    }
-    if !target.is_dir() {
+    let metadata = match std::fs::symlink_metadata(target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(BackupError::TargetNotEmpty),
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
         return Err(BackupError::TargetNotEmpty);
     }
     let empty = target.read_dir().map_err(|_| BackupError::TargetNotEmpty)?.next().is_none();
     if empty { Ok(()) } else { Err(BackupError::TargetNotEmpty) }
+}
+
+/// Checks the configured target without following a symlink while deciding
+/// whether restore must exchange an existing serving tree.
+fn configured_target_is_nonempty(target: &Path) -> Result<bool, BackupError> {
+    let metadata = match std::fs::symlink_metadata(target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(_) => return Err(BackupError::DestinationUnavailable),
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+        return Err(BackupError::TargetNotEmpty);
+    }
+    std::fs::read_dir(target)
+        .map_err(|_| BackupError::DestinationUnavailable)
+        .map(|mut entries| entries.next().is_some())
+}
+
+/// Re-checks a configured target immediately before opening its existing
+/// engine. This is deliberately based on `symlink_metadata`, so the open
+/// path is never knowingly admitted as a destination-controlled symlink.
+fn ensure_configured_target_directory(target: &Path) -> Result<(), BackupError> {
+    let metadata =
+        std::fs::symlink_metadata(target).map_err(|_| BackupError::DestinationUnavailable)?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+        return Err(BackupError::TargetNotEmpty);
+    }
+    Ok(())
 }
 
 /// Cross-process reservation for one restore target.
@@ -2883,6 +2914,39 @@ mod publication_tests {
         drop(first);
         let second = RestoreTargetReservation::acquire(&target).unwrap();
         drop(second);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_restore_rejects_symlink_target_before_reading_or_opening() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root("configured-target-symlink");
+        let outside = root.join("outside");
+        let target = root.join("target");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("state"), b"serving database").unwrap();
+        symlink(&outside, &target).unwrap();
+
+        assert_eq!(configured_target_is_nonempty(&target), Err(BackupError::TargetNotEmpty));
+        assert_eq!(admit_target(&target), Err(BackupError::TargetNotEmpty));
+        assert_eq!(std::fs::read(outside.join("state")).unwrap(), b"serving database");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_restore_rejects_dangling_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root("configured-target-dangling-symlink");
+        let target = root.join("target");
+        std::fs::create_dir_all(&root).unwrap();
+        symlink(root.join("missing"), &target).unwrap();
+
+        assert_eq!(configured_target_is_nonempty(&target), Err(BackupError::TargetNotEmpty));
+        assert_eq!(admit_target(&target), Err(BackupError::TargetNotEmpty));
         std::fs::remove_dir_all(root).unwrap();
     }
 

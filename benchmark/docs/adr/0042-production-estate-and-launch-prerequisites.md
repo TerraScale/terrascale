@@ -1,14 +1,25 @@
 ---
-status: accepted
+status: superseded (2026-09-10)
 authority: ../../../GOAL.md
 supersedes: the release-posture, licence, and soak paragraphs of 0033
+superseded-by: the co-hosted member-host topology in ts-orchestrator/CONTEXT.md
 ---
+
+> **Supersession notice (2026-09-10):** This record's dedicated control-host
+> topology is retired. The current launch shape is two member hosts in every
+> Region, with a local `ts-orchestrator` on each member machine. One selected
+> member in each of GRU, SFO, and FRA hosts a global JetStream control-store
+> replica; there are no dedicated control hosts. See
+> [`ts-orchestrator/CONTEXT.md`](../../../ts-orchestrator/CONTEXT.md) and
+> [`ts-orchestrator/docs/guides/architecture-boundaries.md`](../../../ts-orchestrator/docs/guides/architecture-boundaries.md).
+> The remaining launch prerequisites below are retained as historical context
+> and are not authority for host count, placement, or control-store topology.
 
 # Production estate and launch prerequisites
 
 ## Decision
 
-TerraScale launches on **nine OCI Ampere A1 Flex instances across three
+TerraScale launches on **six OCI Ampere A1 Flex member instances across three
 regions**, plus a fixed list of managed services. This ADR is the target
 specification for the orchestrator's `add-region` command (GOAL D-52, M3-7)
 and the checklist of everything that is not hardware but still blocks the
@@ -21,38 +32,31 @@ engine is **closed source** (GOAL D-50; the MIT paragraph in 0033 is void),
 the launch is **public self-service** (D-23), and the pre-launch soak is
 **seven days** on the exact launch digests (D-10, M5-1), not thirty.
 
-## Why not three servers
+## Historical topology (superseded)
 
-One A1 per region is the development shape. Production needs, per region:
+The former decision described the following per-region shape:
 
 - **two member hosts**, because RF=2 (D-35) only protects data when writer
   and follower are on different hosts and different fault domains;
-- **a third host** for the regional control group, because the orchestrator's
-  JetStream control store is R3 (D-06) and the third replica must survive
-  the loss of either member host.
-
-Three hosts per region is therefore the floor. Nothing else needs its own
-machine at launch: the GRU global authority, Prometheus, Grafana, and
-Alertmanager run as orchestrator-managed systemd services on the control
-hosts. The orchestrator deploys native binaries and does not require a
-container runtime. The dashboard does **not** run on OCI at all: it is a
-Cloudflare Worker (GOAL
-D-59) whose only state is a TerraScale database placed in every region, so
-the member hosts carry nothing but terrabase.
+The third-host regional control-group requirement is superseded. Each Region
+now starts with two admitted member hosts in separate failure domains. Both
+run TerraBase, `ts-node`, and a local `ts-orchestrator` under systemd. One
+selected member in each of GRU, SFO, and FRA hosts a replica of the permanent
+global JetStream R3. Regions added later use that global R3 without joining it.
+No dedicated control-host class exists.
 
 ## Compute estate (per region)
 
 | Role | Count | Shape (start) | Storage | Notes |
 | --- | --- | --- | --- | --- |
-| Member host | 2 | A1 Flex, 4 OCPU / 24 GiB | 200–500 GiB block volume, Balanced or Higher Performance | Writer + follower for each database placed here; distinct fault domains. Nothing else (no dashboard, D-59) |
-| Control host | 1 | A1 Flex, 1 OCPU / 6 GiB | 50 GiB boot | Third JetStream replica, regional control group; in GRU also the global authority, Prometheus, Grafana, Alertmanager |
+| Member host | 2 | A1 Flex, 2 OCPU / 12 GiB | 200–500 GiB block volume, Balanced or Higher Performance | Writer + follower for each database placed here; distinct fault domains. Each also runs `ts-node` and a local `ts-orchestrator`; selected members host global R3 replicas. |
 
-Total at launch: 6 member hosts + 3 control hosts = **9 instances**. Scaling
-a region is "add a member host"; a fourth region is one `add-region` run on
-the same table. All instances are `aarch64-unknown-linux-gnu`; the build
-profile is ARM-first (D-43). OS: Oracle Linux 9 or Ubuntu 24.04 ARM, binaries
-supervised by systemd units, unattended security updates, `chrony` against
-OCI NTP (HLC skew guard), no password login, no public SSH.
+Total at launch: **6 member hosts**. Scaling a region is "add a member host";
+a fourth region is one `add-region` run on the same table. All instances are
+`aarch64-unknown-linux-gnu`; the build profile is ARM-first (D-43). OS: Ubuntu
+LTS minimal, binaries supervised by systemd units, unattended security
+updates, `chrony` against OCI NTP (HLC skew guard), no password login, no
+public SSH.
 
 ## Managed storage and OCI services (per region unless stated)
 
@@ -62,7 +66,7 @@ OCI NTP (HLC skew guard), no password login, no public SSH.
 | Tigris S3-compatible backup storage | Independent backup destination selected by plan/user policy (ADR 0046) | Verify residency-compatible placement, scoped credentials, encryption, logical retention/deletion, and independent restore; one or both are required according to effective plan/user policy |
 | Block Volume backup policy | Second layer under native TerraBase backups | Daily, 7-day retention, per member host |
 | Vault + Key | Per-database encryption keys (M2-1, ADR 0030) | One master key per region; keys never leave their region |
-| IAM (tenancy-wide) | Least privilege | One compartment per region; **instance principals** for members and control hosts; no API keys on disk; CI gets a scoped user per secret (GOAL O-3) |
+| IAM (tenancy-wide) | Least privilege | One compartment per region; **instance principals** for member hosts; no API keys on disk; CI gets a scoped user per secret (GOAL O-3) |
 | VCN + NSG | Network | Public ingress only on 443 (API) and the QUIC replication port (member ↔ member, source-restricted to the other regions' public IPs); everything else via Tailscale |
 | Budgets | Cost cap | Monthly budget with alert at 80 % and 100 %, alert routed to paging |
 | Email Delivery (GRU) | Transactional email (D-26) | Approved sender domain, SPF/DKIM/DMARC records in Cloudflare. Submitted over the **HTTPS Email Submission API** (the dashboard Worker cannot open SMTP), authenticated with a dedicated IAM user whose key is a Worker secret |
@@ -75,17 +79,17 @@ São Paulo has a single availability domain: members there use distinct
 | Piece | Purpose | Notes |
 | --- | --- | --- |
 | Cloudflare zone `terrascale.tech` (Pro) + Workers Paid | DNS, TLS, WAF, rate rules; `ts-proxy` Worker + KV as the global load balancer (D-58); the **dashboard Worker** on `app.` (D-59); later the edge cache (D-55) | Origin certificates on members; `api.` → `ts-proxy` Worker; `gru|sfo|fra.api.` proxied A records straight to member hosts (pinned SDK traffic); `app.` → dashboard Worker (Workers Assets for static files, service binding to `ts-proxy`, secrets via `wrangler secret`); `*.preview.app.` → per-branch preview deployments; `docs.`, `status.` (D-24). No Cloudflare Load Balancing product. Turnstile on signup. |
-| Forgejo Actions runner | Native ARM builds and `make check` in CI | One A1 Flex (2 OCPU / 12 GiB) in GRU outside the orchestrator's control, or the GRU control host if capacity allows |
+| Forgejo Actions runner | Native ARM builds and `make check` in CI | One A1 Flex (2 OCPU / 12 GiB) in GRU outside the orchestrator's control, or a GRU member host if capacity allows |
 | Paging | Alerts to a phone | Grafana OnCall or PagerDuty free tier; primary + escalation contact; OCI budget alerts and external probe route here too |
 | External probe + status page | Independent view of availability (D-23) | A third-party uptime monitor probing all three regions' `/health` and the dashboard; its public page is `status.terrascale.tech` |
 | Stripe live + Stripe Tax | Billing (D-21) | Requires the legal entity (GOAL O-5); webhooks to the dashboard |
-| Tailscale | Operator access | The only path to SSH; members and control hosts join a tailnet; no bastion host |
+| Tailscale | Operator access | The only path to SSH; member hosts join a tailnet; no bastion host |
 
 ## Cost envelope
 
 At A1 Flex list prices (≈ $0.01 per OCPU-hour and ≈ $0.0015 per GiB-hour):
-six member hosts ≈ $330/month, three control hosts ≈ $45, block volumes and
-backups ≈ $60–100, Object Storage < $10 at launch volumes, Cloudflare Pro
+six member hosts ≈ $165/month, block volumes and backups ≈ $60–100, Object
+Storage < $10 at launch volumes, Cloudflare Pro
 ≈ $20 if WAF rules are wanted plus Workers Paid $5 (covers both `ts-proxy`
 and the dashboard; both are far inside the included requests),
 paging/uptime/email ≈ $30. **Roughly
@@ -124,9 +128,11 @@ mistakes "the servers are up" for "we are in production".
 
 - `add-region` (M3-7) takes this table as input and produces exactly this
   estate; its `--dry-run` output is the runbook.
-- The orchestrator's placement model must express "two member hosts in
-  distinct fault domains + one control host" as a region's minimum and
-  refuse to admit a region below it.
+- The orchestrator's placement model must express two member hosts in distinct
+  failure domains as a Region's minimum and refuse to admit a Region below it.
+- Local orchestration is co-hosted on every member host. Global R3 replica
+  placement is a separate decision and is co-hosted on selected members in
+  GRU, SFO, and FRA; no dedicated control-host class may be introduced.
 - ADR 0033 remains the authority for `RegionCode`, provider mapping, and SLO
   definitions; its licence and soak paragraphs are void.
 - Anything that would add a machine class (dedicated analytics nodes,

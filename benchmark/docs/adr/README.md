@@ -22,7 +22,7 @@ choices, not release authorization.
 - [0039 — Multi-tenant authorization and isolation](0039-multi-tenant-authorization-and-isolation.md)
 - [0040 — SQLite storage, parse-once byte pipeline, and auto-indexing](0040-sqlite-storage-parse-once-and-auto-indexing.md)
 - [0041 — Replication on SQLite: WAL-frame follower and journal tailer](0041-replication-on-sqlite.md)
-- [0042 — Production estate and launch prerequisites](0042-production-estate-and-launch-prerequisites.md)
+- [0042 — Production estate and launch prerequisites](0042-production-estate-and-launch-prerequisites.md) (superseded 2026-09-10; dedicated control-host topology replaced by co-hosted member hosts)
 - [0043 — Edge routing contract](0043-edge-routing-contract.md)
 - [0044 — The two engines: replication and sync, on a research base](0044-sync-and-replication-engines.md)
 - [0045 — The auto-indexing engine, on a research base](0045-auto-indexing-engine.md)

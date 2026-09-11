@@ -2307,8 +2307,15 @@ fn capture_plan(
         (Some(base), false) => super::BackupKind::Incremental { base },
         (None, _) => super::BackupKind::Full,
     };
-    let artifact_id =
-        super::capture_artifact_id(stream.config.engine.engine().database_id(), kind, boundary);
+    // A worker capture is an attempt, not the durable logical capture
+    // identity.  The manifest identity is derived from the logical facts and
+    // `run_backup` resolves an already-published matching point before
+    // returning.  Give every attempt a fresh artifact key so a restart (or a
+    // retry with a freshly leased key) cannot seal ordinal zero under the same
+    // key and nonce after an earlier attempt failed or returned uncertainly.
+    // This is also necessary for attempts that failed before a recovery-point
+    // directory was published: there is no persisted ordinal to recover.
+    let artifact_id = crate::identity::generate();
     let encryption = BackupEncryption::from_database_key_lease_with_artifact_id(
         &lease,
         stream.config.engine.engine().database_owner().region(),
@@ -2460,7 +2467,8 @@ async fn enforce_retention_at(
     let root_name = format!("rp-{}", root.identity());
     let manifest_path =
         inventory_path(stream).join(&root_name).join(super::manifest::ENCRYPTED_MANIFEST_FILE);
-    for (_, destination) in &stream.config.destinations {
+    let destinations = retention_destinations(stream)?;
+    for (_, destination) in &destinations {
         // Reconcile completed multipart staging objects left by a crashed
         // upload before using the destination for retention decisions. The
         // one-hour floor leaves recently written objects alone; active
@@ -2488,7 +2496,7 @@ async fn enforce_retention_at(
             continue;
         }
         let name = format!("rp-{}", point.identity());
-        for (_, destination) in &stream.config.destinations {
+        for (_, destination) in &destinations {
             destination
                 .delete_point(&format!("{identity}/{name}"))
                 .await
@@ -2499,7 +2507,7 @@ async fn enforce_retention_at(
         }
         super::sync_directory(&stream.config.staging).map_err(|_| FleetError::Capture)?;
         super::sync_directory(&inventory_path(stream)).map_err(|_| FleetError::Capture)?;
-        for (provider, _) in &stream.config.destinations {
+        for (provider, _) in &destinations {
             let path = stream.config.staging.join(match provider {
                 Provider::Oci => "uploaded-oci",
                 Provider::Tigris => "uploaded-tigris",
@@ -2515,6 +2523,32 @@ async fn enforce_retention_at(
         }
     }
     Ok(())
+}
+
+/// Returns the complete destination history used by physical retention.
+/// Current destinations are also retained in the history catalog, so identity
+/// deduplication is required. A destination identity cannot silently change
+/// provider, since doing so would make upload journals ambiguous.
+fn retention_destinations(
+    stream: &Stream,
+) -> Result<Vec<(Provider, Arc<ObjectDestination>)>, FleetError> {
+    let mut destinations = Vec::new();
+    let mut seen = BTreeMap::new();
+    for (provider, destination) in
+        stream.config.destinations.iter().chain(stream.config.historical_destinations.iter())
+    {
+        let identity = destination.identity().to_owned();
+        if let Some(previous) = seen.get(&identity) {
+            if *previous != *provider {
+                return Err(FleetError::Configuration);
+            }
+        } else {
+            seen.insert(identity, *provider);
+            destinations.push((*provider, Arc::clone(destination)));
+        }
+    }
+    destinations.sort_by(|left, right| left.1.identity().cmp(right.1.identity()));
+    Ok(destinations)
 }
 
 async fn enforce_envelope_retention(
@@ -3140,9 +3174,23 @@ mod tests {
         assert_eq!(target.list_points(identity, 10).await.unwrap().len(), 4);
         assert_eq!(source.list_points(identity, 10).await.unwrap().len(), 4);
         assert!(point_paths(staging, 2).unwrap().is_empty());
+        // Expiry after migration must prune the retired source and current
+        // destination together. The newest root remains as the chain anchor;
+        // a failed destination delete would leave local state intact for retry.
+        enforce_retention_at(
+            identity,
+            fleet.streams.get(identity).unwrap(),
+            fleet.limits,
+            u64::MAX,
+        )
+        .await
+        .unwrap();
+        assert_eq!(source.list_points(identity, 10).await.unwrap().len(), 1);
+        assert_eq!(target.list_points(identity, 10).await.unwrap().len(), 1);
+        assert_eq!(inventory_points(fleet.streams.get(identity).unwrap()).unwrap().len(), 1);
         assert_eq!(
             fleet.purge_retained(identity, &[source.clone(), target.clone()]).await.unwrap(),
-            8
+            2
         );
         assert!(source.list_points(identity, 10).await.unwrap().is_empty());
         assert!(target.list_points(identity, 10).await.unwrap().is_empty());
