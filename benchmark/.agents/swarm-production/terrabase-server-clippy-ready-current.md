@@ -107,3 +107,38 @@ Do not modify `api.rs`, `native_backup_runtime.rs`, `production_data_runtime.rs`
 batches. They are under active restore/auth/runtime coordination. Do not add
 blanket lint allowances or refactor solely to satisfy argument/line-count
 lints.
+
+## Consolidated verification after worker batches
+
+The source-matched test build passed:
+
+```text
+cargo test -p terrabase-server --lib --locked --no-run
+```
+
+Executable: `/tmp/terrabase-native-g1-target.lNjLFz/debug/deps/terrabase_server-b6b1a255b810086b`.
+Twenty-seven exact selectors were executed against that executable. Twenty-five
+passed. Two existing assertions failed:
+
+- `export_api::tests::placement_and_encryption_are_fail_closed`: the expected
+  `PlacementMismatch` assertion failed at `export_api.rs:2879`.
+- `usage_closure_http::tests::duplicate_billing_keys_and_foreign_regions_are_rejected`:
+  observed HTTP 503, expected 404, at `usage_closure_http.rs:368`.
+
+The post-batch clippy command was run once with `-D warnings` and finished
+status 101. Diagnostics fell from 317 to 293. All released worker diagnostics
+in `production_export.rs`, `export_runtime.rs`, `export_store.rs`,
+`export_artifact_crypto.rs`, `replication_frontier.rs`,
+`replication_peers/suspension.rs`, and `webhook_api/journal.rs` are clear.
+The only remaining diagnostics in the released cohort are intentionally
+deferred structural items:
+
+- `export_api.rs:1224`: `too_many_lines` (101/100).
+- `native_recovery/admission.rs:68`: collapsible `if`.
+- `usage_closure_http.rs:114`: `too_many_lines` (127/100).
+
+The remaining 290 diagnostics are in modules excluded by the packet or in
+other pre-existing server modules. Logs:
+`/tmp/terrabase-server-test-build-current-2-20260911.log`,
+`/tmp/terrabase-server-exact-*.log`, and
+`/tmp/terrabase-server-clippy-after-batches-20260911.log`.

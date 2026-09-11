@@ -2872,7 +2872,11 @@ mod tests {
                 region: RegionCode::FRA,
             },
             format: TransferFormat::Jsonl,
-            scope: ExportScope::All,
+            // JSONL is a converted format and therefore must use the
+            // documents-only scope before placement validation is reached.
+            // Keep this fixture valid through the earlier request checks so
+            // it specifically proves the placement boundary below.
+            scope: ExportScope::Documents,
             placement: PlacementLock::single(RegionCode::GRU),
             idempotency_key: None,
         };

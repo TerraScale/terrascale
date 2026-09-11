@@ -65,8 +65,8 @@ pub(crate) fn admit_operation(
         {
             return Err(NativeRecoveryError::VerificationFailed);
         }
-        if let Some(facts) = &state.facts {
-            if facts.source_database_id != source
+        if state.facts.as_ref().is_some_and(|facts| {
+            facts.source_database_id != source
                 || facts.recovery_point_id.is_empty()
                 || facts.recovery_point_id.len() > 256
                 || blake3::Hash::from_hex(&facts.checksum).is_err()
@@ -76,9 +76,8 @@ pub(crate) fn admit_operation(
                     .iter()
                     .any(|region| region.is_empty() || region.chars().any(char::is_control))
                 || facts.retained_until_millis < facts.captured_at_millis
-            {
-                return Err(NativeRecoveryError::VerificationFailed);
-            }
+        }) {
+            return Err(NativeRecoveryError::VerificationFailed);
         }
         if matches!(state.phase, NativeRecoveryPhase::Failed) {
             let pending: i64 = tx.query_row("SELECT count(*) FROM native_recovery_operations WHERE phase IN ('accepted','capturing','measuring')", [], |row| row.get(0)).map_err(|_| NativeRecoveryError::Unavailable)?;

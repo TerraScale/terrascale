@@ -2,7 +2,7 @@
 
 Source basis: `412896c8e5c861e0146f0b567f84548e51b07949` plus this bounded
 worktree change. Updated source SHA-256:
-`9b719ec45829417908f9269f482122ff0be0700becadc66330013fc9afd5ba4c`
+`b23fc095aa6b252ce10d080c177f33f3402f2616a18661b08b3d43a0ba4272fc`
 
 ## Before / after
 
@@ -31,3 +31,9 @@ worktree change. Updated source SHA-256:
 - Cargo builds/tests were intentionally not run; batch owner
   `terrabase_clippy_batch` owns those checks.
 
+## Follow-up lint delta
+
+The nested facts validation conditional was collapsed into
+`Option::is_some_and`; the predicate and `VerificationFailed` return are
+unchanged. This removes the final owned `collapsible_if` diagnostic at the
+latest batch log selector `admission.rs:68`.

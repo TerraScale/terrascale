@@ -1273,7 +1273,7 @@ fn openapi_schemas() -> serde_json::Value {
         "CreateDatabaseRequest": { "type": "object", "required": ["name", "placement", "residency", "operation_id"], "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.", "properties": { "operation_id": { "type": "string" }, "name": { "type": "string" }, "placement": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "residency": { "type": "string" } } },
         "CreateIndexRequest": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" } } },
         "BatchRequest": { "type": "object", "required": ["operations"], "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 1000, "items": { "type": "object", "required": ["op", "id"], "properties": { "op": { "type": "string", "enum": ["put", "patch", "delete"] }, "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
-        "RestoreRequest": { "type": "object", "required": ["name", "operation_id"], "properties": { "name": { "type": "string" }, "at": { "type": "integer", "format": "int64" }, "operation_id": { "type": "string" } } },
+        "RestoreRequest": { "type": "object", "additionalProperties": false, "required": ["name", "operation_id"], "properties": { "name": { "type": "string" }, "at": { "type": "integer", "format": "int64", "minimum": 0 }, "point_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "operation_id": { "type": "string" } } },
         "CreateBranchRequest": { "type": "object", "required": ["name", "operation_id"], "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.", "properties": { "name": { "type": "string" }, "operation_id": { "type": "string" } } },
         "AttachViewRequest": { "type": "object", "required": ["databaseId", "statement"], "properties": { "databaseId": { "type": "string" }, "statement": { "type": "string" }, "parameters": { "type": "string", "description": "Base64 encoded SQL parameter bytes" }, "checkpoint": { "type": ["string", "null"], "description": "Base64 encoded opaque resume checkpoint" }, "subscription": { "type": ["string", "null"] }, "entitlement_epoch": { "type": "integer", "format": "int64" } } },
         "AttachViewResponse": { "type": "object", "required": ["view", "generation", "snapshot_chunks", "log", "checkpoint", "capability", "capability_header", "offset"], "properties": { "view": { "type": "string" }, "generation": { "type": "integer", "format": "int64" }, "snapshot_chunks": { "type": "array", "items": { "type": "string" } }, "log": { "type": "string" }, "checkpoint": { "type": "string" }, "capability": { "type": "string" }, "capability_header": { "type": "string" }, "offset": { "type": "integer", "format": "int64" } } },
@@ -5187,29 +5187,12 @@ async fn restore_backup(
                     .into_response();
             }
         };
-        let (Some(target), Some(operation)) = (
-            value.get("name").and_then(serde_json::Value::as_str),
-            value.get("operation_id").and_then(serde_json::Value::as_str),
-        ) else {
-            return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
-                .into_response();
-        };
-        if target.is_empty() || !valid_restore_operation_id(operation) {
-            return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
-                .into_response();
-        }
-        let at = match restore_at_millis(value.get("at")) {
-            Ok(at) => at,
+        let (target, operation, selection) = match parse_restore_request(&value) {
+            Ok(request) => request,
             Err(()) => {
                 return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest)
                     .into_response();
             }
-        };
-        let selection = match at {
-            Some(unix_millis) => {
-                serde_json::json!({"kind":"unix_millis","unix_millis":unix_millis})
-            }
-            None => serde_json::json!({"kind":"latest"}),
         };
         let scope = crate::delegated_identity::VerifiedProjectScope {
             tenant_id: source.record.tenant_id.clone(),
@@ -5307,11 +5290,53 @@ enum RestoreFlavor {
     Branch,
 }
 
+/// Parses a native restore request without allowing malformed selectors or
+/// unknown fields to silently select the latest backup.
+fn parse_restore_request(
+    value: &serde_json::Value,
+) -> Result<(String, String, serde_json::Value), ()> {
+    let object = value.as_object().ok_or(())?;
+    if object.keys().any(|key| !matches!(key.as_str(), "name" | "operation_id" | "at" | "point_id"))
+    {
+        return Err(());
+    }
+    let target = object.get("name").and_then(serde_json::Value::as_str).ok_or(())?;
+    let operation = object.get("operation_id").and_then(serde_json::Value::as_str).ok_or(())?;
+    if target.is_empty() || !valid_restore_operation_id(operation) {
+        return Err(());
+    }
+    let at = restore_at_millis(object.get("at"))?;
+    let point_id = object
+        .get("point_id")
+        .map(|value| value.as_str().filter(|point_id| valid_restore_point_id(point_id)).ok_or(()));
+    let point_id = match point_id {
+        Some(point_id) => Some(point_id?),
+        None => None,
+    };
+    if at.is_some() && point_id.is_some() {
+        return Err(());
+    }
+    let selection = match (at, point_id) {
+        (Some(unix_millis), None) => {
+            serde_json::json!({"kind":"unix_millis","unix_millis":unix_millis})
+        }
+        (None, Some(point_id)) => serde_json::json!({"kind":"point_id","point_id":point_id}),
+        (None, None) => serde_json::json!({"kind":"latest"}),
+        (Some(_), Some(_)) => unreachable!("mutually exclusive restore selectors"),
+    };
+    Ok((target.to_owned(), operation.to_owned(), selection))
+}
+
+fn valid_restore_point_id(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 /// Parses the optional restore point without allowing malformed values to
-/// silently select the latest backup. `null` has the same meaning as omission.
+/// silently select the latest backup.
 fn restore_at_millis(value: Option<&serde_json::Value>) -> Result<Option<i64>, ()> {
     match value {
-        None | Some(serde_json::Value::Null) => Ok(None),
+        None => Ok(None),
         Some(value) => value.as_i64().filter(|millis| *millis >= 0).map(Some).ok_or(()),
     }
 }
@@ -5639,6 +5664,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[path = "../../api_restore_selection_tests.rs"]
+    mod api_restore_selection_tests;
     #[path = "api_session_query_tests.rs"]
     mod api_session_query_tests;
     #[path = "batch_replay.rs"]
@@ -8298,12 +8325,43 @@ mod tests {
 
     #[test]
     fn restore_at_rejects_malformed_values_and_preserves_latest() {
-        for value in [serde_json::json!(-1), serde_json::json!("1000"), serde_json::json!(1.5)] {
+        for value in [
+            serde_json::json!(-1),
+            serde_json::json!("1000"),
+            serde_json::json!(1.5),
+            serde_json::Value::Null,
+        ] {
             assert_eq!(super::restore_at_millis(Some(&value)), Err(()));
         }
         assert_eq!(super::restore_at_millis(None), Ok(None));
-        assert_eq!(super::restore_at_millis(Some(&serde_json::Value::Null)), Ok(None));
         assert_eq!(super::restore_at_millis(Some(&serde_json::json!(1_000))), Ok(Some(1_000)));
+    }
+
+    #[test]
+    fn restore_request_selectors_are_strict_and_forwarded() {
+        let point_id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let (_, _, selection) = super::parse_restore_request(&serde_json::json!({
+            "name": "restored",
+            "operation_id": "restore-1",
+            "point_id": point_id,
+        }))
+        .expect("point selector");
+        assert_eq!(selection, serde_json::json!({"kind":"point_id", "point_id":point_id}));
+
+        let (_, _, selection) = super::parse_restore_request(
+            &serde_json::json!({"name":"restored", "operation_id":"restore-2"}),
+        )
+        .expect("latest selector");
+        assert_eq!(selection, serde_json::json!({"kind":"latest"}));
+
+        for request in [
+            serde_json::json!({"name":"restored", "operation_id":"restore-3", "at":100, "point_id":point_id}),
+            serde_json::json!({"name":"restored", "operation_id":"restore-4", "point_id":point_id.to_ascii_uppercase()}),
+            serde_json::json!({"name":"restored", "operation_id":"restore-5", "unknown":true}),
+            serde_json::json!({"name":"restored", "operation_id":"restore-6", "at":null}),
+        ] {
+            assert!(super::parse_restore_request(&request).is_err(), "request: {request}");
+        }
     }
 }
 

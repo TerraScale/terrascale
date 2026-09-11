@@ -337,7 +337,9 @@ mod tests {
             "cycle_id":"a".repeat(64),
             "cycle_checksum":"b".repeat(64),
             "inventory_checksum":"c".repeat(64),
-            "region":"SFO",
+            // The member serves SFO; GRU must be rejected before authority
+            // lookup as a foreign regional attestation.
+            "region":"GRU",
             "partition_id":"partition",
             "start_millis":1,
             "end_millis":2

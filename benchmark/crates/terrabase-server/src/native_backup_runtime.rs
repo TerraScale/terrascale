@@ -331,6 +331,16 @@ impl NativeBackupRuntime {
         self.retained_points(database)
     }
 
+    /// Async authenticated envelope observation serialized with fleet work.
+    pub async fn retained_envelopes_async(
+        &self,
+        database: &str,
+    ) -> Result<Vec<terrabase::backup::BackupEnvelope>, NativeBackupRuntimeError> {
+        let _gate = self.async_fleet.lock().await;
+        let fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
+        fleet.retained_envelopes(database).map_err(NativeBackupRuntimeError::Fleet)
+    }
+
     /// Async readiness observation serialized with provider operations.
     pub async fn is_ready_async(&self, database: &str) -> Result<bool, NativeBackupRuntimeError> {
         let _gate = self.async_fleet.lock().await;
