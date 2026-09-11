@@ -5,13 +5,26 @@ import { test } from "vitest";
 import { createTerraScaleAdminClient } from "./admin.js";
 import * as sdk from "./index.js";
 
+const edgeCatalogResponse = {
+  regions: [
+    { code: "GRU", name: "Sao Paulo", country: "BR", latitude: -23.5475, longitude: -46.6361, available: true },
+    { code: "SFO", name: "San Francisco", country: "US", latitude: 37.7749, longitude: -122.4194, available: true },
+    { code: "FRA", name: "Frankfurt", country: "DE", latitude: 50.1109, longitude: 8.6821, available: true },
+  ],
+  hosts: {
+    GRU: "gru.api.terrascale.tech",
+    SFO: "sfo.api.terrascale.tech",
+    FRA: "fra.api.terrascale.tech",
+  },
+} as const;
+
 test("built package keeps all public clients on typed operations without a runtime HTTP escape hatch", async () => {
   const requests: URL[] = [];
   const client = sdk.createTerraScaleClient({
     apiBaseUrl: "https://api.terrascale.test",
     fetch: async (input) => {
       requests.push(new URL(input instanceof Request ? input.url : input.toString()));
-      return Response.json({ regions: [] });
+      return Response.json(edgeCatalogResponse);
     },
   });
   const admin = createTerraScaleAdminClient({
@@ -106,7 +119,7 @@ test("named credentials are sent only to named public operations", async () => {
     accessToken: "project-token",
     fetch: async input => {
       requests.push(input instanceof Request ? input : new Request(input));
-      return Response.json({ regions: [] });
+      return Response.json(edgeCatalogResponse);
     },
   });
 
