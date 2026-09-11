@@ -21,6 +21,14 @@ const MAX_TTL_SECONDS: u64 = 3600;
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkloadIdentityScope {
+    /// Deployment environment bound to the admitted database.
+    pub environment: String,
+    /// Tenant owning the admitted database.
+    pub tenant_id: String,
+    /// Project owning the admitted database.
+    pub project_id: String,
+    /// Database receiving the admitted backup.
+    pub database_id: String,
     /// Customer role or workload identity being assumed.
     pub role: String,
     /// Canonical HTTPS destination endpoint.
@@ -77,6 +85,10 @@ impl UnixWorkloadIdentityProvider {
     ) -> Result<Self, WorkloadIdentityError> {
         if !socket.is_absolute()
             || [
+                scope.environment.as_str(),
+                scope.tenant_id.as_str(),
+                scope.project_id.as_str(),
+                scope.database_id.as_str(),
                 scope.role.as_str(),
                 scope.endpoint.as_str(),
                 scope.bucket.as_str(),
@@ -210,6 +222,10 @@ mod tests {
 
     fn scope() -> WorkloadIdentityScope {
         WorkloadIdentityScope {
+            environment: "production".into(),
+            tenant_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            project_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW".into(),
+            database_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
             role: "role".into(),
             endpoint: "https://example.invalid".into(),
             bucket: "bucket".into(),

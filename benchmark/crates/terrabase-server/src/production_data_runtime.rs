@@ -1241,6 +1241,10 @@ impl ProductionAdmissionRuntime {
                 terrabase::backup::workload_identity_delivery::UnixWorkloadIdentityProvider::new(
                     key_config.socket.clone(),
                     terrabase::backup::workload_identity_delivery::WorkloadIdentityScope {
+                        environment: record.environment.clone(),
+                        tenant_id: record.tenant_id.clone(),
+                        project_id: record.project_id.clone(),
+                        database_id: record.database_id.clone(),
                         role: byok.backup_role_arn.clone(),
                         endpoint: byok.backup_endpoint.clone(),
                         bucket: byok.backup_bucket.clone(),
