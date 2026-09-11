@@ -91,7 +91,15 @@ func (r *RegionCatalogResponse) UnmarshalJSON(data []byte) error {
 		if host == nil {
 			return fmt.Errorf("sdk: region catalog host %q must be a string", code)
 		}
+		if *host == "" {
+			return fmt.Errorf("sdk: region catalog host %q must not be empty", code)
+		}
 		hosts[code] = *host
+	}
+	for _, region := range regions {
+		if _, ok := hosts[string(region.Code)]; !ok {
+			return fmt.Errorf("sdk: region catalog host %q is missing", region.Code)
+		}
 	}
 	*r = RegionCatalogResponse{Regions: regions, Hosts: hosts}
 	return nil

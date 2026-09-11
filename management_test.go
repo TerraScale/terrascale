@@ -176,7 +176,9 @@ func TestRegionsListDecodesEdgeCatalogAndRejectsMemberHealth(t *testing.T) {
 		{name: "invalid coordinates", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":91,"longitude":0,"available":true}],"hosts":{}}`, fail: true},
 		{name: "missing required region field", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0}],"hosts":{}}`, fail: true},
 		{name: "missing hosts", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true}]}`, fail: true},
+		{name: "missing per-region host", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true}],"hosts":{}}`, fail: true},
 		{name: "null host value", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true}],"hosts":{"GRU":null}}`, fail: true},
+		{name: "empty host", body: `{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":0,"longitude":0,"available":true}],"hosts":{"GRU":""}}`, fail: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
