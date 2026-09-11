@@ -418,12 +418,16 @@ pub(super) fn discover_encrypted_points(
         if !metadata.file_type().is_dir() {
             return Err(BackupError::ChainIncomplete);
         }
-        let manifest_path = point.join(ENCRYPTED_MANIFEST_FILE);
         let mut envelope = Vec::new();
-        open_stable_regular(&manifest_path)?
-            .take((crate::encryption::MAX_PLAINTEXT_BYTES + 4096) as u64)
-            .read_to_end(&mut envelope)
-            .map_err(|_| BackupError::ChainIncomplete)?;
+        open_confined_member(
+            destination,
+            name.to_str().ok_or(BackupError::ChainIncomplete)?,
+            ENCRYPTED_MANIFEST_FILE,
+            None,
+        )?
+        .take((crate::encryption::MAX_PLAINTEXT_BYTES + 4096) as u64)
+        .read_to_end(&mut envelope)
+        .map_err(|_| BackupError::ChainIncomplete)?;
         let bytes =
             cipher.open_backup_envelope(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
         let manifest = BackupManifest::decode(&bytes)?;
@@ -450,8 +454,12 @@ pub fn verify_latest_chain_encrypted(
     let chain = resolve_encrypted_chain(destination, cipher, &Selection::Latest)?;
     for link in &chain {
         for member in link.members() {
-            let path = destination.join(point_directory(link.identity())).join(member.name());
-            let mut file = open_member(&path, member.length())?;
+            let mut file = open_confined_member(
+                destination,
+                &point_directory(link.identity()),
+                member.name(),
+                Some(member.length()),
+            )?;
             if member.length() > (crate::encryption::MAX_PLAINTEXT_BYTES as u64 + 4096) {
                 return Err(BackupError::ChecksumMismatch);
             }
@@ -496,15 +504,51 @@ fn chain_of_head(
     Ok(chain)
 }
 
-/// Opens one manifest member for replay after checking the pathname without
-/// following a symlink. The returned handle is the only handle used for both
-/// decoding and digesting, so replay never verifies one pathname and then
-/// reopens it later.
-fn open_member(path: &Path, expected_len: u64) -> Result<File, BackupError> {
-    let file = open_stable_regular(path)?;
-    let file_metadata = file.metadata().map_err(|_| BackupError::ChainIncomplete)?;
-    if file_metadata.len() != expected_len {
-        return Err(BackupError::ChecksumMismatch);
+/// Opens an archive member through descriptors rooted at the backup
+/// destination.  Each path component is resolved relative to an already-open
+/// directory and refuses symlinks, so replacing a recovery-point directory
+/// after discovery cannot redirect the read outside the backup root.
+fn open_confined_member(
+    destination: &Path,
+    point_name: &str,
+    member_name: &str,
+    expected_len: Option<u64>,
+) -> Result<File, BackupError> {
+    let root = rustix::fs::open(
+        destination,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::DIRECTORY
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(|_| BackupError::ChainIncomplete)?;
+    let point = rustix::fs::openat(
+        &root,
+        point_name,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::DIRECTORY
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(|_| BackupError::ChainIncomplete)?;
+    let descriptor = rustix::fs::openat(
+        &point,
+        member_name,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(|_| BackupError::ChainIncomplete)?;
+    let file = File::from(descriptor);
+    let metadata = file.metadata().map_err(|_| BackupError::ChainIncomplete)?;
+    if !metadata.file_type().is_file() {
+        return Err(BackupError::ChainIncomplete);
+    }
+    if let Some(expected_len) = expected_len {
+        if metadata.len() != expected_len {
+            return Err(BackupError::ChecksumMismatch);
+        }
     }
     Ok(file)
 }
@@ -565,6 +609,29 @@ fn manifest_open_rejects_symlink_without_following_it() {
 
     assert!(matches!(open_stable_regular(&manifest), Err(BackupError::ChainIncomplete)));
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn confined_member_rejects_swapped_intermediate_point_symlink() {
+    let root = std::env::temp_dir()
+        .join(format!("terrabase-restore-point-symlink-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let point = root.join("rp-point");
+    let outside =
+        root.with_file_name(format!("{}-outside", root.file_name().unwrap().to_string_lossy()));
+    std::fs::create_dir_all(&point).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("member"), b"outside").unwrap();
+    std::fs::remove_dir(&point).unwrap();
+    std::os::unix::fs::symlink(&outside, &point).unwrap();
+
+    assert!(matches!(
+        open_confined_member(&root, "rp-point", "member", None),
+        Err(BackupError::ChainIncomplete)
+    ));
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(outside).unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -2211,8 +2278,12 @@ impl Replay {
             for member in link.members() {
                 // Manifest validation admits only canonical member names,
                 // so the joined path stays inside the point's directory.
-                let path = destination.join(point_directory(link.identity())).join(member.name());
-                let mut file = open_member(&path, member.length())?;
+                let mut file = open_confined_member(
+                    destination,
+                    &point_directory(link.identity()),
+                    member.name(),
+                    Some(member.length()),
+                )?;
                 if let Some(cipher) = cipher {
                     // The manifest binds the ciphertext length and digest;
                     // only after those checks does the cipher authenticate
