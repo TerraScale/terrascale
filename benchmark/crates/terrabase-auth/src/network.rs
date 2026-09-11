@@ -324,6 +324,7 @@ fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, AuthorityError> {
 }
 
 impl AuthPeer {
+    #[allow(clippy::result_large_err)]
     async fn send<T: DeserializeOwned, E: DeserializeOwned + std::error::Error>(
         &self,
         request: Request,

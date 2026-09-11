@@ -377,7 +377,7 @@ async fn run_production_once(config: &ServerConfig) -> Result<bool, Box<dyn Erro
                 production.clone(),
                 public,
             )
-            .map_err(|detail| {
+            .map_err(|_detail| {
                 Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
                     crate::production::ProductionComponentError {
                         component: crate::production::ProductionComponent::PublicApi,
@@ -1066,7 +1066,7 @@ async fn serve_admitted_production(
         }
         native_shutdown.drain_async().await.map_err(|_| DaemonError::ShutdownTimeout)?;
         let report = member.drain().await;
-        report.storage.map_err(|error| {
+        report.storage.map_err(|_error| {
             Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
                 crate::production::ProductionComponentError {
                     component: crate::production::ProductionComponent::Replication,

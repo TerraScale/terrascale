@@ -431,8 +431,7 @@ where
             None,
         ) {
             Ok((next_cursor, next_records)) => {
-                cursor = next_cursor;
-                committed_records = next_records;
+                let _ = (next_cursor, next_records);
             }
             Err(error) => result = Err(error),
         }

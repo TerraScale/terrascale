@@ -132,8 +132,8 @@ fn runtime_reopens_same_operation_and_revalidates_placement() {
     let mut first =
         SplitRuntime::new(Engine::default(), Orchestrator::default(), ShardRouter::single(1));
     first.admit(split).unwrap();
-    let mut engine = Engine::default();
-    engine.state = first.split().map(ShardSplit::durable_state);
+    let engine =
+        Engine { state: first.split().map(ShardSplit::durable_state), ..Engine::default() };
     let mut resumed = SplitRuntime::new(engine, Orchestrator::default(), ShardRouter::single(1));
     assert!(resumed.resume().unwrap());
     assert_eq!(resumed.split().unwrap().context().unwrap().split_id(), 9);

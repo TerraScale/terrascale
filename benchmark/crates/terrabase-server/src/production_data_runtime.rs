@@ -741,7 +741,6 @@ impl ProductionAdmissionRuntime {
         let records = Arc::new(Mutex::new(BTreeMap::new()));
         let admitted = records.clone();
         let declarations = journal.clone();
-        let authority_journal = journal.clone();
         let local = config.environment.member.to_text();
         let mut usage = crate::usage_admission::UsageAdmissionJournal::open(
             member.root(),

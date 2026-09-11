@@ -374,10 +374,7 @@ mod tests {
     use terrabase::{
         engine::lifecycle_state::DeletionIntent,
         identity::{DatabaseUlid, ProjectUlid, TenantUlid},
-        member::{
-            AcceptedDatabaseRole, AdmissionLimits, DatabaseId, DatabaseRole, DatabaseRoleAuthority,
-            DatabaseScope, DatabaseSpec, Member,
-        },
+        member::{AdmissionLimits, DatabaseId, DatabaseScope, DatabaseSpec, Member},
         regions::RegionCode,
         types::{
             CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,

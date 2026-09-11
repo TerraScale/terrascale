@@ -338,7 +338,7 @@ impl JwtSignatureVerifier for AwsLcJwtVerifier {
     ) -> bool {
         let material: Option<Vec<u8>> = match algorithm {
             Algorithm::Rs256 => rsa_spki(key),
-            Algorithm::Es256 => key.material("x").and_then(|x| key.material("y")).map(|y| {
+            Algorithm::Es256 => key.material("x").and_then(|_| key.material("y")).map(|y| {
                 let x = key.material("x").expect("x checked");
                 let mut point = Vec::with_capacity(65);
                 point.push(4);

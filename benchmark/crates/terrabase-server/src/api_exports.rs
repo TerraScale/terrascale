@@ -6,7 +6,7 @@ use super::{
 };
 use crate::api_keys::{Principal, Verbs};
 use crate::export_api::{self as export, ExportService, ExportSource, ExportSourceError};
-use crate::export_formats::{ExportScope, TransferFormat, content_type};
+use crate::export_formats::{ExportScope, TransferFormat};
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::{Extension, response::IntoResponse};
 use serde::Deserialize;

@@ -1294,7 +1294,7 @@ impl NativeRecoveryRuntime {
             drop(fleet);
             let tenant = terrabase::types::TenantId::try_new(host.tenant())
                 .map_err(|_| NativeRecoveryError::InvalidRequest)?;
-            let stats = host
+            let recovery_stats = host
                 .engine()
                 .recovery_statistics(
                     &host.engine().scope_for(&tenant),
@@ -1303,8 +1303,8 @@ impl NativeRecoveryRuntime {
                     None,
                 )
                 .map_err(|_| NativeRecoveryError::VerificationFailed)?;
-            if stats.journal_cut != point.journal_cut
-                || stats.captured_at_millis != point.captured_at_millis
+            if recovery_stats.journal_cut != point.journal_cut
+                || recovery_stats.captured_at_millis != point.captured_at_millis
             {
                 return Err(NativeRecoveryError::VerificationFailed);
             }
@@ -1313,8 +1313,8 @@ impl NativeRecoveryRuntime {
                 source_database_id: source.to_owned(),
                 journal_cut: point.journal_cut,
                 captured_at_millis: point.captured_at_millis,
-                checksum: blake3::Hash::from(stats.checksum).to_hex().to_string(),
-                row_count: stats.row_count,
+                checksum: blake3::Hash::from(recovery_stats.checksum).to_hex().to_string(),
+                row_count: recovery_stats.row_count,
                 placement: placement.clone(),
                 retained_until_millis: point.retained_until_millis,
             })

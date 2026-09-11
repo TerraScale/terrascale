@@ -119,7 +119,7 @@ async fn put_causal_snapshot_advances_token_and_replays_original_revision_once()
         .usage_page(&scope, terrabase::usage::UsagePageRequest::try_new(None, 100, None).unwrap())
         .unwrap();
     assert_eq!(usage_before.facts(), usage_after.facts(), "replay adds no billing facts");
-    let stale = app
+    let stale_response = app
         .clone()
         .oneshot(
             put()
@@ -129,7 +129,7 @@ async fn put_causal_snapshot_advances_token_and_replays_original_revision_once()
         )
         .await
         .unwrap();
-    assert_eq!(stale.status(), StatusCode::PRECONDITION_FAILED);
+    assert_eq!(stale_response.status(), StatusCode::PRECONDITION_FAILED);
     let read = app
         .oneshot(Request::get(PATH).header("authorization", KEY).body(Body::empty()).unwrap())
         .await

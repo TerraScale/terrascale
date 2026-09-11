@@ -82,7 +82,7 @@ fn recovery_summary(
 pub(super) fn provisioning_summary(
     row: crate::provisioning::ProvisioningOperation,
 ) -> OperationSummary {
-    let (state, stage) = match row.state.as_str() {
+    let (status, phase) = match row.state.as_str() {
         "accepted" => ("queued", "accepted"),
         "pending" => ("running", "pending"),
         "ready" => ("succeeded", "ready"),
@@ -94,8 +94,8 @@ pub(super) fn provisioning_summary(
         kind: "database_create".into(),
         database_id: row.database_id,
         name: row.name,
-        state: state.into(),
-        stage: stage.into(),
+        state: status.into(),
+        stage: phase.into(),
         created_at: None,
         revision: None,
         cancellable: false,

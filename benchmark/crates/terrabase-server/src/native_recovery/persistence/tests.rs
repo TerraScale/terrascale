@@ -202,7 +202,7 @@ fn oversized_checkpoint_is_rejected_on_load() {
     c.execute_batch("PRAGMA ignore_check_constraints=ON;").unwrap();
     c.execute(
         "UPDATE native_recovery_operations SET checkpoint=?2 WHERE operation_id=?1",
-        rusqlite::params!["op", vec![b'x'; 262145]],
+        rusqlite::params!["op", vec![b'x'; 262_145]],
     )
     .unwrap();
     assert_eq!(load_checkpoint(&c, "db", "op"), Err(NativeRecoveryError::VerificationFailed));

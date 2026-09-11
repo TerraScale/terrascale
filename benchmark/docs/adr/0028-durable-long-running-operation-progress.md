@@ -20,7 +20,11 @@ request identity, state, progress generation, stage code, completed and
 optional total units, unit type, child summary, timestamps, cancellation
 capability, result reference, typed error, and placement generation when
 applicable. Region targets use registered uppercase `RegionCode` values;
-provider names do not enter the record.
+provider names do not enter the generic operation record. The dedicated BYOK
+admission record is an explicit exception: it carries only validated provider
+references and wrapped DEK ciphertext needed for restart and recovery. It
+never carries provider credentials, unwrapped keys, or customer data (see ADR
+0049).
 
 The states are `Queued`, `Running`, `Waiting`, `CancelRequested`, `Succeeded`,
 `Failed`, and `Canceled`. Only the last three are terminal. Progress is

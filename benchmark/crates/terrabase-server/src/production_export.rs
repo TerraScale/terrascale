@@ -13,7 +13,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use terrabase::backup::object_store::ObjectDestination;
-use terrabase::backup::worker::BackupKeys;
 
 /// Redacted production export construction failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

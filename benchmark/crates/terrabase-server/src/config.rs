@@ -982,7 +982,7 @@ impl ServerConfig {
             absolute(path)?;
         }
         let public_api =
-            parse_public_api(file.public_api.as_ref(), tbep_listen, observability_listen)?;
+            parse_public_api(file.public_api.as_ref(), tbep_listen, observability_listen, false)?;
         let region = match file.engine.region.as_str() {
             "GRU" => Region::Gru,
             "SFO" => Region::Sfo,
@@ -1464,7 +1464,11 @@ impl ServerConfig {
             .ok_or(ConfigError::InvalidProductionBoundary)?;
         let tbep_listen = production.transport.tbep_listen;
         let metrics_listen = production.transport.metrics_listen;
-        let public_api = parse_public_api(file.public_api.as_ref(), tbep_listen, metrics_listen)?;
+        let public_api =
+            parse_public_api(file.public_api.as_ref(), tbep_listen, metrics_listen, true)?;
+        if let Some(public_api) = &public_api {
+            append_public_api_paths(&mut paths, public_api);
+        }
         let uds = file
             .transport
             .uds
@@ -1876,6 +1880,7 @@ fn parse_public_api(
     section: Option<&FilePublicApi>,
     tbep_listen: SocketAddr,
     observability_listen: SocketAddr,
+    production: bool,
 ) -> Result<Option<PublicApiConfig>, ConfigError> {
     let Some(section) = section else {
         return Ok(None);
@@ -1888,10 +1893,10 @@ fn parse_public_api(
     {
         return Err(ConfigError::InvalidListenAddress);
     }
-    absolute(&section.data_root)?;
+    public_api_path(&section.data_root, production)?;
     if let Some(publisher) = &section.lifecycle_publication {
-        absolute(&publisher.key_file)?;
-        absolute(&publisher.outbox_path)?;
+        public_api_path(&publisher.key_file, production)?;
+        public_api_path(&publisher.outbox_path, production)?;
         let uri: axum::http::Uri =
             publisher.endpoint.parse().map_err(|_| ConfigError::InvalidBound)?;
         if uri.scheme_str() != Some("https")
@@ -1905,7 +1910,7 @@ fn parse_public_api(
             return Err(ConfigError::InvalidBound);
         }
     }
-    validate_public_api_paths(section)?;
+    validate_public_api_paths(section, production)?;
     // Every named region must parse; duplicates collapse (the count is
     // the durability class's input, not a placement).
     let named: std::collections::BTreeSet<String> = section.regions.iter().cloned().collect();
@@ -1930,7 +1935,7 @@ fn parse_public_api(
     }))
 }
 
-fn validate_public_api_paths(section: &FilePublicApi) -> Result<(), ConfigError> {
+fn validate_public_api_paths(section: &FilePublicApi, production: bool) -> Result<(), ConfigError> {
     for key_file in [
         section.bootstrap_key_file.as_ref(),
         section.origin_proof_key_file.as_ref(),
@@ -1941,10 +1946,10 @@ fn validate_public_api_paths(section: &FilePublicApi) -> Result<(), ConfigError>
     .into_iter()
     .flatten()
     {
-        absolute(key_file)?;
+        public_api_path(key_file, production)?;
     }
     if let Some(provisioning) = &section.provisioning {
-        absolute(&provisioning.socket)?;
+        public_api_path(&provisioning.socket, production)?;
         if provisioning.environment.is_empty()
             || provisioning.environment.len() > 128
             || !provisioning
@@ -1956,8 +1961,8 @@ fn validate_public_api_paths(section: &FilePublicApi) -> Result<(), ConfigError>
         }
     }
     if let Some(identity) = &section.identity {
-        absolute(&identity.service_key_file)?;
-        absolute(&identity.authorization_lease_keys_file)?;
+        public_api_path(&identity.service_key_file, production)?;
+        public_api_path(&identity.authorization_lease_keys_file, production)?;
         for endpoint in [&identity.endpoint, &identity.issuer, &identity.audience] {
             let uri: axum::http::Uri =
                 endpoint.parse().map_err(|_| ConfigError::InvalidIdentityAuthority)?;
@@ -1972,9 +1977,9 @@ fn validate_public_api_paths(section: &FilePublicApi) -> Result<(), ConfigError>
         }
     }
     if let Some(rotation) = &section.credential_rotation {
-        absolute(&rotation.socket)?;
-        absolute(&rotation.state_file)?;
-        absolute(&rotation.token_file)?;
+        public_api_path(&rotation.socket, production)?;
+        public_api_path(&rotation.state_file, production)?;
+        public_api_path(&rotation.token_file, production)?;
         if rotation.socket == rotation.state_file
             || rotation.socket == rotation.token_file
             || rotation.state_file == rotation.token_file
@@ -1983,9 +1988,51 @@ fn validate_public_api_paths(section: &FilePublicApi) -> Result<(), ConfigError>
         }
     }
     if let Some(billing) = &section.billing_closure {
-        absolute(&billing.key_file)?;
+        public_api_path(&billing.key_file, production)?;
     }
     Ok(())
+}
+
+fn public_api_path(path: &Path, production: bool) -> Result<PathBuf, ConfigError> {
+    if production { production_path(path) } else { absolute(path).map(|_| path.to_path_buf()) }
+}
+
+fn append_public_api_paths(paths: &mut Vec<PathBuf>, public_api: &PublicApiConfig) {
+    paths.push(public_api.data_root.clone());
+    for path in [
+        public_api.bootstrap_key_file.as_ref(),
+        public_api.origin_proof_key_file.as_ref(),
+        public_api.origin_proof_previous_key_file.as_ref(),
+        public_api.capability_key_file.as_ref(),
+        public_api.capability_previous_key_file.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        paths.push(path.clone());
+    }
+    if let Some(publisher) = &public_api.lifecycle_publication {
+        paths.extend([publisher.key_file.clone(), publisher.outbox_path.clone()]);
+    }
+    if let Some(billing) = &public_api.billing_closure {
+        paths.push(billing.key_file.clone());
+    }
+    if let Some(rotation) = &public_api.credential_rotation {
+        paths.extend([
+            rotation.socket.clone(),
+            rotation.state_file.clone(),
+            rotation.token_file.clone(),
+        ]);
+    }
+    if let Some(provisioning) = &public_api.provisioning {
+        paths.push(provisioning.socket.clone());
+    }
+    if let Some(identity) = &public_api.identity {
+        paths.extend([
+            identity.service_key_file.clone(),
+            identity.authorization_lease_keys_file.clone(),
+        ]);
+    }
 }
 
 fn socket(value: &str, _field: &'static str) -> Result<SocketAddr, ConfigError> {
@@ -2473,6 +2520,35 @@ address = "0.0.0.0:7202"
         let wildcard = production_valid()
             .replace("tbep_listen = \"127.0.0.1:8421\"", "tbep_listen = \"0.0.0.0:8421\"");
         assert!(matches!(ServerConfig::parse(&wildcard), Err(ConfigError::InvalidListenAddress)));
+    }
+
+    #[test]
+    fn production_public_api_paths_use_private_validation_and_disjoint_roots() {
+        let suffix = r#"
+
+[public_api]
+listen = "127.0.0.1:8443"
+data_root = "/var/lib/terrabase/public-api"
+bootstrap_key_file = "/run/secrets/public-bootstrap"
+origin_proof_key_file = "/run/secrets/origin-current"
+origin_proof_previous_key_file = "/run/secrets/origin-previous"
+capability_key_file = "/run/secrets/capability-current"
+capability_previous_key_file = "/run/secrets/capability-previous"
+
+[public_api.billing_closure]
+key_file = "/run/secrets/billing-closure"
+"#;
+        let valid = production_valid() + suffix;
+        assert!(ServerConfig::parse(&valid).is_ok());
+
+        let relative = valid.replace("/run/secrets/public-bootstrap", "relative-bootstrap");
+        assert!(matches!(ServerConfig::parse(&relative), Err(ConfigError::RelativeProductionPath)));
+
+        let overlap = valid.replace(
+            "data_root = \"/var/lib/terrabase/public-api\"",
+            "data_root = \"/var/lib/terrabase/db-a/public-api\"",
+        );
+        assert!(matches!(ServerConfig::parse(&overlap), Err(ConfigError::DuplicateProductionPath)));
     }
 
     #[test]
