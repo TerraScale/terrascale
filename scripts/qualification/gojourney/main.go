@@ -59,6 +59,9 @@ func loadConfig() (config, error) {
 	}
 	c.collection = strings.TrimSpace(os.Getenv("TERRASCALE_COLLECTION"))
 	c.denyKey = strings.TrimSpace(os.Getenv("TERRASCALE_DENY_API_KEY"))
+	if c.denyKey != "" && c.denyKey == c.key {
+		return c, errors.New("TERRASCALE_DENY_API_KEY must differ from TERRASCALE_API_KEY")
+	}
 	if c.collection == "" {
 		c.collection = "sdk_journey"
 	}

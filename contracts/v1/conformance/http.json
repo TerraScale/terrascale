@@ -281,9 +281,11 @@
         },
         {
           "body": {
-            "healthy": false,
-            "region": "sample",
-            "version": "sample"
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
           },
           "mediaType": "application/json",
           "status": 503

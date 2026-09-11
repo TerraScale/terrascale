@@ -104,7 +104,8 @@ func TestProducerHTTPTransportCorpus(t *testing.T) {
 					target = &raw
 				}
 				err = client.do(t.Context(), operation.Request.Method, operation.Request.Path, query, requestBody, target, operation.ID)
-				if response.Status >= 200 && response.Status < 300 {
+				healthUnavailable := operation.ID == "health" && response.Status == http.StatusServiceUnavailable
+				if (response.Status >= 200 && response.Status < 300) || healthUnavailable {
 					if err != nil {
 						t.Fatal(err)
 					}
