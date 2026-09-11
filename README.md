@@ -25,6 +25,21 @@ When a successful response identifies its serving Region, subsequent REST
 requests pin there. Strict affinity routes directly to the configured Region
 and preserves it when another Region is advertised.
 
+## Region discovery and member health
+
+The public `GET https://api.terrascale.tech/api/v1/regions` endpoint is the
+edge-owned region catalog (`RegionCatalogResponse`) used by
+`client.management().regions().catalog()`. It is the only endpoint used for
+initial discovery and includes the ordered region list and regional hosts.
+
+The same path on a regional TerraBase member is intentionally a different,
+private-origin probe: it returns `HealthResponse` for that member. Use
+`client.management().regions().health(region)` or `.status(region)`, which
+target the member's `/api/v1/health` endpoint. A member response must never
+be decoded as the edge catalog, and an edge catalog must never be used as a
+member liveness result. This split is defined by TerraBase ADR 0043 and is
+also reflected in the generated member contract and the edge route manifest.
+
 ## Layout
 
 - `src/` — `terrascale` crate. Key modules are `config`, `regions`,
