@@ -30,7 +30,9 @@ only after it satisfies the same authenticated metadata, exact-scope, bounded
 lease, locked-memory, zeroization, rotation, and fail-closed requirements.
 Imported key material, arbitrary KMS endpoints, provider escrow, and customer
 cipher selection remain unsupported until separately implemented and qualified.
-The current customer-provider admission contract accepts AWS KMS references;
+The current customer-provider admission contract accepts canonical AWS KMS key
+ARNs (with a UUID key resource and matching Region); aliases and bare key IDs
+are rejected at admission;
 the service-managed OCI Vault adapter is a separate path. Azure and other
 customer providers remain reserved until their adapters are independently
 qualified.
