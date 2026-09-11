@@ -24,4 +24,14 @@ coordinator retains its logs and package hash.
 
 `tests/Regression.csproj` exercises the journey's assertions and bounded waits
 with local inputs. These runner regressions are separate from production
-qualification; restore them against the same supplied immutable package.
+qualification. Run them against the same supplied immutable package with
+`./run.sh --regression`; this mode requires only `TERRASCALE_SDK_NUPKG` and
+`TERRASCALE_SDK_NUPKG_SHA256`, and still verifies the package ID, version, and
+copied-artifact hash before restoring `Regression.csproj`.
+
+If the provider contract supplies a deliberately out-of-scope project API key,
+set `TERRASCALE_DENY_API_KEY` (and optionally
+`TERRASCALE_DENY_DATABASE_ID`, which defaults to `TERRASCALE_DATABASE_ID`) for
+the live phases. The journey then requires the deny key to receive HTTP 403
+from the selected database; the check is skipped when the optional input is
+absent.

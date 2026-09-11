@@ -27,6 +27,22 @@ var client = new TerraScaleClient(http, new TerraScaleClientOptions { BaseAddres
 const string collection = "sdk_journey";
 var own = $"{runId}-dotnet";
 var peers = new[] { "typescript", "go", "rust", "dotnet" }.Select(x => $"{runId}-{x}").ToArray();
+var denyKey = Environment.GetEnvironmentVariable("TERRASCALE_DENY_API_KEY");
+var denyDatabase = Environment.GetEnvironmentVariable("TERRASCALE_DENY_DATABASE_ID");
+if (!string.IsNullOrWhiteSpace(denyKey))
+{
+    denyDatabase = string.IsNullOrWhiteSpace(denyDatabase) ? database : denyDatabase.Trim();
+    var denied = new TerraScaleClient(http, new TerraScaleClientOptions { BaseAddress = api, ApiKey = denyKey.Trim() });
+    try
+    {
+        await denied.Documents.GetAsync(denyDatabase, collection, own);
+        throw new InvalidOperationException("out-of-scope API key was accepted");
+    }
+    catch (TerraScaleApiException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new { operation = "deny_api_key_scope", status = "ok", http = 403 }));
+    }
+}
 
 async Task Observe(string operation, Func<Task> action)
 {
