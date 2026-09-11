@@ -11,6 +11,7 @@ struct Config {
     project: String,
     database: String,
     key: String,
+    deny_key: Option<String>,
     run: String,
 }
 
@@ -33,6 +34,9 @@ fn config() -> std::result::Result<Config, String> {
         project: required("TERRASCALE_PROJECT_ID")?,
         database: required("TERRASCALE_DATABASE_ID")?,
         key: required("TERRASCALE_API_KEY")?,
+        deny_key: env::var("TERRASCALE_DENY_API_KEY")
+            .ok()
+            .filter(|v| !v.trim().is_empty()),
         run: required("TERRASCALE_JOURNEY_RUN_ID")?,
     })
 }
@@ -198,7 +202,10 @@ async fn exercise(c: &Config) -> Result<()> {
     }
     let sub = SubscribeOptions::new().with_subscription(format!("{}-rust", c.run));
     let reactive_query = Query::raw("SELECT * FROM sdk_journey", json!({}));
-    let view = sdk.reactive().subscribe(&scope, &reactive_query, sub).await?;
+    let view = sdk
+        .reactive()
+        .subscribe(&scope, &reactive_query, sub)
+        .await?;
     let update = json!({"sdk":"rust","runId":c.run,"reactive":true});
     sdk.documents()
         .put(&scope, "sdk_journey", &id, update.clone())
@@ -241,6 +248,31 @@ async fn exercise(c: &Config) -> Result<()> {
         return Err(terrascale::Error::invalid_response(
             "reactive cancellation was not enforced",
         ));
+    }
+    if let Some(deny_key) = &c.deny_key {
+        let denied = TerraScaleClient::new(
+            ClientConfig::builder()
+                .api_base_url(c.api.clone())
+                .api_key(deny_key.clone())
+                .project_id(c.project.clone())
+                .build()?,
+        );
+        match denied.documents().get(&scope, "sdk_journey", &id).await {
+            Ok(_) => {
+                return Err(terrascale::Error::invalid_response(
+                    "denied API key unexpectedly read document",
+                ))
+            }
+            Err(error) if matches!(error.status, Some(401 | 403)) => {
+                observation("exercise", "passed", "denied scope returned 401/403");
+            }
+            Err(error) => {
+                return Err(terrascale::Error::invalid_response(format!(
+                    "denied scope returned unexpected status {:?}",
+                    error.status
+                )))
+            }
+        }
     }
     observation(
         "exercise",
@@ -287,7 +319,12 @@ async fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            observation(&phase, "failed", &redacted(format!("{}", e), &c.key));
+            let detail = redacted(format!("{}", e), &c.key);
+            let detail = c
+                .deny_key
+                .as_deref()
+                .map_or(detail.clone(), |key| redacted(detail, key));
+            observation(&phase, "failed", &detail);
             ExitCode::from(1)
         }
     }
