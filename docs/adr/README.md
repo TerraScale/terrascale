@@ -14,4 +14,4 @@ qualification evidence.
 | [0004](0004-sqlite-local-development-only.md) | Accepted; temporary | Restrict the separate SDK SQLite runtime to explicit local development. |
 | [0025](0025-public-messagepack-manifest.md) | Accepted | Generate bounded public MessagePack codecs from one manifest. |
 | [0032](0032-public-protocol-bounds.md) | Accepted bounds; service parity pending | Apply workspace public limits and fail closed on hostile input. |
-| [0033](0033-sdk-production-release-gates.md) | Accepted release boundary; qualification pending | Promote only the exact verified npm artifact and workspace-qualified SDK. |
+| [0033](0033-sdk-production-release-gates.md) | Accepted release boundary; live qualification pending | Promote only the exact verified npm artifact and workspace-qualified SDK. |

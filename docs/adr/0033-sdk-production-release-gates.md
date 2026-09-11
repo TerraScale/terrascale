@@ -17,9 +17,22 @@ launch. Missing live configuration is a skipped gate, never a passing result.
 
 ## Implementation boundary
 
-The current workflow delegates to `ts-deploy`; `make check` runs the portable
-repository gate. Browser and tarball qualification commands exist separately.
-The deployment CLI still publishes npm from the checkout. Pack-once publication
-of the exact verified tarball remains required work in the
-[workspace goal](../../../GOAL.md#ts-deploy). Commands and qualification
-requirements are maintained in [the release guide](../release.md).
+The CI workflow delegates to `ts-deploy` after checking out the event revision.
+The portable repository gate is `make check`; browser and live API journeys are
+separate lanes. For an SDK release, `ts-deploy` runs the checkout checks, invokes
+`npm pack --json --ignore-scripts` exactly once into candidate staging, and passes
+that exact absolute tarball to
+`scripts/qualify-npm-artifact.ts --release --tarball`. Release qualification is
+fail-closed: it requires a clean source tree, the reviewed npm installation, the
+declared Node 22 and Node 24 executables, and an output receipt with no
+limitations. It installs the supplied bytes into a clean consumer, checks exports,
+secret and dependency boundaries, license and contract evidence, and verifies
+that the input archive was not changed.
+
+The resulting candidate archive and signature are uploaded to Forgejo and
+verified before publication. Publication invokes `npm publish` on that same
+tarball with lifecycle scripts disabled and requires exact registry readback;
+release never rebuilds or repacks the checkout at publication time. A failed
+qualification, changed archive, or unconfirmed registry outcome blocks handoff.
+Commands, evidence requirements, and the still-unmet launch gates are maintained
+in [the release guide](../release.md).

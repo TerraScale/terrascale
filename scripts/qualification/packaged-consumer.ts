@@ -94,8 +94,12 @@ function observe<T>(label: string, result: TerraScaleResult<T>): void { const ou
 if (phase === "seed") { const result = await client.documents.put(databaseId, "sdk_journey", own, body, { idempotencyKey: own + "-seed" }); observe("seed", result); ok(result, "seed"); }
 if (phase === "verify") { for (const id of ids) { const result = await client.documents.get(databaseId, "sdk_journey", id); observe("verify:" + id, result); const sdk = id.slice(runId.length + 1); assert.deepEqual(ok(result, "verify:" + id), { sdk, runId }); } }
 if (phase === "exercise") {
-  const created = ok(await client.documents.put(databaseId, "sdk_journey", own, body, { idempotencyKey: own + "-create" }), "create");
-  const replay = await client.documents.put(databaseId, "sdk_journey", own, body, { idempotencyKey: own + "-create" }); observe("idempotency-replay", replay); assert.equal(ok(replay, "idempotency-replay").revision, created.revision);
+  const createKey = own + "-create";
+  const created = ok(await client.documents.put(databaseId, "sdk_journey", own, body, { idempotencyKey: createKey }), "create");
+  const replay = await client.documents.put(databaseId, "sdk_journey", own, body, { idempotencyKey: createKey }); observe("idempotency-replay", replay);
+  const replayed = ok(replay, "idempotency-replay");
+  assert.equal(replayed.revision, created.revision, "idempotent replay must retain the revision");
+  assert.equal(replayed.headers.get("etag"), created.headers.get("etag"), "idempotent replay must retain the ETag");
   const stale = await client.documents.patch(databaseId, "sdk_journey", own, { stale: true }, { ifMatch: '"stale-revision"', idempotencyKey: own + "-stale" }); observe("stale-if-match", stale); assert.equal(stale.ok, false); assert.equal(stale.status, 412);
   const sql = await client.sql.execute(databaseId, { sql: "SELECT * FROM sdk_journey WHERE id = :id", parameters: { id: own } }); observe("parameterized-sql", sql); const sqlValue = ok(sql, "parameterized-sql"); assert.ok("rows" in sqlValue); assert.ok(sqlValue.rows.some((row) => { const value = row.value; if (typeof value !== "object" || value === null || Array.isArray(value)) return false; const objectValue = value as { sdk?: unknown; runId?: unknown }; return row.id === own && objectValue.sdk === body.sdk && objectValue.runId === body.runId; }));
   const controller = new AbortController(); const live = await client.reactive.subscribe({ databaseId, subscription: own, query: "SELECT * FROM sdk_journey", parameters: new Uint8Array(), autoStart: false }); process.stdout.write(JSON.stringify({ label: "reactive-attach", ok: true, status: 200 }) + "\\n");
@@ -105,7 +109,16 @@ if (phase === "exercise") {
   } finally { live.close(); controller.abort(); }
   const cancelledController = new AbortController(); cancelledController.abort(); const cancelled = await client.documents.get(databaseId, "sdk_journey", own, { signal: cancelledController.signal }); observe("cancellation", cancelled); assert.equal(cancelled.ok, false); if (cancelled.ok) throw new Error("pre-aborted request unexpectedly succeeded"); assert.equal(cancelled.error.code, "request_cancelled");
   const missing = await client.documents.get(databaseId, "sdk_journey", own + "-missing"); observe("missing-document", missing); assert.equal(missing.ok, false); assert.equal(missing.status, 404);
-  if (denyKey) { const denied = createTerraScaleClient({ apiBaseUrl: apiUrl, projectId, accessToken: denyKey }); const deniedRead = await denied.documents.get(databaseId, "sdk_journey", own); observe("denied-scope", deniedRead); assert.equal(deniedRead.ok, false); assert.ok(deniedRead.status === 401 || deniedRead.status === 403); }
+  if (denyKey) {
+    assert.notEqual(denyKey, apiKey, "TERRASCALE_DENY_API_KEY must differ from the authorized key");
+    const denied = createTerraScaleClient({ apiBaseUrl: apiUrl, projectId, accessToken: denyKey });
+    const deniedRead = await denied.documents.get(databaseId, "sdk_journey", own);
+    observe("denied-scope", deniedRead);
+    assert.equal(deniedRead.ok, false, "denied API key unexpectedly read document");
+    if (deniedRead.ok) throw new Error("denied API key unexpectedly read document");
+    assert.ok(deniedRead.status === 401 || deniedRead.status === 403, "denied scope must return 401/403");
+    assert.equal(deniedRead.error.code, deniedRead.status === 401 ? "unauthorized" : "forbidden", "denied scope must preserve the producer error code");
+  }
 }
 if (phase === "cleanup") { const result = await client.documents.delete(databaseId, "sdk_journey", own, { idempotencyKey: own + "-cleanup" }); observe("cleanup", result); ok(result, "cleanup"); }
 `;

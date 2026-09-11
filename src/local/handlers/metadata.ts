@@ -1,6 +1,6 @@
 import type * as Models from "../../models.js";
 import type { ProjectId, Ulid } from "../../ids.js";
-import { terraScaleRegions } from "../../regions.js";
+import { regionalApiHostname, terraScaleRegions } from "../../regions.js";
 import {
   jsonResponse,
   matchLocalRoute,
@@ -20,15 +20,17 @@ export const handleLocalMetadata: LocalHandler = async (context) => {
   const store = context.store;
   let match = matchLocalRoute(context, "GET", "/api/v1/regions");
   if (match !== undefined) {
+    const regions = terraScaleRegions.map((region): Models.RegionSummary => ({
+      code: region.code,
+      name: region.displayName,
+      country: countryFor(region.code),
+      latitude: region.latitude,
+      longitude: region.longitude,
+      available: region.available,
+    }));
     return jsonResponse({
-      regions: terraScaleRegions.map((region): Models.RegionSummary => ({
-        code: region.code,
-        name: region.displayName,
-        country: countryFor(region.code),
-        latitude: region.latitude,
-        longitude: region.longitude,
-        available: region.available,
-      })),
+      regions,
+      hosts: Object.fromEntries(regions.map((region) => [region.code, regionalApiHostname(region.code)])),
     } satisfies Models.RegionsResponse);
   }
   const projectId = projectIdFromContext(context) ?? projectIdFromRoute(context);

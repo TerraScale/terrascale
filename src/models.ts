@@ -43,6 +43,8 @@ export type RegionDetails = RegionSummary;
 
 export type RegionsResponse = {
   readonly regions: readonly RegionSummary[];
+  /** Regional member origins published by the edge catalog. */
+  readonly hosts: Readonly<Record<string, string>>;
 };
 
 export type Page<TItem> = {

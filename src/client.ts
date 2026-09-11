@@ -1772,7 +1772,15 @@ function decodeRegionsResponse(value: unknown): Models.RegionsResponse {
     throw new TypeError("response.regions must not contain duplicate RegionCode values.");
   }
 
-  return { regions };
+  const hosts = requireRecord(response.hosts, "response.hosts");
+  const decodedHosts: Record<string, string> = {};
+  for (const [code, host] of Object.entries(hosts)) {
+    decodedHosts[parseRegionCode(code, `response.hosts.${code}`)] = requireString(
+      host,
+      `response.hosts.${code}`,
+    );
+  }
+  return { regions, hosts: decodedHosts };
 }
 
 function decodeRegionSummary(value: unknown, path: string): Models.RegionSummary {

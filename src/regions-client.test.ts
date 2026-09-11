@@ -59,6 +59,9 @@ describe("RegionsClient", () => {
       { regions: [{ ...gru, ociRegionCode: "sa-saopaulo-1" }] },
       { regions: [{ ...gru, clusterNodeTag: "A" }] },
       { regions: "GRU" },
+      { regions: [gru] },
+      { regions: [gru], hosts: { GRU: 42 } },
+      { regions: [gru], hosts: { gru: "https://gru.api.terrascale.tech" } },
     ];
 
     for (const body of hostileBodies) {
@@ -75,6 +78,18 @@ describe("RegionsClient", () => {
         assert.deepEqual(result.body, body);
       }
     }
+  });
+
+  test("preserves the required region host map", async () => {
+    const client = createTerraScaleClient({
+      fetch: async () => Response.json({
+        regions: [gru],
+        hosts: { GRU: "https://gru.api.terrascale.tech" },
+      }),
+    });
+    const result = await client.regions.list();
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(result.value.hosts, { GRU: "https://gru.api.terrascale.tech" });
   });
 
 });

@@ -40,9 +40,12 @@ node --experimental-strip-types scripts/qualification/packaged-consumer.ts --pha
 `seed` writes only `${RUN_ID}-typescript` in `sdk_journey`. `verify` reads the
 four cross-SDK IDs (`typescript`, `go`, `rust`, `dotnet`) and requires the
 TypeScript body exactly. `exercise` covers CRUD, stale `If-Match` denial,
-idempotent replay, parameterized SQL, reactive attach/write/poll/close, a
-typed missing-document error, and (when TERRASCALE_DENY_API_KEY is supplied)
-denied-scope behavior. `cleanup` deletes only the TypeScript run ID.
+idempotent replay (including stable revision and ETag receipts), parameterized
+SQL, reactive attach/write/poll/close, a typed missing-document error, and (when
+`TERRASCALE_DENY_API_KEY` is supplied) denied-scope behavior. The denied key
+must differ from the authorized key and the response must preserve the
+producer's `unauthorized` (401) or `forbidden` (403) error code. `cleanup`
+deletes only the TypeScript run ID.
 
 Output is bounded JSON observations containing only labels, status, and typed
 error codes; credentials and request headers are never printed. Missing
