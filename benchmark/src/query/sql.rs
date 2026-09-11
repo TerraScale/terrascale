@@ -156,13 +156,17 @@ pub(crate) fn direct_single_base_referenced_fields(parsed: &ParsedSql) -> Vec<St
         fn pre_visit_expr(&mut self, expression: &Expr) -> ControlFlow<Self::Break> {
             let name = match expression {
                 Expr::Identifier(identifier) => Some(identifier.value.clone()),
-                Expr::CompoundIdentifier(identifiers) =>
-                    identifiers.last().map(|identifier| identifier.value.clone()),
+                Expr::CompoundIdentifier(identifiers) => {
+                    identifiers.last().map(|identifier| identifier.value.clone())
+                }
                 _ => None,
             };
             if let Some(name) = name
                 && valid_identifier(&name)
-                && !matches!(name.as_str(), "_id" | "body" | "_rev" | "_hlc" | "_created" | "_updated")
+                && !matches!(
+                    name.as_str(),
+                    "_id" | "body" | "_rev" | "_hlc" | "_created" | "_updated"
+                )
             {
                 self.0.insert(name);
             }
@@ -205,7 +209,9 @@ pub(crate) fn direct_single_base_referenced_fields(parsed: &ParsedSql) -> Vec<St
         }
     }
     if let Some(order_by) = &query.order_by {
-        let OrderByKind::Expressions(expressions) = &order_by.kind else { return fields.into_iter().collect() };
+        let OrderByKind::Expressions(expressions) = &order_by.kind else {
+            return fields.into_iter().collect();
+        };
         for item in expressions {
             if let Expr::Identifier(identifier) = &item.expr
                 && aliases.contains(identifier.value.as_str())

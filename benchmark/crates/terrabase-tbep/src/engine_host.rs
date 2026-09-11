@@ -909,7 +909,7 @@ impl TbepHost for EngineHost {
             self.engine.scope_for(&tenant),
             collection.clone(),
             schema,
-            operation,
+            operation.clone(),
             terrabase::types::Deadline::after(std::time::Duration::from_secs(30))
                 .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?,
             terrabase::types::Cancellation::default(),
@@ -922,13 +922,7 @@ impl TbepHost for EngineHost {
             .map_err(|_| HostingError::EngineFailure("the snapshot is unavailable".into()))?;
         let mut transaction = self
             .engine
-            .begin(
-                &scope,
-                snapshot,
-                OperationId::try_new(&request.operation_id).map_err(|_| {
-                    HostingError::Invalid("the operation identity is not valid".into())
-                })?,
-            )
+            .begin(&scope, snapshot, operation)
             .map_err(|_| HostingError::EngineFailure("the declaration could not begin".into()))?;
         self.engine
             .families()
@@ -1282,5 +1276,56 @@ mod numeric_bound_tests {
                 vec![("amount".into(), ViolationKind::NumberOutOfRange),]
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod schema_idempotency_tests {
+    use super::EngineHost;
+    use crate::host::TbepHost;
+    use crate::registry::{BoundScope, SchemaDeclareRequest};
+
+    #[test]
+    fn schema_replay_uses_metadata_identity_when_body_operation_changes() {
+        let location = std::env::temp_dir()
+            .join(format!("terrabase-tbep-schema-idempotency-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&location);
+        let host = EngineHost::open(&location, 1, "tenant-a", "project-a", "database-a")
+            .expect("the engine host opens");
+        let scope = BoundScope {
+            principal: "operator".into(),
+            tenant: "tenant-a".into(),
+            project: "project-a".into(),
+            database: "database-a".into(),
+        };
+
+        let first = host
+            .schema_declare(
+                &scope,
+                &SchemaDeclareRequest {
+                    collection: "orders".into(),
+                    schema: None,
+                    operation_id: "body-operation-one".into(),
+                },
+                "metadata-retry-key",
+            )
+            .expect("the initial declaration commits");
+        let replay = host
+            .schema_declare(
+                &scope,
+                &SchemaDeclareRequest {
+                    collection: "orders".into(),
+                    schema: None,
+                    operation_id: "body-operation-two".into(),
+                },
+                "metadata-retry-key",
+            )
+            .expect("the retry replays the committed declaration");
+
+        assert_eq!(replay, first);
+        assert_eq!(first.enforced_version, None);
+        assert_eq!(first.rule_count, 0);
+
+        let _ = std::fs::remove_dir_all(location);
     }
 }

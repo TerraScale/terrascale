@@ -317,12 +317,9 @@ pub(crate) fn compare_field_maps(
 
 /// Reports whether one document satisfies the predicate conjunction.
 pub(crate) fn matches(predicate: &QueryPredicate, document: &Document) -> bool {
-    predicate
-        .conditions()
-        .iter()
-        .all(|condition| {
-            matches_condition(condition, field_of(document, condition.field()).as_deref())
-        })
+    predicate.conditions().iter().all(|condition| {
+        matches_condition(condition, field_of(document, condition.field()).as_deref())
+    })
 }
 
 /// Evaluates one closed condition against one optionally present field value.

@@ -4453,8 +4453,7 @@ fn index_tenant_observations_use_the_executed_snapshot_scope() {
 fn sql_identity_columns_filter_and_project_the_document_id() {
     // Direct probe of the typed evaluator before any scan layer.
     {
-        let document =
-            object_document("doc-1", "orders", &[("total", DocumentValue::Integer(7))]);
+        let document = object_document("doc-1", "orders", &[("total", DocumentValue::Integer(7))]);
         let predicate = QueryPredicate::all(vec![QueryCondition::Equals {
             field: "id".to_owned(),
             value: DocumentValue::String("doc-1".into()),

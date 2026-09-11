@@ -1,7 +1,9 @@
 //! Supplementary collector coverage for sqlparser 0.62 multi-column aliases.
 
 use super::*;
-use sqlparser::ast::{BinaryOperator, Expr, Ident, OrderByExpr, OrderByKind, SelectItem, SetExpr, Statement};
+use sqlparser::ast::{
+    BinaryOperator, Expr, Ident, OrderByExpr, OrderByKind, SelectItem, SetExpr, Statement,
+};
 
 #[test]
 fn multi_alias_projection_retains_input_fields_but_order_by_skips_aliases() {
