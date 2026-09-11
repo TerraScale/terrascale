@@ -825,11 +825,21 @@ impl BackupStreams {
             }
             .ok_or_else(|| RestoreError::NotStreamed(database.to_owned()))?
         };
-        let config = terrabase::EngineConfig::durable(location)
-            .map_err(|_| RestoreError::Spawn(io::Error::other("restore target unavailable")))?;
-        if std::fs::read_dir(location).map_err(RestoreError::Spawn)?.next().is_some() {
-            return Err(RestoreError::Spawn(io::Error::other("restore target is not empty")));
-        }
+        // Admit the destination before constructing EngineConfig. Its
+        // `durable` constructor creates missing paths and follows symlinks,
+        // so target admission must happen at this boundary. Creation is
+        // exclusive; an existing target is checked without following links
+        // and must be empty.
+        let created_target = prepare_restore_target(location)?;
+        let config = match terrabase::EngineConfig::durable(location) {
+            Ok(config) => config,
+            Err(_) => {
+                if created_target {
+                    let _ = std::fs::remove_dir(location);
+                }
+                return Err(RestoreError::Spawn(io::Error::other("restore target unavailable")));
+            }
+        };
         let parent = location
             .parent()
             .ok_or_else(|| RestoreError::Spawn(io::Error::other("restore target has no parent")))?;
@@ -848,6 +858,17 @@ impl BackupStreams {
             )
         })();
         let _ = std::fs::remove_dir_all(download);
+        if result.is_err() && created_target {
+            // Only clean up an empty directory created by this call. Never
+            // remove a pre-existing target or a tree that was published.
+            if let Ok(metadata) = std::fs::symlink_metadata(location)
+                && metadata.file_type().is_dir()
+                && !metadata.file_type().is_symlink()
+                && std::fs::read_dir(location).is_ok_and(|mut entries| entries.next().is_none())
+            {
+                let _ = std::fs::remove_dir(location);
+            }
+        }
         result
     }
 
@@ -1209,6 +1230,44 @@ fn civil_from_days(days: i64) -> (i64, u64, u64) {
     (if m <= 2 { y + 1 } else { y }, m.cast_unsigned(), d.cast_unsigned())
 }
 
+/// Atomically admits a restore target directory and reports whether this call
+/// created it. Missing targets are created exclusively; existing targets must
+/// be real directories with no entries. `symlink_metadata` is intentional:
+/// restore destinations are never allowed to resolve through a symlink.
+fn prepare_restore_target(location: &Path) -> Result<bool, RestoreError> {
+    let parent = location
+        .parent()
+        .ok_or_else(|| RestoreError::Spawn(io::Error::other("restore target has no parent")))?;
+    std::fs::create_dir_all(parent).map_err(RestoreError::Spawn)?;
+
+    let metadata = match std::fs::symlink_metadata(location) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt as _;
+                builder.mode(0o700);
+            }
+            match builder.create(location) {
+                Ok(()) => return Ok(true),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    std::fs::symlink_metadata(location).map_err(RestoreError::Spawn)?
+                }
+                Err(error) => return Err(RestoreError::Spawn(error)),
+            }
+        }
+        Err(error) => return Err(RestoreError::Spawn(error)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+        return Err(RestoreError::Spawn(io::Error::other("restore target is not a directory")));
+    }
+    if std::fs::read_dir(location).map_err(RestoreError::Spawn)?.next().is_some() {
+        return Err(RestoreError::Spawn(io::Error::other("restore target is not empty")));
+    }
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1224,6 +1283,36 @@ mod tests {
     use terrabase_tbep::engine_host::EngineHost;
 
     static NEXT_LOCATION: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn restore_target_admission_creates_absent_directory_and_rejects_occupied_targets() {
+        let root = TestLocation::new("restore-target-admission");
+        let target = root.path().join("nested").join("target");
+        assert!(prepare_restore_target(&target).expect("absent target is admitted"));
+        assert!(target.is_dir());
+        assert!(std::fs::read_dir(&target).expect("target is readable").next().is_none());
+        assert!(!prepare_restore_target(&target).expect("empty target remains admissible"));
+
+        std::fs::write(target.join("occupied"), b"preserve").expect("occupy target");
+        assert!(matches!(prepare_restore_target(&target), Err(RestoreError::Spawn(_))));
+        assert_eq!(std::fs::read(target.join("occupied")).expect("sentinel"), b"preserve");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_target_admission_rejects_symlink_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestLocation::new("restore-target-symlink");
+        let outside = root.path().join("outside");
+        let target = root.path().join("target");
+        std::fs::create_dir_all(&outside).expect("outside");
+        std::fs::write(outside.join("sentinel"), b"preserve").expect("sentinel");
+        symlink(&outside, &target).expect("symlink");
+
+        assert!(matches!(prepare_restore_target(&target), Err(RestoreError::Spawn(_))));
+        assert_eq!(std::fs::read(outside.join("sentinel")).expect("sentinel"), b"preserve");
+    }
 
     #[test]
     fn object_storage_destination_requires_tls() {
