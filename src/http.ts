@@ -10,6 +10,7 @@ import {
   type TerraScaleError,
   type TerraScaleResult,
   type TerraScaleValidationIssue,
+  sanitizeDiagnostic,
 } from "./result.js";
 import {
   canonicalRegionCode,
@@ -228,7 +229,8 @@ export class TerraScaleHttp {
             }
           }
 
-          const error = errorFromResponse(response, body.ok ? body.value : body.raw);
+          const errorBody = sanitizeHttpDiagnostic(body.ok ? body.value : body.raw);
+          const error = errorFromResponse(response, errorBody);
           if (this.canRetry(options.method, idempotencyKey, attempt, response.status, options.retryableRead)) {
             const delayMs = retryDelay(response, this.config.retryDelayMs, attempt);
             // Preserve the server response when its backoff exceeds our automatic
@@ -245,7 +247,7 @@ export class TerraScaleHttp {
             error,
             response.status,
             response.headers,
-            body.ok ? body.value : body.raw,
+            errorBody,
           );
         } catch (error) {
           if (fetchStarted && !responseReceived && !options.signal?.aborted && this.canRetry(options.method, idempotencyKey, attempt, undefined, options.retryableRead)) {
@@ -259,14 +261,15 @@ export class TerraScaleHttp {
       }
     } catch (error) {
       this.recordRequestMetric(base, options.routeName, undefined, performance.now() - startedAt);
+      const safeError = sanitizeHttpDiagnostic(error);
       return err(options.routeName, {
         kind: "transport",
         code: "transport_error",
         message:
           error instanceof Error
-            ? error.message
+            ? sanitizeHttpDiagnostic(error.message) as string
             : "The request failed before a response was received.",
-        details: error,
+        details: safeError,
       });
     }
   }
@@ -752,7 +755,11 @@ function parseDocumentValue(raw: string): unknown {
 }
 
 function errorFromResponse(response: Response, body: unknown): TerraScaleError {
-  const source = unwrapErrorBody(body);
+  // Error responses are producer-controlled. Sanitize before extracting any
+  // published fields so hostile values cannot enter `message`, `fix`, or
+  // validation metadata and rely on a later result-level pass to clean them.
+  const safeBody = sanitizeHttpDiagnostic(body);
+  const source = unwrapErrorBody(safeBody);
   const code =
     stringProperty(source, "code") ??
     stringProperty(source, "errorCode") ??
@@ -777,8 +784,44 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
       stringProperty(source, "traceId") ??
       requestIdFrom(response.headers),
     validation,
-    details: body,
+    details: safeBody,
   };
+}
+
+const diagnosticTokenKey = /(?:^|[._-])(?:token|jwt|signature)(?:$|[._-])/iu;
+const diagnosticUrl = /https?:\/\/[^\s<>"']+/giu;
+
+/** Apply HTTP-specific rules before error fields are extracted. */
+function sanitizeHttpDiagnostic(value: unknown): unknown {
+  return sanitizeHttpDiagnosticValue(sanitizeDiagnostic(value), "", new WeakSet<object>(), 0);
+}
+
+function sanitizeHttpDiagnosticValue(
+  value: unknown,
+  key: string,
+  seen: WeakSet<object>,
+  depth: number,
+): unknown {
+  if (diagnosticTokenKey.test(key)) return "[redacted]";
+  if (typeof value === "string") {
+    return value.replace(diagnosticUrl, (candidate) => {
+      try {
+        const url = new URL(candidate.replace(/[).,;]+$/u, ""));
+        return url.search !== "" || url.hash !== "" ? "[redacted URL]" : candidate;
+      } catch {
+        return candidate;
+      }
+    });
+  }
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= 12 || seen.has(value)) return "[redacted]";
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((entry) => sanitizeHttpDiagnosticValue(entry, "", seen, depth + 1));
+  const output: Record<string, unknown> = {};
+  for (const [entryKey, entryValue] of Object.entries(value)) {
+    output[entryKey] = sanitizeHttpDiagnosticValue(entryValue, entryKey, seen, depth + 1);
+  }
+  return output;
 }
 
 function unwrapErrorBody(body: unknown): Record<string, unknown> {

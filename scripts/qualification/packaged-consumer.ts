@@ -10,7 +10,7 @@ const required = [
   "TERRASCALE_DATABASE_ID", "TERRASCALE_API_KEY", "TERRASCALE_JOURNEY_RUN_ID",
   "TERRASCALE_SDK_TARBALL", "TERRASCALE_SDK_TARBALL_SHA256",
 ] as const;
-type Config = Record<(typeof required)[number], string>;
+type Config = Record<(typeof required)[number], string> & { TERRASCALE_DENY_API_KEY?: string };
 type Phase = "seed" | "verify" | "exercise" | "cleanup";
 
 const phase = parsePhase(process.argv.slice(2));
@@ -34,19 +34,20 @@ try {
   try {
     result = await exec(process.execPath, [path.join(consumer, "out", "journey.js")], { cwd: consumer, maxBuffer: 1024 * 1024 });
   } catch (error) {
-    throw new Error(`packaged consumer failed: ${safeError(error)}`);
+    throw new Error(`packaged consumer failed: ${safeError(error, config.TERRASCALE_API_KEY, process.env.TERRASCALE_DENY_API_KEY)}`);
   }
   process.stdout.write(result.stdout);
 } finally {
   await rm(work, { recursive: true, force: true });
 }
 
-function safeError(error: unknown): string {
+function safeError(error: unknown, ...secrets: (string | undefined)[]): string {
   if (typeof error !== "object" || error === null) return "unknown failure";
   const record = error as { code?: unknown; message?: unknown; stdout?: unknown };
   const message = typeof record.message === "string" ? record.message.slice(0, 2000) : "child process failed";
   const stdout = typeof record.stdout === "string" ? record.stdout.slice(0, 2000) : undefined;
-  return JSON.stringify({ code: typeof record.code === "string" ? record.code.slice(0, 80) : undefined, message: message.replace(/(?:tsauth_[A-Za-z0-9._-]+|Bearer\s+\S+)/giu, "[redacted]"), stdout: stdout?.replace(/(?:tsauth_[A-Za-z0-9._-]+|Bearer\s+\S+)/giu, "[redacted]") });
+  const redact = (value: string): string => secrets.filter((secret): secret is string => Boolean(secret)).reduce((text, secret) => text.replaceAll(secret, "[redacted]"), value.replace(/(?:tsauth_[A-Za-z0-9._-]+|Bearer\s+\S+)/giu, "[redacted]"));
+  return JSON.stringify({ code: typeof record.code === "string" ? record.code.slice(0, 80) : undefined, message: redact(message), stdout: typeof stdout === "string" ? redact(stdout) : undefined });
 }
 
 function parsePhase(args: string[]): Phase {
@@ -65,7 +66,7 @@ function readConfig(): Config {
     try { parsed = new URL(values[key]!); } catch { throw new Error(`${key} must be an absolute HTTP(S) URL`); }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error(`${key} must be an absolute HTTP(S) URL`);
   }
-  return values as Config;
+  return { ...values, TERRASCALE_DENY_API_KEY: process.env.TERRASCALE_DENY_API_KEY?.trim() } as Config;
 }
 
 function journeySource(phase: Phase, c: Config): string {
@@ -95,6 +96,7 @@ if (phase === "exercise") {
   } finally { live.close(); controller.abort(); }
   const cancelledController = new AbortController(); cancelledController.abort(); const cancelled = await client.documents.get(c.TERRASCALE_DATABASE_ID, "sdk_journey", own, { signal: cancelledController.signal }); observe("cancellation", cancelled); assert.equal(cancelled.ok, false); if (cancelled.ok) throw new Error("pre-aborted request unexpectedly succeeded"); assert.equal(cancelled.error.code, "request_cancelled");
   const missing = await client.documents.get(c.TERRASCALE_DATABASE_ID, "sdk_journey", own + "-missing"); observe("missing-document", missing); assert.equal(missing.ok, false); assert.equal(missing.status, 404);
+  if (c.TERRASCALE_DENY_API_KEY) { const denied = createTerraScaleClient({ apiBaseUrl: c.TERRASCALE_API_URL, projectId: c.TERRASCALE_PROJECT_ID, accessToken: c.TERRASCALE_DENY_API_KEY }); const deniedRead = await denied.documents.get(c.TERRASCALE_DATABASE_ID, "sdk_journey", own); observe("denied-scope", deniedRead); assert.equal(deniedRead.ok, false); assert.ok(deniedRead.status === 401 || deniedRead.status === 403); }
 }
 if (phase === "cleanup") { const result = await client.documents.delete(c.TERRASCALE_DATABASE_ID, "sdk_journey", own, { idempotencyKey: own + "-cleanup" }); observe("cleanup", result); ok(result, "cleanup"); }
 `;

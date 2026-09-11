@@ -99,8 +99,12 @@ test("redacts secret-bearing fields, query values, and URLs from hostile error b
       apiKey,
       authorization: `Bearer ${apiKey}`,
       sessionToken: session,
+      token: "bare_token_canary",
       query: querySecret,
-      nested: { callbackUrl: `https://example.test/callback?token=${session}` },
+      nested: {
+        callbackUrl: `https://example.test/callback?token=${session}`,
+        opaqueUrl: "https://example.test/failure?value=opaque_url_secret",
+      },
     },
     diagnostics: [`query=${querySecret}`, { password: "password_canary" }],
   };
@@ -111,7 +115,7 @@ test("redacts secret-bearing fields, query values, and URLs from hostile error b
 
   assert.equal(result.ok, false);
   const serialized = JSON.stringify(result);
-  for (const secret of [apiKey, session, querySecret, "password_canary"]) {
+  for (const secret of [apiKey, session, querySecret, "password_canary", "bare_token_canary", "opaque_url_secret"]) {
     assert.equal(serialized.includes(secret), false, `result leaked ${secret}`);
   }
   assert.match(serialized, /\[redacted\]/u);
@@ -124,7 +128,7 @@ test("redacts secrets from rejecting fetch errors and preserves a typed transpor
   const http = new TerraScaleHttp({
     apiBaseUrl: "https://api.terrascale.test",
     fetch: async () => {
-      throw new Error(`request failed: https://proxy.example.test/?api_key=${apiKey} authorization=Bearer ${session}`);
+      throw new Error(`request failed: https://proxy.example.test/?api_key=${apiKey} authorization=Bearer ${session}; opaque=https://proxy.example.test/?value=transport_url_secret`);
     },
   });
 
@@ -134,6 +138,7 @@ test("redacts secrets from rejecting fetch errors and preserves a typed transpor
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes(apiKey), false);
   assert.equal(serialized.includes(session), false);
+  assert.equal(serialized.includes("transport_url_secret"), false);
   assert.equal(result.error.kind, "transport");
   assert.ok(result.error.details);
   assert.match(result.error.message, /\[redacted URL\]/u);

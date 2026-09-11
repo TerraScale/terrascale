@@ -19,6 +19,11 @@ TERRASCALE_SDK_TARBALL   absolute path to the packed SDK artifact
 TERRASCALE_SDK_TARBALL_SHA256  SHA-256 of that artifact
 ```
 
+Optionally set TERRASCALE_DENY_API_KEY to a second key issued for a
+non-authorized scope. The exercise phase uses it against the same document
+and requires a 401/403 denial. All five consumers must use the same
+TERRASCALE_API_KEY for the shared journey.
+
 Run one phase at a time:
 
 ```bash
@@ -31,8 +36,9 @@ node --experimental-strip-types scripts/qualification/packaged-consumer.ts --pha
 `seed` writes only `${RUN_ID}-typescript` in `sdk_journey`. `verify` reads the
 four cross-SDK IDs (`typescript`, `go`, `rust`, `dotnet`) and requires the
 TypeScript body exactly. `exercise` covers CRUD, stale `If-Match` denial,
-idempotent replay, parameterized SQL, reactive attach/write/poll/close, and a
-typed missing-document error. `cleanup` deletes only the TypeScript run ID.
+idempotent replay, parameterized SQL, reactive attach/write/poll/close, a
+typed missing-document error, and (when TERRASCALE_DENY_API_KEY is supplied)
+denied-scope behavior. `cleanup` deletes only the TypeScript run ID.
 
 Output is bounded JSON observations containing only labels, status, and typed
 error codes; credentials and request headers are never printed. Missing
