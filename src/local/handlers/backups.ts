@@ -67,6 +67,12 @@ export const handleLocalBackups: LocalHandler = async (context) => {
     return jsonResponse(policy);
   }
 
+  match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy");
+  if (match !== undefined) {
+    const policy = await get<Models.BackupPolicyResponse>(store, POLICIES, scopeKey(required(match!.projectId), required(match!.databaseId)));
+    return policy === undefined ? notFound("backup policy") : jsonResponse(policy);
+  }
+
   match = matchLocalRoute(context, "POST", "/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan");
   if (match !== undefined) {
     const operationSessionId = text(body.operationSessionId);

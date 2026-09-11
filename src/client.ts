@@ -975,6 +975,17 @@ export class BackupsClient {
     });
   }
 
+  getPolicy(
+    databaseId: string,
+    projectId?: string,
+  ): Promise<TerraScaleResult<Models.BackupPolicyResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups/policy`,
+      routeName: "backups.policy.get",
+    });
+  }
+
   planBackup(
     databaseId: string,
     request: Models.DatabaseBackupConfirmationPlanRequest,

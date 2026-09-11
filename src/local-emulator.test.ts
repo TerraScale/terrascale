@@ -198,6 +198,9 @@ test("backup plan/execute/replay uses typed clients over the real server", async
       expectOk(
         await client.backups.configurePolicy(seed.databaseId, { fullBackupCron: "0 0 * * *" }),
       );
+      const fetchedPolicy = expectOk(await client.backups.getPolicy(seed.databaseId));
+      assert.equal(fetchedPolicy.fullBackupCron, "0 0 * * *");
+      assert.equal(fetchedPolicy.disabled, false);
       const operationSessionId = "backup-session";
       const plan = expectOk(
         await client.backups.planBackup(seed.databaseId, { operationSessionId }),

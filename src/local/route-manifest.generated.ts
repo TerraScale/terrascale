@@ -192,6 +192,11 @@ export const localManifestRoutes = [
     "routeName": "backups.policy.configure"
   },
   {
+    "method": "GET",
+    "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy",
+    "routeName": "backups.policy.get"
+  },
+  {
     "method": "POST",
     "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan",
     "routeName": "backups.plan"
