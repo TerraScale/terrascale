@@ -109,16 +109,17 @@ async fn database_and_global_scope_are_enforced_at_the_router_boundary() {
         "database-scoped key cannot enumerate globally"
     );
 
-    let response = send(
-        app.clone(),
-        authenticated_request(
-            Method::POST,
-            "/api/v1/databases",
-            Body::from(r#"{"name":"must-not-create","placement":["GRU"]}"#),
-            &auth[7..],
-        ),
-    )
-    .await;
+    let mut create = authenticated_request(
+        Method::POST,
+        "/api/v1/databases",
+        Body::from(r#"{"name":"must-not-create","placement":["GRU"]}"#),
+        &auth[7..],
+    );
+    // Database creation is project administration: it resolves the tenant and
+    // project from the explicit routing headers, not the bearer alone.
+    create.headers_mut().insert("x-terrascale-tenant-id", HeaderValue::from_static("tenant-a"));
+    create.headers_mut().insert("x-terrascale-project-id", HeaderValue::from_static("project-a"));
+    let response = send(app.clone(), create).await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN, "database-scoped key created globally");
 
     let admin = Fixture::new(&[admin_registration()]);
