@@ -86,10 +86,16 @@ impl Engine {
                 .replication_fingerprint(scope.tenant(), &operation)
                 .map_err(|()| EngineError::StorageFailure)?;
             if bound.is_some_and(|value| value != fingerprint) {
+                if std::env::var_os("TB_SIM_TRACE").is_some() {
+                    eprintln!("[engine] branch: bound fingerprint mismatch");
+                }
                 return Err(EngineError::OperationIdReuse { operation_id: operation });
             }
             if let Some(resolution) = storage.port.resolve_operation(scope.tenant(), &operation) {
                 if bound != Some(fingerprint) {
+                    if std::env::var_os("TB_SIM_TRACE").is_some() {
+                        eprintln!("[engine] branch: resolved without matching fingerprint (bound={bound:?})");
+                    }
                     return Err(EngineError::StorageFailure);
                 }
                 return match resolution {
@@ -99,7 +105,12 @@ impl Engine {
                             true,
                         ))
                     }
-                    storage::OperationResolution::Rejected(_) => Err(EngineError::StorageFailure),
+                    storage::OperationResolution::Rejected(_) => {
+                        if std::env::var_os("TB_SIM_TRACE").is_some() {
+                            eprintln!("[engine] branch: resolution Rejected");
+                        }
+                        Err(EngineError::StorageFailure)
+                    }
                 };
             }
             let snapshot = ReadSnapshot::new(
@@ -124,7 +135,15 @@ impl Engine {
                     );
                     let schema = storage.port.merge_schema(&record.collection);
                     let plan =
-                        plan_record(record, current.as_ref(), context.as_deref(), schema.as_ref())?;
+                        match plan_record(record, current.as_ref(), context.as_deref(), schema.as_ref()) {
+                            Ok(plan) => plan,
+                            Err(error) => {
+                                if std::env::var_os("TB_SIM_TRACE").is_some() {
+                                    eprintln!("[engine] branch: plan_record error {error:?}");
+                                }
+                                return Err(error);
+                            }
+                        };
                     Ok((plan, schema.map(|schema| schema.to_canonical_string())))
                 })
                 .collect::<Result<Vec<_>, EngineError>>()?;
@@ -166,7 +185,12 @@ impl Engine {
             CommitOutcome::Rejected(CommitError::OperationIdReuse) => {
                 Err(EngineError::OperationIdReuse { operation_id: operation })
             }
-            _ => Err(EngineError::StorageFailure),
+            other => {
+                if std::env::var_os("TB_SIM_TRACE").is_some() {
+                    eprintln!("[engine] branch: commit outcome {other:?}");
+                }
+                Err(EngineError::StorageFailure)
+            }
         }
     }
 }

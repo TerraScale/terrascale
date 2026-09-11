@@ -626,13 +626,11 @@ impl ProductionWorld {
                 }
                 return Ok(());
             }
-            let apply_result = engine
-                .apply_replicated_publication(&scope, publication)
-                .map_err(|_| ProductionWorldError::EngineUnavailable);
+            let apply_result = engine.apply_replicated_publication(&scope, publication);
             if row.id() == TRACE_ROW && target == RegionId::new(1) {
                 trace("apply_publication", format!("step {}: engine apply -> {apply_result:?}", self.step));
             }
-            apply_result?;
+            apply_result.map_err(|_| ProductionWorldError::EngineUnavailable)?;
             self.regions[position].applied.insert(row.id());
         }
         Ok(())
