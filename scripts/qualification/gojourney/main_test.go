@@ -2,10 +2,25 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestImmutableDriverPreflightFromEmptyDirectory(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "gojourney")
+	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-o", binary, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, output)
+	}
+	run := exec.CommandContext(t.Context(), binary, "--preflight")
+	run.Dir = t.TempDir()
+	run.Env = []string{}
+	if output, err := run.CombinedOutput(); err != nil || !strings.Contains(string(output), `"ok":true`) {
+		t.Fatalf("empty cwd preflight: %v %s", err, output)
+	}
+}
 
 func TestVerifyCurrentSourceInputs(t *testing.T) {
 	if err := verifySourceInputs("."); err != nil {

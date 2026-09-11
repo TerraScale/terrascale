@@ -5,11 +5,13 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,6 +34,12 @@ type config struct {
 }
 
 var journeyPeers = [...]string{"typescript", "go", "rust", "dotnet", "cli"}
+
+// The immutable driver carries the exact checksum-verified build inputs. It
+// never depends on the launch directory or an ambient mutable checkout.
+//
+//go:embed go.mod go.sum source-input-sha256.txt main.go
+var sourceInputs embed.FS
 
 func getenv(name string) (string, error) {
 	v := strings.TrimSpace(os.Getenv(name))
@@ -74,7 +82,11 @@ func loadConfig() (config, error) {
 }
 
 func verifySourceInputs(root string) error {
-	raw, err := os.ReadFile(filepath.Join(root, "source-input-sha256.txt"))
+	return verifyInputFS(os.DirFS(root))
+}
+
+func verifyInputFS(inputs fs.FS) error {
+	raw, err := fs.ReadFile(inputs, "source-input-sha256.txt")
 	if err != nil {
 		return fmt.Errorf("read source input manifest: %w", err)
 	}
@@ -101,7 +113,7 @@ func verifySourceInputs(root string) error {
 		}
 		seen[name] = struct{}{}
 		entries++
-		contents, err := os.ReadFile(filepath.Join(root, name))
+		contents, err := fs.ReadFile(inputs, name)
 		if err != nil {
 			return fmt.Errorf("read source input %q: %w", name, err)
 		}
@@ -117,11 +129,16 @@ func verifySourceInputs(root string) error {
 }
 
 func main() {
-	if err := verifySourceInputs("."); err != nil {
+	if err := verifyInputFS(sourceInputs); err != nil {
 		fail(err)
 	}
 	phase := flag.String("phase", "", "seed, verify, exercise, or cleanup")
+	preflight := flag.Bool("preflight", false, "verify immutable embedded build inputs without provider access")
 	flag.Parse()
+	if *preflight && flag.NArg() == 0 && *phase == "" {
+		emit(observation{Phase: "preflight", Action: "embedded-source-inputs", OK: true})
+		return
+	}
 	if flag.NArg() != 0 || !map[string]bool{"seed": true, "verify": true, "exercise": true, "cleanup": true}[*phase] {
 		fail(fmt.Errorf("--phase must be exactly seed, verify, exercise, or cleanup"))
 	}
