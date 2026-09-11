@@ -67,12 +67,14 @@ impl ReplicationPeers {
             );
         }
         self.ensure_suspension_live()?;
-        let admitted = self.admitted.lock().map_err(failure)?;
-        let current = admitted
-            .iter()
-            .filter(|(_, candidate)| *candidate == scope)
-            .map(|(peer, _)| peer.clone())
-            .collect::<BTreeSet<_>>();
+        let current = {
+            let admitted = self.admitted.lock().map_err(failure)?;
+            admitted
+                .iter()
+                .filter(|(_, candidate)| *candidate == scope)
+                .map(|(peer, _)| peer.clone())
+                .collect::<BTreeSet<_>>()
+        };
         if current != peers {
             return Err("replication assignment changed during suspension".into());
         }
@@ -82,7 +84,6 @@ impl ReplicationPeers {
             .map_err(failure)?
             .entry(scope)
             .or_insert_with(|| NEXT_SUSPENSION.fetch_add(1, Ordering::Relaxed));
-        drop(admitted);
         let mut responses = Vec::new();
         // Publish every command without yielding. Cancellation can only leave a
         // complete, retryable barrier, never an undelivered subset of peers.

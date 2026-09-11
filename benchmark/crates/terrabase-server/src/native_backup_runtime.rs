@@ -151,10 +151,15 @@ impl NativeBackupRuntime {
         }
         let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        let manifests =
-            fleet.capture_participants_at(cut).await.map_err(NativeBackupRuntimeError::Fleet)?;
+        let manifests = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(fleet.capture_participants_at(cut))
+        })
+        .map_err(NativeBackupRuntimeError::Fleet)?;
         let envelope = self.assemble_shard_envelope(cut, manifests)?;
-        fleet.publish_envelope(&envelope).await.map_err(NativeBackupRuntimeError::Fleet)?;
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(fleet.publish_envelope(&envelope))
+        })
+        .map_err(NativeBackupRuntimeError::Fleet)?;
         Ok(envelope)
     }
 
@@ -226,7 +231,9 @@ impl NativeBackupRuntime {
     pub async fn tick(&self) -> Result<Vec<(String, FleetError)>, NativeBackupRuntimeError> {
         let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        let errors = fleet.sync_once().await;
+        let errors = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(fleet.sync_once())
+        });
         if !errors.is_empty() {
             let mut incidents =
                 self.incidents.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
@@ -291,7 +298,10 @@ impl NativeBackupRuntime {
         validate_operation_id(operation_id)?;
         let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        fleet.capture_snapshot(database).await.map_err(NativeBackupRuntimeError::Fleet)
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(fleet.capture_snapshot(database))
+        })
+        .map_err(NativeBackupRuntimeError::Fleet)
     }
 
     /// Returns the authenticated retained chain for one admitted database.
@@ -338,10 +348,11 @@ impl NativeBackupRuntime {
         self.validate_restore_placement(database, placement)?;
         let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        fleet
-            .restore_from_provider(database, provider, point, target, identity)
-            .await
-            .map_err(NativeBackupRuntimeError::Fleet)
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(fleet.restore_from_provider(database, provider, point, target, identity))
+        })
+        .map_err(NativeBackupRuntimeError::Fleet)
     }
 
     /// Restores through an inclusive Unix-second timestamp using one provider.
@@ -364,10 +375,14 @@ impl NativeBackupRuntime {
             .iter()
             .any(|envelope| envelope.digest() == point)
         {
-            let receipt = fleet
-                .restore_envelope_from_provider(database, provider, point, target, identity)
-                .await
-                .map_err(NativeBackupRuntimeError::Fleet)?;
+            let receipt = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(
+                    fleet.restore_envelope_from_provider(
+                        database, provider, point, target, identity,
+                    ),
+                )
+            })
+            .map_err(NativeBackupRuntimeError::Fleet)?;
             return Ok(crate::native_recovery::NativeRestoreReceipt {
                 envelope: Some(
                     String::from_utf8(
@@ -390,10 +405,16 @@ impl NativeBackupRuntime {
                 restored_documents: receipt.documents_read_back,
             });
         }
-        let receipt = fleet
-            .restore_from_provider(database, provider, Some(point), target, identity)
-            .await
-            .map_err(NativeBackupRuntimeError::Fleet)?;
+        let receipt = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(fleet.restore_from_provider(
+                database,
+                provider,
+                Some(point),
+                target,
+                identity,
+            ))
+        })
+        .map_err(NativeBackupRuntimeError::Fleet)?;
         Ok(native_restore_receipt(&receipt))
     }
 
@@ -413,10 +434,12 @@ impl NativeBackupRuntime {
         self.validate_restore_placement(database, placement)?;
         let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        fleet
-            .restore_at_from_provider(database, provider, millis, target, identity)
-            .await
-            .map_err(NativeBackupRuntimeError::Fleet)
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(
+                fleet.restore_at_from_provider(database, provider, millis, target, identity),
+            )
+        })
+        .map_err(NativeBackupRuntimeError::Fleet)
     }
 
     /// Restores through an inclusive Unix-millisecond timestamp without rounding.
@@ -434,10 +457,12 @@ impl NativeBackupRuntime {
         self.validate_restore_placement(database, placement)?;
         let _async_fleet = self.async_fleet.lock().await;
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
-        fleet
-            .restore_at_from_provider(database, provider, at_millis, target, identity)
-            .await
-            .map_err(NativeBackupRuntimeError::Fleet)
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(
+                fleet.restore_at_from_provider(database, provider, at_millis, target, identity),
+            )
+        })
+        .map_err(NativeBackupRuntimeError::Fleet)
     }
 
     /// Dynamically admits one accepted stream under the shared fleet lock.

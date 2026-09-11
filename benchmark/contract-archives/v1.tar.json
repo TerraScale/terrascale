@@ -1,8 +1,8 @@
 {
   "archive": "v1.tar",
-  "archiveSha256": "e7a8bcbe752d814006c52fd40df055d54ac9adb7e3c1e5050630951d8f3498af",
+  "archiveSha256": "b0b0297f3facf5c0ed9cc17b86a6cec477db4babad47ac9a62ce7a2e2134502b",
   "artifactCount": 11,
   "contractVersion": "v1",
-  "manifestSha256": "3bf6908d8f243708de1627703c6f1209e66b5e6293a3670f501802482dd03a40",
+  "manifestSha256": "638accfd6f44aa5d79fe42feb4c0a7236a2c4d9de71302b058720cf7dde51d22",
   "schemaVersion": 1
 }

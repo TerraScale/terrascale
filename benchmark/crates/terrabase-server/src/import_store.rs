@@ -10,7 +10,7 @@ use std::{path::Path, sync::Mutex, time::Duration};
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |value| value.as_millis().min(i64::MAX as u128) as i64)
+        .map_or(0, |value| i64::try_from(value.as_millis()).unwrap_or(i64::MAX))
 }
 
 const MAX_INPUT_BYTES: u64 = 1 << 30;
@@ -101,11 +101,11 @@ impl ImportStore {
             |row| Ok(ImportJob {
                 operation_id: row.get(0)?, tenant_id: row.get(1)?, project_id: row.get(2)?,
                 database_id: row.get(3)?, format: row.get(4)?, durability: row.get(13)?, key_version: row.get(17)?,
-                pending_operation: row.get(14)?, pending_cursor: row.get::<_, Option<i64>>(15)?.map(|v| v as u64), pending_records: row.get::<_, Option<i64>>(16)?.map(|v| v as u64), input_digest: row.get(5)?,
-                input_length: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+                pending_operation: row.get(14)?, pending_cursor: row.get(15)?, pending_records: row.get(16)?, input_digest: row.get(5)?,
+                input_length: row.get(6)?,
                 input_path: row.get(7)?,
-                input_committed: row.get::<_, i64>(8)? != 0, cursor: row.get::<_, i64>(9)? as u64,
-                committed_records: row.get::<_, i64>(10)? as u64, state: row.get(11)?, error: row.get(12)?,
+                input_committed: row.get::<_, i64>(8)? != 0, cursor: row.get(9)?,
+                committed_records: row.get(10)?, state: row.get(11)?, error: row.get(12)?,
             }),
         ).optional()
     }
@@ -225,7 +225,9 @@ impl ImportStore {
         records: u64,
     ) -> rusqlite::Result<()> {
         let connection = self.connection.lock().expect("import store lock");
-        if connection.execute("UPDATE import_jobs SET pending_operation=?2,pending_cursor=?3,pending_records=?4 WHERE operation_id=?1 AND state='running' AND pending_operation IS NULL", params![id, operation, cursor as i64, records as i64])? != 1 { return Err(rusqlite::Error::InvalidQuery); }
+        let cursor = i64::try_from(cursor).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let records = i64::try_from(records).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        if connection.execute("UPDATE import_jobs SET pending_operation=?2,pending_cursor=?3,pending_records=?4 WHERE operation_id=?1 AND state='running' AND pending_operation IS NULL", params![id, operation, cursor, records])? != 1 { return Err(rusqlite::Error::InvalidQuery); }
         Ok(())
     }
 
@@ -268,7 +270,8 @@ impl ImportStore {
     /// supplied cutoff. Unknown/running jobs are never eligible: an
     /// unresolved engine operation must remain recoverable.
     pub(crate) fn purge_expired(&self, now_millis: u64) -> rusqlite::Result<usize> {
-        let cutoff = now_millis.saturating_sub(IMPORT_RETENTION_MILLIS) as i64;
+        let cutoff =
+            i64::try_from(now_millis.saturating_sub(IMPORT_RETENTION_MILLIS)).unwrap_or(i64::MAX);
         let connection = self.connection.lock().expect("import store lock");
         let mut statement = connection.prepare(
             "SELECT operation_id,input_path FROM import_jobs

@@ -596,6 +596,31 @@ fn native_restore_request_digest(
     )
 }
 
+fn validate_restore_target_identity(
+    record: &crate::admission::AdmissionRecord,
+    configured: &crate::config::ProductionDatabase,
+    target: &str,
+) -> Result<(), String> {
+    let configured_regions = configured.selected_regions.clone();
+    let admitted_regions = record
+        .regions
+        .iter()
+        .map(|region| region.parse())
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(|_| "invalid restore target placement")?;
+    if record.database_id != target
+        || configured.database.to_text() != target
+        || configured.tenant.to_text() != record.tenant_id
+        || configured.project.to_text() != record.project_id
+        || configured.region.as_str() != record.region
+        || configured_regions != admitted_regions
+        || configured.encryption_key.to_string() != record.key_version
+    {
+        return Err("configured restore target identity disagrees with admitted record".into());
+    }
+    Ok(())
+}
+
 impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
     fn reconcile<'a>(
         &'a self,
@@ -1363,6 +1388,15 @@ impl ProductionAdmissionRuntime {
             .iter()
             .find(|entry| entry.database.to_text() == database)
             .ok_or("native restore target configuration is unavailable")?;
+        validate_restore_target_identity(&record, configured, database)?;
+        let retained_owner = snapshot.database.host.engine().database_owner();
+        if retained_owner.database().to_text() != record.database_id
+            || retained_owner.tenant().to_text() != record.tenant_id
+            || retained_owner.project().to_text() != record.project_id
+            || retained_owner.region().as_str() != record.region
+        {
+            return Err("retained engine owner disagrees with admitted record".into());
+        }
         let region = record.region.parse().map_err(|_| "invalid restore target Region")?;
         let owner = terrabase::storage::DatabaseOwner::try_new(
             &record.environment,
@@ -1530,6 +1564,9 @@ impl ProductionAdmissionRuntime {
             Ok(configured) => configured,
             Err(error) => return recover(reservation, error),
         };
+        if let Err(error) = validate_restore_target_identity(&record, configured, target) {
+            return recover(reservation, error);
+        }
         let region =
             match record.region.parse().map_err(|_| "invalid restore target Region".to_owned()) {
                 Ok(region) => region,
@@ -2075,6 +2112,47 @@ impl terrabase::member::DatabaseRoleAuthority for VerifiedRole {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+
+    #[test]
+    fn restore_target_rejects_configuration_identity_drift() {
+        let root = std::env::temp_dir()
+            .join(format!("restore-target-{}", terrabase::identity::DatabaseUlid::generate()));
+        let tenant = terrabase::identity::TenantUlid::generate();
+        let project = terrabase::identity::ProjectUlid::generate();
+        let database = terrabase::identity::DatabaseUlid::generate();
+        let member = terrabase::identity::MemberUlid::generate();
+        let peer = terrabase::identity::MemberUlid::generate();
+        let cluster = terrabase::identity::ClusterUlid::generate();
+        let keys = crate::test_keys::key_delivery();
+        let mut config = crate::auth_runtime::tests::admitted_fixture::production_config(
+            (tenant, project, database),
+            cluster,
+            member,
+            peer,
+            &root,
+            &keys,
+        );
+        let record = crate::admission::AdmissionRecord {
+            created_at: 1,
+            environment: "production".into(),
+            tenant_id: tenant.to_text(),
+            project_id: project.to_text(),
+            database_id: database.to_text(),
+            parent_database_id: None,
+            key_version: config.databases[0].encryption_key.to_string(),
+            name: "restore-target".into(),
+            regions: vec!["GRU".into()],
+            residency: "GRU".into(),
+            operation_id: "restore-target-admit".into(),
+            region: "GRU".into(),
+            member_id: member.to_text(),
+        };
+        config.databases[0].project = terrabase::identity::ProjectUlid::generate();
+        let error =
+            validate_restore_target_identity(&record, &config.databases[0], &record.database_id)
+                .expect_err("configuration drift must fail closed before owner construction");
+        assert_eq!(error, "configured restore target identity disagrees with admitted record");
+    }
 
     #[tokio::test]
     async fn readiness_inventory_preserves_outages_but_revokes_invalid_authority() {

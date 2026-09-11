@@ -48,7 +48,7 @@ impl ImportCipher for ImportLeaseCipher {
         SystemRandom::new()
             .fill(&mut nonce)
             .map_err(|_| io::Error::other("import randomness unavailable"))?;
-        let tag = chunk_artifact_id(operation_id, chunk, &nonce);
+        let tag = chunk_artifact_id(operation_id, chunk, &nonce)?;
         let context = EncryptionContext::new_with_project(
             self.lease.metadata().scope().environment(),
             &self.tenant,
@@ -82,7 +82,7 @@ impl ImportCipher for ImportLeaseCipher {
             .ok_or_else(invalid_input)?
             .try_into()
             .map_err(|_| invalid_input())?;
-        let tag = chunk_artifact_id(operation_id, chunk, &nonce);
+        let tag = chunk_artifact_id(operation_id, chunk, &nonce)?;
         let context = EncryptionContext::new_with_project(
             self.lease.metadata().scope().environment(),
             &self.tenant,
@@ -108,13 +108,14 @@ fn invalid_input() -> io::Error {
 fn permission_error() -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, "import encryption context unavailable")
 }
-fn chunk_artifact_id(operation_id: &str, chunk: u64, nonce: &[u8; 32]) -> [u8; 32] {
+fn chunk_artifact_id(operation_id: &str, chunk: u64, nonce: &[u8; 32]) -> io::Result<[u8; 32]> {
     let mut hasher = Hasher::new();
     for value in [operation_id.as_bytes(), &chunk.to_be_bytes(), nonce] {
-        hasher.update(&(value.len() as u64).to_be_bytes());
+        let length = u64::try_from(value.len()).map_err(|_| invalid_input())?;
+        hasher.update(&length.to_be_bytes());
         hasher.update(value);
     }
-    *hasher.finalize().as_bytes()
+    Ok(*hasher.finalize().as_bytes())
 }
 
 pub(crate) struct ImportInputWriter<C> {
@@ -159,13 +160,18 @@ impl<C: ImportCipher> ImportInputWriter<C> {
     pub(crate) fn write_chunk(&mut self, plaintext: &[u8]) -> io::Result<()> {
         let next = self
             .length
-            .checked_add(plaintext.len() as u64)
+            .checked_add(u64::try_from(plaintext.len()).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "input length is not representable")
+            })?)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "input too large"))?;
         if next > MAX_INPUT_BYTES {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "input exceeds 1 GiB"));
         }
         let encrypted = self.cipher.seal_chunk(&self.operation_id, self.chunk, plaintext)?;
-        self.file.write_all(&(encrypted.len() as u64).to_be_bytes())?;
+        let encrypted_length = u64::try_from(encrypted.len()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "encrypted chunk is not representable")
+        })?;
+        self.file.write_all(&encrypted_length.to_be_bytes())?;
         self.file.write_all(&encrypted)?;
         self.digest.update(plaintext);
         self.length = next;
@@ -257,13 +263,17 @@ impl<C: ImportCipher> ImportInputReader<C> {
             ImportPlaintextReader { input: self, chunk: 0, pending: io::Cursor::new(Vec::new()) };
         let mut actual = Hasher::new();
         let mut total = 0u64;
-        let mut buffer = [0u8; 65536];
+        // Keep the validation buffer bounded without consuming a large stack
+        // frame on every request.
+        let mut buffer = vec![0u8; 65536];
         loop {
             let read = reader.read(&mut buffer)?;
             if read == 0 {
                 break;
             }
-            total = total.checked_add(read as u64).ok_or_else(invalid_input)?;
+            total = total
+                .checked_add(u64::try_from(read).map_err(|_| invalid_input())?)
+                .ok_or_else(invalid_input)?;
             if total > length || total > MAX_INPUT_BYTES {
                 return Err(invalid_input());
             }
@@ -299,7 +309,8 @@ impl<C: ImportCipher> Read for ImportPlaintextReader<C> {
             if !(32..=2 * 1024 * 1024).contains(&size) {
                 return Err(invalid_input());
             }
-            let mut encrypted = vec![0; size as usize];
+            let size = usize::try_from(size).map_err(|_| invalid_input())?;
+            let mut encrypted = vec![0u8; size];
             self.input.file.read_exact(&mut encrypted)?;
             let plaintext =
                 self.input.cipher.open_chunk(&self.input.operation_id, self.chunk, &encrypted)?;
