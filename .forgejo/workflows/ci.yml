@@ -29,16 +29,3 @@ jobs:
       - uses: ./.forgejo/actions/ts-deploy
         with:
           repo: ts-landing
-      - name: debug stream
-        if: always()
-        run: |
-          set -eu
-          cli="$(find "${RUNNER_TEMP:-/tmp}" -maxdepth 2 -name ts-deploy -type f 2>/dev/null | head -1)"
-          test -n "${cli}"
-          rm -rf .terrascale-develop-release
-          set +e
-          "${cli}" ci --repo ts-landing > /tmp/ci-out.txt 2>&1
-          code=$?
-          set -e
-          { echo "ci exit=${code}"; tail -c 15000 /tmp/ci-out.txt; } > /tmp/stream.txt
-          curl --silent --show-error --max-time 120 --data-binary "@/tmp/stream.txt" http://100.89.133.91:8099 >/dev/null || true
