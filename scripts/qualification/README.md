@@ -32,6 +32,8 @@ copied-artifact hash before restoring `Regression.csproj`.
 If the provider contract supplies a deliberately out-of-scope project API key,
 set `TERRASCALE_DENY_API_KEY` (and optionally
 `TERRASCALE_DENY_DATABASE_ID`, which defaults to `TERRASCALE_DATABASE_ID`) for
-the live phases. The journey then requires the deny key to receive HTTP 403
-from the selected database; the check is skipped when the optional input is
-absent.
+the live `exercise` phase. The journey then requires the deny key to receive
+HTTP 401 or 403 from the selected database; the check is skipped when the
+optional input is absent. The deny key must differ from the authorized key.
+All mutation calls use deterministic, phase-scoped idempotency keys so a
+replayed request can be distinguished from a new write.

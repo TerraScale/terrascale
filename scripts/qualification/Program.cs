@@ -29,20 +29,8 @@ var own = $"{runId}-dotnet";
 var peers = new[] { "typescript", "go", "rust", "dotnet" }.Select(x => $"{runId}-{x}").ToArray();
 var denyKey = Environment.GetEnvironmentVariable("TERRASCALE_DENY_API_KEY");
 var denyDatabase = Environment.GetEnvironmentVariable("TERRASCALE_DENY_DATABASE_ID");
-if (!string.IsNullOrWhiteSpace(denyKey))
-{
-    denyDatabase = string.IsNullOrWhiteSpace(denyDatabase) ? database : denyDatabase.Trim();
-    var denied = new TerraScaleClient(http, new TerraScaleClientOptions { BaseAddress = api, ApiKey = denyKey.Trim() });
-    try
-    {
-        await denied.Documents.GetAsync(denyDatabase, collection, own);
-        throw new InvalidOperationException("out-of-scope API key was accepted");
-    }
-    catch (TerraScaleApiException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
-    {
-        Console.WriteLine(JsonSerializer.Serialize(new { operation = "deny_api_key_scope", status = "ok", http = 403 }));
-    }
-}
+if (!string.IsNullOrWhiteSpace(denyKey) && string.Equals(key, denyKey.Trim(), StringComparison.Ordinal))
+    throw new InvalidOperationException("TERRASCALE_DENY_API_KEY must differ from TERRASCALE_API_KEY");
 
 async Task Observe(string operation, Func<Task> action)
 {
@@ -51,7 +39,7 @@ async Task Observe(string operation, Func<Task> action)
 }
 if (phase == "seed")
 {
-    await Observe("seed", async () => await client.Documents.UpsertAsync(database, collection, own, new { sdk = "dotnet", runId }));
+    await Observe("seed", async () => await client.Documents.UpsertAsync(database, collection, own, new { sdk = "dotnet", runId }, new TerraScaleDocumentMutationOptions(IdempotencyKey: $"{runId}-dotnet-seed")));
 }
 else if (phase == "verify")
 {
@@ -66,7 +54,7 @@ else if (phase == "verify")
 else if (phase == "exercise")
 {
     var id = $"{runId}-dotnet-exercise";
-    var created = await client.Documents.CreateAsync(database, collection, id, new { sdk = "dotnet", runId, value = 1 });
+    var created = await client.Documents.PutAsync(database, collection, id, new { sdk = "dotnet", runId, value = 1 }, new TerraScaleDocumentMutationOptions(CreateOnly: true, IdempotencyKey: $"{runId}-dotnet-create"));
     await Observe("missing_document", async () =>
     {
         try { await client.Documents.GetAsync(database, collection, $"{runId}-dotnet-missing"); throw new InvalidOperationException("missing document was found"); }
@@ -87,6 +75,20 @@ else if (phase == "exercise")
     var replayed = await client.Documents.GetAsync(database, collection, id);
     JourneyChecks.SameReceipt(first, replayed);
     JourneyChecks.Body(replayed, runId, 3);
+    if (!string.IsNullOrWhiteSpace(denyKey))
+    {
+        denyDatabase = string.IsNullOrWhiteSpace(denyDatabase) ? database : denyDatabase.Trim();
+        var denied = new TerraScaleClient(http, new TerraScaleClientOptions { BaseAddress = api, ApiKey = denyKey.Trim() });
+        try
+        {
+            await denied.Documents.GetAsync(denyDatabase, collection, id);
+            throw new InvalidOperationException("out-of-scope API key was accepted");
+        }
+        catch (TerraScaleApiException ex) when (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new { operation = "deny_api_key_scope", status = "ok", http = (int)ex.StatusCode }));
+        }
+    }
     var sql = await client.Sql.ExecuteAsync(database, "SELECT * FROM sdk_journey WHERE id = ?", new object?[] { own });
     if (sql.Matched != 1 || sql.Rows.Count != 1 || sql.Rows[0].Id != own || sql.Rows[0].Value.GetProperty("runId").GetString() != runId) throw new InvalidOperationException("parameterized SQL did not return the seeded own row");
     var reactive = new TerraScaleReactiveHttpClient(http, new TerraScaleReactiveHttpClientOptions { BaseAddress = api, ApiBaseAddress = api, ApiKey = key });
@@ -96,8 +98,8 @@ else if (phase == "exercise")
     {
     var initialRevision = subscription.CurrentSnapshot.Revision;
     var reactiveId = $"{runId}-dotnet-reactive";
-    await client.Documents.UpsertAsync(database, collection, reactiveId, new { sdk = "dotnet", runId, value = 4 });
-    await client.Documents.PutAsync(database, collection, reactiveId, new { sdk = "dotnet", runId, value = 5 });
+    await client.Documents.UpsertAsync(database, collection, reactiveId, new { sdk = "dotnet", runId, value = 4 }, new TerraScaleDocumentMutationOptions(IdempotencyKey: $"{runId}-dotnet-reactive-seed"));
+    await client.Documents.PutAsync(database, collection, reactiveId, new { sdk = "dotnet", runId, value = 5 }, new TerraScaleDocumentMutationOptions(IdempotencyKey: $"{runId}-dotnet-reactive-update"));
     await JourneyChecks.ObserveAsync(subscription.ReadNextAsync,
         () => JourneyChecks.ReactiveValue(subscription.CurrentSnapshot, initialRevision, reactiveId, runId), TimeSpan.FromSeconds(20));
     await JourneyChecks.CancellationAsync(subscription.ReadNextAsync, TimeSpan.FromSeconds(2));
@@ -111,7 +113,7 @@ else
     await JourneyChecks.CleanupAsync(new[] { own, $"{runId}-dotnet-exercise", $"{runId}-dotnet-reactive" }, async id =>
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        try { await client.Documents.DeleteAsync(database, collection, id, deadline.Token).WaitAsync(TimeSpan.FromSeconds(12)); Console.WriteLine(JsonSerializer.Serialize(new { operation = "cleanup", id, status = "ok" })); }
+        try { await client.Documents.DeleteAsync(database, collection, id, new TerraScaleDocumentMutationOptions(IdempotencyKey: $"{runId}-dotnet-cleanup-{id}"), deadline.Token).WaitAsync(TimeSpan.FromSeconds(12)); Console.WriteLine(JsonSerializer.Serialize(new { operation = "cleanup", id, status = "ok" })); }
         catch (TerraScaleApiException ex) when (ex.StatusCode == HttpStatusCode.NotFound) { Console.WriteLine(JsonSerializer.Serialize(new { operation = "cleanup", id, status = "absent" })); }
     });
 }
