@@ -47,6 +47,15 @@ struct CredentialRequest<'a> {
     scope: &'a WorkloadIdentityScope,
 }
 
+fn encode_request(scope: &WorkloadIdentityScope) -> Result<Vec<u8>, WorkloadIdentityError> {
+    let request = serde_json::to_vec(&CredentialRequest { version: 1, scope })
+        .map_err(|_| WorkloadIdentityError::Invalid)?;
+    if request.len() > MAX_REQUEST_BYTES {
+        return Err(WorkloadIdentityError::Invalid);
+    }
+    Ok(request)
+}
+
 #[derive(serde::Deserialize)]
 struct CredentialResponse {
     access_key: String,
@@ -162,11 +171,7 @@ impl WorkloadIdentityProvider for UnixWorkloadIdentityProvider {
         if credentials.uid.as_raw() != socket_uid {
             return Err(WorkloadIdentityError::Unavailable);
         }
-        let request = serde_json::to_vec(&CredentialRequest { version: 1, scope: &self.scope })
-            .map_err(|_| WorkloadIdentityError::Invalid)?;
-        if request.len() > MAX_REQUEST_BYTES {
-            return Err(WorkloadIdentityError::Invalid);
-        }
+        let request = encode_request(&self.scope)?;
         stream
             .write_u32(u32::try_from(request.len()).map_err(|_| WorkloadIdentityError::Invalid)?)
             .await

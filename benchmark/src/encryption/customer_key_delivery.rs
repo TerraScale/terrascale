@@ -64,7 +64,7 @@ impl CustomerKmsKeyDelivery {
         if !valid_region(&source.key_region)
             || !valid_field(&source.provider)
             || !valid_field(&source.key_id)
-            || !valid_field(&source.key_endpoint)
+            || (!source.key_endpoint.is_empty() && !valid_field(&source.key_endpoint))
         {
             return Err(EncryptionError::InvalidKeyMetadata);
         }
@@ -138,8 +138,8 @@ impl CustomerKmsAdapter for CustomerKmsKeyDelivery {
             scope.purpose().as_str(),
         ];
         let mut request = MAGIC.to_vec();
-        for field in fields {
-            if !valid_field(field) {
+        for (index, field) in fields.into_iter().enumerate() {
+            if !valid_field(field) && !(index == 3 && field.is_empty()) {
                 return Err(EncryptionError::InvalidKeyMetadata);
             }
             let length = u16::try_from(field.len()).map_err(unavailable)?;

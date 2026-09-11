@@ -116,7 +116,11 @@ by the crypto-shred operations decision.
 ## Customer S3 policy
 
 Customer-owned backup storage must use a dedicated bucket or prefix and a
-dedicated role or access key used only by the backup adapter. The minimum
+dedicated workload-identity role used only by the backup adapter. Customer
+configuration supplies the role reference, never a static access key or secret.
+The authenticated host broker issues short-lived provider credentials only for
+the admitted environment, tenant, project, database, provider tuple, and
+placement revision. The minimum
 object policy is:
 
 | Operation | Scope |
@@ -134,10 +138,13 @@ artifacts client-side, a customer KMS permission is not needed merely to store
 the ciphertext; customer-managed object-storage encryption may be layered on
 top, but its availability becomes part of restore readiness.
 
-Credentials are kept in the service secret store and are never written to
-backup objects, logs, metrics, URLs, or customer-visible error text. Rotation
-and revocation of the customer credential must stop new uploads after the
-current request and cause backup health to become degraded. The policy is a
+Provider credentials are obtained from the workload-identity boundary, not
+recovered from NATS or a durable customer-credential record. Credentials and
+workload tokens are never written to NATS, backup objects, logs, metrics, URLs,
+or customer-visible error text. Policy revocation prevents new credential
+leases; already-issued provider credentials remain subject to their provider
+expiry. Credential-issuance or provider denial stops new uploads and causes
+backup health to become degraded. The policy is a
 required configuration and review target; no customer S3 IAM integration is
 declared production-qualified by this ADR alone.
 

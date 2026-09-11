@@ -879,7 +879,7 @@ impl ProductionAdmissionRuntime {
                         byok.key_provider.clone(),
                         byok.key_id.clone(),
                         byok.key_region.clone(),
-                        byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?,
+                        byok.key_endpoint.clone().unwrap_or_default(),
                     )
                     .map_err(|_| "customer KMS adapter unavailable")?;
                     Ok(Arc::new(
@@ -1211,7 +1211,7 @@ impl ProductionAdmissionRuntime {
             {
                 return Err("customer BYOK provider disagrees with admitted configuration".into());
             }
-            let endpoint = byok.key_endpoint.clone().ok_or("customer KMS endpoint unavailable")?;
+            let endpoint = byok.key_endpoint.clone().unwrap_or_default();
             let adapter = terrabase::encryption::CustomerKmsKeyDelivery::new(
                 key_config.socket.clone(),
                 key_config.orchestrator_uid,
