@@ -33,7 +33,7 @@ public sealed class TerraScaleRegionsClient
     /// <summary>Returns the serving member's region and health.</summary>
     public async Task<TerraScaleRegionHealth> HealthAsync(CancellationToken cancellationToken = default)
     {
-        var response = await client.SendAnonymousJsonAsync(
+        var response = await client.SendJsonAsync(
             HttpMethod.Get,
             "/api/v1/health",
             TerraScaleRegionsJsonContext.Default.TerraScaleRegionHealth,

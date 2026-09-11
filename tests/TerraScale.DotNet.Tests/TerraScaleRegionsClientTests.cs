@@ -43,6 +43,7 @@ public sealed class TerraScaleRegionsClientTests
         var status = await client.Regions.HealthAsync();
 
         await Assert.That(handler.Request).IsEqualTo("https://api.example.invalid/api/v1/health");
+        await Assert.That(handler.Authorization).IsEqualTo("Bearer test-key");
         await Assert.That(status.Region).IsEqualTo("GRU");
         await Assert.That(status.Healthy).IsTrue();
     }
@@ -68,10 +69,12 @@ public sealed class TerraScaleRegionsClientTests
     private sealed class RecordingHandler(string responseBody) : HttpMessageHandler
     {
         public string? Request { get; private set; }
+        public string? Authorization { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Request = request.RequestUri?.ToString();
+            Authorization = request.Headers.Authorization?.ToString();
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody, Encoding.UTF8, "application/json") });
         }
     }
