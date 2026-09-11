@@ -522,6 +522,15 @@ impl ObjectDestination {
         Ok(keys)
     }
 
+    /// Deletes one opaque member after validating its bounded key.
+    pub async fn delete_member(&self, key: &str) -> Result<(), TransferError> {
+        if key.is_empty() || key.len() > 1024 {
+            return Err(TransferError::InvalidPoint);
+        }
+        let key = ObjectPath::parse(key).map_err(|_| TransferError::InvalidPoint)?;
+        self.delete_if_present(&key).await
+    }
+
     /// Builds a SigV4-authenticated HTTPS client with bounded retries and timeouts.
     ///
     /// # Errors

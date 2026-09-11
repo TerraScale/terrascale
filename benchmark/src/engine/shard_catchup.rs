@@ -121,7 +121,10 @@ impl ShardJournalCatchUp {
             if !selected.records.is_empty() || !selected.private_payload.is_empty() {
                 self.target
                     .apply_replicated_publication(&self.target_scope, &selected)
-                    .map_err(|_| ShardCatchUpError::TargetFailed)?;
+                    .map_err(|error| {
+                        eprintln!("catch-up target apply failed: {error:?}; publication={selected:?}");
+                        ShardCatchUpError::TargetFailed
+                    })?;
             }
             previous = *cursor;
         }

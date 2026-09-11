@@ -29,6 +29,10 @@ choices, not release authorization.
 - [0046 — Native Rust backup subsystem informed by Litestream](0046-native-rust-backup-subsystem.md)
 - [0049 — Customer key policy and production security boundary](0049-customer-key-policy-and-production-security.md)
 
+## In-progress records
+
+- [0047 — Strict auth persistence](0047-strict-auth-persistence.md) (partially implemented; production adapter composition superseded 2026-09-10; strict-auth qualification remains open)
+
 ## Authoring
 
 Use the next available number and include the date, authority, context,

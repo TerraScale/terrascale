@@ -90,6 +90,25 @@ struct LocalPort {
     crypto: Arc<dyn ArtifactCrypto>,
 }
 impl ArtifactPort for LocalPort {
+    fn delete_job<'a>(&'a self, job_id: &'a str, database: &'a str) -> ExportFuture<'a, ()> {
+        Box::pin(async move {
+            if !safe_member_path(job_id)
+                || Path::new(job_id).components().count() != 1
+                || !safe_member_path(database)
+                || Path::new(database).components().count() != 1
+            {
+                return Err(ExportError::DestinationUnavailable);
+            }
+            let directory = self.root.join(database).join(job_id);
+            ensure_no_symlink_components(&directory)?;
+            match fs::remove_dir_all(directory) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(io_error(&error)),
+            }
+        })
+    }
+
     fn attestation(&self) -> Option<EncryptionAttestation> {
         Some(EncryptionAttestation {
             provider: ProviderMode::LocalFile.identity().into(),

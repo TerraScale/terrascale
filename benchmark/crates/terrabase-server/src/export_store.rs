@@ -288,11 +288,10 @@ impl ExportStore for SqliteExportStore {
 }
 
 impl SqliteExportStore {
-    /// Deletes only terminal export records after their durable retention
-    /// window. Active or failed-resumable jobs remain available to recovery.
-    /// The returned IDs let the runtime remove local artifact directories
-    /// owned by this database without exposing paths through the store API.
-    pub(crate) fn purge_expired(&self, now_millis: u64) -> Result<Vec<String>, ExportError> {
+    /// Returns only terminal export records after their durable retention
+    /// window. Active or failed-resumable jobs remain available to recovery;
+    /// the runtime removes artifacts before calling `delete_expired`.
+    pub(crate) fn expired_terminal_ids(&self, now_millis: u64) -> Result<Vec<String>, ExportError> {
         let cutoff = now_millis.saturating_sub(EXPORT_RETENTION_MILLIS) as i64;
         let connection = self.connection.lock().map_err(io_error)?;
         let mut statement = connection
@@ -303,13 +302,17 @@ impl SqliteExportStore {
             .map_err(io_error)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(io_error)?;
-        drop(statement);
+        Ok(ids)
+    }
+
+    pub(crate) fn delete_expired(&self, ids: &[String]) -> Result<(), ExportError> {
+        let connection = self.connection.lock().map_err(io_error)?;
         let tx = connection.unchecked_transaction().map_err(io_error)?;
-        for id in &ids {
+        for id in ids {
             tx.execute("DELETE FROM export_jobs WHERE job_id=?1", [id]).map_err(io_error)?;
         }
         tx.commit().map_err(io_error)?;
-        Ok(ids)
+        Ok(())
     }
 }
 
@@ -478,6 +481,40 @@ mod tests {
             store.progress(&job.job_id).expect("progress").expect("exists").cancellation,
             ExportCancellation::Requested
         );
+        drop(store);
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn expiry_selects_only_terminal_jobs_and_deletes_after_cleanup() {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-sqlite-export-retention-{}",
+            terrabase::identity::DatabaseUlid::generate()
+        ));
+        let store = SqliteExportStore::open(&root).expect("store");
+        for (id, status) in [
+            ('a', JobStatus::Complete),
+            ('b', JobStatus::Cancelled),
+            ('c', JobStatus::Accepted),
+            ('d', JobStatus::Failed),
+        ] {
+            let mut job = state(id);
+            job.status = status;
+            store.create(&job).expect("create");
+        }
+        store
+            .connection
+            .lock()
+            .expect("connection")
+            .execute("UPDATE export_jobs SET created_at=1", [])
+            .expect("age jobs");
+        let expired =
+            store.expired_terminal_ids(1 + super::EXPORT_RETENTION_MILLIS).expect("expired IDs");
+        assert_eq!(expired, vec!["a".repeat(32), "b".repeat(32)]);
+        store.delete_expired(&expired).expect("delete rows");
+        assert!(store.load(&expired[0]).expect("load").is_none());
+        assert!(store.load(&"c".repeat(32)).expect("load active").is_some());
+        assert!(store.load(&"d".repeat(32)).expect("load failed").is_some());
         drop(store);
         std::fs::remove_dir_all(root).expect("cleanup");
     }

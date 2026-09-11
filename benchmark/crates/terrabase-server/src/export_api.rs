@@ -384,6 +384,13 @@ pub trait ArtifactWriter: Send {
 
 /// Destination/provider seam.  `open` must reject an absent key/provider.
 pub trait ArtifactPort: Send + Sync + 'static {
+    /// Removes one expired terminal export's local and remote artifact members.
+    /// Implementations must be bounded by the provider's member limit and must
+    /// leave the job recoverable when cleanup cannot be confirmed.
+    fn delete_job<'a>(&'a self, _job_id: &'a str, _database: &'a str) -> ExportFuture<'a, ()> {
+        Box::pin(async { Err(ExportError::DependencyUnavailable) })
+    }
+
     /// Reads and decrypts one immutable member after verifying its commit marker.
     ///
     /// # Errors

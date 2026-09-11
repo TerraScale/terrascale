@@ -2,8 +2,16 @@
 
 Date: 2026-09-05
 
-Status: Partially implemented. Production composition, the complete Better Auth
-adapter, immutable contract publication, and public failure qualification remain open.
+Status: Partially implemented; the production adapter-composition portion was
+superseded on 2026-09-10. Strict-auth engine integration, immutable contract
+publication, deployment, and public failure qualification remain open.
+
+Supersession notice (2026-09-10): Dashboard production now composes the
+server-only `@terrascale/sdk/better-auth` adapter and durable secondary storage
+over named public TerraBase operations. This supersedes the composition gap
+described below; it does not make the provider, deployment, consensus, WAN,
+failover, or Better Auth end-to-end qualification gates pass. This ADR remains
+the design and qualification authority for strict auth persistence.
 
 Authority: The workspace goal requires identity correctness during partitions,
 permits workers to choose coordination, and keeps ordinary document consistency
@@ -13,11 +21,12 @@ unchanged. ADR 0044 supplies causal replication, not strict identity authority.
 
 `terrabase-auth` now supplies the strict consensus state machine and encrypted
 storage. `terrabase-server/src/auth_runtime.rs` exposes named auth operations,
-including a durable transaction lifecycle. The TypeScript HTTP client covers
-those operations, but the complete Better Auth operations port still lacks its
-production implementation. The dashboard development path still
-consumes the temporary SQLite bridge. Its deletion depends on qualified public
-persistence, so it remains. Both local bridge implementations now refuse
+including a durable transaction lifecycle. The TypeScript HTTP client and
+server-only Better Auth adapter cover those operations, and Dashboard's
+production composition wires that adapter together with durable secondary
+storage. The dashboard development path still uses the temporary in-memory or
+explicit local SQLite composition; it remains development-only and is not
+production qualification evidence. Both local bridge implementations refuse
 transaction callbacks before executing effects because neither supports atomic
 callback transactions.
 
@@ -230,7 +239,8 @@ lost response, stale leader reads, voter partitions, process crashes between
 log persistence and application, snapshot installation, membership changes,
 revocation, and restore. Verify response loss cannot duplicate an operation and
 minority members never admit strict work. Run those cases through the real
-public API, then the exact Better Auth core/plugin adapter suite. Retire the
-temporary bridge only after the replacement and dashboard flows pass.
+public API, then the exact Better Auth core/plugin adapter suite. Keep the
+temporary bridge development-only and do not use it as evidence for the
+production release gate.
 
 This design is not qualification evidence and does not pass an auth release gate.

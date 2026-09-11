@@ -191,6 +191,39 @@ impl ArtifactWriter for ProductionWriter {
 }
 
 impl ArtifactPort for ProductionArtifactPort {
+    fn delete_job<'a>(&'a self, job: &'a str, database: &'a str) -> ExportFuture<'a, ()> {
+        Box::pin(async move {
+            if !safe_member_path(job) || !safe_member_path(database) {
+                return Err(ExportError::DestinationUnavailable);
+            }
+            let prefix = format!("{}/{}/{}", self.prefix, database, job);
+            let keys = self
+                .destination
+                .list_members(&prefix)
+                .await
+                .map_err(|_| ExportError::DependencyUnavailable)?;
+            for key in keys {
+                let member = key
+                    .strip_prefix(&(prefix.clone() + "/"))
+                    .ok_or(ExportError::IdempotencyConflict)?;
+                if !safe_member_path(member) {
+                    return Err(ExportError::DestinationUnavailable);
+                }
+                self.destination
+                    .delete_member(&key)
+                    .await
+                    .map_err(|_| ExportError::DependencyUnavailable)?;
+            }
+            let directory = self.root.join(database).join(job);
+            crate::export_api::ensure_no_symlink_components(&directory)?;
+            match std::fs::remove_dir_all(directory) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(ExportError::Io(error.to_string())),
+            }
+        })
+    }
+
     fn attestation(&self) -> Option<EncryptionAttestation> {
         Some(EncryptionAttestation {
             provider: "oci-vault".into(),
@@ -421,6 +454,36 @@ mod tests {
         ));
         assert!(root.join("db/job/page").exists());
         drop(writer);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn expired_job_cleanup_removes_remote_members_and_local_cache() {
+        let root =
+            std::env::temp_dir().join(format!("terrabase-export-cleanup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let destination = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            Arc::new(InMemory::new()),
+            1024 * 1024,
+            4096,
+        ));
+        let port = ProductionArtifactPort {
+            root: root.clone(),
+            destination: Arc::clone(&destination),
+            prefix: "exports".into(),
+            crypto: Arc::new(LocalCrypto {
+                key: [3; 32],
+                database: "db".into(),
+                tenant: "t".into(),
+            }),
+        };
+        std::fs::create_dir_all(root.join("db/job")).unwrap();
+        std::fs::write(root.join("db/job/member"), b"cached").unwrap();
+        destination.put_member("exports/db/job/member", b"remote".to_vec()).await.unwrap();
+        port.delete_job("job", "db").await.unwrap();
+        assert!(destination.list_members("exports/db/job").await.unwrap().is_empty());
+        assert!(!root.join("db/job").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 }

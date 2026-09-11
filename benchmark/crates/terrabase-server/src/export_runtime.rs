@@ -112,7 +112,14 @@ impl ExportRuntime {
     ) -> Result<(), ExportError> {
         let identity = blake3::hash(database_id.as_bytes()).to_hex().to_string();
         let store = SqliteExportStore::open(self.root.join(identity))?;
-        let _ = store.purge_expired(unix_millis());
+        let expired = store.expired_terminal_ids(unix_millis())?;
+        let artifacts = self.factory.artifacts(database_id)?;
+        for job in &expired {
+            // Artifact deletion is confirmed before removing the durable row;
+            // a provider outage therefore leaves terminal work recoverable.
+            artifacts.delete_job(job, database_id).await?;
+        }
+        store.delete_expired(&expired)?;
         let mut after: Option<String> = None;
         loop {
             if self.stop_requested.load(Ordering::Acquire) {
