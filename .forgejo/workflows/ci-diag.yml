@@ -34,6 +34,17 @@ jobs:
           {
             set -x
             echo "workspace=$(pwd) contract_url=${CONTRACT_URL:-unset}"
+            for u in https://terrascale.tech/contracts/v1.tar https://terrascale-landing-page.pages.dev/contracts/v1.tar; do
+              echo "--- curl $u"; curl -sS -o /dev/null -w "%{http_code} %{size_download}B\n" --max-time 20 "$u" || true
+              echo "--- urllib $u"; python3 -c "import urllib.request,sys;
+try:
+    r=urllib.request.urlopen('$u',timeout=20); print(r.status,len(r.read()))
+except Exception as e: print('ERR',e)" || true
+              echo "--- urllib with UA $u"; python3 -c "import urllib.request;
+try:
+    r=urllib.request.urlopen(urllib.request.Request('$u',headers={'User-Agent':'terrascale-ci/1'}),timeout=20); print(r.status,len(r.read()))
+except Exception as e: print('ERR',e)" || true
+            done
             printf '%s\n' "${TS_DEPLOY_READ_TOKEN}" | fj auth add-token --host git.terrascale.tech
             asset=ts-deploy-linux-amd64
             cli="$(mktemp -d)/ts-deploy"
