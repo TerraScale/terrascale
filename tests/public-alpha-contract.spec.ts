@@ -181,12 +181,12 @@ test('published routes keep registration, login, status, and policy links canoni
     registrationUrl,
     'https://dash.terrascale.tech/login',
     'https://status.terrascale.tech',
-    'https://docs.terrascale.tech/en/security/',
-    'https://docs.terrascale.tech/en/legal/terms/',
-    'https://docs.terrascale.tech/en/legal/privacy/',
-    'https://docs.terrascale.tech/en/legal/acceptable-use/',
-    'https://docs.terrascale.tech/en/legal/data-processing-terms/',
-    'https://docs.terrascale.tech/en/support/',
+    'https://docs.terrascale.tech/legal/security/',
+    'https://docs.terrascale.tech/legal/terms/',
+    'https://docs.terrascale.tech/legal/privacy/',
+    'https://docs.terrascale.tech/legal/acceptable-use/',
+    'https://docs.terrascale.tech/legal/dpa/',
+    'https://docs.terrascale.tech/legal/support/',
   ]
 
   for (const route of publishedRoutes) {
@@ -308,24 +308,38 @@ test('Public Alpha claims and customer links stay within the launch contract', a
     registrationUrl,
     'https://dash.terrascale.tech/login',
     'https://status.terrascale.tech',
-    'https://docs.terrascale.tech/en/security/',
-    'https://docs.terrascale.tech/en/legal/terms/',
-    'https://docs.terrascale.tech/en/legal/privacy/',
-    'https://docs.terrascale.tech/en/legal/acceptable-use/',
-    'https://docs.terrascale.tech/en/legal/data-processing-terms/',
-    'https://docs.terrascale.tech/en/support/',
+    'https://docs.terrascale.tech/legal/security/',
+    'https://docs.terrascale.tech/legal/terms/',
+    'https://docs.terrascale.tech/legal/privacy/',
+    'https://docs.terrascale.tech/legal/acceptable-use/',
+    'https://docs.terrascale.tech/legal/dpa/',
+    'https://docs.terrascale.tech/legal/support/',
   ]
 
   for (const href of expectedLinks) {
     await expect(page.locator(`a[href="${href}"]:visible`).first()).toBeVisible()
   }
 
-  for (const href of [
-    'https://docs.terrascale.tech/en/legal/terms/',
-    'https://docs.terrascale.tech/en/legal/privacy/',
-    'https://docs.terrascale.tech/en/legal/acceptable-use/',
-    'https://docs.terrascale.tech/en/legal/data-processing-terms/',
-  ]) {
+  const policyLinks = [
+    'https://docs.terrascale.tech/legal/terms/',
+    'https://docs.terrascale.tech/legal/privacy/',
+    'https://docs.terrascale.tech/legal/acceptable-use/',
+    'https://docs.terrascale.tech/legal/dpa/',
+  ]
+  expect(new Set(policyLinks).size).toBe(policyLinks.length)
+  for (const href of policyLinks) {
     await expect(page.locator(`nav[aria-label="Registration policies"] a[href="${href}"]`)).toBeVisible()
+  }
+})
+
+test('footer roadmap and API reference links keep their canonical documentation targets', async ({ page }) => {
+  const expectedFooterLinks = {
+    roadmap: 'https://docs.terrascale.tech',
+    apiReference: 'https://docs.terrascale.tech/getting-started/',
+  }
+
+  await page.goto('/')
+  for (const href of Object.values(expectedFooterLinks)) {
+    await expect(page.locator(`footer a[href="${href}"]`)).toBeVisible()
   }
 })

@@ -63,14 +63,24 @@ for (const url of [
   'https://dash.terrascale.tech/register',
   'https://dash.terrascale.tech/login',
   'https://status.terrascale.tech',
-  'https://docs.terrascale.tech/en/security/',
-  'https://docs.terrascale.tech/en/legal/terms/',
-  'https://docs.terrascale.tech/en/legal/privacy/',
-  'https://docs.terrascale.tech/en/legal/acceptable-use/',
-  'https://docs.terrascale.tech/en/legal/data-processing-terms/',
-  'https://docs.terrascale.tech/en/support/',
+  'https://docs.terrascale.tech/legal/security/',
+  'https://docs.terrascale.tech/legal/terms/',
+  'https://docs.terrascale.tech/legal/privacy/',
+  'https://docs.terrascale.tech/legal/acceptable-use/',
+  'https://docs.terrascale.tech/legal/dpa/',
+  'https://docs.terrascale.tech/legal/support/',
 ]) {
   if (!site.includes(url)) failures.push(`site.ts: missing customer link ${url}`)
+}
+
+const policyDestinations = [
+  'https://docs.terrascale.tech/legal/terms/',
+  'https://docs.terrascale.tech/legal/privacy/',
+  'https://docs.terrascale.tech/legal/acceptable-use/',
+  'https://docs.terrascale.tech/legal/dpa/',
+]
+if (new Set(policyDestinations).size !== policyDestinations.length) {
+  failures.push('site.ts: policy links must point to distinct canonical destinations.')
 }
 
 const redirects = fs.readFileSync(path.join(root, 'static/_redirects'), 'utf8')

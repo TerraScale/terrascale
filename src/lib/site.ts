@@ -74,10 +74,10 @@ export const publicAlphaCatalog = [
 export type PublicAlphaPlanSlug = (typeof publicAlphaCatalog)[number]['slug']
 
 export const registrationPolicyLinks = [
-  { key: 'terms', href: 'https://docs.terrascale.tech/en/legal/terms/' },
-  { key: 'privacy', href: 'https://docs.terrascale.tech/en/legal/privacy/' },
-  { key: 'acceptableUse', href: 'https://docs.terrascale.tech/en/legal/acceptable-use/' },
-  { key: 'dataProcessingTerms', href: 'https://docs.terrascale.tech/en/legal/data-processing-terms/' },
+  { key: 'terms', href: 'https://docs.terrascale.tech/legal/terms/' },
+  { key: 'privacy', href: 'https://docs.terrascale.tech/legal/privacy/' },
+  { key: 'acceptableUse', href: 'https://docs.terrascale.tech/legal/acceptable-use/' },
+  { key: 'dataProcessingTerms', href: 'https://docs.terrascale.tech/legal/dpa/' },
 ] as const
 
 export const launchPhase =
@@ -101,7 +101,7 @@ export const footerColumns: FooterColumn[] = [
     links: [
       { key: 'features', href: '/#features' },
       { key: 'pricing', href: '/pricing' },
-      { key: 'roadmap', href: 'https://docs.terrascale.tech/en/roadmap/' },
+      { key: 'roadmap', href: 'https://docs.terrascale.tech' },
       { key: 'documentation', href: 'https://docs.terrascale.tech' },
     ],
   },
@@ -109,7 +109,7 @@ export const footerColumns: FooterColumn[] = [
     key: 'company',
     links: [
       { key: 'about', href: '/about' },
-      { key: 'blog', href: 'https://docs.terrascale.tech/en/blog/' },
+      { key: 'blog', href: 'https://docs.terrascale.tech/blog/' },
       { key: 'contact', href: '/contact' },
     ],
   },
@@ -117,21 +117,21 @@ export const footerColumns: FooterColumn[] = [
     key: 'resources',
     links: [
       { key: 'docs', href: 'https://docs.terrascale.tech' },
-      { key: 'apiReference', href: 'https://docs.terrascale.tech/en/reference/api/' },
+      { key: 'apiReference', href: 'https://docs.terrascale.tech/getting-started/' },
       { key: 'status', href: 'https://status.terrascale.tech' },
       { key: 'community', href: 'https://discord.gg/8Zr2Nw9g' },
-      { key: 'security', href: 'https://docs.terrascale.tech/en/security/' },
-      { key: 'support', href: 'https://docs.terrascale.tech/en/support/' },
+      { key: 'security', href: 'https://docs.terrascale.tech/legal/security/' },
+      { key: 'support', href: 'https://docs.terrascale.tech/legal/support/' },
     ],
   },
   {
     key: 'legal',
     links: [
-      { key: 'terms', href: 'https://docs.terrascale.tech/en/legal/terms/' },
-      { key: 'privacy', href: 'https://docs.terrascale.tech/en/legal/privacy/' },
-      { key: 'acceptableUse', href: 'https://docs.terrascale.tech/en/legal/acceptable-use/' },
-      { key: 'dataProcessingTerms', href: 'https://docs.terrascale.tech/en/legal/data-processing-terms/' },
-      { key: 'support', href: 'https://docs.terrascale.tech/en/support/' },
+      { key: 'terms', href: 'https://docs.terrascale.tech/legal/terms/' },
+      { key: 'privacy', href: 'https://docs.terrascale.tech/legal/privacy/' },
+      { key: 'acceptableUse', href: 'https://docs.terrascale.tech/legal/acceptable-use/' },
+      { key: 'dataProcessingTerms', href: 'https://docs.terrascale.tech/legal/dpa/' },
+      { key: 'support', href: 'https://docs.terrascale.tech/legal/support/' },
     ],
   },
 ]

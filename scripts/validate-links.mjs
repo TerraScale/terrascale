@@ -12,13 +12,17 @@ export const requiredLinks = [
   'https://dash.terrascale.tech/register',
   'https://dash.terrascale.tech/login',
   'https://status.terrascale.tech',
-  'https://docs.terrascale.tech/en/security/',
-  'https://docs.terrascale.tech/en/legal/terms/',
-  'https://docs.terrascale.tech/en/legal/privacy/',
-  'https://docs.terrascale.tech/en/legal/acceptable-use/',
-  'https://docs.terrascale.tech/en/legal/data-processing-terms/',
-  'https://docs.terrascale.tech/en/support/',
+  'https://docs.terrascale.tech/legal/security/',
+  'https://docs.terrascale.tech/legal/terms/',
+  'https://docs.terrascale.tech/legal/privacy/',
+  'https://docs.terrascale.tech/legal/acceptable-use/',
+  'https://docs.terrascale.tech/legal/dpa/',
+  'https://docs.terrascale.tech/legal/support/',
 ]
+
+if (new Set(requiredLinks).size !== requiredLinks.length) {
+  throw new Error('requiredLinks must contain distinct canonical destinations')
+}
 
 export const approvedExternalHosts = new Set(requiredLinks.map((href) => new URL(href).hostname))
 

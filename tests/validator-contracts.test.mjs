@@ -10,9 +10,14 @@ import {
   checkDeployedRedirects,
   validateRedirectRules,
 } from '../scripts/validate-redirect-contract.mjs'
-import { extractAttributes, extractStructuredDataUrls, probeExternalLinks } from '../scripts/validate-links.mjs'
+import { extractAttributes, extractStructuredDataUrls, probeExternalLinks, requiredLinks } from '../scripts/validate-links.mjs'
 import { validateRenderedLinks } from '../scripts/validate-links.mjs'
 import { findProhibitedClaims, scanProhibitedClaims, walk as walkClaimFiles } from '../scripts/validate-claims.mjs'
+
+test('required external destinations remain distinct', () => {
+  assert.equal(new Set(requiredLinks).size, requiredLinks.length)
+  assert.ok(requiredLinks.includes('https://docs.terrascale.tech/legal/acceptable-use/'))
+})
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const claimsValidator = path.join(root, 'scripts/validate-claims.mjs')
@@ -754,8 +759,8 @@ test('rendered external link inventory includes metadata and structured-data URL
   const fixture = path.join(temporaryRoot, 'inventory.html')
   const urls = [
     'https://status.terrascale.tech',
-    'https://docs.terrascale.tech/en/security/',
-    'https://docs.terrascale.tech/en/support/',
+    'https://docs.terrascale.tech/legal/security/',
+    'https://docs.terrascale.tech/legal/support/',
   ]
   writeFileSync(fixture, `
     <a href="${urls[0]}">status</a>
