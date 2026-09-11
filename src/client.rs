@@ -361,6 +361,19 @@ impl Shared {
                                 e
                             });
                         }
+                        // An unhealthy member answers liveness with HTTP 503
+                        // but keeps the canonical typed HealthResponse body.
+                        // Decode it so callers can inspect `healthy` instead
+                        // of losing the producer's response to a status error.
+                        Err(_error)
+                            if response.status == 503
+                                && matches!(route.as_str(), "regions.health" | "regions.status") =>
+                        {
+                            response.json_body().map_err(|mut e: Error| {
+                                e.code = format!("{}.invalid_response", route_to_code(&route));
+                                e
+                            })
+                        }
                         Err(error) if self.can_retry(&request, &error, retries) => {
                             retries += 1;
                             self.wait_before_retry(retries).await;
