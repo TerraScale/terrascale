@@ -233,16 +233,27 @@ pub(crate) fn normalize_api_key(value: &str) -> Result<String> {
     let value = value.trim();
     let value = if value.eq_ignore_ascii_case("bearer") {
         ""
-    } else if value.len() >= 6
-        && value[..6].eq_ignore_ascii_case("bearer")
-        && value[6..]
-            .chars()
-            .next()
-            .is_some_and(|character| character.is_ascii_whitespace())
-    {
-        value[6..].trim()
     } else {
-        value
+        let prefix_matches = value
+            .as_bytes()
+            .get(..6)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"bearer"));
+        if prefix_matches {
+            let rest = value
+                .get(6..)
+                .expect("an ASCII prefix ends on a UTF-8 character boundary");
+            if rest
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_whitespace())
+            {
+                rest.trim()
+            } else {
+                value
+            }
+        } else {
+            value
+        }
     };
     if value.is_empty() {
         return Err(Error::new(

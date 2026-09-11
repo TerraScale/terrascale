@@ -81,6 +81,14 @@ fn api_key_rejects_empty_whitespace_and_control_characters() {
     }
 }
 
+#[test]
+fn api_key_normalization_handles_multibyte_utf8_at_prefix_boundary() {
+    ClientConfig::builder()
+        .api_key("ééé")
+        .build()
+        .expect("non-control UTF-8 credential");
+}
+
 #[tokio::test]
 async fn documents_propagate_authoritative_etag_and_require_json_success_media() {
     let get = Response {
