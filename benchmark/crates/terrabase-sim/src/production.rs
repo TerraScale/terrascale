@@ -24,15 +24,6 @@ use crate::model::{Frontier, Hlc, JournalRow, RegionId, SessionToken, ViewCut};
 use crate::traits::{ReconcileStats, ReplicationEngine, SyncEngine, ViewRevision};
 
 const TENANT: &str = "simulation-tenant";
-
-// TEMPORARY trace for the wedge reproducer; deleted with the example.
-fn trace(site: &str, detail: String) {
-    if std::env::var_os("TB_SIM_TRACE").is_some() {
-        eprintln!("[trace] {site}: {detail}");
-    }
-}
-
-const TRACE_ROW: (RegionId, u64) = (RegionId(2), 16);
 const COLLECTION: &str = "simulation";
 const GENERATION: u64 = 1;
 // Deterministic physical milliseconds, inside the HLC's 48-bit clock range.
@@ -525,18 +516,6 @@ impl ProductionWorld {
                 }
             }
         }
-        if target == RegionId::new(1) && source == RegionId::new(2) {
-            let hits = publications
-                .iter()
-                .filter(|p| p.origin == "region-2" && p.origin_sequence == 16)
-                .count();
-            if hits == 0 {
-                trace(
-                    "send_rows",
-                    format!("step {} (2,16) NOT in outbox list; total={}", self.step, publications.len()),
-                );
-            }
-        }
         if publications.is_empty() {
             return Ok(());
         }
@@ -592,16 +571,6 @@ impl ProductionWorld {
             self.region_position(target).ok_or(ProductionWorldError::EngineUnavailable)?;
         if !self.regions[position].applied.contains(&row.id()) {
             let frontier = self.applied_frontier(target);
-            if row.id() == TRACE_ROW && target == RegionId::new(1) {
-                trace(
-                    "apply_publication",
-                    format!(
-                        "step {}: frontier gate covers={}",
-                        self.step,
-                        frontier.covers(&row.context)
-                    ),
-                );
-            }
             if !frontier.covers(&row.context) {
                 let waiting = self.deferred.entry(target).or_default();
                 if !waiting.iter().any(|pending| pending.id() == row.id()) {
@@ -616,9 +585,6 @@ impl ProductionWorld {
             let deps_ready = engine
                 .replication_publication_dependencies_ready(&scope, publication)
                 .map_err(|_| ProductionWorldError::EngineUnavailable)?;
-            if row.id() == TRACE_ROW && target == RegionId::new(1) {
-                trace("apply_publication", format!("step {}: deps_ready={}", self.step, deps_ready));
-            }
             if !deps_ready {
                 let waiting = self.deferred.entry(target).or_default();
                 if !waiting.iter().any(|pending| pending.id() == row.id()) {
@@ -626,11 +592,9 @@ impl ProductionWorld {
                 }
                 return Ok(());
             }
-            let apply_result = engine.apply_replicated_publication(&scope, publication);
-            if row.id() == TRACE_ROW && target == RegionId::new(1) {
-                trace("apply_publication", format!("step {}: engine apply -> {apply_result:?}", self.step));
-            }
-            apply_result.map_err(|_| ProductionWorldError::EngineUnavailable)?;
+            engine
+                .apply_replicated_publication(&scope, publication)
+                .map_err(|_| ProductionWorldError::EngineUnavailable)?;
             self.regions[position].applied.insert(row.id());
         }
         Ok(())
@@ -730,32 +694,6 @@ impl ProductionWorld {
         }
         let digest = fnv_bytes(0xcbf2_9ce4_8422_2325, &bytes);
         Some((digest, bytes))
-    }
-
-    /// TEMPORARY wedge diagnostics; deleted with the reproducer example.
-    #[doc(hidden)]
-    pub fn debug_wedge(&self) -> String {
-        let mut out = String::new();
-        for region in &self.regions {
-            let frontier = self.applied_frontier(region.id);
-            out.push_str(&format!(
-                "region {:?} frontier {:?}\n",
-                region.id,
-                frontier.entries().collect::<Vec<_>>()
-            ));
-            for row in self.records.values().filter(|row| !region.applied.contains(&row.id())) {
-                out.push_str(&format!(
-                    "  MISSING row {:?} key {} context {:?}\n",
-                    row.id(),
-                    row.key,
-                    row.context.entries().collect::<Vec<_>>()
-                ));
-            }
-            for row in self.deferred.get(&region.id).into_iter().flatten() {
-                out.push_str(&format!("  DEFERRED row {:?} context {:?}\n", row.id(), row.context.entries().collect::<Vec<_>>()));
-            }
-        }
-        out
     }
 
     /// Whether a row has reached this Region's durable `SQLite` journal.  This
@@ -959,17 +897,9 @@ impl ReplicationEngine for ProductionWorld {
                 };
                 // The received complete source content must match the durable outbox.
                 if self.publications.get(&row.id()) != Some(&publication) {
-                    if row.id() == TRACE_ROW && target == RegionId::new(1) {
-                        trace("receive", "step {}: publication mismatch".to_string());
-                    }
                     continue;
                 }
-                if row.id() == TRACE_ROW && target == RegionId::new(1) {
-                    let result = self.apply_publication(target, &row, &publication);
-                    trace("receive", format!("step {}: apply -> {result:?}", self.step));
-                } else {
-                    let _ = self.apply_publication(target, &row, &publication);
-                }
+                let _ = self.apply_publication(target, &row, &publication);
             }
 
             let deferred = self.deferred.remove(&target).unwrap_or_default();

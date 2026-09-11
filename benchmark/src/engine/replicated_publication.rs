@@ -294,8 +294,9 @@ fn plan_record(
     let Some(current) = current else {
         return Ok((Some(record.clone()), None));
     };
+    let decoded_current = merge::decode_context(context.unwrap_or_default());
     let current_version = merge::DocumentVersion::new(
-        merge::decode_context(context.unwrap_or_default()).ok_or(EngineError::StorageFailure)?,
+        decoded_current.clone().ok_or(EngineError::StorageFailure)?,
         merge::DocumentDot::new(current.origin.clone(), current.origin_sequence),
     );
     let incoming_version = merge::DocumentVersion::new(
@@ -303,6 +304,17 @@ fn plan_record(
         merge::DocumentDot::new(record.origin.clone(), record.origin_sequence),
     );
     if !current_version.is_well_formed() {
+        if std::env::var_os("TB_SIM_TRACE").is_some() {
+            eprintln!(
+                "[engine] plan_record: current not well-formed: origin={} seq={} context={:?} incoming_well={} incoming_dot=({},{})",
+                current.origin,
+                current.origin_sequence,
+                context.unwrap_or_default(),
+                incoming_version.is_well_formed(),
+                record.origin,
+                record.origin_sequence
+            );
+        }
         return Err(EngineError::StorageFailure);
     }
     if incoming_version.context().contains(current_version.dot()) {
