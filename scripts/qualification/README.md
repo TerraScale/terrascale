@@ -6,6 +6,10 @@ tarball into a fresh temporary npm project, and runs the selected phase without
 importing checkout source or using a mock transport. Every phase must use the
 same artifact path and digest.
 
+The generated consumer reads the API URL, project/database IDs, journey run
+ID, and API keys from its inherited environment at execution time. Secret
+values are never interpolated into generated TypeScript or JavaScript source.
+
 Set all of these values before every invocation:
 
 ```text
