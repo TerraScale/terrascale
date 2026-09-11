@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "vitest";
 import { capturePublicClientRoutes, exercisePublicClientRoutes } from "./client-route-capture.js";
+import type { TerraScaleRouteName } from "./http.js";
 import type { TerraScaleResult } from "./result.js";
 
 // These are producer response bytes supplied to the transport codec. They do
@@ -58,8 +59,9 @@ test("public HTTP clients consume the pinned producer response and error corpus"
         const request = new Request(input);
         const entry = vectors.find(({ route }) => route.method === request.method && matchesPath(route.pathTemplate, new URL(request.url).pathname));
         assert.ok(entry, `${request.method} ${request.url}`);
-        expected = responseFor(entry.vector);
-        assert.ok(expected, `Missing producer status ${status}: ${entry.route.routeName}`);
+        const vectorResponse = responseFor(entry.vector);
+        assert.ok(vectorResponse, `Missing producer status ${status}: ${entry.route.routeName}`);
+        expected = materializeResponse(entry.route.routeName, vectorResponse);
         return new Response(expected.body === undefined || expected.status === 204 ? null : expected.mediaType === "application/octet-stream" ? String(expected.body) : JSON.stringify(expected.body), {
           status: expected.status,
           headers: { ...(expected.mediaType ? { "content-type": expected.mediaType } : {}), ...expected.headers },
@@ -95,6 +97,22 @@ test("public HTTP clients consume the pinned producer response and error corpus"
 
 type WireResponse = { status: number; body?: unknown; mediaType?: string; headers?: Record<string, string> };
 type Vector = { operationId: string; request: { method: string }; response: WireResponse; responses: WireResponse[]; errors: WireResponse[] };
+
+/**
+ * Conformance vectors use `sample` for unconstrained strings.  Health's
+ * region is an operational RegionCode, which the SDK deliberately validates
+ * as an uppercase code. Materialize that generated placeholder to the
+ * canonical fixture region before exercising the typed consumer; otherwise
+ * this test would reject the vector's synthetic value instead of checking the
+ * producer health status (including the updated `healthy: false` fixture).
+ */
+function materializeResponse(routeName: TerraScaleRouteName, response: WireResponse): WireResponse {
+  if (routeName !== "health.health" || response.body === undefined || typeof response.body !== "object" || response.body === null || Array.isArray(response.body)) {
+    return response;
+  }
+  const body = response.body as Record<string, unknown>;
+  return body.region === "sample" ? { ...response, body: { ...body, region: "GRU" } } : response;
+}
 
 function matchesPath(template: string, pathname: string): boolean {
   const expected = template.split("/");
