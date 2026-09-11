@@ -143,14 +143,14 @@
 
   .pricing-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 20px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
     margin-top: 48px;
   }
 
   .pricing-card {
     position: relative;
-    padding: 32px;
+    padding: 24px;
     border-radius: 12px;
     background: var(--ts-glass-bg);
     border: 1px solid var(--ts-glass-border);
@@ -208,13 +208,13 @@
   .pricing-card__header {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     margin-bottom: 6px;
   }
 
   .pricing-card__icon {
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
     border-radius: 6px;
     background: rgba(var(--plan-accent-rgb), 0.14);
     border: 1px solid rgba(var(--plan-accent-rgb), 0.3);
@@ -231,16 +231,16 @@
   }
 
   .pricing-card__name {
-    font-size: 22px;
+    font-size: 18px;
     font-weight: 700;
     color: var(--ts-text);
   }
 
   .pricing-card__desc {
     font-family: var(--ts-font-accent);
-    font-size: 13px;
+    font-size: 12px;
     color: var(--ts-text-muted);
-    margin: 0 0 28px;
+    margin: 0 0 20px;
     line-height: 1.5;
   }
 
@@ -253,7 +253,7 @@
 
   .pricing-card__price {
     font-family: var(--ts-font-mono);
-    font-size: 44px;
+    font-size: 34px;
     font-weight: 700;
     line-height: 1;
     color: var(--plan-accent);
@@ -270,23 +270,23 @@
   .pricing-card__divider {
     height: 1px;
     width: 100%;
-    margin: 24px 0;
+    margin: 18px 0;
     background: linear-gradient(90deg, transparent, var(--ts-glass-border), transparent);
   }
 
   .pricing-card__features {
     list-style: none;
     padding: 0;
-    margin: 0 0 28px;
+    margin: 0 0 20px;
     flex: 1;
   }
 
   .pricing-card__features li {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 12px;
-    font-size: 14px;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 13px;
     color: var(--ts-text);
   }
 
@@ -310,7 +310,7 @@
 
   :global(.pricing-card__cta) {
     width: 100%;
-    padding: 14px 20px;
+    padding: 12px 16px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--ts-glass-border);
     color: var(--ts-text);
