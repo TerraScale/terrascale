@@ -766,10 +766,6 @@ impl<'engine> EngineIndexAdapter<'engine> {
             .map_err(|error| map_engine_error(&error))?;
         Ok(tenant)
     }
-
-    fn unavailable(operation: &'static str, required_method: &'static str) -> IndexAdapterError {
-        IndexAdapterError::CoreApiUnavailable { operation, required_method }
-    }
 }
 
 impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {

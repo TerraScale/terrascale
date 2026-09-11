@@ -177,7 +177,7 @@ fn read_secret_reference(path: &Path) -> Result<String, ProductionBackupFactoryE
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_CREDENTIAL_BYTES {
         return Err(ProductionBackupFactoryError::Credential);
     }
-    let mut file = File::open(path).map_err(|_| ProductionBackupFactoryError::Credential)?;
+    let file = File::open(path).map_err(|_| ProductionBackupFactoryError::Credential)?;
     let mut bytes = Vec::new();
     file.take(MAX_CREDENTIAL_BYTES + 1)
         .read_to_end(&mut bytes)

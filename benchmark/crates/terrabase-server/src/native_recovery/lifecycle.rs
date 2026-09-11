@@ -46,7 +46,6 @@ where
                 _ = notify.notified() => {}
             }
         }
-        immediate = false;
         if let Some(until) = deadline
             && tokio::time::Instant::now() >= until
         {
