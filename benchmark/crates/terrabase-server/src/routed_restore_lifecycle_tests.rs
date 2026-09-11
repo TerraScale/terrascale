@@ -1450,7 +1450,7 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         reopened.restore_status(&request.operation_id).unwrap().unwrap().phase,
         NativeRestorePhase::Complete
     );
-    let target = registry.resolve(&records[1].database_id).unwrap().unwrap();
+    let target = registry.resolve(&request.target_database_id).unwrap().unwrap();
     let cut = target.host.engine_host().admitted_shard_read_cut().unwrap().unwrap();
     assert_eq!(cut.participants.len(), 2);
     let queries = target.host.engine().queries();

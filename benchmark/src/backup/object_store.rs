@@ -745,6 +745,9 @@ impl ObjectDestination {
             if let Some(point) = name.strip_suffix(&format!("/{INDEX}"))
                 && point.strip_prefix(prefix).is_some_and(|tail| tail.starts_with('/'))
             {
+                if point.strip_prefix(&format!("{prefix}/envelopes/")).is_some() {
+                    continue;
+                }
                 validate_prefix(point)?;
                 if points.len() == max {
                     return Err(TransferError::InvalidPoint);
@@ -1957,6 +1960,14 @@ mod tests {
             let second = destination(second_store.clone());
             first.upload_point(&point, "db/rp-1").await.unwrap();
             second.upload_point(&point, "db/rp-1").await.unwrap();
+            second_store
+                .put(
+                    &object_key("db/envelopes/env-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", INDEX)
+                        .unwrap(),
+                    b"envelope index".to_vec().into(),
+                )
+                .await
+                .unwrap();
             assert_eq!(second.list_points("db", 10).await.unwrap(), vec!["db/rp-1"]);
             first_store.delete(&object_key("db/rp-1", INDEX).unwrap()).await.unwrap();
             assert_eq!(

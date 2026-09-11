@@ -164,7 +164,7 @@ impl AdmissionHost {
             {
                 return Err("manifest identity mismatch".into());
             }
-            if let Some(fence) = host.fence_store.get(&record.database_id)? {
+            if let Some(fence) = host.fence_store.published(&record.database_id)? {
                 if fence.record != record {
                     return Err("fence admission identity conflict".into());
                 }
@@ -189,7 +189,8 @@ impl AdmissionHost {
             .and_then(|directory| directory.sync_all())
             .map_err(|_| "admission directory sync failed")?;
         for record in loaded.values() {
-            if host.fence_store.get(&record.database_id)?.is_none() {
+            if !host.fence_store.is_uncertain(&record.database_id)?
+                && host.fence_store.published(&record.database_id)?.is_none() {
                 (host.admit_storage)(record)?;
             }
         }

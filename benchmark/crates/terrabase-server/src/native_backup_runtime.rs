@@ -1155,9 +1155,15 @@ mod restore_tests {
     async fn catalog_lists_an_authenticated_standalone_capture() {
         let (runtime, registry, member, root, database) = runtime_fixture("catalog-standalone");
         runtime.capture(&database, "catalog-standalone-capture").await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        let source = registry
+            .retained_snapshot()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == database)
+            .unwrap();
+        commit_marker(&source, "catalog-standalone-content-2");
         runtime.capture(&database, "catalog-standalone-capture-2").await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        commit_marker(&source, "catalog-standalone-content-3");
         runtime.capture(&database, "catalog-standalone-capture-3").await.unwrap();
         let page =
             crate::backup_point_catalog::list_backup_points(&runtime, &database, Some(2), None, 0)
@@ -1194,6 +1200,7 @@ mod restore_tests {
         .await
         .unwrap();
         assert!(expired.points.is_empty());
+        drop(source);
         runtime.drain().unwrap();
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();

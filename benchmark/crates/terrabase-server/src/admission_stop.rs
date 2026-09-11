@@ -79,13 +79,11 @@ impl AdmissionHost {
         if request.operation_id.is_empty() || request.operation_id.len() > 255 {
             return Err("invalid deletion operation".into());
         }
-        let record = self
-            .records
-            .lock()
-            .map_err(|_| "admission lock poisoned")?
-            .get(&request.database_id)
-            .cloned()
-            .ok_or("database not admitted")?;
+        let record = {
+            let records = self.records.lock().map_err(|_| "admission lock poisoned")?;
+            self.fence_store.ensure_database_available(&request.database_id)?;
+            records.get(&request.database_id).cloned().ok_or("database not admitted")?
+        };
         if request.environment != record.environment
             || request.organization_id != record.tenant_id
             || request.project_id != record.project_id
@@ -180,13 +178,11 @@ impl AdmissionHost {
     /// Returns an error when the member identity is not admitted or durable
     /// preparation is unavailable or rejects the request.
     pub fn prepare_stop(&self, request: PrepareStopRequest) -> Result<PrepareStopReceipt, String> {
-        let record = self
-            .records
-            .lock()
-            .map_err(|_| "admission lock poisoned")?
-            .get(&request.database_id)
-            .cloned()
-            .ok_or("database not admitted")?;
+        let record = {
+            let records = self.records.lock().map_err(|_| "admission lock poisoned")?;
+            self.fence_store.ensure_database_available(&request.database_id)?;
+            records.get(&request.database_id).cloned().ok_or("database not admitted")?
+        };
         if request.environment != record.environment
             || request.organization_id != record.tenant_id
             || request.project_id != record.project_id

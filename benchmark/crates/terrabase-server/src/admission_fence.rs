@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
+    io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     sync::Mutex,
@@ -32,6 +32,7 @@ pub(crate) struct AdmissionFenceStore {
     root: PathBuf,
     _lock: fs::File,
     fences: Mutex<BTreeMap<String, FenceRecord>>,
+    uncertain: Mutex<BTreeMap<String, Vec<PathBuf>>>,
     poisoned: Mutex<bool>,
     #[cfg(test)]
     fault: std::sync::atomic::AtomicU8,
@@ -83,13 +84,14 @@ impl AdmissionFenceStore {
             root: admissions,
             _lock: lock,
             fences: Mutex::default(),
+            uncertain: Mutex::default(),
             poisoned: Mutex::default(),
             #[cfg(test)]
             fault: std::sync::atomic::AtomicU8::new(0),
         };
-        store.recover_pending(&validate)?;
         let loaded = store.load_all(&validate)?;
         *store.fences.lock().map_err(|_| "fence lock poisoned")? = loaded;
+        store.recover_pending(&validate)?;
         Ok(store)
     }
 
@@ -98,39 +100,45 @@ impl AdmissionFenceStore {
         validate: &impl Fn(&AdmissionRecord) -> Result<(), String>,
     ) -> Result<(), String> {
         let dir = self.root.join("fences");
+        let mut grouped = BTreeMap::<String, Vec<PathBuf>>::new();
+        let mut count = 0;
         for entry in fs::read_dir(&dir).map_err(|_| "fence directory unavailable")? {
             let entry = entry.map_err(|_| "fence directory unavailable")?;
             if entry.file_name().to_string_lossy().starts_with('.') {
-                let fence = read_fence(&entry.path(), true)?;
-                validate(&fence.record)?;
-                let final_path = dir.join(format!("{}.json", fence.record.database_id));
-                match fs::symlink_metadata(&final_path) {
-                    Ok(_) => {
-                        let published = read_fence(&final_path, false)?;
-                        validate(&published.record)?;
-                        if published != fence {
-                            return Err("pending fence identity conflict".into());
-                        }
-                        fs::File::open(&final_path)
-                            .and_then(|file| file.sync_all())
-                            .map_err(|_| "fence recovery unavailable")?;
-                        sync_directory(&dir)?;
-                        fs::remove_file(entry.path()).map_err(|_| "fence recovery unavailable")?;
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        fs::File::open(entry.path())
-                            .and_then(|f| f.sync_all())
-                            .map_err(|_| "fence recovery unavailable")?;
-                        fs::rename(entry.path(), final_path)
-                            .map_err(|_| "fence recovery unavailable")?;
-                    }
-                    Err(_) => return Err("fence recovery unavailable".into()),
-                }
+                let (database, _) = pending_identity(&entry.path())?;
+                count += 1;
+                if count > 4096 { return Err("too many pending fences".into()); }
+                grouped.entry(database).or_default().push(entry.path());
             }
         }
-        fs::File::open(dir)
-            .and_then(|file| file.sync_all())
-            .map_err(|_| "fence recovery unavailable".into())
+        let mut fences = self.fences.lock().map_err(|_| "fence lock poisoned")?;
+        let mut uncertain = self.uncertain.lock().map_err(|_| "fence lock poisoned")?;
+        for (database, paths) in grouped {
+            // Never pick an arbitrary winner among conflicting pending candidates.
+            if paths.len() != 1 {
+                uncertain.insert(database, paths);
+                continue;
+            }
+            let path = &paths[0];
+            let candidate = read_fence(path, true).and_then(|fence| {
+                validate(&fence.record)?;
+                if fence.outcome == FenceOutcome::NoInstall && has_disk_intent(&self.root, &fence.record)? {
+                    return Err("no-install fence conflicts with admission intent".into());
+                }
+                Ok(fence)
+            });
+            let Ok(candidate) = candidate else {
+                uncertain.insert(database, paths);
+                continue;
+            };
+            if fences.get(&database).is_some_and(|published| published != &candidate) {
+                uncertain.insert(database, paths);
+                continue;
+            }
+            self.publish_pending(path, &candidate, fences.contains_key(&database))?;
+            fences.insert(database, candidate);
+        }
+        Ok(())
     }
 
     fn load_all(
@@ -141,6 +149,10 @@ impl AdmissionFenceStore {
         let mut result = BTreeMap::new();
         for entry in fs::read_dir(dir).map_err(|_| "fence directory unavailable")? {
             let entry = entry.map_err(|_| "fence directory unavailable")?;
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                // Grammar is checked in recovery. Unknown names cannot be scoped.
+                continue;
+            }
             let record = read_fence(&entry.path(), false)?;
             validate(&record.record)?;
             if record.outcome == FenceOutcome::NoInstall
@@ -154,11 +166,29 @@ impl AdmissionFenceStore {
     }
 
     pub(crate) fn get(&self, database: &str) -> Result<Option<FenceRecord>, String> {
+        self.ensure_database_available(database)?;
+        self.published(database)
+    }
+
+    pub(crate) fn published(&self, database: &str) -> Result<Option<FenceRecord>, String> {
         self.ensure_available()?;
         self.fences
             .lock()
             .map(|fences| fences.get(database).cloned())
             .map_err(|_| "fence lock poisoned".into())
+    }
+
+    pub(crate) fn is_uncertain(&self, database: &str) -> Result<bool, String> {
+        self.ensure_available()?;
+        self.uncertain.lock().map(|pending| pending.contains_key(database))
+            .map_err(|_| "fence lock poisoned".into())
+    }
+
+    pub(crate) fn ensure_database_available(&self, database: &str) -> Result<(), String> {
+        if self.is_uncertain(database)? {
+            return Err("database fence is uncertain".into());
+        }
+        Ok(())
     }
 
     pub(crate) fn poison(&self) {
@@ -204,6 +234,46 @@ impl AdmissionFenceStore {
             return Err("invalid deletion operation".into());
         }
         let mut fences = self.fences.lock().map_err(|_| "fence lock poisoned")?;
+        let mut uncertain = self.uncertain.lock().map_err(|_| "fence lock poisoned")?;
+        if let Some(paths) = uncertain.get(&record.database_id) {
+            if paths.len() != 1 { return Err("conflicting pending fences".into()); }
+            let path = &paths[0];
+            let (_, expected_digest) = pending_identity(path)?;
+            let disk_intent = has_disk_intent(&self.root, record)?;
+            let mut matched = None;
+            for outcome in [FenceOutcome::NoInstall, FenceOutcome::StopRequired] {
+                let candidate = FenceRecord { record: record.clone(), deletion_operation_id: deletion_operation_id.to_owned(), project_fence_revision, outcome };
+                let bytes = canonical_bytes(&candidate)?;
+                if digest(&bytes) == expected_digest {
+                    if outcome == FenceOutcome::NoInstall && (retained_admission || disk_intent) {
+                        return Err("no-install fence conflicts with admission intent".into());
+                    }
+                    matched = Some((candidate, bytes));
+                }
+            }
+            let (candidate, bytes) = matched.ok_or("pending fence identity conflict")?;
+            if fences.get(&record.database_id).is_some_and(|published| published != &candidate) {
+                return Err("pending fence conflicts with published fence".into());
+            }
+            // The authenticated retry supplies the missing canonical suffix, not
+            // permission to replace inconsistent evidence or select a new outcome.
+            let mut file = fs::OpenOptions::new().read(true).append(true)
+                .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32).open(path)
+                .map_err(|_| "pending fence unavailable")?;
+            let existing = bounded_read(&mut file)?;
+            if !bytes.starts_with(&existing) {
+                return Err("pending fence is not the canonical prefix".into());
+            }
+            file.write_all(&bytes[existing.len()..]).and_then(|()| file.sync_all()).map_err(|_| {
+                self.poison(); "fence persistence uncertain"
+            })?;
+            self.publish_pending(path, &candidate, fences.contains_key(&record.database_id)).map_err(|error| {
+                self.poison(); error
+            })?;
+            fences.insert(record.database_id.clone(), candidate.clone());
+            uncertain.remove(&record.database_id);
+            return Ok(candidate);
+        }
         if let Some(existing) = fences.get(&record.database_id) {
             if existing.record != *record || existing.deletion_operation_id != deletion_operation_id
             {
@@ -230,8 +300,8 @@ impl AdmissionFenceStore {
             outcome,
         };
         let path = self.root.join("fences").join(format!("{}.json", record.database_id));
-        let tmp = self.root.join("fences").join(format!(".{}.pending", record.database_id));
-        let bytes = serde_json::to_vec(&fenced).map_err(|_| "fence encoding failed")?;
+        let bytes = canonical_bytes(&fenced)?;
+        let tmp = self.root.join("fences").join(pending_name(&fenced)?);
         let mut file =
             fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp).map_err(
                 |_| {
@@ -240,6 +310,14 @@ impl AdmissionFenceStore {
                 },
             )?;
         self.checkpoint(1)
+            .and_then(|()| {
+                #[cfg(test)]
+                if self.fault.load(std::sync::atomic::Ordering::SeqCst) == 6 {
+                    file.write_all(&bytes[..bytes.len() / 2])?;
+                    return Err(std::io::Error::other("injected partial fence write"));
+                }
+                Ok(())
+            })
             .and_then(|()| file.write_all(&bytes))
             .and_then(|()| self.checkpoint(2))
             .and_then(|()| file.sync_all())
@@ -261,6 +339,24 @@ impl AdmissionFenceStore {
             })?;
         fences.insert(record.database_id.clone(), fenced.clone());
         Ok(fenced)
+    }
+
+    fn publish_pending(&self, pending: &Path, fence: &FenceRecord, final_exists: bool) -> Result<(), String> {
+        let dir = self.root.join("fences");
+        let final_path = dir.join(format!("{}.json", fence.record.database_id));
+        if final_exists {
+            // Even equal pending evidence cannot replace the published inode.
+            fs::File::open(&final_path).and_then(|file| file.sync_all())
+                .map_err(|_| "fence recovery unavailable")?;
+            sync_directory(&dir)?;
+            fs::remove_file(pending).map_err(|_| "fence recovery unavailable")?;
+        } else {
+            fs::File::open(pending).and_then(|file| file.sync_all())
+                .map_err(|_| "fence recovery unavailable")?;
+            sync_directory(&dir)?;
+            fs::rename(pending, final_path).map_err(|_| "fence recovery unavailable")?;
+        }
+        sync_directory(&dir)
     }
 }
 
@@ -313,17 +409,19 @@ fn sync_directory(path: &Path) -> Result<(), String> {
 }
 
 fn read_fence(path: &Path, pending: bool) -> Result<FenceRecord, String> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| "fence unavailable")?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 32768 {
-        return Err("unsafe fence".into());
-    }
+    let mut file = fs::OpenOptions::new().read(true)
+        .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32).open(path)
+        .map_err(|_| "fence unavailable")?;
+    let bytes = bounded_read(&mut file)?;
     let fence: FenceRecord =
-        serde_json::from_slice(&fs::read(path).map_err(|_| "fence unavailable")?)
+        serde_json::from_slice(&bytes)
             .map_err(|_| "invalid fence")?;
     terrabase::identity::DatabaseUlid::from_text(&fence.record.database_id)
         .map_err(|_| "invalid fence database")?;
     let expected = if pending {
-        format!(".{}.pending", fence.record.database_id)
+        pending_identity(path)?;
+        if canonical_bytes(&fence)? != bytes { return Err("noncanonical pending fence".into()); }
+        pending_name(&fence)?
     } else {
         format!("{}.json", fence.record.database_id)
     };
@@ -337,6 +435,40 @@ fn read_fence(path: &Path, pending: bool) -> Result<FenceRecord, String> {
         return Err("fence identity mismatch".into());
     }
     Ok(fence)
+}
+
+fn bounded_read(file: &mut fs::File) -> Result<Vec<u8>, String> {
+    let metadata = file.metadata().map_err(|_| "fence unavailable")?;
+    if !metadata.is_file() || metadata.len() > 32768 {
+        return Err("unsafe fence".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(32769).read_to_end(&mut bytes).map_err(|_| "fence unavailable")?;
+    if bytes.len() > 32768 { return Err("unsafe fence".into()); }
+    Ok(bytes)
+}
+
+fn canonical_bytes(fence: &FenceRecord) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(fence).map_err(|_| "fence encoding failed".into())
+}
+
+fn digest(bytes: &[u8]) -> String {
+    hex::encode(aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes).as_ref())
+}
+
+pub(crate) fn pending_name(fence: &FenceRecord) -> Result<String, String> {
+    Ok(format!(".{}.{}.pending", fence.record.database_id, digest(&canonical_bytes(fence)?)))
+}
+
+fn pending_identity(path: &Path) -> Result<(String, String), String> {
+    let name = path.file_name().and_then(|name| name.to_str()).ok_or("invalid pending fence name")?;
+    let parts = name.split('.').collect::<Vec<_>>();
+    if parts.len() != 4 || !parts[0].is_empty() || parts[3] != "pending"
+        || parts[2].len() != 64 || !parts[2].bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    { return Err("invalid pending fence name".into()); }
+    let database = terrabase::identity::DatabaseUlid::from_text(parts[1]).map_err(|_| "invalid pending fence database")?;
+    if database.to_string() != parts[1] { return Err("noncanonical pending fence database".into()); }
+    Ok((parts[1].to_owned(), parts[2].to_owned()))
 }
 
 #[cfg(test)]

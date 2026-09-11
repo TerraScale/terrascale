@@ -78,6 +78,13 @@ async fn restore_route_forwards_each_selector_to_provisioning_authority() {
             (source.tenant_id.clone(), source.project_id.clone()),
             None,
         );
+        keys.register_for_owner(
+            "tskey_test_foreign_abcdefghijkl",
+            "foreign",
+            crate::api_keys::Scope::database("other-database", crate::api_keys::Verbs::ALL),
+            (source.tenant_id.clone(), source.project_id.clone()),
+            None,
+        );
         state.keys = Some(Arc::new(keys));
         state.provisioning = Some(Arc::new(
             crate::provisioning::ProvisioningClient::new(socket, uid, "production".into())
@@ -129,7 +136,7 @@ async fn restore_route_forwards_each_selector_to_provisioning_authority() {
     let response = crate::api::router(Arc::clone(&state))
         .oneshot(
             Request::post(&path)
-                .header("authorization", auth)
+                .header("authorization", "Bearer tskey_test_foreign_abcdefghijkl")
                 .header("x-terrascale-tenant-id", "foreign-tenant")
                 .header("x-terrascale-project-id", "foreign-project")
                 .body(Body::from(r#"{"name":"restored","operation_id":"foreign"}"#))
@@ -217,6 +224,13 @@ async fn backup_points_route_uses_native_catalog_and_enforces_scope() {
         (source.tenant_id.clone(), source.project_id.clone()),
         None,
     );
+    keys.register_for_owner(
+        "tskey_test_foreign_abcdefghijkl",
+        "foreign",
+        crate::api_keys::Scope::database("other-database", crate::api_keys::Verbs::ALL),
+        (source.tenant_id.clone(), source.project_id.clone()),
+        None,
+    );
     Arc::get_mut(&mut state).unwrap().keys = Some(Arc::new(keys));
     let path = format!("/api/v1/databases/{}/backups/points", source.database_id);
     let response = crate::api::router(Arc::clone(&state))
@@ -237,7 +251,7 @@ async fn backup_points_route_uses_native_catalog_and_enforces_scope() {
     let response = crate::api::router(Arc::clone(&state))
         .oneshot(
             Request::get(&path)
-                .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                .header("authorization", "Bearer tskey_test_foreign_abcdefghijkl")
                 .header("x-terrascale-tenant-id", "foreign")
                 .header("x-terrascale-project-id", "foreign")
                 .body(Body::empty())

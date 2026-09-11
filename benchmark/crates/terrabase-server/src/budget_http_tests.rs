@@ -282,7 +282,7 @@ async fn canonical_signed_delivery_is_accepted_over_http_and_persisted() {
             Ok((row.get(0)?, row.get(1)?))
         })
         .unwrap();
-    assert_eq!(operation, "vector-1");
+    assert_eq!(operation, "refill-vector-1");
     assert_eq!(database, "db");
 }
 
@@ -543,11 +543,14 @@ async fn public_writes_consume_signed_included_and_paid_allocations_once() {
         journal
             .execute(
                 "UPDATE allocations SET payload=?1 WHERE operation=?2",
-                rusqlite::params![serde_json::to_vec(&expired).unwrap(), operation],
+                rusqlite::params![
+                    serde_json::to_vec(&expired).unwrap(),
+                    format!("refill-{operation}")
+                ],
             )
             .unwrap();
         assert!(
-            fixture.journal.resolve_allocation(operation, &database).is_err(),
+            fixture.journal.resolve_allocation(&format!("refill-{operation}"), &database).is_err(),
             "expired signed grant cannot authorize spending"
         );
         assert_eq!(app.clone().oneshot(put()).await.unwrap().status(), StatusCode::OK);
@@ -563,9 +566,12 @@ async fn public_writes_consume_signed_included_and_paid_allocations_once() {
             .location_for("terrabase-local", "local", "prod")
             .join("terrabase.sqlite3");
         let connection = rusqlite::Connection::open(path).unwrap();
+        let refill_operation = format!("refill-{operation}");
         let consumption: (i64, i64, i64) = connection.query_row(
             "SELECT COUNT(*), SUM(units_total), SUM(units_remaining) FROM usage_budget_allocations WHERE operation=?1",
-            [operation], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+            [&refill_operation],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
         assert_eq!(consumption, (1, 1, 0), "paid={paid}, batch={batch}");
         let journal_connection =
             rusqlite::Connection::open(fixture.root.join("usage-admissions.sqlite")).unwrap();
