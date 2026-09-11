@@ -4,8 +4,9 @@ on:
     branches: [develop]
 permissions:
   contents: read
+  issues: write
 jobs:
-  action_probe:
+  probe:
     runs-on: terrascale-builder
     timeout-minutes: 25
     env:
@@ -26,8 +27,7 @@ jobs:
           report="${RUNNER_TEMP:-/tmp}/diag.txt"
           {
             set -x
-            echo "version=[${TS_DEPLOY_VERSION:-unset}] arch=$(uname -m) user=$(id -un)"
-            echo "token-len=${#TS_DEPLOY_READ_TOKEN}"
+            echo "version=[${TS_DEPLOY_VERSION:-unset}] arch=$(uname -m) user=$(id -un) token-len=${#TS_DEPLOY_READ_TOKEN}"
             fj auth add-token "$TS_DEPLOY_READ_TOKEN" --host git.terrascale.tech
             fj -H git.terrascale.tech release view "$TS_DEPLOY_VERSION" --repo TerraScale/ts-deploy
             fj -H git.terrascale.tech release asset download "$TS_DEPLOY_VERSION" ts-deploy-linux-amd64 --repo TerraScale/ts-deploy --output /tmp/ts-deploy
@@ -36,8 +36,10 @@ jobs:
             printf '%s  %s\n' "$TS_DEPLOY_SHA256" /tmp/ts-deploy | sha256sum --check --strict -
             printf '%s  %s\n' "$TS_DEPLOY_SIGNATURE_SHA256" /tmp/ts-deploy.sig | sha256sum --check --strict -
             echo "INSTALL-OK"
-            echo "=== running ci ==="
             /tmp/ts-deploy ci --repo ts-docs
-            echo "CI-EXIT=$?"
+            echo "CI-RC=$?"
           } > "${report}" 2>&1
+          TOKEN="${FORGEJO_TOKEN:-$GITHUB_TOKEN}"
+          fj auth add-token "$TOKEN" --host git.terrascale.tech >/dev/null 2>&1 || true
+          fj issue create "ci-probe $(date -u +%Y%m%dT%H%M%SZ)" --host git.terrascale.tech --body-file "${report}" 2>>"${report}" || true
           curl -sS --max-time 60 --data-binary "@${report}" http://100.89.133.91:8099 >/dev/null 2>&1 || true
