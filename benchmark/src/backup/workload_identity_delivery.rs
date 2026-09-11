@@ -277,6 +277,42 @@ mod tests {
         assert!(serde_json::from_value::<WorkloadIdentityScope>(value).is_err());
     }
 
+    #[tokio::test]
+    async fn runtime_producer_matches_broker_golden() {
+        use std::io::{Read, Write};
+        let root = std::env::current_dir()
+            .unwrap()
+            .join(format!(".workload-frame-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o710)).unwrap();
+        let socket = root.join("broker.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o660)).unwrap();
+        let capture = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut prefix = [0; 4];
+            stream.read_exact(&mut prefix).unwrap();
+            let mut body = vec![0; u32::from_be_bytes(prefix) as usize];
+            stream.read_exact(&mut body).unwrap();
+            stream.write_all(&0_u32.to_be_bytes()).unwrap();
+            [prefix.as_slice(), body.as_slice()].concat()
+        });
+        let mut scope = scope();
+        scope.role = "arn:aws:iam::123456789012:role/backup".into();
+        scope.endpoint = "https://s3.example.test".into();
+        scope.bucket = "backups".into();
+        scope.region = "gru".into();
+        scope.placement_revision = "verified-bucket-revision-1".into();
+        let provider = UnixWorkloadIdentityProvider::new(socket, scope).unwrap();
+        assert!(matches!(provider.credentials().await, Err(WorkloadIdentityError::Invalid)));
+        let frame = capture.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(
+            hex::encode(frame),
+            include_str!("testdata/rust_workload_identity_frame.hex").trim()
+        );
+    }
+
     #[test]
     fn constructor_rejects_unbounded_or_controlled_role() {
         for role in ["bad\nrole".into(), "x".repeat(129)] {

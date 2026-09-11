@@ -872,16 +872,7 @@ impl ProductionAdmissionRuntime {
                     if byok.key_provider != "aws-kms" {
                         return Err("customer KMS provider disagrees with configuration".into());
                     }
-                    let adapter = CustomerKmsKeyDelivery::new(
-                        customer_keys.socket.clone(),
-                        customer_keys.orchestrator_uid,
-                        customer_keys.socket_gid,
-                        byok.key_provider.clone(),
-                        byok.key_id.clone(),
-                        byok.key_region.clone(),
-                        byok.key_endpoint.clone().unwrap_or_default(),
-                    )
-                    .map_err(|_| "customer KMS adapter unavailable")?;
+                    let adapter = customer_kms_delivery(&customer_keys, byok)?;
                     Ok(Arc::new(
                         CustomerKmsDatabaseKeys::new(
                             adapter,
@@ -1211,17 +1202,7 @@ impl ProductionAdmissionRuntime {
             {
                 return Err("customer BYOK provider disagrees with admitted configuration".into());
             }
-            let endpoint = byok.key_endpoint.clone().unwrap_or_default();
-            let adapter = terrabase::encryption::CustomerKmsKeyDelivery::new(
-                key_config.socket.clone(),
-                key_config.orchestrator_uid,
-                key_config.socket_gid,
-                byok.key_provider.clone(),
-                byok.key_id.clone(),
-                byok.key_region.clone(),
-                endpoint,
-            )
-            .map_err(|_| "customer KMS adapter unavailable")?;
+            let adapter = customer_kms_delivery(key_config, byok)?;
             let source = CustomerKmsDatabaseKeys::new(
                 adapter,
                 KeyVersionMetadata::new(
@@ -2099,6 +2080,22 @@ fn build_admission_authority(
     })
 }
 
+fn customer_kms_delivery(
+    keys: &crate::config::ProductionKeys,
+    byok: &crate::config::ProductionByokConfig,
+) -> Result<CustomerKmsKeyDelivery, &'static str> {
+    CustomerKmsKeyDelivery::new(
+        keys.socket.clone(),
+        keys.orchestrator_uid,
+        keys.socket_gid,
+        byok.key_provider.clone(),
+        byok.key_id.clone(),
+        byok.key_region.clone(),
+        byok.key_endpoint.clone().unwrap_or_default(),
+    )
+    .map_err(|_| "customer KMS adapter unavailable")
+}
+
 struct VerifiedRole {
     database: terrabase::member::DatabaseId,
     accepted: terrabase::member::AcceptedDatabaseRole,
@@ -2115,6 +2112,67 @@ impl terrabase::member::DatabaseRoleAuthority for VerifiedRole {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+
+    #[test]
+    fn production_customer_kms_none_endpoint_matches_broker_golden() {
+        use std::io::{Read, Write};
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::os::unix::net::UnixListener;
+        use terrabase::encryption::CustomerKmsAdapter;
+        let root = std::env::current_dir()
+            .unwrap()
+            .join(format!(".production-kms-frame-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o710)).unwrap();
+        let socket = root.join("broker.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660)).unwrap();
+        let stat = std::fs::metadata(&socket).unwrap();
+        let keys = crate::config::ProductionKeys {
+            socket,
+            orchestrator_uid: stat.uid(),
+            socket_gid: stat.gid(),
+        };
+        let byok = crate::config::ProductionByokConfig {
+            backup_endpoint: "https://s3.example.test".into(),
+            backup_bucket: "backups".into(),
+            backup_region: "gru".into(),
+            backup_role_arn: "arn:aws:iam::123456789012:role/backup".into(),
+            key_provider: "aws-kms".into(),
+            key_id: "arn:aws:kms:sa-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+                .into(),
+            key_region: "sa-east-1".into(),
+            key_endpoint: None,
+        };
+        let adapter = customer_kms_delivery(&keys, &byok).unwrap();
+        let capture = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut prefix = [0; 4];
+            stream.read_exact(&mut prefix).unwrap();
+            let mut body = vec![0; u32::from_be_bytes(prefix) as usize];
+            stream.read_exact(&mut body).unwrap();
+            stream.write_all(&0_u32.to_be_bytes()).unwrap();
+            [prefix.as_slice(), body.as_slice()].concat()
+        });
+        let metadata = KeyVersionMetadata::new(
+            KeyScope::new_with_project(
+                "production",
+                terrabase::identity::TenantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap(),
+                terrabase::identity::ProjectUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAW").unwrap(),
+                terrabase::identity::DatabaseUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAX").unwrap(),
+                KeyPurpose::Data,
+            )
+            .unwrap(),
+            DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAY").unwrap(),
+        );
+        assert!(adapter.lease(&metadata, "GRU".parse().unwrap()).is_err());
+        let frame = capture.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(
+            hex::encode(frame),
+            include_str!("../../../src/encryption/testdata/rust_customer_key_frame.hex").trim()
+        );
+    }
 
     #[test]
     fn restore_target_rejects_configuration_identity_drift() {

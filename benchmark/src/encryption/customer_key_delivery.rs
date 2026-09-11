@@ -209,6 +209,58 @@ mod tests {
     use super::valid_region;
 
     #[test]
+    fn runtime_producer_matches_broker_golden_with_omitted_endpoint() {
+        use super::*;
+        use crate::encryption::{DatabaseKeyVersion, KeyPurpose, KeyScope};
+        use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::net::UnixListener;
+        let root = std::env::current_dir()
+            .unwrap()
+            .join(format!(".customer-frame-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o710)).unwrap();
+        let socket = root.join("broker.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o660)).unwrap();
+        let stat = fs::metadata(&socket).unwrap();
+        let adapter = CustomerKmsKeyDelivery::new(
+            socket,
+            stat.uid(),
+            stat.gid(),
+            "aws-kms",
+            "arn:aws:kms:sa-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+            "sa-east-1",
+            Option::<String>::None.unwrap_or_default(),
+        )
+        .unwrap();
+        let capture = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut prefix = [0; 4];
+            stream.read_exact(&mut prefix).unwrap();
+            let mut body = vec![0; u32::from_be_bytes(prefix) as usize];
+            stream.read_exact(&mut body).unwrap();
+            stream.write_all(&0_u32.to_be_bytes()).unwrap();
+            [prefix.as_slice(), body.as_slice()].concat()
+        });
+        let metadata = KeyVersionMetadata::new(
+            KeyScope::new_with_project(
+                "production",
+                TenantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap(),
+                ProjectUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAW").unwrap(),
+                DatabaseUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAX").unwrap(),
+                KeyPurpose::Data,
+            )
+            .unwrap(),
+            DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAY").unwrap(),
+        );
+        assert!(adapter.lease(&metadata, RegionCode::from_text("GRU").unwrap()).is_err());
+        let frame = capture.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(hex::encode(frame), include_str!("testdata/rust_customer_key_frame.hex").trim());
+    }
+
+    #[test]
     fn accepts_cloud_provider_regions() {
         assert!(valid_region("us-east-1"));
         assert!(valid_region("eu-west-1"));
