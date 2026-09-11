@@ -340,6 +340,14 @@ impl AdmissionFenceStore {
                 },
             )?;
         self.checkpoint(1)
+            .and_then(|()| {
+                #[cfg(test)]
+                if self.fault.load(std::sync::atomic::Ordering::SeqCst) == 6 {
+                    file.write_all(&bytes[..bytes.len() / 2])?;
+                    return Err(std::io::Error::other("injected partial fence write"));
+                }
+                Ok(())
+            })
             .and_then(|()| file.write_all(&bytes))
             .and_then(|()| self.checkpoint(2))
             .and_then(|()| file.sync_all())
