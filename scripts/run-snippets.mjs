@@ -203,7 +203,11 @@ export function createRemoteSandbox() {
   const base = normalizeSandboxOrigin(configuredBase);
 
   let session;
+  let preferredRegion;
   let writeNumber = 0;
+  // Idempotency keys must never repeat across runs: a replay returns the
+  // original outcome without recreating a document an earlier run deleted.
+  const runTag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const headers = {
     accept: "application/json",
     "content-type": "application/json",
@@ -217,11 +221,15 @@ export function createRemoteSandbox() {
       headers: {
         ...headers,
         ...(session ? { "x-terrascale-session": session } : {}),
+        ...(preferredRegion ? { "x-terrascale-preferred-region": preferredRegion } : {}),
         ...(init.headers ?? {}),
       },
     });
     const nextSession = response.headers.get("x-terrascale-session");
     if (nextSession) session = nextSession;
+    const nextRegion = response.headers.get("x-terrascale-serving-region")
+      ?? response.headers.get("x-terrascale-region");
+    if (nextRegion) preferredRegion = nextRegion;
     if (!response.ok && !accepted.includes(response.status)) {
       const detail = await response.text();
       throw new Error(`remote ${init.method ?? "GET"} ${path} failed: ${response.status}${detail ? `: ${detail.slice(0, 500)}` : ""}`);
@@ -241,11 +249,15 @@ export function createRemoteSandbox() {
       headers: {
         ...headers,
         ...(session ? { "x-terrascale-session": session } : {}),
+        ...(preferredRegion ? { "x-terrascale-preferred-region": preferredRegion } : {}),
       },
       body: JSON.stringify(body),
     });
     const nextSession = response.headers.get("x-terrascale-session");
     if (nextSession) session = nextSession;
+    const nextRegion = response.headers.get("x-terrascale-serving-region")
+      ?? response.headers.get("x-terrascale-region");
+    if (nextRegion) preferredRegion = nextRegion;
     if (!response.ok) {
       const detail = await response.text();
       throw new Error(`remote POST ${path} failed: ${response.status}${detail ? `: ${detail.slice(0, 500)}` : ""}`);
@@ -295,7 +307,7 @@ export function createRemoteSandbox() {
       url.searchParams.set("offset", String(state.revision));
       // Reactive delivery is a capability-gated CDN request. Do not forward
       // the API bearer, session, or JSON headers to the sync origin.
-      const response = await fetch(url, { headers: { accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: state.capability } });
+      const response = await fetch(url, { headers: { accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: state.capability, ...(preferredRegion ? { "x-terrascale-preferred-region": preferredRegion } : {}) } });
       if (!response.ok) throw new Error(`remote GET ${url.pathname} failed: ${response.status}`);
       if (response.status !== 204 && response.status !== 304) {
         if (consume(state, new Uint8Array(await response.arrayBuffer()))) return;
@@ -314,7 +326,7 @@ export function createRemoteSandbox() {
       const active = [...subscriptions].filter((state) => state.collection === collection);
       const { body } = await request(pathFor(collection, doc.id), {
         method: "PUT",
-        headers: { "idempotency-key": `docs-snippet-${++writeNumber}-${collection}-${doc.id}` },
+        headers: { "idempotency-key": `docs-snippet-${runTag}-${++writeNumber}-${collection}-${doc.id}` },
         body: JSON.stringify(doc),
       });
       await Promise.all(active.map((state) => waitForData(state)));
@@ -362,7 +374,7 @@ export function createRemoteSandbox() {
       for (const snapshotUrl of snapshotUrls) {
         // The capability is the only credential accepted by the reactive
         // cache path; API credentials never cross this boundary.
-        const response = await fetch(snapshotUrl, { headers: { accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: capability } });
+        const response = await fetch(snapshotUrl, { headers: { accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: capability, ...(preferredRegion ? { "x-terrascale-preferred-region": preferredRegion } : {}) } });
         if (!response.ok) throw new Error(`remote snapshot failed: ${response.status}`);
         consume(state, new Uint8Array(await response.arrayBuffer()));
       }
