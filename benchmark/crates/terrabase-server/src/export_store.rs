@@ -17,7 +17,20 @@ pub(crate) const EXPORT_RETENTION_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |value| value.as_millis().min(i64::MAX as u128) as i64)
+        .map_or(0, |value| checked_sqlite_millis(value.as_millis()))
+}
+
+fn checked_sqlite_millis(millis: u128) -> i64 {
+    if millis > u128::from(i64::MAX.unsigned_abs()) {
+        i64::MAX
+    } else {
+        i64::try_from(millis).unwrap_or(i64::MAX)
+    }
+}
+
+fn sqlite_retention_cutoff(now_millis: u64) -> i64 {
+    let cutoff = now_millis.saturating_sub(EXPORT_RETENTION_MILLIS);
+    i64::try_from(cutoff.min(i64::MAX as u64)).unwrap_or(i64::MAX)
 }
 
 /// `SQLite` control records and cancellation flags for resumable exports.
@@ -292,7 +305,10 @@ impl SqliteExportStore {
     /// window. Active or failed-resumable jobs remain available to recovery;
     /// the runtime removes artifacts before calling `delete_expired`.
     pub(crate) fn expired_terminal_ids(&self, now_millis: u64) -> Result<Vec<String>, ExportError> {
-        let cutoff = now_millis.saturating_sub(EXPORT_RETENTION_MILLIS) as i64;
+        // SQLite stores this timestamp as a signed INTEGER. Clamping an
+        // unrepresentable wire timestamp to i64::MAX keeps every representable
+        // row eligible without wrapping into a negative cutoff.
+        let cutoff = sqlite_retention_cutoff(now_millis);
         let connection = self.connection.lock().map_err(io_error)?;
         let mut statement = connection
             .prepare("SELECT job_id FROM export_jobs WHERE created_at > 0 AND created_at <= ?1 AND json_extract(CAST(progress AS TEXT), '$.status') IN ('Complete','Cancelled')")
@@ -411,6 +427,15 @@ mod tests {
             manifest: None,
             error: None,
         }
+    }
+
+    #[test]
+    fn sqlite_timestamp_conversion_clamps_unrepresentable_millis() {
+        assert_eq!(checked_sqlite_millis(0), 0);
+        assert_eq!(checked_sqlite_millis(u128::from(i64::MAX.unsigned_abs())), i64::MAX);
+        assert_eq!(checked_sqlite_millis(u128::from(i64::MAX.unsigned_abs()) + 1), i64::MAX);
+        assert_eq!(sqlite_retention_cutoff(EXPORT_RETENTION_MILLIS - 1), 0);
+        assert_eq!(sqlite_retention_cutoff(u64::MAX), i64::MAX);
     }
 
     #[test]

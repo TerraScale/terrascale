@@ -1,5 +1,8 @@
 //! Reversible lane release for the production database replacement barrier.
-use super::*;
+use super::{
+    AtomicU64, DatabaseRouteScope, Duration, Ordering, PeerCommand, PeerDatabaseBatch,
+    ReplicationPeers, failure, observe,
+};
 use std::collections::BTreeSet;
 
 static NEXT_SUSPENSION: AtomicU64 = AtomicU64::new(1);

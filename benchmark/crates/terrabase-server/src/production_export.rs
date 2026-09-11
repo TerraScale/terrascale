@@ -14,6 +14,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use terrabase::backup::object_store::ObjectDestination;
 
+type NativeBackupResolver =
+    dyn Fn(&str) -> Result<crate::native_backup_runtime::NativeBackupInput, String> + Send + Sync;
+
 /// Redacted production export construction failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProductionExportError {
@@ -32,11 +35,7 @@ pub(crate) struct ProductionArtifactPort {
 
 /// Resolves export artifacts from the already admitted backup owner.
 pub(crate) struct ProductionArtifactFactory {
-    pub(crate) resolver: Arc<
-        dyn Fn(&str) -> Result<crate::native_backup_runtime::NativeBackupInput, String>
-            + Send
-            + Sync,
-    >,
+    pub(crate) resolver: Arc<NativeBackupResolver>,
     pub(crate) root: PathBuf,
     pub(crate) prefix: String,
 }
@@ -81,15 +80,12 @@ async fn put_remote_exact(
     key: &str,
     bytes: Vec<u8>,
 ) -> Result<(), ExportError> {
-    match destination.put_member(key, bytes.clone()).await {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            let remote = destination
-                .get_member(key)
-                .await
-                .map_err(|_| ExportError::DependencyUnavailable)?;
-            if remote == bytes { Ok(()) } else { Err(ExportError::IdempotencyConflict) }
-        }
+    if destination.put_member(key, bytes.clone()).await.is_err() {
+        let remote =
+            destination.get_member(key).await.map_err(|_| ExportError::DependencyUnavailable)?;
+        if remote == bytes { Ok(()) } else { Err(ExportError::IdempotencyConflict) }
+    } else {
+        Ok(())
     }
 }
 
@@ -128,7 +124,7 @@ impl ArtifactWriter for ProductionWriter {
             Ok(fact)
         })
     }
-    fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
+    fn existing_facts(&mut self) -> ExportFuture<'_, Vec<ArtifactFact>> {
         Box::pin(async move {
             let base = format!("{}/{}/{}", self.prefix, self.database, self.job);
             let remote_keys = self
@@ -181,7 +177,7 @@ impl ArtifactWriter for ProductionWriter {
             let marker = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
             put_remote_exact(
                 &destination,
-                &format!("{}/{}/{}/COMMITTED", prefix, database, job),
+                &format!("{prefix}/{database}/{job}/COMMITTED"),
                 marker.into_bytes(),
             )
             .await?;
@@ -323,6 +319,14 @@ impl ArtifactPort for ProductionArtifactPort {
 
 /// Constructs the production export owner from an authenticated artifact
 /// provider and an owner-private cursor signing-key reference.
+///
+/// # Errors
+///
+/// Returns [`ProductionExportError::CursorKey`] when the cursor-key reference
+/// is missing, unsafe, malformed, or inaccessible. Returns
+/// [`ProductionExportError::Runtime`] when the export runtime rejects the
+/// authenticated destination or job root. Error values never contain provider
+/// credentials or key material.
 pub fn new_production_export(
     jobs_root: impl Into<std::path::PathBuf>,
     artifact_factory: Arc<dyn ExportArtifactFactory>,
@@ -330,7 +334,7 @@ pub fn new_production_export(
     cursor_key_file: &Path,
 ) -> Result<ExportRuntime, ProductionExportError> {
     let key = crate::export_artifact_crypto::read_cursor_key(cursor_key_file)
-        .map_err(|_| ProductionExportError::CursorKey)?;
+        .map_err(|()| ProductionExportError::CursorKey)?;
     ExportRuntime::new(jobs_root.into(), artifact_factory, destination, key)
         .map_err(|_| ProductionExportError::Runtime)
 }

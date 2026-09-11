@@ -371,7 +371,7 @@ pub trait ArtifactWriter: Send {
     ///
     /// Returns an I/O or verification failure, or `DependencyUnavailable`
     /// when the port does not support recovery.
-    fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
+    fn existing_facts(&mut self) -> ExportFuture<'_, Vec<ArtifactFact>> {
         Box::pin(async { Err(ExportError::DependencyUnavailable) })
     }
     /// Atomically publishes the completed bundle and its commit marker.
@@ -835,7 +835,7 @@ impl ExportService {
                 Err(error) => return Err(error),
             },
         };
-        status_from_state(&state, cancellation)
+        status_from_state(state, cancellation)
     }
 
     /// Reads a job's durable control record on the blocking pool.
@@ -983,6 +983,11 @@ impl ExportService {
     }
 
     /// Reads one completed export member and returns its durable encoding.
+    ///
+    /// # Errors
+    ///
+    /// Refuses unknown or incomplete jobs, invalid member paths, dependency
+    /// failures, and artifacts whose bytes or manifest cannot be verified.
     pub async fn download_with_format(
         &self,
         job_id: &str,

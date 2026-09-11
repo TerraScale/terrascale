@@ -1,6 +1,6 @@
 //! Authenticated native regional usage closure for the billing authority.
 //!
-//! `storage_intervals` contains 1..=65_536 contiguous half-open levels covering
+//! `storage_intervals` contains `1..=65_536` contiguous half-open levels covering
 //! exactly the frozen receipt window, including zero levels. `logical_bytes`
 //! is a canonical unsigned decimal u128 string, measured in this Region once;
 //! timestamps are safe JSON integers. The receipt checksum binds these levels

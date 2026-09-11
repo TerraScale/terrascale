@@ -70,9 +70,10 @@ fn publication(record: &SyncJournalRecord) -> Result<Publication, StorageError> 
     }
     let body = encode_publication(record)?;
     let origin_lane = record.provenance().origin().to_owned();
-    let origin_region = terrabase::OriginLaneId::parse(&origin_lane)
-        .map(|lane| lane.region().as_str().to_ascii_uppercase())
-        .unwrap_or_else(|_| origin_lane.to_ascii_uppercase());
+    let origin_region = terrabase::OriginLaneId::parse(&origin_lane).map_or_else(
+        |_| origin_lane.to_ascii_uppercase(),
+        |lane| lane.region().as_str().to_ascii_uppercase(),
+    );
     Ok(Publication {
         revision: position.sequence(),
         write_index: position.write_index(),

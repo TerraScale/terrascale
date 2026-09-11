@@ -5,6 +5,16 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 const MAX_RECORD_BYTES: i64 = 262_144;
 
+fn persisted_record_size(size: i64) -> Result<usize, NativeRecoveryError> {
+    let size = usize::try_from(size).map_err(|_| NativeRecoveryError::VerificationFailed)?;
+    let max =
+        usize::try_from(MAX_RECORD_BYTES).map_err(|_| NativeRecoveryError::VerificationFailed)?;
+    if size > max {
+        return Err(NativeRecoveryError::VerificationFailed);
+    }
+    Ok(size)
+}
+
 pub(crate) fn admit_operation(
     connection: &mut Connection,
     limits: NativeRecoveryLimits,
@@ -18,7 +28,13 @@ pub(crate) fn admit_operation(
         return Err(NativeRecoveryError::InvalidRequest);
     }
     let bytes = serde_json::to_vec(&proposed).map_err(|_| NativeRecoveryError::Unavailable)?;
-    if bytes.len() > MAX_RECORD_BYTES as usize
+    let max_record_bytes =
+        usize::try_from(MAX_RECORD_BYTES).map_err(|_| NativeRecoveryError::Unavailable)?;
+    let pending_limit = i64::try_from(limits.pending_operations)
+        .map_err(|_| NativeRecoveryError::InvalidRequest)?;
+    let retained_limit = i64::try_from(limits.retained_operations)
+        .map_err(|_| NativeRecoveryError::InvalidRequest)?;
+    if bytes.len() > max_record_bytes
         || proposed.source_database_id.is_empty()
         || proposed.operation_id.is_empty()
     {
@@ -31,7 +47,7 @@ pub(crate) fn admit_operation(
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, Vec<u8>>(3)?)),
     ).optional().map_err(|_| NativeRecoveryError::Unavailable)?;
     if let Some((source, phase, size, stored)) = existing {
-        if source != proposed.source_database_id || !(0..=MAX_RECORD_BYTES).contains(&size) {
+        if source != proposed.source_database_id || persisted_record_size(size).is_err() {
             return Err(NativeRecoveryError::VerificationFailed);
         }
         let state: NativeRecoveryOperation =
@@ -66,7 +82,7 @@ pub(crate) fn admit_operation(
         }
         if matches!(state.phase, NativeRecoveryPhase::Failed) {
             let pending: i64 = tx.query_row("SELECT count(*) FROM native_recovery_operations WHERE phase IN ('accepted','capturing','measuring')", [], |row| row.get(0)).map_err(|_| NativeRecoveryError::Unavailable)?;
-            if pending >= limits.pending_operations as i64 {
+            if pending < 0 || pending >= pending_limit {
                 return Err(NativeRecoveryError::Unavailable);
             }
             tx.execute("UPDATE native_recovery_operations SET phase='accepted', record=?2 WHERE operation_id=?1", params![proposed.operation_id, bytes]).map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -77,19 +93,22 @@ pub(crate) fn admit_operation(
         return Ok(state);
     }
     let pending: i64 = tx.query_row("SELECT count(*) FROM native_recovery_operations WHERE phase IN ('accepted','capturing','measuring')", [], |row| row.get(0)).map_err(|_| NativeRecoveryError::Unavailable)?;
-    if pending >= limits.pending_operations as i64 {
+    if pending < 0 || pending >= pending_limit {
         return Err(NativeRecoveryError::Unavailable);
     }
     let total: i64 = tx
         .query_row("SELECT count(*) FROM native_recovery_operations", [], |row| row.get(0))
         .map_err(|_| NativeRecoveryError::Unavailable)?;
-    if total >= limits.retained_operations as i64 {
+    if total < 0 {
+        return Err(NativeRecoveryError::Unavailable);
+    }
+    if total >= retained_limit {
         tx.execute("DELETE FROM native_recovery_operations WHERE operation_id=(SELECT operation_id FROM native_recovery_operations WHERE phase IN ('complete','failed') ORDER BY operation_id LIMIT 1)", []).map_err(|_| NativeRecoveryError::Unavailable)?;
     }
     let total_after: i64 = tx
         .query_row("SELECT count(*) FROM native_recovery_operations", [], |row| row.get(0))
         .map_err(|_| NativeRecoveryError::Unavailable)?;
-    if total_after >= limits.retained_operations as i64 {
+    if total_after < 0 || total_after >= retained_limit {
         return Err(NativeRecoveryError::Unavailable);
     }
     tx.execute("INSERT INTO native_recovery_operations(operation_id,source_database_id,phase,record) VALUES(?1,?2,'accepted',?3)", params![proposed.operation_id, proposed.source_database_id, bytes]).map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -301,7 +320,7 @@ mod tests {
             &op("a", "db", NativeRecoveryPhase::Accepted),
             "db",
             "accepted",
-            Some(vec![b'x'; MAX_RECORD_BYTES as usize + 1]),
+            Some(vec![b'x'; usize::try_from(MAX_RECORD_BYTES).unwrap() + 1]),
         );
         assert_eq!(
             admit_operation(&mut c, limits(1, 2), op("a", "db", NativeRecoveryPhase::Accepted)),
@@ -350,5 +369,20 @@ mod tests {
             );
             assert!(ids(&c).is_empty());
         }
+    }
+
+    #[test]
+    fn persisted_size_and_limits_reject_signed_or_unrepresentable_values() {
+        assert_eq!(persisted_record_size(-1), Err(NativeRecoveryError::VerificationFailed));
+        assert_eq!(persisted_record_size(i64::MAX), Err(NativeRecoveryError::VerificationFailed));
+        assert_eq!(
+            persisted_record_size(MAX_RECORD_BYTES),
+            Ok(usize::try_from(MAX_RECORD_BYTES).unwrap())
+        );
+
+        #[cfg(target_pointer_width = "64")]
+        assert!(i64::try_from(usize::MAX).is_err());
+        #[cfg(target_pointer_width = "32")]
+        assert!(i64::try_from(usize::MAX).is_ok());
     }
 }

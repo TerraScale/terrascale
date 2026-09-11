@@ -28,6 +28,11 @@ struct FrontierState {
 impl ReplicationRetentionFrontier {
     /// Replaces the immutable required-peer set for an admitted assignment.
     /// New peers start at zero; they cannot be skipped by a fast survivor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid peer identities, a poisoned frontier
+    /// mutex, or an attempt to replace an existing peer assignment.
     pub fn admit(
         &self,
         scope: DatabaseRouteScope,
@@ -54,6 +59,12 @@ impl ReplicationRetentionFrontier {
     /// Records one authenticated durable acknowledgement and advances the
     /// Engine's single replication retention consumer to the required-peer
     /// minimum. Unknown or missing peers are refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the frontier mutex is poisoned, the assignment is
+    /// missing, the peer is not required, or the Engine cannot advance the
+    /// durable retention frontier.
     pub fn acknowledge(
         &self,
         engine: &Engine,

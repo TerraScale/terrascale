@@ -176,7 +176,11 @@ impl ExportRuntime {
 fn unix_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |value| value.as_millis().min(u64::MAX as u128) as u64)
+        .map_or(0, |value| checked_wire_millis(value.as_millis()))
+}
+
+fn checked_wire_millis(millis: u128) -> u64 {
+    if millis > u128::from(u64::MAX) { u64::MAX } else { u64::try_from(millis).unwrap_or(u64::MAX) }
 }
 
 impl ExportRuntime {
@@ -242,5 +246,17 @@ impl ExportRuntime {
         )
         .map(|value| value.to_vec())
         .map_err(|_| invalid())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checked_wire_millis;
+
+    #[test]
+    fn wire_timestamp_conversion_saturates_only_above_u64_max() {
+        assert_eq!(checked_wire_millis(0), 0);
+        assert_eq!(checked_wire_millis(u128::from(u64::MAX)), u64::MAX);
+        assert_eq!(checked_wire_millis(u128::from(u64::MAX) + 1), u64::MAX);
     }
 }
