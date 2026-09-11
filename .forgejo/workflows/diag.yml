@@ -1,0 +1,54 @@
+name: ts-docs diagnostics
+on:
+  push:
+    branches: [develop]
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    env:
+      TS_DEPLOY_VERSION: ${{ vars.TS_DEPLOY_VERSION }}
+      TS_DEPLOY_SHA256: ${{ vars.TS_DEPLOY_SHA256 }}
+      TS_DEPLOY_SIGNATURE_SHA256: ${{ vars.TS_DEPLOY_SIGNATURE_SHA256 }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: diagnostics
+        run: |
+          set +e
+          exec > /tmp/diag.txt 2>&1
+          echo "=== whoami ==="; fj whoami
+          echo "=== vars ==="
+          echo "TS_DEPLOY_VERSION=[${TS_DEPLOY_VERSION:-<unset>}]"
+          echo "TS_DEPLOY_SHA256=[${TS_DEPLOY_SHA256:-<unset>}]"
+          echo "TS_DEPLOY_SIGNATURE_SHA256=[${TS_DEPLOY_SIGNATURE_SHA256:-<unset>}]"
+          echo "=== tools ==="
+          command -v fj; command -v sha256sum; command -v git; uname -m
+          echo "PATH=${PATH}"
+          echo "=== workspace ==="
+          pwd; ls -la; ls -la .forgejo; ls -la .forgejo/actions/ts-deploy 2>&1
+          echo "=== action manifest head ==="
+          head -20 .forgejo/actions/ts-deploy/action.yml 2>&1
+          echo "=== manual install attempt ==="
+          set -eu
+          case "$(uname -m)" in
+            aarch64|arm64) asset=ts-deploy-linux-arm64 ;;
+            x86_64|amd64) asset=ts-deploy-linux-amd64 ;;
+            *) echo "unsupported arch"; exit 1 ;;
+          esac
+          echo "asset=${asset}"
+          fj release view "${TS_DEPLOY_VERSION}" --repo TerraScale/ts-deploy && echo "view-ok"
+          fj release asset download "${TS_DEPLOY_VERSION}" "${asset}" --repo TerraScale/ts-deploy --output /tmp/ts-deploy && echo "download-ok"
+          ls -l /tmp/ts-deploy
+          printf '%s  %s\n' "${TS_DEPLOY_SHA256}" /tmp/ts-deploy | sha256sum --check --strict - && echo "checksum-ok"
+        continue-on-error: true
+      - name: report
+        if: always()
+        run: |
+          fj issue create "CI diagnostics $(date -u +%Y%m%dT%H%M%SZ)" --body-file /tmp/diag.txt
