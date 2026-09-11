@@ -13,6 +13,8 @@ dist-ssr
 .svelte-kit
 build
 .wrangler
+# ts-deploy owns this private release workspace inside the checkout.
+.terrascale-develop-release
 # Local development convenience only; the deployment destination lives in
 # ts-deploy's site kind.
 wrangler.toml

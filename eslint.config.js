@@ -11,6 +11,7 @@ export default tseslint.config(
       'build',
       'dist',
       '.wrangler',
+      '.terrascale-develop-release',
       'tmp',
     ],
   },
