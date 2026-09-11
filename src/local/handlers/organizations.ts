@@ -66,27 +66,12 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
     const name = body.name === undefined ? organization.name : nonBlank(body.name);
     if (name === undefined) return problemResponse(400, "invalid_request", "name is required.");
     const status = body.status === undefined ? organization.status : body.status;
-    if (status !== "Active" && status !== "BillingPending" && status !== "DeletionPending")
+    if (status !== "Active" && status !== "DeletionPending")
       return problemResponse(400, "invalid_request", "status is invalid.");
-    const plan = body.activePlan === undefined ? organization.activePlan : body.activePlan;
-    const pendingPlan = body.pendingPlan === undefined ? organization.pendingPlan : body.pendingPlan;
-    const validPlans = new Set(["free", "starter", "pro", "scale", "business", "enterprise"]);
-    if (plan !== undefined && (typeof plan !== "string" || !validPlans.has(plan)))
-      return problemResponse(400, "invalid_request", "activePlan is invalid.");
-    if (
-      pendingPlan !== undefined &&
-      pendingPlan !== null &&
-      (typeof pendingPlan !== "string" || !validPlans.has(pendingPlan))
-    )
-      return problemResponse(400, "invalid_request", "pendingPlan is invalid.");
     const updated = {
       ...organization,
       name,
       status,
-      ...(plan === undefined ? {} : { activePlan: plan as Models.Organization["activePlan"] }),
-      ...(pendingPlan === undefined
-        ? {}
-        : { pendingPlan: pendingPlan as Models.Organization["pendingPlan"] }),
     } as Models.Organization;
     await put(store, "organizations", match.organizationId!, updated);
     return jsonResponse(updated);

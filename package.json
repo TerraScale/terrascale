@@ -33,10 +33,6 @@
       "types": "./dist/management.d.ts",
       "import": "./dist/management.js"
     },
-    "./tenants": {
-      "types": "./dist/tenants.d.ts",
-      "import": "./dist/tenants.js"
-    },
     "./react": {
       "types": "./dist/react/index.d.ts",
       "import": "./dist/react/index.js"

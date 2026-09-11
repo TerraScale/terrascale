@@ -40,7 +40,6 @@ test("package metadata declares the supported Node and browser matrix", async ()
     ["./schema", "schema"],
     ["./sql", "sql"],
     ["./management", "management"],
-    ["./tenants", "tenants"],
   ] as const) {
     assert.deepEqual(packageJson.exports?.[name], {
       types: `./dist/${target}.d.ts`,

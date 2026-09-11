@@ -3,7 +3,7 @@
 // This worker owns three chapters:
 //   1. CRUD/SQL (databases + saved-queries + typed SQL builder)
 //   2. live+sync (reactive sync/v1 state machine + HTTP attach/poll)
-//   3. tenants+usage (database-per-tenant + usage surfaces)
+//   3. usage surfaces
 //
 // Keep new producer-backed flows in this journey; do not replace the
 // deterministic protocol chapters below.
@@ -18,7 +18,6 @@ import { beforeAll, describe, test } from "vitest";
 
 import { createTerraScaleClient } from "../src/factory.js";
 import { TerraScaleHttp } from "../src/http.js";
-import { TenantContractGapError, TenantsClient } from "../src/tenants.js";
 import {
   Direction,
   Query,
@@ -70,13 +69,6 @@ const journeySavedQuery = {
   createdAt: "2026-08-05T00:00:00Z",
   updatedAt: "2026-08-05T00:00:00Z",
   revision: "opaque-resource-revision",
-};
-
-const journeyTenant = {
-  key: "acme",
-  databaseId: "db-acme",
-  template: "default",
-  placementLock: "eu-only",
 };
 
 const journeyOrgUsage = {
@@ -686,52 +678,10 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Chapter 3: tenants+usage (mock)
+// Chapter 3: usage (mock)
 // ---------------------------------------------------------------------------
 
-describe("P-3 journey chapter 3: tenants+usage (mock)", () => {
-  test("tenant lifecycle inherits placement and uses named routes", async () => {
-    const http = new TerraScaleHttp({
-      apiBaseUrl: "https://api.terrascale.test",
-      idempotencyKeyFactory: () => "tenant-operation-1",
-      fetch: async () => jsonResponse(journeyTenant),
-    });
-    const tenants = new TenantsClient(http);
-
-    // Database-per-tenant is not in the published v1 OpenAPI contract. The
-    // SDK therefore refuses every operation before a request can leave it.
-    assert.throws(
-      () => tenants.create({ key: "acme", template: "default", placementLock: ["FRA"] }),
-      TenantContractGapError,
-    );
-    assert.throws(() => tenants.get("acme"), TenantContractGapError);
-    assert.throws(() => tenants.delete("acme", { confirm: true }), TenantContractGapError);
-  });
-
-  test("tenant validation fails closed before any request", async () => {
-    let fetches = 0;
-    const tenants = new TenantsClient(
-      new TerraScaleHttp({
-        apiBaseUrl: "https://api.terrascale.test",
-        fetch: async () => {
-          fetches += 1;
-          return jsonResponse(journeyTenant);
-        },
-      }),
-    );
-
-    assert.throws(() => tenants.create({ key: "  " }), TenantContractGapError);
-    assert.throws(() => tenants.create({ key: "acme", placementLock: [] }), TenantContractGapError);
-    assert.throws(() => tenants.get("  "), TenantContractGapError);
-    assert.throws(() => tenants.delete("acme", {} as never), TenantContractGapError);
-    assert.equal(fetches, 0);
-
-    const controller = new AbortController();
-    controller.abort();
-    assert.throws(() => tenants.get("acme", { signal: controller.signal }), TenantContractGapError);
-    assert.equal(fetches, 0);
-  });
-
+describe("P-3 journey chapter 3: usage (mock)", () => {
   test("usage journey reads project, organization, workload, latency, and history", async () => {
     const summary = {
       projectId,
@@ -1305,7 +1255,7 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
   });
 
 
-  test("published backup, branch, export, webhook, usage, tenant, import, and dashboard surfaces are honest", async () => {
+  test("published backup, branch, export, webhook, usage, import, and dashboard surfaces are honest", async () => {
     const db = `management-${liveResourceName("surface")}`;
     const branch = `${db}-branch`;
     const restored = `${db}-restored`;
@@ -1401,7 +1351,6 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
         expectLiveStatus(reply, 202, "create_export");
       });
 
-      await check("tenants", async () => requirePublishedDomain(contract, "tenant"));
       await check("imports", async () => requirePublishedDomain(contract, "import"));
       await check("dashboard", async () => {
         if (liveDashboardBaseUrl === undefined) {

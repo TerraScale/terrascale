@@ -28,9 +28,7 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal(typeof client.databaseBranches.getCapability, "function");
   assert.equal(typeof client.databaseBranches.requestClone, "function");
   assert.equal(typeof client.management.databases.list, "function");
-  assert.equal(typeof client.tenants.list, "function");
   assert.equal(Object.getOwnPropertyNames(client).includes("management"), true);
-  assert.equal(Object.getOwnPropertyNames(client).includes("tenants"), true);
   assert.equal(Object.values(client).length, 11);
   for (const removedClient of ["auth", "apiKeys", "m2m", "billing", "pricing", "security"]) {
     assert.equal(removedClient in client, false);
@@ -73,7 +71,6 @@ test("built package keeps all public clients on typed operations without a runti
     "./schema",
     "./sql",
     "./management",
-    "./tenants",
     "./react",
     "./tanstack",
     "./better-auth",

@@ -29,7 +29,6 @@ is `https://api.terrascale.tech`. Keep server credentials out of browser bundles
 | `@terrascale/sdk/schema` | Schema builders |
 | `@terrascale/sdk/sql` | Parameterized SQL builders |
 | `@terrascale/sdk/management` | Database and collection management |
-| `@terrascale/sdk/tenants` | Tenant operations |
 | `@terrascale/sdk/react` | React integration |
 | `@terrascale/sdk/tanstack` | TanStack integration |
 | `@terrascale/sdk/better-auth` | Server-only Better Auth adapter |

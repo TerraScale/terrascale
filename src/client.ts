@@ -8,7 +8,6 @@ import {
   type TerraScaleRegionCode,
 } from "./regions.js";
 import { err, type TerraScaleFailure, type TerraScaleResult, type TerraScaleSuccess } from "./result.js";
-import { TenantsClient } from "./tenants.js";
 import { TerraScaleSyncV1Client } from "./sync/v1/client.js";
 
 const apiRoot = "/api/v1";
@@ -37,8 +36,6 @@ export class TerraScaleClient {
   readonly notifications: NotificationsClient;
   /** The separately named, contract-bound management surface. */
   readonly management: TerraScaleManagementClient;
-  /** Database-per-tenant operations, scoped to this runtime configuration. */
-  readonly tenants: TenantsClient;
   /** Direct document CRUD against the public database API. */
   readonly documents: DocumentsClient;
   /** Read-only parameterized SQL against a named database. */
@@ -74,10 +71,8 @@ export class TerraScaleClient {
     // enumeration. Their operation families have their own named manifests
     // and must not be presented as part of the dashboard product routes.
     this.management = new TerraScaleManagementClient(config);
-    this.tenants = new TenantsClient(new TerraScaleHttp(config));
     Object.defineProperties(this, {
       management: { enumerable: false },
-      tenants: { enumerable: false },
       documents: { enumerable: false },
       sql: { enumerable: false },
       reactive: { enumerable: false },

@@ -29,17 +29,3 @@ export type {
   OperationPage,
   OperationSummary,
 } from "./management.js";
-export type {
-  CreateTenantBranchRequest,
-  CreateTenantKeyRequest,
-  CreateTenantRequest,
-  DeleteTenantOptions,
-  Tenant,
-  TenantApiKey,
-  TenantBranch,
-  TenantListQuery,
-  TenantOperationOptions,
-  TenantPlacementLock,
-  TenantTemplate,
-  TenantsClient,
-} from "./tenants.js";
