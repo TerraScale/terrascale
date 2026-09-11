@@ -60,6 +60,7 @@ describe("RegionsClient", () => {
       { regions: [{ ...gru, clusterNodeTag: "A" }] },
       { regions: "GRU" },
       { regions: [gru] },
+      { regions: [gru], hosts: {} },
       { regions: [gru], hosts: { GRU: 42 } },
       { regions: [gru], hosts: { gru: "https://gru.api.terrascale.tech" } },
     ];

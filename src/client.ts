@@ -1780,6 +1780,11 @@ function decodeRegionsResponse(value: unknown): Models.RegionsResponse {
       `response.hosts.${code}`,
     );
   }
+  for (const region of regions) {
+    if (!Object.hasOwn(decodedHosts, region.code)) {
+      throw new TypeError(`response.hosts.${region.code} is required for every response region.`);
+    }
+  }
   return { regions, hosts: decodedHosts };
 }
 
