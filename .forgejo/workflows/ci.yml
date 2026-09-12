@@ -3,13 +3,16 @@ name: ts-docs CI
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   ci:
-    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy-bisect.yml@main
+    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
     with:
-      probe_value: hello
+      repo: ts-docs
     secrets: inherit
