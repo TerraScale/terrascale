@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   ci:
-    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
+    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy-bisect.yml@main
     with:
       repo: ts-docs
     secrets: inherit
