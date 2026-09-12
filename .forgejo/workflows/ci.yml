@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   ci:
-    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
+    uses: TerraScale/ts-deploy/.forgejo/workflows/probe-ctx.yml@main
     with:
       repo: ts-landing
     secrets: inherit
