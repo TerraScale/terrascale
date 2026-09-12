@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   ci:
-    uses: TerraScale/ts-deploy/.forgejo/workflows/probe-reusable.yml@main
+    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy-bisect.yml@main
     with:
       probe_value: hello
     secrets: inherit
