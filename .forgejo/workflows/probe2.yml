@@ -1,5 +1,11 @@
 on:
   workflow_call:
+    inputs:
+      probe_input:
+        description: probe
+        type: string
+        required: false
+        default: ""
 
 jobs:
   probe:
@@ -7,8 +13,11 @@ jobs:
     timeout-minutes: 5
     env:
       PROBE_VAR: ${{ vars.TS_DEPLOY_VERSION }}
-      PROBE_SECRET: ${{ secrets.TS_DEPLOY_RELEASE_SIGNING_KEY }}
+      FORGEJO_TOKEN: ${{ forgejo.token }}
+      PROBE_INPUT: ${{ inputs.probe_input }}
     steps:
-      - run: test -n "${PROBE_VAR}" || { echo "vars did not propagate"; exit 1; }
-        env:
-          PROBE_PASSED: ${{ env.PROBE_VAR }}
+      - run: |
+          set -eu
+          test -n "${PROBE_VAR}"
+          test -n "${FORGEJO_TOKEN}"
+          echo "env-contexts-ok"
