@@ -7,18 +7,20 @@
   "scripts": {
     "dev": "vitepress dev docs",
     "build": "vitepress build docs",
-    "preview": "vitepress preview docs",
+    "preview": "npm run build && wrangler dev",
     "test": "npm run test:local && node scripts/check-build.mjs",
     "test:stub": "npm run test:local && node scripts/check-build.mjs --sandbox=stub",
     "i18n:sync": "node scripts/i18n-sync.mjs",
     "i18n:status": "node scripts/i18n-status.mjs",
-    "test:local": "node --test scripts/wire-decoder.test.mjs && npm ci --prefix create-terrascale-app --ignore-scripts && npm test --prefix create-terrascale-app"
+    "test:local": "node --test scripts/wire-decoder.test.mjs && npm ci --prefix create-terrascale-app --ignore-scripts && npm test --prefix create-terrascale-app",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "vue": "3.5.42"
   },
   "devDependencies": {
-    "vitepress": "1.6.4"
+    "vitepress": "1.6.4",
+    "wrangler": "^4.131.1"
   },
   "engines": {
     "node": ">=20"

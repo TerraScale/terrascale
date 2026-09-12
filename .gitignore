@@ -4,3 +4,10 @@ docs/.vitepress/dist/
 
 # Private generated CI release candidates and signatures
 /.terrascale-develop-release/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example

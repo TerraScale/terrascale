@@ -1,0 +1,8 @@
+on:
+  workflow_call:
+
+jobs:
+  probe:
+    runs-on: terrascale-builder
+    steps:
+      - run: echo probe-ok
