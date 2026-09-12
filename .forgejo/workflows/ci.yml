@@ -3,10 +3,16 @@ name: ts-docs CI
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   ci:
-    uses: TerraScale/ts-deploy/.forgejo/workflows/probe-reusable.yml@main
+    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
+    with:
+      repo: ts-docs
+    secrets: inherit
