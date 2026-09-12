@@ -1,0 +1,14 @@
+on:
+  workflow_call:
+
+jobs:
+  probe:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    env:
+      PROBE_VAR: ${{ vars.TS_DEPLOY_VERSION }}
+      PROBE_SECRET: ${{ secrets.TS_DEPLOY_RELEASE_SIGNING_KEY }}
+    steps:
+      - run: test -n "${PROBE_VAR}" || { echo "vars did not propagate"; exit 1; }
+        env:
+          PROBE_PASSED: ${{ env.PROBE_VAR }}
