@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TerraBase;
 
+IdentifierTests.Run();
 await StoragePortIsAtomicAndVersioned();
 await DurableStorageSurvivesCloseAndReopen();
 MetricsAreBoundedAndPrometheusCompatible();
@@ -55,7 +56,7 @@ static async Task DurableStorageSurvivesCloseAndReopen()
         await using (var provider = new FileStorageProvider(path))
         {
             var read = await provider.ReadAsync(key);
-            Assert(read?.Version == 1 && read.Body.GetProperty("name").GetString() == "Ada", "durable documents must survive close and reopen");
+            Assert(read is not null && read.Version == 1 && read.Body.GetProperty("name").GetString() == "Ada", "durable documents must survive close and reopen");
             var scanned = new List<Document>();
             await foreach (var document in provider.ScanAsync(key.Tenant, key.Collection))
             {
