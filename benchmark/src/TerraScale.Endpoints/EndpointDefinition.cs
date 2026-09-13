@@ -6,6 +6,10 @@ public sealed class EndpointDefinition
     private readonly List<string> methods = [];
     private readonly List<string> tags = [];
     private readonly List<object> metadata = [];
+    private readonly List<(Type Type, int StatusCode, string ContentType)> responses = [];
+    private string[]? acceptedContentTypes;
+    private string[]? authorizationPolicies;
+    private bool allowAnonymous;
 
     /// <summary>The route pattern.</summary>
     public string Route { get; private set; } = "/";
@@ -93,6 +97,54 @@ public sealed class EndpointDefinition
         return this;
     }
 
+    /// <summary>Documents a response in OpenAPI.</summary>
+    public EndpointDefinition Produces<TResponse>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") =>
+        this.Produces(typeof(TResponse), statusCode, contentType);
+
+    /// <summary>Documents a response type in OpenAPI.</summary>
+    public EndpointDefinition Produces(Type responseType, int statusCode = StatusCodes.Status200OK, string contentType = "application/json")
+    {
+        ArgumentNullException.ThrowIfNull(responseType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
+        this.responses.Add((responseType, statusCode, contentType));
+        return this;
+    }
+
+    /// <summary>Documents accepted request content in OpenAPI.</summary>
+    public EndpointDefinition Accepts<TRequest>(params string[] contentTypes) =>
+        this.Accepts(typeof(TRequest), contentTypes);
+
+    /// <summary>Documents accepted request content in OpenAPI.</summary>
+    public EndpointDefinition Accepts(Type requestType, params string[] contentTypes)
+    {
+        ArgumentNullException.ThrowIfNull(requestType);
+        ArgumentNullException.ThrowIfNull(contentTypes);
+        if (contentTypes.Length == 0 || contentTypes.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("At least one content type is required.", nameof(contentTypes));
+        }
+
+        this.acceptedContentTypes = contentTypes;
+        return this;
+    }
+
+    /// <summary>Allows unauthenticated requests to this endpoint.</summary>
+    public EndpointDefinition AllowAnonymous()
+    {
+        this.allowAnonymous = true;
+        this.authorizationPolicies = null;
+        return this;
+    }
+
+    /// <summary>Requires authorization, optionally using named policies.</summary>
+    public EndpointDefinition RequireAuthorization(params string[] policies)
+    {
+        ArgumentNullException.ThrowIfNull(policies);
+        this.allowAnonymous = false;
+        this.authorizationPolicies = policies;
+        return this;
+    }
+
     /// <summary>Adds endpoint metadata.</summary>
     public EndpointDefinition WithMetadata(params object[] values)
     {
@@ -131,12 +183,29 @@ public sealed class EndpointDefinition
 
         if (requestType is not null && requestType != typeof(EmptyRequest))
         {
-            builder.Accepts(requestType, "application/json");
+            builder.Accepts(requestType, (this.acceptedContentTypes ?? ["application/json"])[0]);
+        }
+        else if (this.acceptedContentTypes is not null)
+        {
+            builder.Accepts(typeof(EmptyRequest), this.acceptedContentTypes[0]);
         }
 
         if (responseType != typeof(void) && !typeof(IResult).IsAssignableFrom(responseType))
         {
             builder.Produces(StatusCodes.Status200OK, responseType, "application/json");
+        }
+        foreach (var response in this.responses)
+        {
+            builder.Produces(response.StatusCode, response.Type, response.ContentType);
+        }
+
+        if (this.allowAnonymous)
+        {
+            builder.AllowAnonymous();
+        }
+        else if (this.authorizationPolicies is not null)
+        {
+            builder.RequireAuthorization(this.authorizationPolicies);
         }
 
         foreach (var item in this.metadata)
