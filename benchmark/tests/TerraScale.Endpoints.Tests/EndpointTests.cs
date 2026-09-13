@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Endpoints;
@@ -65,6 +66,23 @@ public sealed class EndpointTests
     }
 
     [Test]
+    public async Task MultipleAcceptedContentTypesAreMapped()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddSingleton(new EndpointCatalog([typeof(RequestProbeEndpoint)]));
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        await app.StartAsync();
+        var endpoint = app.Services.GetServices<EndpointDataSource>().SelectMany(source => source.Endpoints).Single();
+        var accepted = endpoint.Metadata.GetOrderedMetadata<IAcceptsMetadata>();
+        await Assert.That(accepted.SelectMany(item => item.ContentTypes)).Contains("application/json");
+        await Assert.That(accepted.SelectMany(item => item.ContentTypes)).Contains("application/problem+json");
+        await app.StopAsync();
+        await app.DisposeAsync();
+    }
+
+    [Test]
     public async Task PrecomputedCatalogDeduplicatesTypes()
     {
         var catalog = new EndpointCatalog([typeof(ProbeEndpoint), typeof(ProbeEndpoint)]);
@@ -76,6 +94,7 @@ public sealed class EndpointTests
     public async Task SenderStyleEndpointMapsAsARequestHandler()
     {
         var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.AddSingleton(new EndpointCatalog([typeof(SenderProbeEndpoint)]));
         var app = builder.Build();
         app.MapTerraScaleEndpoints();
@@ -110,3 +129,10 @@ public sealed class SenderProbeEndpoint : Endpoint<SenderProbeRequest>
 }
 public sealed record SenderProbeRequest(string Value);
 public sealed record SenderProbeResponse(string Value);
+
+public sealed class RequestProbeEndpoint : Endpoint<RequestProbe, string>
+{
+    public override void Configure() { Post("/request-probe"); Accepts<RequestProbe>("application/json", "application/problem+json"); }
+    public override Task<string> HandleAsync(RequestProbe request, CancellationToken cancellationToken) => Task.FromResult(request.Value);
+}
+public sealed record RequestProbe(string Value);

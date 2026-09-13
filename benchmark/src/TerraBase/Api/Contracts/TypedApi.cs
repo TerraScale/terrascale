@@ -94,7 +94,8 @@ public sealed class TypedApi
                     context.Request.Headers["X-TB-Tenant"].ToString(),
                     context.Request.Headers["X-TB-Principal"].ToString(),
                     "admin.status",
-                    channel => channel.AdminStatusAsync(cancellationToken))
+                    channel => channel.AdminStatusAsync(cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(status);
         }
@@ -118,7 +119,8 @@ public sealed class TypedApi
                     context.Request.Headers["X-TB-Tenant"].ToString(),
                     context.Request.Headers["X-TB-Principal"].ToString(),
                     "topology.read",
-                    channel => channel.TopologyReadAsync(cancellationToken))
+                    channel => channel.TopologyReadAsync(cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(topology);
         }
@@ -135,7 +137,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var reason = request.Reason == "supervisor" ? ShutdownReason.Supervisor() : ShutdownReason.Operator();
@@ -144,7 +146,7 @@ public sealed class TypedApi
         }
         catch (EngineUnavailableException failure)
         {
-            return this.Unavailable(failure);
+            return Unavailable(failure);
         }
         catch (Exception failure)
         {
@@ -173,11 +175,11 @@ public sealed class TypedApi
             return invalidDocument;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var answer = await this.supervisor
-                .CallAsync(caller.Tenant, caller.Principal, "document.read", channel => channel.DocumentReadAsync(collection, document, cancellationToken))
+                .CallAsync(caller.Tenant, caller.Principal, "document.read", channel => channel.DocumentReadAsync(collection, document, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             return answer.Found
                 ? Results.Json(new DocumentReadDto(true, DocumentBodyDto.Of(answer.Document!)))
@@ -206,12 +208,12 @@ public sealed class TypedApi
             return invalidDocument;
         }
 
-        if (this.Idempotency(context) is { } badKey)
+        if (Idempotency(context) is { } badKey)
         {
             return badKey;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
         try
         {
@@ -224,7 +226,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "document.write",
-                    channel => channel.DocumentWriteAsync(put, Expected(context), idempotencyKey, idempotencyKey, cancellationToken))
+                    channel => channel.DocumentWriteAsync(put, Expected(context), idempotencyKey, idempotencyKey, cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(WriteOutcomeDto.Of(answer.Outcome));
         }
@@ -251,12 +254,12 @@ public sealed class TypedApi
             return invalidDocument;
         }
 
-        if (this.Idempotency(context) is { } badKey)
+        if (Idempotency(context) is { } badKey)
         {
             return badKey;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
         try
         {
@@ -265,7 +268,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "document.delete",
-                    channel => channel.DocumentDeleteAsync(collection, document, Expected(context), idempotencyKey, idempotencyKey, cancellationToken))
+                    channel => channel.DocumentDeleteAsync(collection, document, Expected(context), idempotencyKey, idempotencyKey, cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(WriteOutcomeDto.Of(answer.Outcome));
         }
@@ -282,7 +286,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var answer = await this.supervisor
@@ -290,7 +294,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "query.execute",
-                    channel => channel.QueryExecuteAsync(NextQueryId(), request.Text, request.MaxItems ?? 256, cancellationToken))
+                    channel => channel.QueryExecuteAsync(NextQueryId(), request.Text, request.MaxItems ?? 256, cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new QueryResponseDto(
                 answer.Documents.Select(DocumentBodyDto.Of).ToArray(),
@@ -310,11 +315,11 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var answer = await this.supervisor
-                .CallAsync(caller.Tenant, caller.Principal, "query.cancel", channel => channel.QueryCancelAsync(request.QueryId, cancellationToken))
+                .CallAsync(caller.Tenant, caller.Principal, "query.cancel", channel => channel.QueryCancelAsync(request.QueryId, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new QueryCancelResponseDto(answer.Outcome.Variant.ToSnakeCase()));
         }
@@ -331,7 +336,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var answer = await this.supervisor
@@ -341,7 +346,8 @@ public sealed class TypedApi
                     "family.read",
                     channel => channel.FamilyReadAsync(
                         new FamilyReadRequest { Family = family, Name = name, RequestCodec = request.RequestCodec, Request = request.RequestBytes },
-                        cancellationToken))
+                        cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new FamilyResponseDto(answer.ResponseCodec, answer.Response));
         }
@@ -358,12 +364,12 @@ public sealed class TypedApi
             return refused;
         }
 
-        if (this.Idempotency(context) is { } badKey)
+        if (Idempotency(context) is { } badKey)
         {
             return badKey;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var answer = await this.supervisor
@@ -381,7 +387,8 @@ public sealed class TypedApi
                             OperationId = context.Request.Headers["Idempotency-Key"].ToString(),
                         },
                         context.Request.Headers["Idempotency-Key"].ToString(),
-                        cancellationToken))
+                        cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new FamilyResponseDto(answer.ResponseCodec, answer.Response));
         }
@@ -407,11 +414,11 @@ public sealed class TypedApi
             return invalid;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var status = await this.supervisor
-                .CallAsync(caller.Tenant, caller.Principal, "schema.status", channel => channel.SchemaStatusAsync(collection, cancellationToken))
+                .CallAsync(caller.Tenant, caller.Principal, "schema.status", channel => channel.SchemaStatusAsync(collection, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new SchemaStatusDto(status.EnforcedVersion, status.RuleCount));
         }
@@ -433,12 +440,12 @@ public sealed class TypedApi
             return invalid;
         }
 
-        if (this.Idempotency(context) is { } badKey)
+        if (Idempotency(context) is { } badKey)
         {
             return badKey;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
         try
         {
@@ -448,7 +455,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "schema.declare",
-                    channel => channel.SchemaDeclareAsync(collection, schema, idempotencyKey, idempotencyKey, cancellationToken))
+                    channel => channel.SchemaDeclareAsync(collection, schema, idempotencyKey, idempotencyKey, cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             this.audit.Record(
                 AuditKind.SchemaLifecycle,
@@ -483,7 +491,7 @@ public sealed class TypedApi
 
         if (request.Document is not { } document)
         {
-            var missing = this.ResolveCaller(context);
+            var missing = ResolveCaller(context);
             this.audit.Record(
                 AuditKind.ScopeRefused,
                 missing.Tenant,
@@ -496,7 +504,7 @@ public sealed class TypedApi
                 statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var answer = await this.supervisor
@@ -504,7 +512,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "schema.validate",
-                    channel => channel.SchemaValidateAsync(collection, JsonValues.ToValue(document), cancellationToken))
+                    channel => channel.SchemaValidateAsync(collection, JsonValues.ToValue(document), cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new SchemaValidationDto(
                 answer.EnforcedVersion,
@@ -529,11 +538,11 @@ public sealed class TypedApi
             return invalid;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var status = await this.supervisor
-                .CallAsync(caller.Tenant, caller.Principal, "migration.status", channel => channel.MigrationStatusAsync(collection, cancellationToken))
+                .CallAsync(caller.Tenant, caller.Principal, "migration.status", channel => channel.MigrationStatusAsync(collection, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new MigrationStatusDto(MigrationStateDto.Of(status.State)));
         }
@@ -560,12 +569,12 @@ public sealed class TypedApi
             return this.MigrationContractMissing(context, "migration.dry-run");
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var contract = dryRunContract.ToContract();
             var answer = await this.supervisor
-                .CallAsync(caller.Tenant, caller.Principal, "migration.dry_run", channel => channel.MigrationDryRunAsync(contract, cancellationToken))
+                .CallAsync(caller.Tenant, caller.Principal, "migration.dry_run", channel => channel.MigrationDryRunAsync(contract, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new { plan = MigrationPlanDto.Of(answer.Plan) });
         }
@@ -587,7 +596,7 @@ public sealed class TypedApi
             return invalid;
         }
 
-        if (this.Idempotency(context) is { } badKey)
+        if (Idempotency(context) is { } badKey)
         {
             return badKey;
         }
@@ -597,7 +606,7 @@ public sealed class TypedApi
             return this.MigrationContractMissing(context, "migration.apply");
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
         try
         {
@@ -607,7 +616,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "migration.apply",
-                    channel => channel.MigrationApplyAsync(contract, request.AcknowledgeNotRollbackable, idempotencyKey, idempotencyKey, cancellationToken))
+                    channel => channel.MigrationApplyAsync(contract, request.AcknowledgeNotRollbackable, idempotencyKey, idempotencyKey, cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             this.audit.Record(
                 AuditKind.SchemaLifecycle,
@@ -634,7 +644,7 @@ public sealed class TypedApi
     /// <returns>The refusal answer.</returns>
     private IResult MigrationContractMissing(HttpContext context, string operation)
     {
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         this.audit.Record(
             AuditKind.ScopeRefused,
             caller.Tenant,
@@ -691,7 +701,7 @@ public sealed class TypedApi
             return;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         var from = FromSequence(context, context.Request.Headers["Last-Event-ID"].ToString());
         context.Response.Headers.ContentType = "text/event-stream";
         context.Response.Headers.CacheControl = "no-cache";
@@ -733,7 +743,7 @@ public sealed class TypedApi
             return;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         var from = FromSequence(context, context.Request.Query["from"].ToString());
         using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
         var send = new SemaphoreSlim(1, 1);
@@ -896,7 +906,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var answer = await this.supervisor
@@ -904,7 +914,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "backbone.acknowledge",
-                    channel => channel.BackboneAcknowledgeAsync(id, request.ThroughSequence, cancellationToken))
+                    channel => channel.BackboneAcknowledgeAsync(id, request.ThroughSequence, cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new StreamAckResponseDto(answer.SubscriptionId, answer.AcknowledgedThrough));
         }
@@ -925,7 +936,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var answer = await this.supervisor
@@ -933,7 +944,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "backbone.unsubscribe",
-                    channel => channel.BackboneUnsubscribeAsync(id, cancellationToken))
+                    channel => channel.BackboneUnsubscribeAsync(id, cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             this.audit.Record(
                 AuditKind.SubscriptionClosed,
@@ -970,7 +982,7 @@ public sealed class TypedApi
             return invalid;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         try
         {
             var answer = await this.supervisor
@@ -978,7 +990,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "sync.session_setup",
-                    channel => channel.SyncSessionSetupAsync(request.Collection, request.ResumeBytes, cancellationToken))
+                    channel => channel.SyncSessionSetupAsync(request.Collection, request.ResumeBytes, cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             this.supervisor.Sessions[answer.SessionId] = new TrackedSession(answer.SessionId, caller.Tenant, request.Collection, this.supervisor.Generation);
             this.audit.Record(
@@ -1012,7 +1025,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         var sessions = this.supervisor.Sessions.Values
             .Where(session => session.Tenant == caller.Tenant)
             .Select(session => new SyncSessionSummaryDto(session.SessionId, session.Collection, session.Generation))
@@ -1028,7 +1041,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         if (this.StaleSession(id, caller) is { } stale)
         {
             return stale;
@@ -1037,7 +1050,7 @@ public sealed class TypedApi
         try
         {
             var answer = await this.supervisor
-                .CallAsync(caller.Tenant, caller.Principal, "sync.delta_pull", channel => channel.SyncDeltaPullAsync(id, request.FromBytes, cancellationToken))
+                .CallAsync(caller.Tenant, caller.Principal, "sync.delta_pull", channel => channel.SyncDeltaPullAsync(id, request.FromBytes, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new SyncDeltaResponseDto(answer.SessionId, answer.PayloadCodec, answer.Payload, answer.Next, answer.Commits, answer.SingleCommitOversize));
         }
@@ -1064,7 +1077,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         if (this.StaleSession(id, caller) is { } stale)
         {
             return stale;
@@ -1073,7 +1086,7 @@ public sealed class TypedApi
         try
         {
             var answer = await this.supervisor
-                .CallAsync(caller.Tenant, caller.Principal, "sync.snapshot_pull", channel => channel.SyncSnapshotPullAsync(id, cancellationToken))
+                .CallAsync(caller.Tenant, caller.Principal, "sync.snapshot_pull", channel => channel.SyncSnapshotPullAsync(id, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new SyncSnapshotResponseDto(answer.SessionId, answer.PayloadCodec, answer.Payload, answer.Checkpoint));
         }
@@ -1094,7 +1107,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         if (this.StaleSession(id, caller) is { } stale)
         {
             return stale;
@@ -1103,7 +1116,7 @@ public sealed class TypedApi
         try
         {
             await this.supervisor
-                .CallAsync(caller.Tenant, caller.Principal, "sync.checkpoint_ack", channel => channel.SyncCheckpointAckAsync(id, request.CheckpointBytes, cancellationToken))
+                .CallAsync(caller.Tenant, caller.Principal, "sync.checkpoint_ack", channel => channel.SyncCheckpointAckAsync(id, request.CheckpointBytes, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(new SyncAckedDto(id));
         }
@@ -1128,12 +1141,12 @@ public sealed class TypedApi
             return refused;
         }
 
-        if (this.Idempotency(context) is { } badKey)
+        if (Idempotency(context) is { } badKey)
         {
             return badKey;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         if (this.StaleSession(id, caller) is { } stale)
         {
             return stale;
@@ -1148,7 +1161,8 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "sync.mutation_submit",
-                    channel => channel.SyncMutationSubmitAsync(id, request.Document, change, key, cancellationToken))
+                    channel => channel.SyncMutationSubmitAsync(id, request.Document, change, key, cancellationToken),
+                    cancellationToken)
                 .ConfigureAwait(false);
             var applied = answer.Outcome.Variant == "Applied";
             this.audit.Record(
@@ -1179,7 +1193,7 @@ public sealed class TypedApi
             return refused;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         if (this.StaleSession(id, caller) is { } stale)
         {
             return stale;
@@ -1188,7 +1202,7 @@ public sealed class TypedApi
         try
         {
             await this.supervisor
-                .CallAsync(caller.Tenant, caller.Principal, "sync.session_close", channel => channel.SyncSessionCloseAsync(id, cancellationToken))
+                .CallAsync(caller.Tenant, caller.Principal, "sync.session_close", channel => channel.SyncSessionCloseAsync(id, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
             this.supervisor.Sessions.TryRemove(id, out _);
             this.audit.Record(
@@ -1246,7 +1260,7 @@ public sealed class TypedApi
             return null;
         }
 
-        var caller = this.ResolveCaller(context);
+        var caller = ResolveCaller(context);
         this.audit.Record(
             AuditKind.ScopeRefused,
             caller.Tenant,
@@ -1259,7 +1273,7 @@ public sealed class TypedApi
             statusCode: StatusCodes.Status422UnprocessableEntity);
     }
 
-    private IResult? Idempotency(HttpContext context)
+    private static IResult? Idempotency(HttpContext context)
     {
         var key = context.Request.Headers["Idempotency-Key"].ToString();
         try
@@ -1327,7 +1341,7 @@ public sealed class TypedApi
 
     private static ulong NextQueryId() => (ulong)Interlocked.Increment(ref queryId);
 
-    private Caller ResolveCaller(HttpContext context) => new(
+    private static Caller ResolveCaller(HttpContext context) => new(
         context.Request.Headers["X-TB-Principal"].ToString(),
         context.Request.Headers["X-TB-Tenant"].ToString());
 
@@ -1428,7 +1442,7 @@ public sealed class TypedApi
         }
     }
 
-    private IResult Unavailable(EngineUnavailableException failure) => Results.Json(
+    private static IResult Unavailable(EngineUnavailableException failure) => Results.Json(
         new ErrorDto("engine-unavailable", failure.Message),
         statusCode: StatusCodes.Status503ServiceUnavailable);
 
