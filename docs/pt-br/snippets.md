@@ -6,19 +6,19 @@
 # Snippets
 
 Runnable snippets run against a real cloud sandbox branch pre-filled with the
-reader's key. `npm test` is the remote, fail-closed launch gate. It
+reader's key. `npm test` runs the deterministic local stub check. The explicit remote launch gate is `make qualify-remote`. It
 requires all three environment variables below and exits non-zero when the
 sandbox is unavailable; an absent sandbox is a failed gate, not a passing
-fixture run. `npm run test:stub` is an explicit local-development harness and
+fixture run. Remote qualification requires the sandbox variables above; `npm test` is local-only and
 never qualifies the remote contract or launch.
 
 ```bash
 TERRASCALE_SANDBOX_URL=https://<branch>.<region>.api.terrascale.tech \
-TERRASCALE_API_KEY=ts_... \
-TERRASCALE_DATABASE_ID=db_... \
-npm test
+TERRASCALE_SANDBOX_API_KEY=ts_... \
+TERRASCALE_SANDBOX_DATABASE_ID=db_... \
+make qualify-remote
 # Local-only smoke test; this is not launch qualification.
-npm run test:stub
+npm test
 ```
 
 Do not put a production credential in a snippet fixture. Use a disposable

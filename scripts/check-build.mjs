@@ -1,6 +1,6 @@
-// Verification for the docs build. The default run executes every snippet in
-// the configured cloud branch and fails closed when it cannot qualify it;
-// --sandbox=stub selects the deterministic local harness.
+// Verification for the docs build. Local checks select --sandbox=stub;
+// --sandbox=remote is reserved for explicit cloud qualification and fails
+// closed when its sandbox credentials are absent.
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -59,7 +59,7 @@ assert.ok(!starterPage.includes("new TerraScale("), "starter does not use remove
 assert.ok(!starterPage.includes(".from("), "starter does not use removed collection facade");
 assert.ok(read("create-terrascale-app/template/package.json").includes('"@terrascale/sdk": "0.3.0"'), "starter pins the current SDK version");
 assert.ok(read("create-terrascale-app/template/terrascale.schema.json").includes('"historyRetentionDays": 7'), "starter schema uses canonical JSON shape");
-assert.ok(read("scripts/run-snippets.mjs").includes("TERRASCALE_API_KEY"), "remote runner is credential-gated");
+assert.ok(read("scripts/run-snippets.mjs").includes("TERRASCALE_SANDBOX_API_KEY"), "remote runner is credential-gated");
 assert.ok(read("scripts/run-snippets.mjs").includes("launch gate not passed"), "missing real sandbox is an explicit failed launch gate");
 assert.ok(read("scripts/run-snippets.mjs").includes("x-terrascale-capability"), "reactive requests carry the view capability");
 assert.ok(!read("scripts/run-snippets.mjs").includes("frame.t"), "remote runner does not decode legacy JSON frame fields");

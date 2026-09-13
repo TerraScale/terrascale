@@ -204,12 +204,12 @@ export { normalizeSandboxOrigin, resolveSandboxUrl, VIEW_CAPABILITY_HEADER };
 
 export function createRemoteSandbox() {
   const configuredBase = process.env.TERRASCALE_SANDBOX_URL;
-  const key = process.env.TERRASCALE_API_KEY;
-  const database = process.env.TERRASCALE_DATABASE_ID;
+  const key = process.env.TERRASCALE_SANDBOX_API_KEY;
+  const database = process.env.TERRASCALE_SANDBOX_DATABASE_ID;
   if (!configuredBase || !key || !database) {
     throw new Error(
       "launch gate not passed: the real cloud sandbox is unavailable. Set " +
-        "TERRASCALE_SANDBOX_URL + TERRASCALE_API_KEY + TERRASCALE_DATABASE_ID " +
+        "TERRASCALE_SANDBOX_URL + TERRASCALE_SANDBOX_API_KEY + TERRASCALE_SANDBOX_DATABASE_ID " +
         "for a cloud dev branch pre-filled with the reader's key (D-56); " +
         "the local stub is never substituted automatically.",
     );
@@ -358,7 +358,7 @@ export function createRemoteSandbox() {
     mode: "remote",
     databaseId: database,
     async put({ databaseId: requestedDatabaseId, collection, doc }) {
-      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_SANDBOX_DATABASE_ID");
       if (!doc || typeof doc.id !== "string" || !doc.id) throw new Error("doc must have a string id");
       const active = [...subscriptions].filter((state) => state.collection === collection);
       const { body } = await request(pathFor(collection, doc.id), {
@@ -370,17 +370,17 @@ export function createRemoteSandbox() {
       return { ...doc, _rev: body?.revision ?? body?.rev ?? "remote" };
     },
     async get({ databaseId: requestedDatabaseId, collection, id }) {
-      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_SANDBOX_DATABASE_ID");
       const { body, response } = await request(pathFor(collection, id), {}, [404]);
       return response.status === 404 ? null : body;
     },
     async remove({ databaseId: requestedDatabaseId, collection, id }) {
-      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_SANDBOX_DATABASE_ID");
       const { response } = await request(pathFor(collection, id), { method: "DELETE" }, [404]);
       return response.status !== 404;
     },
     async query({ databaseId: requestedDatabaseId, collection, query }) {
-      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_SANDBOX_DATABASE_ID");
       if (!query || query.op !== "=") throw new Error("remote snippet supports equality SQL only");
       const escapedCollection = collection.replaceAll('"', '""');
       const escapedField = query.field.replaceAll('"', '""');
@@ -398,7 +398,7 @@ export function createRemoteSandbox() {
       });
     },
     async subscribe({ databaseId: requestedDatabaseId, subscription, query, parameters }) {
-      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_SANDBOX_DATABASE_ID");
       const { value } = await reactiveRequest({ databaseId: database, subscription, statement: query, parameters: bytesToBase64(parameters), checkpoint: null, transport: "http" });
       const { view, generation, snapshot_chunks: snapshots, log: rawLogUrl, capability, capability_header: capabilityHeader } = value ?? {};
       if (typeof view !== "string" || !Number.isInteger(Number(generation)) || typeof capability !== "string" || typeof capabilityHeader !== "string" || capabilityHeader.toLowerCase() !== VIEW_CAPABILITY_HEADER || typeof rawLogUrl !== "string" || !Array.isArray(snapshots)) {

@@ -19,14 +19,17 @@ npm run dev
 npm ci && npm run build
 ```
 
-`npm test` runs runnable snippets against a real sandbox branch and fails
-closed when its credentials are missing. Set the URL, API key, and database ID:
+`make check` (and `npm test`) runs the deterministic local stub harness. This
+checks the build and runnable snippet behavior without cloud credentials.
+
+The explicit remote qualification lane runs against a real sandbox branch and
+fails closed unless all sandbox credentials are supplied:
 
 ```bash
 TERRASCALE_SANDBOX_URL=https://<branch>.<region>.api.terrascale.tech \
-TERRASCALE_API_KEY=ts_... \
-TERRASCALE_DATABASE_ID=db_... \
-npm test
+TERRASCALE_SANDBOX_API_KEY=ts_... \
+TERRASCALE_SANDBOX_DATABASE_ID=db_... \
+make qualify-remote
 ```
 
 For the deterministic local harness, use the explicit stub mode:
@@ -34,3 +37,6 @@ For the deterministic local harness, use the explicit stub mode:
 ```bash
 npm run test:stub
 ```
+
+The stub harness is local smoke evidence only; it never substitutes for the
+remote qualification lane.

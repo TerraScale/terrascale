@@ -74,8 +74,8 @@ test("remote runner attaches the configured database and follows the server view
   const { createRemoteSandbox } = await import("./run-snippets.mjs");
   const settings = {
     TERRASCALE_SANDBOX_URL: "https://sandbox.example.test",
-    TERRASCALE_API_KEY: "test-api-token",
-    TERRASCALE_DATABASE_ID: "demo",
+    TERRASCALE_SANDBOX_API_KEY: "test-api-token",
+    TERRASCALE_SANDBOX_DATABASE_ID: "demo",
   };
   const before = Object.fromEntries(Object.keys(settings).map((key) => [key, process.env[key]]));
   Object.assign(process.env, settings);

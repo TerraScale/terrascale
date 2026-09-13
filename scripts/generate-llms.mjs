@@ -74,10 +74,11 @@ ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 ## Snippet harness
 
 - Snippet sources: docs/snippets/*.ts. Runnable snippets export \`run(sandbox)\`.
-- Remote mode (the default, fail-closed): set TERRASCALE_SANDBOX_URL,
-  TERRASCALE_API_KEY, and TERRASCALE_DATABASE_ID, then run \`npm test\`.
-- Explicit local stub mode (no credentials): \`npm run test:stub\`. This does
-  not qualify the remote contract.
+- Local mode (the default): \`npm test\` runs the deterministic stub harness.
+- Remote qualification (explicit, fail-closed): set TERRASCALE_SANDBOX_URL,
+  TERRASCALE_SANDBOX_API_KEY, and TERRASCALE_SANDBOX_DATABASE_ID, then run
+  \`make qualify-remote\`. The local harness does not qualify the remote
+  contract.
 
 ## API entry points
 
