@@ -9,7 +9,8 @@ registries, pass a precomputed `IEnumerable<Type>` to avoid assembly scanning.
 
 The example shows:
 
-- a no-request endpoint with fluent route and OpenAPI metadata;
+- a no-request endpoint with concise route properties and OpenAPI metadata;
 - a JSON request/response endpoint with constructor-injected services;
 - a hand-written endpoint for custom binding and multiple response statuses;
+- the fluent `Configure(EndpointDefinition)` escape hatch described in the package README;
 - Scalar and OpenAPI wiring with one line each.

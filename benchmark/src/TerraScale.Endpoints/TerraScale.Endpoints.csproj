@@ -13,8 +13,10 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**</DefaultItemExcludes>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
   <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.11.2" />

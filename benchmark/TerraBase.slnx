@@ -4,10 +4,6 @@
   </Folder>
   <Folder Name="/Host/">
     <Project Path="src/TerraBase.Protocol/TerraBase.Protocol.csproj" />
-    <Project Path="src/TerraBase.Api/TerraBase.Api.csproj" />
-  </Folder>
-  <Folder Name="/CLI/">
-    <Project Path="src/TerraBase.Cli/TerraBase.Cli.csproj" />
   </Folder>
   <Folder Name="/Endpoints/">
     <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
@@ -18,6 +14,5 @@
     <Project Path="tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj" />
     <Project Path="tests/TerraBase.Protocol.Tests/TerraBase.Protocol.Tests.csproj" />
     <Project Path="tests/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj" />
-    <Project Path="tests/TerraBase.Cli.Tests/TerraBase.Cli.Tests.csproj" />
   </Folder>
 </Solution>

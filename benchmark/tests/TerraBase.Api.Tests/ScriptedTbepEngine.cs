@@ -399,7 +399,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                         writeGate,
                         "document.write",
                         request.Correlation,
-                        new DocumentWriteResponse { Outcome = WriteOutcome.Committed(new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = body.OperationId }) })
+                        new DocumentWriteResponse { Outcome = TerraBase.Protocol.WriteOutcome.Committed(new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = body.OperationId }) })
                         .ConfigureAwait(false);
                     break;
                 }
@@ -416,7 +416,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                         writeGate,
                         "document.delete",
                         request.Correlation,
-                        new DocumentDeleteResponse { Outcome = WriteOutcome.Committed(new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = body.OperationId }) })
+                        new DocumentDeleteResponse { Outcome = TerraBase.Protocol.WriteOutcome.Committed(new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = body.OperationId }) })
                         .ConfigureAwait(false);
                     break;
                 }

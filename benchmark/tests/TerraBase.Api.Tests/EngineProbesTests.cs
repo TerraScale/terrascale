@@ -87,18 +87,18 @@ public static class Probe
     public static IEnumerable<(string Name, string Text)> HostSources()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "src", "TerraBase.Api")))
+        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "src", "TerraBase", "Api")))
         {
             directory = directory.Parent;
         }
 
         if (directory is null)
         {
-            throw new InvalidOperationException("the worktree root (src/TerraBase.Api) is not reachable from the test output");
+            throw new InvalidOperationException("the worktree root (src/TerraBase/Api) is not reachable from the test output");
         }
 
         return Directory
-            .EnumerateFiles(Path.Combine(directory.FullName, "src", "TerraBase.Api"), "*.cs", SearchOption.AllDirectories)
+            .EnumerateFiles(Path.Combine(directory.FullName, "src", "TerraBase", "Api"), "*.cs", SearchOption.AllDirectories)
             .OrderBy(path => path)
             .Select(path => (Path.GetFileName(path), File.ReadAllText(path)));
     }

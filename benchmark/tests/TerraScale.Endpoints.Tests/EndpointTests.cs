@@ -84,22 +84,23 @@ public sealed class EndpointTests
 
 public sealed class ProbeEndpoint : EndpointWithoutRequest<string>
 {
-    public override void Configure(EndpointDefinition definition) => definition
-        .Get("/probe")
-        .WithName("probe")
-        .WithSummary("Probe")
-        .WithDescription("Probe description")
-        .WithTags("Tests");
+    public override string Route => "/probe";
+    public override string Name => "probe";
+    public override string Summary => "Probe";
+    public override string Description => "Probe description";
+    public override IReadOnlyList<string> Tags => ["Tests"];
 
     public override Task<string> ExecuteAsync(CancellationToken cancellationToken) => Task.FromResult("ok");
 }
 
 public abstract class AbstractEndpoint : EndpointWithoutRequest<string>
 {
+    public override string Route => "/abstract";
 }
 
 public sealed class InvalidEndpoint : EndpointWithoutRequest<string>
 {
+    public override string Route => "/invalid";
     public override void Configure(EndpointDefinition definition) { }
 
     public override Task<string> ExecuteAsync(CancellationToken cancellationToken) => Task.FromResult("x");
