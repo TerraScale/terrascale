@@ -67,6 +67,7 @@ export const ptBr: Messages = {
         links: {
           terms: 'Termos',
           privacy: 'Privacidade',
+          acceptableUse: 'Uso aceitável',
           dataProcessingTerms: 'Termos de tratamento de dados',
           support: 'Suporte',
         },
