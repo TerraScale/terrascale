@@ -185,12 +185,12 @@ public abstract class EndpointWithoutRequest : EndpointSenderEndpoint, IEndpoint
 public sealed class EndpointSender
 {
     internal IResult? Result { get; private set; }
-    public Task<IResult> OkAsync<T>(T response) => Set(Results.Ok(response));
-    public Task<IResult> CreatedAsync<T>(string uri, T response) => Set(Results.Created(uri, response));
-    public Task<IResult> AcceptedAsync<T>(string? uri, T response) => Set(Results.Accepted(uri, response));
-    public Task<IResult> NotFoundAsync() => Set(Results.NotFound());
-    public Task<IResult> NoContentAsync() => Set(Results.NoContent());
-    public Task<IResult> ResponseAsync(IResult response) => Set(response);
+    public Task<IResult> OkAsync<T>(T response, CancellationToken cancellationToken = default) => Set(Results.Ok(response));
+    public Task<IResult> CreatedAsync<T>(string uri, T response, CancellationToken cancellationToken = default) => Set(Results.Created(uri, response));
+    public Task<IResult> AcceptedAsync<T>(string? uri, T response, CancellationToken cancellationToken = default) => Set(Results.Accepted(uri, response));
+    public Task<IResult> NotFoundAsync(CancellationToken cancellationToken = default) => Set(Results.NotFound());
+    public Task<IResult> NoContentAsync(CancellationToken cancellationToken = default) => Set(Results.NoContent());
+    public Task<IResult> ResponseAsync(IResult response, CancellationToken cancellationToken = default) => Set(response);
     private Task<IResult> Set(IResult response) { Result = response; return Task.FromResult(response); }
 }
 

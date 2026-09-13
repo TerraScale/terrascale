@@ -4,6 +4,12 @@ A FastEndpoints-inspired authoring layer over ASP.NET Core minimal routing.
 Endpoint discovery is attribute-free and cached per assembly; every endpoint is
 one class in one file.
 
+The authoring model follows the FastEndpoints endpoint definitions documented at
+<https://fast-endpoints.com/docs/get-started> and
+<https://fast-endpoints.com/docs/endpoint-definitions>: configure the verb and
+route in `Configure()`, keep handling code in `HandleAsync()`, use constructor
+injection, and let startup discovery find endpoint classes.
+
 ```csharp
 public sealed class CreateWidgetEndpoint(WidgetStore store)
     : Endpoint<CreateWidgetRequest, Widget>
