@@ -1446,6 +1446,10 @@ public sealed class TypedApi
     {
         switch (failure)
         {
+            case FormatException:
+                return Results.Json(
+                    new ErrorDto("input-invalid", "request bytes must be valid base64"),
+                    statusCode: StatusCodes.Status400BadRequest);
             case EngineUnavailableException:
                 return Results.Json(
                     new ErrorDto("engine-unavailable", failure.Message),

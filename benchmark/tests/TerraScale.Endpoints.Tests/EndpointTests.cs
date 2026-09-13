@@ -106,6 +106,27 @@ public sealed class EndpointTests
         await app.StopAsync();
         await app.DisposeAsync();
     }
+
+    [Test]
+    public async Task ScopedEndpointDependenciesResolvePerRequest()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.WebHost.UseDefaultServiceProvider(options => options.ValidateScopes = true);
+        builder.Services.AddScoped<ScopedProbeDependency>();
+        builder.Services.AddTerraScaleEndpoints([typeof(ScopedProbeEndpoint)]);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        await app.StartAsync();
+
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        var first = await client.GetStringAsync("/scoped-probe");
+        var second = await client.GetStringAsync("/scoped-probe");
+
+        await Assert.That(first).IsNotEqualTo(second);
+        await app.StopAsync();
+        await app.DisposeAsync();
+    }
 }
 
 public sealed class ProbeEndpoint : EndpointWithoutRequest<string>
@@ -136,3 +157,14 @@ public sealed class RequestProbeEndpoint : Endpoint<RequestProbe, string>
     public override Task<string> HandleAsync(RequestProbe request, CancellationToken cancellationToken) => Task.FromResult(request.Value);
 }
 public sealed record RequestProbe(string Value);
+
+public sealed class ScopedProbeDependency
+{
+    public Guid Id { get; } = Guid.NewGuid();
+}
+
+public sealed class ScopedProbeEndpoint(ScopedProbeDependency dependency) : EndpointWithoutRequest<string>
+{
+    public override void Configure() => Get("/scoped-probe");
+    public override Task<string> HandleAsync(CancellationToken cancellationToken) => Task.FromResult(dependency.Id.ToString());
+}
