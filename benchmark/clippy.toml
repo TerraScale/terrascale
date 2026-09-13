@@ -1,2 +1,0 @@
-# Product names are prose, not Rust identifiers.
-doc-valid-idents = ["TerraBase", "TerraScale", ".."]
