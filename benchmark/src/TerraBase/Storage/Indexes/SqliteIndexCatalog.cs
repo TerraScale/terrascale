@@ -62,7 +62,7 @@ public sealed record SqliteIndexDescriptor(
         string tenant,
         string collection,
         string path,
-        SqliteIndexValueType valueType) 
+        SqliteIndexValueType valueType)
     {
         ValidateIdentity(descriptorId, tenant, collection, path);
         var now = DateTimeOffset.UtcNow;

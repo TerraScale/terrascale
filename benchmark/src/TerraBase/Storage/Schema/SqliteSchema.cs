@@ -335,6 +335,10 @@ public static class SqliteSchema
             WHEN version_watermarks.version < excluded.version THEN excluded.version
             ELSE version_watermarks.version
         END;
+
+        INSERT INTO schema_metadata (key, value)
+        VALUES ('schema_version', '4')
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value;
         """;
 
     private static void ExecutePragma(SqliteConnection connection, string sql)

@@ -24,6 +24,7 @@ public static class SqliteMigrationRunner
             using var transaction = connection.BeginTransaction(deferred: false);
             if (TryReadApplied(connection, transaction, migration.Version, out var recorded))
             {
+                ValidateRecorded(migration, recorded);
                 applied[migration.Version] = recorded;
                 transaction.Commit();
                 continue;
@@ -72,6 +73,7 @@ public static class SqliteMigrationRunner
             var recorded = await TryReadAppliedAsync(connection, transaction, migration.Version, cancellationToken).ConfigureAwait(false);
             if (recorded is not null)
             {
+                ValidateRecorded(migration, recorded.Value);
                 applied[migration.Version] = recorded.Value;
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 continue;
@@ -251,6 +253,18 @@ public static class SqliteMigrationRunner
                 throw new InvalidDataException(
                     $"SQLite migration {version} does not match its recorded name or checksum.");
             }
+        }
+    }
+
+    private static void ValidateRecorded(
+        SqliteMigration migration,
+        (string Name, string Checksum) recorded)
+    {
+        if (!string.Equals(migration.Name, recorded.Name, StringComparison.Ordinal)
+            || !string.Equals(migration.Checksum, recorded.Checksum, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                $"SQLite migration {migration.Version} does not match its recorded name or checksum.");
         }
     }
 }

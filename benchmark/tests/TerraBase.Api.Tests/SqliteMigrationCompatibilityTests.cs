@@ -107,8 +107,12 @@ public sealed class SqliteMigrationCompatibilityTests
             await Assert.That(reader.GetInt64(2)).IsEqualTo(2L);
             await Assert.That(((byte[])reader[3]).Length).IsEqualTo(0);
             await Assert.That(reader.GetInt64(4)).IsEqualTo(1789257600000L);
-            await Assert.That(Convert.ToInt32(await ScalarAsync(connection, "SELECT COUNT(*) FROM schema_migrations;") ))
+            await Assert.That(Convert.ToInt32(await ScalarAsync(connection, "SELECT COUNT(*) FROM schema_migrations;")))
                 .IsEqualTo(SqliteSchema.CurrentVersion);
+            await Assert.That(Convert.ToString(await ScalarAsync(
+                connection,
+                "SELECT value FROM schema_metadata WHERE key = 'schema_version';")))
+                .IsEqualTo(SqliteSchema.CurrentVersion.ToString());
         }
         finally
         {
