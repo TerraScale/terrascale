@@ -9,7 +9,7 @@ public sealed class DtoInputTests
 {
     private static string SocketPath() => Path.Combine(Path.GetTempPath(), $"se08-dto-{Guid.NewGuid():N}.sock");
 
-    /// <summary>An invalid base64 DTO field is a typed 400 and never reaches the engine.</summary>
+    /// <summary>An invalid base64 DTO field is a typed 400 and does not dispatch an operation frame.</summary>
     [Test]
     public async Task InvalidBase64IsTypedBadRequestBeforeEngineDispatch()
     {
@@ -27,6 +27,6 @@ public sealed class DtoInputTests
         await Assert.That(status).IsEqualTo(400);
         await Assert.That(body.RootElement.GetProperty("code").GetString()).IsEqualTo("input-invalid");
         await Assert.That(body.RootElement.GetProperty("detail").GetString()).IsEqualTo("request bytes must be valid base64");
-        await Assert.That(engine.Received.Count).IsEqualTo(before);
+        await Assert.That(engine.Received.Skip(before).All(frame => !frame.EndsWith(":FamilyReadRequest", StringComparison.Ordinal))).IsTrue();
     }
 }

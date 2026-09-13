@@ -64,9 +64,10 @@ public sealed class EndpointCatalog
     {
         ArgumentNullException.ThrowIfNull(routes);
         ArgumentNullException.ThrowIfNull(services);
+        using var scope = services.CreateScope();
         foreach (var endpointType in this.endpointTypes)
         {
-            var endpoint = (IEndpoint)ActivatorUtilities.CreateInstance(services, endpointType);
+            var endpoint = (IEndpoint)ActivatorUtilities.GetServiceOrCreateInstance(scope.ServiceProvider, endpointType);
             endpoint.Map(routes);
         }
     }

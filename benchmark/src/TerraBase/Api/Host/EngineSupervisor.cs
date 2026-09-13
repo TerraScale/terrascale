@@ -157,7 +157,9 @@ public sealed class EngineSupervisor : IAsyncDisposable
         }
         catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException)
         {
-            await this.LoseEngineAsync($"the health check failed: {failure.Message}", cancellationToken: cancellationToken).ConfigureAwait(false);
+            // Recovery belongs to the supervisor, so an aborted health
+            // request must not abandon the engine restart it discovered.
+            await this.LoseEngineAsync($"the health check failed: {failure.Message}", cancellationToken: CancellationToken.None).ConfigureAwait(false);
             return new EngineHealthSnapshot(
                 EngineStatus.Unavailable,
                 EngineState: null,
@@ -185,7 +187,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
         }
         catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException)
         {
-            await this.LoseEngineAsync($"the shutdown request failed: {failure.Message}", cancellationToken: cancellationToken).ConfigureAwait(false);
+            await this.LoseEngineAsync($"the shutdown request failed: {failure.Message}", cancellationToken: CancellationToken.None).ConfigureAwait(false);
             throw new EngineUnavailableException("the engine channel failed under the shutdown request");
         }
 
@@ -196,7 +198,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
             operation: "supervision.shutdown",
             outcome: AuditOutcome.Accepted,
             detail: $"state {answer.State.Variant}, in-flight {answer.InFlight}");
-        await this.LoseEngineAsync("graceful shutdown", permanent: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.LoseEngineAsync("graceful shutdown", permanent: true, cancellationToken: CancellationToken.None).ConfigureAwait(false);
         return answer;
     }
 
@@ -248,7 +250,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 // A transport failure (the channel died under the call):
                 // surface the loss, then retry once on a fresh channel. A
                 // typed refusal (Code set) never retries.
-                await this.LoseEngineAsync(failure.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await this.LoseEngineAsync(failure.Message, cancellationToken: CancellationToken.None).ConfigureAwait(false);
             }
             catch (TbepException failure) when (failure.Code is null)
             {
@@ -330,7 +332,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException)
                 {
                     await this.RemoveChannelAsync(tenant, channel).ConfigureAwait(false);
-                    await this.LoseEngineAsync(failure.Message, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await this.LoseEngineAsync(failure.Message, cancellationToken: CancellationToken.None).ConfigureAwait(false);
                     continue;
                 }
 
