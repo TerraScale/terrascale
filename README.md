@@ -13,14 +13,14 @@ npm ci
 npm run dev
 ```
 
-## Verify (`make check`)
+## Verify
 
 ```bash
 npm ci && npm run build
 ```
 
-`make check` (and `npm test`) runs the deterministic local stub harness. This
-checks the build and runnable snippet behavior without cloud credentials.
+`npm test` runs the deterministic local stub harness. This checks the build and
+runnable snippet behavior without cloud credentials.
 
 The explicit remote qualification lane runs against a real sandbox branch and
 fails closed unless all sandbox credentials are supplied:
@@ -29,7 +29,7 @@ fails closed unless all sandbox credentials are supplied:
 TERRASCALE_SANDBOX_URL=https://<branch>.<region>.api.terrascale.tech \
 TERRASCALE_SANDBOX_API_KEY=ts_... \
 TERRASCALE_SANDBOX_DATABASE_ID=db_... \
-make qualify-remote
+npm run test:remote
 ```
 
 For the deterministic local harness, use the explicit stub mode:
