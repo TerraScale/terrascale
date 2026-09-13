@@ -8,10 +8,10 @@ persistence.
 
 ## Contract source
 
-`CONTRACT_VERSION` is the committed TerraBase contract pin. `make contracts`
-requires `CONTRACT_URL`, an immutable versioned package URL, in CI. Local
-development can explicitly use `CONTRACT_SOURCE` for a checked-out contract
-bundle; there is no implicit source fallback. The generator verifies the
+`CONTRACT_VERSION` is the committed TerraBase contract pin. Contract
+verification requires `CONTRACT_URL`, an immutable versioned package URL, in
+CI. Local development can explicitly use `CONTRACT_SOURCE` for a checked-out
+contract bundle; there is no implicit source fallback. The generator verifies the
 producer manifest and every artifact digest, then generates operation, route,
 model, and MessagePack frame metadata in `contract.go`. The producer's HTTP,
 reactive, and MessagePack conformance corpus is required in the bundle.
@@ -19,7 +19,9 @@ reactive, and MessagePack conformance corpus is required in the bundle.
 ## Verify
 
 ```sh
-make check
+test -z "$(gofmt -l .)"
+nice -n 19 go vet ./...
+nice -n 19 go test ./...
 ```
 
 The checks exercise the pinned producer's HTTP success/error corpus and
