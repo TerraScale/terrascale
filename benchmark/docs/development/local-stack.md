@@ -1,4 +1,10 @@
-# Local three-member stack (E-15)
+# Local three-member stack (E-15, historical)
+
+> **Historical design record.** The stack script, Rust member binary, and Make
+> targets described below are retired and are not part of the current C#
+> solution. Use the repository [README](../../README.md) and
+> `TerraBase.slnx` for current restore, format, build, and test commands. The
+> remaining text is retained only to explain the earlier qualification design.
 
 The workspace [GOAL.md](../../../GOAL.md) (G1) owns the requirement; this
 page owns the mechanics. `make stack` boots the harness that our CI and the

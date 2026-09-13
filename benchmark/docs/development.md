@@ -6,15 +6,17 @@ authority;
 [AGENTS.md](../AGENTS.md) contains the repository rules. Source and tests are
 the implementation authority.
 
-TerraBase is Rust with SQLite as its only storage engine. The member serves
-the public API directly; TBEP is private control traffic. SQL is the only
-query language, document writes retain causal and history semantics, and the
-current replication and sync designs are ADR 0044.
+TerraBase is a .NET 10 C# host with a single runtime project. The host serves
+the typed API on a loopback ASP.NET Core listener and uses TBEP MessagePack over
+the configured Unix socket for its managed or attached engine boundary. SQL is
+the only query language, document writes retain causal and history semantics,
+and the current replication and sync designs are ADR 0044.
 
 Run the same solution build and test locally that CI runs:
 
 ```bash
 nice -n 19 dotnet build TerraBase.slnx --configuration Release
+nice -n 19 dotnet format style TerraBase.slnx --verify-no-changes --no-restore
 nice -n 19 dotnet test TerraBase.slnx --configuration Release --no-build
 ```
 
@@ -24,8 +26,8 @@ SDK repository. Do not hand-edit generated output. Keep changes small, remove
 retired code and its documentation in the same series, and update links when a
 document is removed.
 
-Rust work should use the lowest available CPU priority. The member uses
+Builds and tests should use the lowest available CPU priority. The host uses
 bounded asynchronous I/O and bounded CPU parallelism derived from admitted
-resources; blocking work must not run on executor threads. Retain
-deterministic results, durability, authorization, tenant isolation, fairness,
-backpressure, and recovery while changing performance-sensitive code.
+resources; blocking work must not run on request threads. Retain deterministic
+results, durability, authorization, tenant isolation, fairness, backpressure,
+and recovery while changing performance-sensitive code.

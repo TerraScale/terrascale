@@ -1,14 +1,12 @@
 # TerraBase
 
-TerraBase is TerraScale's Rust multi-Region database engine and public API.
-Each member serves the REST and reactive APIs directly with axum and stores
-one customer database per SQLite file. SQL is the only query language; writes
-remain document operations, with canonical JSON bytes, extracted indexes,
-causal replication and live result views. Production backup composition uses
-the internal native Rust subsystem. Its
-recovery, provider, and performance qualification remains incomplete. Backup
-policy selects OCI Object Storage, Tigris, or both by plan, with
-operator-managed overrides for specific users. See [ADR 0046](docs/adr/0046-native-rust-backup-subsystem.md).
+TerraBase is TerraScale's .NET 10 C# database API host. The single
+`src/TerraBase/TerraBase.csproj` contains the ASP.NET Core host, typed API,
+feature-sliced endpoints, storage boundary, observability, and TBEP protocol
+client. It serves the REST and reactive surface through the shared
+`TerraScale.Endpoints` library. SQL and document operations use the checked-in
+typed contracts; multi-Region durability and engine-backed behavior remain
+subject to the qualification gates in the workspace goal.
 
 The workspace [GOAL.md](../GOAL.md#terrabase) defines the production target; [AGENTS.md](AGENTS.md)
 contains repository rules and [docs/adr/README.md](docs/adr/README.md) indexes
@@ -20,25 +18,29 @@ acknowledgement.
 
 ```text
 customer SDK / dashboard
-        -> public REST + reactive API over HTTPS (axum)
-        -> TerraBase member (SQLite, sync, replication)
-orchestrator / CLI
-        -> private protobuf/gRPC TBEP over HTTP/2 and mTLS
+        -> edge routing and authentication
+        -> loopback ASP.NET Core TerraBase host (REST + reactive API)
+TerraBase host
+        -> TBEP MessagePack over the configured Unix socket
+        -> managed or attached engine process
 ```
 
-TBEP is private control traffic. The member owns document storage, indexing,
-query execution, causality, CRDT merge, replication, repair, backup, restore,
-operations, reactive state, and usage facts. Cloud development uses the
-hosted branch workflow; the engine binary is not distributed for self-hosting.
+The host binds only to a loopback HTTP/HTTPS URL. Edge routing, public
+authentication, and production deployment remain outside this process. TBEP is
+the private host-to-engine boundary; its socket path and optional managed
+engine binary are configured with `TERRABASE_TBEP_SOCKET` and
+`TERRABASE_TBEP_ENGINE`. The host owns endpoint discovery, request mapping,
+stream lifecycle, protocol validation, and observability around that boundary.
 
 ## Honest implementation status
 
-The Rust engine, SQLite storage, query, indexing, replication, sync, backup,
-and recovery modules are under active qualification. Source and tests describe
-implemented behavior; local tests, fixtures, and benchmark tables do not by
-themselves qualify an OCI or multi-Region production deployment. The current
-launch blockers and required evidence are tracked in the workspace
-[GOAL.md](../GOAL.md).
+The C# host, protocol, storage, and endpoint tests are under active
+qualification. Engine-backed tests require the separately supplied engine
+source or executable; when it is unavailable, those rows are explicitly
+skipped rather than treated as passing engine evidence. Local tests, fixtures,
+and benchmark tables do not by themselves qualify an OCI or multi-Region
+production deployment. The current launch blockers and required evidence are
+tracked in the workspace [GOAL.md](../GOAL.md).
 
 ## Development
 
@@ -46,6 +48,7 @@ Build and test the solution directly for local verification:
 
 ```sh
 nice -n 19 dotnet build TerraBase.slnx --configuration Release
+nice -n 19 dotnet format style TerraBase.slnx --verify-no-changes --no-restore
 nice -n 19 dotnet test TerraBase.slnx --configuration Release --no-build
 ```
 

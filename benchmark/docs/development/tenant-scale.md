@@ -1,4 +1,10 @@
-# E-16 tenant-scale qualification
+# E-16 tenant-scale qualification (historical)
+
+> **Historical design record.** `scripts/tenant-scale.sh` and the Make
+> integration shown below were retired with the former Rust qualification
+> harness. They are not commands in the current C# solution. Use the
+> repository [README](../../README.md) for the current .NET verification
+> surface; the qualification details remain here only as design evidence.
 
 `scripts/tenant-scale.sh` is the named E-16 qualification command for the
 100,000-database member shape. It has a cheap validator lane and an explicitly
