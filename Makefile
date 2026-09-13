@@ -7,9 +7,9 @@ CONTRACT_DIR := contracts/$(CONTRACT_VERSION)
 GENERATED_DIR := src/TerraScale.DotNet/Generated
 
 check: contracts generated-check
-	dotnet format TerraScale.DotNet.slnx --verify-no-changes
-	dotnet build TerraScale.DotNet.slnx --configuration Release
-	dotnet test TerraScale.DotNet.slnx --configuration Release --no-build
+	nice -n 19 dotnet format TerraScale.DotNet.slnx --verify-no-changes
+	nice -n 19 dotnet build TerraScale.DotNet.slnx --configuration Release
+	nice -n 19 dotnet test TerraScale.DotNet.slnx --configuration Release --no-build
 	$(MAKE) package-check
 
 package-check:
