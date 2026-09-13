@@ -4,5 +4,5 @@ github.com/klauspost/cpuid/v2 v2.0.12 h1:p9dKCg8i4gmOxtv35DvrYoWqYzQrvEVdjQ762Y0
 github.com/klauspost/cpuid/v2 v2.0.12/go.mod h1:g2LTdtYhdyuGPqyWyv7qRAmj1WBqxuObKfj5c0PQa7c=
 github.com/zeebo/blake3 v0.2.4 h1:KYQPkhpRtcqh0ssGYcKLG1JYvddkEA8QwCM/yBqhaZI=
 github.com/zeebo/blake3 v0.2.4/go.mod h1:7eeQ6d2iXWRGF6npfaxl2CU+xy2Fjo2gxeyZGCRUjcE=
-terrascale.tech/sdk v0.0.0-20260911070544-71e10be4f6db h1:UUiSXPh9QwmEWiyKjGx/BvZ8kt2Yr3rfQIL56Kk93uk=
+terrascale.tech/sdk v0.0.0-20260911070544-71e10be4f6db h1:Refv9vDskN2fT1tUjFEJapjXY3tl5twPam3SoosMmsw=
 terrascale.tech/sdk v0.0.0-20260911070544-71e10be4f6db/go.mod h1:CBgIEfw0wTY2UDGAo1hmt1COj0872PnfTUNB3o0/3io=

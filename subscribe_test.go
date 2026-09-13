@@ -19,6 +19,9 @@ func TestSubscribeWebSocketLoopback(t *testing.T) {
 	protocols := make(chan string, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/reactive/views", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer websocket-secret" {
+			t.Errorf("attach authorization = %q", got)
+		}
 		if r.Method != http.MethodPost {
 			t.Errorf("attach method = %s", r.Method)
 		}
@@ -26,6 +29,9 @@ func TestSubscribeWebSocketLoopback(t *testing.T) {
 		_, _ = w.Write([]byte(`{"view":"view-1","generation":1,"checkpoint":"Y3A=","log":"/api/v1/reactive/views/view-1/1/log","capability":"cap-token","snapshot":[{"id":"doc-1","body":{"ok":true}}]}`))
 	})
 	mux.HandleFunc("/api/v1/reactive/views/view-1/1/websocket", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer websocket-secret" {
+			t.Errorf("websocket authorization = %q", got)
+		}
 		protocols <- r.Header.Get("Sec-WebSocket-Protocol")
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"terrascale.sync.v1"}})
 		if err != nil {
@@ -42,7 +48,7 @@ func TestSubscribeWebSocketLoopback(t *testing.T) {
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	client, err := NewClient(Config{APIBaseURL: server.URL, HTTPClient: server.Client(), AccessToken: "secret"})
+	client, err := NewClient(Config{APIBaseURL: server.URL, HTTPClient: server.Client(), AccessToken: "  bEaReR websocket-secret  "})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,6 +67,42 @@ func TestSubscribeWebSocketLoopback(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for snapshot")
+	}
+}
+
+func TestBearerAuthorizationCanonicalizesCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  string
+		err   string
+	}{
+		{name: "bare", input: "secret", want: "Bearer secret"},
+		{name: "prefixed case and whitespace", input: "  bEaReR   secret  ", want: "Bearer secret"},
+		{name: "empty", input: "  "},
+		{name: "empty prefixed", input: "Bearer   ", err: "sdk: bearer token cannot be empty"},
+		{name: "control character", input: "secret\nvalue", err: "sdk: access token contains invalid control characters"},
+		{name: "control character hidden by trimming", input: " \n ", err: "sdk: access token contains invalid control characters"},
+		{name: "internal whitespace", input: "secret value", err: "sdk: bearer token contains whitespace"},
+		{name: "internal whitespace after prefix", input: "Bearer secret value", err: "sdk: bearer token contains whitespace"},
+		{name: "tab between prefix and credential", input: "Bearer\tsecret", err: "sdk: access token contains invalid control characters"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			header := make(http.Header)
+			err := setBearerAuthorization(header, tc.input)
+			if tc.err != "" {
+				if err == nil || err.Error() != tc.err {
+					t.Fatalf("error = %v, want %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := header.Get("Authorization"); got != tc.want {
+				t.Fatalf("authorization = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -192,7 +234,7 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 			})
 		case strings.HasSuffix(r.URL.Path, "/api/v1/reactive/views/view-1/7/log"):
 			mu.Lock()
-			requests = append(requests, r.URL.RequestURI()+" "+r.Header.Get("X-TerraScale-Capability")+" "+r.Header.Get("X-TerraScale-View-Capability"))
+			requests = append(requests, r.URL.RequestURI()+" "+r.Header.Get("X-TerraScale-Capability")+" "+r.Header.Get("X-TerraScale-View-Capability")+" "+r.Header.Get("Authorization"))
 			n := len(requests)
 			mu.Unlock()
 			if n == 2 {
@@ -214,7 +256,7 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 	}))
 	defer server.Close()
 
-	client, err := NewClient(Config{APIBaseURL: server.URL, HTTPClient: server.Client()})
+	client, err := NewClient(Config{APIBaseURL: server.URL, HTTPClient: server.Client(), AccessToken: "  bEaReR poll-secret  "})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,10 +288,10 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 	mu.Lock()
 	got := append([]string(nil), requests...)
 	mu.Unlock()
-	if len(got) == 0 || got[0] != "/api/v1/reactive/views/view-1/7/log?offset=0 cap-1 " {
+	if len(got) == 0 || got[0] != "/api/v1/reactive/views/view-1/7/log?offset=0 cap-1  Bearer poll-secret" {
 		t.Fatalf("first log request = %q", got)
 	}
-	if len(got) < 2 || got[1] != "/api/v1/reactive/views/view-1/7/log?offset=4 cap-1 " {
+	if len(got) < 2 || got[1] != "/api/v1/reactive/views/view-1/7/log?offset=4 cap-1  Bearer poll-secret" {
 		t.Fatalf("second log request = %q", got)
 	}
 }

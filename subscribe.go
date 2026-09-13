@@ -586,10 +586,8 @@ func (c *Client) dialReactiveWebSocket(ctx context.Context, s *Subscription) (*w
 	header := make(http.Header)
 	c.decorateScopeHeaders(header)
 	if token := c.token(); token != "" {
-		if strings.HasPrefix(token, "Bearer ") {
-			header.Set("Authorization", token)
-		} else {
-			header.Set("Authorization", "Bearer "+token)
+		if err := setBearerAuthorization(header, token); err != nil {
+			return nil, err
 		}
 	}
 	if causal := strings.TrimSpace(s.sessionToken); causal != "" {
@@ -923,10 +921,8 @@ func (c *Client) fetchSnapshotChunks(ctx context.Context, attach *attachResponse
 		capHeader, _ := normalizeCapabilityHeader(attach.CapabilityHeader)
 		req.Header.Set(capHeader, attach.Capability)
 		if token := c.token(); token != "" {
-			if strings.HasPrefix(token, "Bearer ") {
-				req.Header.Set("Authorization", token)
-			} else {
-				req.Header.Set("Authorization", "Bearer "+token)
+			if err := setBearerAuthorization(req.Header, token); err != nil {
+				return nil, "", err
 			}
 		}
 		if causal := strings.TrimSpace(c.SessionToken()); causal != "" {
@@ -1043,11 +1039,15 @@ func (s *Subscription) pollLoop(ctx context.Context) {
 				u.Checkpoint = prog
 			}
 			u.Body = cloneRaw(u.Body)
-			if !s.deliver(u) {
-				return
-			}
+			// Publish progress before the event so consumers observing the
+			// event can immediately resume from its checkpoint. Delivering
+			// first creates a race where Checkpoint still reports the prior
+			// value after the event has been received.
 			if u.Checkpoint != "" {
 				s.setProgress(u.Checkpoint, "", "")
+			}
+			if !s.deliver(u) {
+				return
 			}
 		}
 		if prog != "" || offset != "" || etag != "" {
@@ -1138,10 +1138,8 @@ func (s *Subscription) pollOnce(ctx context.Context) ([]Update, Checkpoint, stri
 		req.Header.Set("If-None-Match", etag)
 	}
 	if token := s.c.token(); token != "" {
-		if strings.HasPrefix(token, "Bearer ") {
-			req.Header.Set("Authorization", token)
-		} else {
-			req.Header.Set("Authorization", "Bearer "+token)
+		if err := setBearerAuthorization(req.Header, token); err != nil {
+			return nil, "", "", "", nil, err
 		}
 	}
 	if causal := strings.TrimSpace(s.sessionToken); causal != "" {

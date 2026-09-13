@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Public protocol limits (GOAL D-32). These limits are applied before a
@@ -798,11 +799,9 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 		h.Set("X-TerraScale-Preferred-Region", string(hint))
 	}
 	if token := c.token(); token != "" {
-		authorization, err := bearerAuthorization(token)
-		if err != nil {
+		if err := setBearerAuthorization(h, token); err != nil {
 			return 0, nil, nil, err
 		}
-		h.Set("Authorization", authorization)
 	}
 	session := rc.sessionToken
 	if session == "" {
@@ -849,6 +848,11 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 }
 
 func bearerAuthorization(value string) (string, error) {
+	// Validate before trimming so a control character cannot be hidden by
+	// normalization (for example, "\n" must not become an empty token).
+	if strings.ContainsFunc(value, unicode.IsControl) {
+		return "", fmt.Errorf("sdk: access token contains invalid control characters")
+	}
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", nil
@@ -856,14 +860,34 @@ func bearerAuthorization(value string) (string, error) {
 	if strings.ContainsAny(value, "\r\n") {
 		return "", fmt.Errorf("sdk: access token contains invalid control characters")
 	}
+	if strings.EqualFold(value, "Bearer") {
+		return "", fmt.Errorf("sdk: bearer token cannot be empty")
+	}
 	if len(value) >= len("Bearer ") && strings.EqualFold(value[:len("Bearer ")], "Bearer ") {
 		credential := strings.TrimSpace(value[len("Bearer "):])
 		if credential == "" {
 			return "", fmt.Errorf("sdk: bearer token cannot be empty")
 		}
+		if strings.ContainsFunc(credential, unicode.IsSpace) {
+			return "", fmt.Errorf("sdk: bearer token contains whitespace")
+		}
 		return "Bearer " + credential, nil
 	}
+	if strings.ContainsFunc(value, unicode.IsSpace) {
+		return "", fmt.Errorf("sdk: bearer token contains whitespace")
+	}
 	return "Bearer " + value, nil
+}
+
+func setBearerAuthorization(header http.Header, token string) error {
+	authorization, err := bearerAuthorization(token)
+	if err != nil {
+		return err
+	}
+	if authorization != "" {
+		header.Set("Authorization", authorization)
+	}
+	return nil
 }
 
 type binaryResponse []byte
