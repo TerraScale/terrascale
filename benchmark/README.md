@@ -57,9 +57,9 @@ TerraBase is licensed under the [MIT License](LICENSE.md).
 
 ## TerraScale.Endpoints
 
-The C# HTTP surface uses the `TerraScale.Endpoints` components embedded in the
-single TerraBase project under `src/TerraBase/Endpoints`. Endpoint classes live in individual files and can
-be mapped with:
+The C# HTTP surface uses the `TerraScale.Endpoints` components from
+`src/TerraScale.Endpoints`. TerraBase endpoint classes live in individual files
+under `src/TerraBase/Api/Endpoints` and can be mapped with:
 
 ```csharp
 builder.Services.AddTerraScaleEndpoints(typeof(Program).Assembly);

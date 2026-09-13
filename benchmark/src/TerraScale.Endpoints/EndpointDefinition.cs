@@ -223,11 +223,17 @@ public sealed class EndpointDefinition
 
         if (requestType is not null && requestType != typeof(EmptyRequest))
         {
-            builder.Accepts(requestType, (this.acceptedContentTypes ?? ["application/json"])[0]);
+            foreach (var contentType in this.acceptedContentTypes ?? ["application/json"])
+            {
+                builder.Accepts(requestType, contentType);
+            }
         }
         else if (this.acceptedContentTypes is not null)
         {
-            builder.Accepts(typeof(EmptyRequest), this.acceptedContentTypes[0]);
+            foreach (var contentType in this.acceptedContentTypes)
+            {
+                builder.Accepts(typeof(EmptyRequest), contentType);
+            }
         }
 
         if (responseType != typeof(void) && !typeof(IResult).IsAssignableFrom(responseType))

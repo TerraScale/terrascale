@@ -71,7 +71,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: null,
             expect: TbepRegistry.ResponseKindOf("channel.bind"),
             cancellationToken).ConfigureAwait(false);
-        var response = MessagePackSerializer.Deserialize<ChannelBindResponse>(answer.Body, TbepOptions.Strict);
+        var response = MessagePackSerializer.Deserialize<ChannelBindResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
         this.tenant = tenant;
         this.principal = principal;
         return response;
@@ -122,7 +122,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: null,
             expect: (ushort)TbepFrameKind.NegotiationResponse,
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<NegotiationResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<NegotiationResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Configures the Storage Tier Mover's policy (mutation): the idempotency key is the retry identity.</summary>
@@ -152,7 +152,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: idempotencyKey,
             expect: TbepRegistry.ResponseKindOf("tier.configure"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<TierConfigureResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<TierConfigureResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Inspects the tier state: the control state and the backend's tier facts.</summary>
@@ -167,7 +167,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: null,
             expect: TbepRegistry.ResponseKindOf("tier.inspect"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<TierInspectResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<TierInspectResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Runs one dry mover pass: the receipt explains the next decision without transferring anything.</summary>
@@ -182,7 +182,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: null,
             expect: TbepRegistry.ResponseKindOf("tier.dry_run"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<TierDryRunResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<TierDryRunResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Reads one document.</summary>
@@ -199,7 +199,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: null,
             expect: TbepRegistry.ResponseKindOf("document.read"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<DocumentReadResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<DocumentReadResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Writes one document (mutation): the idempotency key is the retry identity the engine replays.</summary>
@@ -218,7 +218,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: idempotencyKey,
             expect: TbepRegistry.ResponseKindOf("document.write"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<DocumentWriteResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<DocumentWriteResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Writes one atomic document batch (mutation): one frame, one engine transaction — every item commits together or none does. The idempotency key is the whole batch's retry identity.</summary>
@@ -236,7 +236,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: idempotencyKey,
             expect: TbepRegistry.ResponseKindOf("document.batch"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<DocumentBatchResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<DocumentBatchResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Deletes one document (mutation): the idempotency key is the retry identity the engine replays.</summary>
@@ -256,7 +256,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: idempotencyKey,
             expect: TbepRegistry.ResponseKindOf("document.delete"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<DocumentDeleteResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<DocumentDeleteResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Submits the query-cancellation live signal (GAP-Q12, PB-4034).</summary>
@@ -272,7 +272,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: null,
             expect: TbepRegistry.ResponseKindOf("query.cancel"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<QueryCancelResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<QueryCancelResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Opens one sync session (the terrascale.sync.v2 serving seam, PD-2026-08-26-12).</summary>
@@ -289,7 +289,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: null,
             expect: TbepRegistry.ResponseKindOf("sync.session_setup"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<SyncSessionSetupResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<SyncSessionSetupResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Submits one server-ack mutation (PD-2026-08-26-12 D2: the idempotency key is the retry identity).</summary>
@@ -313,7 +313,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: idempotencyKey,
             expect: TbepRegistry.ResponseKindOf("sync.mutation_submit"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<SyncMutationSubmitResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<SyncMutationSubmitResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>Subscribes one backbone stream; the returned reader yields the ordered batches, the content-free triggers, and the close frame.</summary>
@@ -338,7 +338,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             idempotency: null,
             expect: TbepRegistry.ResponseKindOf("backbone.subscribe"),
             cancellationToken).ConfigureAwait(false);
-        return MessagePackSerializer.Deserialize<BackboneSubscribeResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<BackboneSubscribeResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -415,7 +415,7 @@ public sealed partial class TbepClient : IAsyncDisposable
         await this.gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var body = MessagePackSerializer.Serialize(request, TbepOptions.Strict);
+            var body = MessagePackSerializer.Serialize(request, TbepOptions.Strict, cancellationToken: cancellationToken);
             var correlation = ++this.correlation;
             var frame = TbepWire.Seal(requestKind, correlation, 0, idempotency, body);
             await TbepWire.WriteFrame(this.stream, frame).ConfigureAwait(false);
@@ -431,7 +431,7 @@ public sealed partial class TbepClient : IAsyncDisposable
 
                 if (answer.Causation == correlation)
                 {
-                    var error = MessagePackSerializer.Deserialize<Error>(answer.Body, TbepOptions.Strict);
+                    var error = MessagePackSerializer.Deserialize<Error>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
                     throw new TbepException(operation, error.Code, error.Detail);
                 }
 

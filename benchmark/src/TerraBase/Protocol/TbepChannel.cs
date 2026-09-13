@@ -479,7 +479,7 @@ public sealed class TbepChannel : IAsyncDisposable
             throw new TbepException($"the engine channel is closed; {operation} was not sent");
         }
 
-        var body = MessagePackSerializer.Serialize(request, TbepOptions.Strict);
+        var body = MessagePackSerializer.Serialize(request, TbepOptions.Strict, cancellationToken: cancellationToken);
         var completion = new TaskCompletionSource<TbepWire.Frame>(TaskCreationOptions.RunContinuationsAsynchronously);
         ulong correlation;
         await this.writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -523,11 +523,11 @@ public sealed class TbepChannel : IAsyncDisposable
         var answer = await completion.Task.ConfigureAwait(false);
         if (answer.Kind == TbepRegistry.KindCode("Error"))
         {
-            var error = MessagePackSerializer.Deserialize<Error>(answer.Body, TbepOptions.Strict);
+            var error = MessagePackSerializer.Deserialize<Error>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
             throw new TbepException(operation, error.Code, error.Detail);
         }
 
-        return MessagePackSerializer.Deserialize<TResponse>(answer.Body, TbepOptions.Strict);
+        return MessagePackSerializer.Deserialize<TResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 
     private void Abandon(ulong correlation, TaskCompletionSource<TbepWire.Frame> completion)

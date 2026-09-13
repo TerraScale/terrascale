@@ -6,7 +6,7 @@ namespace TerraScale.Endpoints;
 /// <summary>Discovers endpoint classes once per assembly and reuses the result.</summary>
 public static class EndpointDiscovery
 {
-    private static readonly ConcurrentDictionary<Assembly, Type[]> Cache = new();
+    private static readonly ConcurrentDictionary<Assembly, Lazy<Type[]>> Cache = new();
 
     /// <summary>Finds concrete endpoint classes in an assembly.</summary>
     /// <param name="assembly">The assembly to inspect.</param>
@@ -14,12 +14,14 @@ public static class EndpointDiscovery
     public static IReadOnlyList<Type> Discover(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
-        return Cache.GetOrAdd(assembly, static source => source
-            .DefinedTypes
-            .Where(type => !type.IsAbstract && !type.IsInterface && typeof(IEndpoint).IsAssignableFrom(type))
-            .OrderBy(type => type.FullName, StringComparer.Ordinal)
-            .Select(type => type.AsType())
-            .ToArray());
+        return Cache.GetOrAdd(assembly, static source => new Lazy<Type[]>(
+            () => source
+                .DefinedTypes
+                .Where(type => !type.IsAbstract && !type.IsInterface && typeof(IEndpoint).IsAssignableFrom(type))
+                .OrderBy(type => type.FullName, StringComparer.Ordinal)
+                .Select(type => type.AsType())
+                .ToArray(),
+            LazyThreadSafetyMode.ExecutionAndPublication)).Value;
     }
 }
 

@@ -19,6 +19,15 @@ public sealed class EndpointTests
     }
 
     [Test]
+    public async Task ConcurrentDiscoveryReturnsOnePublishedSnapshot()
+    {
+        var snapshots = await Task.WhenAll(Enumerable.Range(0, 32)
+            .Select(_ => Task.Run(() => EndpointDiscovery.Discover(typeof(EndpointTests).Assembly))));
+        var first = snapshots[0];
+        await Assert.That(snapshots.All(snapshot => ReferenceEquals(first, snapshot))).IsTrue();
+    }
+
+    [Test]
     public async Task FastStyleEndpointMapsMetadata()
     {
         var builder = WebApplication.CreateBuilder();
@@ -39,10 +48,20 @@ public sealed class EndpointTests
     {
         await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() => new EndpointDefinition().Get("widgets")));
         await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() => new EndpointDefinition().Method(" ", "/widgets")));
+        await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() => new EndpointDefinition().Verbs()));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => Task.Run(() => new EndpointDefinition().Produces<string>(600)));
         await Assert.ThrowsAsync<ArgumentNullException>(() => Task.Run(() => EndpointDiscovery.Discover(null!)));
         var app = WebApplication.CreateBuilder().Build();
         await Assert.ThrowsAsync<InvalidOperationException>(() => Task.Run(() => new InvalidEndpoint().Map(app)));
         await app.DisposeAsync();
+    }
+
+    [Test]
+    public async Task FluentVerbsNormalizeAndDeduplicate()
+    {
+        var definition = new EndpointDefinition().WithRoute("/widgets").Verbs("get", "GET", "post");
+        await Assert.That(definition.Route).IsEqualTo("/widgets");
+        await Assert.That(definition.Methods).IsEquivalentTo(new[] { "GET", "POST" });
     }
 
     [Test]
