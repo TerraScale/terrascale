@@ -15,6 +15,7 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 # Libraries
 - We should use MagincOnion for C# <-> C# comunnication
 - We should use TUnit for tests
+- We must use TerraScale.Endpoints for all endpoints
 
 # Benchmark
 - We need to save all benchmarks in an easy to see .md tables so we can compare from the very beginning the difference and improvements
