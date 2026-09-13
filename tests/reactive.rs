@@ -163,10 +163,46 @@ async fn poll_sends_capability_header_and_keeps_canonical_log_url_immutable() {
             .map(|(_, value)| value.as_str()),
         Some("capability")
     );
+    assert!(!requests[0]
+        .headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("authorization")));
     assert_eq!(
         view.log_url,
         "https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log?cut=1"
     );
+}
+
+#[tokio::test]
+async fn poll_rejects_snapshot_origin_or_path_mismatch_before_transport() {
+    for snapshot_url in [
+        "https://evil.example.test/api/v1/reactive/views/view-1/4/snapshot/0",
+        "https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log",
+    ] {
+        let mock = Mock::new([Ok(Response::json(
+            201,
+            &json!({
+                "view": "view-1",
+                "generation": 4,
+                "checkpoint": "Y3Ax",
+                "snapshot_chunks": [snapshot_url],
+                "log": "https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log",
+                "capability": "capability",
+                "offset": 1
+            }),
+        ))]);
+        let error = client(Arc::clone(&mock))
+            .reactive()
+            .subscribe_live(
+                &DatabaseScope::new("db"),
+                &Query::raw("SELECT * FROM users".to_owned(), vec![]),
+                SubscribeOptions::new(),
+            )
+            .await
+            .expect_err("invalid snapshot endpoint");
+        assert_eq!(error.code, "reactive_subscribe.invalid_response");
+        assert_eq!(mock.requests.lock().expect("request mutex").len(), 1);
+    }
 }
 
 #[tokio::test]

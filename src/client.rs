@@ -36,6 +36,9 @@ pub const MAX_IDEMPOTENCY_KEY_LENGTH: usize = 128;
 /// a per-request eventual-consistency option suppress the shared causal
 /// session header without exposing an unsupported wire header.
 pub(crate) const SKIP_SESSION_MARKER: &str = "x-terrascale-sdk-skip-session";
+/// Internal marker removed before transport. Capability-authenticated
+/// reactive delivery must not receive the API bearer credential.
+pub(crate) const SKIP_AUTH_MARKER: &str = "x-terrascale-sdk-skip-auth";
 
 /// Shareable pipeline state behind every sub-client.
 #[derive(Debug)]
@@ -175,17 +178,24 @@ impl Shared {
     }
 
     fn decorate(&self, request: &mut Request) {
+        let skip_auth = request
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case(SKIP_AUTH_MARKER));
         let skip_session = request
             .headers
             .iter()
             .any(|(name, _)| name.eq_ignore_ascii_case(SKIP_SESSION_MARKER));
-        request
-            .headers
-            .retain(|(name, _)| !name.eq_ignore_ascii_case(SKIP_SESSION_MARKER));
-        if let Some(api_key) = self.config.api_key() {
-            request
-                .headers
-                .push(("authorization".to_owned(), format!("Bearer {api_key}")));
+        request.headers.retain(|(name, _)| {
+            !name.eq_ignore_ascii_case(SKIP_SESSION_MARKER)
+                && !name.eq_ignore_ascii_case(SKIP_AUTH_MARKER)
+        });
+        if !skip_auth {
+            if let Some(api_key) = self.config.api_key() {
+                request
+                    .headers
+                    .push(("authorization".to_owned(), format!("Bearer {api_key}")));
+            }
         }
         for (header, value) in [
             ("x-terrascale-tenant-id", self.config.tenant_id()),

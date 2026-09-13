@@ -71,9 +71,11 @@ rename is absent.
 `nice -n 19 make check` runs `make contracts`, `cargo fmt --all --check`,
 Clippy with warnings denied, and the test suite. `make contracts` validates the
 producer bundle and regenerates `contracts/<CONTRACT_VERSION>/` plus
-`src/generated_contract.rs`; it requires an immutable `CONTRACT_URL` together
-with `CONTRACT_ARCHIVE_SHA256`, or an explicit `CONTRACT_SOURCE` directory for
-local producer development. Missing provenance fails the check.
+`src/generated_contract.rs`. By default it validates and regenerates from the
+checked-in `contracts/<CONTRACT_VERSION>` bundle. Published builds may provide
+an immutable `CONTRACT_URL` with `CONTRACT_ARCHIVE_SHA256`, and local producer
+development may provide an explicit `CONTRACT_SOURCE` directory. The contract
+script itself remains fail-closed when invoked without a source or URL.
 
 Cancellation tokens interrupt local waiting, including an in-flight request or
 retry delay. They do not prove that a submitted mutation was rolled back; retain

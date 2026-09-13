@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use base64::engine::{general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 
-use crate::client::SharedClient;
+use crate::client::{SharedClient, SKIP_AUTH_MARKER};
 use crate::documents::DatabaseScope;
 use crate::error::{Error, ErrorKind, Result};
 use crate::regions::RegionCode;
@@ -823,7 +823,7 @@ impl ReactiveClient {
                 route_name: "reactive.poll".to_owned(),
                 method: Method::Get,
                 url: url.clone(),
-                headers: Vec::new(),
+                headers: vec![(SKIP_AUTH_MARKER.to_owned(), String::new())],
                 body: None,
             };
             request.headers.push((
@@ -939,12 +939,21 @@ impl ReactiveClient {
             ));
         }
         let mut assembled: Option<ViewSnapshot> = None;
-        for advertised in &view.snapshot_urls {
+        for (index, advertised) in view.snapshot_urls.iter().enumerate() {
             let mut request = Request {
                 route_name: "reactive.snapshot".to_owned(),
                 method: Method::Get,
-                url: resolve_delivery(self.shared.config().sync_base_url(), advertised),
-                headers: vec![("accept".to_owned(), "application/msgpack".to_owned())],
+                url: {
+                    let expected = canonical_snapshot_path(&view.view_id, view.generation, index);
+                    let validated = advertised_url(advertised, &expected).map_err(|message| {
+                        Error::new(ErrorKind::Validation, "invalid_reactive_endpoint", message)
+                    })?;
+                    resolve_delivery(self.shared.config().sync_base_url(), &validated)
+                },
+                headers: vec![
+                    (SKIP_AUTH_MARKER.to_owned(), String::new()),
+                    ("accept".to_owned(), "application/msgpack".to_owned()),
+                ],
                 body: None,
             };
             request.headers.push((
