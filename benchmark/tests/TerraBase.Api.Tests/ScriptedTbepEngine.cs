@@ -159,270 +159,270 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
             switch (kind)
             {
                 case "ChannelBindRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<ChannelBindRequest>(request.Body, TbepOptions.Strict);
-                    if (tenant is not null)
                     {
-                        await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.AlreadyBound(), "channel bound").ConfigureAwait(false);
-                        continue;
-                    }
+                        var body = MessagePackSerializer.Deserialize<ChannelBindRequest>(request.Body, TbepOptions.Strict);
+                        if (tenant is not null)
+                        {
+                            await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.AlreadyBound(), "channel bound").ConfigureAwait(false);
+                            continue;
+                        }
 
-                    if (this.Draining)
-                    {
-                        await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.OperationRefused(), "the host is draining").ConfigureAwait(false);
-                        continue;
-                    }
+                        if (this.Draining)
+                        {
+                            await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.OperationRefused(), "the host is draining").ConfigureAwait(false);
+                            continue;
+                        }
 
-                    if (this.BindDelay > TimeSpan.Zero)
-                    {
-                        // The deterministic first-bind race window: the
-                        // answer stays outstanding long enough for a
-                        // second caller to reach the same channel.
-                        await Task.Delay(this.BindDelay).ConfigureAwait(false);
-                    }
+                        if (this.BindDelay > TimeSpan.Zero)
+                        {
+                            // The deterministic first-bind race window: the
+                            // answer stays outstanding long enough for a
+                            // second caller to reach the same channel.
+                            await Task.Delay(this.BindDelay).ConfigureAwait(false);
+                        }
 
-                    tenant = body.Tenant;
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "channel.bind",
-                        request.Correlation,
-                        new ChannelBindResponse { Tenant = this.BindResponseTenant ?? body.Tenant, ServingInstance = 1 }).ConfigureAwait(false);
-                    break;
-                }
-
-                case "SchemaDeclareRequest":
-                {
-                    // The SM-04 scripted schema surface: a deterministic
-                    // declaration that records the collection's version for
-                    // the bound tenant, or refuses typed when the scripted
-                    // engine owns the collection for another tenant.
-                    var body = MessagePackSerializer.Deserialize<SchemaDeclareRequest>(request.Body, TbepOptions.Strict);
-                    if (this.SchemaOwner is { } owner && owner.Collection == body.Collection && owner.Tenant != tenant)
-                    {
-                        await this.RefuseCrossTenantAsync(stream, writeGate, request.Correlation).ConfigureAwait(false);
+                        tenant = body.Tenant;
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "channel.bind",
+                            request.Correlation,
+                            new ChannelBindResponse { Tenant = this.BindResponseTenant ?? body.Tenant, ServingInstance = 1 }).ConfigureAwait(false);
                         break;
                     }
 
-                    this.Received.Enqueue($"{tenant}:schema.declare:{body.Collection}");
-                    var ruleCount = (uint)(body.Schema is null ? 0 : 3);
-                    var version = body.Schema is null ? (ulong?)null : this.NextSchemaVersion(body.Collection);
-                    if (version is { } declared)
+                case "SchemaDeclareRequest":
                     {
-                        this.schemas[$"{tenant}/{body.Collection}"] = declared;
-                    }
+                        // The SM-04 scripted schema surface: a deterministic
+                        // declaration that records the collection's version for
+                        // the bound tenant, or refuses typed when the scripted
+                        // engine owns the collection for another tenant.
+                        var body = MessagePackSerializer.Deserialize<SchemaDeclareRequest>(request.Body, TbepOptions.Strict);
+                        if (this.SchemaOwner is { } owner && owner.Collection == body.Collection && owner.Tenant != tenant)
+                        {
+                            await this.RefuseCrossTenantAsync(stream, writeGate, request.Correlation).ConfigureAwait(false);
+                            break;
+                        }
 
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "schema.declare",
-                        request.Correlation,
-                        new SchemaDeclareResponse { EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var recorded) ? recorded : null, RuleCount = ruleCount })
-                        .ConfigureAwait(false);
-                    break;
-                }
+                        this.Received.Enqueue($"{tenant}:schema.declare:{body.Collection}");
+                        var ruleCount = (uint)(body.Schema is null ? 0 : 3);
+                        var version = body.Schema is null ? (ulong?)null : this.NextSchemaVersion(body.Collection);
+                        if (version is { } declared)
+                        {
+                            this.schemas[$"{tenant}/{body.Collection}"] = declared;
+                        }
+
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "schema.declare",
+                            request.Correlation,
+                            new SchemaDeclareResponse { EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var recorded) ? recorded : null, RuleCount = ruleCount })
+                            .ConfigureAwait(false);
+                        break;
+                    }
 
                 case "SchemaStatusRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<SchemaStatusRequest>(request.Body, TbepOptions.Strict);
-                    this.Received.Enqueue($"{tenant}:schema.status:{body.Collection}");
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "schema.status",
-                        request.Correlation,
-                        new SchemaStatusResponse
-                        {
-                            EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var version) ? version : null,
-                            RuleCount = this.schemas.ContainsKey($"{tenant}/{body.Collection}") ? 3u : 0u,
-                        })
-                        .ConfigureAwait(false);
-                    break;
-                }
+                    {
+                        var body = MessagePackSerializer.Deserialize<SchemaStatusRequest>(request.Body, TbepOptions.Strict);
+                        this.Received.Enqueue($"{tenant}:schema.status:{body.Collection}");
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "schema.status",
+                            request.Correlation,
+                            new SchemaStatusResponse
+                            {
+                                EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var version) ? version : null,
+                                RuleCount = this.schemas.ContainsKey($"{tenant}/{body.Collection}") ? 3u : 0u,
+                            })
+                            .ConfigureAwait(false);
+                        break;
+                    }
 
                 case "SchemaValidateRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<SchemaValidateRequest>(request.Body, TbepOptions.Strict);
-                    this.Received.Enqueue($"{tenant}:schema.validate:{body.Collection}");
-                    var violations = new List<SchemaViolation>();
-                    if (this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var version)
-                        && body.Document is { Tag: 6 } document
-                        && document.Payload is ObjectField[] fields
-                        && fields.Any(field => field.Name == "email" && field.Value.Tag == 2))
                     {
-                        violations.Add(new SchemaViolation { Field = "email", Kind = ViolationKind.TypeMismatch() });
-                    }
-
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "schema.validate",
-                        request.Correlation,
-                        new SchemaValidateResponse
+                        var body = MessagePackSerializer.Deserialize<SchemaValidateRequest>(request.Body, TbepOptions.Strict);
+                        this.Received.Enqueue($"{tenant}:schema.validate:{body.Collection}");
+                        var violations = new List<SchemaViolation>();
+                        if (this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var version)
+                            && body.Document is { Tag: 6 } document
+                            && document.Payload is ObjectField[] fields
+                            && fields.Any(field => field.Name == "email" && field.Value.Tag == 2))
                         {
-                            EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var enforced) ? enforced : null,
-                            Valid = violations.Count == 0,
-                            Violations = [.. violations],
-                        })
-                        .ConfigureAwait(false);
-                    break;
-                }
+                            violations.Add(new SchemaViolation { Field = "email", Kind = ViolationKind.TypeMismatch() });
+                        }
+
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "schema.validate",
+                            request.Correlation,
+                            new SchemaValidateResponse
+                            {
+                                EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var enforced) ? enforced : null,
+                                Valid = violations.Count == 0,
+                                Violations = [.. violations],
+                            })
+                            .ConfigureAwait(false);
+                        break;
+                    }
 
                 case "MigrationStatusRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<MigrationStatusRequest>(request.Body, TbepOptions.Strict);
-                    this.Received.Enqueue($"{tenant}:migration.status:{body.Collection}");
-                    var applied = this.appliedMigrations.Contains($"{tenant}/{body.Collection}");
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "migration.status",
-                        request.Correlation,
-                        new MigrationStatusResponse
-                        {
-                            State = new MigrationState
+                    {
+                        var body = MessagePackSerializer.Deserialize<MigrationStatusRequest>(request.Body, TbepOptions.Strict);
+                        this.Received.Enqueue($"{tenant}:migration.status:{body.Collection}");
+                        var applied = this.appliedMigrations.Contains($"{tenant}/{body.Collection}");
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "migration.status",
+                            request.Correlation,
+                            new MigrationStatusResponse
                             {
-                                Kind = applied ? MigrationStateKind.Complete() : MigrationStateKind.None(),
-                                Manifest = "0123abcd",
-                                FromVersion = 1,
-                                ToVersion = 2,
-                                Documents = 0,
-                                Transformed = 0,
-                                Pages = 0,
-                            },
-                        })
-                        .ConfigureAwait(false);
-                    break;
-                }
+                                State = new MigrationState
+                                {
+                                    Kind = applied ? MigrationStateKind.Complete() : MigrationStateKind.None(),
+                                    Manifest = "0123abcd",
+                                    FromVersion = 1,
+                                    ToVersion = 2,
+                                    Documents = 0,
+                                    Transformed = 0,
+                                    Pages = 0,
+                                },
+                            })
+                            .ConfigureAwait(false);
+                        break;
+                    }
 
                 case "MigrationDryRunRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<MigrationDryRunRequest>(request.Body, TbepOptions.Strict);
-                    this.Received.Enqueue($"{tenant}:migration.dry_run:{body.Contract.Collection}");
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "migration.dry_run",
-                        request.Correlation,
-                        new MigrationDryRunResponse
-                        {
-                            Plan = new MigrationPlan
+                    {
+                        var body = MessagePackSerializer.Deserialize<MigrationDryRunRequest>(request.Body, TbepOptions.Strict);
+                        this.Received.Enqueue($"{tenant}:migration.dry_run:{body.Contract.Collection}");
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "migration.dry_run",
+                            request.Correlation,
+                            new MigrationDryRunResponse
                             {
-                                Manifest = "0123abcd",
-                                Collection = body.Contract.Collection,
-                                FromVersion = body.Contract.FromVersion,
-                                ToVersion = body.Contract.ToVersion,
-                                Ready = true,
-                                Documents = 1,
-                                SourceDigest = new string('a', 64),
-                                ResultDigest = new string('b', 64),
-                                TransformCounts = new TransformCounts { Added = 1, Removed = 1, Renamed = 0, Retyped = 0 },
-                                Problems = [],
-                                ProblemsTruncated = false,
-                            },
-                        })
-                        .ConfigureAwait(false);
-                    break;
-                }
+                                Plan = new MigrationPlan
+                                {
+                                    Manifest = "0123abcd",
+                                    Collection = body.Contract.Collection,
+                                    FromVersion = body.Contract.FromVersion,
+                                    ToVersion = body.Contract.ToVersion,
+                                    Ready = true,
+                                    Documents = 1,
+                                    SourceDigest = new string('a', 64),
+                                    ResultDigest = new string('b', 64),
+                                    TransformCounts = new TransformCounts { Added = 1, Removed = 1, Renamed = 0, Retyped = 0 },
+                                    Problems = [],
+                                    ProblemsTruncated = false,
+                                },
+                            })
+                            .ConfigureAwait(false);
+                        break;
+                    }
 
                 case "MigrationApplyRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<MigrationApplyRequest>(request.Body, TbepOptions.Strict);
-                    this.Received.Enqueue($"{tenant}:migration.apply:{body.Contract.Collection}");
-                    this.schemas[$"{tenant}/{body.Contract.Collection}"] = body.Contract.ToVersion;
-                    this.appliedMigrations.Add($"{tenant}/{body.Contract.Collection}");
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "migration.apply",
-                        request.Correlation,
-                        new MigrationApplyResponse
-                        {
-                            Receipt = new MigrationReceipt
+                    {
+                        var body = MessagePackSerializer.Deserialize<MigrationApplyRequest>(request.Body, TbepOptions.Strict);
+                        this.Received.Enqueue($"{tenant}:migration.apply:{body.Contract.Collection}");
+                        this.schemas[$"{tenant}/{body.Contract.Collection}"] = body.Contract.ToVersion;
+                        this.appliedMigrations.Add($"{tenant}/{body.Contract.Collection}");
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "migration.apply",
+                            request.Correlation,
+                            new MigrationApplyResponse
                             {
-                                Collection = body.Contract.Collection,
-                                Manifest = "0123abcd",
-                                FromVersion = body.Contract.FromVersion,
-                                ToVersion = body.Contract.ToVersion,
-                                SourceDigest = new string('a', 64),
-                                ResultDigest = new string('b', 64),
-                                Documents = 1,
-                                Transformed = 1,
-                                TransformCounts = new TransformCounts { Added = 1, Removed = 1, Renamed = 0, Retyped = 0 },
-                                Pages = 1,
-                                RollbackLimit = RollbackLimitKind.NotReversible(),
-                                AcknowledgedNotRollbackable = body.AcknowledgeNotRollbackable,
-                                AlreadyApplied = false,
-                            },
-                        })
-                        .ConfigureAwait(false);
-                    break;
-                }
+                                Receipt = new MigrationReceipt
+                                {
+                                    Collection = body.Contract.Collection,
+                                    Manifest = "0123abcd",
+                                    FromVersion = body.Contract.FromVersion,
+                                    ToVersion = body.Contract.ToVersion,
+                                    SourceDigest = new string('a', 64),
+                                    ResultDigest = new string('b', 64),
+                                    Documents = 1,
+                                    Transformed = 1,
+                                    TransformCounts = new TransformCounts { Added = 1, Removed = 1, Renamed = 0, Retyped = 0 },
+                                    Pages = 1,
+                                    RollbackLimit = RollbackLimitKind.NotReversible(),
+                                    AcknowledgedNotRollbackable = body.AcknowledgeNotRollbackable,
+                                    AlreadyApplied = false,
+                                },
+                            })
+                            .ConfigureAwait(false);
+                        break;
+                    }
 
                 case "DocumentReadRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<DocumentReadRequest>(request.Body, TbepOptions.Strict);
-                    if (this.Documents.TryGetValue($"{tenant}/{body.Collection}/{body.Document}", out var document))
                     {
-                        await this.AnswerAsync(
-                            stream,
-                            writeGate,
-                            "document.read",
-                            request.Correlation,
-                            new DocumentReadResponse { Found = true, Document = document }).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        await this.AnswerAsync(
-                            stream,
-                            writeGate,
-                            "document.read",
-                            request.Correlation,
-                            new DocumentReadResponse { Found = false }).ConfigureAwait(false);
-                    }
+                        var body = MessagePackSerializer.Deserialize<DocumentReadRequest>(request.Body, TbepOptions.Strict);
+                        if (this.Documents.TryGetValue($"{tenant}/{body.Collection}/{body.Document}", out var document))
+                        {
+                            await this.AnswerAsync(
+                                stream,
+                                writeGate,
+                                "document.read",
+                                request.Correlation,
+                                new DocumentReadResponse { Found = true, Document = document }).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            await this.AnswerAsync(
+                                stream,
+                                writeGate,
+                                "document.read",
+                                request.Correlation,
+                                new DocumentReadResponse { Found = false }).ConfigureAwait(false);
+                        }
 
-                    break;
-                }
+                        break;
+                    }
 
                 case "DocumentWriteRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<DocumentWriteRequest>(request.Body, TbepOptions.Strict);
-                    this.WriteConditionals.Enqueue($"{tenant}:write:{Render(body.Expected)}");
-                    var sequence = this.Commit(tenant!, body.Document.Collection, body.OperationId, body.Document.Id);
-                    this.Documents[$"{tenant}/{body.Document.Collection}/{body.Document.Id}"] = new DocumentBody
                     {
-                        Id = body.Document.Id,
-                        Collection = body.Document.Collection,
-                        Version = sequence,
-                        Body = body.Document.Body,
-                    };
-                    await this.BroadcastAsync(tenant!, body.Document.Collection, subscriptions, stream, writeGate).ConfigureAwait(false);
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "document.write",
-                        request.Correlation,
-                        new DocumentWriteResponse { Outcome = TerraBase.Protocol.WriteOutcome.Committed(new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = body.OperationId }) })
-                        .ConfigureAwait(false);
-                    break;
-                }
+                        var body = MessagePackSerializer.Deserialize<DocumentWriteRequest>(request.Body, TbepOptions.Strict);
+                        this.WriteConditionals.Enqueue($"{tenant}:write:{Render(body.Expected)}");
+                        var sequence = this.Commit(tenant!, body.Document.Collection, body.OperationId, body.Document.Id);
+                        this.Documents[$"{tenant}/{body.Document.Collection}/{body.Document.Id}"] = new DocumentBody
+                        {
+                            Id = body.Document.Id,
+                            Collection = body.Document.Collection,
+                            Version = sequence,
+                            Body = body.Document.Body,
+                        };
+                        await this.BroadcastAsync(tenant!, body.Document.Collection, subscriptions, stream, writeGate).ConfigureAwait(false);
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "document.write",
+                            request.Correlation,
+                            new DocumentWriteResponse { Outcome = TerraBase.Protocol.WriteOutcome.Committed(new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = body.OperationId }) })
+                            .ConfigureAwait(false);
+                        break;
+                    }
 
                 case "DocumentDeleteRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<DocumentDeleteRequest>(request.Body, TbepOptions.Strict);
-                    this.WriteConditionals.Enqueue($"{tenant}:delete:{Render(body.Expected)}");
-                    var sequence = this.Commit(tenant!, body.Collection, body.OperationId, body.Document);
-                    this.Documents.TryRemove($"{tenant}/{body.Collection}/{body.Document}", out _);
-                    await this.BroadcastAsync(tenant!, body.Collection, subscriptions, stream, writeGate).ConfigureAwait(false);
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "document.delete",
-                        request.Correlation,
-                        new DocumentDeleteResponse { Outcome = TerraBase.Protocol.WriteOutcome.Committed(new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = body.OperationId }) })
-                        .ConfigureAwait(false);
-                    break;
-                }
+                    {
+                        var body = MessagePackSerializer.Deserialize<DocumentDeleteRequest>(request.Body, TbepOptions.Strict);
+                        this.WriteConditionals.Enqueue($"{tenant}:delete:{Render(body.Expected)}");
+                        var sequence = this.Commit(tenant!, body.Collection, body.OperationId, body.Document);
+                        this.Documents.TryRemove($"{tenant}/{body.Collection}/{body.Document}", out _);
+                        await this.BroadcastAsync(tenant!, body.Collection, subscriptions, stream, writeGate).ConfigureAwait(false);
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "document.delete",
+                            request.Correlation,
+                            new DocumentDeleteResponse { Outcome = TerraBase.Protocol.WriteOutcome.Committed(new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = body.OperationId }) })
+                            .ConfigureAwait(false);
+                        break;
+                    }
 
                 case "QueryExecuteRequest":
                 case "QueryCancelRequest":
@@ -438,295 +438,295 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                     break;
 
                 case "BackboneSubscribeRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<BackboneSubscribeRequest>(request.Body, TbepOptions.Strict);
-                    // The real engine honors the caller-assigned
-                    // subscription identity (host.rs); so does the
-                    // fixture — the host's hub owns the id space.
-                    var id = body.SubscriptionId;
-                    this.subscriptionTenants[id] = tenant!;
-                    var from = body.From.Variant == "Sequence" ? (ulong)body.From.Payload! : 1ul;
-                    var journal = this.journals.GetOrAdd(tenant!, []);
-                    // The replay is collection-filtered and the
-                    // subscription's cursor starts after it — both the
-                    // real engine's semantics.
-                    var events = journal
-                        .Where(@event => @event.Sequence >= from)
-                        .Where(@event => body.Collections is null || body.Collections.Contains(@event.Collection))
-                        .ToArray();
-                    var start = events.Length > 0 ? events[^1].Sequence + 1 : from;
-                    subscriptions.Add(new Subscription(id, body.Collections, start));
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "backbone.subscribe",
-                        request.Correlation,
-                        new BackboneSubscribeResponse { SubscriptionId = id, StartSequence = start }).ConfigureAwait(false);
-                    if (events.Length > 0)
                     {
+                        var body = MessagePackSerializer.Deserialize<BackboneSubscribeRequest>(request.Body, TbepOptions.Strict);
+                        // The real engine honors the caller-assigned
+                        // subscription identity (host.rs); so does the
+                        // fixture — the host's hub owns the id space.
+                        var id = body.SubscriptionId;
+                        this.subscriptionTenants[id] = tenant!;
+                        var from = body.From.Variant == "Sequence" ? (ulong)body.From.Payload! : 1ul;
+                        var journal = this.journals.GetOrAdd(tenant!, []);
+                        // The replay is collection-filtered and the
+                        // subscription's cursor starts after it — both the
+                        // real engine's semantics.
+                        var events = journal
+                            .Where(@event => @event.Sequence >= from)
+                            .Where(@event => body.Collections is null || body.Collections.Contains(@event.Collection))
+                            .ToArray();
+                        var start = events.Length > 0 ? events[^1].Sequence + 1 : from;
+                        subscriptions.Add(new Subscription(id, body.Collections, start));
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "backbone.subscribe",
+                            request.Correlation,
+                            new BackboneSubscribeResponse { SubscriptionId = id, StartSequence = start }).ConfigureAwait(false);
+                        if (events.Length > 0)
+                        {
+                            await this.NotifyAsync(
+                                stream,
+                                writeGate,
+                                id,
+                                new SubscriptionBatch { SubscriptionId = id, FromSequence = from, Events = events, NextSequence = start })
+                                .ConfigureAwait(false);
+                        }
+
+                        break;
+                    }
+
+                case "BackboneAcknowledgeRequest":
+                    {
+                        var body = MessagePackSerializer.Deserialize<BackboneAcknowledgeRequest>(request.Body, TbepOptions.Strict);
+                        this.subscriptionTenants.TryGetValue(body.SubscriptionId, out var owner);
+                        if (owner is null || owner != tenant)
+                        {
+                            await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "subscription", owner).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "backbone.acknowledge",
+                            request.Correlation,
+                            new BackboneAcknowledgeResponse { SubscriptionId = body.SubscriptionId, AcknowledgedThrough = body.ThroughSequence }).ConfigureAwait(false);
+                        break;
+                    }
+
+                case "BackboneUnsubscribeRequest":
+                    {
+                        var body = MessagePackSerializer.Deserialize<BackboneUnsubscribeRequest>(request.Body, TbepOptions.Strict);
+                        this.subscriptionTenants.TryGetValue(body.SubscriptionId, out var owner);
+                        if (owner is null || owner != tenant)
+                        {
+                            await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "subscription", owner).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        this.subscriptionTenants.TryRemove(body.SubscriptionId, out _);
+                        subscriptions.RemoveAll(subscription => subscription.Id == body.SubscriptionId);
                         await this.NotifyAsync(
                             stream,
                             writeGate,
-                            id,
-                            new SubscriptionBatch { SubscriptionId = id, FromSequence = from, Events = events, NextSequence = start })
-                            .ConfigureAwait(false);
+                            body.SubscriptionId,
+                            new SubscriptionClosed { SubscriptionId = body.SubscriptionId, Reason = SubscriptionCloseReason.Replaced() }).ConfigureAwait(false);
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "backbone.unsubscribe",
+                            request.Correlation,
+                            new BackboneUnsubscribeResponse { SubscriptionId = body.SubscriptionId }).ConfigureAwait(false);
+                        break;
                     }
-
-                    break;
-                }
-
-                case "BackboneAcknowledgeRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<BackboneAcknowledgeRequest>(request.Body, TbepOptions.Strict);
-                    this.subscriptionTenants.TryGetValue(body.SubscriptionId, out var owner);
-                    if (owner is null || owner != tenant)
-                    {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "subscription", owner).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "backbone.acknowledge",
-                        request.Correlation,
-                        new BackboneAcknowledgeResponse { SubscriptionId = body.SubscriptionId, AcknowledgedThrough = body.ThroughSequence }).ConfigureAwait(false);
-                    break;
-                }
-
-                case "BackboneUnsubscribeRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<BackboneUnsubscribeRequest>(request.Body, TbepOptions.Strict);
-                    this.subscriptionTenants.TryGetValue(body.SubscriptionId, out var owner);
-                    if (owner is null || owner != tenant)
-                    {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "subscription", owner).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    this.subscriptionTenants.TryRemove(body.SubscriptionId, out _);
-                    subscriptions.RemoveAll(subscription => subscription.Id == body.SubscriptionId);
-                    await this.NotifyAsync(
-                        stream,
-                        writeGate,
-                        body.SubscriptionId,
-                        new SubscriptionClosed { SubscriptionId = body.SubscriptionId, Reason = SubscriptionCloseReason.Replaced() }).ConfigureAwait(false);
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "backbone.unsubscribe",
-                        request.Correlation,
-                        new BackboneUnsubscribeResponse { SubscriptionId = body.SubscriptionId }).ConfigureAwait(false);
-                    break;
-                }
 
                 case "SyncSessionSetupRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<SyncSessionSetupRequest>(request.Body, TbepOptions.Strict);
-                    if (body.Resume is { } resume && !Decodes(resume))
                     {
-                        // The real engine refuses a resume checkpoint that
-                        // does not decode, fail-closed.
-                        await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.CheckpointRefused(), "the resume checkpoint does not decode").ConfigureAwait(false);
-                        continue;
-                    }
+                        var body = MessagePackSerializer.Deserialize<SyncSessionSetupRequest>(request.Body, TbepOptions.Strict);
+                        if (body.Resume is { } resume && !Decodes(resume))
+                        {
+                            // The real engine refuses a resume checkpoint that
+                            // does not decode, fail-closed.
+                            await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.CheckpointRefused(), "the resume checkpoint does not decode").ConfigureAwait(false);
+                            continue;
+                        }
 
-                    ulong id;
-                    lock (this.idGate)
-                    {
-                        id = ++this.nextSession;
-                    }
+                        ulong id;
+                        lock (this.idGate)
+                        {
+                            id = ++this.nextSession;
+                        }
 
-                    this.sessionTenants[id] = tenant!;
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "sync.session_setup",
-                        request.Correlation,
-                        new SyncSessionSetupResponse { SessionId = id, Checkpoint = CheckpointOf(0), RetainedFloor = CheckpointOf(0) }).ConfigureAwait(false);
-                    break;
-                }
+                        this.sessionTenants[id] = tenant!;
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "sync.session_setup",
+                            request.Correlation,
+                            new SyncSessionSetupResponse { SessionId = id, Checkpoint = CheckpointOf(0), RetainedFloor = CheckpointOf(0) }).ConfigureAwait(false);
+                        break;
+                    }
 
                 case "SyncDeltaPullRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<SyncDeltaPullRequest>(request.Body, TbepOptions.Strict);
-                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
-                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
-                        continue;
-                    }
+                        var body = MessagePackSerializer.Deserialize<SyncDeltaPullRequest>(request.Body, TbepOptions.Strict);
+                        this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                        if (owner is null || owner != tenant)
+                        {
+                            await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
+                            continue;
+                        }
 
-                    var commits = (ulong)this.journals.GetOrAdd(tenant!, []).Count;
-                    if (body.From.AsSpan().SequenceEqual(CheckpointOf(commits)))
-                    {
-                        await this.AnswerAsync(
-                            stream,
-                            writeGate,
-                            "sync.delta_pull",
-                            request.Correlation,
-                            new SyncDeltaPullResponse
-                            {
-                                SessionId = body.SessionId,
-                                // Native codec of ADR 0022/0024: the engine's delta answers carry terrabase-native/1.
-                                PayloadCodec = "terrabase-native/1",
-                                Payload = [],
-                                Next = CheckpointOf(commits),
-                                Commits = 0,
-                                SingleCommitOversize = false,
-                            }).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.CheckpointRefused(), "behind-retained-floor").ConfigureAwait(false);
-                    }
+                        var commits = (ulong)this.journals.GetOrAdd(tenant!, []).Count;
+                        if (body.From.AsSpan().SequenceEqual(CheckpointOf(commits)))
+                        {
+                            await this.AnswerAsync(
+                                stream,
+                                writeGate,
+                                "sync.delta_pull",
+                                request.Correlation,
+                                new SyncDeltaPullResponse
+                                {
+                                    SessionId = body.SessionId,
+                                    // Native codec of ADR 0022/0024: the engine's delta answers carry terrabase-native/1.
+                                    PayloadCodec = "terrabase-native/1",
+                                    Payload = [],
+                                    Next = CheckpointOf(commits),
+                                    Commits = 0,
+                                    SingleCommitOversize = false,
+                                }).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.CheckpointRefused(), "behind-retained-floor").ConfigureAwait(false);
+                        }
 
-                    break;
-                }
+                        break;
+                    }
 
                 case "SyncSnapshotPullRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<SyncSnapshotPullRequest>(request.Body, TbepOptions.Strict);
-                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
-                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    var commits = (ulong)this.journals.GetOrAdd(tenant!, []).Count;
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "sync.snapshot_pull",
-                        request.Correlation,
-                        new SyncSnapshotPullResponse
+                        var body = MessagePackSerializer.Deserialize<SyncSnapshotPullRequest>(request.Body, TbepOptions.Strict);
+                        this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                        if (owner is null || owner != tenant)
                         {
-                            SessionId = body.SessionId,
-                            // Native codec of ADR 0022/0024: the engine's snapshot answers carry terrabase-snapshot/1.
-                            PayloadCodec = "terrabase-snapshot/1",
-                            Payload = [1, 2, 3],
-                            Checkpoint = CheckpointOf(commits),
-                        }).ConfigureAwait(false);
-                    break;
-                }
+                            await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        var commits = (ulong)this.journals.GetOrAdd(tenant!, []).Count;
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "sync.snapshot_pull",
+                            request.Correlation,
+                            new SyncSnapshotPullResponse
+                            {
+                                SessionId = body.SessionId,
+                                // Native codec of ADR 0022/0024: the engine's snapshot answers carry terrabase-snapshot/1.
+                                PayloadCodec = "terrabase-snapshot/1",
+                                Payload = [1, 2, 3],
+                                Checkpoint = CheckpointOf(commits),
+                            }).ConfigureAwait(false);
+                        break;
+                    }
 
                 case "SyncCheckpointAckRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<SyncCheckpointAckRequest>(request.Body, TbepOptions.Strict);
-                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
-                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
-                        continue;
-                    }
+                        var body = MessagePackSerializer.Deserialize<SyncCheckpointAckRequest>(request.Body, TbepOptions.Strict);
+                        this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                        if (owner is null || owner != tenant)
+                        {
+                            await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
+                            continue;
+                        }
 
-                    if (!Decodes(body.Checkpoint))
-                    {
-                        await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.CheckpointRefused(), "the checkpoint does not decode").ConfigureAwait(false);
-                        continue;
-                    }
+                        if (!Decodes(body.Checkpoint))
+                        {
+                            await this.ErrorAsync(stream, writeGate, request.Correlation, ErrorCode.CheckpointRefused(), "the checkpoint does not decode").ConfigureAwait(false);
+                            continue;
+                        }
 
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "sync.checkpoint_ack",
-                        request.Correlation,
-                        new SyncCheckpointAckResponse { SessionId = body.SessionId }).ConfigureAwait(false);
-                    break;
-                }
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "sync.checkpoint_ack",
+                            request.Correlation,
+                            new SyncCheckpointAckResponse { SessionId = body.SessionId }).ConfigureAwait(false);
+                        break;
+                    }
 
                 case "SyncMutationSubmitRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<SyncMutationSubmitRequest>(request.Body, TbepOptions.Strict);
-                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
-                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    var composite = body.Change.Variant == "Put"
-                        && ((SyncField[])body.Change.Payload!).Any(f => f.Value.Tag is 5 or 6);
-                    if (composite)
-                    {
-                        await this.AnswerAsync(
-                            stream,
-                            writeGate,
-                            "sync.mutation_submit",
-                            request.Correlation,
-                            new SyncMutationSubmitResponse
-                            {
-                                SessionId = body.SessionId,
-                                Outcome = MutationOutcome.Rejected(MutationReason.InvalidBody()),
-                            }).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    // At-least-once: a retried key answers the recorded
-                    // receipt (the real engine's bounded applied-key
-                    // registry, 128 receipts per scope, drop-oldest).
-                    var key = request.Idempotency ?? "op";
-                    var receipts = this.appliedKeys.GetOrAdd(tenant!, _ => new ConcurrentDictionary<string, CommitReceipt>());
-                    if (receipts.TryGetValue(key, out var recorded))
-                    {
-                        await this.AnswerAsync(
-                            stream,
-                            writeGate,
-                            "sync.mutation_submit",
-                            request.Correlation,
-                            new SyncMutationSubmitResponse
-                            {
-                                SessionId = body.SessionId,
-                                Outcome = MutationOutcome.Applied(recorded),
-                            }).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    var sequence = this.Commit(tenant!, "orders", key, body.Document);
-                    var receipt = new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = key };
-                    lock (receipts)
-                    {
-                        receipts[key] = receipt;
-                        while (receipts.Count > 128)
+                        var body = MessagePackSerializer.Deserialize<SyncMutationSubmitRequest>(request.Body, TbepOptions.Strict);
+                        this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                        if (owner is null || owner != tenant)
                         {
-                            receipts.TryRemove(receipts.Keys.First(), out _);
+                            await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
+                            continue;
                         }
-                    }
 
-                    await this.BroadcastAsync(tenant!, "orders", subscriptions, stream, writeGate).ConfigureAwait(false);
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "sync.mutation_submit",
-                        request.Correlation,
-                        new SyncMutationSubmitResponse
+                        var composite = body.Change.Variant == "Put"
+                            && ((SyncField[])body.Change.Payload!).Any(f => f.Value.Tag is 5 or 6);
+                        if (composite)
                         {
-                            SessionId = body.SessionId,
-                            Outcome = MutationOutcome.Applied(receipt),
-                        }).ConfigureAwait(false);
-                    break;
-                }
+                            await this.AnswerAsync(
+                                stream,
+                                writeGate,
+                                "sync.mutation_submit",
+                                request.Correlation,
+                                new SyncMutationSubmitResponse
+                                {
+                                    SessionId = body.SessionId,
+                                    Outcome = MutationOutcome.Rejected(MutationReason.InvalidBody()),
+                                }).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        // At-least-once: a retried key answers the recorded
+                        // receipt (the real engine's bounded applied-key
+                        // registry, 128 receipts per scope, drop-oldest).
+                        var key = request.Idempotency ?? "op";
+                        var receipts = this.appliedKeys.GetOrAdd(tenant!, _ => new ConcurrentDictionary<string, CommitReceipt>());
+                        if (receipts.TryGetValue(key, out var recorded))
+                        {
+                            await this.AnswerAsync(
+                                stream,
+                                writeGate,
+                                "sync.mutation_submit",
+                                request.Correlation,
+                                new SyncMutationSubmitResponse
+                                {
+                                    SessionId = body.SessionId,
+                                    Outcome = MutationOutcome.Applied(recorded),
+                                }).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        var sequence = this.Commit(tenant!, "orders", key, body.Document);
+                        var receipt = new CommitReceipt { Sequence = sequence, Version = sequence, OperationId = key };
+                        lock (receipts)
+                        {
+                            receipts[key] = receipt;
+                            while (receipts.Count > 128)
+                            {
+                                receipts.TryRemove(receipts.Keys.First(), out _);
+                            }
+                        }
+
+                        await this.BroadcastAsync(tenant!, "orders", subscriptions, stream, writeGate).ConfigureAwait(false);
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "sync.mutation_submit",
+                            request.Correlation,
+                            new SyncMutationSubmitResponse
+                            {
+                                SessionId = body.SessionId,
+                                Outcome = MutationOutcome.Applied(receipt),
+                            }).ConfigureAwait(false);
+                        break;
+                    }
 
                 case "SyncSessionCloseRequest":
-                {
-                    var body = MessagePackSerializer.Deserialize<SyncSessionCloseRequest>(request.Body, TbepOptions.Strict);
-                    this.sessionTenants.TryGetValue(body.SessionId, out var owner);
-                    if (owner is null || owner != tenant)
                     {
-                        await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
-                        continue;
-                    }
+                        var body = MessagePackSerializer.Deserialize<SyncSessionCloseRequest>(request.Body, TbepOptions.Strict);
+                        this.sessionTenants.TryGetValue(body.SessionId, out var owner);
+                        if (owner is null || owner != tenant)
+                        {
+                            await this.RefuseLifecycleAsync(stream, writeGate, request.Correlation, "session", owner).ConfigureAwait(false);
+                            continue;
+                        }
 
-                    this.sessionTenants.TryRemove(body.SessionId, out _);
-                    await this.AnswerAsync(
-                        stream,
-                        writeGate,
-                        "sync.session_close",
-                        request.Correlation,
-                        new SyncSessionCloseResponse { SessionId = body.SessionId }).ConfigureAwait(false);
-                    break;
-                }
+                        this.sessionTenants.TryRemove(body.SessionId, out _);
+                        await this.AnswerAsync(
+                            stream,
+                            writeGate,
+                            "sync.session_close",
+                            request.Correlation,
+                            new SyncSessionCloseResponse { SessionId = body.SessionId }).ConfigureAwait(false);
+                        break;
+                    }
 
                 case "TopologyReadRequest":
                     await this.AnswerAsync(
