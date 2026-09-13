@@ -27,65 +27,18 @@ public sealed class TypedApi
     private readonly BackboneHub hub;
     private readonly AuditLog audit;
 
-    private TypedApi(EngineSupervisor supervisor, BackboneHub hub, AuditLog audit)
+    internal TypedApi(EngineSupervisor supervisor, BackboneHub hub, AuditLog audit)
     {
         this.supervisor = supervisor;
         this.hub = hub;
         this.audit = audit;
     }
 
-    /// <summary>Maps the typed API onto the application.</summary>
-    /// <param name="app">The application.</param>
-    /// <param name="supervisor">The engine supervisor.</param>
-    /// <param name="hub">The backbone stream hub.</param>
-    /// <param name="audit">The lifecycle audit log.</param>
-    public static void MapApi(IEndpointRouteBuilder app, EngineSupervisor supervisor, BackboneHub hub, AuditLog audit)
-    {
-        var api = new TypedApi(supervisor, hub, audit);
-
-        app.MapGet("/health", api.HealthAsync);
-        app.MapGet("/v1/metrics", api.Metrics);
-        app.MapGet("/v1/audit", api.Audit);
-
-        app.MapGet("/v1/engine/health", api.EngineHealthAsync);
-        app.MapGet("/v1/engine/status", api.EngineStatusAsync);
-        app.MapGet("/v1/engine/topology", api.EngineTopologyAsync);
-        app.MapPost("/v1/engine/shutdown", api.EngineShutdownAsync);
-
-        app.MapGet("/v1/documents/{collection}/{document}", api.DocumentReadAsync);
-        app.MapPut("/v1/documents/{collection}/{document}", api.DocumentWriteAsync);
-        app.MapDelete("/v1/documents/{collection}/{document}", api.DocumentDeleteAsync);
-        app.MapPost("/v1/query", api.QueryExecuteAsync);
-        app.MapPost("/v1/query/cancel", api.QueryCancelAsync);
-        app.MapPost("/v1/families/{family}/{name}/read", api.FamilyReadAsync);
-        app.MapPost("/v1/families/{family}/{name}/write", api.FamilyWriteAsync);
-
-        app.MapGet("/v1/schemas/{collection}", api.SchemaStatusAsync);
-        app.MapPut("/v1/schemas/{collection}", api.SchemaDeclareAsync);
-        app.MapPost("/v1/schemas/{collection}/validate", api.SchemaValidateAsync);
-        app.MapGet("/v1/migrations/{collection}", api.MigrationStatusAsync);
-        app.MapPost("/v1/migrations/{collection}/dry-run", api.MigrationDryRunAsync);
-        app.MapPost("/v1/migrations/{collection}/apply", api.MigrationApplyAsync);
-
-        app.MapGet("/v1/streams", api.StreamSseAsync);
-        app.MapGet("/v1/streams/ws", api.StreamWebSocketAsync);
-        app.MapPost("/v1/streams/{id}/ack", api.StreamAcknowledgeAsync);
-        app.MapDelete("/v1/streams/{id}", api.StreamCloseAsync);
-
-        app.MapPost("/v1/sync/sessions", api.SyncSessionSetupAsync);
-        app.MapGet("/v1/sync/sessions", api.SyncSessionsAsync);
-        app.MapPost("/v1/sync/sessions/{id}/delta", api.SyncDeltaPullAsync);
-        app.MapPost("/v1/sync/sessions/{id}/snapshot", api.SyncSnapshotPullAsync);
-        app.MapPost("/v1/sync/sessions/{id}/ack", api.SyncCheckpointAckAsync);
-        app.MapPost("/v1/sync/sessions/{id}/mutations", api.SyncMutationSubmitAsync);
-        app.MapPost("/v1/sync/sessions/{id}/close", api.SyncSessionCloseAsync);
-    }
-
     // ------------------------------------------------------------------
     // Health, metrics, audit
     // ------------------------------------------------------------------
 
-    private async Task<IResult> HealthAsync(CancellationToken cancellationToken)
+    internal async Task<IResult> HealthAsync(CancellationToken cancellationToken)
     {
         var health = await this.supervisor.HealthAsync(cancellationToken).ConfigureAwait(false);
         var status = health.Status == EngineStatus.Serving && health.EngineState is not ("Stopped" or "Draining")
@@ -105,7 +58,7 @@ public sealed class TypedApi
             statusCode: status == "serving" ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
     }
 
-    private IResult Metrics() => Results.Json(new MetricsResponse(
+    internal IResult Metrics() => Results.Json(new MetricsResponse(
         EngineGeneration: this.supervisor.Generation,
         EngineRestarts: this.supervisor.Restarts,
         EngineStatus: this.supervisor.Status.ToString().ToLowerInvariant(),
@@ -114,9 +67,9 @@ public sealed class TypedApi
         TrackedSessions: this.supervisor.Sessions.Count,
         AuditRecords: this.audit.Count));
 
-    private IResult Audit(int limit = 100) => Results.Json(new AuditResponse(this.audit.Recent(Math.Clamp(limit, 1, AuditLog.Capacity))));
+    internal IResult Audit(int limit = 100) => Results.Json(new AuditResponse(this.audit.Recent(Math.Clamp(limit, 1, AuditLog.Capacity))));
 
-    private async Task<IResult> EngineHealthAsync(HttpContext context, CancellationToken cancellationToken)
+    internal async Task<IResult> EngineHealthAsync(HttpContext context, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -127,7 +80,7 @@ public sealed class TypedApi
         return Results.Json(health);
     }
 
-    private async Task<IResult> EngineStatusAsync(HttpContext context, CancellationToken cancellationToken)
+    internal async Task<IResult> EngineStatusAsync(HttpContext context, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -151,7 +104,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> EngineTopologyAsync(HttpContext context, CancellationToken cancellationToken)
+    internal async Task<IResult> EngineTopologyAsync(HttpContext context, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -175,7 +128,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> EngineShutdownAsync(HttpContext context, ShutdownRequestDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> EngineShutdownAsync(HttpContext context, ShutdownRequestDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -203,7 +156,7 @@ public sealed class TypedApi
     // Documents, queries, families (forwarded typed operations)
     // ------------------------------------------------------------------
 
-    private async Task<IResult> DocumentReadAsync(HttpContext context, string collection, string document, CancellationToken cancellationToken)
+    internal async Task<IResult> DocumentReadAsync(HttpContext context, string collection, string document, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -236,7 +189,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> DocumentWriteAsync(HttpContext context, string collection, string document, JsonValue? body, CancellationToken cancellationToken)
+    internal async Task<IResult> DocumentWriteAsync(HttpContext context, string collection, string document, JsonValue? body, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -281,7 +234,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> DocumentDeleteAsync(HttpContext context, string collection, string document, CancellationToken cancellationToken)
+    internal async Task<IResult> DocumentDeleteAsync(HttpContext context, string collection, string document, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -322,7 +275,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> QueryExecuteAsync(HttpContext context, QueryRequestDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> QueryExecuteAsync(HttpContext context, QueryRequestDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -350,7 +303,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> QueryCancelAsync(HttpContext context, QueryCancelDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> QueryCancelAsync(HttpContext context, QueryCancelDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -371,7 +324,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> FamilyReadAsync(HttpContext context, string family, string name, FamilyRequestDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> FamilyReadAsync(HttpContext context, string family, string name, FamilyRequestDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -398,7 +351,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> FamilyWriteAsync(HttpContext context, string family, string name, FamilyRequestDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> FamilyWriteAsync(HttpContext context, string family, string name, FamilyRequestDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -442,7 +395,7 @@ public sealed class TypedApi
     // The schema surface (SM-04): the typed schema lifecycle
     // ------------------------------------------------------------------
 
-    private async Task<IResult> SchemaStatusAsync(HttpContext context, string collection, CancellationToken cancellationToken)
+    internal async Task<IResult> SchemaStatusAsync(HttpContext context, string collection, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -468,7 +421,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> SchemaDeclareAsync(HttpContext context, string collection, SchemaDeclareDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> SchemaDeclareAsync(HttpContext context, string collection, SchemaDeclareDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -516,7 +469,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> SchemaValidateAsync(HttpContext context, string collection, SchemaValidateDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> SchemaValidateAsync(HttpContext context, string collection, SchemaValidateDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -564,7 +517,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> MigrationStatusAsync(HttpContext context, string collection, CancellationToken cancellationToken)
+    internal async Task<IResult> MigrationStatusAsync(HttpContext context, string collection, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -590,7 +543,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> MigrationDryRunAsync(HttpContext context, string collection, MigrationDryRunDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> MigrationDryRunAsync(HttpContext context, string collection, MigrationDryRunDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -622,7 +575,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> MigrationApplyAsync(HttpContext context, string collection, MigrationApplyDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> MigrationApplyAsync(HttpContext context, string collection, MigrationApplyDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -723,7 +676,7 @@ public sealed class TypedApi
     // Subscription endpoints (SSE and WebSocket over the backbone)
     // ------------------------------------------------------------------
 
-    private async Task StreamSseAsync(HttpContext context, CancellationToken cancellationToken)
+    internal async Task StreamSseAsync(HttpContext context, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -759,7 +712,7 @@ public sealed class TypedApi
             cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task StreamWebSocketAsync(HttpContext context, CancellationToken cancellationToken)
+    internal async Task StreamWebSocketAsync(HttpContext context, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -936,7 +889,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> StreamAcknowledgeAsync(HttpContext context, ulong id, StreamAckDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> StreamAcknowledgeAsync(HttpContext context, ulong id, StreamAckDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -965,7 +918,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> StreamCloseAsync(HttpContext context, ulong id, CancellationToken cancellationToken)
+    internal async Task<IResult> StreamCloseAsync(HttpContext context, ulong id, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -1005,7 +958,7 @@ public sealed class TypedApi
     // terrascale.sync.v2 sessions, forwarded to the engine
     // ------------------------------------------------------------------
 
-    private async Task<IResult> SyncSessionSetupAsync(HttpContext context, SyncSessionSetupDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> SyncSessionSetupAsync(HttpContext context, SyncSessionSetupDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -1052,7 +1005,7 @@ public sealed class TypedApi
         }
     }
 
-    private IResult SyncSessionsAsync(HttpContext context)
+    internal IResult SyncSessionsAsync(HttpContext context)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -1068,7 +1021,7 @@ public sealed class TypedApi
         return Results.Json(sessions);
     }
 
-    private async Task<IResult> SyncDeltaPullAsync(HttpContext context, ulong id, SyncDeltaDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> SyncDeltaPullAsync(HttpContext context, ulong id, SyncDeltaDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -1104,7 +1057,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> SyncSnapshotPullAsync(HttpContext context, ulong id, CancellationToken cancellationToken)
+    internal async Task<IResult> SyncSnapshotPullAsync(HttpContext context, ulong id, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -1134,7 +1087,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> SyncCheckpointAckAsync(HttpContext context, ulong id, SyncAckDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> SyncCheckpointAckAsync(HttpContext context, ulong id, SyncAckDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -1168,7 +1121,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> SyncMutationSubmitAsync(HttpContext context, ulong id, SyncMutationDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> SyncMutationSubmitAsync(HttpContext context, ulong id, SyncMutationDto request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
@@ -1219,7 +1172,7 @@ public sealed class TypedApi
         }
     }
 
-    private async Task<IResult> SyncSessionCloseAsync(HttpContext context, ulong id, CancellationToken cancellationToken)
+    internal async Task<IResult> SyncSessionCloseAsync(HttpContext context, ulong id, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {

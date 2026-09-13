@@ -134,9 +134,9 @@ public sealed class EndpointDefinition
             builder.Accepts(requestType, "application/json");
         }
 
-        if (responseType != typeof(void))
+        if (responseType != typeof(void) && !typeof(IResult).IsAssignableFrom(responseType))
         {
-            builder.Produces(responseType, StatusCodes.Status200OK, "application/json");
+            builder.Produces(StatusCodes.Status200OK, responseType, "application/json");
         }
 
         foreach (var item in this.metadata)

@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TerraBase.Protocol\TerraBase.Protocol.csproj" />
+    <ProjectReference Include="..\..\endpoints\TerraScale.Endpoints\TerraScale.Endpoints.csproj" />
   </ItemGroup>
 
   <ItemGroup>

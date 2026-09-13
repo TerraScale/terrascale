@@ -5,6 +5,7 @@
 namespace TerraBase.Api;
 
 using System.Text.Json.Serialization;
+using TerraScale.Endpoints;
 
 /// <summary>
 /// The API host assembly point: builds the ASP.NET Core application
@@ -23,17 +24,25 @@ public static class TerraBaseHost
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls(options.ListenUrl);
         configure?.Invoke(builder);
+
+        var audit = new AuditLog();
+        var supervisor = new EngineSupervisor(options, audit);
+        var hub = new BackboneHub(supervisor, audit);
+        builder.Services.AddSingleton(new TypedApi(supervisor, hub, audit));
+        builder.Services.AddTerraScaleEndpoints(typeof(TerraBaseHost).Assembly, endpointOptions =>
+        {
+            endpointOptions.Title = "TerraBase API";
+            endpointOptions.Version = "v1";
+        });
         builder.Services.ConfigureHttpJsonOptions(json =>
         {
             json.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
         });
 
-        var audit = new AuditLog();
-        var supervisor = new EngineSupervisor(options, audit);
-        var hub = new BackboneHub(supervisor, audit);
         var app = builder.Build();
         app.UseWebSockets();
-        TypedApi.MapApi(app, supervisor, hub, audit);
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
         return new HostBundle(app, supervisor, hub, audit);
     }
 }

@@ -46,6 +46,22 @@ public static class EndpointServiceCollectionExtensions
         Action<EndpointOptions>? configure = null) =>
         services.AddTerraScaleEndpoints(Assembly.GetCallingAssembly(), configure);
 
+    /// <summary>Registers a precomputed endpoint list without assembly scanning.</summary>
+    public static IServiceCollection AddTerraScaleEndpoints(
+        this IServiceCollection services,
+        IEnumerable<Type> endpointTypes,
+        Action<EndpointOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(endpointTypes);
+        var options = new EndpointOptions();
+        configure?.Invoke(options);
+        Validate(options);
+        services.AddSingleton(options);
+        services.AddSingleton(new EndpointCatalog(endpointTypes, alreadyDiscovered: true));
+        services.AddOpenApi(options.Version);
+        return services;
+    }
+
     /// <summary>Registers endpoints from an assembly.</summary>
     public static IServiceCollection AddTerraScaleEndpoints(
         this IServiceCollection services,

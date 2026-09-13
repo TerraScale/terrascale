@@ -17,7 +17,6 @@ public static class EndpointDiscovery
         return Cache.GetOrAdd(assembly, static source => source
             .DefinedTypes
             .Where(type => !type.IsAbstract && !type.IsInterface && typeof(IEndpoint).IsAssignableFrom(type))
-            .Where(type => type.GetCustomAttribute<EndpointAttribute>() is not null)
             .OrderBy(type => type.FullName, StringComparer.Ordinal)
             .Select(type => type.AsType())
             .ToArray());
@@ -29,7 +28,7 @@ public sealed class EndpointCatalog
 {
     private readonly Type[] endpointTypes;
 
-    /// <summary>Creates a catalog for the supplied assemblies.</summary>
+    /// <summary>Creates a catalog by scanning the supplied assemblies once.</summary>
     public EndpointCatalog(IEnumerable<Assembly> assemblies)
     {
         ArgumentNullException.ThrowIfNull(assemblies);
@@ -40,6 +39,20 @@ public sealed class EndpointCatalog
             .OrderBy(type => type.FullName, StringComparer.Ordinal)
             .ToArray();
     }
+
+    /// <summary>Creates a catalog from a precomputed endpoint list.</summary>
+    public EndpointCatalog(IEnumerable<Type> endpointTypes, bool alreadyDiscovered)
+    {
+        ArgumentNullException.ThrowIfNull(endpointTypes);
+        this.endpointTypes = endpointTypes
+            .Distinct()
+            .Where(type => !type.IsAbstract && !type.IsInterface && typeof(IEndpoint).IsAssignableFrom(type))
+            .OrderBy(type => type.FullName, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    /// <summary>The endpoint types in deterministic mapping order.</summary>
+    public IReadOnlyList<Type> Types => this.endpointTypes;
 
     /// <summary>The number of discovered endpoints.</summary>
     public int Count => this.endpointTypes.Length;
