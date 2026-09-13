@@ -67,6 +67,8 @@ describe("RegionsClient", () => {
       { regions: [{ ...gru, available: "yes" }] },
       { regions: [{ ...gru, ociRegionCode: "sa-saopaulo-1" }] },
       { regions: [{ ...gru, clusterNodeTag: "A" }] },
+      { regions: [{ ...gru, extra: true }], hosts: { GRU: "https://gru.api.terrascale.tech" } },
+      { regions: [gru], hosts: { GRU: "https://gru.api.terrascale.tech" }, extra: true },
       { regions: "GRU" },
       { regions: [gru] },
       { regions: [gru], hosts: {} },

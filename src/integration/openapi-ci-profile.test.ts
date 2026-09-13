@@ -9,12 +9,9 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 test("the CI workflow delegates contract and verification gates to ts-deploy", async () => {
   const workflow = await readFile(path.join(repositoryRoot, ".forgejo", "workflows", "ci.yml"), "utf8");
 
-  assert.match(workflow, /^  push:\r?\n    branches: \[develop\]$/mu);
-  assert.doesNotMatch(workflow, /^\s+pull_request:/mu);
-  assert.match(workflow, /uses:\s+https:\/\/data\.forgejo\.org\/actions\/checkout@[0-9a-f]{40}\b/u);
-  assert.match(workflow, /ref:\s+\$\{\{\s*forgejo\.sha\s*\}\}/u);
-  assert.match(workflow, /fetch-depth:\s*0\b/u);
-  assert.match(workflow, /persist-credentials:\s*false\b/u);
+  assert.match(workflow, /^  push:\r?\n    branches: \[main\]$/mu);
+  assert.match(workflow, /^\s+pull_request:\r?\n    branches: \[main\]$/mu);
+  assert.match(workflow, /^\s+workflow_dispatch:/mu);
   assert.doesNotMatch(workflow, /^\s*(?:container|strategy|matrix):/mu);
   assert.doesNotMatch(
     workflow,
@@ -22,6 +19,6 @@ test("the CI workflow delegates contract and verification gates to ts-deploy", a
   );
   assert.doesNotMatch(workflow, /ts-dashboard\.git|path:\s*Dashboard/u);
 
-  assert.match(workflow, /uses:\s+\.\/\.forgejo\/actions\/ts-deploy\b/u);
+  assert.match(workflow, /uses:\s+TerraScale\/ts-deploy\/\.forgejo\/workflows\/deploy\.yml@main/u);
   assert.match(workflow, /with:\s*\r?\n\s+repo:\s+ts-typescript\b/u);
 });

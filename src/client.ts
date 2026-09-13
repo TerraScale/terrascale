@@ -476,13 +476,13 @@ export class RegionsClient {
     this.#http = http;
   }
 
-  async list(): Promise<TerraScaleResult<Models.RegionsResponse>> {
+  async list(): Promise<TerraScaleResult<Models.RegionCatalogResponse>> {
     const result = await this.#http.request<unknown>({
       method: "GET",
       path: `${apiRoot}/regions`,
       routeName: "regions.list",
     });
-    return decodeRegionResult(result, decodeRegionsResponse);
+    return decodeRegionResult(result, decodeRegionCatalogResponse);
   }
 
   /** Returns the serving member's health-shaped response. */
@@ -1766,8 +1766,9 @@ function invalidRegionResponse<TValue>(
   };
 }
 
-function decodeRegionsResponse(value: unknown): Models.RegionsResponse {
+function decodeRegionCatalogResponse(value: unknown): Models.RegionCatalogResponse {
   const response = requireRecord(value, "response");
+  assertAllowedKeys(response, ["regions", "hosts"], "response");
   if (!Array.isArray(response.regions)) {
     throw new TypeError("response.regions must be an array.");
   }
@@ -1828,6 +1829,7 @@ function decodeHealthResult(
 
 function decodeRegionSummary(value: unknown, path: string): Models.RegionSummary {
   const region = requireRecord(value, path);
+  assertAllowedKeys(region, ["code", "name", "country", "latitude", "longitude", "available"], path);
   for (const field of ["ociRegionCode", "clusterNodeTag"] as const) {
     if (Object.hasOwn(region, field)) {
       throw new TypeError(`${path} contains forbidden provider field ${field}.`);
@@ -1850,6 +1852,13 @@ function decodeRegionSummary(value: unknown, path: string): Models.RegionSummary
   }
 
   return { code, name, country, latitude, longitude, available: region.available };
+}
+
+function assertAllowedKeys(record: Record<string, unknown>, allowed: readonly string[], path: string): void {
+  const permitted = new Set(allowed);
+  for (const key of Object.keys(record)) {
+    if (!permitted.has(key)) throw new TypeError(`${path} contains unknown field ${key}.`);
+  }
 }
 
 function requireRecord(value: unknown, path: string): Record<string, unknown> {

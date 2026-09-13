@@ -41,7 +41,7 @@ export type RegionSummary = {
 
 export type RegionDetails = RegionSummary;
 
-export type RegionsResponse = {
+export type RegionCatalogResponse = {
   readonly regions: readonly RegionSummary[];
   /** Regional member origins published by the edge catalog. */
   readonly hosts: Readonly<Record<string, string>>;

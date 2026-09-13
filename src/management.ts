@@ -217,15 +217,17 @@ export class ManagementDatabasesClient {
 
   constructor(http: TerraScaleHttp) { this.#http = http; }
 
-  list(_projectId?: string, _query?: ManagementPageRequest): Promise<TerraScaleResult<DatabaseListResponse>> {
+  list(projectId?: string, query?: ManagementPageRequest): Promise<TerraScaleResult<DatabaseListResponse>> {
     return this.#http.request({
       method: "GET",
       path: apiRoot + "/databases",
       routeName: "databases.listDatabases",
+      projectId,
+      query,
     });
   }
 
-  create(request: CreateDatabaseRequest, _projectId?: string): Promise<CreateDatabaseResult> {
+  create(request: CreateDatabaseRequest, projectId?: string): Promise<CreateDatabaseResult> {
     validateCreateDatabase(request);
     return this.#http.request({
       method: "POST",
@@ -233,14 +235,16 @@ export class ManagementDatabasesClient {
       routeName: "databases.createDatabase",
       body: request,
       idempotencyKey: false,
+      projectId,
     }).then(decodeCreateDatabaseResult);
   }
 
-  get(databaseId: string, _projectId?: string): Promise<TerraScaleResult<Database>> {
+  get(databaseId: string, projectId?: string): Promise<TerraScaleResult<Database>> {
     return this.#http.request({
       method: "GET",
       path: databasePath(databaseId),
       routeName: "databases.getDatabase",
+      projectId,
     });
   }
 
@@ -252,6 +256,7 @@ export class ManagementDatabasesClient {
       path: databasePath(databaseId),
       routeName: "databases.deleteDatabase",
       idempotencyKey: options.idempotencyKey,
+      projectId: options.projectId,
     });
   }
 
@@ -275,9 +280,9 @@ export class ManagementDatabasesClient {
     });
   }
 
-  listDatabases(): Promise<TerraScaleResult<DatabaseListResponse>> { return this.list(); }
-  createDatabase(request: CreateDatabaseRequest): Promise<CreateDatabaseResult> { return this.create(request); }
-  getDatabase(databaseId: string): Promise<TerraScaleResult<Database>> { return this.get(databaseId); }
+  listDatabases(projectId?: string, query?: ManagementPageRequest): Promise<TerraScaleResult<DatabaseListResponse>> { return this.list(projectId, query); }
+  createDatabase(request: CreateDatabaseRequest, projectId?: string): Promise<CreateDatabaseResult> { return this.create(request, projectId); }
+  getDatabase(databaseId: string, projectId?: string): Promise<TerraScaleResult<Database>> { return this.get(databaseId, projectId); }
   deleteDatabase(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<DeletionOperation>> { return this.delete(databaseId, options); }
   restoreDatabase(databaseId: string): Promise<TerraScaleResult<Database>> { return this.restore(databaseId); }
 }
@@ -362,11 +367,13 @@ export class ManagementBackupsClient {
     return contractGap("management.backups.execute");
   }
 
-  listBackups(databaseId: string, _query?: ManagementPageRequest, _projectId?: string): Promise<TerraScaleResult<BackupStatusResponse>> {
+  listBackups(databaseId: string, query?: ManagementPageRequest, projectId?: string): Promise<TerraScaleResult<BackupStatusResponse>> {
     return this.#http.request({
       method: "GET",
       path: `${databasePath(databaseId)}/backups`,
       routeName: "databases.listBackups",
+      projectId,
+      query,
     });
   }
 
@@ -544,7 +551,36 @@ function validateWebhookEndpoint(raw: unknown): string {
   if (octets && (octets.some(part => part > 255) || first === 0 || first === 10 || first === 127 || (first === 192 && second === 168) || (first === 172 && second !== undefined && second >= 16 && second <= 31) || (first === 169 && second === 254))) {
     throw new TypeError("webhook endpoint host is not public.");
   }
+  if (isPrivateIpv6(host)) {
+    throw new TypeError("webhook endpoint host is not public.");
+  }
   return endpoint.toString();
+}
+
+/** Reject non-routable IPv6 destinations before a server can SSRF them. */
+function isPrivateIpv6(host: string): boolean {
+  const value = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (!value.includes(":")) return false;
+  const pieces = value.toLowerCase().split("::");
+  if (pieces.length > 2) return true;
+  const left = pieces[0] === "" ? [] : pieces[0]!.split(":");
+  const right = pieces.length === 2 && pieces[1] !== "" ? pieces[1]!.split(":") : [];
+  if (left.some(part => !/^[0-9a-f]{1,4}$/u.test(part)) || right.some(part => !/^[0-9a-f]{1,4}$/u.test(part))) return true;
+  if (pieces.length === 1 && left.length !== 8) return true;
+  if (pieces.length === 2 && left.length + right.length >= 8) return true;
+  const words = [...left, ...Array(8 - left.length - right.length).fill("0"), ...right].map(part => Number.parseInt(part, 16));
+  const first = words[0]!;
+  // Unspecified, loopback, IPv4-mapped, unique-local, link-local, and multicast.
+  if (words.every(word => word === 0) || (words[0] === 0 && words.slice(1, 7).every(word => word === 0) && words[7] === 1)) return true;
+  if ((first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00) return true;
+  if (words.slice(0, 5).every(word => word === 0) && (words[5] === 0 || words[5] === 0xffff)) {
+    const ipv4First = words[6]! >>> 8;
+    const ipv4Second = words[6]! & 255;
+    const ipv4Third = words[7]! >>> 8;
+    const ipv4Fourth = words[7]! & 255;
+    return ipv4First === 0 || ipv4First === 10 || ipv4First === 127 || (ipv4First === 192 && ipv4Second === 168) || (ipv4First === 172 && ipv4Second >= 16 && ipv4Second <= 31) || (ipv4First === 169 && ipv4Second === 254) || ipv4Third === 0 && ipv4Fourth === 0;
+  }
+  return false;
 }
 
 export class ManagementWebhooksClient {

@@ -31,7 +31,7 @@ export const handleLocalMetadata: LocalHandler = async (context) => {
     return jsonResponse({
       regions,
       hosts: Object.fromEntries(regions.map((region) => [region.code, regionalApiHostname(region.code)])),
-    } satisfies Models.RegionsResponse);
+    } satisfies Models.RegionCatalogResponse);
   }
   const projectId = projectIdFromContext(context) ?? projectIdFromRoute(context);
   if (projectId !== undefined) {

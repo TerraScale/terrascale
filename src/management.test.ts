@@ -444,3 +444,29 @@ it("retries webhook creation only with an explicit stable identity and never ret
     expect(requests.map(request => request.headers.get("idempotency-key"))).toEqual(operation === "keyed-create" ? ["stable-one", "stable-one"] : [null]);
   }
 });
+
+it("uses per-call project scope and forwards management pagination", async () => {
+  const requests: Request[] = [];
+  const client = createTerraScaleManagementClient({
+    projectId: "configured-project",
+    fetch: async input => { requests.push(new Request(input)); return Response.json({ databases: [] }); },
+  });
+  await client.databases.list("call-project", { skip: 5, take: 10 });
+  await client.backups.listBackups("db", { skip: 2, take: 3 }, "backup-project");
+  expect(requests[0]!.headers.get("x-terrascale-project-id")).toBe("call-project");
+  expect(new URL(requests[0]!.url).search).toBe("?skip=5&take=10");
+  expect(requests[1]!.headers.get("x-terrascale-project-id")).toBe("backup-project");
+  expect(new URL(requests[1]!.url).search).toBe("?skip=2&take=3");
+});
+
+it("rejects private IPv6 webhook destinations", async () => {
+  const client = createTerraScaleManagementClient({ fetch: async () => Response.json({}) });
+  for (const endpoint of [
+    "https://[::1]/hook",
+    "https://[fc00::1]/hook",
+    "https://[fe80::1]/hook",
+    "https://[::ffff:127.0.0.1]/hook",
+  ]) {
+    expect(() => client.webhooks.create("db", { endpoint })).toThrow("host is not public");
+  }
+});

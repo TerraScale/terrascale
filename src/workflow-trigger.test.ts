@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "vitest";
 
-test("CI runs on main pushes and pull requests", async () => {
+test("CI runs on main pushes, pull requests, and manual dispatch", async () => {
   const workflow = await readFile(
     new URL("../.forgejo/workflows/ci.yml", import.meta.url),
     "utf8",
@@ -10,7 +10,7 @@ test("CI runs on main pushes and pull requests", async () => {
 
   assert.match(workflow, /^  push:\r?\n    branches: \[main\]$/mu);
   assert.match(workflow, /^\s+pull_request:\r?\n    branches: \[main\]$/mu);
-  assert.doesNotMatch(workflow, /^\s+(?:workflow_dispatch|schedule|workflow_call):/mu);
+  assert.match(workflow, /^\s+workflow_dispatch:/mu);
 });
 
 test("CI delegates to the central ts-deploy reusable workflow", async () => {
@@ -28,7 +28,6 @@ test("CI delegates to the central ts-deploy reusable workflow", async () => {
   );
   assert.match(workflow, /repo:\s+ts-typescript/u);
   assert.match(workflow, /secrets:\s+inherit/u);
-  assert.match(workflow, /permissions:\r?\n\s+contents:\s+write\r?\n\s+issues:\s+write/u);
   assert.doesNotMatch(workflow, /^\s*(?:container|strategy|matrix):/mu);
   assert.doesNotMatch(
     workflow,

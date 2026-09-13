@@ -47,6 +47,8 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly method: TerraScaleHttpMethod;
   readonly path: string;
   readonly routeName: TerraScaleRouteName;
+  /** Per-request project scope; falls back to the client configuration. */
+  readonly projectId?: string | undefined;
   readonly query?: QueryRecord | undefined;
   readonly body?: TBody | undefined;
   readonly headers?: HeadersInit | undefined;
@@ -309,8 +311,8 @@ export class TerraScaleHttp {
     if (this.config.tenantId !== undefined) {
       headers.set("x-terrascale-tenant-id", this.config.tenantId);
     }
-    if (this.config.projectId !== undefined) {
-      headers.set("x-terrascale-project-id", this.config.projectId);
+    if ((options.projectId ?? this.config.projectId) !== undefined) {
+      headers.set("x-terrascale-project-id", options.projectId ?? this.config.projectId!);
     }
 
     if (
