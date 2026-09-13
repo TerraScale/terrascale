@@ -357,15 +357,6 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
             has_companion = true;
             continue;
         }
-        // Litestream 0.5 keeps its LTX journal in a hidden directory beside
-        // the database file it captures. The backup child is terrabase-owned
-        // state, so a restart must revalidate the location with it present.
-        if entry_type.is_dir()
-            && name.to_str().is_some_and(|name| name == litestream_sidecar_name())
-        {
-            has_companion = true;
-            continue;
-        }
         // Encrypted SQLite keeps its authenticated companion, generation
         // files, and per-artifact lock stubs beside the logical database.
         // They are all regular files owned by the encrypted VFS and must
@@ -390,12 +381,6 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
         return Err(OwnershipError::ForeignLocation);
     }
     Ok(())
-}
-
-/// The Litestream 0.5 LTX journal directory created beside the database file
-/// by the member's own backup child (`.<database>-litestream`).
-fn litestream_sidecar_name() -> String {
-    format!(".{DATABASE_FILE}-litestream")
 }
 
 fn encrypted_artifact_name(name: &str) -> bool {
@@ -567,27 +552,6 @@ mod tests {
         let second = load_or_create(&path, None, OwnershipMode::LocalDevelopment).expect("read");
         assert_eq!(first, second);
         assert!(!path.join("format").exists(), "ownership needs no backend selector");
-        let _ = fs::remove_dir_all(path);
-    }
-
-    #[test]
-    fn litestream_sidecar_does_not_prevent_restart_reopen() {
-        let path = location("litestream-restart");
-        let owner = load_or_create(&path, None, OwnershipMode::LocalDevelopment).expect("create");
-        fs::write(path.join(DATABASE_FILE), b"sqlite-owned-by-test").expect("database fixture");
-        // The backup child creates its LTX journal beside the database; a
-        // member restart must still revalidate and reopen the location.
-        let sidecar = path.join(litestream_sidecar_name());
-        fs::create_dir_all(sidecar.join("ltx").join("0")).expect("sidecar");
-        assert_eq!(load_existing(&path, Some(&owner), OwnershipMode::LocalDevelopment), Ok(owner));
-        // The sidecar is only valid as the backup child's directory shape;
-        // a plain file with that name is still foreign.
-        fs::remove_dir_all(&sidecar).unwrap();
-        fs::write(&sidecar, b"not a directory").unwrap();
-        assert_eq!(
-            load_existing(&path, None, OwnershipMode::LocalDevelopment),
-            Err(OwnershipError::ForeignLocation)
-        );
         let _ = fs::remove_dir_all(path);
     }
 

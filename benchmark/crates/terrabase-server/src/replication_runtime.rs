@@ -280,7 +280,11 @@ impl ReplicationProgress {
             return Err(ReplicationWaitError::Fenced);
         }
         if !progress.selected.contains(region)
-            || frontier.keys().any(|origin| !progress.selected.contains(origin))
+            || frontier.keys().any(|origin| {
+                origin.is_empty()
+                    || origin.len() > 128
+                    || origin.bytes().any(|byte| byte.is_ascii_control())
+            })
         {
             return Err(ReplicationWaitError::NotAdmitted);
         }
@@ -431,7 +435,11 @@ impl ReplicationProgress {
             if progress.selected.len() < 2 {
                 return Err(ReplicationWaitError::InsufficientRegions);
             }
-            if frontier.keys().any(|origin| !progress.selected.contains(origin)) {
+            if frontier.keys().any(|origin| {
+                origin.is_empty()
+                    || origin.len() > 128
+                    || origin.bytes().any(|byte| byte.is_ascii_control())
+            }) {
                 return Err(ReplicationWaitError::NotAdmitted);
             }
             Ok(progress.selected.iter().all(|region| {

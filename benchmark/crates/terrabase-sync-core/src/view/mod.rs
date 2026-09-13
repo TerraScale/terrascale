@@ -2128,10 +2128,12 @@ mod tests {
         let reader = Arc::clone(&view);
         let worker =
             std::thread::spawn(move || reader.poll(1, 0, &checkpoint, Duration::from_secs(2)));
-        for _ in 0..1_000 {
-            if view.singleflight_keys() == 1 {
-                break;
-            }
+        // Thread scheduling is nondeterministic, especially when the full
+        // workspace test suite is running.  Wait for the worker to publish
+        // its shared flight instead of assuming a fixed number of yields is
+        // enough to run it.
+        let registration_deadline = Instant::now() + Duration::from_secs(1);
+        while view.singleflight_keys() != 1 && Instant::now() < registration_deadline {
             std::thread::yield_now();
         }
         assert_eq!(view.singleflight_keys(), 1);

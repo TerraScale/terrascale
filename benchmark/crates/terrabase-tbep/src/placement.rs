@@ -1090,8 +1090,20 @@ impl PlacementJournal {
     /// Rejects missing proofs or invalid retained chain.
     pub fn accepted(&self) -> Result<pb::PlacementAcceptanceResponse, PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
-        let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let Some(trust) = configured.as_ref() else {
+            // A fresh journal has no retained proof to verify yet. Pending
+            // control must be allowed to serve until the first acceptance
+            // installs transition trust; a non-empty journal remains invalid.
+            let count: i64 = connection
+                .query_row("SELECT COUNT(*) FROM accepted", [], |row| row.get(0))
+                .map_err(|_| PlacementError::Storage)?;
+            return if count == 0 {
+                Err(PlacementError::NotFound)
+            } else {
+                Err(PlacementError::Invalid)
+            };
+        };
         let chain = self.verified_chain(&connection, trust)?;
         let (_, revision, proof) = chain.last().ok_or(PlacementError::NotFound)?;
         Ok(accepted_response(*revision, proof))

@@ -230,10 +230,6 @@ mod tests {
     use tokio::time::{sleep, timeout};
 
     fn state() -> Arc<crate::api::ApiState> {
-        let backups = Arc::new(crate::backup::BackupStreams::open_member());
-        let backup_root = unique_path("backup");
-        let timetravel =
-            Arc::new(crate::backup::TimeTravelCache::new(Arc::clone(&backups), &backup_root));
         Arc::new(crate::api::ApiState {
             budget: None,
             native_backups: None,
@@ -253,9 +249,6 @@ mod tests {
             control: None,
             catalog: None,
             scope: ("test-tenant".into(), "test-project".into()),
-            backups: Some(backups),
-            backup_root,
-            timetravel: Some(timetravel),
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),

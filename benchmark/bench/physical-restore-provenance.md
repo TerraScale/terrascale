@@ -34,9 +34,9 @@ nice -n 19 cargo test --locked --release -p terrabase-server --lib \
 
 Forgejo runs this gate in `.forgejo/workflows/release-benchmark.yml` on every
 `main` push and release tag (and it is available for an explicit dispatch).
-That workflow verifies that the pinned runner has Litestream before starting;
-missing benchmark infrastructure is a failed qualification rather than a
-silent skipped test.
+That workflow verifies the pinned runner's benchmark infrastructure before
+starting; missing benchmark infrastructure is a failed qualification rather
+than a silent skipped test.
 
 The baseline includes workspace revision `546affae`. The candidate's
 `src/storage/sqlite/branch_provenance.rs` SHA-256 was

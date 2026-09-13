@@ -52,7 +52,11 @@ impl OriginLaneId {
             return Err(OriginLaneError::Malformed);
         }
         let incarnation = u128::from_str_radix(hex, 16).map_err(|_| OriginLaneError::Malformed)?;
-        Self::try_new(region, incarnation)
+        let lane = Self::try_new(region, incarnation)?;
+        if lane.as_str() != value {
+            return Err(OriginLaneError::Malformed);
+        }
+        Ok(lane)
     }
 
     /// Returns the placement Region.
@@ -113,5 +117,50 @@ mod tests {
         assert_ne!(first.as_str(), second.as_str());
         assert_eq!(OriginLaneId::parse(&first.as_str()).unwrap(), first);
         assert!(OriginLaneId::parse("GRU").is_err());
+    }
+
+    #[test]
+    fn parser_rejects_every_noncanonical_or_overflowing_shape() {
+        let valid = "lane1.GRU.00000000000000000000000000000001";
+        for value in [
+            "",
+            "lane1",
+            "lane1.GRU",
+            "lane1.GRU.1",
+            "lane1.GRU.00000000000000000000000000000000",
+            "lane1.GRU.0000000000000000000000000000000G",
+            "lane1.GRU.00000000000000000000000000000001.extra",
+            "lane1.GRU.0000000000000000000000000000000a ",
+            "lane2.GRU.00000000000000000000000000000001",
+        ] {
+            assert!(OriginLaneId::parse(value).is_err(), "accepted malformed lane {value:?}");
+        }
+        assert!(OriginLaneId::parse(valid).is_ok());
+        let lowercase_hex = "lane1.GRU.0000000000000000000000000000000a";
+        assert!(OriginLaneId::parse(lowercase_hex).is_ok());
+        assert!(OriginLaneId::parse(&lowercase_hex.replace('a', "A")).is_err());
+    }
+
+    #[test]
+    fn lane_constructor_rejects_zero_and_preserves_maximum_incarnation() {
+        let region = RegionId::try_new("remote").unwrap();
+        assert_eq!(OriginLaneId::try_new(region.clone(), 0), Err(OriginLaneError::ZeroIncarnation));
+        let lane = OriginLaneId::try_new(region, u128::MAX).unwrap();
+        assert_eq!(OriginLaneId::parse(&lane.as_str()).unwrap(), lane);
+        assert_eq!(lane.as_str().len(), "lane1.remote.".len() + 32);
+    }
+
+    #[test]
+    fn lane_order_is_deterministic_by_region_then_incarnation() {
+        let region = RegionId::try_new("GRU").unwrap();
+        let mut lanes = [
+            OriginLaneId::try_new(region.clone(), 2).unwrap(),
+            OriginLaneId::try_new(region.clone(), 1).unwrap(),
+            OriginLaneId::try_new(RegionId::try_new("FRA").unwrap(), 1).unwrap(),
+        ];
+        lanes.sort();
+        assert_eq!(lanes[0].region().as_str(), "FRA");
+        assert_eq!(lanes[1].incarnation(), 1);
+        assert_eq!(lanes[2].incarnation(), 2);
     }
 }

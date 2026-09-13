@@ -121,7 +121,7 @@ impl<T: CanonicalValue> Candidate<T> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LwwRegister<T: CanonicalValue> {
     context: CausalContext,
-    winner: Option<Candidate<T>>,
+    candidates: Vec<Candidate<T>>,
 }
 
 impl<T: CanonicalValue> Default for LwwRegister<T> {
@@ -134,7 +134,7 @@ impl<T: CanonicalValue> LwwRegister<T> {
     /// Creates an empty register.
     #[must_use]
     pub const fn empty() -> Self {
-        Self { context: CausalContext::new(), winner: None }
+        Self { context: CausalContext::new(), candidates: Vec::new() }
     }
 
     /// Creates a register containing one candidate.
@@ -142,7 +142,7 @@ impl<T: CanonicalValue> LwwRegister<T> {
     pub fn from_candidate(candidate: Candidate<T>) -> Self {
         let mut context = candidate.version.context().clone();
         context.insert(candidate.dot());
-        Self { context, winner: Some(candidate) }
+        Self { context, candidates: vec![candidate] }
     }
 
     /// Returns the joined causal context, including discarded candidate dots.
@@ -153,41 +153,25 @@ impl<T: CanonicalValue> LwwRegister<T> {
 
     /// Returns the deterministic winning candidate, including a removal.
     #[must_use]
-    pub const fn winner(&self) -> Option<&Candidate<T>> {
-        self.winner.as_ref()
+    pub fn winner(&self) -> Option<&Candidate<T>> {
+        self.candidates.iter().max_by(|left, right| compare_candidates(left, right))
     }
 
     /// Returns the visible winning value, or `None` for empty/removal state.
     #[must_use]
     pub fn materialize(&self) -> Option<&T> {
-        self.winner.as_ref().and_then(Candidate::value)
+        self.winner().and_then(Candidate::value)
     }
 
     /// Joins two states using causal dominance before the HLC tie-break.
     #[must_use]
     pub fn join(&self, other: &Self) -> Self {
-        let mut context = self.context.clone();
-        context.union(&other.context);
-        let mut candidates = Vec::with_capacity(2);
-        if let Some(candidate) = self.winner.as_ref()
-            && (other.winner.as_ref().is_some_and(|right| right.identity() == candidate.identity())
-                || !other.context.contains(candidate.dot()))
-        {
-            candidates.push(candidate.clone());
-        }
-        if let Some(candidate) = other.winner.as_ref()
-            && (self.winner.as_ref().is_some_and(|left| left.identity() == candidate.identity())
-                || !self.context.contains(candidate.dot()))
-        {
-            candidates.push(candidate.clone());
-        }
-        // A well-formed state cannot contain two different values for one
-        // causal identity, but `Candidate` is intentionally constructible at
-        // this crate boundary.  Tie-break equal identities by their
-        // canonical value bytes so a malformed/equivocating pair still joins
-        // commutatively and deterministically.
-        let winner = candidates.into_iter().max_by(compare_candidates);
-        Self { context, winner }
+        let left =
+            MvRegister { context: self.context.clone(), candidates: self.candidates.clone() };
+        let right =
+            MvRegister { context: other.context.clone(), candidates: other.candidates.clone() };
+        let merged = left.join(&right);
+        Self { context: merged.context, candidates: merged.candidates }
     }
 
     /// Returns BLAKE3 over the domain-separated canonical register bytes.
@@ -206,8 +190,7 @@ impl<T: CanonicalValue> LwwRegister<T> {
             return Err(DecodeError::TrailingBytes);
         }
         let (context, candidates) = state;
-        let winner = candidates.into_iter().next();
-        Ok(Self { context, winner })
+        Ok(Self { context, candidates })
     }
 }
 
@@ -318,10 +301,18 @@ impl<T: CanonicalValue> MvRegister<T> {
 /// The payload tie-break is only relevant for an invalid state that carries
 /// conflicting values for the same identity; it makes joins total and
 /// commutative instead of depending on argument order.
-fn compare_candidates<T: CanonicalValue>(left: &Candidate<T>, right: &Candidate<T>) -> std::cmp::Ordering {
+fn compare_candidates<T: CanonicalValue>(
+    left: &Candidate<T>,
+    right: &Candidate<T>,
+) -> std::cmp::Ordering {
     let key = left.key().cmp(&right.key());
     if key != std::cmp::Ordering::Equal {
         return key;
+    }
+    let context =
+        left.version.context().canonical_bytes().cmp(&right.version.context().canonical_bytes());
+    if context != std::cmp::Ordering::Equal {
+        return context;
     }
     let left_value = canonical_candidate_value(left);
     let right_value = canonical_candidate_value(right);
@@ -338,7 +329,7 @@ fn canonical_candidate_value<T: CanonicalValue>(candidate: &Candidate<T>) -> Vec
 
 impl<T: CanonicalValue> CanonicalEncode for LwwRegister<T> {
     fn encode_canonical(&self, output: &mut Vec<u8>) {
-        encode_state(output, LWW_KIND, &self.context, self.winner.iter());
+        encode_state(output, LWW_KIND, &self.context, self.candidates.iter());
     }
 }
 
@@ -428,15 +419,20 @@ fn decode_state<T: CanonicalValue>(
         }
         candidates.push(candidate);
     }
-    if expected_kind == LWW_KIND && candidates.len() > 1 {
-        return Err(DecodeError::InvalidValue);
-    }
-    if expected_kind == MV_KIND {
+    if expected_kind == LWW_KIND || expected_kind == MV_KIND {
         let mut sorted = candidates.clone();
         sorted.sort_by_key(Candidate::key);
         if sorted != candidates {
             return Err(DecodeError::InvalidValue);
         }
+    }
+    if candidates.iter().enumerate().any(|(index, candidate)| {
+        candidates[index + 1..].iter().any(|other| {
+            candidate.version().happens_before(other.version())
+                || other.version().happens_before(candidate.version())
+        })
+    }) {
+        return Err(DecodeError::NonCanonicalContext);
     }
     Ok((context, candidates))
 }

@@ -153,7 +153,8 @@ fn register_decoder_rejects_candidate_that_observes_its_own_dot() {
 #[test]
 fn lww_join_is_commutative_for_equivocating_equal_identities() {
     let left = LwwRegister::from_candidate(candidate(9, 1, CausalContext::new(), 7, Some("left")));
-    let right = LwwRegister::from_candidate(candidate(9, 1, CausalContext::new(), 7, Some("right")));
+    let right =
+        LwwRegister::from_candidate(candidate(9, 1, CausalContext::new(), 7, Some("right")));
     let forward = left.join(&right);
     let reverse = right.join(&left);
     assert_eq!(forward, reverse);
@@ -166,4 +167,121 @@ fn mv_join_is_commutative_for_equivocating_equal_identities() {
     let right = MvRegister::from_candidate(candidate(9, 1, CausalContext::new(), 7, Some("right")));
     assert_eq!(left.join(&right), right.join(&left));
     assert_eq!(left.join(&right).materialize().len(), 1);
+}
+
+#[test]
+fn equal_identity_removal_and_value_have_a_stable_winner() {
+    let live = LwwRegister::from_candidate(candidate(4, 8, CausalContext::new(), 2, Some("live")));
+    let removed = LwwRegister::from_candidate(candidate(4, 8, CausalContext::new(), 2, None));
+    assert_eq!(live.join(&removed), removed.join(&live));
+    assert_eq!(live.join(&removed).materialize(), Some(&"live".to_owned()));
+}
+
+#[test]
+fn equal_identity_and_value_with_different_contexts_still_join_commutatively() {
+    let dot = Dot::new(actor(5), OriginCounter::new(2).unwrap());
+    let mut observed = CausalContext::new();
+    observed.insert(Dot::new(actor(1), OriginCounter::new(1).unwrap()));
+    let left = LwwRegister::from_candidate(Candidate::new(
+        Some("same".to_owned()),
+        DottedVersion::new(CausalContext::new(), dot),
+        MutationOrdinal::new(0),
+        HlcTimestamp::new(3, 0),
+    ));
+    let right = LwwRegister::from_candidate(Candidate::new(
+        Some("same".to_owned()),
+        DottedVersion::new(observed, dot),
+        MutationOrdinal::new(0),
+        HlcTimestamp::new(3, 0),
+    ));
+    assert_eq!(left.join(&right), right.join(&left));
+}
+
+#[test]
+fn canonical_scalar_values_round_trip_at_boundaries() {
+    for value in [false, true] {
+        let register = LwwRegister::from_candidate(Candidate::new(
+            Some(value),
+            DottedVersion::new(
+                CausalContext::new(),
+                Dot::new(actor(1), OriginCounter::new(1).unwrap()),
+            ),
+            MutationOrdinal::new(0),
+            HlcTimestamp::new(1, 0),
+        ));
+        let bytes = register.canonical_bytes();
+        assert_eq!(
+            RegisterCodec::decode_lww::<bool>(&bytes, DecodeLimits::default()).unwrap(),
+            register
+        );
+    }
+    for value in [0_u64, 1, u64::MAX] {
+        let register = LwwRegister::from_candidate(Candidate::new(
+            Some(value),
+            DottedVersion::new(
+                CausalContext::new(),
+                Dot::new(actor(2), OriginCounter::new(1).unwrap()),
+            ),
+            MutationOrdinal::new(0),
+            HlcTimestamp::new(1, 0),
+        ));
+        let bytes = register.canonical_bytes();
+        assert_eq!(
+            RegisterCodec::decode_lww::<u64>(&bytes, DecodeLimits::default()).unwrap(),
+            register
+        );
+    }
+    for value in [i64::MIN, -1, 0, 1, i64::MAX] {
+        let register = LwwRegister::from_candidate(Candidate::new(
+            Some(value),
+            DottedVersion::new(
+                CausalContext::new(),
+                Dot::new(actor(3), OriginCounter::new(1).unwrap()),
+            ),
+            MutationOrdinal::new(0),
+            HlcTimestamp::new(1, 0),
+        ));
+        let bytes = register.canonical_bytes();
+        assert_eq!(
+            RegisterCodec::decode_lww::<i64>(&bytes, DecodeLimits::default()).unwrap(),
+            register
+        );
+    }
+}
+
+#[test]
+fn decoder_rejects_trailing_bytes_and_wrong_datatypes() {
+    let register = LwwRegister::from_candidate(candidate(1, 1, CausalContext::new(), 1, Some("x")));
+    let mut trailing = register.canonical_bytes();
+    trailing.push(0);
+    assert_eq!(
+        RegisterCodec::decode_lww::<String>(&trailing, DecodeLimits::default()),
+        Err(DecodeError::TrailingBytes)
+    );
+    assert_eq!(
+        RegisterCodec::decode_mv::<String>(&register.canonical_bytes(), DecodeLimits::default()),
+        Err(DecodeError::WrongDatatype)
+    );
+    assert_eq!(
+        RegisterCodec::decode_lww::<u64>(&register.canonical_bytes(), DecodeLimits::default()),
+        Err(DecodeError::WrongDatatype)
+    );
+}
+
+#[test]
+fn decoder_limits_are_checked_before_value_allocation() {
+    let value = "x".repeat(64);
+    let register =
+        LwwRegister::from_candidate(candidate(1, 1, CausalContext::new(), 1, Some(&value)));
+    let bytes = register.canonical_bytes();
+    let limits = DecodeLimits { max_bytes: bytes.len() - 1, ..DecodeLimits::default() };
+    assert_eq!(
+        RegisterCodec::decode_lww::<String>(&bytes, limits),
+        Err(DecodeError::LimitExceeded)
+    );
+    let limits = DecodeLimits { max_value_bytes: value.len() - 1, ..DecodeLimits::default() };
+    assert_eq!(
+        RegisterCodec::decode_lww::<String>(&bytes, limits),
+        Err(DecodeError::LimitExceeded)
+    );
 }

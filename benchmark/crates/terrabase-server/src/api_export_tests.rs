@@ -8,6 +8,16 @@ use std::sync::Arc;
 use terrabase::RegionCode;
 use tower::util::ServiceExt;
 
+fn export_root() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "terrabase-api-export-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos())
+    ))
+}
+
 async fn request(app: &Router, method: &str, path: &str, payload: &str) -> Response {
     app.clone()
         .oneshot(
@@ -58,7 +68,7 @@ async fn complete(app: &Router, path: &str) -> ExportStatus {
 #[allow(clippy::too_many_lines)]
 async fn http_export_reads_real_documents_and_recovers_after_runtime_restart() {
     let mut state = super::super::tests::state_with_keys_and_control();
-    let root = state.backup_root.with_file_name("exports");
+    let root = export_root();
     Arc::get_mut(&mut state).unwrap().exports =
         Some(Arc::new(ExportRuntime::local(&root, RegionCode::GRU).unwrap()));
     let app = router(Arc::clone(&state));
@@ -306,7 +316,7 @@ async fn seed_export_documents(app: &Router) {
 #[tokio::test]
 async fn http_export_refuses_destination_outside_database_placement() {
     let mut state = super::super::tests::state_with_keys_and_control();
-    let root = state.backup_root.with_file_name("exports");
+    let root = export_root();
     Arc::get_mut(&mut state).unwrap().exports =
         Some(Arc::new(ExportRuntime::local(&root, RegionCode::FRA).unwrap()));
     let app = router(state);

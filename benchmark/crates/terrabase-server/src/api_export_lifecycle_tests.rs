@@ -7,6 +7,16 @@ use std::sync::Arc;
 use terrabase::RegionCode;
 use tower::util::ServiceExt;
 
+fn export_root() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "terrabase-api-export-lifecycle-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos())
+    ))
+}
+
 async fn call(app: &Router, method: &str, path: &str, body: &str) -> serde_json::Value {
     let response = app
         .clone()
@@ -32,7 +42,7 @@ async fn call(app: &Router, method: &str, path: &str, body: &str) -> serde_json:
 #[tokio::test]
 async fn disconnected_client_discovers_cancels_and_resumes_the_same_durable_export() {
     let mut state = super::super::tests::state_with_keys_and_control();
-    let root = state.backup_root.with_file_name("exports");
+    let root = export_root();
     let runtime = Arc::new(export::ExportRuntime::local(&root, RegionCode::GRU).unwrap());
     // A process shutdown yields accepted workers before their first page.
     // Reconstructing the runtime below exercises the real startup recovery path.

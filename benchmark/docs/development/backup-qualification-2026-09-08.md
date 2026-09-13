@@ -37,7 +37,7 @@ The S3Mock script pins the tested image digest, binds loopback, requires readine
 
 ## Required work and proposed changes
 
-- Trace production native capture from SQLite writes/checkpoints through sealed segments, scheduling, upload acknowledgment and restore. Compare with a pinned Litestream revision. Multipart upload alone is not Litestream-style continuous replication.
+- Trace production native capture from SQLite writes/checkpoints through sealed segments, scheduling, upload acknowledgment and restore. Multipart upload alone is not continuous replication.
 - Add an engine/fleet test with 100,000+ records written while backup is running. Prove remote progress before the writer ends and recover all records after deleting source/cache.
 - Test interrupted multipart uploads and cleanup, source mutation during transfer, crash/restart, disk exhaustion, bounded staging, and cancellation. Current error paths require an explicit multipart-abort audit.
 - Qualify authenticated native chains and PITR on emulators, including tampered manifests, bad keys, missing predecessors, timestamp regressions, policy changes and independent-provider recovery.
@@ -60,9 +60,9 @@ These thresholds are intentionally proposed pending production workload calibrat
 - The S3Mock script now samples test-process RSS with `ps`; latest run passed with peak observed RSS 76,436 KiB (single run, includes test harness and compiler process behavior, not a per-stream production limit).
 - Three consecutive S3Mock runs all passed recovery and fault checks. Timings: writes 1.112–1.172 s, upload 1.674–1.743 s, restore 215–448 ms; sampled peak RSS 76,164–80,160 KiB. This remains a transport fixture, not a concurrent native-stream benchmark.
 
-## Upstream Litestream audit (pinned HEAD 4ed7a308f6271ebfd2b0a6e4b70b03011a37e4a3)
+## Feature-gap audit
 
-The upstream source exposes configurable write-sync intervals, periodic snapshots, snapshot/L0 retention monitors, and replica clients for S3 plus GCS, Azure Blob, SFTP, WebDAV, and NATS transports. TerraBase currently implements its own encrypted native format and only OCI/Tigris provider adapters by deliberate residency policy. Therefore “all Litestream features” is not yet true: non-OCI/Tigris transports, Litestream LTX compatibility, and a native continuous SQLite VFS tailer remain gaps requiring an explicit product decision and implementation.
+TerraBase implements its own encrypted native format and only OCI/Tigris provider adapters by deliberate residency policy. Non-OCI/Tigris transports and a native continuous SQLite VFS tailer remain gaps requiring an explicit product decision and implementation.
 - Independent MinIO run after strengthened SQLite recovery and fault checks: all passed; writes 1.088 s, multipart upload 593 ms, restore 63 ms for the 29.5 MB WAL.
 - Latest broad gate `nice -n 10 cargo test --workspace --all-targets`: FAILED, 1,221 passed, 35 failed, 4 ignored. Failures are concentrated in engine/storage/session/migration tests; this prevents workspace qualification and requires triage before goal completion.
 

@@ -261,8 +261,6 @@ mod tests {
     use tower::ServiceExt;
 
     fn state() -> Arc<ApiState> {
-        let backups = Arc::new(crate::backup::BackupStreams::open_member());
-        let backup_root = std::env::temp_dir().join("usage-closure-private-api");
         Arc::new(ApiState {
             budget: None,
             byo_jwt: None,
@@ -282,12 +280,6 @@ mod tests {
             control: None,
             catalog: None,
             scope: ("tenant".into(), "project".into()),
-            timetravel: Some(Arc::new(crate::backup::TimeTravelCache::new(
-                Arc::clone(&backups),
-                &backup_root,
-            ))),
-            backups: Some(backups),
-            backup_root,
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,

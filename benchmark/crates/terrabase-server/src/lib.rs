@@ -14,7 +14,6 @@ pub mod admitted_databases;
 pub mod api;
 pub mod api_keys;
 pub mod auth_runtime;
-pub mod backup;
 pub mod byo_jwt;
 pub mod config;
 pub mod control;

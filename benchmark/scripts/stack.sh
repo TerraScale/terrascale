@@ -142,11 +142,6 @@ stop_all() {
     fi
   done <"$PIDS_FILE"
   rm -f "$PIDS_FILE"
-  # Litestream children live in their member's process group, so a member
-  # that died without this script leaves them orphaned — a later up would
-  # double-stream the same replica. Reap any survivor bound to this stack's
-  # data directory before it can collide with a fresh member.
-  pkill -f "litestream.*${STACK_DIR}/data" 2>/dev/null || true
 }
 
 stop_on_failure() {

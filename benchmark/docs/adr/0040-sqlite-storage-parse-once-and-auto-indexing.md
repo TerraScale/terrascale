@@ -48,8 +48,8 @@ are physical WAL-frame followers with promotion, not second writers (ADR 0044).
 
 ### D-29 — Native Rust backup
 
-Rebuild Litestream inside TerraBase in Rust, after reading its pinned upstream
-source, per [ADR 0046](0046-native-rust-backup-subsystem.md). Shared background
+Build backup inside TerraBase in Rust, per
+[ADR 0046](0046-native-rust-backup-subsystem.md). Shared background
 workers replace the external process per database. Improved throughput,
 restore time, CPU, memory, and I/O efficiency require benchmark evidence.
 
@@ -68,8 +68,8 @@ covers its backups. Bucket lifecycle is orchestrator-owned, per region:
 segments older than 24 h move to Infrequent Access, older than 7 days to
 Archive. Tigris uses supported mechanisms for the same logical retention
 and deletion policy; its storage classes need not match OCI. Account for
-both providers and OCI outbound costs. Completely remove the external
-Litestream dependency and integration in the native replacement series.
+both providers and OCI outbound costs. The external backup tool integration was removed in the native
+replacement series.
 
 ### D-30 — Parse once, bytes everywhere
 

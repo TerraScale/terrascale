@@ -5,9 +5,8 @@ Each member serves the REST and reactive APIs directly with axum and stores
 one customer database per SQLite file. SQL is the only query language; writes
 remain document operations, with canonical JSON bytes, extracted indexes,
 causal replication and live result views. Production backup composition uses
-the internal native Rust subsystem informed by Litestream’s source. Its
-recovery, provider, and performance qualification remains incomplete; the
-external process adapter is retained only for development fixtures. Backup
+the internal native Rust subsystem. Its
+recovery, provider, and performance qualification remains incomplete. Backup
 policy selects OCI Object Storage, Tigris, or both by plan, with
 operator-managed overrides for specific users. See [ADR 0046](docs/adr/0046-native-rust-backup-subsystem.md).
 

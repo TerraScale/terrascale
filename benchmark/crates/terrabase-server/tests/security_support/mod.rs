@@ -12,7 +12,6 @@ use terrabase::observability::MetricsRegistry;
 use terrabase::regions::RegionCode;
 use terrabase_server::api::{ApiState, router};
 use terrabase_server::api_keys::{KeyStore, Scope, Verbs};
-use terrabase_server::backup::{BackupStreams, TimeTravelCache};
 use terrabase_server::control::ControlPlane;
 use terrabase_server::reactive_api::{CapabilityKeyRing, OriginProofKeyRing};
 use tower::util::ServiceExt;
@@ -41,7 +40,6 @@ impl Fixture {
             Duration::from_mins(1),
         )
         .expect("database catalog opens");
-        let backups = Arc::new(BackupStreams::new(root.join("missing-litestream")));
         let state = Arc::new(ApiState {
             budget: None,
             native_backups: None,
@@ -61,9 +59,6 @@ impl Fixture {
             control: Some(Arc::new(control)),
             catalog: Some(Arc::new(catalog)),
             scope: ("tenant-a".into(), "project-a".into()),
-            backups: Some(Arc::clone(&backups)),
-            backup_root: root.join("backup"),
-            timetravel: Some(Arc::new(TimeTravelCache::new(backups, &root.join("timetravel")))),
             guards: Arc::new(terrabase_server::guards::AbuseGuards::new()),
             origin_proof_keys: Arc::new(
                 OriginProofKeyRing::new(

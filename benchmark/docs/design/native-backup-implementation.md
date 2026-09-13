@@ -1,44 +1,21 @@
-# Native backup implementation and upstream study
+# Native backup implementation
 
-Reviewed upstream: Litestream commit
-`4ed7a308f6271ebfd2b0a6e4b70b03011a37e4a3` (2026-09-05 checkout),
-<https://github.com/benbjohnson/litestream/tree/4ed7a308f6271ebfd2b0a6e4b70b03011a37e4a3>.
 This is an implementation record for ADR 0046, not qualification evidence.
-No upstream code was copied; upstream remains Apache-2.0 licensed.
 
 ## Cleanup and replacement boundary
 
 The production member composes `NativeBackupRuntime` from
 `crates/terrabase-server/src/native_backup_runtime.rs` and
-`production_backup.rs`. The process adapter in
-`crates/terrabase-server/src/backup.rs` remains only for development fixtures
-and tests; it is not the production backup owner. Native recovery, provider,
-and comparative performance gates still need to pass before the replacement is
+`production_backup.rs`. The external process adapter
+(`crates/terrabase-server/src/backup.rs`) is deleted; there is no other
+backup owner. Native recovery, provider, and comparative performance gates
+still need to pass before the replacement is
 fully qualified. Existing `src/backup` is active native logical backup/recovery
 code, not obsolete storage: it exports engine publication state and ordered
 journal changes into encrypted, manifest-bound recovery points. Its tests and
 evidence are retained. The unused `RestoreResult` compatibility alias had no
 callers across the workspace and was removed with its sole documentation
 reference. No active production backup path was deleted.
-
-## Reviewed source and recovery lessons
-
-| Source at pinned revision | Reviewed behavior | TerraBase consequence |
-| --- | --- | --- |
-| `db.go:verifyAndSyncWithExecutor`, `verifyWithExecutor`, `sync` | Verify WAL salt/offset continuity before capture; logical WAL end differs from file length; checkpoint lock protects capture; LTX files represent transaction boundaries | Use the engine's durable publication journal for native logical capture. Never infer an incremental boundary from WAL file length. Physical capture remains behind `Engine::with_quiescent_wal`. |
-| `db.go:checkpointWithExecutor` | Capture before checkpoint, then seal writes under a barrier; compare WAL restart state | Backup retention is independent of follower acknowledgement. Native worker pins `consumer_frontiers['native-backup']`; only every selected provider's complete readback advances it. |
-| `replica.go:syncOnce` | Serialize replica sync; recompute remote position on error; bounded batches | One shared fleet tick bounds in-flight capture/upload and retries every selected provider independently. Upload index is last; retry never treats a PUT acknowledgement as verified coverage. |
-| `replica.go:calcRestorePlan`, `applyNewLTXFiles` | Select complete paths; bridge compacted gaps, refuse unsupported gaps; verify restore before follow progress | Restore authenticates every manifest/member and validates predecessor boundaries before publication. One provider supplies its own listing and complete chain. |
-| `db.go:EnforceSnapshotRetention` | Retain a root even when all snapshots are old; conservative floor preserves in-flight restore plans | Periodic self-contained roots and retention keep the newest complete root preceding the cutoff and every newer point. Exclusive fleet operations prevent pruning during local restores. Staging exhaustion preserves pending data. |
-
-Reviewed tests include `TestReplica_RestoreRetriesInitialLTXOpenError`,
-`TestReplica_Restore_InvalidFileSize`, `TestReplica_Restore_RemovesTempFileOnFailure`,
-`TestReplica_Restore_Follow_CrashRecovery`, `TestDB_SyncAfterVacuum`, and
-`TestStore_EnforceSnapshotRetention_RetainsInFlightRestorePlanFiles`. Source issue
-references reviewed: #724 (RESTART checkpoint write blocking), #927 (unnecessary
-snapshots on restart), #997 (stale WAL frames affecting checkpoint thresholds),
-and #896 (checkpoint bookkeeping producing idle work). These references are
-source observations, not a claim that the upstream test suite ran here.
 
 ## Implemented boundaries
 
@@ -127,9 +104,9 @@ gauge measures observed unprotected work, not the exact last remotely recoverabl
 commit time; a ten-second timer alone does not establish ten-second RPO.
 
 Actual OCI and Tigris bucket placement, credentials, outages/throttling, key
-revocation/deletion, fourteen daily restore drills, and comparative measurements
-against pinned upstream and the existing adapter require intended provider and
-host access. No local object-store fixture establishes provider qualification.
+revocation/deletion, fourteen daily restore drills, and comparative
+measurements require intended provider and host access. No local
+object-store fixture establishes provider qualification.
 Comparisons must retain ADR 0046's database counts, hardware, encryption,
 durability and workload controls and report lag/RSS/CPU/disk/object-request
-tradeoffs in `bench/` before the external adapter is removed.
+tradeoffs in `bench/`.

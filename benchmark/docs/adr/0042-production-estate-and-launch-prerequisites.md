@@ -138,7 +138,7 @@ mistakes "the servers are up" for "we are in production".
 - Anything that would add a machine class (dedicated analytics nodes,
   dedicated edge nodes, a bastion) is a new ADR, not a quiet addition.
 
-The native backup rebuild completely removes external Litestream integration.
+The native backup rebuild removed the external backup tool integration.
 The budget above predates the policy-selected Tigris copy: recalculate storage,
 requests, retrieval, and OCI outbound costs for each supported provider policy before launch.
 Restore qualification must recover independently from OCI and from Tigris,

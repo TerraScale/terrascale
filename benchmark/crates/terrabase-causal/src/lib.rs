@@ -2080,4 +2080,177 @@ mod tests {
             lifecycle.canonical_bytes()
         );
     }
+
+    #[test]
+    fn identity_and_interval_boundaries_refuse_reserved_or_reversed_values() {
+        assert_eq!(ReplicaEpoch::new(0), Err(IdentityError::ZeroReserved));
+        assert_eq!(OriginCounter::new(0), Err(IdentityError::ZeroReserved));
+        assert_eq!(CounterInterval::new(0, 1), Err(IntervalError::ZeroReserved));
+        assert_eq!(CounterInterval::new(4, 3), Err(IntervalError::Reversed));
+        assert_eq!(CounterInterval::new(u64::MAX, u64::MAX).unwrap().first(), u64::MAX);
+    }
+
+    #[test]
+    fn actor_progress_handles_max_counter_without_wraparound() {
+        let mut progress = ActorProgress::new();
+        progress.insert_interval(CounterInterval::new(u64::MAX, u64::MAX).unwrap());
+        assert_eq!(progress.through(), 0);
+        assert!(progress.contains(OriginCounter::new(u64::MAX).unwrap()));
+        progress.insert(OriginCounter::new(1).unwrap());
+        assert_eq!(progress.through(), 1);
+        assert!(progress.contains(OriginCounter::new(u64::MAX).unwrap()));
+    }
+
+    #[test]
+    fn actor_lifecycle_rejects_duplicate_and_stale_incarnations_atomically() {
+        let replica = ReplicaId::from_bytes([4; 16]);
+        let first = ActorId::new(replica, ReplicaEpoch::new(2).unwrap());
+        let stale = ActorId::new(replica, ReplicaEpoch::new(1).unwrap());
+        let mut lifecycle = ActorLifecycle::default();
+        assert!(lifecycle.register(first).is_ok());
+        assert_eq!(lifecycle.register(first), Err(ActorLifecycleError::AlreadyActive));
+        assert_eq!(lifecycle.register(stale), Err(ActorLifecycleError::EpochReuse));
+        assert!(lifecycle.is_active(first));
+        assert!(!lifecycle.is_active(stale));
+    }
+
+    #[test]
+    fn required_frontier_deduplicates_actors_and_dominance_is_componentwise() {
+        let a = actor(1, 1);
+        let b = actor(2, 1);
+        let required = StableFrontier::from_attestations([
+            (a, {
+                let mut p = ActorProgress::new();
+                p.insert_interval(CounterInterval::new(1, 4).unwrap());
+                p
+            }),
+            (b, {
+                let mut p = ActorProgress::new();
+                p.insert(OriginCounter::new(1).unwrap());
+                p
+            }),
+        ]);
+        let deduped = StableFrontier::required([a, a, b]);
+        assert_eq!(deduped.actors().len(), 2);
+        let advanced = StableFrontier::from_attestations([(a, {
+            let mut p = ActorProgress::new();
+            p.insert(OriginCounter::new(3).unwrap());
+            p
+        })]);
+        assert!(!advanced.dominates(&required));
+        assert!(required.dominates(&StableFrontier::required([a])));
+    }
+
+    #[test]
+    fn actor_progress_normalizes_all_adjacency_and_overlap_shapes() {
+        let shapes = [
+            vec![(3, 3), (1, 1), (2, 2)],
+            vec![(1, 5), (2, 4), (4, 8)],
+            vec![(u64::MAX - 2, u64::MAX), (u64::MAX - 1, u64::MAX)],
+        ];
+        for shape in shapes {
+            let mut progress = ActorProgress::new();
+            for (first, last) in shape {
+                progress.insert_interval(CounterInterval::new(first, last).unwrap());
+            }
+            assert!(
+                progress
+                    .intervals()
+                    .windows(2)
+                    .all(|pair| { pair[0].last().saturating_add(1) < pair[1].first() })
+            );
+            assert!(
+                progress.intervals().iter().all(|interval| interval.first() > progress.through())
+            );
+        }
+    }
+
+    #[test]
+    fn actor_progress_union_is_commutative_associative_and_idempotent() {
+        let mut left = ActorProgress::new();
+        left.insert_interval(CounterInterval::new(2, 4).unwrap());
+        let mut right = ActorProgress::new();
+        right.insert_interval(CounterInterval::new(6, 8).unwrap());
+        let mut both = left.clone();
+        both.union(&right);
+        let mut reverse = right.clone();
+        reverse.union(&left);
+        assert_eq!(both, reverse);
+        let mut repeated = both.clone();
+        repeated.union(&both);
+        assert_eq!(repeated, both);
+    }
+
+    #[test]
+    fn causal_context_union_keeps_sparse_holes_and_dominance_exact() {
+        let a = actor(9, 1);
+        let mut sparse = CausalContext::new();
+        sparse.insert(Dot::new(a, OriginCounter::new(2).unwrap()));
+        sparse.insert(Dot::new(a, OriginCounter::new(4).unwrap()));
+        let mut contiguous = CausalContext::new();
+        contiguous.insert(Dot::new(a, OriginCounter::new(1).unwrap()));
+        contiguous.insert(Dot::new(a, OriginCounter::new(3).unwrap()));
+        sparse.union(&contiguous);
+        assert!(!sparse.contains(Dot::new(a, OriginCounter::new(5).unwrap())));
+        assert!(sparse.contains(Dot::new(a, OriginCounter::new(4).unwrap())));
+        assert!(sparse.dominates(&contiguous));
+        assert!(!contiguous.dominates(&sparse));
+    }
+
+    #[test]
+    fn dotted_versions_with_the_same_dot_are_not_concurrent() {
+        let dot = Dot::new(actor(3, 1), OriginCounter::new(7).unwrap());
+        let first = DottedVersion::new(CausalContext::new(), dot);
+        let second = DottedVersion::new(CausalContext::new(), dot);
+        assert!(!first.happens_before(&second));
+        assert!(!second.happens_before(&first));
+        assert!(first.concurrent_with(&second));
+    }
+
+    #[test]
+    fn hybrid_clock_overflow_and_future_skew_leave_state_unchanged() {
+        let last = HlcTimestamp::new(10, u32::MAX);
+        let mut clock = HybridLogicalClock::restore(last);
+        assert_eq!(clock.send(10), Err(ClockError::LogicalOverflow));
+        assert_eq!(clock.last(), last);
+        assert_eq!(
+            clock.receive(10, HlcTimestamp::new(100, 0), 1),
+            Err(ClockError::FutureSkew { remote_physical: 100, maximum_accepted: 11 })
+        );
+        assert_eq!(clock.last(), last);
+    }
+
+    #[test]
+    fn stable_frontier_missing_attestations_conservatively_stay_at_zero() {
+        let a = actor(1, 1);
+        let b = actor(2, 1);
+        let mut p = ActorProgress::new();
+        p.insert_interval(CounterInterval::new(1, 4).unwrap());
+        let frontier = StableFrontier::from_attestations([(a, p)]);
+        assert_eq!(frontier.through(a), 4);
+        assert_eq!(frontier.through(b), 0);
+        assert!(!frontier.contains(Dot::new(b, OriginCounter::new(1).unwrap())));
+    }
+
+    #[test]
+    fn actor_lifecycle_retirement_is_monotone_at_counter_boundaries() {
+        let replica = ReplicaId::from_bytes([8; 16]);
+        let first = ActorId::new(replica, ReplicaEpoch::new(1).unwrap());
+        let newer = ActorId::new(replica, ReplicaEpoch::new(2).unwrap());
+        let mut lifecycle = ActorLifecycle::default();
+        lifecycle.register(first).unwrap();
+        let mut progress = ActorProgress::new();
+        progress.insert_interval(CounterInterval::new(1, u64::MAX).unwrap());
+        let proof = StableFrontier::from_attestations([(first, progress)]);
+        lifecycle.retire(first, OriginCounter::new(u64::MAX).unwrap(), &proof).unwrap();
+        assert_eq!(lifecycle.register(first), Err(ActorLifecycleError::EpochReuse));
+        lifecycle.register(newer).unwrap();
+        assert!(lifecycle.is_active(newer));
+    }
+
+    #[test]
+    fn canonical_hash_domains_are_distinct_for_identical_payloads() {
+        let dot = Dot::new(actor(5, 1), OriginCounter::new(1).unwrap());
+        assert_ne!(dot.canonical_bytes(), actor(5, 1).canonical_bytes());
+    }
 }

@@ -453,10 +453,16 @@ mod tests {
         catalog.host_for("tenant-a", "project-a", "database-b").expect("the second host opens");
         catalog.host_for("tenant-a", "project-a", "database-c").expect("the third host opens");
         assert_eq!(catalog.open_len(), 2, "the resident set stays at the capacity bound");
+        let first_weak = Arc::downgrade(&first);
+        // The caller's reference keeps an evicted host alive until it is
+        // released.  Drop it before reopening the same durable location so
+        // the previous engine can finish its shutdown and release its file
+        // locks.
+        drop(first);
         let reopened = catalog
             .host_for("tenant-a", "project-a", "database-a")
             .expect("the evicted database reopens");
-        assert!(!Arc::ptr_eq(&first, &reopened), "the evicted scope reopens as a new host");
+        assert!(first_weak.upgrade().is_none(), "the evicted host fully shut down");
         assert_eq!(
             get(&reopened, "database-a", "doc-1"),
             Some(7),
@@ -495,10 +501,14 @@ mod tests {
         put(&host, "database-a", "doc-1", 3);
         assert_eq!(catalog.close_idle(), 1, "the zero threshold closes the idle host");
         assert_eq!(catalog.open_len(), 0);
+        let host_weak = Arc::downgrade(&host);
+        // A borrowed host remains alive after catalog eviction; release the
+        // caller's reference before reopening its durable location.
+        drop(host);
         let reopened = catalog
             .host_for("tenant-a", "project-a", "database-a")
             .expect("the closed database reopens");
-        assert!(!Arc::ptr_eq(&host, &reopened), "the idle-closed scope reopens as a new host");
+        assert!(host_weak.upgrade().is_none(), "the idle-closed host fully shut down");
         assert_eq!(
             get(&reopened, "database-a", "doc-1"),
             Some(3),

@@ -799,9 +799,6 @@ async fn serve_admitted_production(
             Arc::clone(&progress),
             (primary.tenant.to_text(), primary.project.to_text()),
             provisioning,
-            None,
-            parts_root_for_recovery(production),
-            None,
             Arc::new(crate::guards::AbuseGuards::default()),
             // The production rings come from the configured key files and
             // fail closed (disabled) when a deployment configures none; the
@@ -1705,12 +1702,7 @@ async fn serve_public_api(
         );
     }
     let region = public_api_region(config.region)?;
-    let backups = Arc::new(crate::backup::BackupStreams::open_member());
     let backup_root = public.data_root.join("backup");
-    let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
-        Arc::clone(&backups),
-        &backup_root.join("timetravel"),
-    ));
     let origin_proof_keys = origin_proof_key_ring(&public)?;
     let capability_keys = capability_key_ring(&public)?;
     let rotation = public
@@ -1788,9 +1780,6 @@ async fn serve_public_api(
         control: Some(Arc::new(control)),
         catalog: Some(Arc::new(catalog)),
         scope: (tenant, project),
-        backups: Some(backups),
-        backup_root: backup_root.clone(),
-        timetravel: Some(timetravel),
         guards: Arc::new(crate::guards::AbuseGuards::default()),
         origin_proof_keys: Arc::new(origin_proof_keys),
         webhook_keys: None,
@@ -1823,9 +1812,6 @@ async fn serve_public_api(
     });
     let dispatcher = crate::api::spawn_webhook_dispatcher(&state);
     let schema_migrations = crate::api::spawn_schema_migrations(&state);
-    // Databases that predate this process lose their stream coverage unless
-    // the member reattaches them at boot; creation only attaches new ones.
-    crate::api::reattach_member_backups(&state);
     let export_runtime = state.exports.clone();
     let router = crate::api::router(state);
     let task = tokio::spawn(async move {

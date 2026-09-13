@@ -463,7 +463,7 @@ impl ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "backup_failure",
             message: format!("the backup surface refused: {reason}"),
-            fix: "check the member's litestream.log under the database's replica directory".into(),
+            fix: "check the member's native backup runtime and its operator logs".into(),
             placement: None,
         }
     }
@@ -609,15 +609,6 @@ pub struct ApiState {
     /// member (the single-tenant local stack shape; the multi-project
     /// router arrives with the ts-proxy lane).
     pub scope: (String, String),
-    /// Development-only external backup adapter. Production uses
-    /// `native_backups` and leaves this unset.
-    pub backups: Option<Arc<crate::backup::BackupStreams>>,
-    /// Where the fleet writes replicas: `<data_root>/backup` on the local
-    /// stack (`S-06`).
-    pub backup_root: std::path::PathBuf,
-    /// Development-only external time-travel cache. Production leaves this
-    /// unset and routes restore operations through the native owner.
-    pub timetravel: Option<Arc<crate::backup::TimeTravelCache>>,
     /// The D-64 abuse guards and per-tenant governance budgets (E-10):
     /// every read/query/transport admission on this surface checks them
     /// first, and every served direct-read byte accounts against them.
@@ -667,9 +658,6 @@ impl ApiState {
         replication_progress: Arc<crate::replication_runtime::ReplicationProgress>,
         scope: (String, String),
         provisioning: Option<Arc<crate::provisioning::ProvisioningClient>>,
-        backups: Option<Arc<crate::backup::BackupStreams>>,
-        backup_root: std::path::PathBuf,
-        timetravel: Option<Arc<crate::backup::TimeTravelCache>>,
         guards: Arc<crate::guards::AbuseGuards>,
         origin_proof_keys: Arc<crate::reactive_api::OriginProofKeyRing>,
         capability_keys: Arc<crate::reactive_api::CapabilityKeyRing>,
@@ -698,9 +686,6 @@ impl ApiState {
             control: None,
             catalog: None,
             scope,
-            backups,
-            backup_root,
-            timetravel,
             guards,
             origin_proof_keys,
             capability_keys,
@@ -2202,31 +2187,14 @@ async fn create_database(
                     crate::guards::AbuseLimits { read_query_rps: rps, ..limits },
                 );
             }
-            // The backup stream attaches at creation (S-06): open the
-            // engine location so the database file exists, then start one
-            // stream child for it from its first moment. The plan comes
-            // from the fleet's per-database registry — Free until the
-            // billing lane supplies the database's plan (D-25 retention,
-            // fail-closed).
+            // The engine location must open so the database file exists
+            // from its first moment.
             if record.placement.contains(&state.region)
                 && let Some(catalog) = state.catalog.clone()
+                && catalog.host_for(&state.scope.0, &state.scope.1, name).is_err()
             {
-                if catalog.host_for(&state.scope.0, &state.scope.1, name).is_err() {
-                    let _ = control.soft_delete(name);
-                    return ApiError::storage_failure().into_response();
-                }
-                let location = catalog.location_for(&state.scope.0, &state.scope.1, name);
-                let Some(backups) = state.backups.as_ref() else {
-                    let _ = control.soft_delete(name);
-                    return ApiError::backup("native backup owner is unavailable").into_response();
-                };
-                let plan = backups.plan_for(name);
-                if let Err(error) =
-                    attach_backup(backups, name, &location, &state.backup_root, &plan, state.region)
-                {
-                    let _ = control.soft_delete(name);
-                    return ApiError::backup(error).into_response();
-                }
+                let _ = control.soft_delete(name);
+                return ApiError::storage_failure().into_response();
             }
             record_response(StatusCode::CREATED, &record)
         }
@@ -2305,12 +2273,7 @@ async fn delete_database(
         return ApiError::control_unavailable().into_response();
     };
     match control.soft_delete(&name) {
-        Ok(record) => {
-            if let Some(backups) = &state.backups {
-                backups.detach(&name);
-            }
-            record_response(StatusCode::OK, &record)
-        }
+        Ok(record) => record_response(StatusCode::OK, &record),
         Err(error) => ApiError::control(error).into_response(),
     }
 }
@@ -3610,61 +3573,6 @@ pub(crate) fn response_bytes(len: usize) -> u64 {
     u64::try_from(len).unwrap_or(u64::MAX)
 }
 
-/// Attaches a database stream using the member's registered Region. The
-/// lower-level convenience method predates placement-aware members and
-/// defaults to GRU; public API paths must carry the actual placement.
-fn attach_backup(
-    backups: &crate::backup::BackupStreams,
-    database: &str,
-    location: &std::path::Path,
-    backup_root: &std::path::Path,
-    plan: &str,
-    region: RegionCode,
-) -> std::io::Result<()> {
-    use terrabase::encryption::{DatabaseKeyVersion, KeyProviderIdentity};
-    let config = crate::backup::BackupAttachConfig::new(
-        location.to_path_buf(),
-        crate::backup::BackupDestination::File { root: backup_root.to_path_buf(), region },
-        crate::backup::retention_for_plan(plan).to_owned(),
-        crate::backup::BackupEncryptionConfig::new(
-            KeyProviderIdentity::LocalFile,
-            DatabaseKeyVersion::generate(),
-        ),
-    );
-    backups.set_plan(database, plan);
-    backups.attach_with_config(database, region, config)
-}
-
-/// Reattaches one backup stream for every database this member already hosts.
-/// Creation attaches a stream from the database's first moment; a restart must
-/// restore the same coverage for databases that predate the process, or their
-/// WAL never streams again.
-pub(crate) fn reattach_member_backups(state: &ApiState) {
-    let Some(control) = state.control.clone() else { return };
-    let Some(catalog) = state.catalog.clone() else { return };
-    let Some(backups) = state.backups.clone() else { return };
-    let records = match control.list() {
-        Ok(records) => records,
-        Err(error) => {
-            eprintln!("backup reattach skipped; control catalog unreadable: {error:?}");
-            return;
-        }
-    };
-    for record in records {
-        if record.deleted || !record.placement.contains(&state.region) {
-            continue;
-        }
-        let name = record.name.clone();
-        let location = catalog.location_for(&state.scope.0, &state.scope.1, &name);
-        let plan = backups.plan_for(&name);
-        if let Err(error) =
-            attach_backup(&backups, &name, &location, &state.backup_root, &plan, state.region)
-        {
-            eprintln!("backup reattach failed for '{name}': {error}");
-        }
-    }
-}
-
 /// The typed refusal for a malformed collection or identifier path.
 fn invalid_identifier(kind: &str, value: &str) -> ApiError {
     ApiError {
@@ -3922,20 +3830,7 @@ async fn get_document(
         None
     };
     if let Some(at_millis) = at.at {
-        if let Some(session) = &mut session
-            && let Err(error) = session.load(&collection, &id)
-        {
-            return session_error(error).into_response();
-        }
-        return time_travel_document(
-            &state,
-            &name,
-            &collection,
-            &id,
-            at_millis,
-            &headers,
-            session.as_ref().map(terrabase::Session::session_token),
-        );
+        return time_travel_document(at_millis);
     }
     // A live document read must first cover the session frontier. This gate
     // belongs before the revision probe so 304 and missing responses cannot
@@ -4022,15 +3917,7 @@ struct AtQuery {
 /// budget (S-06 (d)). The moment must sit inside the plan's PITR retention
 /// (D-25); older moments name their typed remedy instead of restoring
 /// bytes the configured backup retention no longer keeps.
-fn time_travel_document(
-    state: &ApiState,
-    name: &str,
-    collection: &CollectionName,
-    id: &DocumentId,
-    at_millis: i64,
-    headers: &axum::http::HeaderMap,
-    session: Option<&SessionToken>,
-) -> Response {
+fn time_travel_document(at_millis: i64) -> Response {
     if at_millis < 0 {
         return invalid_at("it is negative");
     }
@@ -4039,73 +3926,10 @@ fn time_travel_document(
     if at_seconds > now_seconds.saturating_add(60) {
         return invalid_at("it is in the future");
     }
-    // The retention gate reads the database's plan from the fleet's
-    // per-database registry — Free until the billing lane supplies it
-    // (D-25 retention, unknown plans fail closed to the Free window).
-    let Some(backups) = state.backups.as_ref() else {
-        return ApiError::backup("native backup owner is unavailable").into_response();
-    };
-    let plan = backups.plan_for(name);
-    let retention_days = crate::backup::retention_days_for_plan(&plan);
-    if at_seconds.saturating_add(retention_days.saturating_mul(86_400)) < now_seconds {
-        return ApiError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "pitr_outside_retention",
-            message: format!(
-                "?at= is older than the plan's PITR retention ({retention_days} days)"
-            ),
-            fix: "read a newer moment, or move to a plan with longer retention (Free 1 / \
-                  Starter 7 / Pro 30 / Scale 35 days)"
-                .into(),
-            placement: None,
-        }
-        .into_response();
-    }
-    let owner = match database_owner_scope(state, name) {
-        Ok(owner) => owner,
-        Err(error) => return error.into_response(),
-    };
-    let Ok(tenant) = terrabase::types::TenantId::try_new(&owner.0) else {
-        return ApiError::control_unavailable().into_response();
-    };
-    let Some(timetravel) = state.timetravel.as_ref() else {
-        return ApiError::backup("native backup owner is unavailable").into_response();
-    };
-    match timetravel.read_at(name, &tenant, at_seconds, collection, id) {
-        Err(error) => ApiError::backup(error).into_response(),
-        Ok(None) => document_not_found(collection.as_str(), id.as_str()).into_response(),
-        Ok(Some(read)) => {
-            let revision = &read.revision;
-            let etag = format!("\"{revision}\"");
-            if headers
-                .get(axum::http::header::IF_NONE_MATCH)
-                .and_then(|value| value.to_str().ok())
-                .is_some_and(|present| present == etag)
-            {
-                let mut response = StatusCode::NOT_MODIFIED.into_response();
-                if let Ok(etag) = HeaderValue::from_str(&etag) {
-                    response.headers_mut().insert(axum::http::header::ETAG, etag);
-                }
-                if let Some(session) = session {
-                    with_session(&mut response, session);
-                }
-                return response;
-            }
-            let mut body = String::with_capacity(256);
-            push_value(&mut body, &read.value);
-            if let Err(error) = account_direct_read(state, name, response_bytes(body.len())) {
-                return error.into_response();
-            }
-            let mut response = json_response(StatusCode::OK, body);
-            if let Ok(etag) = HeaderValue::from_str(&etag) {
-                response.headers_mut().insert(axum::http::header::ETAG, etag);
-            }
-            if let Some(session) = session {
-                with_session(&mut response, session);
-            }
-            response
-        }
-    }
+    // ponytail: point-in-time reads without a native recovery owner fail
+    // closed; wire the native owner here when local time travel returns.
+    let _ = (at_seconds, now_seconds);
+    ApiError::backup("the native recovery owner is unavailable on this member").into_response()
 }
 
 /// The typed refusal for an unusable `?at=` timestamp.
@@ -5222,8 +5046,6 @@ async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<Strin
             Err(error) => return ApiError::backup(error).into_response(),
         };
         (ready, streaming)
-    } else if let Some(backups) = &state.backups {
-        (backups.is_ready(&name), backups.attached(&name))
     } else {
         return ApiError::backup("backup owner unavailable").into_response();
     };
@@ -5353,14 +5175,26 @@ async fn restore_backup(
             Err(error) => provisioning_error(error).into_response(),
         };
     }
-    // Local/development members use the Litestream adapter. A production
-    // composition has native backup state but no provisioning authority and
-    // must fail closed rather than silently crossing into the local path.
+    // Restores and branches run through the provisioning authority's
+    // orchestrator pipeline; a member without it fails closed.
     if state.native_backups.is_some() || state.native_recovery.is_some() {
         return ApiError::backup("native restore provisioning authority is unavailable")
             .into_response();
     }
-    restore_or_branch(state, name, body, RestoreFlavor::Restore).await
+    if let Some(control) = &state.control {
+        match control.lock_for_derived(&name, std::slice::from_ref(&state.region)) {
+            Ok(_) => {}
+            Err(error @ crate::control::ControlError::PlacementLockWidened { .. }) => {
+                return ApiError::control(error).into_response();
+            }
+            Err(crate::control::ControlError::NotFound(_)) => {
+                return ApiError::database_not_found(&name).into_response();
+            }
+            Err(_) => return ApiError::storage_failure().into_response(),
+        }
+    }
+    ApiError::backup("restore requires the provisioning authority, which is unavailable")
+        .into_response()
 }
 
 /// `POST /databases/{name}/branches` — restore plus register with parent
@@ -5425,13 +5259,20 @@ async fn create_branch(
         return ApiError::backup("native branch provisioning authority is unavailable")
             .into_response();
     }
-    restore_or_branch(state, name, body, RestoreFlavor::Branch).await
-}
-
-/// Whether the new database registers plain or as a branch.
-enum RestoreFlavor {
-    Restore,
-    Branch,
+    if let Some(control) = &state.control {
+        match control.lock_for_derived(&name, std::slice::from_ref(&state.region)) {
+            Ok(_) => {}
+            Err(error @ crate::control::ControlError::PlacementLockWidened { .. }) => {
+                return ApiError::control(error).into_response();
+            }
+            Err(crate::control::ControlError::NotFound(_)) => {
+                return ApiError::database_not_found(&name).into_response();
+            }
+            Err(_) => return ApiError::storage_failure().into_response(),
+        }
+    }
+    ApiError::backup("branching requires the provisioning authority, which is unavailable")
+        .into_response()
 }
 
 /// Parses a native restore request without allowing malformed selectors or
@@ -5489,113 +5330,6 @@ fn valid_restore_operation_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
-}
-
-/// The shared restore-to-new-database path: register the target record,
-/// restore the file into the target's catalog location, and answer the
-/// record. A failed restore soft-deletes the record it just made so no
-/// half-born database lingers as live.
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "the axum handlers move owned state, name, body, and flavor into this shared path"
-)]
-#[allow(clippy::unused_async, reason = "mirrors the async handler surface it serves")]
-async fn restore_or_branch(
-    state: Arc<ApiState>,
-    name: String,
-    body: String,
-    flavor: RestoreFlavor,
-) -> Response {
-    let Some(control) = state.control.clone() else {
-        return ApiError::control_unavailable().into_response();
-    };
-    let Some(catalog) = state.catalog.clone() else {
-        return ApiError::control_unavailable().into_response();
-    };
-    let request: serde_json::Value = match serde_json::from_str(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return ApiError {
-                status: StatusCode::BAD_REQUEST,
-                code: "invalid_json",
-                message: "the request body is not the expected JSON object".into(),
-                fix: "send {\"name\":\"<new-database>\",\"at\":<unix-millis>?}".into(),
-                placement: None,
-            }
-            .into_response();
-        }
-    };
-    let Some(target) = request.get("name").and_then(serde_json::Value::as_str) else {
-        return ApiError {
-            status: StatusCode::BAD_REQUEST,
-            code: "missing_name",
-            message: "the request names no target database".into(),
-            fix: "add \"name\": \"<new-database>\" to the request body".into(),
-            placement: None,
-        }
-        .into_response();
-    };
-    if let Some(operation) = request.get("operation_id")
-        && operation.as_str().is_none_or(|operation| !valid_restore_operation_id(operation))
-    {
-        return ApiError {
-            status: StatusCode::BAD_REQUEST,
-            code: "invalid_operation_id",
-            message: "the operation_id must be printable ASCII text of at most 128 bytes".into(),
-            fix: "send a stable non-empty operation_id, or omit it on a local member".into(),
-            placement: None,
-        }
-        .into_response();
-    }
-    let Ok(at) = restore_at_millis(request.get("at")) else {
-        return invalid_at("it must be a non-negative integer or null");
-    };
-    let placement = [state.region];
-    let registered = match flavor {
-        // D-52: a restore is bytes at rest in a new place — the target
-        // inherits the source's placement lock and cannot widen it. An
-        // unknown source fails closed before any record is made.
-        RestoreFlavor::Restore => {
-            let inherited = match control.lock_for_derived(&name, &placement) {
-                Ok(inherited) => inherited,
-                Err(error) => return ApiError::control(error).into_response(),
-            };
-            control.create(target, &placement, inherited.as_deref())
-        }
-        // The branch lock check lives in `create_branch` itself (D-52).
-        RestoreFlavor::Branch => control.create_branch(target, &placement, None, &name),
-    };
-    let record = match registered {
-        Ok(record) => record,
-        Err(error) => return ApiError::control(error).into_response(),
-    };
-    let location = catalog.location_for(&state.scope.0, &state.scope.1, target);
-    // A resident host for the target must not hold the file the restore
-    // swaps (S-06: restore never writes under a live engine).
-    catalog.close_database(&state.scope.0, &state.scope.1, target);
-    let at_seconds = at.map(|millis| u64::try_from(millis / 1000).unwrap_or(0));
-    let Some(backups) = state.backups.as_ref() else {
-        return ApiError::backup("native backup restore authority is unavailable").into_response();
-    };
-    match backups.restore_to_location(&name, at_seconds, &location) {
-        Ok(()) => {
-            // The new database is a main.db from its first moment: it gets
-            // its own stream under the source's plan (Free until the
-            // billing lane supplies plans; D-25 retention, fail-closed).
-            let plan = backups.plan_for(&name);
-            if let Err(error) =
-                attach_backup(backups, target, &location, &state.backup_root, &plan, state.region)
-            {
-                let _ = control.soft_delete(target);
-                return ApiError::backup(error).into_response();
-            }
-            record_response(StatusCode::CREATED, &record)
-        }
-        Err(error) => {
-            let _ = control.soft_delete(target);
-            ApiError::backup(error).into_response()
-        }
-    }
 }
 
 /// Lists the database's branches: records whose parent names it.
@@ -6019,10 +5753,6 @@ mod tests {
     }
 
     fn state() -> Arc<ApiState> {
-        let backups = Arc::new(crate::backup::BackupStreams::open_member());
-        let backup_root = std::env::temp_dir().join("terrabase-api-test-backup-root");
-        let timetravel =
-            Arc::new(crate::backup::TimeTravelCache::new(Arc::clone(&backups), &backup_root));
         Arc::new(ApiState {
             budget: None,
             native_backups: None,
@@ -6042,9 +5772,6 @@ mod tests {
             control: None,
             catalog: None,
             scope: ("terrabase-local".into(), "local".into()),
-            backups: Some(backups),
-            backup_root,
-            timetravel: Some(timetravel),
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,
@@ -6074,11 +5801,6 @@ mod tests {
             std::time::Duration::from_hours(1),
         )
         .expect("catalog opens");
-        let backups = Arc::new(crate::backup::BackupStreams::open_member());
-        let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
-            Arc::clone(&backups),
-            &dir.join("backup-timetravel"),
-        ));
         Arc::new(ApiState {
             budget: None,
             native_backups: None,
@@ -6102,9 +5824,6 @@ mod tests {
             control: Some(Arc::new(control)),
             catalog: Some(Arc::new(catalog)),
             scope: ("terrabase-local".into(), "local".into()),
-            backups: Some(backups),
-            backup_root: dir.join("backup"),
-            timetravel: Some(timetravel),
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,
@@ -6561,345 +6280,6 @@ mod tests {
             "the envelope codes the refusal: {body}"
         );
         assert!(body.contains("\"fix\":"), "every error carries a fix (D-56): {body}");
-    }
-
-    /// The S-06 journey through the router: create (stream attaches),
-    /// write, restore to a new database, branch with parent metadata.
-    /// Skips when the external backup executable is not packaged on this machine.
-    #[tokio::test]
-    async fn backup_restore_and_branch_through_the_router() {
-        use crate::backup::BackupStreams;
-        if BackupStreams::discover().is_none() {
-            eprintln!("skipping: litestream is not on PATH");
-            return;
-        }
-        let state = state_with_keys_and_control();
-        let backup_root = state.backup_root.clone();
-        let fleet = Arc::clone(state.backups.as_ref().expect("development backup fleet"));
-        let router = router(state);
-        let auth = "Bearer tskey_test_abcdefghijklmnop";
-
-        let response = router
-            .clone()
-            .oneshot(
-                Request::post("/api/v1/databases")
-                    .header("authorization", auth)
-                    .header("x-terrascale-tenant-id", "terrabase-local")
-                    .header("x-terrascale-project-id", "local")
-                    .header("x-terrascale-tenant-id", "terrabase-local")
-                    .header("x-terrascale-project-id", "local")
-                    .body(Body::from(r#"{"name":"live","placement":["GRU"],"residency":null}"#))
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert_eq!(response.status(), StatusCode::CREATED);
-        assert!(fleet.attached("live"), "the stream attached at creation");
-        assert!(fleet.wait_until_ready("live", std::time::Duration::from_secs(30)), "ready");
-
-        // The write's WAL segment must ship before a restore can see it:
-        // the segment count must grow past the pre-write baseline
-        // (schema-init segments already in it don't count).
-        let wal = backup_root.join("live").join("ltx").join("0");
-        let shipped = |dir: &std::path::Path| {
-            std::fs::read_dir(dir).map_or(0, |entries| entries.flatten().count())
-        };
-        let baseline = shipped(&wal);
-        let response = router
-            .clone()
-            .oneshot(
-                Request::put("/api/v1/databases/live/collections/orders/documents/orders-1")
-                    .header("authorization", auth)
-                    .body(Body::from(r#"{"value":41}"#))
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert!(response.status().is_success(), "the document lands: {}", response.status());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while shipped(&wal) <= baseline {
-            assert!(std::time::Instant::now() < deadline, "the write shipped to the replica");
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-
-        let response = router
-            .clone()
-            .oneshot(
-                Request::post("/api/v1/databases/live/backups/restore")
-                    .header("authorization", auth)
-                    .body(Body::from(r#"{"name":"live-restored"}"#))
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert_eq!(response.status(), StatusCode::CREATED, "the restore registers");
-        let response = router
-            .clone()
-            .oneshot(
-                Request::get("/api/v1/databases/live-restored/collections/orders/documents")
-                    .header("authorization", auth)
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
-        let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("orders-1"), "the restored database serves the write: {body}");
-
-        let response = router
-            .clone()
-            .oneshot(
-                Request::post("/api/v1/databases/live/branches")
-                    .header("authorization", auth)
-                    .body(Body::from(r#"{"name":"live-branch"}"#))
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert_eq!(response.status(), StatusCode::CREATED, "the branch registers");
-        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
-        let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("\"parent\":\"live\""), "the branch carries parent metadata: {body}");
-
-        let response = router
-            .clone()
-            .oneshot(
-                Request::get("/api/v1/databases/live/branches")
-                    .header("authorization", auth)
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
-        let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("live-branch"), "the branch lists under its parent: {body}");
-        fleet.detach_all();
-    }
-
-    /// The S-06 `?at=` retention gate reads the database's plan from the
-    /// fleet registry: Free refuses a ten-day-old moment, Pro lets it
-    /// through to the restore (which refuses without a stream — the gate
-    /// passed), and an unknown plan fails closed to Free. No backup process
-    /// needed: the gate answers before any restore runs.
-    #[test]
-    fn time_travel_retention_gate_honors_the_database_plan() {
-        use terrabase::types::{CollectionName, DocumentId};
-        let state = state();
-        let collection = CollectionName::try_new("orders").expect("the collection parses");
-        let id = DocumentId::try_new("orders/first").expect("the document id parses");
-        let headers = axum::http::HeaderMap::new();
-        let ten_days_ago_millis =
-            super::unix_now_seconds().saturating_sub(10 * 86_400).cast_signed() * 1000;
-
-        let refused = super::time_travel_document(
-            &state,
-            "planned",
-            &collection,
-            &id,
-            ten_days_ago_millis,
-            &headers,
-            None,
-        )
-        .status();
-        assert_eq!(refused, StatusCode::UNPROCESSABLE_ENTITY, "Free refuses the old moment");
-
-        state.backups.as_ref().expect("development backup fleet").set_plan("planned", "pro");
-        let gated = super::time_travel_document(
-            &state,
-            "planned",
-            &collection,
-            &id,
-            ten_days_ago_millis,
-            &headers,
-            None,
-        )
-        .status();
-        assert_ne!(
-            gated,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Pro admits the moment past the Free window"
-        );
-
-        state.backups.as_ref().expect("development backup fleet").set_plan("planned", "team");
-        let closed = super::time_travel_document(
-            &state,
-            "planned",
-            &collection,
-            &id,
-            ten_days_ago_millis,
-            &headers,
-            None,
-        )
-        .status();
-        assert_eq!(closed, StatusCode::UNPROCESSABLE_ENTITY, "unknown plans fail closed");
-    }
-
-    /// The journey's write step: PUT one document, answer the status.
-    async fn write_document(
-        router: &axum::Router,
-        auth: &str,
-        uri: &str,
-        body: &'static str,
-    ) -> StatusCode {
-        router
-            .clone()
-            .oneshot(
-                Request::put(uri)
-                    .header("authorization", auth)
-                    .body(Body::from(body))
-                    .expect("request"),
-            )
-            .await
-            .expect("answers")
-            .status()
-    }
-
-    /// The journey's read step: GET one URI, answer the status and body.
-    async fn read_document_body(
-        router: &axum::Router,
-        auth: &str,
-        uri: String,
-    ) -> (StatusCode, String) {
-        let response = router
-            .clone()
-            .oneshot(
-                Request::get(uri)
-                    .header("authorization", auth)
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
-        (status, String::from_utf8(bytes.to_vec()).expect("utf-8"))
-    }
-
-    /// The S-06 time-travel journey through the router: write, wait,
-    /// write, then `?at=` between the writes serves the old value while
-    /// the live read serves the new one. Skips when the external backup
-    /// executable is not packaged on this machine.
-    #[tokio::test]
-    #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
-    async fn document_time_travel_at_returns_the_old_value() {
-        use crate::backup::BackupStreams;
-        if BackupStreams::discover().is_none() {
-            eprintln!("skipping: litestream is not on PATH");
-            return;
-        }
-        let state = state_with_keys_and_control();
-        let backup_root = state.backup_root.clone();
-        let fleet = Arc::clone(state.backups.as_ref().expect("development backup fleet"));
-        let router = router(state);
-        let auth = "Bearer tskey_test_abcdefghijklmnop";
-        let unix_now = super::unix_now_seconds;
-
-        let response = router
-            .clone()
-            .oneshot(
-                Request::post("/api/v1/databases")
-                    .header("authorization", auth)
-                    .header("x-terrascale-tenant-id", "terrabase-local")
-                    .header("x-terrascale-project-id", "local")
-                    .body(Body::from(r#"{"name":"tt","placement":["GRU"],"residency":null}"#))
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert_eq!(response.status(), StatusCode::CREATED);
-        assert!(fleet.wait_until_ready("tt", std::time::Duration::from_secs(30)), "ready");
-
-        // The write's WAL segment must ship before a restore can see it:
-        // the segment count must grow past the pre-write baseline.
-        let wal = backup_root.join("tt").join("ltx").join("0");
-        let shipped = |dir: &std::path::Path| {
-            std::fs::read_dir(dir).map_or(0, |entries| entries.flatten().count())
-        };
-        let wait_for_ship = |baseline: usize, what: &str| {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-            while shipped(&wal) <= baseline {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "the {what} write shipped to the replica"
-                );
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        };
-        let baseline = shipped(&wal);
-        let first = write_document(
-            &router,
-            auth,
-            "/api/v1/databases/tt/collections/orders/documents/item-1",
-            r#"{"value":1}"#,
-        )
-        .await;
-        assert!(first.is_success(), "the first write lands: {first}");
-        wait_for_ship(baseline, "first");
-
-        // The restore point sits strictly between the writes (a write is
-        // addressable a sync after it leaves the building).
-        std::thread::sleep(std::time::Duration::from_millis(2_500));
-        let at = unix_now() + 1;
-        while unix_now() <= at {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        let between = shipped(&wal);
-        let second = write_document(
-            &router,
-            auth,
-            "/api/v1/databases/tt/collections/orders/documents/item-1",
-            r#"{"value":2}"#,
-        )
-        .await;
-        assert!(second.is_success(), "the second write lands: {second}");
-        wait_for_ship(between, "second");
-
-        // Time-travel serves the old value; the repeat hits the cache.
-        let at_millis = at * 1000;
-        for _ in 0..2 {
-            let (status, body) = read_document_body(
-                &router,
-                auth,
-                format!("/api/v1/databases/tt/collections/orders/documents/item-1?at={at_millis}"),
-            )
-            .await;
-            assert_eq!(status, StatusCode::OK, "the past serves: {body}");
-            assert!(body.contains("\"value\":1"), "the old value serves: {body}");
-            assert!(!body.contains("\"value\":2"), "the new value stays out: {body}");
-        }
-
-        // The live read serves the new value.
-        let (status, body) = read_document_body(
-            &router,
-            auth,
-            "/api/v1/databases/tt/collections/orders/documents/item-1".to_owned(),
-        )
-        .await;
-        assert!(status.is_success());
-        assert!(body.contains("\"value\":2"), "the live value serves: {body}");
-
-        // A moment older than the plan's retention names its remedy.
-        let (status, body) = read_document_body(
-            &router,
-            auth,
-            "/api/v1/databases/tt/collections/orders/documents/item-1?at=1000".to_owned(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert!(body.contains("pitr_outside_retention"), "the typed refusal: {body}");
-
-        // A future moment is unusable.
-        let future_millis = (unix_now() + 3_600) * 1000;
-        let (status, _) = read_document_body(
-            &router,
-            auth,
-            format!("/api/v1/databases/tt/collections/orders/documents/item-1?at={future_millis}"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        fleet.detach_all();
     }
 
     #[tokio::test]

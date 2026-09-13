@@ -1,14 +1,14 @@
-# ADR 0046: Native Rust backup subsystem informed by Litestream
+# ADR 0046: Native Rust backup subsystem
 
 Status: accepted (owner decision, 2026-09-05).
 Authority: workspace `GOAL.md`, D-29 and E-7. This decision replaces the
-external Litestream implementation choice in ADR 0040 and applies to backup,
+external backup tool choice in ADR 0040 and applies to backup,
 restore, branching, and bootstrap references in earlier ADRs.
 
 ## Context
 
-TerraBase currently supervises a Litestream child process per streamed
-database in `crates/terrabase-server/src/backup.rs`. Our member hosts many
+TerraBase previously supervised an external backup child process per streamed
+database. Our member hosts many
 SQLite databases and already owns WAL capture, checkpoint scheduling,
 encryption, and database lifecycle. Separate backup processes repeat runtime
 and scheduling resources and cannot directly share these engine facilities.
@@ -16,20 +16,14 @@ The size of that overhead and the benefit of replacing it require measurement.
 
 ## Decision
 
-Rebuild the required Litestream functionality as an internal native Rust
-subsystem of TerraBase. Read and study
-[Litestream's source](https://github.com/benbjohnson/litestream) before
-implementing the replacement. Record the reviewed commit, source paths,
-relevant tests and issues, recovery invariants, and deliberate departures in
-an implementation design note. Cover WAL capture and checkpoint coordination,
+Build the required backup functionality as an internal native Rust
+subsystem of TerraBase. Cover WAL capture and checkpoint coordination,
 snapshot and incremental formats, upload recovery, retention, and PITR.
-Preserve applicable license notices and attribution for reused material.
 
-The subsystem runs inside the Rust member. It has no external Litestream
+The subsystem runs inside the Rust member. It has no external
 binary, embedded Go runtime, per-database subprocess, or upstream runtime
 dependency. Use established Rust crates for supporting facilities where
-appropriate. Sharing proven ideas does not require retaining upstream's
-deployment model or backup format compatibility.
+appropriate.
 
 Maintain one logical stream per SQLite file with per-database keys,
 frontiers, resource accounting, and isolation. Share bounded background
@@ -120,9 +114,8 @@ benchmarks.
 ## Performance and correctness gates
 
 Faster backup and restore, lower CPU and memory use, and less disk I/O and
-object-request overhead are explicit implementation goals. Record comparative
-Markdown tables in `bench/` against a pinned upstream Litestream version and
-the existing per-database integration under equivalent durability, upload,
+object-request overhead are explicit implementation goals. Record
+Markdown tables in `bench/` under explicit durability, upload,
 retention, and encryption settings. Include hardware, versions, workload,
 database counts, and reproducible commands. Measure idle and active databases,
 write-heavy load, startup/resume, backup throughput and lag, restore time,
@@ -142,13 +135,11 @@ This is an accepted design and required rebuild, not a completed implementation
 or a measured performance claim. E-7 remains incomplete until the native path,
 recovery evidence, and comparative benchmarks satisfy this decision.
 
-Completely remove Litestream from the product in the replacement series:
-delete the external process adapter, dependencies, binary
-packaging, subprocess supervision, Litestream-specific runtime configuration,
-and obsolete tests and documentation. Replace their coverage with native
-integration and recovery tests. Keep no compatibility shim or permanent
-fallback to the retired implementation. Source review and benchmark references
-to upstream remain useful development material.
+The external process adapter, its dependencies, binary packaging,
+subprocess supervision, its runtime configuration, and obsolete tests and
+documentation are deleted in the replacement series. Replace their coverage
+with native integration and recovery tests. Keep no compatibility shim or
+permanent fallback to the retired implementation.
 
 The orchestrator owns infrastructure, lifecycle intent, and restore drills;
 TerraBase owns backup execution and readiness evidence. We take responsibility

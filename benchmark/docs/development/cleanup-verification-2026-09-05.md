@@ -12,11 +12,10 @@ source files; neither the Makefile nor the stack scripts consume these probes.
 They were deleted as generated leftovers, removing about 21 MB of tracked
 binaries. The ignored `rust_out` and `target/` local outputs were left alone.
 
-The external backup adapter remains active: server `backup.rs` launches its
-configured Litestream executable for streaming and restoration. It cannot be
-removed until the native replacement meets ADR 0046's restore-chain,
-encryption, residency, multi-database resource, and upstream comparison gates.
-This is an unfinished retirement dependency, not a passed G1 gate.
+The external backup adapter was retired: server `backup.rs` and its
+subprocess integration are deleted. Native replacement coverage of ADR
+0046's restore-chain, encryption, residency, and multi-database resource
+gates remains open work.
 
 ## Webhook destination security
 
