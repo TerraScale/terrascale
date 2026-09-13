@@ -1,0 +1,77 @@
+namespace TerraBase;
+
+/// <summary>Options used when opening a TerraBase engine.</summary>
+public sealed record TerraBaseOptions
+{
+    /// <summary>Creates default local options.</summary>
+    public TerraBaseOptions()
+    {
+    }
+
+    /// <summary>The region label used by request metrics.</summary>
+    public Region Region { get; init; } = Region.Unknown;
+}
+
+/// <summary>
+/// The C# TerraBase composition root. Storage and telemetry remain interfaces
+/// so a durable backend can be introduced without changing document callers.
+/// </summary>
+public sealed class TerraBaseEngine : IAsyncDisposable
+{
+    private readonly IStorageProvider provider;
+    private bool disposed;
+
+    /// <summary>Opens an engine over a supplied storage provider.</summary>
+    /// <param name="provider">The storage provider.</param>
+    /// <param name="metrics">The metrics registry, or a new registry.</param>
+    /// <param name="options">The engine options.</param>
+    public TerraBaseEngine(
+        IStorageProvider provider,
+        MetricsRegistry? metrics = null,
+        TerraBaseOptions? options = null)
+    {
+        this.provider = provider ?? throw new ArgumentNullException(nameof(provider));
+        Metrics = metrics ?? new MetricsRegistry();
+        Options = options ?? new TerraBaseOptions();
+        Documents = new DocumentStore(provider, Metrics);
+        Metrics.SetComponentHealth(Component.Storage, HealthStatus.Healthy);
+        Metrics.SetComponentHealth(Component.Replication, HealthStatus.Healthy);
+        Metrics.SetComponentHealth(Component.Membership, HealthStatus.Healthy);
+        Metrics.SetComponentHealth(Component.ControlPlane, HealthStatus.Unknown);
+        Metrics.SetComponentHealth(Component.Backup, HealthStatus.Unknown);
+        Metrics.SetComponentHealth(Component.Metrics, HealthStatus.Healthy);
+        Metrics.SetServiceState(ServiceState.Serving);
+    }
+
+    /// <summary>Opens a local in-memory engine.</summary>
+    /// <param name="metrics">The metrics registry, or a new registry.</param>
+    /// <param name="options">The engine options.</param>
+    /// <returns>The opened engine.</returns>
+    public static TerraBaseEngine Open(MetricsRegistry? metrics = null, TerraBaseOptions? options = null) =>
+        new(new InMemoryStorageProvider(), metrics, options);
+
+    /// <summary>The configured options.</summary>
+    public TerraBaseOptions Options { get; }
+
+    /// <summary>The metrics registry for this engine.</summary>
+    public MetricsRegistry Metrics { get; }
+
+    /// <summary>The abstract document operation surface.</summary>
+    public DocumentStore Documents { get; }
+
+    /// <summary>Returns a current health report.</summary>
+    public HealthReport Health() => Metrics.Health();
+
+    /// <summary>Stops the engine and releases its storage provider.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed)
+        {
+            return;
+        }
+
+        disposed = true;
+        Metrics.SetServiceState(ServiceState.Stopped);
+        await provider.DisposeAsync().ConfigureAwait(false);
+    }
+}

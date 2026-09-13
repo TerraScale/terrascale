@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="TerraBase.csproj" />
+  <Project Path="tests/TerraBase.Tests/TerraBase.Tests.csproj" />
+</Solution>

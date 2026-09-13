@@ -10,7 +10,7 @@ __pycache__/
 
 # Local, generated runtime and benchmark output.
 /benches/results/
-/.terrascale/stack/
+/.terrascale/
 /bench/.member/
 /bench/.member-*/
 
