@@ -73,7 +73,7 @@ public sealed class TbepValue : IEquatable<TbepValue>
 [MessagePackFormatter(typeof(ObjectFieldFormatter))]
 public sealed record ObjectField(string Name, TbepValue Value);
 
-/// <summary>The strict MessagePack formatter of <see cref="TbepValue"/>: positional arrays only, nil never accepted for the type.</summary>
+/// <summary>The MessagePack formatter of <see cref="TbepValue"/>: positional arrays with nil reserved for nullable fields.</summary>
 #pragma warning disable MsgPack009
 public sealed class TbepValueFormatter : IMessagePackFormatter<TbepValue?>
 {
