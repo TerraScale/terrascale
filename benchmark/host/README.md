@@ -1,6 +1,12 @@
-# TerraBase API host (C#)
+# TerraBase host surface (C#)
 
-> Migration-source documentation. The supported target host is the independent
+> Migration-source documentation. The former standalone `TerraBase.Api` and
+> `TerraBase.Protocol` projects were consolidated into
+> `src/TerraBase/TerraBase.csproj`; their implementation remains organized
+> under `src/TerraBase/Api` and `src/TerraBase/Protocol`. The former
+> `TerraBase.Cli` project and its README were retired with the standalone CLI;
+> operator commands now live in the separate `ts-cli` repository. The
+> supported target host is the independent
 > C#/.NET 10 `TerraScale.Database` service. It uses QUIC TBEP on loopback and
 > network links and authenticates through Dashboard OIDC, introspection, and
 > typed authorization grants. The UDS host and trusted context headers below
@@ -20,18 +26,22 @@
 The database's external surface, in C# per the workspace stack policy
 (charter PD-2026-08-26-01/02; ADR 0005): an ASP.NET Core host that is a
 TBEP **client** of the Rust engine process over the required
-Unix-domain-socket binding (PD-2026-08-26-11 D1), speaking through the
-SE-14 `TerraBase.Protocol` client — never a C ABI, never a raw socket,
-never storage access (probe-tested red-then-green in
-`TerraBase.Api.Tests/EngineProbesTests.cs`).
+Unix-domain-socket binding (PD-2026-08-26-11 D1), using the SE-14 client
+implementation under `src/TerraBase/Protocol` — never a C ABI, never a raw
+socket, never storage access (probe-tested red-then-green in
+`tests/TerraBase.Api.Tests/EngineProbesTests.cs`).
 
-## Projects
+## Current projects
 
 | Project | Role |
 | --- | --- |
-| `TerraBase.Protocol` | The SE-14 TBEP client (landed with SE-14), plus this packet's `TbepChannel`: one engine connection multiplexed between concurrent typed calls and the unsolicited backbone notifications. |
-| `TerraBase.Api` | The ASP.NET host: typed operations, subscription endpoints, sync-session forwarding, engine supervision, lifecycle audit (`TerraBaseHost.Create` is the assembly point; `Program` is the entry). |
-| `TerraBase.Api.Tests` | The SE-08 test family (TUnit): the local gate and tenant isolation, SSE/WebSocket parity and resume, the bounded-queue drops, the sync-session lifecycle, the SE-04 golden vectors end to end, real-engine e2e rows, and supervision against real engine-process loss. |
+| `src/TerraBase/TerraBase.csproj` | The unified ASP.NET host and TBEP client: typed operations, subscription endpoints, sync-session forwarding, engine supervision, lifecycle audit, and the endpoint components. The host assembly points are `TerraBaseHost.Create` and `Program`; the protocol implementation remains under `src/TerraBase/Protocol`. |
+| `tests/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj` | The SE-08 host test family (TUnit): the local gate and tenant isolation, SSE/WebSocket parity and resume, bounded-queue drops, sync-session lifecycle, SE-04 golden vectors end to end, real-engine e2e rows, and supervision against real engine-process loss. |
+| `tests/TerraBase.Protocol.Tests/TerraBase.Protocol.Tests.csproj` | The SE-14 TBEP conformance suite, including golden-vector and serving-channel error-routing rows. It remains a separate test assembly but references the unified TerraBase project. |
+
+The test assembly names retain their SE-08 and SE-14 history. They no longer
+correspond to standalone `TerraBase.Api` or `TerraBase.Protocol` production
+projects.
 
 ## The boundary (PD-2026-08-26-11)
 
@@ -108,6 +118,8 @@ and never a document body, payload, or credential (tested).
 
 ## Running
 
+Run these commands from the `terrabase` repository root:
+
 ```
 TERRABASE_TBEP_SOCKET=/path/to/engine.sock     # default /run/terrabase/engine.tbep.sock
 TERRABASE_TBEP_ENGINE=/path/to/engine-binary   # unset = attach to a managed-elsewhere engine
@@ -115,9 +127,9 @@ TERRABASE_HOST_URL=http://127.0.0.1:8420       # the loopback listener
 ```
 
 ```
-dotnet run --project ../../src/TerraBase/TerraBase.csproj              # the host
-dotnet run --project TerraBase.Api.Tests        # the SE-08 family (80 rows)
-dotnet run --project TerraBase.Protocol.Tests   # the SE-14 conformance suite
+dotnet run --project src/TerraBase/TerraBase.csproj
+dotnet run --project tests/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj
+dotnet run --project tests/TerraBase.Protocol.Tests/TerraBase.Protocol.Tests.csproj
 ```
 
 The real-engine e2e rows build the repository's actual engine server

@@ -188,6 +188,7 @@ public sealed class BackboneHub
 /// shed frame counted, the drop surfaced in-band and in the metrics —
 /// and the frame that triggered the shed always lands.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711", Justification = "BackboneStream is the documented protocol stream abstraction.")]
 public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
 {
     private readonly BackboneHub hub;

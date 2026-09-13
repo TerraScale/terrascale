@@ -32,6 +32,7 @@ public static class TbepQuic
     /// <returns>The connected client, unbound.</returns>
     /// <exception cref="System.PlatformNotSupportedException">The platform carries no QUIC support.</exception>
     /// <exception cref="System.Security.Authentication.AuthenticationException">The TLS handshake failed.</exception>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5359", Justification = "The callback is enabled only by the explicit test-only trustServerCertificate option.")]
     public static async Task<TbepClient> ConnectAsync(
         string host,
         int port,

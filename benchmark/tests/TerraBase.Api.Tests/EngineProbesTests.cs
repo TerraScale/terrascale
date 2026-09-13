@@ -9,9 +9,9 @@ namespace TerraBase.Api.Tests;
 /// talks to the engine only through the SE-14 C# TBEP client — no C
 /// ABI, no raw sockets, no storage access. The detector is proven
 /// capable of going red (each banned construct, embedded as a fixture,
-/// is flagged), then the real host sources are asserted green. The
-/// TerraBase.Protocol project is the sanctioned socket path and is out
-/// of the probe's scope by design.
+/// is flagged), then the real host sources are asserted green. The TBEP
+/// client implementation under src/TerraBase/Protocol is the sanctioned
+/// socket path and is out of the probe's scope by design.
 /// </summary>
 public sealed class EngineProbesTests
 {
@@ -82,7 +82,7 @@ public sealed class EngineProbesTests
 /// <summary>The probe itself: scans the host's own C# sources for banned constructs.</summary>
 public static class Probe
 {
-    /// <summary>Every C# source of the API host project (the Protocol project is the sanctioned client).</summary>
+    /// <summary>Every C# source of the host implementation (the TBEP client is the sanctioned socket path).</summary>
     /// <returns>The file names with their full text.</returns>
     public static IEnumerable<(string Name, string Text)> HostSources()
     {

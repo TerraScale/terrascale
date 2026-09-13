@@ -28,18 +28,21 @@ public sealed record JsonValue
     public bool? Boolean { get; init; }
 
     /// <summary>The integer discriminator.</summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1720", Justification = "Integer is the documented JSON discriminator name.")]
     public long? Integer { get; init; }
 
     /// <summary>The number discriminator.</summary>
     public double? Number { get; init; }
 
     /// <summary>The string discriminator.</summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1720", Justification = "String is the documented JSON discriminator name.")]
     public string? String { get; init; }
 
     /// <summary>The array discriminator.</summary>
     public IReadOnlyList<JsonValue>? Array { get; init; }
 
     /// <summary>The object discriminator.</summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1720", Justification = "Object is the documented JSON discriminator name.")]
     public IReadOnlyDictionary<string, JsonValue>? Object { get; init; }
 
     /// <summary>Converts to the protocol's value.</summary>
@@ -521,6 +524,7 @@ public sealed record LiteralDto
     public bool? Boolean { get; init; }
 
     /// <summary>The integer literal.</summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1720", Justification = "Integer is the documented JSON discriminator name.")]
     public long? Integer { get; init; }
 
     /// <summary>The text literal.</summary>

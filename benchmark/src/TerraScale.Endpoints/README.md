@@ -52,7 +52,9 @@ public sealed class EchoEndpoint : Endpoint<EchoRequest>
     public override void Configure() => Post("/echo");
 
     public override async Task HandleAsync(EchoRequest request, CancellationToken ct)
-        => await Send.OkAsync(new { request.Value });
+    {
+        await Send.OkAsync(new { request.Value });
+    }
 }
 ```
 
