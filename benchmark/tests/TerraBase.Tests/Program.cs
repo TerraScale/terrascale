@@ -2,6 +2,7 @@ using System.Text.Json;
 using TerraBase;
 
 await StoragePortIsAtomicAndVersioned();
+await DurableStorageSurvivesCloseAndReopen();
 MetricsAreBoundedAndPrometheusCompatible();
 LifecycleAndReadinessFailClosed();
 Console.WriteLine("TerraBase focused tests passed.");
@@ -36,6 +37,38 @@ static async Task StoragePortIsAtomicAndVersioned()
     var deleted = await engine.Documents.DeleteAsync(key, DocumentPrecondition.Version(2));
     Assert(deleted.Outcome == WriteOutcome.Deleted, "a matching delete must remove the document");
     Assert(await engine.Documents.ReadAsync(key) is null, "deleted documents must not be readable");
+}
+
+static async Task DurableStorageSurvivesCloseAndReopen()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"terrabase-storage-{Guid.NewGuid():N}.json");
+    var key = new DocumentKey(new TenantId("tenant-durable"), new CollectionId("users"), "user-1");
+    try
+    {
+        await using (var provider = new FileStorageProvider(path))
+        {
+            using var body = JsonDocument.Parse("{\"name\":\"Ada\"}");
+            var result = await provider.UpsertAsync(key, body.RootElement, DocumentPrecondition.Missing);
+            Assert(result.Outcome == WriteOutcome.Created && result.Document?.Version == 1, "durable writes must commit the first version");
+        }
+
+        await using (var provider = new FileStorageProvider(path))
+        {
+            var read = await provider.ReadAsync(key);
+            Assert(read?.Version == 1 && read.Body.GetProperty("name").GetString() == "Ada", "durable documents must survive close and reopen");
+            var scanned = new List<Document>();
+            await foreach (var document in provider.ScanAsync(key.Tenant, key.Collection))
+            {
+                scanned.Add(document);
+            }
+
+            Assert(scanned.Count == 1 && scanned[0].Key == key, "reopened durable scans must expose committed documents");
+        }
+    }
+    finally
+    {
+        File.Delete(path);
+    }
 }
 
 static void MetricsAreBoundedAndPrometheusCompatible()

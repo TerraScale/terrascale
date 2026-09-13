@@ -288,6 +288,282 @@ public sealed class InMemoryStorageProvider : IStorageProvider
     }
 }
 
+/// <summary>A durable file-backed storage provider for a local engine.</summary>
+/// <remarks>
+/// The provider keeps the current document set in memory for the operation
+/// surface, and commits a complete versioned snapshot after each mutation.
+/// Snapshot replacement happens through a same-directory temporary file so a
+/// completed operation is always represented by one complete file.
+/// </remarks>
+public sealed class FileStorageProvider : IStorageProvider
+{
+    private const int StorageFormatVersion = 1;
+    private static readonly JsonSerializerOptions serializerOptions = new(JsonSerializerDefaults.General);
+    private readonly object gate = new();
+    private readonly Dictionary<DocumentKey, Document> documents = new();
+    private readonly string storagePath;
+    private bool disposed;
+
+    /// <summary>Opens a durable provider at the supplied file path.</summary>
+    /// <param name="path">The file that stores the document snapshot.</param>
+    public FileStorageProvider(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        storagePath = Path.GetFullPath(path);
+        if (Directory.Exists(storagePath))
+        {
+            throw new IOException($"The storage path is a directory: {storagePath}");
+        }
+
+        var parent = Path.GetDirectoryName(storagePath);
+        if (parent is null)
+        {
+            throw new IOException($"The storage path has no parent directory: {storagePath}");
+        }
+
+        Directory.CreateDirectory(parent);
+        if (File.Exists(storagePath))
+        {
+            LoadSnapshot();
+        }
+        else
+        {
+            PersistSnapshot();
+        }
+    }
+
+    /// <summary>The fully qualified file path used by this provider.</summary>
+    public string StoragePath => storagePath;
+
+    /// <inheritdoc />
+    public ValueTask<Document?> ReadAsync(DocumentKey key, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            return ValueTask.FromResult(documents.GetValueOrDefault(key));
+        }
+    }
+
+    /// <inheritdoc />
+    public ValueTask<StorageWriteResult> UpsertAsync(
+        DocumentKey key,
+        JsonElement body,
+        DocumentPrecondition precondition,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            var current = documents.GetValueOrDefault(key);
+            if (!precondition.Matches(current))
+            {
+                return ValueTask.FromResult(StorageWriteResult.Conflict);
+            }
+
+            var document = new Document(key, body, current is null ? 1UL : checked(current.Version + 1), DateTimeOffset.UtcNow);
+            documents[key] = document;
+            try
+            {
+                PersistSnapshot();
+            }
+            catch
+            {
+                Restore(key, current);
+                throw;
+            }
+
+            var outcome = current is null ? WriteOutcome.Created : WriteOutcome.Updated;
+            return ValueTask.FromResult(new StorageWriteResult(outcome, document));
+        }
+    }
+
+    /// <inheritdoc />
+    public ValueTask<StorageWriteResult> DeleteAsync(
+        DocumentKey key,
+        DocumentPrecondition precondition,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            var current = documents.GetValueOrDefault(key);
+            if (current is null)
+            {
+                return ValueTask.FromResult(StorageWriteResult.NotFound);
+            }
+
+            if (!precondition.Matches(current))
+            {
+                return ValueTask.FromResult(StorageWriteResult.Conflict);
+            }
+
+            documents.Remove(key);
+            try
+            {
+                PersistSnapshot();
+            }
+            catch
+            {
+                documents[key] = current;
+                throw;
+            }
+
+            return ValueTask.FromResult(new StorageWriteResult(WriteOutcome.Deleted, current));
+        }
+    }
+
+    /// <inheritdoc />
+    public async IAsyncEnumerable<Document> ScanAsync(
+        TenantId tenant,
+        CollectionId collection,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        Document[] snapshot;
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            snapshot = documents
+                .Where(pair => pair.Key.Tenant == tenant && pair.Key.Collection == collection)
+                .OrderBy(pair => pair.Key.DocumentId, StringComparer.Ordinal)
+                .Select(pair => pair.Value)
+                .ToArray();
+        }
+
+        foreach (var document in snapshot)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return document;
+            await Task.CompletedTask.ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc />
+    public ValueTask DisposeAsync()
+    {
+        lock (gate)
+        {
+            disposed = true;
+            documents.Clear();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private void LoadSnapshot()
+    {
+        try
+        {
+            using var stream = File.OpenRead(storagePath);
+            var snapshot = JsonSerializer.Deserialize<StorageSnapshot>(stream, serializerOptions)
+                ?? throw new InvalidDataException("The storage snapshot is empty.");
+            if (snapshot.FormatVersion != StorageFormatVersion)
+            {
+                throw new InvalidDataException($"Unsupported storage snapshot format {snapshot.FormatVersion}.");
+            }
+
+            foreach (var persisted in snapshot.Documents)
+            {
+                var key = new DocumentKey(
+                    new TenantId(persisted.Tenant),
+                    new CollectionId(persisted.Collection),
+                    persisted.DocumentId);
+                if (documents.ContainsKey(key))
+                {
+                    throw new InvalidDataException($"The storage snapshot contains duplicate key {key}.");
+                }
+
+                using var body = JsonDocument.Parse(persisted.Body);
+                documents.Add(key, new Document(key, body.RootElement, persisted.Version, persisted.UpdatedAt));
+            }
+        }
+        catch (JsonException failure)
+        {
+            throw new InvalidDataException($"The storage snapshot is not valid JSON: {storagePath}", failure);
+        }
+        catch (ArgumentException failure)
+        {
+            throw new InvalidDataException($"The storage snapshot contains an invalid document: {storagePath}", failure);
+        }
+    }
+
+    private void PersistSnapshot()
+    {
+        var snapshot = new StorageSnapshot(
+            StorageFormatVersion,
+            documents
+                .OrderBy(pair => pair.Key.Tenant.Value, StringComparer.Ordinal)
+                .ThenBy(pair => pair.Key.Collection.Value, StringComparer.Ordinal)
+                .ThenBy(pair => pair.Key.DocumentId, StringComparer.Ordinal)
+                .Select(pair => new PersistedDocument(
+                    pair.Key.Tenant.Value,
+                    pair.Key.Collection.Value,
+                    pair.Key.DocumentId,
+                    pair.Value.Body.GetRawText(),
+                    pair.Value.Version,
+                    pair.Value.UpdatedAt))
+                .ToArray());
+        var temporaryPath = $"{storagePath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            using (var stream = new FileStream(
+                temporaryPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 16 * 1024,
+                FileOptions.WriteThrough))
+            {
+                JsonSerializer.Serialize(stream, snapshot, serializerOptions);
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporaryPath, storagePath, overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch (FileNotFoundException)
+            {
+            }
+        }
+    }
+
+    private void Restore(DocumentKey key, Document? current)
+    {
+        if (current is null)
+        {
+            documents.Remove(key);
+        }
+        else
+        {
+            documents[key] = current;
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+    }
+
+    private sealed record StorageSnapshot(int FormatVersion, IReadOnlyList<PersistedDocument> Documents);
+
+    private sealed record PersistedDocument(
+        string Tenant,
+        string Collection,
+        string DocumentId,
+        string Body,
+        ulong Version,
+        DateTimeOffset UpdatedAt);
+}
+
 /// <summary>A document store that owns the engine's storage port.</summary>
 public sealed class DocumentStore : IDocumentStore
 {
