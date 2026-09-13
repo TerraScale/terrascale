@@ -67,7 +67,10 @@ public sealed class EndpointCatalog
         using var scope = services.CreateScope();
         foreach (var endpointType in this.endpointTypes)
         {
-            var endpoint = (IEndpoint)ActivatorUtilities.GetServiceOrCreateInstance(scope.ServiceProvider, endpointType);
+            var provider = typeof(IRequestScopedEndpoint).IsAssignableFrom(endpointType)
+                ? scope.ServiceProvider
+                : services;
+            var endpoint = (IEndpoint)ActivatorUtilities.GetServiceOrCreateInstance(provider, endpointType);
             endpoint.Map(routes);
         }
     }

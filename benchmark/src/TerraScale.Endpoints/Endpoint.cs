@@ -1,9 +1,13 @@
 namespace TerraScale.Endpoints;
 
+internal interface IRequestScopedEndpoint
+{
+}
+
 /// <summary>FastEndpoints-style base for one request/response endpoint.</summary>
 /// <typeparam name="TRequest">The bound request model.</typeparam>
 /// <typeparam name="TResponse">The response model or <see cref="IResult"/>.</typeparam>
-public abstract class Endpoint<TRequest, TResponse> : IEndpoint
+public abstract class Endpoint<TRequest, TResponse> : IEndpoint, IRequestScopedEndpoint
 {
     private EndpointDefinition? definition;
 
@@ -70,7 +74,7 @@ public abstract class Endpoint<TRequest, TResponse> : IEndpoint
 
 /// <summary>FastEndpoints-style base for an endpoint without a request body.</summary>
 /// <typeparam name="TResponse">The response model or <see cref="IResult"/>.</typeparam>
-public abstract class EndpointWithoutRequest<TResponse> : IEndpoint
+public abstract class EndpointWithoutRequest<TResponse> : IEndpoint, IRequestScopedEndpoint
 {
     private EndpointDefinition? definition;
 
@@ -135,7 +139,7 @@ public abstract class EndpointWithoutRequest<TResponse> : IEndpoint
 }
 
 /// <summary>FastEndpoints-style request endpoint that writes its response through <see cref="Send"/>.</summary>
-public abstract class Endpoint<TRequest> : EndpointSenderEndpoint, IEndpoint
+public abstract class Endpoint<TRequest> : EndpointSenderEndpoint, IEndpoint, IRequestScopedEndpoint
 {
     public abstract void Configure();
     public abstract Task HandleAsync(TRequest request, CancellationToken cancellationToken);
@@ -185,7 +189,7 @@ public abstract class Endpoint<TRequest> : EndpointSenderEndpoint, IEndpoint
 }
 
 /// <summary>FastEndpoints-style endpoint without a request body that writes through <see cref="Send"/>.</summary>
-public abstract class EndpointWithoutRequest : EndpointSenderEndpoint, IEndpoint
+public abstract class EndpointWithoutRequest : EndpointSenderEndpoint, IEndpoint, IRequestScopedEndpoint
 {
     public abstract void Configure();
     public abstract Task HandleAsync(CancellationToken cancellationToken);
