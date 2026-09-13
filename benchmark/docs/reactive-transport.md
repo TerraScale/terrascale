@@ -107,34 +107,22 @@ An empty result is 32 zero bytes. For each nonempty ordered result:
 The HTTP view key includes the digest format version to separate cached bytes
 from retired encodings.
 
-## Local SDK qualification
+## Local API qualification
 
-The Rust test harness starts a real TCP member with an isolated database. The SDK
-journey uses native fetch and WebSocket, checks canonical/local identity mapping,
-empty results, HTTP/WebSocket result equality, and reconnect. Install the SDK's
-Node dependencies, then run from the terrabase checkout:
-
-```sh
-TERRASCALE_TYPESCRIPT_SDK="$PWD/../ts-typescript" nice -n 19 cargo test --locked \
-  -p terrabase-server --lib typescript_browser_websocket_journey -- --ignored
-```
-
-The SDK's standalone test is environment-gated; the Rust harness supplies its
-isolated endpoint and ephemeral fixture credential. This gate does not require
-OCI or Cloudflare credentials.
-
-To test actual browser CORS enforcement, install the SDK's Playwright browsers
-and run:
+The current qualification surface is the C# solution. It exercises the
+ASP.NET Core host, endpoint discovery, protocol vectors, and engine boundary
+using the tracked TUnit projects. Run it from the terrabase checkout:
 
 ```sh
-TERRASCALE_TYPESCRIPT_SDK="$PWD/../ts-typescript" nice -n 19 cargo test --locked \
-  -p terrabase-server --lib packed_sdk_cross_origin_browser_journey -- --ignored
+nice -n 19 dotnet build TerraBase.slnx --configuration Release --nologo
+nice -n 19 dotnet format style TerraBase.slnx --verify-no-changes --no-restore
+nice -n 19 dotnet test TerraBase.slnx --configuration Release --no-build
 ```
 
-This harness builds and packs the SDK, serves it on a different local origin,
-and runs the Chrome, Firefox, Safari/WebKit, and Edge Playwright projects against
-the real member. It checks HTTP and WebSocket updates, reconnect, Region-header
-visibility, and readable authentication errors. It does not exercise Cloudflare.
+Engine-backed rows require the separately supplied engine source or executable
+and are explicitly skipped when that dependency is unavailable. A browser or
+cloud deployment qualification remains an external, separately authorized
+test; it is not performed by the .NET solution test command.
 
 Attach reports `X-TerraScale-Region`; the SDK uses that Region's member host for
 optional WebSockets, as required by D-24/D-48. Snapshot and log requests retain

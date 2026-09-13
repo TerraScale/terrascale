@@ -1,4 +1,10 @@
-# Private usage registration
+# Private usage registration (historical design)
+
+> **Historical design record.** The admission listener, Go orchestrator
+> integration, and Cargo test commands described below are not part of the
+> current C# host surface. Use the repository [README](../../README.md) and
+> solution tests for current verification. The detailed contract is retained
+> only for traceability while a replacement C# boundary is decided.
 
 `ProductionAdmissionRuntime` opens `usage-admissions.sqlite` under its existing
 Member root. An accepted database remains closed until a durable registration

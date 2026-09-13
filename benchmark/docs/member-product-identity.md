@@ -1,4 +1,9 @@
-# Member product identity admission
+# Member product identity admission (historical design)
+
+> **Historical design record.** The identity-admission subsystem described
+> below is not part of the current C# host surface. The current implementation
+> map is [the repository README](../README.md); do not use the former routes or
+> commands below as deployment instructions.
 
 The public member router can admit product credentials through a configured
 Better Auth identity authority. Registered member data keys retain their existing
@@ -6,11 +11,11 @@ scope checks. Other bearer credentials require a fresh authority response for
 every request; there is no successful-admission cache or local fallback.
 
 `IdentityConfig` pins an HTTPS endpoint, exact issuer, exact public API audience,
-and a private service credential of at least 32 bytes. The native Rust client
-verifies the certificate and hostname against Mozilla roots, follows no redirects,
-ignores proxy environment variables, bounds concurrent requests to 32, and limits
-an attempt to five seconds and the response body to 16 KiB. Failures deny admission.
-Credential contents cannot select the endpoint or TLS trust roots.
+and a private service credential of at least 32 bytes. The former native Rust
+client verified the configured HTTPS authority, followed no redirects, ignored
+proxy environment variables, bounded concurrent requests to 32, and limited an
+attempt to five seconds and the response body to 16 KiB. Failures denied
+admission. Credential contents could not select the endpoint or TLS trust roots.
 
 The producer is the dashboard's `POST /api/internal/identity/introspect` route.
 The member sends `x-terrascale-identity-service-key` and JSON containing `token`,
@@ -55,10 +60,9 @@ pending intents cannot serve. The identity producer also requires consensus-back
 revocation and permission reductions across partitions; a local or stale replica
 does not satisfy that requirement.
 
-The focused `cargo test -p terrabase-server --lib delegated_identity` suite covers
-native TLS, untrusted certificates, hostname mismatch, live revocation, permission
-reduction, expiry, issuer/audience and tenant/database binding, authority loss,
-and admission/revocation through the actual public router.
+The focused identity tests and their former Cargo command are retained as
+dated design evidence. They do not qualify the current C# host. Use the
+solution commands in the repository README for current verification.
 
 Configure the existing public API listener with an explicit nested section:
 

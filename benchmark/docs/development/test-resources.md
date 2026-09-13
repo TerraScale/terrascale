@@ -22,8 +22,8 @@ repository, including their final newline, so the resource check detects any
 subsequent edit without silently treating the Rust checkout as a source path.
 
 These resources prove the C# codec and host boundary against recorded
-contract data. The end-to-end API rows and real-engine rows still need the
-external `crates/terrabase-tbep` source and Cargo toolchain. When that source
-is absent, `EngineHarness` classifies those rows as unavailable and skips
-them with an explicit reason. Once the source is present, a failed Cargo
-build remains a test failure so engine regressions are not hidden as skips.
+contract data. Engine-backed rows still require the separately supplied
+engine source or executable. When that dependency is absent,
+`EngineHarness` classifies those rows as unavailable and skips them with an
+explicit reason. When it is present, a failed engine build remains a test
+failure so engine regressions are not hidden as skips.

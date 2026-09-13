@@ -1,10 +1,15 @@
 # Immutable contract bundles
 
-`terrabase-contracts` is the only producer of the public contract directory.
-After generation, `make contract-archive` packages `contracts/` into
-`contract-archives/v<version>.tar`. The tar entries are rooted at the contract
-version and have deterministic metadata (sorted paths, zero timestamps and
-neutral ownership), so the same producer bytes produce the same archive.
+The checked-in `contract-archives/` directory is the source of truth for the
+published contract bytes in this C# checkout. The former
+`terrabase-contracts` producer and its `make contract-archive` target are not
+part of the current solution. Contract publication must therefore use the
+reviewed release artifact and its sidecar digest; do not recreate an archive
+with an undocumented local command.
+
+Each archive is rooted at its contract version and has deterministic metadata
+(sorted paths, zero timestamps and neutral ownership), so the same producer
+bytes produce the same archive.
 
 The target also writes `<version>.tar.sha256` and `<version>.tar.json`. The
 sidecar records the archive SHA-256, contract version, manifest SHA-256 and
