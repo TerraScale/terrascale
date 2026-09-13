@@ -84,7 +84,7 @@ public sealed class SqliteSchemaTests
             var original = new SqliteMigration(1, "one", "CREATE TABLE sample (value INTEGER NOT NULL);");
             SqliteMigrationRunner.Apply(connection, [original]);
 
-            var changed = new SqliteMigration(1, "one", "CREATE TABLE sample (value TEXT NOT NULL);");
+            var changed = new SqliteMigration(1, "two", "CREATE TABLE sample (value TEXT NOT NULL);");
             var failure = await Assert.ThrowsAsync<InvalidDataException>(
                 () => Task.Run(() => SqliteMigrationRunner.Apply(connection, [changed])));
 

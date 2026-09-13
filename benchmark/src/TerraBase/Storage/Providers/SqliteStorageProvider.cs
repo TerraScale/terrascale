@@ -111,7 +111,7 @@ public sealed class SqliteStorageProvider : IStorageProvider
             ThrowIfDisposed();
             lock (pathGate)
             {
-                using var transaction = connection.BeginTransaction();
+                using var transaction = connection.BeginTransaction(deferred: false);
                 var current = ReadCurrent(key, transaction);
                 if (!precondition.Matches(current))
                 {
@@ -143,6 +143,7 @@ public sealed class SqliteStorageProvider : IStorageProvider
 
                 WriteWatermark(key, version, transaction);
                 WriteJournal(key, "upsert", version, bodyBytes, updatedAt, transaction);
+                WriteCanonicalJournal(key, "upsert", commitSequence, bodyBytes, transaction);
                 transaction.Commit();
 
                 var document = new Document(key, body, version, updatedAt);
@@ -164,7 +165,7 @@ public sealed class SqliteStorageProvider : IStorageProvider
             ThrowIfDisposed();
             lock (pathGate)
             {
-                using var transaction = connection.BeginTransaction();
+                using var transaction = connection.BeginTransaction(deferred: false);
                 var current = ReadCurrent(key, transaction);
                 if (current is null)
                 {
@@ -201,6 +202,7 @@ public sealed class SqliteStorageProvider : IStorageProvider
 
                 WriteWatermark(key, version, transaction);
                 WriteJournal(key, "delete", version, body: null, deletedAt, transaction);
+                WriteCanonicalJournal(key, "delete", commitSequence, Array.Empty<byte>(), transaction);
                 transaction.Commit();
                 return ValueTask.FromResult(new StorageWriteResult(WriteOutcome.Deleted, current));
             }
@@ -336,6 +338,16 @@ public sealed class SqliteStorageProvider : IStorageProvider
                 updated_at_ms INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS journal (
+                sequence INTEGER PRIMARY KEY CHECK (sequence >= 0),
+                tenant TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                frame BLOB NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS journal_tenant_sequence
+                ON journal (tenant, sequence);
+
             CREATE TABLE IF NOT EXISTS operation_facts (
                 tenant TEXT NOT NULL,
                 operation TEXT NOT NULL,
@@ -432,6 +444,26 @@ public sealed class SqliteStorageProvider : IStorageProvider
         command.Parameters.AddWithValue("$version", ToSqliteInteger(version, nameof(version)));
         command.Parameters.Add("$body", SqliteType.Blob).Value = body ?? (object)DBNull.Value;
         command.Parameters.AddWithValue("$updated_at_ms", updatedAt.ToUnixTimeMilliseconds());
+        command.ExecuteNonQuery();
+    }
+
+    private void WriteCanonicalJournal(
+        DocumentKey key,
+        string operation,
+        long sequence,
+        byte[] frame,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO journal (sequence, tenant, operation, frame)
+            VALUES ($sequence, $tenant, $operation, $frame);
+            """;
+        command.Parameters.AddWithValue("$sequence", sequence);
+        command.Parameters.AddWithValue("$tenant", key.Tenant.Value);
+        command.Parameters.AddWithValue("$operation", operation);
+        command.Parameters.Add("$frame", SqliteType.Blob).Value = frame;
         command.ExecuteNonQuery();
     }
 

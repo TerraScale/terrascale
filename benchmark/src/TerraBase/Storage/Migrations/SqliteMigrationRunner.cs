@@ -30,15 +30,16 @@ public static class SqliteMigrationRunner
             using var receipt = connection.CreateCommand();
             receipt.Transaction = transaction;
             receipt.CommandText = """
-                INSERT INTO schema_migrations (version, name, applied_at)
-                VALUES ($version, $name, $applied_at);
+                INSERT INTO schema_migrations (version, name, checksum, applied_at)
+                VALUES ($version, $name, $checksum, $applied_at);
                 """;
             receipt.Parameters.AddWithValue("$version", migration.Version);
             receipt.Parameters.AddWithValue("$name", migration.Name);
+            receipt.Parameters.AddWithValue("$checksum", migration.Checksum);
             receipt.Parameters.AddWithValue("$applied_at", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
             receipt.ExecuteNonQuery();
             transaction.Commit();
-            applied.Add(migration.Version, migration.Name);
+            applied[migration.Version] = (migration.Name, migration.Checksum);
         }
     }
 
@@ -73,17 +74,18 @@ public static class SqliteMigrationRunner
             {
                 receipt.Transaction = transaction;
                 receipt.CommandText = """
-                    INSERT INTO schema_migrations (version, name, applied_at)
-                    VALUES ($version, $name, $applied_at);
+                    INSERT INTO schema_migrations (version, name, checksum, applied_at)
+                    VALUES ($version, $name, $checksum, $applied_at);
                     """;
                 receipt.Parameters.AddWithValue("$version", migration.Version);
                 receipt.Parameters.AddWithValue("$name", migration.Name);
+                receipt.Parameters.AddWithValue("$checksum", migration.Checksum);
                 receipt.Parameters.AddWithValue("$applied_at", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
                 await receipt.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            applied.Add(migration.Version, migration.Name);
+            applied[migration.Version] = (migration.Name, migration.Checksum);
         }
     }
 
@@ -121,6 +123,7 @@ public static class SqliteMigrationRunner
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY CHECK (version > 0),
                 name TEXT NOT NULL,
+                checksum TEXT NOT NULL,
                 applied_at TEXT NOT NULL
             ) WITHOUT ROWID;
             """;
@@ -134,22 +137,23 @@ public static class SqliteMigrationRunner
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY CHECK (version > 0),
                 name TEXT NOT NULL,
+                checksum TEXT NOT NULL,
                 applied_at TEXT NOT NULL
             ) WITHOUT ROWID;
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static Dictionary<int, string> ReadApplied(SqliteConnection connection)
+    private static Dictionary<int, (string Name, string Checksum)> ReadApplied(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT version, name FROM {MigrationTable} ORDER BY version;";
+        command.CommandText = $"SELECT version, name, checksum FROM {MigrationTable} ORDER BY version;";
         using var reader = command.ExecuteReader();
-        var applied = new Dictionary<int, string>();
+        var applied = new Dictionary<int, (string Name, string Checksum)>();
         while (reader.Read())
         {
             var version = reader.GetInt32(0);
-            if (!applied.TryAdd(version, reader.GetString(1)))
+            if (!applied.TryAdd(version, (reader.GetString(1), reader.GetString(2))))
             {
                 throw new InvalidDataException($"SQLite contains duplicate migration version {version}.");
             }
@@ -158,18 +162,18 @@ public static class SqliteMigrationRunner
         return applied;
     }
 
-    private static async Task<Dictionary<int, string>> ReadAppliedAsync(
+    private static async Task<Dictionary<int, (string Name, string Checksum)>> ReadAppliedAsync(
         SqliteConnection connection,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT version, name FROM {MigrationTable} ORDER BY version;";
+        command.CommandText = $"SELECT version, name, checksum FROM {MigrationTable} ORDER BY version;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        var applied = new Dictionary<int, string>();
+        var applied = new Dictionary<int, (string Name, string Checksum)>();
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             var version = reader.GetInt32(0);
-            if (!applied.TryAdd(version, reader.GetString(1)))
+            if (!applied.TryAdd(version, (reader.GetString(1), reader.GetString(2))))
             {
                 throw new InvalidDataException($"SQLite contains duplicate migration version {version}.");
             }
@@ -180,10 +184,10 @@ public static class SqliteMigrationRunner
 
     private static void ValidateApplied(
         IReadOnlyList<SqliteMigration> catalog,
-        IReadOnlyDictionary<int, string> applied)
+        IReadOnlyDictionary<int, (string Name, string Checksum)> applied)
     {
         var knownVersions = catalog.Select(item => item.Version).ToHashSet();
-        foreach (var (version, name) in applied)
+        foreach (var (version, appliedMigration) in applied)
         {
             var migration = catalog.FirstOrDefault(item => item.Version == version);
             if (!knownVersions.Contains(version) || migration is null)
@@ -191,10 +195,11 @@ public static class SqliteMigrationRunner
                 throw new InvalidDataException($"SQLite contains unknown migration version {version}.");
             }
 
-            if (!string.Equals(migration.Name, name, StringComparison.Ordinal))
+            if (!string.Equals(migration.Name, appliedMigration.Name, StringComparison.Ordinal)
+                || !string.Equals(migration.Checksum, appliedMigration.Checksum, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidDataException(
-                    $"SQLite migration {version} is recorded as '{name}', expected '{migration.Name}'.");
+                    $"SQLite migration {version} does not match its recorded name or checksum.");
             }
         }
     }

@@ -198,7 +198,7 @@ public sealed partial class EngineSupervisor
                 this.identityChannels.Remove(identity);
                 if (channel is not null)
                 {
-                    _ = channel.DisposeAsync();
+                    _ = DisposeChannelAsync(channel);
                 }
 
                 channel = TbepChannel.Connect(this.Options.SocketPath);
@@ -225,7 +225,7 @@ public sealed partial class EngineSupervisor
 
             if (this.adminChannel is { IsClosed: true } closed)
             {
-                _ = closed.DisposeAsync();
+                _ = DisposeChannelAsync(closed);
             }
 
             this.adminChannel = TbepChannel.Connect(this.Options.SocketPath);
@@ -259,6 +259,11 @@ public sealed partial class EngineSupervisor
         {
             throw new EngineUnavailableException("the admin channel did not publish its tenant binding");
         }
+    }
+
+    private static async Task DisposeChannelAsync(TbepChannel channel)
+    {
+        await channel.DisposeAsync().ConfigureAwait(false);
     }
 
     private async Task RemoveChannelAsync(string tenant, string principal, TbepChannel channel)
