@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using TerraBase.Storage.Schema;
 
 namespace TerraBase;
 
@@ -20,11 +21,9 @@ namespace TerraBase;
 /// the existing <see cref="Document"/> value; SQLite never interprets body
 /// contents or executes JSON expressions against them.
 /// </remarks>
-public sealed class SqliteStorageProvider : IStorageProvider
+public sealed class SqliteStorageProvider : IStorageProvider, ITransactionalStorageProvider
 {
-    private const int SchemaVersion = 1;
     private const long MaximumSqliteInteger = long.MaxValue;
-    private const string JournalMode = "WAL";
     private static readonly ConcurrentDictionary<string, object> PathGates =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly object gate = new();
@@ -65,8 +64,7 @@ public sealed class SqliteStorageProvider : IStorageProvider
         lock (pathGate)
         {
             connection.Open();
-            ConfigureConnection();
-            EnsureSchema();
+            SqliteSchema.EnsureCreated(connection);
         }
     }
 
@@ -128,8 +126,8 @@ public sealed class SqliteStorageProvider : IStorageProvider
                     command.Transaction = transaction;
                     command.CommandText = """
                         INSERT INTO documents
-                            (tenant, collection, id, document_id, commit_seq, commit_ulid, revision, deleted, body, context, version, updated_at_ms)
-                        VALUES ($tenant, $collection, $document_id, $document_id, $commit_seq, $commit_ulid, $version, 0, $body, $context, $version, $updated_at_ms);
+                            (tenant, collection, id, document_id, commit_seq, commit_ulid, revision, deleted, body, context, version, updated_at, updated_at_ms)
+                        VALUES ($tenant, $collection, $document_id, $document_id, $commit_seq, $commit_ulid, $version, 0, $body, $context, $version, $updated_at, $updated_at_ms);
                         """;
                     BindKey(command, key);
                     command.Parameters.AddWithValue("$commit_seq", ToSqliteInteger((ulong)commitSequence, nameof(commitSequence)));
@@ -137,6 +135,7 @@ public sealed class SqliteStorageProvider : IStorageProvider
                     command.Parameters.Add("$context", SqliteType.Blob).Value = Array.Empty<byte>();
                     command.Parameters.Add("$body", SqliteType.Blob).Value = bodyBytes;
                     command.Parameters.AddWithValue("$version", ToSqliteInteger(version, nameof(version)));
+                    command.Parameters.AddWithValue("$updated_at", updatedAt.ToString("O"));
                     command.Parameters.AddWithValue("$updated_at_ms", updatedAt.ToUnixTimeMilliseconds());
                     command.ExecuteNonQuery();
                 }
@@ -187,13 +186,14 @@ public sealed class SqliteStorageProvider : IStorageProvider
                     command.Transaction = transaction;
                     command.CommandText = """
                         INSERT INTO documents
-                            (tenant, collection, id, document_id, commit_seq, commit_ulid, revision, deleted, body, context, version, updated_at_ms)
-                        VALUES ($tenant, $collection, $document_id, $document_id, $commit_seq, $commit_ulid, $version, 1, $body, $context, $version, $updated_at_ms);
+                            (tenant, collection, id, document_id, commit_seq, commit_ulid, revision, deleted, body, context, version, updated_at, updated_at_ms)
+                        VALUES ($tenant, $collection, $document_id, $document_id, $commit_seq, $commit_ulid, $version, 1, $body, $context, $version, $updated_at, $updated_at_ms);
                         """;
                     BindKey(command, key);
                     command.Parameters.AddWithValue("$commit_seq", ToSqliteInteger((ulong)commitSequence, nameof(commitSequence)));
                     command.Parameters.AddWithValue("$version", ToSqliteInteger(version, nameof(version)));
                     command.Parameters.AddWithValue("$commit_ulid", Guid.NewGuid().ToString("N"));
+                    command.Parameters.AddWithValue("$updated_at", deletedAt.ToString("O"));
                     command.Parameters.Add("$body", SqliteType.Blob).Value = Array.Empty<byte>();
                     command.Parameters.Add("$context", SqliteType.Blob).Value = Array.Empty<byte>();
                     command.Parameters.AddWithValue("$updated_at_ms", deletedAt.ToUnixTimeMilliseconds());
@@ -205,6 +205,96 @@ public sealed class SqliteStorageProvider : IStorageProvider
                 WriteCanonicalJournal(key, "delete", commitSequence, Array.Empty<byte>(), transaction);
                 transaction.Commit();
                 return ValueTask.FromResult(new StorageWriteResult(WriteOutcome.Deleted, current));
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public ValueTask<StorageBatchResult> ApplyBatchAsync(
+        IReadOnlyList<StorageMutation> mutations,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(mutations);
+        if (mutations.Count == 0)
+        {
+            throw new ArgumentException("A storage batch must contain at least one mutation.", nameof(mutations));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            lock (pathGate)
+            {
+                using var transaction = connection.BeginTransaction(deferred: false);
+                var writes = new List<StorageWriteResult>(mutations.Count);
+                ulong? firstSequence = null;
+                ulong? lastSequence = null;
+
+                foreach (var mutation in mutations)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ArgumentNullException.ThrowIfNull(mutation);
+
+                    var current = ReadCurrent(mutation.Key, transaction);
+                    if (mutation.Kind == StorageMutationKind.Upsert)
+                    {
+                        if (!mutation.Precondition.Matches(current))
+                        {
+                            transaction.Rollback();
+                            return ValueTask.FromResult(StorageBatchResult.Conflict);
+                        }
+
+                        var body = EncodeBody(mutation.Body);
+                        var version = NextVersion(ReadWatermark(mutation.Key, transaction));
+                        var sequence = NextCommitSequence(transaction);
+                        var updatedAt = DateTimeOffset.UtcNow;
+                        WriteDocumentRow(mutation.Key, sequence, version, false, body, updatedAt, transaction);
+                        WriteWatermark(mutation.Key, version, transaction);
+                        WriteJournal(mutation.Key, "upsert", version, body, updatedAt, transaction);
+                        WriteCanonicalJournal(mutation.Key, "upsert", sequence, body, transaction);
+                        writes.Add(new StorageWriteResult(
+                            current is null ? WriteOutcome.Created : WriteOutcome.Updated,
+                            new Document(mutation.Key, mutation.Body, version, updatedAt)));
+                        TrackSequence((ulong)sequence, ref firstSequence, ref lastSequence);
+                        continue;
+                    }
+
+                    if (mutation.Kind != StorageMutationKind.Delete)
+                    {
+                        throw new ArgumentOutOfRangeException(nameof(mutations), mutation.Kind, "Unknown storage mutation kind.");
+                    }
+
+                    if (current is null)
+                    {
+                        transaction.Rollback();
+                        return ValueTask.FromResult(StorageBatchResult.NotFound);
+                    }
+
+                    if (!mutation.Precondition.Matches(current))
+                    {
+                        transaction.Rollback();
+                        return ValueTask.FromResult(StorageBatchResult.Conflict);
+                    }
+
+                    var deleteVersion = NextVersion(ReadWatermark(mutation.Key, transaction));
+                    var deleteSequence = NextCommitSequence(transaction);
+                    var deletedAt = DateTimeOffset.UtcNow;
+                    WriteDocumentRow(mutation.Key, deleteSequence, deleteVersion, true, [], deletedAt, transaction);
+                    WriteWatermark(mutation.Key, deleteVersion, transaction);
+                    WriteJournal(mutation.Key, "delete", deleteVersion, body: null, deletedAt, transaction);
+                    WriteCanonicalJournal(mutation.Key, "delete", deleteSequence, [], transaction);
+                    writes.Add(new StorageWriteResult(WriteOutcome.Deleted, current));
+                    TrackSequence((ulong)deleteSequence, ref firstSequence, ref lastSequence);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                transaction.Commit();
+                return ValueTask.FromResult(new StorageBatchResult(
+                    StorageBatchOutcome.Committed,
+                    writes,
+                    firstSequence,
+                    lastSequence));
             }
         }
     }
@@ -277,102 +367,6 @@ public sealed class SqliteStorageProvider : IStorageProvider
         return ValueTask.CompletedTask;
     }
 
-    private void ConfigureConnection()
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = $"""
-            PRAGMA journal_mode={JournalMode};
-            PRAGMA synchronous=NORMAL;
-            PRAGMA foreign_keys=ON;
-            PRAGMA busy_timeout=60000;
-            """;
-        command.ExecuteNonQuery();
-    }
-
-    private void EnsureSchema()
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            CREATE TABLE IF NOT EXISTS meta (
-                key TEXT PRIMARY KEY,
-                value BLOB NOT NULL
-            ) WITHOUT ROWID;
-
-            CREATE TABLE IF NOT EXISTS schema_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            ) WITHOUT ROWID;
-
-            CREATE TABLE IF NOT EXISTS documents (
-                tenant TEXT NOT NULL,
-                collection TEXT NOT NULL,
-                id TEXT NOT NULL,
-                document_id TEXT NOT NULL,
-                commit_seq INTEGER NOT NULL CHECK (commit_seq >= 0),
-                commit_ulid TEXT NOT NULL,
-                revision INTEGER NOT NULL CHECK (revision > 0),
-                deleted INTEGER NOT NULL CHECK (deleted IN (0, 1)),
-                body BLOB NOT NULL,
-                context BLOB NOT NULL,
-                version INTEGER NOT NULL CHECK (version > 0),
-                updated_at_ms INTEGER NOT NULL,
-                PRIMARY KEY (tenant, collection, document_id, commit_seq)
-            );
-
-            CREATE TABLE IF NOT EXISTS version_watermarks (
-                tenant TEXT NOT NULL,
-                collection TEXT NOT NULL,
-                document_id TEXT NOT NULL,
-                version INTEGER NOT NULL CHECK (version > 0),
-                PRIMARY KEY (tenant, collection, document_id)
-            ) WITHOUT ROWID;
-
-            CREATE TABLE IF NOT EXISTS publication_journal (
-                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                operation TEXT NOT NULL,
-                tenant TEXT NOT NULL,
-                collection TEXT NOT NULL,
-                document_id TEXT NOT NULL,
-                version INTEGER NOT NULL CHECK (version > 0),
-                body BLOB,
-                updated_at_ms INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS journal (
-                sequence INTEGER PRIMARY KEY CHECK (sequence >= 0),
-                tenant TEXT NOT NULL,
-                operation TEXT NOT NULL,
-                frame BLOB NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS journal_tenant_sequence
-                ON journal (tenant, sequence);
-
-            CREATE TABLE IF NOT EXISTS operation_facts (
-                tenant TEXT NOT NULL,
-                operation TEXT NOT NULL,
-                fact BLOB NOT NULL,
-                PRIMARY KEY (tenant, operation)
-            ) WITHOUT ROWID;
-
-            CREATE TABLE IF NOT EXISTS family_metadata (
-                tenant TEXT NOT NULL,
-                family TEXT NOT NULL,
-                metadata BLOB NOT NULL,
-                PRIMARY KEY (tenant, family)
-            ) WITHOUT ROWID;
-
-            CREATE INDEX IF NOT EXISTS publication_journal_key
-                ON publication_journal (tenant, collection, document_id, sequence);
-
-            INSERT INTO schema_metadata (key, value)
-            VALUES ('schema_version', $schema_version)
-            ON CONFLICT (key) DO UPDATE SET value = excluded.value;
-            """;
-        command.Parameters.AddWithValue("$schema_version", SchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        command.ExecuteNonQuery();
-    }
-
     private Document? ReadCurrent(DocumentKey key, SqliteTransaction transaction)
     {
         using var command = connection.CreateCommand();
@@ -400,6 +394,34 @@ public sealed class SqliteStorageProvider : IStorageProvider
         BindKey(command, key);
         var value = command.ExecuteScalar();
         return value is null or DBNull ? 0 : Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private void WriteDocumentRow(
+        DocumentKey key,
+        long sequence,
+        ulong version,
+        bool deleted,
+        byte[] body,
+        DateTimeOffset updatedAt,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO documents
+                (tenant, collection, id, document_id, commit_seq, commit_ulid, revision, deleted, body, context, version, updated_at, updated_at_ms)
+            VALUES ($tenant, $collection, $document_id, $document_id, $commit_seq, $commit_ulid, $version, $deleted, $body, $context, $version, $updated_at, $updated_at_ms);
+            """;
+        BindKey(command, key);
+        command.Parameters.AddWithValue("$commit_seq", ToSqliteInteger((ulong)sequence, nameof(sequence)));
+        command.Parameters.AddWithValue("$commit_ulid", Guid.NewGuid().ToString("N"));
+        command.Parameters.AddWithValue("$version", ToSqliteInteger(version, nameof(version)));
+        command.Parameters.AddWithValue("$deleted", deleted ? 1 : 0);
+        command.Parameters.Add("$body", SqliteType.Blob).Value = body;
+        command.Parameters.Add("$context", SqliteType.Blob).Value = Array.Empty<byte>();
+        command.Parameters.AddWithValue("$updated_at", updatedAt.ToString("O"));
+        command.Parameters.AddWithValue("$updated_at_ms", updatedAt.ToUnixTimeMilliseconds());
+        command.ExecuteNonQuery();
     }
 
     private long NextCommitSequence(SqliteTransaction transaction)
@@ -465,6 +487,12 @@ public sealed class SqliteStorageProvider : IStorageProvider
         command.Parameters.AddWithValue("$operation", operation);
         command.Parameters.Add("$frame", SqliteType.Blob).Value = frame;
         command.ExecuteNonQuery();
+    }
+
+    private static void TrackSequence(ulong sequence, ref ulong? firstSequence, ref ulong? lastSequence)
+    {
+        firstSequence ??= sequence;
+        lastSequence = sequence;
     }
 
     private static Document ReadDocument(

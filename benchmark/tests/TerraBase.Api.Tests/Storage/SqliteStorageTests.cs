@@ -121,6 +121,82 @@ public sealed class SqliteStorageTests
         }
     }
 
+    /// <summary>Several SQLite mutations commit as one journal-visible transaction.</summary>
+    [Test]
+    public async Task BatchCommitsMutationsAndReturnsJournalSequenceRange()
+    {
+        var path = NewPath();
+        var existingKey = Key("batch", "documents", "existing");
+        var createdKey = Key("batch", "documents", "created");
+        try
+        {
+            await using var provider = new TerraBase.SqliteStorageProvider(path);
+            using var initialBody = JsonDocument.Parse("{\"value\":0}");
+            await provider.UpsertAsync(existingKey, initialBody.RootElement, DocumentPrecondition.Missing);
+            using var createdBody = JsonDocument.Parse("{\"value\":1}");
+
+            var batch = await provider.ApplyBatchAsync([
+                TerraBase.StorageMutation.Upsert(createdKey, createdBody.RootElement, DocumentPrecondition.Missing),
+                TerraBase.StorageMutation.Delete(existingKey, DocumentPrecondition.Version(1)),
+            ]);
+
+            await Assert.That(batch.Outcome).IsEqualTo(TerraBase.StorageBatchOutcome.Committed);
+            await Assert.That(batch.Writes).Count().IsEqualTo(2);
+            await Assert.That(batch.Writes[0].Outcome).IsEqualTo(TerraBase.WriteOutcome.Created);
+            await Assert.That(batch.Writes[1].Outcome).IsEqualTo(TerraBase.WriteOutcome.Deleted);
+            await Assert.That(batch.FirstSequence).IsEqualTo(2ul);
+            await Assert.That(batch.LastSequence).IsEqualTo(3ul);
+            await Assert.That((await provider.ReadAsync(createdKey))?.Body.GetProperty("value").GetInt32()).IsEqualTo(1);
+            await Assert.That(await provider.ReadAsync(existingKey)).IsNull();
+
+            await using var connection = OpenInspectionConnection(path);
+            await using var journal = connection.CreateCommand();
+            journal.CommandText = "SELECT COUNT(*) FROM publication_journal;";
+            await Assert.That(Convert.ToInt64(await journal.ExecuteScalarAsync())).IsEqualTo(3L);
+        }
+        finally
+        {
+            DeleteDatabase(path);
+        }
+    }
+
+    /// <summary>A failed mutation rolls back earlier mutations in the same batch.</summary>
+    [Test]
+    public async Task BatchConflictRollsBackDocumentsAndJournalRows()
+    {
+        var path = NewPath();
+        var existingKey = Key("batch-conflict", "documents", "existing");
+        var createdKey = Key("batch-conflict", "documents", "created");
+        try
+        {
+            await using var provider = new TerraBase.SqliteStorageProvider(path);
+            using var initialBody = JsonDocument.Parse("{\"value\":0}");
+            await provider.UpsertAsync(existingKey, initialBody.RootElement, DocumentPrecondition.Missing);
+            using var createdBody = JsonDocument.Parse("{\"value\":1}");
+
+            var batch = await provider.ApplyBatchAsync([
+                TerraBase.StorageMutation.Upsert(createdKey, createdBody.RootElement, DocumentPrecondition.Missing),
+                TerraBase.StorageMutation.Upsert(existingKey, createdBody.RootElement, DocumentPrecondition.Version(99)),
+            ]);
+
+            await Assert.That(batch.Outcome).IsEqualTo(TerraBase.StorageBatchOutcome.Conflict);
+            await Assert.That(batch.Writes).Count().IsEqualTo(0);
+            await Assert.That(batch.FirstSequence).IsNull();
+            await Assert.That(batch.LastSequence).IsNull();
+            await Assert.That(await provider.ReadAsync(createdKey)).IsNull();
+            await Assert.That((await provider.ReadAsync(existingKey))?.Body.GetProperty("value").GetInt32()).IsEqualTo(0);
+
+            await using var connection = OpenInspectionConnection(path);
+            await using var journal = connection.CreateCommand();
+            journal.CommandText = "SELECT COUNT(*) FROM publication_journal;";
+            await Assert.That(Convert.ToInt64(await journal.ExecuteScalarAsync())).IsEqualTo(1L);
+        }
+        finally
+        {
+            DeleteDatabase(path);
+        }
+    }
+
     /// <summary>Collection scans use deterministic binary identifier order.</summary>
     [Test]
     public async Task ScanReturnsOnlyRequestedCollectionInBinaryOrder()

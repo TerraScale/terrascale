@@ -74,17 +74,18 @@ public sealed class TbepValue : IEquatable<TbepValue>
 public sealed record ObjectField(string Name, TbepValue Value);
 
 /// <summary>The strict MessagePack formatter of <see cref="TbepValue"/>: positional arrays only, nil never accepted for the type.</summary>
+#pragma warning disable MsgPack009
 public sealed class TbepValueFormatter : IMessagePackFormatter<TbepValue?>
 {
     /// <summary>The shared singleton formatter.</summary>
     public static readonly TbepValueFormatter Formatter = new();
 
     /// <inheritdoc/>
-    public TbepValue Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    public TbepValue? Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
     {
         if (reader.TryReadNil())
         {
-            throw TbepWire.FormatException("nil is not a TbepValue");
+            return null;
         }
 
         var count = reader.ReadArrayHeader();
@@ -154,7 +155,8 @@ public sealed class TbepValueFormatter : IMessagePackFormatter<TbepValue?>
     {
         if (value is null)
         {
-            throw TbepWire.FormatException("nil is not a TbepValue");
+            writer.WriteNil();
+            return;
         }
 
         switch (value.Tag)
@@ -220,7 +222,8 @@ public sealed class ObjectFieldFormatter : IMessagePackFormatter<ObjectField?>
         }
 
         var name = reader.ReadString() ?? throw TbepWire.FormatException("nil is not a field name");
-        var value = TbepValueFormatter.Formatter.Deserialize(ref reader, options);
+        var value = TbepValueFormatter.Formatter.Deserialize(ref reader, options)
+            ?? throw TbepWire.FormatException("nil is not an object field value");
         return new ObjectField(name, value);
     }
 

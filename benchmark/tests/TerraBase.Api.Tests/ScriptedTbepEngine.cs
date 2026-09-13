@@ -206,10 +206,15 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
 
                         this.Received.Enqueue($"{tenant}:schema.declare:{body.Collection}");
                         var ruleCount = (uint)(body.Schema is null ? 0 : 3);
+                        var schemaKey = $"{tenant}/{body.Collection}";
                         var version = body.Schema is null ? (ulong?)null : this.NextSchemaVersion(body.Collection);
                         if (version is { } declared)
                         {
-                            this.schemas[$"{tenant}/{body.Collection}"] = declared;
+                            this.schemas[schemaKey] = declared;
+                        }
+                        else
+                        {
+                            this.schemas.Remove(schemaKey);
                         }
 
                         await this.AnswerAsync(
@@ -217,7 +222,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                             writeGate,
                             "schema.declare",
                             request.Correlation,
-                            new SchemaDeclareResponse { EnforcedVersion = this.schemas.TryGetValue($"{tenant}/{body.Collection}", out var recorded) ? recorded : null, RuleCount = ruleCount })
+                            new SchemaDeclareResponse { EnforcedVersion = this.schemas.TryGetValue(schemaKey, out var recorded) ? recorded : null, RuleCount = ruleCount })
                             .ConfigureAwait(false);
                         break;
                     }

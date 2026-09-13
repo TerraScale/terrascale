@@ -17,7 +17,7 @@ namespace TerraBase.Storage.Schema;
 public static class SqliteSchema
 {
     /// <summary>The latest schema migration version.</summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     /// <summary>The busy timeout applied to every SQLite connection.</summary>
     public const int BusyTimeoutMilliseconds = 60_000;
@@ -32,6 +32,7 @@ public static class SqliteSchema
     [
         new SqliteMigration(1, "storage-core", StorageCoreSql),
         new SqliteMigration(2, "schema-and-auto-index-catalog", SchemaAndAutoIndexSql),
+        new SqliteMigration(3, "document-publication-compatibility", DocumentPublicationCompatibilitySql),
     ]);
 
     /// <summary>
@@ -260,6 +261,60 @@ public static class SqliteSchema
             evidence      BLOB NOT NULL,
             recorded_at   TEXT NOT NULL
         );
+        """;
+
+    private static readonly string DocumentPublicationCompatibilitySql = """
+        ALTER TABLE documents ADD COLUMN document_id TEXT NOT NULL DEFAULT '';
+        ALTER TABLE documents ADD COLUMN commit_ulid TEXT NOT NULL DEFAULT '';
+        ALTER TABLE documents ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0);
+        ALTER TABLE documents ADD COLUMN context BLOB NOT NULL DEFAULT X'';
+        ALTER TABLE documents ADD COLUMN updated_at_ms INTEGER NOT NULL DEFAULT 0;
+        UPDATE documents SET document_id = id WHERE document_id = '';
+
+        CREATE TABLE IF NOT EXISTS version_watermarks (
+            tenant       TEXT NOT NULL,
+            collection   TEXT NOT NULL,
+            document_id  TEXT NOT NULL,
+            version      INTEGER NOT NULL CHECK (version > 0),
+            PRIMARY KEY (tenant, collection, document_id)
+        ) WITHOUT ROWID;
+
+        CREATE TABLE IF NOT EXISTS publication_journal (
+            sequence     INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation    TEXT NOT NULL,
+            tenant       TEXT NOT NULL,
+            collection   TEXT NOT NULL,
+            document_id  TEXT NOT NULL,
+            version      INTEGER NOT NULL CHECK (version > 0),
+            body         BLOB,
+            updated_at_ms INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS publication_journal_key
+            ON publication_journal (tenant, collection, document_id, sequence);
+
+        CREATE TABLE IF NOT EXISTS operation_facts (
+            tenant     TEXT NOT NULL,
+            operation  TEXT NOT NULL,
+            fact       BLOB NOT NULL,
+            PRIMARY KEY (tenant, operation)
+        ) WITHOUT ROWID;
+
+        CREATE TABLE IF NOT EXISTS family_metadata (
+            tenant    TEXT NOT NULL,
+            family    TEXT NOT NULL,
+            metadata  BLOB NOT NULL,
+            PRIMARY KEY (tenant, family)
+        ) WITHOUT ROWID;
+
+        CREATE TABLE IF NOT EXISTS schema_metadata (
+            key       TEXT PRIMARY KEY,
+            value     TEXT NOT NULL
+        ) WITHOUT ROWID;
+
+        INSERT INTO schema_metadata (key, value)
+        VALUES ('schema_version', '3')
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value;
         """;
 
     private static void ExecutePragma(SqliteConnection connection, string sql)
