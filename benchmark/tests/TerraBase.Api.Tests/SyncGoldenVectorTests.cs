@@ -25,23 +25,53 @@ public sealed class SyncGoldenVectorTests
 {
     private static string Corpus => Path.Combine(AppContext.BaseDirectory, "vectors", "terrascale.sync.v2");
 
+    private static readonly string[] Categories =
+    [
+        "checkpoint-resume",
+        "fresh-session",
+        "malformed-frame-rejection",
+        "reconnect-replay",
+        "region-route-change",
+        "repeated-change-delta",
+        "resync-required",
+        "slow-consumer",
+        "trigger-notification",
+    ];
+
     /// <summary>The corpus is exactly the committed category set: a new vector fails loudly here.</summary>
     [Test]
     public async Task TheCorpusIsExactlyTheCommittedCategorySet()
     {
-        var categories = Directory.GetFiles(Corpus, "*.json").Select(file => Path.GetFileNameWithoutExtension(file)!).OrderBy(name => name).ToArray();
-        await Assert.That(categories).IsEquivalentTo(
-        [
-            "checkpoint-resume",
-            "fresh-session",
-            "malformed-frame-rejection",
-            "reconnect-replay",
-            "region-route-change",
-            "repeated-change-delta",
-            "resync-required",
-            "slow-consumer",
-            "trigger-notification",
-        ]);
+        var categories = VectorFiles().OrderBy(name => name).ToArray();
+        await Assert.That(categories).IsEquivalentTo(Categories);
+    }
+
+    /// <summary>Every tracked vector has the size and digest recorded by its copy manifest.</summary>
+    [Test]
+    public async Task VendoredCorpusMatchesItsCopyManifest()
+    {
+        var manifestPath = Path.Combine(Corpus, "manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            throw new InvalidOperationException($"the tracked sync copy manifest is missing: {manifestPath}");
+        }
+
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath));
+        var entries = manifest.RootElement.GetProperty("vectors").EnumerateArray().ToArray();
+        await Assert.That(entries.Length).IsEqualTo(Categories.Length);
+        var expected = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in entries)
+        {
+            var file = entry.GetProperty("file").GetString()!;
+            expected.Add(file);
+            var bytes = await File.ReadAllBytesAsync(Path.Combine(Corpus, file));
+            await Assert.That(bytes.Length).IsEqualTo(entry.GetProperty("bytes").GetInt32());
+            await Assert.That(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant())
+                .IsEqualTo(entry.GetProperty("sha256").GetString());
+        }
+
+        var actual = VectorFiles().Select(file => $"{file}.json").ToHashSet(StringComparer.Ordinal);
+        await Assert.That(actual).IsEquivalentTo(expected);
     }
 
     /// <summary>Every vector declares the sync.v2 protocol and a server scope, and every replayed category exists.</summary>
@@ -245,7 +275,7 @@ public sealed class SyncGoldenVectorTests
     [Test]
     public async Task TheOutOfScopeCategoriesAreRecordedHonestly()
     {
-        var categories = Directory.GetFiles(Corpus, "*.json").Select(Path.GetFileNameWithoutExtension).ToArray();
+        var categories = VectorFiles().ToArray();
         await Assert.That(categories).Contains("trigger-notification");
         await Assert.That(categories).Contains("slow-consumer");
         await Assert.That(categories).Contains("region-route-change");
@@ -286,7 +316,9 @@ public sealed class SyncGoldenVectorTests
     /// <summary>Every corpus file, one row each.</summary>
     /// <returns>The file names.</returns>
     public static IEnumerable<string> VectorFiles() =>
-        Directory.GetFiles(Corpus, "*.json").Select(file => Path.GetFileNameWithoutExtension(file)!);
+        Directory.GetFiles(Corpus, "*.json")
+            .Where(file => !string.Equals(Path.GetFileName(file), "manifest.json", StringComparison.Ordinal))
+            .Select(file => Path.GetFileNameWithoutExtension(file)!);
 
     /// <summary>One vector replay: its host, caller, session, and the vector document.</summary>
     private sealed class VectorHarness(HostHarness host, HttpClient caller, ulong sessionId, JsonElement vector) : IAsyncDisposable

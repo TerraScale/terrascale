@@ -19,21 +19,28 @@ public sealed class TbepGoldenVectorsTests
 {
     private static readonly string CorpusRoot = FindCorpusRoot();
 
+    private static readonly string[] Categories =
+    [
+        "channel-bind",
+        "negotiation",
+        "tier-admin",
+        "document-frames",
+        "query-cancellation",
+        "sync-session",
+        "trigger-notification",
+        "schema-pitfalls",
+        "adversarial-rejection",
+    ];
+
     private static string FindCorpusRoot()
     {
-        var directory = AppContext.BaseDirectory;
-        while (directory is not null)
+        var root = Path.Combine(AppContext.BaseDirectory, "vectors", "tbep");
+        if (!Directory.Exists(root))
         {
-            var candidate = Path.Combine(directory, "vectors", "tbep");
-            if (Directory.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            directory = Path.GetDirectoryName(directory);
+            throw new InvalidOperationException($"the tracked TBEP corpus was not copied beside the test binary: {root}");
         }
 
-        throw new InvalidOperationException("the TBEP corpus directory was not found beside the test binary");
+        return root;
     }
 
     /// <summary>One corpus file with its recorded documents.</summary>
@@ -53,20 +60,8 @@ public sealed class TbepGoldenVectorsTests
     /// <summary>The corpus files, one per category, asserted against the Rust runner's category set.</summary>
     public static IEnumerable<CorpusFile> Corpus()
     {
-        var files = Directory.EnumerateFiles(CorpusRoot, "*.json").Order().ToArray();
-        var categories = new[]
-        {
-            "channel-bind",
-            "negotiation",
-            "tier-admin",
-            "document-frames",
-            "query-cancellation",
-            "sync-session",
-            "trigger-notification",
-            "schema-pitfalls",
-            "adversarial-rejection",
-        };
-        if (files.Length != categories.Length)
+        var files = VectorPaths().ToArray();
+        if (files.Length != Categories.Length)
         {
             throw new InvalidOperationException($"the corpus holds exactly one file per category, found {files.Length}");
         }
@@ -75,6 +70,34 @@ public sealed class TbepGoldenVectorsTests
             var document = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { AllowTrailingCommas = false });
             yield return new CorpusFile(Path.GetFileName(path), document);
         }
+    }
+
+    /// <summary>Every tracked vector has the size and digest recorded by its copy manifest.</summary>
+    [Test]
+    public async Task VendoredCorpusMatchesItsCopyManifest()
+    {
+        var manifestPath = Path.Combine(CorpusRoot, "corpus.manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            throw new InvalidOperationException($"the tracked TBEP copy manifest is missing: {manifestPath}");
+        }
+
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath));
+        var entries = manifest.RootElement.GetProperty("vectors").EnumerateArray().ToArray();
+        await Assert.That(entries.Length).IsEqualTo(Categories.Length);
+        var expected = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in entries)
+        {
+            var file = entry.GetProperty("file").GetString()!;
+            expected.Add(file);
+            var bytes = await File.ReadAllBytesAsync(Path.Combine(CorpusRoot, file));
+            await Assert.That(bytes.Length).IsEqualTo(entry.GetProperty("bytes").GetInt32());
+            await Assert.That(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant())
+                .IsEqualTo(entry.GetProperty("sha256").GetString());
+        }
+
+        var actual = VectorPaths().Select(path => Path.GetFileName(path)!).ToHashSet(StringComparer.Ordinal);
+        await Assert.That(actual).IsEquivalentTo(expected);
     }
 
     /// <summary>Every golden frame decodes, re-encodes byte-exact, and respects its budget.</summary>
@@ -210,6 +233,11 @@ public sealed class TbepGoldenVectorsTests
 
         return bytes;
     }
+
+    private static IEnumerable<string> VectorPaths() =>
+        Directory.EnumerateFiles(CorpusRoot, "*.json")
+            .Where(path => !string.Equals(Path.GetFileName(path), "corpus.manifest.json", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal);
 }
 
 /// <summary>The snake-case helper the adversarial expectations carry.</summary>

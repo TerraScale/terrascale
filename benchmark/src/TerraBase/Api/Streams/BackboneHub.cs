@@ -244,7 +244,7 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
     /// <summary>The tenant whose channel subscribed (engine-enforced isolation).</summary>
     public string Tenant { get; }
 
-    /// <summary>The principal that opened the stream, when recorded.</summary>
+    /// <summary>The principal that opened the stream.</summary>
     public string Principal { get; }
 
     /// <summary>The collection filter, or <c>null</c> for every collection.</summary>

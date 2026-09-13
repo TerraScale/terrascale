@@ -36,7 +36,8 @@ public static class EngineHarness
             directory = directory.Parent;
         }
 
-        return directory?.FullName ?? throw new InvalidOperationException("the worktree root (crates/terrabase-tbep) is not reachable from the test output");
+        return directory?.FullName ?? throw new TUnit.Core.Exceptions.SkipTestException(
+            "the external Rust engine is unavailable: crates/terrabase-tbep is not present in this worktree");
     }
 
     private static string Home()
@@ -142,7 +143,8 @@ public static class EngineHarness
     }
     """).ConfigureAwait(false);
 
-        var cargo = ResolveCargo() ?? throw new InvalidOperationException("cargo is not on PATH; the real-engine rows cannot build the engine server");
+        var cargo = ResolveCargo() ?? throw new TUnit.Core.Exceptions.SkipTestException(
+            "the external Rust engine is unavailable: cargo is not on PATH");
         var arguments = new List<string> { "+1.97.1", "build", "--release" };
         if (Environment.GetEnvironmentVariable("TERRABASE_TEST_CARGO_ONLINE") != "1")
         {

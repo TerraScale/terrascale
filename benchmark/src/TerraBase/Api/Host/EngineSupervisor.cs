@@ -29,7 +29,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
 {
     private readonly AuditLog audit;
     private readonly object gate = new();
-    private readonly Dictionary<(string Tenant, string Principal), TbepChannel> tenantChannels = [];
+    private readonly Dictionary<(string Tenant, string Principal), TbepChannel> identityChannels = [];
     private readonly SemaphoreSlim bindGate = new(1, 1);
     private readonly SemaphoreSlim recovery = new(1, 1);
     private readonly CancellationTokenSource stopped = new();
@@ -300,9 +300,9 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 return channel;
             }
 
-            if (channel.Tenant is not null)
+            if (channel.Tenant is not null || channel.Principal is not null)
             {
-                // A channel bound to another tenant is never handed out:
+                // A channel bound to another identity is never handed out:
                 // discard it and start over (defense in depth).
                 await this.RemoveChannelAsync(tenant, principal, channel).ConfigureAwait(false);
                 continue;
@@ -377,11 +377,11 @@ public sealed class EngineSupervisor : IAsyncDisposable
             }
 
             var identity = (tenant, principal);
-            if (!this.tenantChannels.TryGetValue(identity, out var channel) || channel.IsClosed)
+            if (!this.identityChannels.TryGetValue(identity, out var channel) || channel.IsClosed)
             {
-                this.tenantChannels.Remove(identity);
+                this.identityChannels.Remove(identity);
                 channel = TbepChannel.Connect(this.Options.SocketPath);
-                this.tenantChannels[identity] = channel;
+                this.identityChannels[identity] = channel;
             }
 
             return channel;
@@ -602,9 +602,9 @@ public sealed class EngineSupervisor : IAsyncDisposable
         lock (this.gate)
         {
             var identity = (tenant, principal);
-            if (this.tenantChannels.TryGetValue(identity, out var tracked) && ReferenceEquals(tracked, channel))
+            if (this.identityChannels.TryGetValue(identity, out var tracked) && ReferenceEquals(tracked, channel))
             {
-                this.tenantChannels.Remove(identity);
+                this.identityChannels.Remove(identity);
             }
         }
 
@@ -616,13 +616,13 @@ public sealed class EngineSupervisor : IAsyncDisposable
         List<TbepChannel> closing;
         lock (this.gate)
         {
-            closing = [.. this.tenantChannels.Values];
+            closing = [.. this.identityChannels.Values];
             if (this.adminChannel is not null)
             {
                 closing.Add(this.adminChannel);
             }
 
-            this.tenantChannels.Clear();
+            this.identityChannels.Clear();
             this.adminChannel = null;
         }
 

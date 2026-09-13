@@ -339,19 +339,33 @@ public sealed class MetricsSnapshot
         Region region => region switch { Region.Gru => "GRU", Region.Sfo => "SFO", Region.Fra => "FRA", _ => "unknown" },
         Operation operation => operation switch
         {
-            Operation.Read => "read", Operation.Write => "write", Operation.Query => "query", Operation.Delete => "delete",
-            Operation.Subscribe => "subscribe", Operation.Backup => "backup", Operation.Restore => "restore",
-            Operation.Repair => "repair", _ => "other",
+            Operation.Read => "read",
+            Operation.Write => "write",
+            Operation.Query => "query",
+            Operation.Delete => "delete",
+            Operation.Subscribe => "subscribe",
+            Operation.Backup => "backup",
+            Operation.Restore => "restore",
+            Operation.Repair => "repair",
+            _ => "other",
         },
         Outcome outcome => outcome switch
         {
-            Outcome.Success => "success", Outcome.Error => "error", Outcome.Rejected => "rejected",
-            Outcome.Timeout => "timeout", Outcome.Conflict => "conflict", _ => "not_found",
+            Outcome.Success => "success",
+            Outcome.Error => "error",
+            Outcome.Rejected => "rejected",
+            Outcome.Timeout => "timeout",
+            Outcome.Conflict => "conflict",
+            _ => "not_found",
         },
         Component component => component switch
         {
-            Component.Storage => "storage", Component.Replication => "replication", Component.Membership => "membership",
-            Component.ControlPlane => "control_plane", Component.Backup => "backup", _ => "metrics",
+            Component.Storage => "storage",
+            Component.Replication => "replication",
+            Component.Membership => "membership",
+            Component.ControlPlane => "control_plane",
+            Component.Backup => "backup",
+            _ => "metrics",
         },
         _ => value.ToString()!.ToLowerInvariant(),
     };

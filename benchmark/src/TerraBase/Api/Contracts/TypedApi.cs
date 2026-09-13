@@ -54,7 +54,7 @@ public sealed class TypedApi
                     health.FramesServed,
                     health.Generation,
                     health.Restarts,
-                    health.Detail)),
+                    PublicHealthDetail(health))),
             statusCode: status == "serving" ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
     }
 
@@ -735,7 +735,7 @@ public sealed class TypedApi
                 caller.Principal,
                 operation,
                 AuditOutcome.Refused,
-                failure.Detail);
+                "tenant lifecycle refused");
             return Results.Json(
                 new ErrorDto("tenant-refused", $"the schema surface of {collection} belongs to another tenant's channel"),
                 statusCode: StatusCodes.Status403Forbidden);
@@ -862,7 +862,7 @@ public sealed class TypedApi
             };
             if (context.Response.ContentType?.StartsWith("text/event-stream", StringComparison.Ordinal) != true)
             {
-                await context.Response.WriteAsJsonAsync(new ErrorDto("stream-refused", failure.Message), cancellationToken).ConfigureAwait(false);
+                await context.Response.WriteAsJsonAsync(new ErrorDto("stream-refused", "the stream could not be opened"), cancellationToken).ConfigureAwait(false);
             }
 
             return;
@@ -1088,7 +1088,7 @@ public sealed class TypedApi
             // resyncs by opening a fresh session (or pulling a snapshot
             // on one it owns).
             return Results.Json(
-                new ErrorDto("checkpoint-refused", failure.Detail) { ResyncRequired = true },
+                new ErrorDto("checkpoint-refused", PublicEngineFailureDetail("CheckpointRefused")) { ResyncRequired = true },
                 statusCode: StatusCodes.Status409Conflict);
         }
         catch (Exception failure)
@@ -1140,7 +1140,7 @@ public sealed class TypedApi
         catch (TbepException failure) when (failure.Code?.Variant == "CheckpointRefused")
         {
             return Results.Json(
-                new ErrorDto("checkpoint-refused", failure.Detail) { ResyncRequired = true },
+                new ErrorDto("checkpoint-refused", PublicEngineFailureDetail("CheckpointRefused")) { ResyncRequired = true },
                 statusCode: StatusCodes.Status409Conflict);
         }
         catch (Exception failure)
@@ -1205,7 +1205,7 @@ public sealed class TypedApi
         }
         catch (TbepException failure) when (failure.Code?.Variant == "CheckpointRefused")
         {
-            return Results.Json(new ErrorDto("checkpoint-refused", failure.Detail), statusCode: StatusCodes.Status409Conflict);
+            return Results.Json(new ErrorDto("checkpoint-refused", PublicEngineFailureDetail("CheckpointRefused")), statusCode: StatusCodes.Status409Conflict);
         }
         catch (Exception failure)
         {
@@ -1307,29 +1307,73 @@ public sealed class TypedApi
     // The local gate, scope validation, and error mapping
     // ------------------------------------------------------------------
 
-    private IResult? Gate(HttpContext context)
+    private static EngineHealthSnapshot PublicHealth(EngineHealthSnapshot health) => health with
+    {
+        Detail = PublicHealthDetail(health),
+    };
+
+    private static string? PublicHealthDetail(EngineHealthSnapshot health) => health.Detail is null
+        ? null
+        : health.Status == EngineStatus.Unavailable
+            ? "engine unavailable"
+            : "engine health unavailable";
+
+    private static AuditRecord PublicAudit(AuditRecord record) => record with
+    {
+        Detail = record.Kind switch
+        {
+            AuditKind.EngineLost => "engine unavailable",
+            AuditKind.EngineStarted => "engine started",
+            AuditKind.EngineShutdown => "engine shutdown accepted",
+            AuditKind.TenantRefused => "tenant lifecycle refused",
+            AuditKind.SessionEndedByRestart => "session ended with engine generation",
+            _ => record.Detail,
+        },
+    };
+
+    private IResult? Gate(HttpContext context, params string[] roles)
     {
         var principal = context.Request.Headers["X-TB-Principal"].ToString();
         var tenant = context.Request.Headers["X-TB-Tenant"].ToString();
-        if (IsPresent(principal) && IsPresent(tenant))
+        if (!IsPresent(principal) || !IsPresent(tenant))
+        {
+            // The local gate: no backend-supplied context, no engine frame —
+            // the refusal happens here, before anything is sent (the caller
+            // is the trusted local backend; customer auth lives exclusively
+            // at the Platform, PD-2026-08-26-11 D1).
+            this.audit.Record(
+                AuditKind.GateRefused,
+                tenant: IsPresent(tenant) ? tenant : null,
+                principal: IsPresent(principal) ? principal : null,
+                operation: "gate",
+                outcome: AuditOutcome.Refused,
+                detail: "backend-supplied context missing");
+            return Results.Json(
+                new ErrorDto("unauthorized", "backend-supplied context (X-TB-Principal, X-TB-Tenant) is required"),
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        if (roles.Length == 0)
         {
             return null;
         }
 
-        // The local gate: no backend-supplied context, no engine frame —
-        // the refusal happens here, before anything is sent (the caller
-        // is the trusted local backend; customer auth lives exclusively
-        // at the Platform, PD-2026-08-26-11 D1).
+        var role = context.Request.Headers["X-TB-Role"].ToString();
+        if (roles.Contains(role, StringComparer.Ordinal))
+        {
+            return null;
+        }
+
         this.audit.Record(
             AuditKind.GateRefused,
-            tenant: IsPresent(tenant) ? tenant : null,
-            principal: IsPresent(principal) ? principal : null,
-            operation: "gate",
+            tenant,
+            principal,
+            operation: "role-gate",
             outcome: AuditOutcome.Refused,
-            detail: "backend-supplied context missing");
+            detail: "the backend role is not permitted for this operation");
         return Results.Json(
-            new ErrorDto("unauthorized", "backend-supplied context (X-TB-Principal, X-TB-Tenant) is required"),
-            statusCode: StatusCodes.Status401Unauthorized);
+            new ErrorDto("forbidden", "the backend role is not permitted for this operation"),
+            statusCode: StatusCodes.Status403Forbidden);
     }
 
     private IResult? Scope(HttpContext context, string candidate)
@@ -1458,7 +1502,7 @@ public sealed class TypedApi
                 caller.Principal,
                 operation: $"{kind}.lifecycle",
                 outcome: AuditOutcome.Refused,
-                detail: failure.Detail);
+                detail: "tenant lifecycle refused");
             return Results.Json(
                 new ErrorDto("tenant-refused", $"the {kind} belongs to another tenant's channel"),
                 statusCode: StatusCodes.Status403Forbidden);
@@ -1481,7 +1525,7 @@ public sealed class TypedApi
         }
 
         return Results.Json(
-            new ErrorDto($"{kind}-ended", failure.Detail),
+            new ErrorDto($"{kind}-ended", $"the {kind} is no longer live on the engine"),
             statusCode: StatusCodes.Status410Gone);
     }
 
@@ -1495,7 +1539,7 @@ public sealed class TypedApi
                     statusCode: StatusCodes.Status400BadRequest);
             case EngineUnavailableException:
                 return Results.Json(
-                    new ErrorDto("engine-unavailable", failure.Message),
+                    new ErrorDto("engine-unavailable", "the engine is unavailable"),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             case TbepException typed when typed.Code is not null:
                 var status = typed.Code.Variant switch
@@ -1517,16 +1561,25 @@ public sealed class TypedApi
                     return this.TenantOrStale(typed, caller ?? new Caller("unknown", "unknown"), 0, typed.Code.Variant == "SessionRefused" ? "session" : "subscription");
                 }
 
-                return Results.Json(new ErrorDto(typed.Code.Variant.ToSnakeCase(), typed.Detail), statusCode: status);
+                return Results.Json(new ErrorDto(typed.Code.Variant.ToSnakeCase(), PublicEngineFailureDetail(typed.Code.Variant)), statusCode: status);
             default:
                 return Results.Json(
-                    new ErrorDto("host-failure", failure.Message),
+                    new ErrorDto("host-failure", "the host could not complete the request"),
                     statusCode: StatusCodes.Status500InternalServerError);
         }
     }
 
-    private static IResult Unavailable(EngineUnavailableException failure) => Results.Json(
-        new ErrorDto("engine-unavailable", failure.Message),
+    private static string PublicEngineFailureDetail(string code) => code switch
+    {
+        "CheckpointRefused" => "the checkpoint was refused; resync is required",
+        "OperationRefused" => "the engine does not support this operation",
+        "SessionRefused" or "SubscriptionRefused" => "the lifecycle is no longer live on the engine",
+        "ShuttingDown" => "the engine is shutting down",
+        _ => "the engine rejected the request",
+    };
+
+    private static IResult Unavailable(EngineUnavailableException _) => Results.Json(
+        new ErrorDto("engine-unavailable", "the engine is unavailable"),
         statusCode: StatusCodes.Status503ServiceUnavailable);
 
     private sealed record Caller(string Principal, string Tenant);

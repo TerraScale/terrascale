@@ -104,12 +104,19 @@ public sealed class TbepChannel : IAsyncDisposable
     /// <param name="operationId">The operation id.</param>
     /// <param name="idempotencyKey">The retry identity.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
+    /// <param name="ack">The requested acknowledgement level, or <c>null</c> for the regional default.</param>
     /// <returns>The write response.</returns>
     /// <exception cref="TbepException">The operation failed.</exception>
-    public Task<DocumentWriteResponse> DocumentWriteAsync(DocumentPut document, ExpectedVersion expected, string operationId, string idempotencyKey, CancellationToken cancellationToken = default) =>
+    public Task<DocumentWriteResponse> DocumentWriteAsync(
+        DocumentPut document,
+        ExpectedVersion expected,
+        string operationId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default,
+        Acknowledgement? ack = null) =>
         this.CallAsync<DocumentWriteRequest, DocumentWriteResponse>(
             "document.write",
-            new DocumentWriteRequest { Document = document, Expected = expected, OperationId = operationId },
+            new DocumentWriteRequest { Document = document, Expected = expected, OperationId = operationId, Ack = ack },
             idempotency: idempotencyKey,
             cancellationToken);
 
@@ -120,12 +127,20 @@ public sealed class TbepChannel : IAsyncDisposable
     /// <param name="operationId">The operation id.</param>
     /// <param name="idempotencyKey">The retry identity.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
+    /// <param name="ack">The requested acknowledgement level, or <c>null</c> for the regional default.</param>
     /// <returns>The delete response.</returns>
     /// <exception cref="TbepException">The operation failed.</exception>
-    public Task<DocumentDeleteResponse> DocumentDeleteAsync(string collection, string document, ExpectedVersion expected, string operationId, string idempotencyKey, CancellationToken cancellationToken = default) =>
+    public Task<DocumentDeleteResponse> DocumentDeleteAsync(
+        string collection,
+        string document,
+        ExpectedVersion expected,
+        string operationId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default,
+        Acknowledgement? ack = null) =>
         this.CallAsync<DocumentDeleteRequest, DocumentDeleteResponse>(
             "document.delete",
-            new DocumentDeleteRequest { Collection = collection, Document = document, Expected = expected, OperationId = operationId },
+            new DocumentDeleteRequest { Collection = collection, Document = document, Expected = expected, OperationId = operationId, Ack = ack },
             idempotency: idempotencyKey,
             cancellationToken);
 

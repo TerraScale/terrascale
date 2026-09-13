@@ -54,10 +54,19 @@ public sealed class HostHarness : IAsyncDisposable
     /// <param name="tenant">The backend-supplied tenant.</param>
     /// <returns>The configured client.</returns>
     public HttpClient As(string principal, string tenant)
+        => this.AsRole(principal, tenant, "operator");
+
+    /// <summary>A client with backend-supplied context and an explicit local role.</summary>
+    /// <param name="principal">The backend principal.</param>
+    /// <param name="tenant">The backend-supplied tenant.</param>
+    /// <param name="role">The backend role.</param>
+    /// <returns>The configured client.</returns>
+    public HttpClient AsRole(string principal, string tenant, string role)
     {
         var client = new HttpClient { BaseAddress = this.Http.BaseAddress, Timeout = TimeSpan.FromSeconds(30) };
         client.DefaultRequestHeaders.Add("X-TB-Principal", principal);
         client.DefaultRequestHeaders.Add("X-TB-Tenant", tenant);
+        client.DefaultRequestHeaders.Add("X-TB-Role", role);
         return client;
     }
 

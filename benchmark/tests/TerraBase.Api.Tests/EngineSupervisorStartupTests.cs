@@ -7,6 +7,21 @@ namespace TerraBase.Api.Tests;
 /// <summary>The supervisor's startup publication and loss boundaries.</summary>
 public sealed class EngineSupervisorStartupTests
 {
+    /// <summary>An unbound admin channel cannot publish a serving generation.</summary>
+    [Test]
+    public async Task AdminBindingFailureDoesNotPublishServing()
+    {
+        var socket = Path.Combine(Path.GetTempPath(), $"tbep-admin-bind-{Guid.NewGuid():N}.sock");
+        await using var engine = new ScriptedTbepEngine(socket) { Draining = true };
+        await using var supervisor = new EngineSupervisor(
+            new EngineOptions { SocketPath = socket },
+            new AuditLog());
+
+        await Assert.ThrowsAsync<EngineUnavailableException>(() => supervisor.StartAsync());
+        await Assert.That(supervisor.Status).IsEqualTo(EngineStatus.Unavailable);
+        await Assert.That(supervisor.Generation).IsEqualTo(0);
+    }
+
     /// <summary>
     /// A managed endpoint that exits after accepting the readiness probe
     /// never gets published as a serving generation while startup is still
@@ -25,7 +40,7 @@ public sealed class EngineSupervisorStartupTests
         var socket = Path.Combine(home, "engine.sock");
         var script = Path.Combine(home, "engine.py");
         await File.WriteAllTextAsync(script, """
-            #!/usr/bin/python3
+            #!/usr/bin/env python3
             import os
             import socket
             import sys

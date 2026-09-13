@@ -104,12 +104,22 @@ public sealed record WriteOutcomeDto(string Outcome, CommitReceiptDto? Receipt =
 }
 
 /// <summary>One commit receipt.</summary>
-public sealed record CommitReceiptDto(ulong Sequence, ulong Version, string OperationId)
+public sealed record CommitReceiptDto(
+    ulong Sequence,
+    ulong Version,
+    string OperationId,
+    string? Acknowledgement = null,
+    string? Backup = null)
 {
     /// <summary>Builds from the protocol receipt.</summary>
     /// <param name="receipt">The protocol receipt.</param>
     /// <returns>The DTO.</returns>
-    public static CommitReceiptDto Of(CommitReceipt receipt) => new(receipt.Sequence, receipt.Version, receipt.OperationId);
+    public static CommitReceiptDto Of(CommitReceipt receipt) => new(
+        receipt.Sequence,
+        receipt.Version,
+        receipt.OperationId,
+        receipt.Acknowledgement?.Variant.ToSnakeCase(),
+        receipt.Backup?.Variant.ToSnakeCase());
 }
 
 /// <summary>The query execution request.</summary>

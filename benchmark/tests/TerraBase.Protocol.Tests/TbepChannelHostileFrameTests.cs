@@ -25,10 +25,34 @@ public sealed class TbepChannelHostileFrameTests
         var path = Path.Combine(Path.GetTempPath(), $"tbep-hostile-{Guid.NewGuid():N}.sock");
         try
         {
-            await using var engine = new HostileEngine(path);
+            await using var engine = new HostileEngine(path, malformedFrame: false);
             await using var channel = TbepChannel.Connect(path);
             await channel.BindChannelAsync("backend", "tenant-a");
             await channel.BackboneSubscribeAsync(42, collections: null, fromSequence: null, new NoopSink());
+
+            var pending = channel.DocumentReadAsync("orders", "hostile");
+            await engine.SawReadRequest.WaitAsync(TimeSpan.FromSeconds(10));
+
+            var failure = await Assert.ThrowsAsync<TbepException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+            await Assert.That(failure).IsNotNull();
+            await Assert.That(channel.IsClosed).IsTrue();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>A malformed envelope from the stream fails all pending calls and closes the channel.</summary>
+    [Test]
+    public async Task MalformedFrameFailsPendingCallAndClosesChannel()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"tbep-hostile-{Guid.NewGuid():N}.sock");
+        try
+        {
+            await using var engine = new HostileEngine(path, malformedFrame: true);
+            await using var channel = TbepChannel.Connect(path);
+            await channel.BindChannelAsync("backend", "tenant-a");
 
             var pending = channel.DocumentReadAsync("orders", "hostile");
             await engine.SawReadRequest.WaitAsync(TimeSpan.FromSeconds(10));
@@ -64,9 +88,11 @@ public sealed class TbepChannelHostileFrameTests
         private readonly CancellationTokenSource stopped = new();
         private readonly TaskCompletionSource sawReadRequest = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly Task serving;
+        private readonly bool malformedFrame;
 
-        public HostileEngine(string path)
+        public HostileEngine(string path, bool malformedFrame)
         {
+            this.malformedFrame = malformedFrame;
             this.listener.Bind(new UnixDomainSocketEndPoint(path));
             this.listener.Listen(1);
             this.serving = this.ServeAsync(this.stopped.Token);
@@ -104,6 +130,13 @@ public sealed class TbepChannelHostileFrameTests
                         break;
                     case "DocumentReadRequest":
                         this.sawReadRequest.TrySetResult();
+                        if (this.malformedFrame)
+                        {
+                            await stream.WriteAsync(new byte[] { 1, 0, 0, 0, 0x91 }).ConfigureAwait(false);
+                            await stream.FlushAsync().ConfigureAwait(false);
+                            return;
+                        }
+
                         var hostile = TbepWire.Seal(
                             TbepRegistry.KindCode("SubscriptionBatch"),
                             correlation: 0,

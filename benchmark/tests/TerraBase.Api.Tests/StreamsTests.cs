@@ -216,7 +216,7 @@ public sealed class StreamsTests
         await Assert.That(drop.ResumeFrom).IsGreaterThan(0ul);
 
         // The count is surfaced in the host metrics and audited.
-        var (metricsStatus, metrics) = await HostHarness.SendAsync(host.Http, "/v1/metrics");
+        var (metricsStatus, metrics) = await HostHarness.SendAsync(caller, "/v1/metrics");
         await Assert.That(metricsStatus).IsEqualTo(200);
         await Assert.That(metrics.RootElement.GetProperty("droppedFrames").GetInt64()).IsEqualTo(stream.Dropped);
         await Assert.That(metrics.RootElement.GetProperty("openStreams").GetInt32()).IsEqualTo(1);
@@ -430,6 +430,66 @@ public sealed class StreamsTests
         await Assert.That(ackStatus).IsEqualTo(410);
         await Assert.That(ackBody.RootElement.GetProperty("code").GetString()).IsEqualTo("subscription-ended");
         await Assert.That(host.Audit.Recent(16).Any(record => record.Kind == AuditKind.TenantRefused)).IsFalse();
+    }
+
+    /// <summary>DELETE closes the SSE pump and removes its stream from the host registry.</summary>
+    [Test]
+    public async Task DeleteClosesSsePumpAndRemovesOpenStream()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        await using var sse = await SseReader.OpenAsync(caller, string.Empty);
+        var opened = await sse.ExpectAsync("opened");
+        var subscriptionId = opened.Data.RootElement.GetProperty("subscriptionId").GetUInt64();
+        await Assert.That(host.Hub.OpenCount).IsEqualTo(1);
+
+        var (status, _) = await HostHarness.SendAsync(caller, $"/v1/streams/{subscriptionId}", method: "DELETE");
+        await Assert.That(status).IsEqualTo(200);
+        await Assert.That(host.Hub.OpenCount).IsEqualTo(0);
+        await sse.ExpectAsync("closed");
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await Assert.That(await sse.ReadAsync(timeout.Token)).IsNull();
+        await Assert.That(host.Hub.OpenCount).IsEqualTo(0);
+    }
+
+    /// <summary>DELETE closes the WebSocket pump and removes its stream from the host registry.</summary>
+    [Test]
+    public async Task DeleteClosesWebSocketPumpAndRemovesOpenStream()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        using var socket = await Ws.OpenAsync(host.Http.BaseAddress!, "backend-operator", "tenant-a", string.Empty);
+        var opened = await Ws.ExpectAsync(socket, "opened");
+        var subscriptionId = opened.RootElement.GetProperty("subscriptionId").GetUInt64();
+        await Assert.That(host.Hub.OpenCount).IsEqualTo(1);
+
+        var (status, _) = await HostHarness.SendAsync(caller, $"/v1/streams/{subscriptionId}", method: "DELETE");
+        await Assert.That(status).IsEqualTo(200);
+        await Assert.That(host.Hub.OpenCount).IsEqualTo(0);
+        await Ws.ExpectAsync(socket, "closed");
+
+        JsonDocument? terminal;
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            try
+            {
+                terminal = await Ws.ReadAsync(socket, timeout.Token);
+            }
+            catch (WebSocketException)
+            {
+                terminal = null;
+            }
+        }
+
+        await Assert.That(terminal).IsNull();
+        await Assert.That(host.Hub.OpenCount).IsEqualTo(0);
     }
 
     /// <summary>A non-WebSocket request to the WebSocket endpoint is refused plainly.</summary>

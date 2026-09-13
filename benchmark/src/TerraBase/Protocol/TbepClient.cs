@@ -210,13 +210,20 @@ public sealed partial class TbepClient : IAsyncDisposable
     /// <param name="operationId">The stable operation identity.</param>
     /// <param name="idempotencyKey">The envelope's idempotency key.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
+    /// <param name="ack">The requested acknowledgement level, or <c>null</c> for the regional default.</param>
     /// <returns>The write response with its outcome.</returns>
     /// <exception cref="TbepException">The operation failed.</exception>
-    public async Task<DocumentWriteResponse> DocumentWriteAsync(DocumentPut document, ExpectedVersion expected, string operationId, string idempotencyKey, CancellationToken cancellationToken = default)
+    public async Task<DocumentWriteResponse> DocumentWriteAsync(
+        DocumentPut document,
+        ExpectedVersion expected,
+        string operationId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default,
+        Acknowledgement? ack = null)
     {
         var answer = await this.CallAsync(
             "document.write",
-            new DocumentWriteRequest { Document = document, Expected = expected, OperationId = operationId },
+            new DocumentWriteRequest { Document = document, Expected = expected, OperationId = operationId, Ack = ack },
             idempotency: idempotencyKey,
             expect: TbepRegistry.ResponseKindOf("document.write"),
             cancellationToken).ConfigureAwait(false);
@@ -248,13 +255,21 @@ public sealed partial class TbepClient : IAsyncDisposable
     /// <param name="operationId">The stable operation identity.</param>
     /// <param name="idempotencyKey">The envelope's idempotency key.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
+    /// <param name="ack">The requested acknowledgement level, or <c>null</c> for the regional default.</param>
     /// <returns>The delete response with its outcome.</returns>
     /// <exception cref="TbepException">The operation failed.</exception>
-    public async Task<DocumentDeleteResponse> DocumentDeleteAsync(string collection, string document, ExpectedVersion expected, string operationId, string idempotencyKey, CancellationToken cancellationToken = default)
+    public async Task<DocumentDeleteResponse> DocumentDeleteAsync(
+        string collection,
+        string document,
+        ExpectedVersion expected,
+        string operationId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default,
+        Acknowledgement? ack = null)
     {
         var answer = await this.CallAsync(
             "document.delete",
-            new DocumentDeleteRequest { Collection = collection, Document = document, Expected = expected, OperationId = operationId },
+            new DocumentDeleteRequest { Collection = collection, Document = document, Expected = expected, OperationId = operationId, Ack = ack },
             idempotency: idempotencyKey,
             expect: TbepRegistry.ResponseKindOf("document.delete"),
             cancellationToken).ConfigureAwait(false);

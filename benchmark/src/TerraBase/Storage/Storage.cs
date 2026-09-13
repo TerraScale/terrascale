@@ -339,9 +339,20 @@ public sealed class FileStorageProvider : IStorageProvider
             Directory.CreateDirectory(parent);
             if (File.Exists(storagePath))
             {
-                LoadSnapshot();
+                try
+                {
+                    LoadSnapshot();
+                    CleanupTemporarySnapshots();
+                }
+                catch (InvalidDataException failure)
+                {
+                    if (!TryRecoverSnapshot(failure))
+                    {
+                        throw;
+                    }
+                }
             }
-            else
+            else if (!TryRecoverSnapshot())
             {
                 PersistSnapshot();
             }
@@ -488,22 +499,34 @@ public sealed class FileStorageProvider : IStorageProvider
         return ValueTask.CompletedTask;
     }
 
-    private void LoadSnapshot()
+    private void LoadSnapshot() => ApplySnapshot(ReadSnapshot(storagePath));
+
+    private static SnapshotState ReadSnapshot(string path)
     {
-        StorageSnapshot snapshot;
         try
         {
-            using var stream = File.OpenRead(storagePath);
-            snapshot = JsonSerializer.Deserialize<StorageSnapshot>(stream, serializerOptions)
+            using var stream = File.OpenRead(path);
+            var snapshot = JsonSerializer.Deserialize<StorageSnapshot>(stream, serializerOptions)
                 ?? throw new InvalidDataException("The storage snapshot is empty.");
             if (snapshot.FormatVersion != StorageFormatVersion)
             {
                 throw new InvalidDataException($"Unsupported storage snapshot format {snapshot.FormatVersion}.");
             }
 
+            if (snapshot.Documents is null)
+            {
+                throw new InvalidDataException("The storage snapshot documents collection is null.");
+            }
+
             var loaded = new Dictionary<DocumentKey, Document>();
+            var watermarks = new Dictionary<DocumentKey, ulong>();
             foreach (var persisted in snapshot.Documents)
             {
+                if (persisted is null)
+                {
+                    throw new InvalidDataException("The storage snapshot contains a null document.");
+                }
+
                 var key = new DocumentKey(
                     new TenantId(persisted.Tenant),
                     new CollectionId(persisted.Collection),
@@ -513,23 +536,140 @@ public sealed class FileStorageProvider : IStorageProvider
                     throw new InvalidDataException($"The storage snapshot contains duplicate key {key}.");
                 }
 
+                if (persisted.Body is null)
+                {
+                    throw new InvalidDataException($"The storage snapshot contains a null body for {key}.");
+                }
+
                 using var body = JsonDocument.Parse(persisted.Body);
-                loaded.Add(key, new Document(key, body.RootElement, persisted.Version, persisted.UpdatedAt));
+                var document = new Document(key, body.RootElement, persisted.Version, persisted.UpdatedAt);
+                loaded.Add(key, document);
+                watermarks.Add(key, document.Version);
             }
 
-            documents.Clear();
-            foreach (var (key, document) in loaded)
+            if (snapshot.VersionWatermarks is not null)
             {
-                documents.Add(key, document);
+                foreach (var persisted in snapshot.VersionWatermarks)
+                {
+                    if (persisted is null)
+                    {
+                        throw new InvalidDataException("The storage snapshot contains a null version watermark.");
+                    }
+
+                    if (persisted.Version == 0)
+                    {
+                        throw new InvalidDataException("The storage snapshot contains a zero version watermark.");
+                    }
+
+                    var key = new DocumentKey(
+                        new TenantId(persisted.Tenant),
+                        new CollectionId(persisted.Collection),
+                        persisted.DocumentId);
+                    if (watermarks.TryGetValue(key, out var currentVersion))
+                    {
+                        if (loaded.ContainsKey(key))
+                        {
+                            if (persisted.Version < currentVersion)
+                            {
+                                throw new InvalidDataException($"The storage snapshot contains a stale version watermark for {key}.");
+                            }
+
+                            watermarks[key] = persisted.Version;
+                            continue;
+                        }
+
+                        throw new InvalidDataException($"The storage snapshot contains duplicate version watermarks for {key}.");
+                    }
+
+                    watermarks.Add(key, persisted.Version);
+                }
             }
+
+            return new SnapshotState(loaded, watermarks);
         }
         catch (JsonException failure)
         {
-            throw new InvalidDataException($"The storage snapshot is not valid JSON: {storagePath}", failure);
+            throw new InvalidDataException($"The storage snapshot is not valid JSON: {path}", failure);
         }
         catch (ArgumentException failure)
         {
-            throw new InvalidDataException($"The storage snapshot contains an invalid document: {storagePath}", failure);
+            throw new InvalidDataException($"The storage snapshot contains an invalid document: {path}", failure);
+        }
+        catch (InvalidOperationException failure)
+        {
+            throw new InvalidDataException($"The storage snapshot contains an invalid document: {path}", failure);
+        }
+    }
+
+    private bool TryRecoverSnapshot(InvalidDataException? primaryFailure = null)
+    {
+        var candidates = EnumerateTemporarySnapshots().ToArray();
+        if (candidates.Length == 0)
+        {
+            if (primaryFailure is not null)
+            {
+                throw primaryFailure;
+            }
+
+            return false;
+        }
+
+        InvalidDataException? candidateFailure = null;
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var recovered = ReadSnapshot(candidate);
+                File.Move(candidate, storagePath, overwrite: true);
+                ApplySnapshot(recovered);
+                CleanupTemporarySnapshots();
+                return true;
+            }
+            catch (InvalidDataException failure)
+            {
+                candidateFailure ??= failure;
+            }
+        }
+
+        throw new InvalidDataException(
+            $"The storage snapshot could not be recovered: {storagePath}",
+            primaryFailure ?? candidateFailure);
+    }
+
+    private IEnumerable<string> EnumerateTemporarySnapshots() =>
+        Directory.EnumerateFiles(
+                Path.GetDirectoryName(storagePath)!,
+                $"{Path.GetFileName(storagePath)}.*.tmp",
+                SearchOption.TopDirectoryOnly)
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .ThenBy(path => path, StringComparer.Ordinal);
+
+    private void CleanupTemporarySnapshots()
+    {
+        foreach (var candidate in EnumerateTemporarySnapshots())
+        {
+            try
+            {
+                File.Delete(candidate);
+            }
+            catch (FileNotFoundException)
+            {
+            }
+        }
+    }
+
+    private void ApplySnapshot(SnapshotState snapshot)
+    {
+        documents.Clear();
+        foreach (var (key, document) in snapshot.Documents)
+        {
+            documents.Add(key, document);
+        }
+
+        versionWatermarks.Clear();
+        foreach (var (key, version) in snapshot.VersionWatermarks)
+        {
+            versionWatermarks.Add(key, version);
         }
     }
 
@@ -548,6 +688,17 @@ public sealed class FileStorageProvider : IStorageProvider
                     pair.Value.Body.GetRawText(),
                     pair.Value.Version,
                     pair.Value.UpdatedAt))
+                .ToArray(),
+            versionWatermarks
+                .Where(pair => !documents.ContainsKey(pair.Key))
+                .OrderBy(pair => pair.Key.Tenant.Value, StringComparer.Ordinal)
+                .ThenBy(pair => pair.Key.Collection.Value, StringComparer.Ordinal)
+                .ThenBy(pair => pair.Key.DocumentId, StringComparer.Ordinal)
+                .Select(pair => new PersistedVersion(
+                    pair.Key.Tenant.Value,
+                    pair.Key.Collection.Value,
+                    pair.Key.DocumentId,
+                    pair.Value))
                 .ToArray());
         var temporaryPath = $"{storagePath}.{Guid.NewGuid():N}.tmp";
         try
@@ -578,7 +729,7 @@ public sealed class FileStorageProvider : IStorageProvider
         }
     }
 
-    private void Restore(DocumentKey key, Document? current)
+    private void Restore(DocumentKey key, Document? current, ulong previousVersion)
     {
         if (current is null)
         {
@@ -588,6 +739,15 @@ public sealed class FileStorageProvider : IStorageProvider
         {
             documents[key] = current;
         }
+
+        if (previousVersion == 0)
+        {
+            versionWatermarks.Remove(key);
+        }
+        else
+        {
+            versionWatermarks[key] = previousVersion;
+        }
     }
 
     private void ThrowIfDisposed()
@@ -595,7 +755,14 @@ public sealed class FileStorageProvider : IStorageProvider
         ObjectDisposedException.ThrowIf(disposed, this);
     }
 
-    private sealed record StorageSnapshot(int FormatVersion, IReadOnlyList<PersistedDocument> Documents);
+    private sealed record SnapshotState(
+        Dictionary<DocumentKey, Document> Documents,
+        Dictionary<DocumentKey, ulong> VersionWatermarks);
+
+    private sealed record StorageSnapshot(
+        int FormatVersion,
+        IReadOnlyList<PersistedDocument>? Documents,
+        IReadOnlyList<PersistedVersion>? VersionWatermarks);
 
     private sealed record PersistedDocument(
         string Tenant,
@@ -604,6 +771,12 @@ public sealed class FileStorageProvider : IStorageProvider
         string Body,
         ulong Version,
         DateTimeOffset UpdatedAt);
+
+    private sealed record PersistedVersion(
+        string Tenant,
+        string Collection,
+        string DocumentId,
+        ulong Version);
 }
 
 /// <summary>A document store that owns the engine's storage port.</summary>

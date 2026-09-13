@@ -5,6 +5,8 @@ IdentifierTests.Run();
 await StoragePortIsAtomicAndVersioned();
 await DurableStorageSurvivesCloseAndReopen();
 await ConcurrentFileStorageProvidersRetainWrites();
+await DurableStorageRecoversSnapshotsAndRejectsNullDocuments();
+await DurableStorageRetainsVersionAfterDeleteAndRecreate();
 MetricsAreBoundedAndPrometheusCompatible();
 LifecycleAndReadinessFailClosed();
 Console.WriteLine("TerraBase focused tests passed.");
@@ -39,6 +41,11 @@ static async Task StoragePortIsAtomicAndVersioned()
     var deleted = await engine.Documents.DeleteAsync(key, DocumentPrecondition.Version(2));
     Assert(deleted.Outcome == WriteOutcome.Deleted, "a matching delete must remove the document");
     Assert(await engine.Documents.ReadAsync(key) is null, "deleted documents must not be readable");
+
+    var recreated = await engine.Documents.UpsertAsync(key, body.RootElement, DocumentPrecondition.Missing);
+    Assert(recreated.Outcome == WriteOutcome.Created && recreated.Document?.Version == 3, "recreated documents must retain monotonic versions");
+    var staleRecreate = await engine.Documents.UpsertAsync(key, body.RootElement, DocumentPrecondition.Version(2));
+    Assert(staleRecreate.Outcome == WriteOutcome.Conflict, "a deleted document version must not authorize its recreation");
 }
 
 static async Task DurableStorageSurvivesCloseAndReopen()
@@ -98,6 +105,91 @@ static async Task ConcurrentFileStorageProvidersRetainWrites()
         {
             Assert(await reopened.ReadAsync(firstKey) is not null, "the first concurrent write must remain durable");
             Assert(await reopened.ReadAsync(secondKey) is not null, "the second concurrent write must remain durable");
+        }
+    }
+    finally
+    {
+        File.Delete(path);
+    }
+}
+
+static async Task DurableStorageRecoversSnapshotsAndRejectsNullDocuments()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"terrabase-storage-recovery-{Guid.NewGuid():N}.json");
+    var temporaryPath = $"{path}.orphan.tmp";
+    var key = new DocumentKey(new TenantId("tenant-recovery"), new CollectionId("users"), "user-1");
+    try
+    {
+        await using (var provider = new FileStorageProvider(path))
+        {
+            using var body = JsonDocument.Parse("{\"name\":\"Ada\"}");
+            await provider.UpsertAsync(key, body.RootElement, DocumentPrecondition.Missing);
+        }
+
+        File.WriteAllText(temporaryPath, "not-json");
+        await using (var provider = new FileStorageProvider(path))
+        {
+            Assert(await provider.ReadAsync(key) is not null, "a valid snapshot must win over an orphan temporary file");
+        }
+
+        File.WriteAllText(path, "{\"FormatVersion\":1,\"Documents\":null}");
+        File.WriteAllText(
+            temporaryPath,
+            "{\"FormatVersion\":1,\"Documents\":[{\"Tenant\":\"tenant-recovery\",\"Collection\":\"users\",\"DocumentId\":\"user-1\",\"Body\":\"{\\\"name\\\":\\\"Grace\\\"}\",\"Version\":2,\"UpdatedAt\":\"2026-09-13T00:00:00+00:00\"}]}" );
+        await using (var provider = new FileStorageProvider(path))
+        {
+            var recovered = await provider.ReadAsync(key);
+            Assert(recovered?.Version == 2 && recovered.Body.GetProperty("name").GetString() == "Grace", "a valid orphan snapshot must recover a corrupt primary snapshot");
+        }
+
+        Assert(!File.Exists(temporaryPath), "recovery must remove the promoted temporary snapshot");
+
+        File.WriteAllText(path, "{\"FormatVersion\":1,\"Documents\":[null]}");
+        var rejected = false;
+        try
+        {
+            await using var provider = new FileStorageProvider(path);
+        }
+        catch (InvalidDataException)
+        {
+            rejected = true;
+        }
+
+        Assert(rejected, "null persisted documents must fail closed as invalid data");
+    }
+    finally
+    {
+        File.Delete(path);
+        File.Delete(temporaryPath);
+    }
+}
+
+static async Task DurableStorageRetainsVersionAfterDeleteAndRecreate()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"terrabase-storage-versions-{Guid.NewGuid():N}.json");
+    var key = new DocumentKey(new TenantId("tenant-versions"), new CollectionId("users"), "user-1");
+    try
+    {
+        await using (var provider = new FileStorageProvider(path))
+        {
+            using var body = JsonDocument.Parse("{\"name\":\"Ada\"}");
+            var created = await provider.UpsertAsync(key, body.RootElement, DocumentPrecondition.Missing);
+            Assert(created.Document?.Version == 1, "durable version sequence must start at one");
+            var deleted = await provider.DeleteAsync(key, DocumentPrecondition.Version(1));
+            Assert(deleted.Outcome == WriteOutcome.Deleted, "the current durable version must authorize delete");
+            var recreated = await provider.UpsertAsync(key, body.RootElement, DocumentPrecondition.Missing);
+            Assert(recreated.Document?.Version == 2, "durable recreation must advance the version watermark");
+            var stale = await provider.UpsertAsync(key, body.RootElement, DocumentPrecondition.Version(1));
+            Assert(stale.Outcome == WriteOutcome.Conflict, "a deleted version must remain stale after recreation");
+        }
+
+        await using (var provider = new FileStorageProvider(path))
+        {
+            var deleted = await provider.DeleteAsync(key, DocumentPrecondition.Version(2));
+            Assert(deleted.Outcome == WriteOutcome.Deleted, "the recreated durable document must be deletable at its current version");
+            using var body = JsonDocument.Parse("{\"name\":\"Grace\"}");
+            var recreated = await provider.UpsertAsync(key, body.RootElement, DocumentPrecondition.Missing);
+            Assert(recreated.Document?.Version == 3, "durable version watermarks must survive close and reopen");
         }
     }
     finally

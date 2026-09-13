@@ -67,6 +67,54 @@ public sealed class GateTests
         await Assert.That(engine.Received.Count).IsEqualTo(framesBeforeAnyCaller);
     }
 
+    /// <summary>Diagnostic and lifecycle routes require the local role policy after context admission.</summary>
+    [Test]
+    public async Task DiagnosticAndShutdownRoutesRequireTheirRoles()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var reader = host.AsRole("backend-reader", "tenant-a", "reader");
+        var before = engine.Received.Count;
+
+        foreach (var requestPath in new[] { "/v1/metrics", "/v1/audit", "/v1/engine/health", "/v1/engine/status", "/v1/engine/topology" })
+        {
+            var (status, body) = await HostHarness.SendAsync(reader, requestPath);
+            await Assert.That(status).IsEqualTo(403);
+            await Assert.That(body.RootElement.GetProperty("code").GetString()).IsEqualTo("forbidden");
+        }
+
+        var (shutdownStatus, shutdownBody) = await HostHarness.SendAsync(reader, "/v1/engine/shutdown", new { reason = "operator" });
+        await Assert.That(shutdownStatus).IsEqualTo(403);
+        await Assert.That(shutdownBody.RootElement.GetProperty("code").GetString()).IsEqualTo("forbidden");
+        await Assert.That(engine.Received.Count).IsEqualTo(before);
+    }
+
+    /// <summary>Observer diagnostics are served with bounded engine facts and a shutdown is operator controlled.</summary>
+    [Test]
+    public async Task ObserverDiagnosticsRedactEngineDetailsAndOperatorCanShutdown()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var observer = host.AsRole("backend-observer", "tenant-a", "observer");
+        var operatorClient = host.AsRole("backend-operator", "tenant-a", "operator");
+
+        var (metricsStatus, _) = await HostHarness.SendAsync(observer, "/v1/metrics");
+        await Assert.That(metricsStatus).IsEqualTo(200);
+        var (auditStatus, auditBody) = await HostHarness.SendAsync(observer, "/v1/audit?limit=1024");
+        await Assert.That(auditStatus).IsEqualTo(200);
+        await Assert.That(auditBody.RootElement.GetRawText().Contains(path, StringComparison.Ordinal)).IsFalse();
+
+        var (shutdownStatus, _) = await HostHarness.SendAsync(operatorClient, "/v1/engine/shutdown", new { reason = "operator" });
+        await Assert.That(shutdownStatus).IsEqualTo(200);
+
+        var (healthStatus, healthBody) = await HostHarness.SendAsync(observer, "/v1/engine/health");
+        await Assert.That(healthStatus).IsEqualTo(200);
+        await Assert.That(healthBody.RootElement.GetProperty("detail").GetString()).IsEqualTo("engine unavailable");
+        await Assert.That(healthBody.RootElement.GetRawText().Contains("not established", StringComparison.Ordinal)).IsFalse();
+    }
+
     /// <summary>A gate-passing caller is served: the engine sees the bound tenant on every frame.</summary>
     [Test]
     public async Task PresentedBackendContextReachesTheEngineBound()
