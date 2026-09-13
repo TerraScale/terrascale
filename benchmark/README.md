@@ -42,15 +42,17 @@ launch blockers and required evidence are tracked in the workspace
 
 ## Development
 
-Use the repository check target for local verification:
+Build and test the solution directly for local verification:
 
 ```sh
-make check
+nice -n 19 dotnet build TerraBase.slnx --configuration Release
+nice -n 19 dotnet test TerraBase.slnx --configuration Release --no-build
 ```
 
-It runs formatting, Clippy, workspace tests, protobuf lint, contract checks,
-and the `terrabase-go` client checks when that client is present. Run
-`make contracts` when changing the published contract. See
+These commands build the consolidated TerraBase host, endpoint library,
+examples, and test projects. The checked-in contract archive remains the
+source of truth for protocol changes; update its generated consumer metadata
+in the affected SDK repositories when changing the published contract. See
 [docs/development.md](docs/development.md) for the contributor workflow.
 
 TerraBase is licensed under the [MIT License](LICENSE.md).

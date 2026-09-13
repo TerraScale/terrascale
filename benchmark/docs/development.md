@@ -11,17 +11,18 @@ the public API directly; TBEP is private control traffic. SQL is the only
 query language, document writes retain causal and history semantics, and the
 current replication and sync designs are ADR 0044.
 
-Run the same check locally that CI runs:
+Run the same solution build and test locally that CI runs:
 
 ```bash
-make check
+nice -n 19 dotnet build TerraBase.slnx --configuration Release
+nice -n 19 dotnet test TerraBase.slnx --configuration Release --no-build
 ```
 
-Run `make contracts` when changing the published OpenAPI, protobuf, or
-MessagePack contract. Consumers regenerate from the pinned contract; do not
-hand-edit generated output. Keep changes small, remove retired code and its
-documentation in the same series, and update links when a document is
-removed.
+When changing the published OpenAPI, protobuf, or MessagePack contract, update
+the checked-in contract archive and regenerate consumer output in the affected
+SDK repository. Do not hand-edit generated output. Keep changes small, remove
+retired code and its documentation in the same series, and update links when a
+document is removed.
 
 Rust work should use the lowest available CPU priority. The member uses
 bounded asynchronous I/O and bounded CPU parallelism derived from admitted
