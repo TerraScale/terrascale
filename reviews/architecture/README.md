@@ -66,10 +66,8 @@ authorization, placement, session and requested durability requirements.
 - [Pricing source](../../data/pricing.json): draft rates, organization allowances,
   Region multiplication, consent and continuing storage charges.
 
-The historical [storage draft](storage-design-draft.md) and
-[benchmark publication draft](benchmark-publication-draft.md) remain preserved
-for their design questions and qualification context; they are not current
-contracts. Repository-owned ADRs and runbooks control their implementation.
+Historical storage and benchmark drafts were removed. Repository-owned ADRs,
+source, and qualification records control implementation and evidence.
 This atlas remains outside public product navigation and VitePress build inputs.
 
 ## Editable sources and rendering
