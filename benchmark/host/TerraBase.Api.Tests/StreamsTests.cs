@@ -1,0 +1,551 @@
+// <copyright file="StreamsTests.cs" company="TerraScale">
+// TerraBase (SE-08). See LICENSE.md.
+// </copyright>
+
+namespace TerraBase.Api.Tests;
+
+using System.Net.WebSockets;
+using System.Text.Json;
+
+/// <summary>
+/// The subscription-endpoint rows of the AC (against the scripted
+/// engine): the SSE and WebSocket endpoints are two projections of the
+/// same TBEP backbone subscription — parity of the delivered frames,
+/// checkpoint/resume on reconnect (the explicit <c>from</c> replay and
+/// the <c>Last-Event-ID</c> auto-resume), the bounded per-stream queue
+/// with counted, surfaced drops, and the stream lifecycle (acknowledge,
+/// close, unknown-subscription refusals).
+/// </summary>
+public sealed class StreamsTests
+{
+    private static string SocketPath() => Path.Combine(Path.GetTempPath(), $"se08-streams-{Guid.NewGuid():N}.sock");
+
+    /// <summary>One write lands, with one idempotency key, as one journal commit.</summary>
+    private static async Task<(int Status, JsonDocument Body)> WriteAsync(HttpClient caller, string document, string operation)
+    {
+        var answer = await HostHarness.SendAsync(
+            caller,
+            $"/v1/documents/orders/{document}",
+            new { @string = $"body-of-{document}" },
+            idempotencyKey: operation,
+            method: "PUT");
+        return answer;
+    }
+
+    /// <summary>SSE and WebSocket deliver the same backbone frames: the same batches, triggers, and sequences.</summary>
+    [Test]
+    public async Task SseAndWebSocketDeliverTheSameBackboneFrames()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        // Two commits land before either consumer connects.
+        await WriteAsync(caller, "d-01", "op-01");
+        await WriteAsync(caller, "d-02", "op-02");
+
+        await using var sse = await SseReader.OpenAsync(caller, "collections=orders&from=1");
+        using var ws = await Ws.OpenAsync(host.Http.BaseAddress!, "backend-operator", "tenant-a", "collections=orders&from=1");
+
+        var sseOpened = await sse.ExpectAsync("opened");
+        var wsOpened = await Ws.ExpectAsync(ws, "opened");
+        await Assert.That(sseOpened.Data.RootElement.GetProperty("startSequence").GetUInt64()).IsEqualTo(3ul);
+        await Assert.That(wsOpened.RootElement.GetProperty("startSequence").GetUInt64()).IsEqualTo(3ul);
+
+        // The replayed journal (both commits) reaches both consumers.
+        var sseReplay = await sse.ExpectAsync("batch");
+        var wsReplay = await Ws.ExpectAsync(ws, "batch");
+        var sseEvents = sseReplay.Data.RootElement.GetProperty("events").EnumerateArray().ToArray();
+        var wsEvents = wsReplay.RootElement.GetProperty("events").EnumerateArray().ToArray();
+        await Assert.That(sseEvents.Length).IsEqualTo(2);
+        await Assert.That(wsEvents.Length).IsEqualTo(2);
+        for (var index = 0; index < sseEvents.Length; index++)
+        {
+            await Assert.That(sseEvents[index].GetProperty("sequence").GetUInt64()).IsEqualTo(wsEvents[index].GetProperty("sequence").GetUInt64());
+            await Assert.That(sseEvents[index].GetProperty("operationId").GetString()).IsEqualTo(wsEvents[index].GetProperty("operationId").GetString());
+        }
+
+        // A live commit reaches both consumers as the ordered batch and
+        // the content-free trigger, in arrival order.
+        await WriteAsync(caller, "d-03", "op-03");
+        var sseLive = await sse.ExpectAsync("batch");
+        var wsLive = await Ws.ExpectAsync(ws, "batch");
+        await Assert.That(sseLive.Data.RootElement.GetProperty("events").EnumerateArray().Single().GetProperty("sequence").GetUInt64()).IsEqualTo(3ul);
+        await Assert.That(wsLive.RootElement.GetProperty("events").EnumerateArray().Single().GetProperty("sequence").GetUInt64()).IsEqualTo(3ul);
+        var sseTrigger = await sse.ExpectAsync("trigger");
+        var wsTrigger = await Ws.ExpectAsync(ws, "trigger");
+        await Assert.That(sseTrigger.Data.RootElement.GetProperty("sequence").GetUInt64()).IsEqualTo(3ul);
+        await Assert.That(wsTrigger.RootElement.GetProperty("sequence").GetUInt64()).IsEqualTo(3ul);
+
+        // The trigger is content-free (PD-2026-08-26-13 D3): the hint
+        // carries the subscription, collection, sequence, and operation
+        // id — never a document body.
+        await Assert.That(sseTrigger.Data.RootElement.GetProperty("collection").GetString()).IsEqualTo("orders");
+        await Assert.That(sseTrigger.Data.RootElement.GetProperty("operationId").GetString()).IsEqualTo("op-03");
+        var triggerText = sseTrigger.Data.RootElement.GetRawText();
+        await Assert.That(triggerText.Contains("body-of-d-03", StringComparison.Ordinal)).IsFalse();
+    }
+
+    /// <summary>A collection filter scopes the stream: other collections never arrive.</summary>
+    [Test]
+    public async Task CollectionFiltersScopeTheStream()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        await WriteAsync(caller, "d-01", "op-01");
+
+        await using var sse = await SseReader.OpenAsync(caller, "collections=users&from=1");
+        var opened = await sse.ExpectAsync("opened");
+        await Assert.That(opened.Data.RootElement.GetProperty("collections").EnumerateArray().Single().GetString()).IsEqualTo("users");
+        await WriteAsync(caller, "d-02", "op-02");
+        await WriteAsync(caller, "d-03", "op-03");
+
+        // No batch, no trigger: only the filtered collections arrive.
+        using var quiet = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var next = await sse.ReadAsync(quiet.Token);
+        await Assert.That(next).IsNull();
+    }
+
+    /// <summary>The collection filter validates: a bad scope is refused before the engine.</summary>
+    [Test]
+    public async Task CollectionFiltersValidate()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        using var refused = await caller.GetAsync("/v1/streams?collections=orders,bad%20scope", HttpCompletionOption.ResponseHeadersRead);
+        await Assert.That((int)refused.StatusCode).IsEqualTo(422);
+        refused.Dispose();
+    }
+
+    /// <summary>An explicit from-sequence resumes the journal at that checkpoint.</summary>
+    [Test]
+    public async Task AnExplicitFromSequenceReplaysFromTheCheckpoint()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        for (var index = 1; index <= 3; index++)
+        {
+            await WriteAsync(caller, $"d-0{index}", $"op-0{index}");
+        }
+
+        await using var sse = await SseReader.OpenAsync(caller, "from=2");
+        var replay = await sse.ExpectAsync("batch");
+        var sequences = replay.Data.RootElement.GetProperty("events").EnumerateArray()
+            .Select(@event => @event.GetProperty("sequence").GetUInt64())
+            .ToArray();
+        await Assert.That(sequences).IsEquivalentTo([2ul, 3ul]);
+        await Assert.That(replay.Id).IsEqualTo("3");
+    }
+
+    /// <summary>An SSE reconnect with Last-Event-ID resumes strictly after the last seen event — no duplicates.</summary>
+    [Test]
+    public async Task ALastEventIdReconnectResumesStrictlyAfter()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        for (var index = 1; index <= 3; index++)
+        {
+            await WriteAsync(caller, $"d-0{index}", $"op-0{index}");
+        }
+
+        // The first consumer sees the replay through sequence 2.
+        await using (var first = await SseReader.OpenAsync(caller, "from=1"))
+        {
+            var batch = await first.ExpectAsync("batch");
+            var last = batch.Data.RootElement.GetProperty("events").EnumerateArray().Last().GetProperty("sequence").GetUInt64();
+            await Assert.That(last).IsEqualTo(3ul);
+        }
+
+        // The consumer disconnects after sequence 2 (its stored id);
+        // one further commit lands while it is away.
+        await WriteAsync(caller, "d-04", "op-04");
+
+        // The reconnect with Last-Event-ID: 2 replays exactly the missed
+        // events (3 and 4) — the sequence-2 event is not re-delivered.
+        await using var second = await SseReader.OpenAsync(caller, string.Empty, lastEventId: "2");
+        var resumed = await second.ExpectAsync("batch");
+        var sequences = resumed.Data.RootElement.GetProperty("events").EnumerateArray()
+            .Select(@event => @event.GetProperty("sequence").GetUInt64())
+            .ToArray();
+        await Assert.That(sequences).IsEquivalentTo([3ul, 4ul]);
+    }
+
+    /// <summary>A full bounded queue drops the oldest frame, counts the drop, and surfaces it in-band and in the metrics.</summary>
+    [Test]
+    public async Task AFullBoundedQueueDropsCountsAndSurfaces()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        // The hub opens the subscription; nothing consumes it while the
+        // journal runs ahead — every broadcast offers the stream's
+        // bounded queue (depth 64) a batch and a trigger.
+        var stream = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: 1);
+        for (var index = 0; index < 80; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"d-{index:D3}", $"op-{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        await Assert.That(stream.Dropped).IsGreaterThan(0);
+        await Assert.That(host.Hub.DroppedTotal).IsEqualTo(stream.Dropped);
+
+        // The drop is surfaced in-band: the consumer reads drop markers
+        // carrying the sequence it must resume from, after the queue
+        // fell a full depth behind.
+        var kinds = new List<StreamEvent>();
+        while (await stream.ReadAsync(TimeSpan.FromSeconds(5)) is { } frame)
+        {
+            kinds.Add(frame);
+        }
+
+        await Assert.That(kinds.Count(item => item is StreamEvent.Dropped)).IsGreaterThan(0);
+        var drop = kinds.OfType<StreamEvent.Dropped>().First();
+        await Assert.That(drop.ResumeFrom).IsGreaterThan(0ul);
+
+        // The count is surfaced in the host metrics and audited.
+        var (metricsStatus, metrics) = await HostHarness.SendAsync(host.Http, "/v1/metrics");
+        await Assert.That(metricsStatus).IsEqualTo(200);
+        await Assert.That(metrics.RootElement.GetProperty("droppedFrames").GetInt64()).IsEqualTo(stream.Dropped);
+        await Assert.That(metrics.RootElement.GetProperty("openStreams").GetInt32()).IsEqualTo(1);
+        await Assert.That(host.Audit.Recent(AuditLog.Capacity).Count(record => record.Kind == AuditKind.StreamDropped)).IsGreaterThan(0);
+        await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A full bounded queue sheds the OLDEST queued frame, never the
+    /// incoming one: the frame that triggered the shed lands in the freed
+    /// slot and is delivered — a bounded queue may shed load, never lose
+    /// the frame it just accepted uncounted.
+    /// </summary>
+    [Test]
+    public async Task TheIncomingFrameSurvivesAFullQueue()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        // Nothing consumes the stream while the journal runs ahead: the
+        // queue (depth 64) fills and sheds.
+        var stream = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: 1);
+        const int writes = 40;
+        for (var index = 1; index <= writes; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"d-{index:D3}", $"op-{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        await Assert.That(stream.Dropped).IsGreaterThan(0);
+        var delivered = new List<StreamEvent>();
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            delivered.Add(frame);
+        }
+
+        // The frames offered last — into a full queue — survive: the
+        // newest committed batch and its trigger reach the consumer.
+        var batches = delivered.OfType<StreamEvent.Batch>().SelectMany(batch => batch.Body.Events.Select(@event => @event.Sequence));
+        await Assert.That(batches).Contains((ulong)writes);
+        var triggers = delivered.OfType<StreamEvent.Trigger>().Select(trigger => trigger.Body.Sequence);
+        await Assert.That(triggers).Contains((ulong)writes);
+        await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The drop accounting is exact: every offered frame is either
+    /// delivered to the consumer or counted as dropped — offered equals
+    /// delivered plus dropped, never less (an uncounted loss).
+    /// </summary>
+    [Test]
+    public async Task EveryOfferedFrameIsDeliveredOrCountedExactly()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        // The journal is empty at subscribe (no replay batch): every
+        // write offers exactly one batch and one trigger, and nothing
+        // else is ever offered on this stream.
+        var stream = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: 1);
+        const int writes = 80;
+        for (var index = 1; index <= writes; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"d-{index:D3}", $"op-{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        long deliveredFrames = 0;
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            // Markers are surfaced bookkeeping, not offered frames.
+            if (frame is not StreamEvent.Dropped)
+            {
+                deliveredFrames++;
+            }
+        }
+
+        const ulong offered = 2 * (ulong)writes;
+        await Assert.That(stream.Dropped).IsGreaterThan(0);
+        await Assert.That((ulong)deliveredFrames + (ulong)stream.Dropped).IsEqualTo(offered);
+        await Assert.That(host.Hub.DroppedTotal).IsEqualTo(stream.Dropped);
+        await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The in-band drop marker carries the boundary of the dropped
+    /// region — the oldest sequence actually dropped (the gap start) —
+    /// and a reconnect from that boundary re-delivers the missed range:
+    /// the surfaced resume point never erases the gap.
+    /// </summary>
+    [Test]
+    public async Task APostDropReconnectRedeliversTheMissedRange()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        var stream = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: 1);
+        const int writes = 80;
+        for (var index = 1; index <= writes; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"d-{index:D3}", $"op-{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        var deliveredSequences = new HashSet<ulong>();
+        StreamEvent.Dropped? drop = null;
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            switch (frame)
+            {
+                case StreamEvent.Batch batch:
+                    foreach (var @event in batch.Body.Events)
+                    {
+                        deliveredSequences.Add(@event.Sequence);
+                    }
+
+                    break;
+                case StreamEvent.Trigger trigger:
+                    deliveredSequences.Add(trigger.Body.Sequence);
+                    break;
+                case StreamEvent.Dropped marker:
+                    drop ??= marker;
+                    break;
+            }
+        }
+
+        var offered = Enumerable.Range(1, writes).Select(sequence => (ulong)sequence).ToHashSet();
+        var missing = offered.Except(deliveredSequences).ToArray();
+        await Assert.That(missing).IsNotEmpty();
+        await Assert.That(drop).IsNotNull();
+
+        // The marker's boundary is the oldest sequence actually dropped.
+        await Assert.That(drop!.ResumeFrom).IsEqualTo(missing.Min());
+
+        // The reconnect from the surfaced boundary re-delivers the missed
+        // range (at-least-once): nothing the consumer missed is skipped.
+        var reconnect = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: drop.ResumeFrom);
+        var replayed = new HashSet<ulong>();
+        while (await reconnect.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            if (frame is StreamEvent.Batch batch)
+            {
+                foreach (var @event in batch.Body.Events)
+                {
+                    replayed.Add(@event.Sequence);
+                }
+            }
+        }
+
+        await Assert.That(replayed.IsSupersetOf(missing)).IsTrue();
+        await host.Hub.CloseAsync(reconnect, reason: "test-complete").ConfigureAwait(false);
+        await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
+    }
+
+    /// <summary>Acknowledging a stream records the consumer's checkpoint with the engine.</summary>
+    [Test]
+    public async Task AcknowledgingAStreamRecordsTheCheckpoint()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        await WriteAsync(caller, "d-01", "op-01");
+
+        await using var sse = await SseReader.OpenAsync(caller, "from=1");
+        var opened = await sse.ExpectAsync("opened");
+        var subscriptionId = opened.Data.RootElement.GetProperty("subscriptionId").GetUInt64();
+        await sse.ExpectAsync("batch");
+
+        var (status, body) = await HostHarness.SendAsync(caller, $"/v1/streams/{subscriptionId}/ack", new { throughSequence = 1 });
+        await Assert.That(status).IsEqualTo(200);
+        await Assert.That(body.RootElement.GetProperty("subscriptionId").GetUInt64()).IsEqualTo(subscriptionId);
+        await Assert.That(body.RootElement.GetProperty("acknowledgedThrough").GetUInt64()).IsEqualTo(1ul);
+    }
+
+    /// <summary>The stream lifecycle after close: an unknown subscription is refused as ended.</summary>
+    [Test]
+    public async Task ALifecycleFrameOnAClosedSubscriptionIsRefusedAsEnded()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        await WriteAsync(caller, "d-01", "op-01");
+
+        await using var sse = await SseReader.OpenAsync(caller, "from=1");
+        var opened = await sse.ExpectAsync("opened");
+        var subscriptionId = opened.Data.RootElement.GetProperty("subscriptionId").GetUInt64();
+        await sse.ExpectAsync("batch");
+
+        // The consumer closes its stream: the engine unsubscribes and
+        // the close frame reaches the consumer.
+        var (closed, _) = await HostHarness.SendAsync(caller, $"/v1/streams/{subscriptionId}", method: "DELETE");
+        await Assert.That(closed).IsEqualTo(200);
+        var closeEvent = await sse.ExpectAsync("closed");
+        await Assert.That(closeEvent.Data.RootElement.GetProperty("reason").GetString()).IsEqualTo("replaced");
+
+        // A lifecycle frame naming the closed subscription is refused
+        // as ended — truthfully, without a tenant-refused audit.
+        var (ackStatus, ackBody) = await HostHarness.SendAsync(caller, $"/v1/streams/{subscriptionId}/ack", new { throughSequence = 1 });
+        await Assert.That(ackStatus).IsEqualTo(410);
+        await Assert.That(ackBody.RootElement.GetProperty("code").GetString()).IsEqualTo("subscription-ended");
+        await Assert.That(host.Audit.Recent(16).Any(record => record.Kind == AuditKind.TenantRefused)).IsFalse();
+    }
+
+    /// <summary>A non-WebSocket request to the WebSocket endpoint is refused plainly.</summary>
+    [Test]
+    public async Task APlainGetOnTheWebSocketEndpointIsRefused()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        var (status, _) = await HostHarness.SendAsync(caller, "/v1/streams/ws");
+        await Assert.That(status).IsEqualTo(400);
+    }
+    /// <summary>
+    /// Folds shed while a drop marker sat queued-but-unread survive the
+    /// marker's delivery: the next region's marker carries a boundary no
+    /// newer than those folds, so a shed region is never left unsurfaced
+    /// in-band (re-gate MINOR at integration, 2026-08-27).
+    /// </summary>
+    [Test]
+    public async Task ASecondRegionsMarkerKeepsFoldsFromWhileTheFirstWaited()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        var stream = await host.Hub.OpenAsync("tenant-a", "backend-operator", null, fromSequence: 1);
+
+        // Region 1: overflow the 64-deep queue with no consumer, then keep
+        // writing while the first marker sits queued (those folds are the
+        // point of the row).
+        ulong lastDelivered = 0;
+        StreamEvent.Dropped? first = null;
+        for (var index = 1; index <= 80; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"a-{index:D3}", $"op-a{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        for (var index = 81; index <= 100; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"a-{index:D3}", $"op-a{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            switch (frame)
+            {
+                case StreamEvent.Batch batch:
+                    lastDelivered = batch.Body.Events[^1].Sequence;
+                    break;
+                case StreamEvent.Trigger trigger:
+                    lastDelivered = trigger.Body.Sequence;
+                    break;
+                case StreamEvent.Dropped marker:
+                    first ??= marker;
+                    break;
+            }
+
+        }
+
+        // Drain FULLY: the leftover queue must not mask the row — any
+        // queued region-1.5 frame would fold an old boundary into region
+        // 2's marker no matter the wipe, so the queue is emptied before
+        // region 2 begins.
+        await Assert.That(first).IsNotNull();
+        var boundaryAfterFirst = lastDelivered;
+
+        // Region 2: overflow again after the first marker was delivered.
+        for (var index = 101; index <= 140; index++)
+        {
+            var (status, _) = await WriteAsync(caller, $"a-{index:D3}", $"op-a{index:D3}");
+            await Assert.That(status).IsEqualTo(200);
+        }
+
+        StreamEvent.Dropped? second = null;
+        while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
+        {
+            if (frame is StreamEvent.Dropped marker && !ReferenceEquals(marker, first))
+            {
+                second = marker;
+                break;
+            }
+        }
+
+        await Assert.That(second).IsNotNull();
+        // The second marker must not point past the folds shed while the
+        // first marker waited: its boundary stays within region 1.5's span
+        // (at most its last written sequence) instead of jumping to region
+        // 2's own oldest. boundaryAfterFirst pins that the drain really
+        // reached the marker (it is at most the queue's depth).
+        const ulong region15Last = 100;
+        await Assert.That(boundaryAfterFirst).IsLessThanOrEqualTo(region15Last);
+        await Assert.That(second!.ResumeFrom).IsLessThanOrEqualTo(region15Last);
+        await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
+    }
+
+}
+
+/// <summary>The stream-queue reader half the drop row needs: drains with a bound.</summary>
+file static class BackboneStreamReading
+{
+    /// <summary>Reads the next frame of the stream with a timeout bound.</summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="within">The bound.</param>
+    /// <returns>The frame, or <c>null</c> when the stream ended or the bound elapsed.</returns>
+    public static async Task<StreamEvent?> ReadAsync(this BackboneStream stream, TimeSpan within)
+    {
+        using var bound = new CancellationTokenSource(within);
+        try
+        {
+            return await stream.ReadAsync(bound.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+
+}

@@ -1,0 +1,94 @@
+using System.Text.Json;
+using TerraBase;
+
+await StoragePortIsAtomicAndVersioned();
+MetricsAreBoundedAndPrometheusCompatible();
+LifecycleAndReadinessFailClosed();
+Console.WriteLine("TerraBase focused tests passed.");
+
+static async Task StoragePortIsAtomicAndVersioned()
+{
+    await using var engine = TerraBaseEngine.Open();
+    var key = new DocumentKey(new TenantId("tenant-a"), new CollectionId("users"), "user-1");
+    using var body = JsonDocument.Parse("{\"name\":\"Ada\"}");
+
+    var created = await engine.Documents.UpsertAsync(key, body.RootElement, DocumentPrecondition.Missing);
+    Assert(created.Outcome == WriteOutcome.Created, "the first write must create a document");
+    Assert(created.Document?.Version == 1, "the first version must be one");
+
+    var conflict = await engine.Documents.UpsertAsync(key, body.RootElement, DocumentPrecondition.Version(99));
+    Assert(conflict.Outcome == WriteOutcome.Conflict, "a stale version must be refused");
+
+    using var changedBody = JsonDocument.Parse("{\"name\":\"Grace\"}");
+    var updated = await engine.Documents.UpsertAsync(key, changedBody.RootElement, DocumentPrecondition.Version(1));
+    Assert(updated.Outcome == WriteOutcome.Updated && updated.Document?.Version == 2, "a matching version must update atomically");
+
+    var read = await engine.Documents.ReadAsync(key);
+    Assert(read?.Body.GetProperty("name").GetString() == "Grace", "reads must return the committed body");
+
+    var scanned = new List<Document>();
+    await foreach (var document in engine.Documents.ScanAsync(key.Tenant, key.Collection))
+    {
+        scanned.Add(document);
+    }
+
+    Assert(scanned.Count == 1 && scanned[0].Key == key, "collection scans must be deterministic");
+    var deleted = await engine.Documents.DeleteAsync(key, DocumentPrecondition.Version(2));
+    Assert(deleted.Outcome == WriteOutcome.Deleted, "a matching delete must remove the document");
+    Assert(await engine.Documents.ReadAsync(key) is null, "deleted documents must not be readable");
+}
+
+static void MetricsAreBoundedAndPrometheusCompatible()
+{
+    var metrics = new MetricsRegistry();
+    metrics.SetComponentHealth(Component.Storage, HealthStatus.Healthy);
+    metrics.SetComponentHealth(Component.Replication, HealthStatus.Healthy);
+    metrics.SetComponentHealth(Component.Membership, HealthStatus.Healthy);
+    metrics.SetServiceState(ServiceState.Serving);
+    metrics.RecordRequest(Region.Gru, Operation.Read, Outcome.Success, TimeSpan.FromMilliseconds(8));
+    metrics.RecordRequest(Region.Gru, Operation.Read, Outcome.Success, TimeSpan.FromMilliseconds(60));
+
+    var snapshot = metrics.Snapshot();
+    var series = snapshot.Requests.Single();
+    Assert(snapshot.Ready, "serving with required healthy components must be ready");
+    Assert(series.Total == 2 && series.Duration.CumulativeBuckets[1] == 1, "histograms must expose cumulative buckets");
+
+    var exposition = snapshot.RenderPrometheus();
+    Assert(exposition.Contains("terrabase_requests_total{region=\"GRU\",operation=\"read\",outcome=\"success\"} 2", StringComparison.Ordinal), "request counters must use closed labels");
+    Assert(exposition.Contains("terrabase_request_duration_seconds_bucket", StringComparison.Ordinal), "request histograms must be rendered");
+    Assert(!exposition.Contains("tenant-a", StringComparison.Ordinal), "customer identities must not become metric labels");
+}
+
+static void LifecycleAndReadinessFailClosed()
+{
+    var metrics = new MetricsRegistry();
+    Assert(!metrics.Snapshot().Ready, "starting services must not be ready");
+    Assert(metrics.Snapshot().IsLive, "starting services must be live");
+    metrics.SetComponentHealth(Component.Storage, HealthStatus.Healthy);
+    metrics.SetComponentHealth(Component.Replication, HealthStatus.Healthy);
+    metrics.SetComponentHealth(Component.Membership, HealthStatus.Healthy);
+    metrics.SetServiceState(ServiceState.Serving);
+    metrics.SetServiceState(ServiceState.Draining);
+    metrics.SetServiceState(ServiceState.Stopped);
+    Assert(!metrics.Snapshot().IsLive, "stopped services must not be live");
+
+    var invalid = false;
+    try
+    {
+        metrics.SetServiceState(ServiceState.Serving);
+    }
+    catch (InvalidOperationException)
+    {
+        invalid = true;
+    }
+
+    Assert(invalid, "a stopped service must not return to serving");
+}
+
+static void Assert(bool condition, string message)
+{
+    if (!condition)
+    {
+        throw new InvalidOperationException(message);
+    }
+}

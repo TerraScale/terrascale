@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- TerraBase.Cli — the C# operator CLI (ticket SE-13, charter        -->
+  <!-- PD-2026-08-26-01/02; ADR 0005): drives the API host's typed HTTP    -->
+  <!-- surface by default and, in its documented direct mode, the same    -->
+  <!-- typed operation set against a local engine process through the     -->
+  <!-- SE-14 TerraBase.Protocol client over the required UDS binding      -->
+  <!-- (PD-2026-08-26-11 D1). JSON surfaces use System.Text.Json only;    -->
+  <!-- machine output is a versioned envelope; no credentials exist on    -->
+  <!-- this local surface and none are logged.                            -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>preview</LangVersion>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>TerraBase.Cli</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Packaging: a framework-dependent tool published per the CLI
+         README (dotnet publish/pack); no run-time package output. -->
+    <PackAsTool>false</PackAsTool>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The direct mode's only engine path: the SE-14 client (never a
+         raw socket, never a C ABI — the SE-08 probes own that rule). -->
+    <ProjectReference Include="..\..\host\TerraBase.Protocol\TerraBase.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TerraBase.Cli.Tests" />
+  </ItemGroup>
+
+</Project>
