@@ -39,7 +39,14 @@ public sealed partial class EngineSupervisor
                 outcome: AuditOutcome.Noted,
                 detail: $"generation {this.Generation}, binding {this.Options.SocketPath}");
         }
-        catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException)
+        catch (OperationCanceledException)
+        {
+            this.SetStartupUnavailable();
+            await this.CloseChannelsAsync().ConfigureAwait(false);
+            await this.StopManagedProcessAsync().ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException or System.ComponentModel.Win32Exception)
         {
             // A startup failure owns the channels it opened. In
             // particular, the process-exit callback can race this path
@@ -47,6 +54,7 @@ public sealed partial class EngineSupervisor
             // here or wait on the same gate recursively.
             this.SetStartupUnavailable();
             await this.CloseChannelsAsync().ConfigureAwait(false);
+            await this.StopManagedProcessAsync().ConfigureAwait(false);
             throw failure is EngineUnavailableException
                 ? failure
                 : new EngineUnavailableException($"the engine endpoint could not start: {failure.Message}");
@@ -209,11 +217,15 @@ public sealed partial class EngineSupervisor
         catch (OperationCanceledException)
         {
             this.SetStatus(EngineStatus.Unavailable);
+            await this.CloseChannelsAsync().ConfigureAwait(false);
+            await this.StopManagedProcessAsync().ConfigureAwait(false);
             throw;
         }
         catch (Exception failure)
         {
             this.SetStatus(EngineStatus.Unavailable);
+            await this.CloseChannelsAsync().ConfigureAwait(false);
+            await this.StopManagedProcessAsync().ConfigureAwait(false);
             this.audit.Record(
                 AuditKind.EngineLost,
                 tenant: null,
@@ -243,23 +255,7 @@ public sealed partial class EngineSupervisor
         }
 
         this.stopped.Cancel();
-        if (this.engineProcess is { } process)
-        {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch (InvalidOperationException)
-            {
-                // The process had already exited; disposal continues.
-            }
-
-            process.Dispose();
-        }
-
+        await this.StopManagedProcessAsync().ConfigureAwait(false);
         await this.CloseChannelsAsync().ConfigureAwait(false);
         this.Sessions.Clear();
         this.bindGate.Dispose();

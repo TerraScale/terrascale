@@ -491,9 +491,18 @@ public sealed class TbepChannel : IAsyncDisposable
     private async Task DisposeCoreAsync()
     {
         Task writersIdle;
+        Exception? failure = null;
         this.MarkClosed();
         this.FailPending(new TbepException("the engine channel is closed"));
-        this.disposed.Cancel();
+        try
+        {
+            this.disposed.Cancel();
+        }
+        catch (Exception cancellationFailure)
+        {
+            failure = cancellationFailure;
+        }
+
         lock (this.gate)
         {
             writersIdle = this.writersIdle.Task;
@@ -502,15 +511,38 @@ public sealed class TbepChannel : IAsyncDisposable
         try
         {
             await this.client.DisposeAsync().ConfigureAwait(false);
-            await this.reading.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+        catch (Exception disposeFailure)
+        {
+            failure ??= disposeFailure;
+        }
+
+        await this.reading.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        try
+        {
             await writersIdle.ConfigureAwait(false);
+        }
+        catch (Exception writerFailure)
+        {
+            failure ??= writerFailure;
+        }
+
+        try
+        {
             this.writeGate.Dispose();
-            this.disposed.Dispose();
+        }
+        catch (Exception gateFailure)
+        {
+            failure ??= gateFailure;
+        }
+
+        this.disposed.Dispose();
+        if (failure is null)
+        {
             this.disposal.TrySetResult(null);
         }
-        catch (Exception failure)
+        else
         {
-            this.disposed.Dispose();
             this.disposal.TrySetException(failure);
         }
     }
@@ -549,9 +581,9 @@ public sealed class TbepChannel : IAsyncDisposable
                 this.pending[correlation] = completion;
             }
 
-            var frame = TbepWire.Seal(TbepRegistry.RequestKindOf(operation), correlation, 0, idempotency, body);
             try
             {
+                var frame = TbepWire.Seal(TbepRegistry.RequestKindOf(operation), correlation, 0, idempotency, body);
                 await TbepWire.WriteFrame(this.stream, frame).ConfigureAwait(false);
             }
             catch (TbepWire.WireException)

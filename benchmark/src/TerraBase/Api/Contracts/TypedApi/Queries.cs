@@ -9,11 +9,18 @@ public sealed partial class TypedApi
     // Queries (forwarded typed operations)
     // ------------------------------------------------------------------
 
-    internal async Task<IResult> QueryExecuteAsync(HttpContext context, QueryRequestDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> QueryExecuteAsync(HttpContext context, QueryRequestDto? request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
             return refused;
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.Text))
+        {
+            return Results.Json(
+                new ErrorDto("input-invalid", "query text is required"),
+                statusCode: StatusCodes.Status400BadRequest);
         }
 
         var caller = ResolveCaller(context);

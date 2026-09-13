@@ -9,7 +9,7 @@ __pycache__/
 *.pyc
 
 # Local, generated runtime and benchmark output.
-/benches/results/
+/bench/results/
 /.terrascale/
 /bench/.member/
 /bench/.member-*/

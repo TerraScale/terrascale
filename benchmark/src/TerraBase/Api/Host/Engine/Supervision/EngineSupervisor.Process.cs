@@ -27,6 +27,11 @@ public sealed partial class EngineSupervisor
             return;
         }
 
+        if (current is not null && Interlocked.CompareExchange(ref this.engineProcess, null, current) == current)
+        {
+            current.Dispose();
+        }
+
         var instance = checked(this.Generation + 1);
         var start = new ProcessStartInfo
         {
@@ -51,6 +56,39 @@ public sealed partial class EngineSupervisor
         process.Exited += (_, _) => _ = this.LoseEngineAsync("the engine process exited");
 
         await WaitForSocketAsync(this.Options.SocketPath, this.Options.StartTimeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task StopManagedProcessAsync()
+    {
+        var process = Volatile.Read(ref this.engineProcess);
+        if (process is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().ConfigureAwait(false);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited between the liveness check and cleanup.
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // The process was already reaped by the operating system.
+        }
+        finally
+        {
+            if (Interlocked.CompareExchange(ref this.engineProcess, null, process) == process)
+            {
+                process.Dispose();
+            }
+        }
     }
 
     private static async Task WaitForSocketAsync(string path, TimeSpan timeout, CancellationToken cancellationToken)

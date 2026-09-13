@@ -9,8 +9,8 @@ moment that produced it, per the limits each results document carries.
 
 Every MEASURED launch member — the TerraBase member, PostgreSQL /
 pgbouncer / pgrest, RavenDB — runs capped at **2 OCPU / 12 GiB RAM**
-(`bench/scripts/resource-envelope.sh`, spec `2ocpu/12GiB`: two-CPU
-affinity inside a `systemd-run` scope holding the memory ceiling).
+(spec `2ocpu/12GiB`: two-CPU affinity inside a `systemd-run` scope
+holding the memory ceiling).
 Load generators (the bench lane process) are NOT capped: they are the
 instrument, not the subject. Disk is unfenced; write-family numbers must
 be read next to the ambient `io-pressure` snapshot the runner records.
@@ -217,5 +217,4 @@ Status: **unavailable** — no served-boundary receipt was retained.
 | unknown | cross_region | unavailable | - | - | - |
 
 <!-- E-13 sync END -->
-
 

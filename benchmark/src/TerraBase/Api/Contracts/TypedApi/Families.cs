@@ -11,11 +11,26 @@ public sealed partial class TypedApi
     // Families (forwarded typed operations)
     // ------------------------------------------------------------------
 
-    internal async Task<IResult> FamilyReadAsync(HttpContext context, string family, string name, FamilyRequestDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> FamilyReadAsync(HttpContext context, string family, string name, FamilyRequestDto? request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
             return refused;
+        }
+
+        if (this.Scope(context, family) is { } invalidFamily)
+        {
+            return invalidFamily;
+        }
+
+        if (this.Scope(context, name) is { } invalidName)
+        {
+            return invalidName;
+        }
+
+        if (InvalidFamilyRequest(request) is { } invalidRequest)
+        {
+            return invalidRequest;
         }
 
         var caller = ResolveCaller(context);
@@ -39,11 +54,26 @@ public sealed partial class TypedApi
         }
     }
 
-    internal async Task<IResult> FamilyWriteAsync(HttpContext context, string family, string name, FamilyRequestDto request, CancellationToken cancellationToken)
+    internal async Task<IResult> FamilyWriteAsync(HttpContext context, string family, string name, FamilyRequestDto? request, CancellationToken cancellationToken)
     {
         if (this.Gate(context) is { } refused)
         {
             return refused;
+        }
+
+        if (this.Scope(context, family) is { } invalidFamily)
+        {
+            return invalidFamily;
+        }
+
+        if (this.Scope(context, name) is { } invalidName)
+        {
+            return invalidName;
+        }
+
+        if (InvalidFamilyRequest(request) is { } invalidRequest)
+        {
+            return invalidRequest;
         }
 
         if (Idempotency(context) is { } badKey)
@@ -81,5 +111,12 @@ public sealed partial class TypedApi
     }
 
     // ------------------------------------------------------------------
+
+    private static IResult? InvalidFamilyRequest(FamilyRequestDto? request) =>
+        request is null || string.IsNullOrWhiteSpace(request.RequestCodec) || string.IsNullOrWhiteSpace(request.Request)
+            ? Results.Json(
+                new ErrorDto("input-invalid", "family requests require a codec and base64 request bytes"),
+                statusCode: StatusCodes.Status400BadRequest)
+            : null;
 
 }
