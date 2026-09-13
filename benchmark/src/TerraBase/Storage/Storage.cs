@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 
@@ -182,6 +183,7 @@ public sealed class InMemoryStorageProvider : IStorageProvider
 {
     private readonly object gate = new();
     private readonly Dictionary<DocumentKey, Document> documents = new();
+    private readonly Dictionary<DocumentKey, ulong> versionWatermarks = new();
     private bool disposed;
 
     /// <inheritdoc />
@@ -212,9 +214,11 @@ public sealed class InMemoryStorageProvider : IStorageProvider
                 return ValueTask.FromResult(StorageWriteResult.Conflict);
             }
 
-            var version = current is null ? 1UL : checked(current.Version + 1);
+            var previousVersion = versionWatermarks.GetValueOrDefault(key);
+            var version = checked(previousVersion + 1);
             var document = new Document(key, body, version, DateTimeOffset.UtcNow);
             documents[key] = document;
+            versionWatermarks[key] = version;
             var outcome = current is null ? WriteOutcome.Created : WriteOutcome.Updated;
             return ValueTask.FromResult(new StorageWriteResult(outcome, document));
         }
@@ -278,6 +282,7 @@ public sealed class InMemoryStorageProvider : IStorageProvider
         {
             disposed = true;
             documents.Clear();
+            versionWatermarks.Clear();
         }
 
         return ValueTask.CompletedTask;
@@ -300,9 +305,13 @@ public sealed class FileStorageProvider : IStorageProvider
 {
     private const int StorageFormatVersion = 1;
     private static readonly JsonSerializerOptions serializerOptions = new(JsonSerializerDefaults.General);
+    private static readonly ConcurrentDictionary<string, object> pathGates =
+        new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly object gate = new();
     private readonly Dictionary<DocumentKey, Document> documents = new();
+    private readonly Dictionary<DocumentKey, ulong> versionWatermarks = new();
     private readonly string storagePath;
+    private readonly object pathGate;
     private bool disposed;
 
     /// <summary>Opens a durable provider at the supplied file path.</summary>
@@ -312,25 +321,30 @@ public sealed class FileStorageProvider : IStorageProvider
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         storagePath = Path.GetFullPath(path);
-        if (Directory.Exists(storagePath))
-        {
-            throw new IOException($"The storage path is a directory: {storagePath}");
-        }
+        pathGate = pathGates.GetOrAdd(storagePath, static _ => new object());
 
-        var parent = Path.GetDirectoryName(storagePath);
-        if (parent is null)
+        lock (pathGate)
         {
-            throw new IOException($"The storage path has no parent directory: {storagePath}");
-        }
+            if (Directory.Exists(storagePath))
+            {
+                throw new IOException($"The storage path is a directory: {storagePath}");
+            }
 
-        Directory.CreateDirectory(parent);
-        if (File.Exists(storagePath))
-        {
-            LoadSnapshot();
-        }
-        else
-        {
-            PersistSnapshot();
+            var parent = Path.GetDirectoryName(storagePath);
+            if (parent is null)
+            {
+                throw new IOException($"The storage path has no parent directory: {storagePath}");
+            }
+
+            Directory.CreateDirectory(parent);
+            if (File.Exists(storagePath))
+            {
+                LoadSnapshot();
+            }
+            else
+            {
+                PersistSnapshot();
+            }
         }
     }
 
@@ -344,7 +358,11 @@ public sealed class FileStorageProvider : IStorageProvider
         lock (gate)
         {
             ThrowIfDisposed();
-            return ValueTask.FromResult(documents.GetValueOrDefault(key));
+            lock (pathGate)
+            {
+                LoadSnapshot();
+                return ValueTask.FromResult(documents.GetValueOrDefault(key));
+            }
         }
     }
 
@@ -359,26 +377,32 @@ public sealed class FileStorageProvider : IStorageProvider
         lock (gate)
         {
             ThrowIfDisposed();
-            var current = documents.GetValueOrDefault(key);
-            if (!precondition.Matches(current))
+            lock (pathGate)
             {
-                return ValueTask.FromResult(StorageWriteResult.Conflict);
-            }
+                LoadSnapshot();
+                var current = documents.GetValueOrDefault(key);
+                if (!precondition.Matches(current))
+                {
+                    return ValueTask.FromResult(StorageWriteResult.Conflict);
+                }
 
-            var document = new Document(key, body, current is null ? 1UL : checked(current.Version + 1), DateTimeOffset.UtcNow);
-            documents[key] = document;
-            try
-            {
-                PersistSnapshot();
-            }
-            catch
-            {
-                Restore(key, current);
-                throw;
-            }
+                var previousVersion = versionWatermarks.GetValueOrDefault(key);
+                var document = new Document(key, body, checked(previousVersion + 1), DateTimeOffset.UtcNow);
+                documents[key] = document;
+                versionWatermarks[key] = document.Version;
+                try
+                {
+                    PersistSnapshot();
+                }
+                catch
+                {
+                    Restore(key, current, previousVersion);
+                    throw;
+                }
 
-            var outcome = current is null ? WriteOutcome.Created : WriteOutcome.Updated;
-            return ValueTask.FromResult(new StorageWriteResult(outcome, document));
+                var outcome = current is null ? WriteOutcome.Created : WriteOutcome.Updated;
+                return ValueTask.FromResult(new StorageWriteResult(outcome, document));
+            }
         }
     }
 
@@ -392,29 +416,33 @@ public sealed class FileStorageProvider : IStorageProvider
         lock (gate)
         {
             ThrowIfDisposed();
-            var current = documents.GetValueOrDefault(key);
-            if (current is null)
+            lock (pathGate)
             {
-                return ValueTask.FromResult(StorageWriteResult.NotFound);
-            }
+                LoadSnapshot();
+                var current = documents.GetValueOrDefault(key);
+                if (current is null)
+                {
+                    return ValueTask.FromResult(StorageWriteResult.NotFound);
+                }
 
-            if (!precondition.Matches(current))
-            {
-                return ValueTask.FromResult(StorageWriteResult.Conflict);
-            }
+                if (!precondition.Matches(current))
+                {
+                    return ValueTask.FromResult(StorageWriteResult.Conflict);
+                }
 
-            documents.Remove(key);
-            try
-            {
-                PersistSnapshot();
-            }
-            catch
-            {
-                documents[key] = current;
-                throw;
-            }
+                documents.Remove(key);
+                try
+                {
+                    PersistSnapshot();
+                }
+                catch
+                {
+                    documents[key] = current;
+                    throw;
+                }
 
-            return ValueTask.FromResult(new StorageWriteResult(WriteOutcome.Deleted, current));
+                return ValueTask.FromResult(new StorageWriteResult(WriteOutcome.Deleted, current));
+            }
         }
     }
 
@@ -428,11 +456,15 @@ public sealed class FileStorageProvider : IStorageProvider
         lock (gate)
         {
             ThrowIfDisposed();
-            snapshot = documents
-                .Where(pair => pair.Key.Tenant == tenant && pair.Key.Collection == collection)
-                .OrderBy(pair => pair.Key.DocumentId, StringComparer.Ordinal)
-                .Select(pair => pair.Value)
-                .ToArray();
+            lock (pathGate)
+            {
+                LoadSnapshot();
+                snapshot = documents
+                    .Where(pair => pair.Key.Tenant == tenant && pair.Key.Collection == collection)
+                    .OrderBy(pair => pair.Key.DocumentId, StringComparer.Ordinal)
+                    .Select(pair => pair.Value)
+                    .ToArray();
+            }
         }
 
         foreach (var document in snapshot)
@@ -450,6 +482,7 @@ public sealed class FileStorageProvider : IStorageProvider
         {
             disposed = true;
             documents.Clear();
+            versionWatermarks.Clear();
         }
 
         return ValueTask.CompletedTask;
@@ -457,29 +490,37 @@ public sealed class FileStorageProvider : IStorageProvider
 
     private void LoadSnapshot()
     {
+        StorageSnapshot snapshot;
         try
         {
             using var stream = File.OpenRead(storagePath);
-            var snapshot = JsonSerializer.Deserialize<StorageSnapshot>(stream, serializerOptions)
+            snapshot = JsonSerializer.Deserialize<StorageSnapshot>(stream, serializerOptions)
                 ?? throw new InvalidDataException("The storage snapshot is empty.");
             if (snapshot.FormatVersion != StorageFormatVersion)
             {
                 throw new InvalidDataException($"Unsupported storage snapshot format {snapshot.FormatVersion}.");
             }
 
+            var loaded = new Dictionary<DocumentKey, Document>();
             foreach (var persisted in snapshot.Documents)
             {
                 var key = new DocumentKey(
                     new TenantId(persisted.Tenant),
                     new CollectionId(persisted.Collection),
                     persisted.DocumentId);
-                if (documents.ContainsKey(key))
+                if (loaded.ContainsKey(key))
                 {
                     throw new InvalidDataException($"The storage snapshot contains duplicate key {key}.");
                 }
 
                 using var body = JsonDocument.Parse(persisted.Body);
-                documents.Add(key, new Document(key, body.RootElement, persisted.Version, persisted.UpdatedAt));
+                loaded.Add(key, new Document(key, body.RootElement, persisted.Version, persisted.UpdatedAt));
+            }
+
+            documents.Clear();
+            foreach (var (key, document) in loaded)
+            {
+                documents.Add(key, document);
             }
         }
         catch (JsonException failure)

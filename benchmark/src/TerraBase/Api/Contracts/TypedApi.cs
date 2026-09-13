@@ -58,31 +58,51 @@ public sealed class TypedApi
             statusCode: status == "serving" ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
     }
 
-    internal IResult Metrics() => Results.Json(new MetricsResponse(
-        EngineGeneration: this.supervisor.Generation,
-        EngineRestarts: this.supervisor.Restarts,
-        EngineStatus: this.supervisor.Status.ToString().ToLowerInvariant(),
-        OpenStreams: this.hub.OpenCount,
-        DroppedFrames: this.hub.DroppedTotal,
-        TrackedSessions: this.supervisor.Sessions.Count,
-        AuditRecords: this.audit.Count));
+    internal IResult Metrics(HttpContext context)
+    {
+        if (this.Gate(context, "observer", "operator") is { } refused)
+        {
+            return refused;
+        }
 
-    internal IResult Audit(int limit = 100) => Results.Json(new AuditResponse(this.audit.Recent(Math.Clamp(limit, 1, AuditLog.Capacity))));
+        return Results.Json(new MetricsResponse(
+            EngineGeneration: this.supervisor.Generation,
+            EngineRestarts: this.supervisor.Restarts,
+            EngineStatus: this.supervisor.Status.ToString().ToLowerInvariant(),
+            OpenStreams: this.hub.OpenCount,
+            DroppedFrames: this.hub.DroppedTotal,
+            TrackedSessions: this.supervisor.Sessions.Count,
+            AuditRecords: this.audit.Count));
+    }
+
+    internal IResult Audit(HttpContext context, int limit = 100)
+    {
+        if (this.Gate(context, "observer", "operator") is { } refused)
+        {
+            return refused;
+        }
+
+        var records = this.audit
+            .Recent(Math.Clamp(limit, 1, AuditLog.Capacity))
+            .Select(PublicAudit)
+            .ToArray();
+        return Results.Json(new AuditResponse(records));
+    }
 
     internal async Task<IResult> EngineHealthAsync(HttpContext context, CancellationToken cancellationToken)
     {
-        if (this.Gate(context) is { } refused)
+        if (this.Gate(context, "observer", "operator") is { } refused)
         {
             return refused;
         }
 
         var health = await this.supervisor.HealthAsync(cancellationToken).ConfigureAwait(false);
-        return Results.Json(health);
+        return Results.Json(PublicHealth(health));
     }
 
     internal async Task<IResult> EngineStatusAsync(HttpContext context, CancellationToken cancellationToken)
     {
-        if (this.Gate(context) is { } refused)
+        if (this.Gate(context, "observer", "operator") is { } refused)
         {
             return refused;
         }
@@ -107,7 +127,7 @@ public sealed class TypedApi
 
     internal async Task<IResult> EngineTopologyAsync(HttpContext context, CancellationToken cancellationToken)
     {
-        if (this.Gate(context) is { } refused)
+        if (this.Gate(context, "observer", "operator") is { } refused)
         {
             return refused;
         }
@@ -132,9 +152,15 @@ public sealed class TypedApi
 
     internal async Task<IResult> EngineShutdownAsync(HttpContext context, ShutdownRequestDto request, CancellationToken cancellationToken)
     {
-        if (this.Gate(context) is { } refused)
+        if (this.Gate(context, "operator", "supervisor") is { } refused)
         {
             return refused;
+        }
+
+        var requiredRole = request.Reason == "supervisor" ? "supervisor" : "operator";
+        if (this.Gate(context, requiredRole) is { } roleRefused)
+        {
+            return roleRefused;
         }
 
         var caller = ResolveCaller(context);
@@ -825,7 +851,6 @@ public sealed class TypedApi
         try
         {
             stream = await this.hub.OpenAsync(caller.Tenant, caller.Principal, collections, from, cancellationToken).ConfigureAwait(false);
-            stream.Principal = caller.Principal;
         }
         catch (Exception failure)
         {
@@ -973,6 +998,24 @@ public sealed class TypedApi
         }
 
         var caller = ResolveCaller(context);
+        if (this.hub.TryGet(id, out var stream)
+            && stream is not null
+            && stream.Tenant == caller.Tenant)
+        {
+            try
+            {
+                // The hub owns the live stream and its pump. Closing through
+                // it removes the host registry entry and lets the engine's
+                // close notification drain before the queue completes.
+                await this.hub.CloseAsync(stream, reason: "consumer-requested").ConfigureAwait(false);
+                return Results.Json(new StreamAckResponseDto(id, 0));
+            }
+            catch (Exception failure)
+            {
+                return this.Failure(failure, caller);
+            }
+        }
+
         try
         {
             var answer = await this.supervisor

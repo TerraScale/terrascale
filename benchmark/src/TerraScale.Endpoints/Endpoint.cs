@@ -4,6 +4,51 @@ internal interface IRequestScopedEndpoint
 {
 }
 
+internal static class EndpointActivation
+{
+    internal static object Resolve(IServiceProvider services, Type endpointType, out bool manuallyCreated)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(endpointType);
+
+        if (services.GetService(endpointType) is { } endpoint)
+        {
+            manuallyCreated = false;
+            return endpoint;
+        }
+
+        manuallyCreated = true;
+        return ActivatorUtilities.CreateInstance(services, endpointType);
+    }
+
+    internal static ValueTask DisposeAsync(object endpoint)
+    {
+        if (endpoint is IAsyncDisposable asyncDisposable)
+        {
+            return asyncDisposable.DisposeAsync();
+        }
+
+        if (endpoint is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    internal static void DisposeSynchronously(object endpoint)
+    {
+        if (endpoint is IAsyncDisposable asyncDisposable)
+        {
+            asyncDisposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        else if (endpoint is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+    }
+}
+
 /// <summary>FastEndpoints-style base for one request/response endpoint.</summary>
 /// <typeparam name="TRequest">The bound request model.</typeparam>
 /// <typeparam name="TResponse">The response model or <see cref="IResult"/>.</typeparam>
@@ -61,14 +106,24 @@ public abstract class Endpoint<TRequest, TResponse> : IEndpoint, IRequestScopedE
             typeof(TResponse));
     }
 
-    private static Task<TResponse> HandleAsync(
+    private static async Task<TResponse> HandleAsync(
         HttpContext context,
         TRequest request,
         Type endpointType,
         CancellationToken cancellationToken)
     {
-        var endpoint = (Endpoint<TRequest, TResponse>)ActivatorUtilities.GetServiceOrCreateInstance(context.RequestServices, endpointType);
-        return endpoint.HandleAsync(request, cancellationToken);
+        var endpoint = (Endpoint<TRequest, TResponse>)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
+        try
+        {
+            return await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (manuallyCreated)
+            {
+                await EndpointActivation.DisposeAsync(endpoint).ConfigureAwait(false);
+            }
+        }
     }
 }
 
@@ -128,13 +183,23 @@ public abstract class EndpointWithoutRequest<TResponse> : IEndpoint, IRequestSco
             typeof(TResponse));
     }
 
-    private static Task<TResponse> HandleAsync(
+    private static async Task<TResponse> HandleAsync(
         HttpContext context,
         Type endpointType,
         CancellationToken cancellationToken)
     {
-        var endpoint = (EndpointWithoutRequest<TResponse>)ActivatorUtilities.GetServiceOrCreateInstance(context.RequestServices, endpointType);
-        return endpoint.HandleAsync(cancellationToken);
+        var endpoint = (EndpointWithoutRequest<TResponse>)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
+        try
+        {
+            return await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (manuallyCreated)
+            {
+                await EndpointActivation.DisposeAsync(endpoint).ConfigureAwait(false);
+            }
+        }
     }
 }
 
@@ -181,10 +246,20 @@ public abstract class Endpoint<TRequest> : EndpointSenderEndpoint, IEndpoint, IR
         Type endpointType,
         CancellationToken cancellationToken)
     {
-        var endpoint = (Endpoint<TRequest>)ActivatorUtilities.GetServiceOrCreateInstance(context.RequestServices, endpointType);
-        using var scope = endpoint.BeginSendScope();
-        await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
-        return scope.Result ?? Results.NoContent();
+        var endpoint = (Endpoint<TRequest>)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
+        try
+        {
+            using var scope = endpoint.BeginSendScope();
+            await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
+            return scope.Result ?? Results.NoContent();
+        }
+        finally
+        {
+            if (manuallyCreated)
+            {
+                await EndpointActivation.DisposeAsync(endpoint).ConfigureAwait(false);
+            }
+        }
     }
 }
 
@@ -230,10 +305,20 @@ public abstract class EndpointWithoutRequest : EndpointSenderEndpoint, IEndpoint
         Type endpointType,
         CancellationToken cancellationToken)
     {
-        var endpoint = (EndpointWithoutRequest)ActivatorUtilities.GetServiceOrCreateInstance(context.RequestServices, endpointType);
-        using var scope = endpoint.BeginSendScope();
-        await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
-        return scope.Result ?? Results.NoContent();
+        var endpoint = (EndpointWithoutRequest)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
+        try
+        {
+            using var scope = endpoint.BeginSendScope();
+            await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
+            return scope.Result ?? Results.NoContent();
+        }
+        finally
+        {
+            if (manuallyCreated)
+            {
+                await EndpointActivation.DisposeAsync(endpoint).ConfigureAwait(false);
+            }
+        }
     }
 }
 

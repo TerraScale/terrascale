@@ -63,6 +63,9 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
     /// <summary>When set, the engine refuses every new binding (a draining engine).</summary>
     public bool Draining { get; set; }
 
+    /// <summary>Overrides the tenant in bind responses to exercise fail-closed validation.</summary>
+    public string? BindResponseTenant { get; set; }
+
     /// <summary>
     /// When set, the scripted engine owns the named collection for another
     /// tenant, so a schema declaration for it is refused typed (the
@@ -184,7 +187,7 @@ public sealed class ScriptedTbepEngine : IAsyncDisposable
                         writeGate,
                         "channel.bind",
                         request.Correlation,
-                        new ChannelBindResponse { Tenant = body.Tenant, ServingInstance = 1 }).ConfigureAwait(false);
+                        new ChannelBindResponse { Tenant = this.BindResponseTenant ?? body.Tenant, ServingInstance = 1 }).ConfigureAwait(false);
                     break;
                 }
 

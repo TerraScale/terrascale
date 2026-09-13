@@ -56,6 +56,9 @@ public sealed partial class TbepClient : IAsyncDisposable
     /// <summary>The bound tenant, or <c>null</c> before the channel binding.</summary>
     public string? Tenant => this.tenant;
 
+    /// <summary>The bound principal, or <c>null</c> before the channel binding.</summary>
+    public string? Principal => this.principal;
+
     /// <summary>Binds the channel to the backend-supplied principal and tenant (PD-2026-08-26-11 D1: no frame carries a tenant).</summary>
     /// <param name="principal">The backend principal.</param>
     /// <param name="tenant">The backend-supplied tenant the engine enforces.</param>
@@ -72,8 +75,7 @@ public sealed partial class TbepClient : IAsyncDisposable
             expect: TbepRegistry.ResponseKindOf("channel.bind"),
             cancellationToken).ConfigureAwait(false);
         var response = MessagePackSerializer.Deserialize<ChannelBindResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
-        this.tenant = tenant;
-        this.principal = principal;
+        this.AdoptBinding(response, tenant, principal);
         return response;
     }
 

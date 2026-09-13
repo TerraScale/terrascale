@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- TerraBase.Protocol.Tests — the C# half of the TBEP conformance -->
-  <!-- suite (SE-14, PD-2026-08-26-02 D4): the same golden-vector       -->
-  <!-- corpus the Rust runner replays (crates/terrabase-tbep/vectors/)  -->
-  <!-- drives this suite, so both languages must agree on every byte.   -->
+  <!-- suite (SE-14, PD-2026-08-26-02 D4). The exact engine-published    -->
+  <!-- corpus is vendored under this test project with a copy manifest;  -->
+  <!-- the project does not depend on an untracked Rust checkout.         -->
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -26,12 +26,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The committed cross-language corpus, copied beside the test
-         binary so this suite and the Rust runner read the same bytes. -->
-    <None
-      Include="..\..\crates\terrabase-tbep\vectors\tbep\**\*.json"
-      CopyToOutputDirectory="PreserveNewest"
-      Link="vectors\tbep\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- The tracked cross-language corpus and its integrity manifest are
+         copied beside the test binary. -->
+    <None Update="vectors\**\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

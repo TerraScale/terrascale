@@ -62,6 +62,9 @@ public sealed class TbepChannel : IAsyncDisposable
     /// <summary>The bound tenant, or <c>null</c> before the channel binding.</summary>
     public string? Tenant => this.client.Tenant;
 
+    /// <summary>The bound principal, or <c>null</c> before the channel binding.</summary>
+    public string? Principal => this.client.Principal;
+
     /// <summary>Answers whether the channel is closed: the engine ended it, or it was disposed.</summary>
     public bool IsClosed => Volatile.Read(ref this.closed);
 
@@ -78,7 +81,7 @@ public sealed class TbepChannel : IAsyncDisposable
             new ChannelBindRequest { Principal = principal, Tenant = tenant },
             idempotency: null,
             cancellationToken).ConfigureAwait(false);
-        this.client.AdoptTenant(tenant);
+        this.client.AdoptBinding(response, tenant, principal);
         return response;
     }
 
@@ -555,6 +558,15 @@ public sealed class TbepChannel : IAsyncDisposable
             try
             {
                 frame = await TbepWire.ReadFrame(this.stream).ConfigureAwait(false);
+
+                if (frame is null)
+                {
+                    this.FailPending(new TbepException("the engine closed the channel"));
+                    this.MarkClosed();
+                    return;
+                }
+
+                this.Dispatch(frame);
             }
             catch (Exception failure) when (failure is IOException or SocketException or ObjectDisposedException or TbepWire.WireException)
             {
@@ -562,15 +574,6 @@ public sealed class TbepChannel : IAsyncDisposable
                 this.MarkClosed();
                 return;
             }
-
-            if (frame is null)
-            {
-                this.FailPending(new TbepException("the engine closed the channel"));
-                this.MarkClosed();
-                return;
-            }
-
-            this.Dispatch(frame);
         }
     }
 
@@ -592,13 +595,13 @@ public sealed class TbepChannel : IAsyncDisposable
             switch (frame.Kind)
             {
                 case (ushort)TbepFrameKind.SubscriptionBatch:
-                    sink.OnBatch(MessagePackSerializer.Deserialize<SubscriptionBatch>(frame.Body, TbepOptions.Strict));
+                    sink.OnBatch(DecodeNotification<SubscriptionBatch>(frame));
                     break;
                 case (ushort)TbepFrameKind.TriggerNotification:
-                    sink.OnTrigger(MessagePackSerializer.Deserialize<TriggerNotification>(frame.Body, TbepOptions.Strict));
+                    sink.OnTrigger(DecodeNotification<TriggerNotification>(frame));
                     break;
                 case (ushort)TbepFrameKind.SubscriptionClosed:
-                    sink.OnClosed(MessagePackSerializer.Deserialize<SubscriptionClosed>(frame.Body, TbepOptions.Strict));
+                    sink.OnClosed(DecodeNotification<SubscriptionClosed>(frame));
                     break;
                 default:
                     return;
@@ -648,6 +651,22 @@ public sealed class TbepChannel : IAsyncDisposable
         }
     }
 
+    private static T DecodeNotification<T>(TbepWire.Frame frame)
+    {
+        try
+        {
+            return MessagePackSerializer.Deserialize<T>(frame.Body, TbepOptions.Strict);
+        }
+        catch (TbepWire.WireException)
+        {
+            throw;
+        }
+        catch (Exception failure)
+        {
+            throw TbepWire.FormatException($"malformed {TbepRegistry.KindName(frame.Kind)} body: {failure.Message}");
+        }
+    }
+
     private void FailPending(TbepException failure)
     {
         List<TaskCompletionSource<TbepWire.Frame>> waiting;
@@ -678,7 +697,21 @@ public sealed partial class TbepClient
     /// <summary>The channel's transport: the stream of the socket or QUIC channel this client opened.</summary>
     internal Stream Transport => this.stream;
 
-    /// <summary>Records the tenant a serving channel bound (the channel, not the caller, owns the binding).</summary>
-    /// <param name="tenant">The bound tenant.</param>
-    internal void AdoptTenant(string tenant) => this.tenant = tenant;
+    /// <summary>Records a validated serving-channel binding (the channel, not the caller, owns the identity).</summary>
+    /// <param name="response">The engine's binding response.</param>
+    /// <param name="tenant">The requested tenant.</param>
+    /// <param name="principal">The requested principal.</param>
+    internal void AdoptBinding(ChannelBindResponse response, string tenant, string principal)
+    {
+        if (!string.Equals(response.Tenant, tenant, StringComparison.Ordinal))
+        {
+            throw new TbepException(
+                "channel.bind",
+                ErrorCode.OperationRefused(),
+                $"the engine returned tenant '{response.Tenant}' for requested tenant '{tenant}'");
+        }
+
+        this.tenant = tenant;
+        this.principal = principal;
+    }
 }

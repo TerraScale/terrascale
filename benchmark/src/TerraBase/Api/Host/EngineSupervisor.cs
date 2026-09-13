@@ -29,7 +29,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
 {
     private readonly AuditLog audit;
     private readonly object gate = new();
-    private readonly Dictionary<string, TbepChannel> tenantChannels = [];
+    private readonly Dictionary<(string Tenant, string Principal), TbepChannel> tenantChannels = [];
     private readonly SemaphoreSlim bindGate = new(1, 1);
     private readonly SemaphoreSlim recovery = new(1, 1);
     private readonly CancellationTokenSource stopped = new();
@@ -107,8 +107,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
             this.SetStatus(EngineStatus.Starting);
             await this.EnsureEngineAsync(cancellationToken).ConfigureAwait(false);
             await this.OpenAdminChannelAsync(cancellationToken).ConfigureAwait(false);
-            Interlocked.Increment(ref this.generation);
-            this.SetStatus(EngineStatus.Serving);
+            this.PublishServing();
             this.audit.Record(
                 AuditKind.EngineStarted,
                 tenant: this.Options.AdminTenant,
@@ -116,6 +115,18 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 operation: "engine.start",
                 outcome: AuditOutcome.Noted,
                 detail: $"generation {this.Generation}, binding {this.Options.SocketPath}");
+        }
+        catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException)
+        {
+            // A startup failure owns the channels it opened. In
+            // particular, the process-exit callback can race this path
+            // while the recovery gate is held; do not call LoseEngineAsync
+            // here or wait on the same gate recursively.
+            this.SetStartupUnavailable();
+            await this.CloseChannelsAsync().ConfigureAwait(false);
+            throw failure is EngineUnavailableException
+                ? failure
+                : new EngineUnavailableException($"the engine endpoint could not start: {failure.Message}");
         }
         finally
         {
@@ -260,7 +271,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
     }
 
     /// <summary>
-    /// Borrows the caller's tenant channel directly — for the
+    /// Borrows the caller's tenant-principal channel directly — for the
     /// subscription endpoints, whose sinks outlive the initiating call.
     /// The first use of a channel binds it under the bind gate:
     /// concurrent first callers queue there, and a late arrival adopts
@@ -283,8 +294,8 @@ public sealed class EngineSupervisor : IAsyncDisposable
 
         while (true)
         {
-            var channel = this.EnsureChannel(tenant);
-            if (channel.Tenant == tenant)
+            var channel = this.EnsureChannel(tenant, principal);
+            if (channel.Tenant == tenant && channel.Principal == principal)
             {
                 return channel;
             }
@@ -293,14 +304,14 @@ public sealed class EngineSupervisor : IAsyncDisposable
             {
                 // A channel bound to another tenant is never handed out:
                 // discard it and start over (defense in depth).
-                await this.RemoveChannelAsync(tenant, channel).ConfigureAwait(false);
+                await this.RemoveChannelAsync(tenant, principal, channel).ConfigureAwait(false);
                 continue;
             }
 
             await this.bindGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                var current = this.EnsureChannel(tenant);
+                var current = this.EnsureChannel(tenant, principal);
                 if (!ReferenceEquals(current, channel))
                 {
                     // The channel this caller saw left the map while it
@@ -309,7 +320,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
                     channel = current;
                 }
 
-                if (channel.Tenant == tenant)
+                if (channel.Tenant == tenant && channel.Principal == principal)
                 {
                     // The first bind completed while this caller waited:
                     // adopt its outcome.
@@ -326,12 +337,12 @@ public sealed class EngineSupervisor : IAsyncDisposable
                     // engine refuses every new binding): the typed refusal
                     // propagates and the unbound channel is discarded — the
                     // fail-closed binding rule of PD-2026-08-26-11 D1.
-                    await this.RemoveChannelAsync(tenant, channel).ConfigureAwait(false);
+                    await this.RemoveChannelAsync(tenant, principal, channel).ConfigureAwait(false);
                     throw;
                 }
                 catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException)
                 {
-                    await this.RemoveChannelAsync(tenant, channel).ConfigureAwait(false);
+                    await this.RemoveChannelAsync(tenant, principal, channel).ConfigureAwait(false);
                     await this.LoseEngineAsync(failure.Message, cancellationToken: CancellationToken.None).ConfigureAwait(false);
                     continue;
                 }
@@ -352,10 +363,11 @@ public sealed class EngineSupervisor : IAsyncDisposable
         }
     }
 
-    /// <summary>Returns the tenant's tracked live channel, connecting a fresh one when there is none.</summary>
+    /// <summary>Returns the caller identity's tracked live channel, connecting a fresh one when there is none.</summary>
     /// <param name="tenant">The backend-supplied tenant.</param>
+    /// <param name="principal">The backend-supplied principal.</param>
     /// <returns>The channel to bind or serve on.</returns>
-    private TbepChannel EnsureChannel(string tenant)
+    private TbepChannel EnsureChannel(string tenant, string principal)
     {
         lock (this.gate)
         {
@@ -364,11 +376,12 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 ObjectDisposedException.ThrowIf(this.disposed, nameof(EngineSupervisor));
             }
 
-            if (!this.tenantChannels.TryGetValue(tenant, out var channel) || channel.IsClosed)
+            var identity = (tenant, principal);
+            if (!this.tenantChannels.TryGetValue(identity, out var channel) || channel.IsClosed)
             {
-                this.tenantChannels.Remove(tenant);
+                this.tenantChannels.Remove(identity);
                 channel = TbepChannel.Connect(this.Options.SocketPath);
-                this.tenantChannels[tenant] = channel;
+                this.tenantChannels[identity] = channel;
             }
 
             return channel;
@@ -538,20 +551,60 @@ public sealed class EngineSupervisor : IAsyncDisposable
             await channel.BindChannelAsync(this.Options.AdminPrincipal, this.Options.AdminTenant, cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (TbepException)
+        catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException)
         {
-            // The admin channel stays unbound: health and admin status
-            // reads need no tenant scope, and the next bind retries.
+            // Serving is published only after the supervisor's own
+            // channel is bound. A connected but unbound channel cannot
+            // represent a serving generation, even though health itself
+            // does not require tenant scope.
+            throw new EngineUnavailableException($"the admin channel could not bind: {failure.Message}");
+        }
+
+        if (channel.Tenant != this.Options.AdminTenant)
+        {
+            throw new EngineUnavailableException("the admin channel did not publish its tenant binding");
         }
     }
 
-    private async Task RemoveChannelAsync(string tenant, TbepChannel channel)
+    private void PublishServing()
     {
         lock (this.gate)
         {
-            if (this.tenantChannels.TryGetValue(tenant, out var tracked) && ReferenceEquals(tracked, channel))
+            if (this.status != EngineStatus.Starting)
             {
-                this.tenantChannels.Remove(tenant);
+                throw new EngineUnavailableException("the engine generation was lost during startup");
+            }
+
+            if (this.engineProcess is { HasExited: true })
+            {
+                this.status = EngineStatus.Unavailable;
+                throw new EngineUnavailableException("the engine process exited during startup");
+            }
+
+            Interlocked.Increment(ref this.generation);
+            this.status = EngineStatus.Serving;
+        }
+    }
+
+    private void SetStartupUnavailable()
+    {
+        lock (this.gate)
+        {
+            if (this.status == EngineStatus.Starting)
+            {
+                this.status = EngineStatus.Unavailable;
+            }
+        }
+    }
+
+    private async Task RemoveChannelAsync(string tenant, string principal, TbepChannel channel)
+    {
+        lock (this.gate)
+        {
+            var identity = (tenant, principal);
+            if (this.tenantChannels.TryGetValue(identity, out var tracked) && ReferenceEquals(tracked, channel))
+            {
+                this.tenantChannels.Remove(identity);
             }
         }
 

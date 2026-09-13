@@ -1,0 +1,65 @@
+{
+  "category": "region-route-change",
+  "description": "A region route change tells the session its serving region moved: a small advisory control frame; the client re-resolves the endpoint through the Platform and resumes from its checkpoint.",
+  "protocol": "terrascale.sync.v2",
+  "protocol_version": 2,
+  "schema": "terrascale.sync.v2/vector-corpus@2",
+  "server": {
+    "config": {
+      "batch_byte_budget": 8192,
+      "checkpoint_window": 128
+    },
+    "journal_before": [
+      {
+        "document": "d-01",
+        "operation_id": "op-000001",
+        "put": {
+          "f000": "v0001"
+        },
+        "sequence": 1
+      }
+    ],
+    "scope": {
+      "collection": "orders",
+      "tenant": "tenant-a"
+    }
+  },
+  "steps": [
+    {
+      "note": "the serving region changed under the live session"
+    },
+    {
+      "server_frame": {
+        "frame": {
+          "causation": 1,
+          "correlation": 201,
+          "kind": "region_route_change",
+          "region": "eu-1"
+        },
+        "wire": "020b00c9000000000000000100000000000000008ab9a5c8eb706a2d0e000000000000000b00040000000000000065752d31"
+      }
+    },
+    {
+      "note": "the client carries its checkpoint to the new region"
+    },
+    {
+      "client_frame": {
+        "frame": {
+          "causation": 201,
+          "checkpoint": {
+            "ends": [
+              [
+                1,
+                1
+              ]
+            ],
+            "storage_sequence": 1
+          },
+          "correlation": 1,
+          "kind": "checkpoint_ack"
+        },
+        "wire": "0205000100000000000000c90000000000000000dd2d51072c866dec270000000000000005001d000000000000000201000000000000000100000001000000000000000100000000000000"
+      }
+    }
+  ]
+}

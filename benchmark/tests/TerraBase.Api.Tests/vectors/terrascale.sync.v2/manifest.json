@@ -1,0 +1,71 @@
+{
+  "protocol": "terrascale.sync.v2",
+  "protocol_version": 2,
+  "schema": "terrascale.sync.v2/corpus-manifest@2",
+  "source_commit": "d67c4c43f8800675f8b093448e1435afd13ab2b9",
+  "vectors": [
+    {
+      "bytes": 4126,
+      "category": "checkpoint-resume",
+      "corpus": "terrascale.sync.v2",
+      "file": "checkpoint-resume.json",
+      "sha256": "ebdc4de6142d24bd63ada474d16f97cfb0baba08611f581e99ff2f8232621b36"
+    },
+    {
+      "bytes": 6692,
+      "category": "fresh-session",
+      "corpus": "terrascale.sync.v2",
+      "file": "fresh-session.json",
+      "sha256": "17bab1a113e53e63e38b095899ef29112b4b7f438532f7e7eeefbfecb51e4b1d"
+    },
+    {
+      "bytes": 3451,
+      "category": "malformed-frame-rejection",
+      "corpus": "terrascale.sync.v2",
+      "file": "malformed-frame-rejection.json",
+      "sha256": "152009d055ef911b379067057e0a1dbc500b2fff5d81a0523e9cbdbe58341610"
+    },
+    {
+      "bytes": 5579,
+      "category": "reconnect-replay",
+      "corpus": "terrascale.sync.v2",
+      "file": "reconnect-replay.json",
+      "sha256": "5ce9185dca0eb7c0ae78d233713bb060dc2986b56cb43851a745ac4c5c9776da"
+    },
+    {
+      "bytes": 1739,
+      "category": "region-route-change",
+      "corpus": "terrascale.sync.v2",
+      "file": "region-route-change.json",
+      "sha256": "6cf0e08e7ba9a2456dfc838931c02e69d53ea10d4e676fe50a6bc6490fbb97bb"
+    },
+    {
+      "bytes": 86652,
+      "category": "repeated-change-delta",
+      "corpus": "terrascale.sync.v2",
+      "file": "repeated-change-delta.json",
+      "sha256": "3cb6399c5dba923ad16fadf5b7d7d7b704446f19dfc9c7b8b2afced907909076"
+    },
+    {
+      "bytes": 20297,
+      "category": "resync-required",
+      "corpus": "terrascale.sync.v2",
+      "file": "resync-required.json",
+      "sha256": "255e735c03760a3a3f0b8abc5785c15cadbb7d006c84f7848da060cfb2e21e4d"
+    },
+    {
+      "bytes": 58158,
+      "category": "slow-consumer",
+      "corpus": "terrascale.sync.v2",
+      "file": "slow-consumer.json",
+      "sha256": "6e4fb3c95c9ce9e4ad9e097334a3e2490682f37301b7e1a2130f0903d1174f46"
+    },
+    {
+      "bytes": 4078,
+      "category": "trigger-notification",
+      "corpus": "terrascale.sync.v2",
+      "file": "trigger-notification.json",
+      "sha256": "10b56b09ef0655c931aa0a5c7f7be01a201632ab349791a6e3255045e62bf788"
+    }
+  ]
+}

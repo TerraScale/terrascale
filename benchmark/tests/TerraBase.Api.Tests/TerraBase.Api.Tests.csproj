@@ -28,15 +28,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The SE-04 golden vectors (the sync-engine compatibility
-         guarantee) are consumed from the committed corpus beside the
-         test binary, exactly as the Protocol suite copies the TBEP
-         corpus: the host replays them end to end through its sync
-         sessions to the engine and back. -->
-    <None
-      Include="..\..\crates\terrabase-sync-core\vectors\terrascale.sync.v2\*.json"
-      CopyToOutputDirectory="PreserveNewest"
-      Link="vectors\terrascale.sync.v2\%(Filename)%(Extension)" />
+    <!-- The tracked SE-04 golden vectors and their integrity manifest are
+         copied beside the test binary. The live-engine rows still require
+         the separately provisioned Rust engine. -->
+    <None Update="vectors\**\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

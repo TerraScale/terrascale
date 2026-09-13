@@ -70,8 +70,18 @@ public sealed class EndpointCatalog
             var provider = typeof(IRequestScopedEndpoint).IsAssignableFrom(endpointType)
                 ? scope.ServiceProvider
                 : services;
-            var endpoint = (IEndpoint)ActivatorUtilities.GetServiceOrCreateInstance(provider, endpointType);
-            endpoint.Map(routes);
+            var endpoint = (IEndpoint)EndpointActivation.Resolve(provider, endpointType, out var manuallyCreated);
+            try
+            {
+                endpoint.Map(routes);
+            }
+            finally
+            {
+                if (manuallyCreated)
+                {
+                    EndpointActivation.DisposeSynchronously(endpoint);
+                }
+            }
         }
     }
 }

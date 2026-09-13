@@ -27,17 +27,16 @@ public static class TbepQuic
     /// <param name="host">The engine's QUIC host name (the certificate's name).</param>
     /// <param name="port">The engine's QUIC port.</param>
     /// <param name="clientCertificate">The gateway workload identity presented to the engine.</param>
-    /// <param name="trustServerCertificate">Whether the row trusts the presented certificate unverified — test rows with self-signed identities only; production verifies.</param>
+    /// <param name="serverTrustRoots">Optional explicit roots for the engine certificate chain. When omitted, the platform trust store is used.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>The connected client, unbound.</returns>
     /// <exception cref="System.PlatformNotSupportedException">The platform carries no QUIC support.</exception>
     /// <exception cref="System.Security.Authentication.AuthenticationException">The TLS handshake failed.</exception>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5359", Justification = "The callback is enabled only by the explicit test-only trustServerCertificate option.")]
     public static async Task<TbepClient> ConnectAsync(
         string host,
         int port,
         X509Certificate2 clientCertificate,
-        bool trustServerCertificate,
+        X509Certificate2Collection? serverTrustRoots = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(clientCertificate);
@@ -47,9 +46,18 @@ public static class TbepQuic
             ClientCertificates = new X509CertificateCollection { clientCertificate },
             TargetHost = host,
         };
-        if (trustServerCertificate)
+        if (serverTrustRoots is not null)
         {
-            options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
+            var trustPolicy = new X509ChainPolicy
+            {
+                TrustMode = X509ChainTrustMode.CustomRootTrust,
+            };
+            foreach (var root in serverTrustRoots)
+            {
+                trustPolicy.CustomTrustStore.Add(root);
+            }
+
+            options.CertificateChainPolicy = trustPolicy;
         }
 
         var connection = await QuicConnection.ConnectAsync(
@@ -61,10 +69,18 @@ public static class TbepQuic
                 DefaultStreamErrorCode = 1,
             },
             cancellationToken).ConfigureAwait(false);
-        var stream = await connection.OpenOutboundStreamAsync(
-            QuicStreamType.Bidirectional,
-            cancellationToken).ConfigureAwait(false);
-        return TbepClient.OverStream(new QuicChannelStream(connection, stream));
+        try
+        {
+            var stream = await connection.OpenOutboundStreamAsync(
+                QuicStreamType.Bidirectional,
+                cancellationToken).ConfigureAwait(false);
+            return TbepClient.OverStream(new QuicChannelStream(connection, stream));
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <summary>One bidirectional QUIC stream as a <see cref="Stream"/>: disposing it closes the connection it belongs to.</summary>

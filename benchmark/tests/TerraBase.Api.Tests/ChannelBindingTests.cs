@@ -44,4 +44,47 @@ public sealed class ChannelBindingTests
             .ConfigureAwait(false);
         await Assert.That(answer.Found).IsFalse();
     }
+
+    /// <summary>Two principals in one tenant receive distinct channels whose immutable identities stay isolated.</summary>
+    [Test]
+    public async Task SameTenantDifferentPrincipalsDoNotShareAChannel()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+
+        var first = await host.Supervisor.ChannelForAsync("tenant-a", "principal-a");
+        var second = await host.Supervisor.ChannelForAsync("tenant-a", "principal-b");
+
+        await Assert.That(second).IsNotEqualTo(first);
+        await Assert.That(first.Tenant).IsEqualTo("tenant-a");
+        await Assert.That(first.Principal).IsEqualTo("principal-a");
+        await Assert.That(second.Tenant).IsEqualTo("tenant-a");
+        await Assert.That(second.Principal).IsEqualTo("principal-b");
+
+        var selected = await host.Supervisor.CallAsync(
+            "tenant-a",
+            "principal-b",
+            "identity.probe",
+            channel => Task.FromResult(channel.Principal));
+        await Assert.That(selected).IsEqualTo("principal-b");
+    }
+
+    /// <summary>A bind response for another tenant is rejected before the channel records any identity.</summary>
+    [Test]
+    public async Task BindResponseForAnotherTenantIsRejected()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        engine.BindResponseTenant = "tenant-b";
+
+        var failure = await Assert.ThrowsAsync<TbepException>(
+            () => host.Supervisor.ChannelForAsync("tenant-a", "principal-a"));
+
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.Code).IsNotNull();
+        await Assert.That(failure.Code!.Variant).IsEqualTo("OperationRefused");
+        await Assert.That(host.Supervisor.Status).IsEqualTo(EngineStatus.Serving);
+    }
 }

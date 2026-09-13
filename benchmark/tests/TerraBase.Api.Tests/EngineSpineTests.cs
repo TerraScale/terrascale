@@ -449,7 +449,7 @@ public sealed class EngineQuicTests
                 "127.0.0.1",
                 port,
                 clientCertificate,
-                trustServerCertificate: true);
+                serverTrustRoots: new X509Certificate2Collection { root });
             await client.BindChannelAsync("backend", "tenant-a");
 
             var write = await client.DocumentWriteAsync(

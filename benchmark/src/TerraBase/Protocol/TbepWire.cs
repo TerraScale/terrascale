@@ -196,6 +196,22 @@ public static partial class TbepWire
     /// <exception cref="WireException">Any fail-closed row.</exception>
     public static Frame Decode(byte[] bytes)
     {
+        try
+        {
+            return DecodeCore(bytes);
+        }
+        catch (WireException)
+        {
+            throw;
+        }
+        catch (Exception failure)
+        {
+            throw FormatException($"malformed envelope: {failure.Message}");
+        }
+    }
+
+    private static Frame DecodeCore(byte[] bytes)
+    {
         if (bytes.LongLength > TbepRegistry.MaxFrameBytes)
         {
             throw FormatException($"the frame exceeds {TbepRegistry.MaxFrameBytes} bytes", WireFailure.FrameTooLarge);

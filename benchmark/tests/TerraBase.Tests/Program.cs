@@ -4,6 +4,7 @@ using TerraBase;
 IdentifierTests.Run();
 await StoragePortIsAtomicAndVersioned();
 await DurableStorageSurvivesCloseAndReopen();
+await ConcurrentFileStorageProvidersRetainWrites();
 MetricsAreBoundedAndPrometheusCompatible();
 LifecycleAndReadinessFailClosed();
 Console.WriteLine("TerraBase focused tests passed.");
@@ -64,6 +65,39 @@ static async Task DurableStorageSurvivesCloseAndReopen()
             }
 
             Assert(scanned.Count == 1 && scanned[0].Key == key, "reopened durable scans must expose committed documents");
+        }
+    }
+    finally
+    {
+        File.Delete(path);
+    }
+}
+
+static async Task ConcurrentFileStorageProvidersRetainWrites()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"terrabase-storage-concurrent-{Guid.NewGuid():N}.json");
+    var firstKey = new DocumentKey(new TenantId("tenant-concurrent"), new CollectionId("users"), "user-1");
+    var secondKey = new DocumentKey(new TenantId("tenant-concurrent"), new CollectionId("users"), "user-2");
+    try
+    {
+        await using (var first = new FileStorageProvider(path))
+        await using (var second = new FileStorageProvider(path))
+        {
+            using var firstBody = JsonDocument.Parse("{\"name\":\"Ada\"}");
+            using var secondBody = JsonDocument.Parse("{\"name\":\"Grace\"}");
+            var writes = await Task.WhenAll(
+                Task.Run(async () => await first.UpsertAsync(firstKey, firstBody.RootElement, DocumentPrecondition.Missing)),
+                Task.Run(async () => await second.UpsertAsync(secondKey, secondBody.RootElement, DocumentPrecondition.Missing)));
+
+            Assert(writes.All(result => result.Outcome == WriteOutcome.Created), "concurrent providers must commit both first writes");
+            Assert((await first.ReadAsync(secondKey))?.Body.GetProperty("name").GetString() == "Grace", "a provider must reload writes committed by another provider");
+            Assert((await second.ReadAsync(firstKey))?.Body.GetProperty("name").GetString() == "Ada", "each provider must retain the other provider's write");
+        }
+
+        await using (var reopened = new FileStorageProvider(path))
+        {
+            Assert(await reopened.ReadAsync(firstKey) is not null, "the first concurrent write must remain durable");
+            Assert(await reopened.ReadAsync(secondKey) is not null, "the second concurrent write must remain durable");
         }
     }
     finally

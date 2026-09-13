@@ -1,0 +1,90 @@
+{
+  "category": "malformed-frame-rejection",
+  "description": "Fail-closed decode: unknown versions (including v1), unknown kinds, truncation, trailing bytes, lying lengths, and idempotency keys on non-mutation frames are all rejected with typed errors.",
+  "protocol": "terrascale.sync.v2",
+  "protocol_version": 2,
+  "schema": "terrascale.sync.v2/vector-corpus@2",
+  "server": {
+    "config": {
+      "batch_byte_budget": 8192,
+      "checkpoint_window": 128
+    },
+    "journal_before": [],
+    "scope": {
+      "collection": "orders",
+      "tenant": "tenant-a"
+    }
+  },
+  "steps": [
+    {
+      "decode_rejects": {
+        "error": "unsupported_version",
+        "wire": "000100010000000000000000000000000000000076f6c9c2612cfc79150000000000000001000100000006000000000000006f726465727300"
+      },
+      "note": "version 0 fails closed (v1 included: no wire compatibility)"
+    },
+    {
+      "decode_rejects": {
+        "error": "unsupported_version",
+        "wire": "010100010000000000000000000000000000000076f6c9c2612cfc79150000000000000001000100000006000000000000006f726465727300"
+      },
+      "note": "version 1 fails closed (v1 included: no wire compatibility)"
+    },
+    {
+      "decode_rejects": {
+        "error": "unsupported_version",
+        "wire": "030100010000000000000000000000000000000076f6c9c2612cfc79150000000000000001000100000006000000000000006f726465727300"
+      },
+      "note": "version 3 fails closed (v1 included: no wire compatibility)"
+    },
+    {
+      "decode_rejects": {
+        "error": "unsupported_version",
+        "wire": "ff0100010000000000000000000000000000000076f6c9c2612cfc79150000000000000001000100000006000000000000006f726465727300"
+      },
+      "note": "version 255 fails closed (v1 included: no wire compatibility)"
+    },
+    {
+      "decode_rejects": {
+        "error": "malformed_frame",
+        "wire": "02ff7f010000000000000000000000000000000076f6c9c2612cfc79150000000000000001000100000006000000000000006f726465727300"
+      },
+      "note": "an unknown frame kind fails closed"
+    },
+    {
+      "decode_rejects": {
+        "error": "malformed_frame",
+        "wire": "020100010000000000000000000000000000000076f6c9c2612cfc79"
+      },
+      "note": "a truncated frame never decodes"
+    },
+    {
+      "decode_rejects": {
+        "error": "malformed_frame",
+        "wire": "020100010000000000000000000000000000000076f6c9c2612cfc79150000000000000001000100000006000000000000006f72646572730000"
+      },
+      "note": "trailing bytes after the body are rejected"
+    },
+    {
+      "decode_rejects": {
+        "error": "malformed_frame",
+        "wire": "020100010000000000000000000000000000000076f6c9c2612cfc79ea0000000000000001000100000006000000000000006f726465727300"
+      },
+      "note": "the outer body-length field must agree with the actual bytes"
+    },
+    {
+      "decode_rejects": {
+        "error": "malformed_frame",
+        "wire": "020100010000000000000000000000000000000176f6c9c2612cfc79150000000000000001000100000006000000000000006f726465727300"
+      },
+      "note": "an idempotency key on a non-mutation frame is a pairing violation"
+    },
+    {
+      "decode_rejects": {
+        "error": "idempotency_pairing",
+        "wire": "020d00010000000000000000000000000000000073ea040d3b8013e21d000000000000000d0006000000000000006f72646572730400000000000000642d303102"
+      },
+      "note": "a mutation frame without its idempotency key is a pairing violation"
+    }
+  ]
+}

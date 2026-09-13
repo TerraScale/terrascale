@@ -80,7 +80,7 @@ public sealed class BackboneHub
         lock (this.gate)
         {
             subscriptionId = ++this.nextSubscriptionId;
-            stream = new BackboneStream(this, subscriptionId, tenant, collections);
+            stream = new BackboneStream(this, subscriptionId, tenant, principal, collections);
             this.open[subscriptionId] = stream;
         }
 
@@ -115,16 +115,26 @@ public sealed class BackboneHub
     /// <returns>A task that completes when the engine side is unsubscribed.</returns>
     public async Task CloseAsync(BackboneStream stream, string reason)
     {
+        bool owned;
         lock (this.gate)
         {
-            this.open.Remove(stream.SubscriptionId);
+            owned = this.open.Remove(stream.SubscriptionId);
         }
 
-        stream.Complete();
+        if (!owned)
+        {
+            // Another close path owns the engine unsubscribe, or the
+            // generation-loss path already ended this stream. Keep this
+            // method idempotent so a pump's finally cannot issue a second
+            // lifecycle frame for the same subscription.
+            stream.Complete();
+            return;
+        }
+
         try
         {
             var channel = await this.supervisor
-                .ChannelForAsync(stream.Tenant, principal: stream.Principal ?? "stream-owner")
+                .ChannelForAsync(stream.Tenant, stream.Principal)
                 .ConfigureAwait(false);
             await channel.BackboneUnsubscribeAsync(stream.SubscriptionId).ConfigureAwait(false);
         }
@@ -134,6 +144,13 @@ public sealed class BackboneHub
             // with it. The stream is closed locally either way — never
             // orphaned on the host.
         }
+        finally
+        {
+            // Complete after unsubscribe so the engine's close notification
+            // can reach the consumer before the queue is ended. If the
+            // notification never arrives, this still wakes the pump.
+            stream.Complete();
+        }
 
         this.audit.Record(
             AuditKind.SubscriptionClosed,
@@ -142,6 +159,18 @@ public sealed class BackboneHub
             operation: "backbone.unsubscribe",
             outcome: AuditOutcome.Noted,
             detail: $"subscription {stream.SubscriptionId}: {reason}, dropped {stream.Dropped}");
+    }
+
+    /// <summary>Finds a stream that is still owned by this hub.</summary>
+    /// <param name="subscriptionId">The subscription identity.</param>
+    /// <param name="stream">The open stream, when present.</param>
+    /// <returns><c>true</c> when the stream is currently open.</returns>
+    internal bool TryGet(ulong subscriptionId, out BackboneStream? stream)
+    {
+        lock (this.gate)
+        {
+            return this.open.TryGetValue(subscriptionId, out stream);
+        }
     }
 
     /// <summary>Ends every open stream of a lost engine generation; nothing orphans.</summary>
@@ -200,11 +229,12 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
     private bool markerQueued;
     private bool completing;
 
-    internal BackboneStream(BackboneHub hub, ulong subscriptionId, string tenant, string[]? collections)
+    internal BackboneStream(BackboneHub hub, ulong subscriptionId, string tenant, string principal, string[]? collections)
     {
         this.hub = hub;
         this.SubscriptionId = subscriptionId;
         this.Tenant = tenant;
+        this.Principal = principal;
         this.Collections = collections;
     }
 
@@ -215,7 +245,7 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
     public string Tenant { get; }
 
     /// <summary>The principal that opened the stream, when recorded.</summary>
-    public string? Principal { get; internal set; }
+    public string Principal { get; }
 
     /// <summary>The collection filter, or <c>null</c> for every collection.</summary>
     public string[]? Collections { get; }
@@ -271,8 +301,11 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
     }
 
     /// <inheritdoc/>
-    void TbepChannel.ITbepNotificationSink.OnClosed(SubscriptionClosed closed) =>
+    void TbepChannel.ITbepNotificationSink.OnClosed(SubscriptionClosed closed)
+    {
         this.Offer(new StreamEvent.Closed(closed));
+        this.Complete();
+    }
 
     internal void Complete(bool generationLost = false)
     {
