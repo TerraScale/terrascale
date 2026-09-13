@@ -28,5 +28,4 @@ public sealed partial class TypedApi
         this.hub = hub;
         this.audit = audit;
     }
-
 }
