@@ -119,9 +119,13 @@ public sealed class EndpointDefinition
     {
         ArgumentNullException.ThrowIfNull(requestType);
         ArgumentNullException.ThrowIfNull(contentTypes);
-        if (contentTypes.Length == 0 || contentTypes.Any(string.IsNullOrWhiteSpace))
+        if (contentTypes.Length == 0)
         {
-            throw new ArgumentException("At least one content type is required.", nameof(contentTypes));
+            contentTypes = ["application/json"];
+        }
+        else if (contentTypes.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("Content types cannot be empty.", nameof(contentTypes));
         }
 
         this.acceptedContentTypes = contentTypes;
