@@ -115,8 +115,7 @@ TERRABASE_HOST_URL=http://127.0.0.1:8420       # the loopback listener
 ```
 
 ```
-cd host
-dotnet run --project TerraBase.Api              # the host
+dotnet run --project ../../src/TerraBase/TerraBase.csproj              # the host
 dotnet run --project TerraBase.Api.Tests        # the SE-08 family (80 rows)
 dotnet run --project TerraBase.Protocol.Tests   # the SE-14 conformance suite
 ```

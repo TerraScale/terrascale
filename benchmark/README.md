@@ -57,8 +57,8 @@ TerraBase is licensed under the [MIT License](LICENSE.md).
 
 ## TerraScale.Endpoints
 
-The C# HTTP surface uses the `TerraScale.Endpoints` library in
-`src/TerraScale.Endpoints`. Endpoint classes live in individual files and can
+The C# HTTP surface uses the `TerraScale.Endpoints` components embedded in the
+single TerraBase project under `src/TerraBase/Endpoints`. Endpoint classes live in individual files and can
 be mapped with:
 
 ```csharp
@@ -73,7 +73,5 @@ types, and activates them through dependency injection. Services that need zero
 reflection at startup can pass a precomputed endpoint type list instead. The
 integration serves OpenAPI at `/openapi/v1.json` and Scalar at `/scalar`.
 
-A complete runnable example is in
-[`src/TerraScale.Endpoints.Example`](src/TerraScale.Endpoints.Example), with
-edge-case coverage in
+Edge-case coverage is in
 [`tests/TerraScale.Endpoints.Tests`](tests/TerraScale.Endpoints.Tests).
