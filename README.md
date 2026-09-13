@@ -73,15 +73,12 @@ retries; rotation and replay are not automatically retried.
 ## Verification
 
 ```bash
-# Published immutable bundle:
-make check CONTRACT_URL="$CONTRACT_URL" CONTRACT_ARCHIVE_SHA256="$CONTRACT_ARCHIVE_SHA256"
-
-# Explicit local producer input for development:
-make check CONTRACT_SOURCE=../terrabase/contracts
+dotnet build TerraScale.DotNet.slnx --configuration Release
+dotnet test TerraScale.DotNet.slnx --configuration Release --no-build
 ```
 
-`make check` verifies and installs the pinned artifacts, checks generated sources
-and formatting, builds, and runs tests. Tests consume the producer OpenAPI,
+The solution build and test verify the checked-in generated sources and
+formatting. Tests consume the producer OpenAPI,
 HTTP error corpus, reactive snapshot/delta/reset/timeout fixtures, and hostile
 MessagePack vectors. The package check then restores and runs a separate NuGet
 consumer with an isolated package directory and no SDK project reference.
