@@ -1,5 +1,4 @@
 using System.Reflection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace TerraScale.Endpoints;
 
@@ -56,7 +55,7 @@ public static class EndpointServiceCollectionExtensions
         configure?.Invoke(options);
         Validate(options);
         services.AddSingleton(options);
-        services.AddSingleton(new EndpointCatalog(endpointTypes, alreadyDiscovered: true));
+        services.AddSingleton(new EndpointCatalog(endpointTypes));
         AddOpenApi(services, options);
         return services;
     }

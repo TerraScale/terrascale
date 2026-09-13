@@ -11,6 +11,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.56.18" />
-    <ProjectReference Include="..\..\src\TerraScale.Endpoints\TerraScale.Endpoints.csproj" />
+    <ProjectReference Include="..\..\src\TerraBase\TerraBase.csproj" />
   </ItemGroup>
 </Project>

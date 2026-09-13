@@ -23,7 +23,7 @@ public sealed class EndpointTests
     [Test]
     public async Task CatalogCanUsePrecomputedTypesWithoutScanning()
     {
-        var catalog = new EndpointCatalog([typeof(ProbeEndpoint), typeof(ProbeEndpoint)], alreadyDiscovered: true);
+        var catalog = new EndpointCatalog([typeof(ProbeEndpoint), typeof(ProbeEndpoint)]);
 
         await Assert.That(catalog.Count).IsEqualTo(1);
         await Assert.That(catalog.Types.Single()).IsEqualTo(typeof(ProbeEndpoint));
@@ -46,7 +46,7 @@ public sealed class EndpointTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddSingleton(new EndpointCatalog([typeof(ProbeEndpoint)], alreadyDiscovered: true));
+        builder.Services.AddSingleton(new EndpointCatalog([typeof(ProbeEndpoint)]));
         var app = builder.Build();
         app.MapTerraScaleEndpoints();
         await app.StartAsync();
@@ -64,7 +64,7 @@ public sealed class EndpointTests
     public async Task NullArgumentsAndInvalidOptionsFailFast()
     {
         await Assert.ThrowsAsync<ArgumentNullException>(() => Task.Run(() => EndpointDiscovery.Discover(null!)));
-        await Assert.ThrowsAsync<ArgumentNullException>(() => Task.Run(() => new EndpointCatalog((IEnumerable<Type>)null!, true)));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Task.Run(() => new EndpointCatalog((IEnumerable<Type>)null!)));
         await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() =>
         {
             var services = new ServiceCollection();

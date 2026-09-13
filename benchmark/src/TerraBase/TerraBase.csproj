@@ -16,8 +16,11 @@
 
   <ItemGroup>
     <Compile Include="**/*.cs" Exclude="bin/**;obj/**" />
-    <ProjectReference Include="..\TerraBase.Protocol\TerraBase.Protocol.csproj" />
-    <ProjectReference Include="..\TerraScale.Endpoints\TerraScale.Endpoints.csproj" />
     <InternalsVisibleTo Include="TerraBase.Api.Tests" />
+    <InternalsVisibleTo Include="TerraBase.Protocol.Tests" />
+    <InternalsVisibleTo Include="TerraScale.Endpoints.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MessagePack" Version="3.1.8" />
   </ItemGroup>
 </Project>

@@ -2,13 +2,6 @@
   <Folder Name="/Core/">
     <Project Path="src/TerraBase/TerraBase.csproj" />
   </Folder>
-  <Folder Name="/Host/">
-    <Project Path="src/TerraBase.Protocol/TerraBase.Protocol.csproj" />
-  </Folder>
-  <Folder Name="/Endpoints/">
-    <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
-    <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />
-  </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/TerraBase.Tests/TerraBase.Tests.csproj" />
     <Project Path="tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj" />

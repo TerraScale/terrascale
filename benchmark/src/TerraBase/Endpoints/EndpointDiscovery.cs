@@ -41,7 +41,7 @@ public sealed class EndpointCatalog
     }
 
     /// <summary>Creates a catalog from a precomputed endpoint list.</summary>
-    public EndpointCatalog(IEnumerable<Type> endpointTypes, bool alreadyDiscovered)
+    public EndpointCatalog(IEnumerable<Type> endpointTypes)
     {
         ArgumentNullException.ThrowIfNull(endpointTypes);
         this.endpointTypes = endpointTypes

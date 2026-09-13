@@ -25,7 +25,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/TerraBase/TerraBase.csproj" />
-    <ProjectReference Include="../../src/TerraBase.Protocol/TerraBase.Protocol.csproj" />
   </ItemGroup>
 
   <ItemGroup>
