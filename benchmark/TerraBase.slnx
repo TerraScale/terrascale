@@ -1,4 +1,18 @@
 <Solution>
-  <Project Path="TerraBase.csproj" />
-  <Project Path="tests/TerraBase.Tests/TerraBase.Tests.csproj" />
+  <Folder Name="/Core/">
+    <Project Path="TerraBase.csproj" />
+  </Folder>
+  <Folder Name="/Host/">
+    <Project Path="host/TerraBase.Protocol/TerraBase.Protocol.csproj" />
+    <Project Path="host/TerraBase.Api/TerraBase.Api.csproj" />
+  </Folder>
+  <Folder Name="/CLI/">
+    <Project Path="cli/TerraBase.Cli/TerraBase.Cli.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/TerraBase.Tests/TerraBase.Tests.csproj" />
+    <Project Path="host/TerraBase.Protocol.Tests/TerraBase.Protocol.Tests.csproj" />
+    <Project Path="host/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj" />
+    <Project Path="cli/TerraBase.Cli.Tests/TerraBase.Cli.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -1,62 +1,37 @@
-.PHONY: check contracts contract-archive stack stack-check stack-test stack-config-test stack-pre-engine stack-down
+.PHONY: check build test contracts contract-archive
 
-stack:
-	./scripts/stack.sh up
-
-stack-check:
-	./scripts/stack.sh check
-
-stack-test:
-	./scripts/stack.sh test
-
-stack-config-test:
-	./tests/stack/test_stack_config.sh
-	python3 ./tests/stack/test_webhook_receiver.py
-
-# Transitional harness for engine work before E-5/E-6 are available. It is
-# deliberately separate: the normal `stack` target never starts the X-4 stub.
-stack-pre-engine:
-	./scripts/stack.sh pre-engine
-
-stack-down:
-	./scripts/stack.sh down
-
-check:
-	cargo fmt --all --check
-	cargo clippy --workspace --all-targets --locked -- -D warnings
-	cargo test --workspace --locked
-	buf lint
-	@if [ -n "$(CONTRACT_PREVIOUS)" ]; then \
-		./scripts/validate-release-contracts.sh --version "$(CONTRACT_VERSION)" --previous "$(CONTRACT_PREVIOUS)"; \
-	else \
-		./scripts/validate-release-contracts.sh --version "$(CONTRACT_VERSION)"; \
-	fi
-	@if [ -f terrabase-go/go.mod ]; then \
-		echo "--- terrabase-go"; \
-		test -z "$$(cd terrabase-go && gofmt -l .)"; \
-		(cd terrabase-go && go vet ./... && go test -race ./...); \
-	fi
-
+SOLUTION ?= TerraBase.slnx
+CONFIGURATION ?= Release
 CONTRACT_VERSION ?= v1
 CONTRACT_PREVIOUS ?=
-
-contracts:
-	cargo run --quiet --locked -p terrabase-server --bin terrabase-contracts -- \
-		--repository-root . \
-		--output contracts \
-		--version "$(CONTRACT_VERSION)"
-	@if [ -n "$(CONTRACT_PREVIOUS)" ]; then \
-		./scripts/validate-release-contracts.sh --version "$(CONTRACT_VERSION)" --previous "$(CONTRACT_PREVIOUS)"; \
-	else \
-		./scripts/validate-release-contracts.sh --version "$(CONTRACT_VERSION)"; \
-	fi
-
-# Package the producer-owned bundle once, with deterministic tar metadata.
-# Consumers receive the archive and its SHA-256 sidecar; they never infer a
-# source from a sibling checkout. Existing output is immutable and is only
-# accepted again when its bytes and metadata are identical.
 CONTRACT_ARCHIVE_DIR ?= contract-archives
 CONTRACT_ARCHIVE := $(CONTRACT_ARCHIVE_DIR)/$(CONTRACT_VERSION).tar
+
+# The root solution is the canonical C# build and test boundary. Keep the
+# process at the lowest priority so local development remains responsive.
+check: contracts build test
+
+build:
+	nice -n 19 dotnet build "$(SOLUTION)" --configuration "$(CONFIGURATION)" --nologo
+
+test:
+	nice -n 19 dotnet test "$(SOLUTION)" --configuration "$(CONFIGURATION)" --no-build --nologo
+
+# Validate the checked-in producer bundle without invoking a retired Rust
+# generator. The archive packager validates manifest paths, file types,
+# digests, and immutable output bytes; a temporary output keeps this target
+# read-only with respect to the checked-in archive.
+
+contracts:
+	@work="$$(mktemp -d "$${TMPDIR:-/tmp}/terrabase-contracts.XXXXXX")"; \
+	trap 'rm -rf -- "$$work"' EXIT; \
+	python3 scripts/package-contract-archive.py \
+		--source contracts --version "$(CONTRACT_VERSION)" \
+		--output "$$work/$(CONTRACT_VERSION).tar" >/dev/null; \
+	if [ -n "$(CONTRACT_PREVIOUS)" ]; then \
+		echo "CONTRACT_PREVIOUS is unsupported by the C# producer bundle validator" >&2; \
+		exit 2; \
+	fi
 
 contract-archive: contracts
 	python3 scripts/package-contract-archive.py \
