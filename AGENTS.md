@@ -4,6 +4,9 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 Read the workspace `../GOAL.md` and root `../AGENTS.md` before changing a
 public contract.
 
+# Libraries
+- We should use TUnit for tests
+
 ## Repository role
 
 This repository owns the official .NET 10 customer SDK and the separate
