@@ -8,6 +8,7 @@ await ConcurrentFileStorageProvidersRetainWrites();
 await DurableStorageRecoversSnapshotsAndRejectsNullDocuments();
 await DurableStorageRetainsVersionAfterDeleteAndRecreate();
 MetricsAreBoundedAndPrometheusCompatible();
+InFlightMetricsAreSnapshotAndPrometheusCompatible();
 HealthReportsRequireEveryRequiredComponent();
 LifecycleAndReadinessFailClosed();
 Console.WriteLine("TerraBase focused tests passed.");
@@ -218,6 +219,20 @@ static void MetricsAreBoundedAndPrometheusCompatible()
     Assert(exposition.Contains("terrabase_requests_total{region=\"GRU\",operation=\"read\",outcome=\"success\"} 2", StringComparison.Ordinal), "request counters must use closed labels");
     Assert(exposition.Contains("terrabase_request_duration_seconds_bucket", StringComparison.Ordinal), "request histograms must be rendered");
     Assert(!exposition.Contains("tenant-a", StringComparison.Ordinal), "customer identities must not become metric labels");
+}
+
+static void InFlightMetricsAreSnapshotAndPrometheusCompatible()
+{
+    var metrics = new MetricsRegistry();
+    using var request = metrics.BeginRequest(Region.Fra, Operation.Query);
+
+    var active = metrics.Snapshot();
+    Assert(active.InFlight.Single() is { Operation: Operation.Query, Count: 1 }, "a live request must be represented in the in-flight snapshot");
+    Assert(active.RenderPrometheus().Contains("terrabase_in_flight_operations{operation=\"query\"} 1", StringComparison.Ordinal), "in-flight gauges must use the closed operation label");
+
+    request.Complete(Outcome.Success);
+    var completed = metrics.Snapshot();
+    Assert(completed.InFlight.Single() is { Operation: Operation.Query, Count: 0 }, "completed requests must leave a zero in-flight gauge");
 }
 
 static void LifecycleAndReadinessFailClosed()

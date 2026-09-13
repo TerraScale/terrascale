@@ -28,9 +28,14 @@ public sealed partial class TypedApi
             return invalidName;
         }
 
-        if (InvalidFamilyRequest(request) is { } invalidRequest)
+        if (request is null)
         {
-            return invalidRequest;
+            return InvalidFamilyRequest();
+        }
+
+        if (string.IsNullOrWhiteSpace(request.RequestCodec) || string.IsNullOrWhiteSpace(request.Request))
+        {
+            return InvalidFamilyRequest();
         }
 
         var caller = ResolveCaller(context);
@@ -71,9 +76,14 @@ public sealed partial class TypedApi
             return invalidName;
         }
 
-        if (InvalidFamilyRequest(request) is { } invalidRequest)
+        if (request is null)
         {
-            return invalidRequest;
+            return InvalidFamilyRequest();
+        }
+
+        if (string.IsNullOrWhiteSpace(request.RequestCodec) || string.IsNullOrWhiteSpace(request.Request))
+        {
+            return InvalidFamilyRequest();
         }
 
         if (Idempotency(context) is { } badKey)
@@ -112,11 +122,8 @@ public sealed partial class TypedApi
 
     // ------------------------------------------------------------------
 
-    private static IResult? InvalidFamilyRequest(FamilyRequestDto? request) =>
-        request is null || string.IsNullOrWhiteSpace(request.RequestCodec) || string.IsNullOrWhiteSpace(request.Request)
-            ? Results.Json(
-                new ErrorDto("input-invalid", "family requests require a codec and base64 request bytes"),
-                statusCode: StatusCodes.Status400BadRequest)
-            : null;
+    private static IResult InvalidFamilyRequest() => Results.Json(
+        new ErrorDto("input-invalid", "family requests require a codec and base64 request bytes"),
+        statusCode: StatusCodes.Status400BadRequest);
 
 }

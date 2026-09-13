@@ -53,7 +53,7 @@ public sealed class StreamsTests
         // Metadata does not advance the journal checkpoint. The replay
         // begins at sequence 1, so both transports advertise the checkpoint
         // immediately before it.
-        await Assert.That(sseOpened.Id).IsEqualTo("2");
+        await Assert.That(sseOpened.Id).IsEqualTo("0");
         await Assert.That(sseOpened.Data.RootElement.GetProperty("startSequence").GetUInt64()).IsEqualTo(3ul);
         await Assert.That(wsOpened.RootElement.GetProperty("startSequence").GetUInt64()).IsEqualTo(3ul);
 
@@ -141,6 +141,8 @@ public sealed class StreamsTests
         }
 
         await using var sse = await SseReader.OpenAsync(caller, "from=2");
+        var opened = await sse.ExpectAsync("opened");
+        await Assert.That(opened.Id).IsEqualTo("1");
         var replay = await sse.ExpectAsync("batch");
         var sequences = replay.Data.RootElement.GetProperty("events").EnumerateArray()
             .Select(@event => @event.GetProperty("sequence").GetUInt64())
@@ -526,7 +528,7 @@ public sealed class StreamsTests
 
         await Assert.That(source.UnsubscribeCalls).IsEqualTo(1);
         await Assert.That(hub.OpenCount).IsEqualTo(0);
-        await Assert.That(stream.ReadAsync(TimeSpan.FromSeconds(1))).IsNull();
+        await Assert.That(await stream.ReadAsync(TimeSpan.FromSeconds(1))).IsNull();
     }
     /// <summary>
     /// Folds shed while a drop marker sat queued-but-unread survive the

@@ -8,12 +8,14 @@ public sealed partial class MetricsSnapshot
         bool started,
         bool ready,
         IReadOnlyList<RequestSeries> requests,
+        IReadOnlyList<InFlightSeries> inFlight,
         HealthReport health)
     {
         ServiceState = serviceState;
         Started = started;
         Ready = ready;
         Requests = requests;
+        InFlight = inFlight;
         Health = health;
     }
 
@@ -28,6 +30,9 @@ public sealed partial class MetricsSnapshot
 
     /// <summary>Request series in deterministic closed-label order.</summary>
     public IReadOnlyList<RequestSeries> Requests { get; }
+
+    /// <summary>In-flight operation gauges in deterministic closed-label order.</summary>
+    public IReadOnlyList<InFlightSeries> InFlight { get; }
 
     /// <summary>The component health report captured with the metrics.</summary>
     public HealthReport Health { get; }

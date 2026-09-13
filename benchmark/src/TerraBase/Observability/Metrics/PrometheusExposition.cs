@@ -66,6 +66,16 @@ public sealed partial class MetricsSnapshot
                 .Append(series.Duration.SumSeconds.ToString("G", CultureInfo.InvariantCulture)).Append('\n');
         }
 
+        Help(output, "terrabase_in_flight_operations", "TerraBase operations currently in flight.", "gauge");
+        foreach (var series in InFlight)
+        {
+            output.Append("terrabase_in_flight_operations{operation=\"")
+                .Append(Label(series.Operation))
+                .Append("\"} ")
+                .Append(series.Count)
+                .Append('\n');
+        }
+
         Help(output, "terrabase_component_health", "Current bounded component health.", "gauge");
         foreach (var check in Health.Checks)
         {

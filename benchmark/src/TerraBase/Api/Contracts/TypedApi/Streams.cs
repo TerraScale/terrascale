@@ -137,10 +137,10 @@ public sealed partial class TypedApi
         try
         {
             // The opened event contains metadata and does not deliver a
-            // journal record. Its id therefore names the checkpoint before
-            // the first replay item, so a client reconnecting after only the
-            // opened event does not skip that item.
-            await writer("opened", stream.StartSequence > 0 ? stream.StartSequence - 1 : 0, new Dictionary<string, object?>
+            // journal record. Its id therefore names the requested
+            // checkpoint before queued replay is delivered, so a client
+            // reconnecting after only the opened event does not skip it.
+            await writer("opened", stream.ResumeCheckpoint, new Dictionary<string, object?>
             {
                 ["subscriptionId"] = stream.SubscriptionId,
                 ["startSequence"] = stream.StartSequence,

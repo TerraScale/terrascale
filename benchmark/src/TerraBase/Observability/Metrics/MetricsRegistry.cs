@@ -103,7 +103,17 @@ public sealed class MetricsRegistry : IMetricsSource
                     pair.Value.Total,
                     ToSnapshot(pair.Value)))
                 .ToArray();
-            return new MetricsSnapshot(serviceState, started, serviceState == ServiceState.Serving && report.IsReady, requestSnapshots, report);
+            var inFlightSnapshots = inFlight
+                .OrderBy(pair => pair.Key)
+                .Select(pair => new InFlightSeries(pair.Key, pair.Value))
+                .ToArray();
+            return new MetricsSnapshot(
+                serviceState,
+                started,
+                serviceState == ServiceState.Serving && report.IsReady,
+                requestSnapshots,
+                inFlightSnapshots,
+                report);
         }
     }
 

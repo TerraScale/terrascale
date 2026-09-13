@@ -37,6 +37,7 @@ public sealed partial class EngineSupervisor : IAsyncDisposable
     private int generation;
     private int restarts;
     private bool disposed;
+    private bool shutdownRequested;
 
     /// <summary>Initializes the supervisor over one engine endpoint.</summary>
     /// <param name="options">The engine endpoint and restart policy.</param>

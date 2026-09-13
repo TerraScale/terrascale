@@ -3,7 +3,7 @@
 Full re-run of every locally runnable lane against the working tree of
 2026-09-09 (post "Backup resume qualification final" + uncommitted
 backup/restore work). Baseline = newest complete receipt per lane retained
-before the re-run, snapshotted at `bench/results-baseline-20260909/`.
+before the re-run, snapshotted at `bench/rust/results-baseline-20260909/`.
 Median sample per receipt; picking and admission mirror the RESULTS.md
 renderer (newest by filename timestamp, `status: complete` only).
 Lane contract unchanged: seed 1,000 · 10,000 ops/sample · 5 samples ·

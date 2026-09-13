@@ -22,9 +22,19 @@ public sealed partial class EngineSupervisor
         await this.recovery.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (this.Status == EngineStatus.Serving)
+            lock (this.gate)
             {
-                return;
+                if (this.disposed || this.status == EngineStatus.Stopped)
+                {
+                    throw new EngineUnavailableException("the engine supervisor is stopped");
+                }
+
+                if (this.status == EngineStatus.Serving)
+                {
+                    return;
+                }
+
+                this.shutdownRequested = false;
             }
 
             this.SetStatus(EngineStatus.Starting);
@@ -46,7 +56,7 @@ public sealed partial class EngineSupervisor
             await this.StopManagedProcessAsync().ConfigureAwait(false);
             throw;
         }
-        catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException or System.ComponentModel.Win32Exception)
+        catch (Exception failure)
         {
             // A startup failure owns the channels it opened. In
             // particular, the process-exit callback can race this path
@@ -100,7 +110,7 @@ public sealed partial class EngineSupervisor
                 Restarts: this.Restarts,
                 Detail: null);
         }
-        catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException)
+        catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException or System.ComponentModel.Win32Exception or ArgumentException)
         {
             // Recovery belongs to the supervisor, so an aborted health
             // request must not abandon the engine restart it discovered.
@@ -116,18 +126,35 @@ public sealed partial class EngineSupervisor
     /// <exception cref="EngineUnavailableException">The engine channel is down.</exception>
     public async Task<SupervisionShutdownResponse> ShutdownAsync(ShutdownReason reason, CancellationToken cancellationToken = default)
     {
-        if (this.Status != EngineStatus.Serving)
+        lock (this.gate)
         {
-            throw new EngineUnavailableException("the engine endpoint is not serving");
+            if (this.disposed || this.status != EngineStatus.Serving)
+            {
+                throw new EngineUnavailableException("the engine endpoint is not serving");
+            }
+
+            // Fence the process-exit callback before sending the request. A
+            // graceful shutdown can close the process before this method
+            // receives its response; that exit must never trigger recovery.
+            this.shutdownRequested = true;
         }
 
-        var channel = this.AdminChannel();
         SupervisionShutdownResponse answer;
         try
         {
+            var channel = this.AdminChannel();
             answer = await channel.SupervisionShutdownAsync(reason, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException)
+        catch (OperationCanceledException)
+        {
+            lock (this.gate)
+            {
+                this.shutdownRequested = false;
+            }
+
+            throw;
+        }
+        catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException or System.ComponentModel.Win32Exception or ArgumentException)
         {
             await this.LoseEngineAsync($"the shutdown request failed: {failure.Message}", cancellationToken: CancellationToken.None).ConfigureAwait(false);
             throw new EngineUnavailableException("the engine channel failed under the shutdown request");
@@ -159,6 +186,7 @@ public sealed partial class EngineSupervisor
             }
 
             this.status = EngineStatus.Unavailable;
+            permanent |= this.shutdownRequested;
         }
 
         this.audit.Record(

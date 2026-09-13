@@ -1,4 +1,7 @@
-# Benchmarks (E-13)
+# Historical Rust benchmark baseline (E-13)
+
+This baseline is archived from the former Rust TerraBase implementation. The historical renderer called that side `terrabase`; in this archive it means `terrabase-rust`. Receipt bytes remain unchanged.
+
 
 One command per family appends here; this file is generated, never
 hand-edited. Each family section is delimited by markers so sibling
@@ -42,11 +45,11 @@ attempt failed, older complete attempts are superseded.
 
 | workload | side | status | ops/s | p50 us | p95 us | p99 us | wall ms |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| read | terrabase | failed | - | - | - | - | - |
+| read | terrabase-rust | failed | - | - | - | - | - |
 | read | postgresql | failed | - | - | - | - | - |
 | read | pg-fullstack | invalid | - | - | - | - | - |
 | read | ravendb | invalid | - | - | - | - | - |
-| write | terrabase | failed | - | - | - | - | - |
+| write | terrabase-rust | failed | - | - | - | - | - |
 | write | postgresql | failed | - | - | - | - | - |
 | write | pg-fullstack | invalid | - | - | - | - | - |
 | write | ravendb | invalid | - | - | - | - | - |
@@ -59,7 +62,7 @@ attempt failed, older complete attempts are superseded.
 
 ### Benchmark history
 
-Every row is derived from a lane results document under `bench/results/`
+Every row is derived from a lane results document under `bench/rust/results/`
 by `terrabase-bench-lane --render-history` — never hand-edited. Verdicts and
 receipts are produced only by the engine-side adapter
 (`src/benchmarks/`); this table tabulates facts. A wall-clock number here
@@ -77,20 +80,20 @@ per `LaneConfig::RECORD_MINIMUM`.
 
 Only rows with a valid comparability contract may join a workload comparison; no verdict is produced by this renderer. Failed/raw attempts remain retained and never contribute measurements.
 
-- terrabase/read: failed/raw — `bench/results/terrabase-read-1788816291301969015-821228-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
-- postgresql/read: failed/raw — `bench/results/postgresql-read-1788137614741020195-272364-0.json` — cannot connect to the pinned reference: error connecting to server
-- pg-fullstack/read: invalid/raw — `bench/results/pg-fullstack-read-1788187005634601753-306703-0.json` — comparability.run_digest is not a SHA-256 digest
-- ravendb/read: invalid/raw — `bench/results/ravendb-read-1788135679661528717-4010795-0.json` — comparability.run_digest is not a SHA-256 digest
-- terrabase/write: failed/raw — `bench/results/terrabase-write-1788816291307716735-821233-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
-- postgresql/write: failed/raw — `bench/results/postgresql-write-1788137614935028280-272475-0.json` — cannot connect to the pinned reference: error connecting to server
-- pg-fullstack/write: invalid/raw — `bench/results/pg-fullstack-write-1788187050721866209-310755-0.json` — comparability.run_digest is not a SHA-256 digest
-- ravendb/write: invalid/raw — `bench/results/ravendb-write-1788135716237245380-4013312-0.json` — comparability.run_digest is not a SHA-256 digest
-- postgresql/query: failed/raw — `bench/results/postgresql-query-1788137615123935909-272552-0.json` — cannot connect to the pinned reference: error connecting to server
-- pg-fullstack/query: invalid/raw — `bench/results/pg-fullstack-query-1788187017599762987-309854-0.json` — comparability.run_digest is not a SHA-256 digest
-- ravendb/query: invalid/raw — `bench/results/ravendb-query-1788135744820433018-4027234-0.json` — comparability.run_digest is not a SHA-256 digest
-- postgresql/mixed: failed/raw — `bench/results/postgresql-mixed-1788137615313202308-272578-0.json` — cannot connect to the pinned reference: error connecting to server
-- pg-fullstack/mixed: invalid/raw — `bench/results/pg-fullstack-mixed-1788187073308144008-328055-0.json` — comparability.run_digest is not a SHA-256 digest
-- ravendb/mixed: invalid/raw — `bench/results/ravendb-mixed-1788135763958015648-4034105-0.json` — comparability.run_digest is not a SHA-256 digest
+- terrabase-rust/read: failed/raw — `bench/rust/results/terrabase-read-1788816291301969015-821228-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
+- postgresql/read: failed/raw — `bench/rust/results/postgresql-read-1788137614741020195-272364-0.json` — cannot connect to the pinned reference: error connecting to server
+- pg-fullstack/read: invalid/raw — `bench/rust/results/pg-fullstack-read-1788187005634601753-306703-0.json` — comparability.run_digest is not a SHA-256 digest
+- ravendb/read: invalid/raw — `bench/rust/results/ravendb-read-1788135679661528717-4010795-0.json` — comparability.run_digest is not a SHA-256 digest
+- terrabase-rust/write: failed/raw — `bench/rust/results/terrabase-write-1788816291307716735-821233-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
+- postgresql/write: failed/raw — `bench/rust/results/postgresql-write-1788137614935028280-272475-0.json` — cannot connect to the pinned reference: error connecting to server
+- pg-fullstack/write: invalid/raw — `bench/rust/results/pg-fullstack-write-1788187050721866209-310755-0.json` — comparability.run_digest is not a SHA-256 digest
+- ravendb/write: invalid/raw — `bench/rust/results/ravendb-write-1788135716237245380-4013312-0.json` — comparability.run_digest is not a SHA-256 digest
+- postgresql/query: failed/raw — `bench/rust/results/postgresql-query-1788137615123935909-272552-0.json` — cannot connect to the pinned reference: error connecting to server
+- pg-fullstack/query: invalid/raw — `bench/rust/results/pg-fullstack-query-1788187017599762987-309854-0.json` — comparability.run_digest is not a SHA-256 digest
+- ravendb/query: invalid/raw — `bench/rust/results/ravendb-query-1788135744820433018-4027234-0.json` — comparability.run_digest is not a SHA-256 digest
+- postgresql/mixed: failed/raw — `bench/rust/results/postgresql-mixed-1788137615313202308-272578-0.json` — cannot connect to the pinned reference: error connecting to server
+- pg-fullstack/mixed: invalid/raw — `bench/rust/results/pg-fullstack-mixed-1788187073308144008-328055-0.json` — comparability.run_digest is not a SHA-256 digest
+- ravendb/mixed: invalid/raw — `bench/rust/results/ravendb-mixed-1788135763958015648-4034105-0.json` — comparability.run_digest is not a SHA-256 digest
 - read: no complete comparison group
 - write: no complete comparison group
 - query: no complete comparison group
@@ -100,41 +103,41 @@ Only rows with a valid comparability contract may join a workload comparison; no
 
 These attempts are retained for audit and are never used as complete measurements.
 
-- `bench/results/auto-index-1788816336-828597.json` — missing required TERRABASE_BENCH_TERRABASE_ENDPOINT
-- `bench/results/postgresql-mixed-1788135184461262373-3832326-0.json` — cannot connect to the pinned reference: error connecting to server
-- `bench/results/postgresql-mixed-1788137615313202308-272578-0.json` — cannot connect to the pinned reference: error connecting to server
-- `bench/results/postgresql-query-1788135183790116747-3831866-0.json` — cannot connect to the pinned reference: error connecting to server
-- `bench/results/postgresql-query-1788137615123935909-272552-0.json` — cannot connect to the pinned reference: error connecting to server
-- `bench/results/postgresql-read-1788135180812017910-3786857-0.json` — cannot connect to the pinned reference: error connecting to server
-- `bench/results/postgresql-read-1788137614741020195-272364-0.json` — cannot connect to the pinned reference: error connecting to server
-- `bench/results/postgresql-write-1788135182670212210-3831205-0.json` — cannot connect to the pinned reference: error connecting to server
-- `bench/results/postgresql-write-1788137614935028280-272475-0.json` — cannot connect to the pinned reference: error connecting to server
-- `bench/results/terrabase-read-1788127672017788122-manual-0.json` — qualification harness exited before readiness: the TBEP serving policy is outside its bounds because the supplied gateway principal did not satisfy the production SPIFFE identity grammar
-- `bench/results/terrabase-read-1788127825772532192-2666279-0.json` — bind seed client: rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: credentials: cannot check peer: missing selected ALPN property. If you upgraded from a grpc-go version earlier than 1.67, your TLS connections may have stopped working due to ALPN enforcement. For more details, see: https://github.com/grpc/grpc-go/issues/434"
-- `bench/results/terrabase-read-1788128076667027110-manual-0.json` — qualification harness exited before readiness: engine open refused
-- `bench/results/terrabase-read-1788128658931014378-1.json` — seed operation 0: terrabase: usage_unavailable (grpc FailedPrecondition): a production network mutation requires trusted usage admission
-- `bench/results/terrabase-read-1788128659735477939-2.json` — Go benchmark adapter exited with status exit status: 1
-- `bench/results/terrabase-read-1788128992385733234-2.json` — invalid adapter result: config operation counts must be divisible by concurrency
-- `bench/results/terrabase-read-1788816291301969015-821228-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
-- `bench/results/terrabase-write-1788816291307716735-821233-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
+- `bench/rust/results/auto-index-1788816336-828597.json` — missing required TERRABASE_BENCH_TERRABASE_ENDPOINT
+- `bench/rust/results/postgresql-mixed-1788135184461262373-3832326-0.json` — cannot connect to the pinned reference: error connecting to server
+- `bench/rust/results/postgresql-mixed-1788137615313202308-272578-0.json` — cannot connect to the pinned reference: error connecting to server
+- `bench/rust/results/postgresql-query-1788135183790116747-3831866-0.json` — cannot connect to the pinned reference: error connecting to server
+- `bench/rust/results/postgresql-query-1788137615123935909-272552-0.json` — cannot connect to the pinned reference: error connecting to server
+- `bench/rust/results/postgresql-read-1788135180812017910-3786857-0.json` — cannot connect to the pinned reference: error connecting to server
+- `bench/rust/results/postgresql-read-1788137614741020195-272364-0.json` — cannot connect to the pinned reference: error connecting to server
+- `bench/rust/results/postgresql-write-1788135182670212210-3831205-0.json` — cannot connect to the pinned reference: error connecting to server
+- `bench/rust/results/postgresql-write-1788137614935028280-272475-0.json` — cannot connect to the pinned reference: error connecting to server
+- `bench/rust/results/terrabase-read-1788127672017788122-manual-0.json` — qualification harness exited before readiness: the TBEP serving policy is outside its bounds because the supplied gateway principal did not satisfy the production SPIFFE identity grammar
+- `bench/rust/results/terrabase-read-1788127825772532192-2666279-0.json` — bind seed client: rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: credentials: cannot check peer: missing selected ALPN property. If you upgraded from a grpc-go version earlier than 1.67, your TLS connections may have stopped working due to ALPN enforcement. For more details, see: https://github.com/grpc/grpc-go/issues/434"
+- `bench/rust/results/terrabase-read-1788128076667027110-manual-0.json` — qualification harness exited before readiness: engine open refused
+- `bench/rust/results/terrabase-read-1788128658931014378-1.json` — seed operation 0: terrabase: usage_unavailable (grpc FailedPrecondition): a production network mutation requires trusted usage admission
+- `bench/rust/results/terrabase-read-1788128659735477939-2.json` — Go benchmark adapter exited with status exit status: 1
+- `bench/rust/results/terrabase-read-1788128992385733234-2.json` — invalid adapter result: config operation counts must be divisible by concurrency
+- `bench/rust/results/terrabase-read-1788816291301969015-821228-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
+- `bench/rust/results/terrabase-write-1788816291307716735-821233-0.json` — legacy Go served benchmark adapter is retired; use a direct public-boundary family
 
 ## Results (median across samples)
 
 | workload | side | status | ops/s | p50 µs (median–max) | p95 µs | p99 µs | sample wall ms |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| read | terrabase | failed | — | — | — | — | — |
+| read | terrabase-rust | failed | — | — | — | — | — |
 | read | postgresql | failed | — | — | — | — | — |
 | read | pg-fullstack | invalid | — | — | — | — | — |
 | read | ravendb | invalid | — | — | — | — | — |
-| write | terrabase | failed | — | — | — | — | — |
+| write | terrabase-rust | failed | — | — | — | — | — |
 | write | postgresql | failed | — | — | — | — | — |
 | write | pg-fullstack | invalid | — | — | — | — | — |
 | write | ravendb | invalid | — | — | — | — | — |
-| query | terrabase | missing | — | — | — | — | — |
+| query | terrabase-rust | missing | — | — | — | — | — |
 | query | postgresql | failed | — | — | — | — | — |
 | query | pg-fullstack | invalid | — | — | — | — | — |
 | query | ravendb | invalid | — | — | — | — | — |
-| mixed | terrabase | missing | — | — | — | — | — |
+| mixed | terrabase-rust | missing | — | — | — | — | — |
 | mixed | postgresql | failed | — | — | — | — | — |
 | mixed | pg-fullstack | invalid | — | — | — | — | — |
 | mixed | ravendb | invalid | — | — | — | — | — |
@@ -154,7 +157,7 @@ Admission error: TERRABASE_BENCH_INDEXED_QUERY_RUN_DIGEST is required
 
 | side | status | p50 us | p95 us | p99 us | rows returned | rows examined | pages read | logical work |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| terrabase | failed - not launched: OCI launch-member resource evidence file is missing | - | - | - | - | - | - | - |
+| terrabase-rust | failed - not launched: OCI launch-member resource evidence file is missing | - | - | - | - | - | - | - |
 | postgresql-jsonb | failed - adapter unavailable (TERRABASE_BENCH_INDEXED_QUERY_POSTGRESQL_JSONB_CMD is not set) | - | - | - | - | - | - | - |
 | ravendb | failed - adapter unavailable (TERRABASE_BENCH_INDEXED_QUERY_RAVENDB_CMD is not set) | - | - | - | - | - | - | - |
 
@@ -169,8 +172,8 @@ Numbers are admitted only from side adapters with observed identities, immutable
 
 | target | topology | status | documents/sample | docs/s | p50 batch us | p95 batch us | p99 batch us |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| terrabase | single-node | unavailable | - | - | - | - | - |
-| terrabase | rf2 | unavailable | - | - | - | - | - |
+| terrabase-rust | single-node | unavailable | - | - | - | - | - |
+| terrabase-rust | rf2 | unavailable | - | - | - | - | - |
 | postgresql-jsonb | single-node | unavailable | - | - | - | - | - |
 | postgresql-jsonb | rf2 | unavailable | - | - | - | - | - |
 | ravendb | single-node | unavailable | - | - | - | - | - |
@@ -185,7 +188,7 @@ The launch-member contract is exactly 2 OCPU / 12 GiB; single-node and RF=2 rows
 
 ### Auto-indexing
 
-Status: **failed** · topology: **unknown** · documents: **-** · receipt: `bench/results/auto-index-1788816336-828597.json`
+Status: **failed** · topology: **unknown** · documents: **-** · receipt: `bench/rust/results/auto-index-1788816336-828597.json`
 
 | phase | subject | value |
 | --- | --- | --- |

@@ -90,7 +90,17 @@ public sealed partial class EngineSupervisor
 
         while (true)
         {
-            var channel = this.EnsureChannel(tenant, principal);
+            TbepChannel channel;
+            try
+            {
+                channel = this.EnsureChannel(tenant, principal);
+            }
+            catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or System.ComponentModel.Win32Exception)
+            {
+                await this.LoseEngineAsync($"the channel could not connect: {failure.Message}", cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                throw new EngineUnavailableException($"the engine channel cannot serve the caller: {failure.Message}");
+            }
+
             if (channel.Tenant == tenant && channel.Principal == principal)
             {
                 return channel;
@@ -107,7 +117,17 @@ public sealed partial class EngineSupervisor
             await this.bindGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                var current = this.EnsureChannel(tenant, principal);
+                TbepChannel current;
+                try
+                {
+                    current = this.EnsureChannel(tenant, principal);
+                }
+                catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or System.ComponentModel.Win32Exception)
+                {
+                    await this.LoseEngineAsync($"the channel could not connect: {failure.Message}", cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                    throw new EngineUnavailableException($"the engine channel cannot serve the caller: {failure.Message}");
+                }
+
                 if (!ReferenceEquals(current, channel))
                 {
                     // The channel this caller saw left the map while it
@@ -176,6 +196,11 @@ public sealed partial class EngineSupervisor
             if (!this.identityChannels.TryGetValue(identity, out var channel) || channel.IsClosed)
             {
                 this.identityChannels.Remove(identity);
+                if (channel is not null)
+                {
+                    _ = channel.DisposeAsync();
+                }
+
                 channel = TbepChannel.Connect(this.Options.SocketPath);
                 this.identityChannels[identity] = channel;
             }
@@ -196,6 +221,11 @@ public sealed partial class EngineSupervisor
             if (this.adminChannel is { IsClosed: false } channel)
             {
                 return channel;
+            }
+
+            if (this.adminChannel is { IsClosed: true } closed)
+            {
+                _ = closed.DisposeAsync();
             }
 
             this.adminChannel = TbepChannel.Connect(this.Options.SocketPath);

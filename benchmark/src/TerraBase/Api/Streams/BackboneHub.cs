@@ -109,6 +109,9 @@ public sealed class BackboneHub
             }
 
             stream.StartSequence = answer.StartSequence;
+            stream.ResumeCheckpoint = fromSequence is { } requested
+                ? requested > 0 ? requested - 1 : 0
+                : answer.StartSequence > 0 ? answer.StartSequence - 1 : 0;
             this.audit.Record(
                 AuditKind.SubscriptionOpened,
                 tenant,
@@ -272,6 +275,9 @@ public sealed class BackboneStream : IBackboneNotificationSink
 
     /// <summary>The sequence the engine started serving from (the resume point of this stream).</summary>
     public ulong StartSequence { get; internal set; }
+
+    /// <summary>The checkpoint represented by stream metadata before queued replay is delivered.</summary>
+    internal ulong ResumeCheckpoint { get; set; }
 
     /// <summary>The last sequence this stream handed the consumer.</summary>
     public ulong LastSequence => Volatile.Read(ref this.lastSequence);

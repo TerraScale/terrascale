@@ -83,6 +83,11 @@ public sealed record RequestSeries(
     long Total,
     HistogramSnapshot Duration);
 
+/// <summary>A bounded in-flight operation gauge.</summary>
+public sealed record InFlightSeries(
+    Operation Operation,
+    long Count);
+
 /// <summary>A read-only source for Prometheus adapters.</summary>
 public interface IMetricsSource
 {

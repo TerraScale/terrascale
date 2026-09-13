@@ -51,7 +51,7 @@ PostgreSQL receipts currently provide no valid comparison baseline.
 | Engine, materializer, QUIC ACK, and 100k FTS diagnostics | Prior release runs completed | Results retained; do not substitute for final-source qualification |
 | PostgreSQL comparison | Retained receipts audited | No usable baseline; no parity ratio claimed |
 
-Current receipts live in `bench/results/run-20260907/`. Detailed transient
+Current receipts live in `bench/rust/results/run-20260907/`. Detailed transient
 source cohorts, task ownership, review packets, and test logs are recorded in
 `/tmp/terrabase-performance-review-20260907/` and
 `/tmp/terrabase-performance-verification-20260907/`. Update this table as

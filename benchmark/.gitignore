@@ -9,6 +9,7 @@ __pycache__/
 *.pyc
 
 # Local, generated runtime and benchmark output.
+/bench/rust/results/
 /bench/results/
 /.terrascale/
 /bench/.member/
