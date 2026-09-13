@@ -1,4 +1,4 @@
-// <copyright file="QueryDtos.cs" company="TerraScale">
+// <copyright file="ExecutionDtos.cs" company="TerraScale">
 // TerraBase (SE-08). See LICENSE.md.
 // </copyright>
 
@@ -16,13 +16,3 @@ public sealed record QueryRequestDto
 
 /// <summary>The query execution answer.</summary>
 public sealed record QueryResponseDto(DocumentBodyDto[] Documents, uint Count, string Terminal);
-
-/// <summary>The query-cancellation live signal (GAP-Q12, PB-4034).</summary>
-public sealed record QueryCancelDto
-{
-    /// <summary>The in-flight query identity.</summary>
-    public required ulong QueryId { get; init; }
-}
-
-/// <summary>The query-cancellation answer.</summary>
-public sealed record QueryCancelResponseDto(string Outcome);

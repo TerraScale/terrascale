@@ -188,14 +188,14 @@ public sealed partial class EngineSupervisor
     {
         lock (this.gate)
         {
-            if (this.adminChannel is { IsClosed: false } channel)
-            {
-                return channel;
-            }
-
             if (this.disposed)
             {
                 throw new EngineUnavailableException("the engine endpoint is not established");
+            }
+
+            if (this.adminChannel is { IsClosed: false } channel)
+            {
+                return channel;
             }
 
             this.adminChannel = TbepChannel.Connect(this.Options.SocketPath);

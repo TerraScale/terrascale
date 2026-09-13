@@ -185,6 +185,11 @@ public sealed partial class TypedApi
             return refused;
         }
 
+        if (this.Scope(context, request.Document) is { } invalidDocument)
+        {
+            return invalidDocument;
+        }
+
         if (Idempotency(context) is { } badKey)
         {
             return badKey;

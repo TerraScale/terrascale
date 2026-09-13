@@ -60,11 +60,25 @@ public sealed record HealthCheck(Component Component, HealthStatus Status);
 /// <summary>An immutable health report for all bounded components.</summary>
 public sealed record HealthReport(HealthStatus Status, IReadOnlyList<HealthCheck> Checks)
 {
+    private static readonly Component[] RequiredComponents =
+        [Component.Storage, Component.Replication, Component.Membership];
+
     /// <summary>Whether required components are observed healthy.</summary>
-    public bool IsReady =>
-        Checks.Where(check => check.Component is Component.Storage or Component.Replication or Component.Membership)
-            .GroupBy(check => check.Component)
-            .All(group => group.Count() == 1 && group.Single().Status == HealthStatus.Healthy);
+    public bool IsReady
+    {
+        get
+        {
+            var requiredChecks = Checks
+                .Where(check => RequiredComponents.Contains(check.Component))
+                .GroupBy(check => check.Component)
+                .ToDictionary(group => group.Key, group => group.ToArray());
+
+            return RequiredComponents.All(component =>
+                requiredChecks.TryGetValue(component, out var checks)
+                && checks.Length == 1
+                && checks[0].Status == HealthStatus.Healthy);
+        }
+    }
 
     /// <summary>The HTTP status code for a readiness probe.</summary>
     public int ReadinessStatusCode => IsReady ? 200 : 503;

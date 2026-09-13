@@ -1,4 +1,4 @@
-// <copyright file="SyncDtos.cs" company="TerraScale">
+// <copyright file="MutationDtos.cs" company="TerraScale">
 // TerraBase (SE-08). See LICENSE.md.
 // </copyright>
 
@@ -6,60 +6,6 @@ namespace TerraBase.Api;
 
 using System.Text.Json;
 using TerraBase.Protocol;
-
-/// <summary>The sync session setup request: a collection scope and an optional resume checkpoint.</summary>
-public sealed record SyncSessionSetupDto
-{
-    /// <summary>The collection scope.</summary>
-    public required string Collection { get; init; }
-
-    /// <summary>The resume checkpoint bytes, base64, or <c>null</c> for a fresh session.</summary>
-    public string? Resume { get; init; }
-
-    /// <summary>The decoded resume checkpoint, or <c>null</c>.</summary>
-    public byte[]? ResumeBytes => this.Resume is null ? null : Convert.FromBase64String(this.Resume);
-}
-
-/// <summary>The sync session setup answer.</summary>
-public sealed record SyncSessionDto(ulong SessionId, byte[] Checkpoint, byte[] RetainedFloor);
-
-/// <summary>One live sync session of the caller's tenant.</summary>
-public sealed record SyncSessionSummaryDto(ulong SessionId, string Collection, int Generation);
-
-/// <summary>The delta pull request.</summary>
-public sealed record SyncDeltaDto
-{
-    /// <summary>The checkpoint bytes to serve after, base64.</summary>
-    public required string From { get; init; }
-
-    /// <summary>The decoded checkpoint bytes.</summary>
-    public byte[] FromBytes => Convert.FromBase64String(this.From);
-}
-
-/// <summary>The delta pull answer.</summary>
-public sealed record SyncDeltaResponseDto(
-    ulong SessionId,
-    string PayloadCodec,
-    byte[] Payload,
-    byte[] Next,
-    uint Commits,
-    bool SingleCommitOversize);
-
-/// <summary>The snapshot pull answer.</summary>
-public sealed record SyncSnapshotResponseDto(ulong SessionId, string PayloadCodec, byte[] Payload, byte[] Checkpoint);
-
-/// <summary>The checkpoint acknowledgement request.</summary>
-public sealed record SyncAckDto
-{
-    /// <summary>The durable checkpoint bytes, base64.</summary>
-    public required string Checkpoint { get; init; }
-
-    /// <summary>The decoded checkpoint bytes.</summary>
-    public byte[] CheckpointBytes => Convert.FromBase64String(this.Checkpoint);
-}
-
-/// <summary>The acknowledged answer.</summary>
-public sealed record SyncAckedDto(ulong SessionId);
 
 /// <summary>The server-ack mutation request (PD-2026-08-26-12 D2: no optimistic patches).</summary>
 public sealed record SyncMutationDto

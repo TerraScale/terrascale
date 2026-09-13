@@ -126,6 +126,34 @@ public sealed class SchemaSurfaceTests
         await Assert.That(after.RootElement.GetProperty("enforcedVersion").GetUInt64()).IsEqualTo(2ul);
     }
 
+    /// <summary>JSON null clears a schema through the nullable protocol field.</summary>
+    [Test]
+    public async Task ANullSchemaClearsTheRecordedPolicy()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+
+        var (declareStatus, _) = await HostHarness.SendAsync(
+            caller,
+            "/v1/schemas/users",
+            new Dictionary<string, object> { ["schema"] = UsersSchema(1) },
+            idempotencyKey: "op-declare-clear",
+            method: "PUT");
+        await Assert.That(declareStatus).IsEqualTo(200);
+
+        var (clearStatus, clear) = await HostHarness.SendAsync(
+            caller,
+            "/v1/schemas/users",
+            new Dictionary<string, object?> { ["schema"] = null },
+            idempotencyKey: "op-clear-schema",
+            method: "PUT");
+        await Assert.That(clearStatus).IsEqualTo(200);
+        await Assert.That(clear.RootElement.GetProperty("enforcedVersion").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(clear.RootElement.GetProperty("ruleCount").GetUInt32()).IsEqualTo(0u);
+    }
+
     /// <summary>Migration contracts cannot escape the collection named by the route.</summary>
     [Test]
     public async Task MigrationRouteAndContractCollectionsMustMatch()

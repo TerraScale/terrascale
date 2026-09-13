@@ -1,4 +1,4 @@
-// <copyright file="SchemaDtos.cs" company="TerraScale">
+// <copyright file="JsonValueConversions.cs" company="TerraScale">
 // TerraBase (SE-08). See LICENSE.md.
 // </copyright>
 
@@ -52,32 +52,3 @@ public static class JsonValues
         _ => throw new JsonException($"unknown value tag {value.Tag}"),
     };
 }
-
-/// <summary>The schema declaration request: the typed schema document, or <c>null</c> to clear the policy.</summary>
-public sealed record SchemaDeclareDto
-{
-    /// <summary>The schema document of the documented JSON Schema subset.</summary>
-    public JsonElement? Schema { get; init; }
-}
-
-/// <summary>The recorded schema state.</summary>
-public sealed record SchemaStatusDto(ulong? EnforcedVersion, uint RuleCount);
-
-/// <summary>The on-demand validation request: the document to validate.</summary>
-public sealed record SchemaValidateDto
-{
-    /// <summary>
-    /// The document value. Optional at the binding level so the local gate
-    /// runs before the request's own shape is judged (the same ordering the
-    /// document endpoints keep).
-    /// </summary>
-    public JsonElement? Document { get; init; }
-}
-
-/// <summary>The validation answer: the enforced version and the typed violations, never a field value.</summary>
-public sealed record SchemaValidationDto(ulong? EnforcedVersion, bool Valid, ViolationDto[] Violations);
-
-/// <summary>One typed policy violation of one document field.</summary>
-/// <param name="Field">The violated field name, or empty when the document itself is the violation.</param>
-/// <param name="Kind">The snake_case violation kind.</param>
-public sealed record ViolationDto(string Field, string Kind);

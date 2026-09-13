@@ -61,7 +61,14 @@ public sealed partial class TypedApi
         var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
         try
         {
-            var schema = request.Schema is { } document ? JsonValues.ToValue(document) : null;
+            // A JSON null clears the policy. It must stay a nullable protocol
+            // field rather than becoming the typed TbepValue.Null value.
+            var schema = request.Schema switch
+            {
+                null => null,
+                { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined } => null,
+                { } document => JsonValues.ToValue(document),
+            };
             var answer = await this.supervisor
                 .CallAsync(
                     caller.Tenant,

@@ -27,8 +27,12 @@ public sealed class TbepChannel : IAsyncDisposable
     private readonly Dictionary<ulong, TaskCompletionSource<TbepWire.Frame>> pending = [];
     private readonly Dictionary<ulong, ITbepNotificationSink> sinks = [];
     private readonly CancellationTokenSource disposed = new();
+    private readonly TaskCompletionSource<object?> disposal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task reading;
+    private TaskCompletionSource<object?> writersIdle = CompletedSignal();
     private ulong correlation;
+    private int activeWriters;
+    private int disposalStarted;
     private bool closed;
 
     private TbepChannel(TbepClient client)
@@ -474,14 +478,41 @@ public sealed class TbepChannel : IAsyncDisposable
             cancellationToken);
 
     /// <inheritdoc/>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
+        if (Interlocked.CompareExchange(ref this.disposalStarted, 1, 0) == 0)
+        {
+            _ = this.DisposeCoreAsync();
+        }
+
+        return new ValueTask(this.disposal.Task);
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        Task writersIdle;
         this.MarkClosed();
+        this.FailPending(new TbepException("the engine channel is closed"));
         this.disposed.Cancel();
-        await this.client.DisposeAsync().ConfigureAwait(false);
-        await this.reading.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        this.writeGate.Dispose();
-        this.disposed.Dispose();
+        lock (this.gate)
+        {
+            writersIdle = this.writersIdle.Task;
+        }
+
+        try
+        {
+            await this.client.DisposeAsync().ConfigureAwait(false);
+            await this.reading.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await writersIdle.ConfigureAwait(false);
+            this.writeGate.Dispose();
+            this.disposed.Dispose();
+            this.disposal.TrySetResult(null);
+        }
+        catch (Exception failure)
+        {
+            this.disposed.Dispose();
+            this.disposal.TrySetException(failure);
+        }
     }
 
     private async Task<TResponse> CallAsync<TRequest, TResponse>(
@@ -500,9 +531,12 @@ public sealed class TbepChannel : IAsyncDisposable
         var body = MessagePackSerializer.Serialize(request, TbepOptions.Strict, cancellationToken: cancellationToken);
         var completion = new TaskCompletionSource<TbepWire.Frame>(TaskCreationOptions.RunContinuationsAsynchronously);
         ulong correlation;
-        await this.writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        this.EnterWriter(operation);
+        var acquired = false;
         try
         {
+            await this.writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            acquired = true;
             cancellationToken.ThrowIfCancellationRequested();
             correlation = ++this.correlation;
             lock (this.gate)
@@ -520,10 +554,8 @@ public sealed class TbepChannel : IAsyncDisposable
             {
                 await TbepWire.WriteFrame(this.stream, frame).ConfigureAwait(false);
             }
-            catch
+            catch (TbepWire.WireException)
             {
-                // The frame never left: the registration goes with it, so
-                // no later answer can complete an abandoned call.
                 lock (this.gate)
                 {
                     this.pending.Remove(correlation);
@@ -531,10 +563,29 @@ public sealed class TbepChannel : IAsyncDisposable
 
                 throw;
             }
+            catch (Exception failure)
+            {
+                // The frame never completed its write: the registration
+                // goes with it, and every other call must observe the same
+                // terminal transport failure rather than hang behind it.
+                lock (this.gate)
+                {
+                    this.pending.Remove(correlation);
+                }
+
+                var channelFailure = new TbepException($"the engine channel failed while writing {operation}: {failure.Message}");
+                this.Close(channelFailure);
+                throw channelFailure;
+            }
         }
         finally
         {
-            this.writeGate.Release();
+            if (acquired)
+            {
+                this.writeGate.Release();
+            }
+
+            this.ExitWriter();
         }
 
         using var link = cancellationToken.Register(() => this.Abandon(correlation, completion));
@@ -576,17 +627,15 @@ public sealed class TbepChannel : IAsyncDisposable
 
                 if (frame is null)
                 {
-                    this.FailPending(new TbepException("the engine closed the channel"));
-                    this.MarkClosed();
+                    this.Close(new TbepException("the engine closed the channel"));
                     return;
                 }
 
                 this.Dispatch(frame);
             }
-            catch (Exception failure) when (failure is IOException or SocketException or ObjectDisposedException or TbepWire.WireException)
+            catch (Exception failure)
             {
-                this.FailPending(new TbepException($"the engine channel failed: {failure.Message}"));
-                this.MarkClosed();
+                this.Close(new TbepException($"the engine channel failed: {failure.Message}"));
                 return;
             }
         }
@@ -703,6 +752,50 @@ public sealed class TbepChannel : IAsyncDisposable
         {
             this.closed = true;
         }
+    }
+
+    private void EnterWriter(string operation)
+    {
+        lock (this.gate)
+        {
+            if (this.closed)
+            {
+                throw new TbepException($"the engine channel is closed; {operation} was not sent");
+            }
+
+            if (this.activeWriters++ == 0)
+            {
+                this.writersIdle = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+    }
+
+    private void ExitWriter()
+    {
+        TaskCompletionSource<object?>? idle = null;
+        lock (this.gate)
+        {
+            if (--this.activeWriters == 0)
+            {
+                idle = this.writersIdle;
+            }
+        }
+
+        idle?.TrySetResult(null);
+    }
+
+    private void Close(TbepException failure)
+    {
+        this.MarkClosed();
+        this.FailPending(failure);
+        this.disposed.Cancel();
+    }
+
+    private static TaskCompletionSource<object?> CompletedSignal()
+    {
+        var signal = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        signal.TrySetResult(null);
+        return signal;
     }
 }
 

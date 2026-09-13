@@ -26,7 +26,7 @@ public sealed class BackboneHub
     /// <summary>The bounded queue depth of one stream.</summary>
     public const int QueueDepth = 64;
 
-    private readonly EngineSupervisor supervisor;
+    private readonly IBackboneSource source;
     private readonly AuditLog audit;
     private readonly object gate = new();
     private readonly Dictionary<ulong, BackboneStream> open = [];
@@ -37,10 +37,20 @@ public sealed class BackboneHub
     /// <param name="supervisor">The engine supervisor.</param>
     /// <param name="audit">The lifecycle audit log.</param>
     public BackboneHub(EngineSupervisor supervisor, AuditLog audit)
+        : this(new TbepBackboneSource(supervisor), audit)
     {
-        this.supervisor = supervisor;
+    }
+
+    /// <summary>Initializes the hub over a journal source and the audit log.</summary>
+    /// <param name="source">The tenant-scoped journal notification source.</param>
+    /// <param name="audit">The lifecycle audit log.</param>
+    internal BackboneHub(IBackboneSource source, AuditLog audit)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(audit);
+        this.source = source;
         this.audit = audit;
-        supervisor.EngineLost += this.OnEngineLost;
+        source.GenerationLost += this.OnEngineLost;
     }
 
     /// <summary>The total dropped-frame count across every stream (surfaced in the metrics).</summary>
@@ -74,7 +84,6 @@ public sealed class BackboneHub
         ulong? fromSequence,
         CancellationToken cancellationToken = default)
     {
-        var channel = await this.supervisor.ChannelForAsync(tenant, principal, cancellationToken).ConfigureAwait(false);
         ulong subscriptionId;
         BackboneStream stream;
         lock (this.gate)
@@ -86,12 +95,19 @@ public sealed class BackboneHub
 
         try
         {
-            var answer = await channel.BackboneSubscribeAsync(
+            var answer = await this.source.SubscribeAsync(
                 subscriptionId,
+                tenant,
+                principal,
                 collections,
                 fromSequence,
                 sink: stream,
                 cancellationToken).ConfigureAwait(false);
+            if (answer.SubscriptionId != subscriptionId)
+            {
+                throw new InvalidOperationException("the backbone source returned a different subscription identity");
+            }
+
             stream.StartSequence = answer.StartSequence;
             this.audit.Record(
                 AuditKind.SubscriptionOpened,
@@ -133,10 +149,9 @@ public sealed class BackboneHub
 
         try
         {
-            var channel = await this.supervisor
-                .ChannelForAsync(stream.Tenant, stream.Principal)
+            await this.source
+                .UnsubscribeAsync(stream.SubscriptionId, stream.Tenant, stream.Principal)
                 .ConfigureAwait(false);
-            await channel.BackboneUnsubscribeAsync(stream.SubscriptionId).ConfigureAwait(false);
         }
         catch (Exception failure) when (failure is TbepException or EngineUnavailableException or IOException)
         {

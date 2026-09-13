@@ -14,6 +14,16 @@ durable local decisions. `GlobalDurable` is accepted only with at least two
 active selected Regions; a request with fewer Regions fails before
 acknowledgement.
 
+## Current solution layout
+
+TerraBase is intentionally a consolidated .NET solution. The runtime project
+is `src/TerraBase/TerraBase.csproj`; its `Api`, `Engine`, `Protocol`,
+`Storage`, and `Observability` feature folders contain the C# host and its
+engine-facing boundaries. `src/TerraScale.Endpoints` is the shared endpoint
+mapping library, and `src/TerraScale.Endpoints.Example` is its small example
+host. The test projects under `tests/` cover the host, protocol, core engine,
+and endpoint library. `TerraBase.slnx` is the entry point for all of them.
+
 ## Runtime boundary
 
 ```text
@@ -57,6 +67,17 @@ examples, and test projects. The checked-in contract archive remains the
 source of truth for protocol changes; update its generated consumer metadata
 in the affected SDK repositories when changing the published contract. See
 [docs/development.md](docs/development.md) for the contributor workflow.
+
+To run the host after configuring an attached or managed TBEP engine, use the
+same project directly:
+
+```sh
+nice -n 19 dotnet run --project src/TerraBase/TerraBase.csproj --no-build
+```
+
+The host listens on its loopback URL and reads `TERRABASE_TBEP_SOCKET`,
+`TERRABASE_TBEP_ENGINE`, and `TERRABASE_HOST_URL` for its engine and listener
+configuration.
 
 TerraBase is licensed under the [MIT License](LICENSE.md).
 

@@ -4,6 +4,7 @@
 
 namespace TerraBase.Api;
 
+using System.Globalization;
 using System.Diagnostics;
 using System.Net.Sockets;
 using TerraBase.Protocol;
@@ -30,12 +31,13 @@ public sealed partial class EngineSupervisor
         var start = new ProcessStartInfo
         {
             FileName = this.Options.ManagedBinary,
-            Arguments = $"\"{this.Options.SocketPath}\" {instance}",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = true,
             UseShellExecute = false,
         };
+        start.ArgumentList.Add(this.Options.SocketPath);
+        start.ArgumentList.Add(instance.ToString(CultureInfo.InvariantCulture));
         var process = Process.Start(start) ?? throw new EngineUnavailableException("the engine process did not start");
         Volatile.Write(ref this.engineProcess, process);
         // The pipes drain in the background so a chatty engine can never

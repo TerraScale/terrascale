@@ -8,6 +8,7 @@ await ConcurrentFileStorageProvidersRetainWrites();
 await DurableStorageRecoversSnapshotsAndRejectsNullDocuments();
 await DurableStorageRetainsVersionAfterDeleteAndRecreate();
 MetricsAreBoundedAndPrometheusCompatible();
+HealthReportsRequireEveryRequiredComponent();
 LifecycleAndReadinessFailClosed();
 Console.WriteLine("TerraBase focused tests passed.");
 
@@ -243,6 +244,22 @@ static void LifecycleAndReadinessFailClosed()
     }
 
     Assert(invalid, "a stopped service must not return to serving");
+}
+
+static void HealthReportsRequireEveryRequiredComponent()
+{
+    var empty = new HealthReport(HealthStatus.Healthy, []);
+    Assert(!empty.IsReady, "a report without required checks must not be ready");
+
+    var duplicate = new HealthReport(
+        HealthStatus.Healthy,
+        [
+            new HealthCheck(Component.Storage, HealthStatus.Healthy),
+            new HealthCheck(Component.Storage, HealthStatus.Healthy),
+            new HealthCheck(Component.Replication, HealthStatus.Healthy),
+            new HealthCheck(Component.Membership, HealthStatus.Healthy),
+        ]);
+    Assert(!duplicate.IsReady, "duplicate required checks must not be treated as a trustworthy readiness observation");
 }
 
 static void Assert(bool condition, string message)

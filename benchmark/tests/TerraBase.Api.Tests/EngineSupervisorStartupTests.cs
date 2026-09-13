@@ -93,4 +93,36 @@ public sealed class EngineSupervisorStartupTests
             Directory.Delete(home, recursive: true);
         }
     }
+
+    /// <summary>A launch failure is surfaced as the supervisor's typed unavailability.</summary>
+    [Test]
+    public async Task MissingManagedEngineIsTypedUnavailable()
+    {
+        var socket = Path.Combine(Path.GetTempPath(), $"tbep-missing-engine-{Guid.NewGuid():N}.sock");
+        await using var supervisor = new EngineSupervisor(
+            new EngineOptions
+            {
+                SocketPath = socket,
+                ManagedBinary = Path.Combine(Path.GetTempPath(), $"missing-engine-{Guid.NewGuid():N}"),
+            },
+            new AuditLog());
+
+        await Assert.ThrowsAsync<EngineUnavailableException>(() => supervisor.StartAsync());
+        await Assert.That(supervisor.Status).IsEqualTo(EngineStatus.Unavailable);
+    }
+
+    /// <summary>A disposed supervisor cannot reuse its former admin channel.</summary>
+    [Test]
+    public async Task DisposedSupervisorRefusesShutdown()
+    {
+        var socket = Path.Combine(Path.GetTempPath(), $"tbep-disposed-{Guid.NewGuid():N}.sock");
+        await using var engine = new ScriptedTbepEngine(socket);
+        var supervisor = new EngineSupervisor(
+            new EngineOptions { SocketPath = socket },
+            new AuditLog());
+        await supervisor.StartAsync();
+        await supervisor.DisposeAsync();
+
+        await Assert.ThrowsAsync<EngineUnavailableException>(() => supervisor.ShutdownAsync(ShutdownReason.Operator()));
+    }
 }

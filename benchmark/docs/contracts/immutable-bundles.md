@@ -1,25 +1,22 @@
 # Immutable contract bundles
 
 The checked-in `contract-archives/` directory is the source of truth for the
-published contract bytes in this C# checkout. The former
-`terrabase-contracts` producer and its `make contract-archive` target are not
-part of the current solution. Contract publication must therefore use the
-reviewed release artifact and its sidecar digest; do not recreate an archive
-with an undocumented local command.
+published contract bytes in this C# checkout. The current solution consumes
+the reviewed release artifact and its sidecar digest; archive publication is a
+release operation, not a local build step. Do not recreate an archive with an
+undocumented command.
 
 Each archive is rooted at its contract version and has deterministic metadata
-(sorted paths, zero timestamps and neutral ownership), so the same producer
-bytes produce the same archive.
+(sorted paths, zero timestamps and neutral ownership). The archive and its
+sidecars are checked in together so the C# host and protocol tests consume one
+reviewed byte set.
 
-The target also writes `<version>.tar.sha256` and `<version>.tar.json`. The
-sidecar records the archive SHA-256, contract version, manifest SHA-256 and
-artifact count. A consumer handoff consists of the archive URL and the exact
-`archiveSha256` value. TypeScript, Go, Rust, .NET and CLI installers verify the
-downloaded bytes before extraction and then verify each artifact against the
-producer manifest.
+For each version, `<version>.tar.sha256` and `<version>.tar.json` record the
+archive SHA-256, contract version, manifest SHA-256, and artifact count. A
+consumer handoff consists of the archive URL and the exact `archiveSha256`
+value. SDK and CLI consumers verify the downloaded bytes before extraction and
+then verify each artifact against the manifest.
 
-An existing archive is immutable: rerunning the target succeeds only when the
-new bytes and sidecars are byte-identical. A changed source must receive a new
-versioned archive. The archive is not a substitute for publication; release
-automation must upload these exact bytes and pass the sidecar digest to each
-consumer check.
+An existing archive is immutable. A changed contract receives a new versioned
+archive, and release automation uploads those exact bytes while passing the
+sidecar digest to each consumer check.

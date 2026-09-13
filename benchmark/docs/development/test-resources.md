@@ -3,7 +3,7 @@
 The protocol and API test projects carry the exact golden-vector bytes they
 exercise under their own `vectors/` directories. Their project files copy
 those tracked resources beside the test binaries; they do not rely on a
-separate Rust checkout being present while the .NET projects are built.
+separate engine checkout being present while the .NET projects are built.
 
 The TBEP files in
 `tests/TerraBase.Protocol.Tests/vectors/tbep/` are the engine corpus from
@@ -19,7 +19,8 @@ The sync files in
 `SyncGoldenVectorTests.VendoredCorpusMatchesItsCopyManifest` before the
 categories are consumed. The manifest covers the bytes committed in this
 repository, including their final newline, so the resource check detects any
-subsequent edit without silently treating the Rust checkout as a source path.
+subsequent edit without silently treating an external engine tree as a source
+path.
 
 These resources prove the C# codec and host boundary against recorded
 contract data. Engine-backed rows still require the separately supplied

@@ -299,4 +299,31 @@ public sealed class SyncSessionTests
         await Assert.That(engine.Received.Count).IsEqualTo(before);
         await Assert.That(host.Audit.Recent(8).Any(record => record.Kind == AuditKind.SessionEndedByRestart)).IsTrue();
     }
+
+    /// <summary>A mutation document identifier is refused before the session frame is dispatched.</summary>
+    [Test]
+    public async Task AnInvalidMutationDocumentIsRefusedBeforeEngineDispatch()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        var (sessionId, _) = await OpenSessionAsync(caller);
+        var before = engine.Received.Count;
+
+        var (status, body) = await HostHarness.SendAsync(
+            caller,
+            $"/v1/sync/sessions/{sessionId}/mutations",
+            new
+            {
+                document = "d-0 1",
+                change = new { put = new[] { new { name = "qty", value = new { integer = 3L } } } },
+            },
+            idempotencyKey: "op-invalid-document");
+
+        await Assert.That(status).IsEqualTo(422);
+        await Assert.That(body.RootElement.GetProperty("code").GetString()).IsEqualTo("scope-invalid");
+        await Assert.That(engine.Received.Count).IsEqualTo(before);
+        await Assert.That(host.Audit.Recent(8).Any(record => record.Kind == AuditKind.ScopeRefused)).IsTrue();
+    }
 }

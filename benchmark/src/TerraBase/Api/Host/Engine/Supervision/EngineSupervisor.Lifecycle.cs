@@ -64,29 +64,32 @@ public sealed partial class EngineSupervisor
     {
         if (this.Status is not (EngineStatus.Serving or EngineStatus.Starting))
         {
-            return new EngineHealthSnapshot(
-                EngineStatus.Unavailable,
-                EngineState: null,
-                Sessions: null,
-                Subscriptions: null,
-                FramesServed: null,
-                Generation: this.Generation,
-                Restarts: this.restarts,
-                Detail: "the engine endpoint is not established");
+            return this.UnavailableHealth("the engine endpoint is not established");
         }
 
         try
         {
             var channel = this.AdminChannel();
             var health = await channel.SupervisionHealthAsync(cancellationToken).ConfigureAwait(false);
+
+            // A health frame can race startup or loss. Re-read the
+            // supervisor state after the frame so a generation that has
+            // not been published (or was lost while the request was in
+            // flight) cannot be reported as serving.
+            var status = this.Status;
+            if (status is not (EngineStatus.Serving or EngineStatus.Starting))
+            {
+                return this.UnavailableHealth("the engine endpoint is not established");
+            }
+
             return new EngineHealthSnapshot(
-                EngineStatus.Serving,
+                status,
                 EngineState: health.State.Variant,
                 Sessions: health.Sessions,
                 Subscriptions: health.Subscriptions,
                 FramesServed: health.FramesServed,
                 Generation: this.Generation,
-                Restarts: this.restarts,
+                Restarts: this.Restarts,
                 Detail: null);
         }
         catch (Exception failure) when (failure is TbepException or IOException or SocketException or ObjectDisposedException or EngineUnavailableException)
@@ -94,15 +97,7 @@ public sealed partial class EngineSupervisor
             // Recovery belongs to the supervisor, so an aborted health
             // request must not abandon the engine restart it discovered.
             await this.LoseEngineAsync($"the health check failed: {failure.Message}", cancellationToken: CancellationToken.None).ConfigureAwait(false);
-            return new EngineHealthSnapshot(
-                EngineStatus.Unavailable,
-                EngineState: null,
-                Sessions: null,
-                Subscriptions: null,
-                FramesServed: null,
-                Generation: this.Generation,
-                Restarts: this.restarts,
-                Detail: "the engine channel failed under the health check");
+            return this.UnavailableHealth("the engine channel failed under the health check");
         }
     }
 
@@ -113,6 +108,11 @@ public sealed partial class EngineSupervisor
     /// <exception cref="EngineUnavailableException">The engine channel is down.</exception>
     public async Task<SupervisionShutdownResponse> ShutdownAsync(ShutdownReason reason, CancellationToken cancellationToken = default)
     {
+        if (this.Status != EngineStatus.Serving)
+        {
+            throw new EngineUnavailableException("the engine endpoint is not serving");
+        }
+
         var channel = this.AdminChannel();
         SupervisionShutdownResponse answer;
         try
@@ -324,4 +324,14 @@ public sealed partial class EngineSupervisor
             this.status = value;
         }
     }
+
+    private EngineHealthSnapshot UnavailableHealth(string detail) => new(
+        EngineStatus.Unavailable,
+        EngineState: null,
+        Sessions: null,
+        Subscriptions: null,
+        FramesServed: null,
+        Generation: this.Generation,
+        Restarts: this.Restarts,
+        Detail: detail);
 }
