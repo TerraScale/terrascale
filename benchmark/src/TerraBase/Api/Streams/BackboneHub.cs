@@ -251,6 +251,7 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
                 Volatile.Write(ref this.markerQueued, false);
             }
 
+            this.MarkDelivered(frame);
             return frame;
         }
 
@@ -260,14 +261,12 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
     /// <inheritdoc/>
     void TbepChannel.ITbepNotificationSink.OnBatch(SubscriptionBatch batch)
     {
-        Volatile.Write(ref this.lastSequence, batch.NextSequence > 0 ? batch.NextSequence - 1 : 0);
         this.Offer(new StreamEvent.Batch(batch));
     }
 
     /// <inheritdoc/>
     void TbepChannel.ITbepNotificationSink.OnTrigger(TriggerNotification trigger)
     {
-        Volatile.Write(ref this.lastSequence, Math.Max(this.LastSequence, trigger.Sequence));
         this.Offer(new StreamEvent.Trigger(trigger));
     }
 
@@ -366,6 +365,23 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
     {
         Interlocked.Increment(ref this.dropped);
         this.hub.OnDrop(this);
+    }
+
+    /// <summary>Advances the checkpoint only after a frame leaves the bounded queue.</summary>
+    /// <param name="frame">The frame handed to the consumer.</param>
+    private void MarkDelivered(StreamEvent frame)
+    {
+        ulong sequence = frame switch
+        {
+            StreamEvent.Batch batch when batch.Body.NextSequence > 0 => batch.Body.NextSequence - 1,
+            StreamEvent.Trigger trigger => trigger.Body.Sequence,
+            _ => 0ul,
+        };
+
+        if (sequence > this.LastSequence)
+        {
+            Volatile.Write(ref this.lastSequence, sequence);
+        }
     }
 
     /// <summary>Folds a boundary into the tracked gap, keeping the oldest (the start of the dropped region).</summary>

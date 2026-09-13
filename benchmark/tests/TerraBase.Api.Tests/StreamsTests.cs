@@ -249,6 +249,10 @@ public sealed class StreamsTests
         }
 
         await Assert.That(stream.Dropped).IsGreaterThan(0);
+        // The queue has received frames, but the consumer has not read any
+        // yet. Its checkpoint must remain at the last handed sequence, not
+        // advance past frames that may be shed by the bounded queue.
+        await Assert.That(stream.LastSequence).IsEqualTo(0ul);
         var delivered = new List<StreamEvent>();
         while (await stream.ReadAsync(TimeSpan.FromMilliseconds(500)) is { } frame)
         {

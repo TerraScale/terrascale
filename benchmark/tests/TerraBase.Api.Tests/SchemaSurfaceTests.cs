@@ -126,6 +126,36 @@ public sealed class SchemaSurfaceTests
         await Assert.That(after.RootElement.GetProperty("enforcedVersion").GetUInt64()).IsEqualTo(2ul);
     }
 
+    /// <summary>Migration contracts cannot escape the collection named by the route.</summary>
+    [Test]
+    public async Task MigrationRouteAndContractCollectionsMustMatch()
+    {
+        var path = SocketPath();
+        await using var engine = new ScriptedTbepEngine(path);
+        await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
+        var caller = host.As("backend-operator", "tenant-a");
+        var contract = new Dictionary<string, object>(UsersContract()) { ["collection"] = "orders" };
+        var before = engine.Received.Count;
+
+        var (dryRunStatus, dryRun) = await HostHarness.SendAsync(
+            caller,
+            "/v1/migrations/users/dry-run",
+            new Dictionary<string, object> { ["contract"] = contract });
+        await Assert.That(dryRunStatus).IsEqualTo(422);
+        await Assert.That(dryRun.RootElement.GetProperty("code").GetString()).IsEqualTo("collection-mismatch");
+
+        var (applyStatus, apply) = await HostHarness.SendAsync(
+            caller,
+            "/v1/migrations/users/apply",
+            new Dictionary<string, object> { ["contract"] = contract, ["acknowledgeNotRollbackable"] = true },
+            idempotencyKey: "op-apply-mismatch");
+        await Assert.That(applyStatus).IsEqualTo(422);
+        await Assert.That(apply.RootElement.GetProperty("code").GetString()).IsEqualTo("collection-mismatch");
+
+        await Assert.That(engine.Received.Count).IsEqualTo(before);
+        await Assert.That(host.Audit.Recent(8).Count(record => record.Kind == AuditKind.ScopeRefused)).IsEqualTo(2);
+    }
+
     /// <summary>The schema endpoints sit behind the local gate: no backend context, no engine frame.</summary>
     [Test]
     public async Task TheSchemaEndpointsAreRefusedWithoutBackendContext()

@@ -569,6 +569,11 @@ public sealed class TypedApi
             return this.MigrationContractMissing(context, "migration.dry-run");
         }
 
+        if (this.MigrationCollection(context, collection, dryRunContract.Collection, "migration.dry-run") is { } invalidCollection)
+        {
+            return invalidCollection;
+        }
+
         var caller = ResolveCaller(context);
         try
         {
@@ -604,6 +609,11 @@ public sealed class TypedApi
         if (request.Contract is not { } applyContract)
         {
             return this.MigrationContractMissing(context, "migration.apply");
+        }
+
+        if (this.MigrationCollection(context, collection, applyContract.Collection, "migration.apply") is { } invalidCollection)
+        {
+            return invalidCollection;
         }
 
         var caller = ResolveCaller(context);
@@ -654,6 +664,32 @@ public sealed class TypedApi
             "the migration contract is missing");
         return Results.Json(
             new ErrorDto("contract-missing", "a migration names the contract it runs"),
+            statusCode: StatusCodes.Status422UnprocessableEntity);
+    }
+
+    /// <summary>Refuses a migration contract that names a collection other than the route scope.</summary>
+    /// <param name="context">The request context.</param>
+    /// <param name="routeCollection">The collection from the route.</param>
+    /// <param name="contractCollection">The collection from the migration contract.</param>
+    /// <param name="operation">The migration operation.</param>
+    /// <returns>The refusal answer, or <c>null</c> when both collection scopes agree.</returns>
+    private IResult? MigrationCollection(HttpContext context, string routeCollection, string? contractCollection, string operation)
+    {
+        if (string.Equals(routeCollection, contractCollection, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var caller = ResolveCaller(context);
+        this.audit.Record(
+            AuditKind.ScopeRefused,
+            caller.Tenant,
+            caller.Principal,
+            operation,
+            AuditOutcome.Refused,
+            "the migration route collection does not match the contract collection");
+        return Results.Json(
+            new ErrorDto("collection-mismatch", "the migration route collection must match the contract collection"),
             statusCode: StatusCodes.Status422UnprocessableEntity);
     }
 
