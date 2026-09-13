@@ -116,7 +116,6 @@ export const footerColumns: FooterColumn[] = [
   {
     key: 'resources',
     links: [
-      { key: 'docs', href: 'https://docs.terrascale.tech' },
       { key: 'apiReference', href: 'https://docs.terrascale.tech/getting-started/' },
       { key: 'status', href: 'https://status.terrascale.tech' },
       { key: 'community', href: 'https://discord.gg/8Zr2Nw9g' },
