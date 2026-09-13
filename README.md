@@ -49,7 +49,8 @@ also reflected in the generated member contract and the edge route manifest.
 - `tests/conformance.rs` — SDK behavior checks against a mock transport.
 - `tests/producer_http_conformance.rs` — public SDK calls exercised against
   the pinned producer HTTP corpus; these do not replace live API qualification.
-- `CONTRACT_VERSION` — pinned contract version (`make contracts`).
+- `CONTRACT_VERSION` — pinned contract version; contract verification is run by
+  `python3 scripts/contracts.py` with an explicit source or immutable archive.
 
 The derive accepts named-field and unit structs and implements
 `terrascale::schema::Document`. A type name supplies the default collection
@@ -68,14 +69,11 @@ rename is absent.
 
 ## Verify
 
-`nice -n 19 make check` runs `make contracts`, `cargo fmt --all --check`,
-Clippy with warnings denied, and the test suite. `make contracts` validates the
-producer bundle and regenerates `contracts/<CONTRACT_VERSION>/` plus
-`src/generated_contract.rs`. By default it validates and regenerates from the
-checked-in `contracts/<CONTRACT_VERSION>` bundle. Published builds may provide
-an immutable `CONTRACT_URL` with `CONTRACT_ARCHIVE_SHA256`, and local producer
-development may provide an explicit `CONTRACT_SOURCE` directory. The contract
-script itself remains fail-closed when invoked without a source or URL.
+`nice -n 19 cargo fmt --all --check`, `nice -n 19 cargo clippy --workspace
+--all-targets --all-features -- -D warnings`, and `nice -n 19 cargo test
+--workspace --all-features` run the Rust verification set. Contract
+verification uses `python3 scripts/contracts.py` with an explicit source or
+immutable archive and remains fail-closed without one.
 
 Cancellation tokens interrupt local waiting, including an in-flight request or
 retry delay. They do not prove that a submitted mutation was rolled back; retain
