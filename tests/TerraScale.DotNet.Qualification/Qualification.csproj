@@ -5,11 +5,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="TUnit" Version="1.56.18" />
+    <Compile Include="JourneyChecks.cs" />
+    <Compile Include="Program.cs" />
     <PackageReference Include="TerraScale.DotNet" Version="0.1.0" />
-    <Compile Include="../JourneyChecks.cs" Link="JourneyChecks.cs" />
   </ItemGroup>
 </Project>

@@ -7,7 +7,7 @@ import unittest
 import zipfile
 import hashlib
 
-RUNNER = Path(__file__).resolve().parents[1] / "run.sh"
+RUNNER = Path(__file__).resolve().parents[2] / "scripts" / "qualification" / "run.sh"
 
 
 class PackageInputs(unittest.TestCase):

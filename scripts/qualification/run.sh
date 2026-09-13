@@ -41,10 +41,11 @@ copied="$(sha256sum "$feed/TerraScale.DotNet.0.1.0.nupkg" | awk '{print $1}')"
 config="$tmp/NuGet.Config"
 printf '%s\n' '<configuration><packageSources><clear/><add key="local-sdk" value="'"$feed"'"/><add key="nuget" value="https://api.nuget.org/v3/index.json"/></packageSources><packageSourceMapping><packageSource key="local-sdk"><package pattern="TerraScale.DotNet"/></packageSource><packageSource key="nuget"><package pattern="*"/></packageSource></packageSourceMapping></configuration>' > "$config"
 if [[ "$regression" == true ]]; then
-  project="$root/scripts/qualification/tests/Regression.csproj"
+  project="$root/tests/TerraScale.DotNet.Qualification/Regression.csproj"
   dotnet restore "$project" --configfile "$config" --packages "$tmp/packages" -p:BaseIntermediateOutputPath="$tmp/obj/" -p:MSBuildProjectExtensionsPath="$tmp/obj/"
   dotnet run --project "$project" --configuration Release --no-restore -p:BaseIntermediateOutputPath="$tmp/obj/" -p:MSBuildProjectExtensionsPath="$tmp/obj/" -p:OutputPath="$tmp/out/"
 else
-  dotnet restore "$root/scripts/qualification/Qualification.csproj" --configfile "$config" --packages "$tmp/packages" -p:BaseIntermediateOutputPath="$tmp/obj/" -p:MSBuildProjectExtensionsPath="$tmp/obj/"
-  dotnet run --project "$root/scripts/qualification/Qualification.csproj" --configuration Release --no-restore -p:BaseIntermediateOutputPath="$tmp/obj/" -p:MSBuildProjectExtensionsPath="$tmp/obj/" -p:OutputPath="$tmp/out/" -- --phase "$phase"
+  project="$root/tests/TerraScale.DotNet.Qualification/Qualification.csproj"
+  dotnet restore "$project" --configfile "$config" --packages "$tmp/packages" -p:BaseIntermediateOutputPath="$tmp/obj/" -p:MSBuildProjectExtensionsPath="$tmp/obj/"
+  dotnet run --project "$project" --configuration Release --no-restore -p:BaseIntermediateOutputPath="$tmp/obj/" -p:MSBuildProjectExtensionsPath="$tmp/obj/" -p:OutputPath="$tmp/out/" -- --phase "$phase"
 fi

@@ -22,12 +22,14 @@ Run IDs must match `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`. Missing inputs and any live
 non-zero failures; local execution does not qualify a provider run until the
 coordinator retains its logs and package hash.
 
-`tests/Regression.csproj` exercises the journey's assertions and bounded waits
-with local inputs. These runner regressions are separate from production
+`tests/TerraScale.DotNet.Qualification/Regression.csproj` exercises the
+journey's assertions and bounded waits with local inputs. These runner
+regressions are separate from production
 qualification. Run them against the same supplied immutable package with
 `./run.sh --regression`; this mode requires only `TERRASCALE_SDK_NUPKG` and
 `TERRASCALE_SDK_NUPKG_SHA256`, and still verifies the package ID, version, and
-copied-artifact hash before restoring `Regression.csproj`.
+copied-artifact hash before restoring
+`tests/TerraScale.DotNet.Qualification/Regression.csproj`.
 
 If the provider contract supplies a deliberately out-of-scope project API key,
 set `TERRASCALE_DENY_API_KEY` (and optionally
