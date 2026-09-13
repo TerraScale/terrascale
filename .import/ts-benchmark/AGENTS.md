@@ -4,6 +4,7 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 
 - This repo must use C# only
 - This is terrabase a multi region database with a really efficient and fast sync engine
+- We should use MagincOnion for C# <-> C# comunnication
 - When interacting with forgejo use the "fj" cli
 - We need to expose metrics to prometheus compatible
 - We should use crates that are tested and popular whenever possible instead of creating our own solutions
