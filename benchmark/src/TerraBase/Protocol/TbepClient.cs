@@ -57,7 +57,7 @@ public sealed partial class TbepClient : IAsyncDisposable
     public string? Tenant => this.tenant;
 
     /// <summary>The bound principal, or <c>null</c> before the channel binding.</summary>
-    public string? Principal => this.principal;
+    internal string? Principal => this.principal;
 
     /// <summary>Binds the channel to the backend-supplied principal and tenant (PD-2026-08-26-11 D1: no frame carries a tenant).</summary>
     /// <param name="principal">The backend principal.</param>
@@ -218,8 +218,8 @@ public sealed partial class TbepClient : IAsyncDisposable
         ExpectedVersion expected,
         string operationId,
         string idempotencyKey,
-        CancellationToken cancellationToken = default,
-        Acknowledgement? ack = null)
+        Acknowledgement? ack = null,
+        CancellationToken cancellationToken = default)
     {
         var answer = await this.CallAsync(
             "document.write",
@@ -264,8 +264,8 @@ public sealed partial class TbepClient : IAsyncDisposable
         ExpectedVersion expected,
         string operationId,
         string idempotencyKey,
-        CancellationToken cancellationToken = default,
-        Acknowledgement? ack = null)
+        Acknowledgement? ack = null,
+        CancellationToken cancellationToken = default)
     {
         var answer = await this.CallAsync(
             "document.delete",

@@ -135,7 +135,7 @@ static async Task DurableStorageRecoversSnapshotsAndRejectsNullDocuments()
         File.WriteAllText(path, "{\"FormatVersion\":1,\"Documents\":null}");
         File.WriteAllText(
             temporaryPath,
-            "{\"FormatVersion\":1,\"Documents\":[{\"Tenant\":\"tenant-recovery\",\"Collection\":\"users\",\"DocumentId\":\"user-1\",\"Body\":\"{\\\"name\\\":\\\"Grace\\\"}\",\"Version\":2,\"UpdatedAt\":\"2026-09-13T00:00:00+00:00\"}]}" );
+            "{\"FormatVersion\":1,\"Documents\":[{\"Tenant\":\"tenant-recovery\",\"Collection\":\"users\",\"DocumentId\":\"user-1\",\"Body\":\"{\\\"name\\\":\\\"Grace\\\"}\",\"Version\":2,\"UpdatedAt\":\"2026-09-13T00:00:00+00:00\"}]}");
         await using (var provider = new FileStorageProvider(path))
         {
             var recovered = await provider.ReadAsync(key);

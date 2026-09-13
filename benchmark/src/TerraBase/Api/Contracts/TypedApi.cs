@@ -14,12 +14,12 @@ using TerraBase.Protocol;
 /// a typed TBEP operation on the engine through the SE-14 client, every
 /// stream is a TBEP backbone subscription, and every sync session is a
 /// forwarded terrascale.sync.v2 serving session. The boundary is local
-/// and backend-only (PD-2026-08-26-11 D1): there is no authentication
-/// or authorization surface here — the local gate checks that the
-/// backend-supplied context (principal, tenant) is present and valid
-/// before any engine frame is sent, the engine enforces tenant
-/// isolation from that context, and customer auth/PB-3042 lives
-/// exclusively at the TerraScale Platform (no claim is made here).
+/// and backend-only (PD-2026-08-26-11 D1): it does not implement external
+/// authentication. The local gate checks that the backend-supplied context
+/// (principal, tenant, and, for restricted routes, role) is present and
+/// valid before any engine frame is sent, the engine enforces tenant
+/// isolation from that context, and customer auth/PB-3042 lives exclusively
+/// at the TerraScale Platform (no claim is made here).
 /// </summary>
 public sealed class TypedApi
 {
@@ -252,7 +252,7 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "document.write",
-                    channel => channel.DocumentWriteAsync(put, Expected(context), idempotencyKey, idempotencyKey, cancellationToken),
+                    channel => channel.DocumentWriteAsync(put, Expected(context), idempotencyKey, idempotencyKey, cancellationToken: cancellationToken),
                     cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(WriteOutcomeDto.Of(answer.Outcome));
@@ -294,7 +294,7 @@ public sealed class TypedApi
                     caller.Tenant,
                     caller.Principal,
                     "document.delete",
-                    channel => channel.DocumentDeleteAsync(collection, document, Expected(context), idempotencyKey, idempotencyKey, cancellationToken),
+                    channel => channel.DocumentDeleteAsync(collection, document, Expected(context), idempotencyKey, idempotencyKey, cancellationToken: cancellationToken),
                     cancellationToken)
                 .ConfigureAwait(false);
             return Results.Json(WriteOutcomeDto.Of(answer.Outcome));
@@ -1000,7 +1000,8 @@ public sealed class TypedApi
         var caller = ResolveCaller(context);
         if (this.hub.TryGet(id, out var stream)
             && stream is not null
-            && stream.Tenant == caller.Tenant)
+            && stream.Tenant == caller.Tenant
+            && stream.Principal == caller.Principal)
         {
             try
             {

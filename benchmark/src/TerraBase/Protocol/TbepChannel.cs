@@ -63,7 +63,7 @@ public sealed class TbepChannel : IAsyncDisposable
     public string? Tenant => this.client.Tenant;
 
     /// <summary>The bound principal, or <c>null</c> before the channel binding.</summary>
-    public string? Principal => this.client.Principal;
+    internal string? Principal => this.client.Principal;
 
     /// <summary>Answers whether the channel is closed: the engine ended it, or it was disposed.</summary>
     public bool IsClosed => Volatile.Read(ref this.closed);
@@ -112,8 +112,8 @@ public sealed class TbepChannel : IAsyncDisposable
         ExpectedVersion expected,
         string operationId,
         string idempotencyKey,
-        CancellationToken cancellationToken = default,
-        Acknowledgement? ack = null) =>
+        Acknowledgement? ack = null,
+        CancellationToken cancellationToken = default) =>
         this.CallAsync<DocumentWriteRequest, DocumentWriteResponse>(
             "document.write",
             new DocumentWriteRequest { Document = document, Expected = expected, OperationId = operationId, Ack = ack },
@@ -136,8 +136,8 @@ public sealed class TbepChannel : IAsyncDisposable
         ExpectedVersion expected,
         string operationId,
         string idempotencyKey,
-        CancellationToken cancellationToken = default,
-        Acknowledgement? ack = null) =>
+        Acknowledgement? ack = null,
+        CancellationToken cancellationToken = default) =>
         this.CallAsync<DocumentDeleteRequest, DocumentDeleteResponse>(
             "document.delete",
             new DocumentDeleteRequest { Collection = collection, Document = document, Expected = expected, OperationId = operationId, Ack = ack },

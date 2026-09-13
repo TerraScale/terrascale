@@ -8,7 +8,7 @@ separate Rust checkout being present while the .NET projects are built.
 The TBEP files in
 `tests/TerraBase.Protocol.Tests/vectors/tbep/` are the engine corpus from
 TerraBaseV2 commit `59ce520ab7840db022fe3c0ef3a5734bb5fce27b`. The copy
-manifest records each file's byte count and SHA-256 digest, and
+manifest records each committed file's byte count and SHA-256 digest, and
 `TbepGoldenVectorsTests.VendoredCorpusMatchesItsCopyManifest` checks the
 record before replay.
 
@@ -17,7 +17,9 @@ The sync files in
 `terrabase-sync-core` corpus from commit
 `d67c4c43f8800675f8b093448e1435afd13ab2b9`. Its manifest is checked by
 `SyncGoldenVectorTests.VendoredCorpusMatchesItsCopyManifest` before the
-categories are consumed.
+categories are consumed. The manifest covers the bytes committed in this
+repository, including their final newline, so the resource check detects any
+subsequent edit without silently treating the Rust checkout as a source path.
 
 These resources prove the C# codec and host boundary against recorded
 contract data. The end-to-end API rows and real-engine rows still need the

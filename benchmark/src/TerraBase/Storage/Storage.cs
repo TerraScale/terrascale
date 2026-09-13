@@ -639,8 +639,11 @@ public sealed class FileStorageProvider : IStorageProvider
     private IEnumerable<string> EnumerateTemporarySnapshots() =>
         Directory.EnumerateFiles(
                 Path.GetDirectoryName(storagePath)!,
-                $"{Path.GetFileName(storagePath)}.*.tmp",
+                "*",
                 SearchOption.TopDirectoryOnly)
+            .Where(path =>
+                path.StartsWith($"{storagePath}.", StringComparison.Ordinal)
+                && path.EndsWith(".tmp", StringComparison.Ordinal))
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .ThenBy(path => path, StringComparer.Ordinal);
 
