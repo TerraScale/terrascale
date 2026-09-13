@@ -429,10 +429,16 @@ public sealed partial class TbepClient : IAsyncDisposable
                     return answer;
                 }
 
-                if (answer.Causation == correlation)
+                if (answer.Causation == correlation && answer.Kind == TbepRegistry.KindCode("Error"))
                 {
                     var error = MessagePackSerializer.Deserialize<Error>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
                     throw new TbepException(operation, error.Code, error.Detail);
+                }
+
+                if (answer.Causation == correlation)
+                {
+                    throw new TbepException(
+                        $"an unexpected frame answered {operation}: expected kind {expect}, got kind {answer.Kind}");
                 }
 
                 // An unsolicited notification (correlation 0, causation

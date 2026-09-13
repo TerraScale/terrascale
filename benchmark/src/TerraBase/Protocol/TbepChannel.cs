@@ -527,6 +527,13 @@ public sealed class TbepChannel : IAsyncDisposable
             throw new TbepException(operation, error.Code, error.Detail);
         }
 
+        var expectedKind = TbepRegistry.ResponseKindOf(operation);
+        if (answer.Kind != expectedKind)
+        {
+            throw new TbepException(
+                $"an unexpected frame answered {operation}: expected kind {expectedKind}, got kind {answer.Kind}");
+        }
+
         return MessagePackSerializer.Deserialize<TResponse>(answer.Body, TbepOptions.Strict, cancellationToken: cancellationToken);
     }
 

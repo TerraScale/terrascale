@@ -4,6 +4,7 @@
 
 namespace TerraBase.Api;
 
+using System.Net;
 using System.Text.Json.Serialization;
 using TerraScale.Endpoints;
 
@@ -21,6 +22,7 @@ public static class TerraBaseHost
     /// <returns>The application with its supervised engine, stream hub, and audit log.</returns>
     public static HostBundle Create(EngineOptions options, Action<WebApplicationBuilder>? configure = null)
     {
+        ValidateListenUrl(options.ListenUrl);
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls(options.ListenUrl);
         configure?.Invoke(builder);
@@ -45,6 +47,24 @@ public static class TerraBaseHost
         app.MapTerraScaleOpenApi();
         return new HostBundle(app, supervisor, hub, audit);
     }
+
+    private static void ValidateListenUrl(string listenUrl)
+    {
+        if (string.IsNullOrWhiteSpace(listenUrl)
+            || listenUrl.Contains(';', StringComparison.Ordinal)
+            || !Uri.TryCreate(listenUrl, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https")
+            || !IsLoopbackHost(uri.Host))
+        {
+            throw new ArgumentException(
+                "ListenUrl must be one HTTP or HTTPS URL bound to a loopback address.",
+                nameof(listenUrl));
+        }
+    }
+
+    private static bool IsLoopbackHost(string host) =>
+        host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+        || IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
 }
 
 /// <summary>The built host: the application and its engine-facing halves.</summary>
