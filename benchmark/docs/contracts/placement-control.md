@@ -1,4 +1,10 @@
-# Pending placement control
+# Pending placement control (historical design)
+
+> **Historical design record.** The protobuf/gRPC placement listener described
+> below is not part of the current C# host. The active host uses the checked-in
+> TBEP MessagePack protocol and loopback boundary documented in the repository
+> README. Keep this contract for provenance until the C# placement boundary is
+> explicitly implemented.
 
 `PlacementControlService` in the TBEP protobuf persists orchestrator placement
 intent in an owner-private SQLite journal. This implements the control-gRPC peer

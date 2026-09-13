@@ -1,10 +1,12 @@
 # TerraBase observability contract
 
-This directory documents the in-process contract implemented by
-`src/observability/mod.rs`. It renders Prometheus 0.0.4 text and keeps
-liveness, startup, readiness, and component health as separate facts.
-`terrabase-server` owns the private listener and routes. `ts-orchestrator`
-owns target discovery, the Grafana agent, retention, and alert delivery.
+This directory documents the in-process contract implemented by the C#
+`src/TerraBase/Observability` feature slice. It renders Prometheus 0.0.4 text
+and keeps liveness, startup, readiness, and component health as separate
+facts. The `TerraBase` host owns the private listener and routes;
+`ts-orchestrator` owns target discovery, the Grafana agent, retention, and
+alert delivery. Where the table below names an earlier emitter, the current C#
+source is authoritative.
 
 ## Metric families and current wiring
 
@@ -15,20 +17,20 @@ condition is healthy.
 
 | Family | Labels | Current emitter/status |
 | --- | --- | --- |
-| `terrabase_liveness`, `terrabase_started`, `terrabase_ready` | none | `terrabase-server` runtime lifecycle and private probe routes. |
+| `terrabase_liveness`, `terrabase_started`, `terrabase_ready` | none | `TerraBase` host lifecycle and private probe routes. |
 | `terrabase_requests_total` | `region`, `operation`, `outcome` | TBEP `run_host` records private host calls. Public HTTP request middleware does not currently record this family. |
 | `terrabase_request_duration_seconds` | `region`, `operation`, `outcome` | Same TBEP `run_host` path as the request counter; public HTTP latency is not represented. |
 | `terrabase_in_flight_operations` | `operation` | Defined only; no production `set_in_flight` caller is currently wired. |
 | `terrabase_admission_rejections_total` | `operation`, `reason` | Public API read/query, webhook, and reactive-view guards. |
 | `terrabase_queue_depth`, `terrabase_queue_capacity` | `queue` | Defined only; no production queue collector currently calls `set_queue`. |
 | `terrabase_wal_fsync_total`, `terrabase_wal_fsync_duration_seconds` | `outcome` | Defined only; the current SQLite commit path does not call the registry WAL-fsync methods. |
-| `terrabase_commits_total`, `terrabase_commit_duration_seconds` | `outcome` | `Engine::commit` records the durability result and duration. |
+| `terrabase_commits_total`, `terrabase_commit_duration_seconds` | `outcome` | The C# engine boundary records the durability result and duration. |
 | `terrabase_replication_lag_seconds`, `terrabase_replication_backlog_bytes` | `region` | Defined only; no current lag/backlog collector is wired. |
 | `terrabase_replication_frontier_health` | `region` | Server runtime seeds configured lanes as `unknown` until a replication composition supplies an observation. |
 | `terrabase_active_members` | `region` | Defined only; topology/member-count publication is not wired in this repository. |
 | `terrabase_component_health` | `component` | Runtime sets metrics/storage health; unset slots render `-1` (`unknown`). |
 | `terrabase_backup_last_success_age_seconds`, `terrabase_backup_runs_total` | `mode` and `mode`, `outcome` | Defined only; current backup code does not publish to this registry. |
-| `terrabase_usage_export_frontier`, `terrabase_usage_export_failures_total` | none | `Engine::usage_page` records successful frontiers and failures. |
+| `terrabase_usage_export_frontier`, `terrabase_usage_export_failures_total` | none | The C# engine boundary records successful frontiers and failures. |
 | `terrabase_clock_offset_seconds`, `terrabase_clock_write_refusals_total` | none | Host-fed `Engine` clock observations and the origin-write admission refusal. |
 | `terrabase_egress_bytes_total` | `region`, `kind` | Public API `account_direct_read` records direct response bytes as `kind="read"`; replication and snapshot call sites are not wired. |
 
@@ -107,7 +109,7 @@ scrape timeout, and connection limits. It does not proxy customer request
 paths or accept arbitrary labels. The listener uses plaintext HTTP without
 application authentication; private-network policy is the trust boundary.
 
-`terrabase-server` serves `/internal/metrics`, `/live`, `/startup`, and
+The `TerraBase` host serves `/internal/metrics`, `/live`, `/startup`, and
 `/ready` from one immutable `MetricsSnapshot`. Startup becomes true after
 durable engine open and listener binding; draining clears readiness before
 shutdown; terminal shutdown clears liveness.
