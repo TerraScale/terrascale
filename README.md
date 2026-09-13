@@ -102,7 +102,10 @@ exact packed tarball and the current stable major versions of Chrome, Firefox, S
 ## Development and contracts
 
 ```bash
-make check
+npm ci
+npm run typecheck
+npm run build
+npm test
 ```
 
 This checks committed contract metadata, installs dependencies, typechecks,
@@ -112,9 +115,14 @@ builds, and runs Vitest. Browser qualification is a separate lane:
 npm run test:browser
 ```
 
-`make contracts` regenerates route and OpenAPI metadata from the pinned
-producer bundle. Supply explicit development `CONTRACT_SOURCE`, or immutable
-`CONTRACT_URL` and `CONTRACT_ARCHIVE_SHA256`; there is no Dashboard fallback.
+Use the explicit generation scripts to regenerate route and OpenAPI metadata
+from the pinned producer bundle:
+
+```bash
+npm run generate:route-manifest
+npm run generate:openapi-contract-descriptor
+```
+
 Review generated changes against the owning service contract before updating a
 pin. Product routes remain typed clients in the root entrypoint and are not
 part of the generated database/reactive route manifest.
