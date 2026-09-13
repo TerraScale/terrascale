@@ -7,8 +7,6 @@
     <Nullable>enable</Nullable>
     <LangVersion>preview</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <!-- Protocol/API wire models intentionally use schema names and explicit cancellation policy. -->
-    <NoWarn>$(NoWarn);CA2016;CA1720;CA1711;CA1513;CA1822;CA5359</NoWarn>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
