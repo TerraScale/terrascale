@@ -197,6 +197,30 @@ public sealed class SqliteStorageTests
         }
     }
 
+    /// <summary>The SQLite engine composition root exposes its atomic batch capability.</summary>
+    [Test]
+    public async Task EngineAppliesSqliteBatchThroughItsStoragePort()
+    {
+        var path = NewPath();
+        var key = Key("batch-engine", "documents", "one");
+        try
+        {
+            await using var engine = TerraBase.TerraBaseEngine.OpenSqlite(path);
+            using var body = JsonDocument.Parse("{\"value\":7}");
+
+            var batch = await engine.ApplyBatchAsync([
+                TerraBase.StorageMutation.Upsert(key, body.RootElement, DocumentPrecondition.Missing),
+            ]);
+
+            await Assert.That(batch.Outcome).IsEqualTo(TerraBase.StorageBatchOutcome.Committed);
+            await Assert.That((await engine.Documents.ReadAsync(key))?.Body.GetProperty("value").GetInt32()).IsEqualTo(7);
+        }
+        finally
+        {
+            DeleteDatabase(path);
+        }
+    }
+
     /// <summary>Collection scans use deterministic binary identifier order.</summary>
     [Test]
     public async Task ScanReturnsOnlyRequestedCollectionInBinaryOrder()

@@ -75,6 +75,28 @@ public sealed class TerraBaseEngine : IAsyncDisposable
     /// <summary>The abstract document operation surface.</summary>
     public DocumentStore Documents { get; }
 
+    /// <summary>
+    /// Applies several document mutations through the configured provider as
+    /// one atomic transaction.
+    /// </summary>
+    /// <param name="mutations">The ordered mutations to evaluate.</param>
+    /// <param name="cancellationToken">The cancellation signal.</param>
+    /// <returns>The committed writes and journal sequence range.</returns>
+    /// <exception cref="NotSupportedException">
+    /// The configured provider does not expose transactional batches.
+    /// </exception>
+    public ValueTask<StorageBatchResult> ApplyBatchAsync(
+        IReadOnlyList<StorageMutation> mutations,
+        CancellationToken cancellationToken = default)
+    {
+        if (provider is not ITransactionalStorageProvider transactional)
+        {
+            throw new NotSupportedException("The configured storage provider does not support atomic batches.");
+        }
+
+        return transactional.ApplyBatchAsync(mutations, cancellationToken);
+    }
+
     /// <summary>Returns a current health report.</summary>
     public HealthReport Health() => Metrics.Health();
 
