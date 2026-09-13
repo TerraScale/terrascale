@@ -30,6 +30,7 @@ public static class TerraBaseHost
         var audit = new AuditLog();
         var supervisor = new EngineSupervisor(options, audit);
         var hub = new BackboneHub(supervisor, audit);
+        builder.Services.AddSingleton(new MetricsRegistry());
         builder.Services.AddSingleton(new TypedApi(supervisor, hub, audit));
         builder.Services.AddTerraScaleEndpoints(typeof(TerraBaseHost).Assembly, endpointOptions =>
         {

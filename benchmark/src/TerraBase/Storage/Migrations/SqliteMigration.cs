@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace TerraBase.Storage.Migrations;
 
 /// <summary>One ordered SQLite schema migration.</summary>
@@ -22,6 +25,9 @@ public sealed record SqliteMigration
 
     /// <summary>The SQL batch applied for this migration.</summary>
     public string Sql { get; }
+
+    /// <summary>The stable checksum of the migration SQL.</summary>
+    public string Checksum => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Sql))).ToLowerInvariant();
 
     /// <summary>Validates the migration descriptor.</summary>
     /// <exception cref="ArgumentOutOfRangeException">The version is not positive.</exception>

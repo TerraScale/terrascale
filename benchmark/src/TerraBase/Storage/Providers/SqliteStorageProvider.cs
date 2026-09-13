@@ -84,13 +84,14 @@ public sealed class SqliteStorageProvider : IStorageProvider
             {
                 using var command = connection.CreateCommand();
                 command.CommandText = """
-                    SELECT body, version, updated_at_ms
+                    SELECT body, revision, updated_at_ms, deleted
                     FROM documents
-                    WHERE tenant = $tenant AND collection = $collection AND document_id = $document_id;
+                    WHERE tenant = $tenant AND collection = $collection AND document_id = $document_id
+                    ORDER BY commit_seq DESC LIMIT 1;
                     """;
                 BindKey(command, key);
                 using var reader = command.ExecuteReader();
-                return ValueTask.FromResult(reader.Read() ? ReadDocument(key, reader) : null);
+                return ValueTask.FromResult(reader.Read() && reader.GetInt64(3) == 0 ? ReadDocument(key, reader) : null);
             }
         }
     }
@@ -120,19 +121,20 @@ public sealed class SqliteStorageProvider : IStorageProvider
 
                 var previousVersion = ReadWatermark(key, transaction);
                 var version = NextVersion(previousVersion);
+                var commitSequence = NextCommitSequence(transaction);
                 var updatedAt = DateTimeOffset.UtcNow;
                 using (var command = connection.CreateCommand())
                 {
                     command.Transaction = transaction;
                     command.CommandText = """
-                        INSERT INTO documents (tenant, collection, document_id, body, version, updated_at_ms)
-                        VALUES ($tenant, $collection, $document_id, $body, $version, $updated_at_ms)
-                        ON CONFLICT (tenant, collection, document_id) DO UPDATE SET
-                            body = excluded.body,
-                            version = excluded.version,
-                            updated_at_ms = excluded.updated_at_ms;
+                        INSERT INTO documents
+                            (tenant, collection, id, document_id, commit_seq, commit_ulid, revision, deleted, body, context, version, updated_at_ms)
+                        VALUES ($tenant, $collection, $document_id, $document_id, $commit_seq, $commit_ulid, $version, 0, $body, $context, $version, $updated_at_ms);
                         """;
                     BindKey(command, key);
+                    command.Parameters.AddWithValue("$commit_seq", ToSqliteInteger((ulong)commitSequence, nameof(commitSequence)));
+                    command.Parameters.AddWithValue("$commit_ulid", Guid.NewGuid().ToString("N"));
+                    command.Parameters.Add("$context", SqliteType.Blob).Value = Array.Empty<byte>();
                     command.Parameters.Add("$body", SqliteType.Blob).Value = bodyBytes;
                     command.Parameters.AddWithValue("$version", ToSqliteInteger(version, nameof(version)));
                     command.Parameters.AddWithValue("$updated_at_ms", updatedAt.ToUnixTimeMilliseconds());
@@ -177,15 +179,23 @@ public sealed class SqliteStorageProvider : IStorageProvider
                 }
 
                 var version = NextVersion(ReadWatermark(key, transaction));
+                var commitSequence = NextCommitSequence(transaction);
                 var deletedAt = DateTimeOffset.UtcNow;
                 using (var command = connection.CreateCommand())
                 {
                     command.Transaction = transaction;
                     command.CommandText = """
-                        DELETE FROM documents
-                        WHERE tenant = $tenant AND collection = $collection AND document_id = $document_id;
+                        INSERT INTO documents
+                            (tenant, collection, id, document_id, commit_seq, commit_ulid, revision, deleted, body, context, version, updated_at_ms)
+                        VALUES ($tenant, $collection, $document_id, $document_id, $commit_seq, $commit_ulid, $version, 1, $body, $context, $version, $updated_at_ms);
                         """;
                     BindKey(command, key);
+                    command.Parameters.AddWithValue("$commit_seq", ToSqliteInteger((ulong)commitSequence, nameof(commitSequence)));
+                    command.Parameters.AddWithValue("$version", ToSqliteInteger(version, nameof(version)));
+                    command.Parameters.AddWithValue("$commit_ulid", Guid.NewGuid().ToString("N"));
+                    command.Parameters.Add("$body", SqliteType.Blob).Value = Array.Empty<byte>();
+                    command.Parameters.Add("$context", SqliteType.Blob).Value = Array.Empty<byte>();
+                    command.Parameters.AddWithValue("$updated_at_ms", deletedAt.ToUnixTimeMilliseconds());
                     command.ExecuteNonQuery();
                 }
 
@@ -212,10 +222,15 @@ public sealed class SqliteStorageProvider : IStorageProvider
             {
                 using var command = connection.CreateCommand();
                 command.CommandText = """
-                    SELECT document_id, body, version, updated_at_ms
-                    FROM documents
-                    WHERE tenant = $tenant AND collection = $collection
-                    ORDER BY document_id COLLATE BINARY;
+                    SELECT d.document_id, d.body, d.revision, d.updated_at_ms
+                    FROM documents AS d
+                    JOIN (SELECT tenant, collection, document_id, MAX(commit_seq) AS commit_seq
+                          FROM documents WHERE tenant = $tenant AND collection = $collection
+                          GROUP BY tenant, collection, document_id) AS latest
+                      ON latest.tenant = d.tenant AND latest.collection = d.collection
+                     AND latest.document_id = d.document_id AND latest.commit_seq = d.commit_seq
+                    WHERE d.deleted = 0
+                    ORDER BY d.document_id COLLATE BINARY;
                     """;
                 command.Parameters.AddWithValue("$tenant", tenant.Value);
                 command.Parameters.AddWithValue("$collection", collection.Value);
@@ -276,6 +291,11 @@ public sealed class SqliteStorageProvider : IStorageProvider
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value BLOB NOT NULL
+            ) WITHOUT ROWID;
+
             CREATE TABLE IF NOT EXISTS schema_metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -284,12 +304,18 @@ public sealed class SqliteStorageProvider : IStorageProvider
             CREATE TABLE IF NOT EXISTS documents (
                 tenant TEXT NOT NULL,
                 collection TEXT NOT NULL,
+                id TEXT NOT NULL,
                 document_id TEXT NOT NULL,
+                commit_seq INTEGER NOT NULL CHECK (commit_seq >= 0),
+                commit_ulid TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK (revision > 0),
+                deleted INTEGER NOT NULL CHECK (deleted IN (0, 1)),
                 body BLOB NOT NULL,
+                context BLOB NOT NULL,
                 version INTEGER NOT NULL CHECK (version > 0),
                 updated_at_ms INTEGER NOT NULL,
-                PRIMARY KEY (tenant, collection, document_id)
-            ) WITHOUT ROWID;
+                PRIMARY KEY (tenant, collection, document_id, commit_seq)
+            );
 
             CREATE TABLE IF NOT EXISTS version_watermarks (
                 tenant TEXT NOT NULL,
@@ -310,6 +336,20 @@ public sealed class SqliteStorageProvider : IStorageProvider
                 updated_at_ms INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS operation_facts (
+                tenant TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                fact BLOB NOT NULL,
+                PRIMARY KEY (tenant, operation)
+            ) WITHOUT ROWID;
+
+            CREATE TABLE IF NOT EXISTS family_metadata (
+                tenant TEXT NOT NULL,
+                family TEXT NOT NULL,
+                metadata BLOB NOT NULL,
+                PRIMARY KEY (tenant, family)
+            ) WITHOUT ROWID;
+
             CREATE INDEX IF NOT EXISTS publication_journal_key
                 ON publication_journal (tenant, collection, document_id, sequence);
 
@@ -326,13 +366,14 @@ public sealed class SqliteStorageProvider : IStorageProvider
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT body, version, updated_at_ms
+            SELECT body, revision, updated_at_ms, deleted
             FROM documents
-            WHERE tenant = $tenant AND collection = $collection AND document_id = $document_id;
+            WHERE tenant = $tenant AND collection = $collection AND document_id = $document_id
+            ORDER BY commit_seq DESC LIMIT 1;
             """;
         BindKey(command, key);
         using var reader = command.ExecuteReader();
-        return reader.Read() ? ReadDocument(key, reader) : null;
+        return reader.Read() && reader.GetInt64(3) == 0 ? ReadDocument(key, reader) : null;
     }
 
     private long ReadWatermark(DocumentKey key, SqliteTransaction transaction)
@@ -347,6 +388,14 @@ public sealed class SqliteStorageProvider : IStorageProvider
         BindKey(command, key);
         var value = command.ExecuteScalar();
         return value is null or DBNull ? 0 : Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private long NextCommitSequence(SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT COALESCE(MAX(commit_seq), 0) + 1 FROM documents;";
+        return Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private void WriteWatermark(DocumentKey key, ulong version, SqliteTransaction transaction)

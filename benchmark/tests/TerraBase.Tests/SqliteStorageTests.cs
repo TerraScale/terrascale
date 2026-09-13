@@ -21,13 +21,13 @@ internal static class SqliteStorageTests
                 var deleted = await provider.DeleteAsync(key, DocumentPrecondition.Version(1));
                 Assert(deleted.Outcome == WriteOutcome.Deleted, "SQLite deletes transactionally");
                 var recreated = await provider.UpsertAsync(key, body.RootElement, DocumentPrecondition.Missing);
-                Assert(recreated.Document?.Version == 2, "SQLite preserves version watermarks after delete");
+                Assert(recreated.Document?.Version == 3, $"SQLite preserves version watermarks after delete (outcome={recreated.Outcome}, version={recreated.Document?.Version})");
             }
 
             await using (var reopened = new SqliteStorageProvider(path))
             {
                 var read = await reopened.ReadAsync(key);
-                Assert(read?.Version == 2, "SQLite data survives close and reopen");
+                Assert(read?.Version == 3, "SQLite data survives close and reopen");
                 var documents = new List<Document>();
                 await foreach (var document in reopened.ScanAsync(key.Tenant, key.Collection))
                 {

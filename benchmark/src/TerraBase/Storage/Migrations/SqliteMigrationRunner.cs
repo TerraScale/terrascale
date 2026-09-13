@@ -97,7 +97,7 @@ public static class SqliteMigrationRunner
         }
     }
 
-    private static IReadOnlyList<SqliteMigration> NormalizeCatalog(IReadOnlyList<SqliteMigration> migrations)
+    private static SqliteMigration[] NormalizeCatalog(IReadOnlyList<SqliteMigration> migrations)
     {
         foreach (var migration in migrations)
         {

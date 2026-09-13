@@ -26,11 +26,13 @@ public static class SqliteSchema
     public const long JournalSizeLimitBytes = 64 * 1024 * 1024;
 
     /// <summary>Returns the complete, ordered schema migration catalog.</summary>
-    public static IReadOnlyList<SqliteMigration> Migrations { get; } =
+    public static IReadOnlyList<SqliteMigration> Migrations => migrationCatalog.Value;
+
+    private static readonly Lazy<IReadOnlyList<SqliteMigration>> migrationCatalog = new(() =>
     [
         new SqliteMigration(1, "storage-core", StorageCoreSql),
         new SqliteMigration(2, "schema-and-auto-index-catalog", SchemaAndAutoIndexSql),
-    ];
+    ]);
 
     /// <summary>
     /// Configures one opened connection for TerraBase durability and

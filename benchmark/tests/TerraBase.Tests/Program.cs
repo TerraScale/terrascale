@@ -11,6 +11,7 @@ await ConcurrentFileStorageProvidersRetainWrites();
 await DurableStorageRecoversSnapshotsAndRejectsNullDocuments();
 await DurableStorageRetainsVersionAfterDeleteAndRecreate();
 await SqliteStorageMatchesRustJournalAndMetadataSurface();
+await TerraBase.Tests.SqliteMigrationTests.RunAsync();
 MetricsAreBoundedAndPrometheusCompatible();
 InFlightMetricsAreSnapshotAndPrometheusCompatible();
 HealthReportsRequireEveryRequiredComponent();

@@ -56,10 +56,7 @@ public sealed record SqliteCollectionMigration(
         byte[]? sourceDigest = null)
     {
         ValidateIdentity(tenant, collection, migrationId);
-        if (fromVersion <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(fromVersion));
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(fromVersion);
 
         if (toVersion <= fromVersion)
         {
