@@ -162,12 +162,12 @@ session — labels the local gate checks, never secrets — and the CLI
 never logs them.
 
 Packaging: the projects build with the workspace-pinned .NET SDK
-(`dotnet build cli/TerraBase.Cli.slnx`, warnings-as-errors). For an
+(`dotnet build TerraBase.slnx`, warnings-as-errors). For an
 operator install, publish the framework-dependent executable and put
 it on `PATH` as `terrabase`:
 
 ```
-dotnet publish cli/TerraBase.Cli -c Release -o <publish-dir>
+dotnet publish src/TerraBase.Cli/TerraBase.Cli.csproj -c Release -o <publish-dir>
 ln -s <publish-dir>/TerraBase.Cli <bin-dir>/terrabase
 ```
 

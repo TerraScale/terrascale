@@ -22,7 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\TerraBase.Protocol\TerraBase.Protocol.csproj" />
+    <ProjectReference Include="../../src/TerraBase.Protocol/TerraBase.Protocol.csproj" />
   </ItemGroup>
 
   <ItemGroup>

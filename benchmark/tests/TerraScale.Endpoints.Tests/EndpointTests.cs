@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Hosting;
@@ -58,6 +57,19 @@ public sealed class EndpointTests
         await Assert.That(endpoint.DisplayName).Contains("/probe");
         await app.StopAsync();
         await app.DisposeAsync();
+    }
+
+
+    [Test]
+    public async Task NullArgumentsAndInvalidOptionsFailFast()
+    {
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Task.Run(() => EndpointDiscovery.Discover(null!)));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => Task.Run(() => new EndpointCatalog((IEnumerable<Type>)null!, true)));
+        await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() =>
+        {
+            var services = new ServiceCollection();
+            services.AddTerraScaleEndpoints(Array.Empty<Type>(), options => options.ScalarRoute = " ");
+        }));
     }
 
     [Test]

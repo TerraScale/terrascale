@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>TerraBase</RootNamespace>
@@ -15,6 +15,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="src/**/*.cs" />
+    <Compile Include="**/*.cs" Exclude="bin/**;obj/**" />
+    <ProjectReference Include="..\TerraBase.Protocol\TerraBase.Protocol.csproj" />
+    <ProjectReference Include="..\TerraScale.Endpoints\TerraScale.Endpoints.csproj" />
+    <InternalsVisibleTo Include="TerraBase.Api.Tests" />
   </ItemGroup>
 </Project>

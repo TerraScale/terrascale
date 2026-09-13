@@ -24,8 +24,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\TerraBase.Api\TerraBase.Api.csproj" />
-    <ProjectReference Include="..\TerraBase.Protocol\TerraBase.Protocol.csproj" />
+    <ProjectReference Include="../../src/TerraBase/TerraBase.csproj" />
+    <ProjectReference Include="../../src/TerraBase.Protocol/TerraBase.Protocol.csproj" />
   </ItemGroup>
 
   <ItemGroup>

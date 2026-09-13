@@ -1,6 +1,6 @@
 <Solution>
   <Folder Name="/Core/">
-    <Project Path="TerraBase.csproj" />
+    <Project Path="src/TerraBase/TerraBase.csproj" />
   </Folder>
   <Folder Name="/Host/">
     <Project Path="src/TerraBase.Protocol/TerraBase.Protocol.csproj" />

@@ -9,6 +9,6 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../TerraBase.csproj" />
+    <ProjectReference Include="../../src/TerraBase/TerraBase.csproj" />
   </ItemGroup>
 </Project>

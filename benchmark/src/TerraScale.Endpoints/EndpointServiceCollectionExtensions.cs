@@ -35,8 +35,7 @@ public static class EndpointServiceCollectionExtensions
         Validate(options);
         services.AddSingleton(options);
         services.AddSingleton(new EndpointCatalog(assemblies));
-        services.AddOpenApi(options.Version);
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<Microsoft.AspNetCore.OpenApi.OpenApiOptions>, ConfigureOpenApiOptions>());
+        AddOpenApi(services, options);
         return services;
     }
 
@@ -58,7 +57,7 @@ public static class EndpointServiceCollectionExtensions
         Validate(options);
         services.AddSingleton(options);
         services.AddSingleton(new EndpointCatalog(endpointTypes, alreadyDiscovered: true));
-        services.AddOpenApi(options.Version);
+        AddOpenApi(services, options);
         return services;
     }
 
@@ -98,21 +97,14 @@ public static class EndpointServiceCollectionExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(options.OpenApiRoute);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.ScalarRoute);
     }
-}
 
-internal sealed class ConfigureOpenApiOptions : IConfigureOptions<Microsoft.AspNetCore.OpenApi.OpenApiOptions>
-{
-    private readonly EndpointOptions options;
-
-    public ConfigureOpenApiOptions(EndpointOptions options) => this.options = options;
-
-    public void Configure(Microsoft.AspNetCore.OpenApi.OpenApiOptions value)
+    private static void AddOpenApi(IServiceCollection services, EndpointOptions options)
     {
-        value.AddDocumentTransformer((document, _, _) =>
+        services.AddOpenApi(options.Version, openApi => openApi.AddDocumentTransformer((document, _, _) =>
         {
-            document.Info.Title = this.options.Title;
-            document.Info.Version = this.options.Version;
+            document.Info.Title = options.Title;
+            document.Info.Version = options.Version;
             return Task.CompletedTask;
-        });
+        }));
     }
 }
