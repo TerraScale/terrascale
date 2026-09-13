@@ -41,7 +41,11 @@ npm run cf:pages:dev
 
 The site is deployed by `ts-deploy` from this repository's Forgejo Actions
 workflow. A push to `develop` runs `./ts-deploy ci --repo ts-landing`, which
+<<<<<<< Updated upstream
 verifies the checkout with the native npm check, builds the site, signs one immutable
+=======
+verifies the checkout with `npm run check`, builds the site, signs one immutable
+>>>>>>> Stashed changes
 candidate archive, publishes it to the Forgejo release, and only then deploys
 the extracted, byte-verified candidate to Cloudflare Pages.
 
