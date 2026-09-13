@@ -33,9 +33,8 @@ Indexing is where databases often make you choose between performance and correc
 
 Finally, the practical payoff (D-39): because a database is a file, a branch can start from a database snapshot, PITR will use TerraBase’s internal Rust backup subsystem to archive committed SQLite changes to object storage, full-text search uses SQLite's FTS5, and ad-hoc analysis uses read-only SQL over HTTP. These launch features build on the same storage model. The honest footnote is that transactions are single-database. One file, one transaction. Cross-database transactions do not exist by design.
 
-The backup subsystem will rebuild the required functionality of
-[Litestream](https://github.com/benbjohnson/litestream) natively inside
-TerraBase, informed by a review of its source. The design shares background
+The backup subsystem implements its functionality natively inside
+TerraBase. The design shares background
 resources across databases and coordinates WAL capture with the engine.
 Faster backup and restore and lower resource use are implementation goals
 that must be demonstrated by benchmarks and recovery tests.
@@ -44,4 +43,4 @@ Backup policy selects OCI Object Storage, Tigris, or both according to the
 plan, with operator-managed overrides for specific users. Each selected
 provider must support an independent restore and satisfy the database’s
 residency policy. Full backup readiness requires every selected destination.
-The rebuild completely removes the external Litestream integration.
+The external backup tool integration is completely removed.
