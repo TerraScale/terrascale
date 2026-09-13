@@ -42,6 +42,8 @@ public sealed class SqliteIndexCatalogTests
                 await Assert.That(() => catalog.AdvanceBuildAsync(descriptor.DescriptorId, 6))
                     .Throws<SqliteIndexCatalogException>();
 
+                await Assert.That(() => catalog.ActivateAsync(descriptor.DescriptorId, 6))
+                    .Throws<SqliteIndexCatalogException>();
                 await catalog.ActivateAsync(descriptor.DescriptorId, 7);
                 var active = await catalog.FindAsync(descriptor.DescriptorId);
                 await Assert.That(active).IsNotNull();

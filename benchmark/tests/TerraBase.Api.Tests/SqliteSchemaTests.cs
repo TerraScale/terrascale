@@ -82,20 +82,17 @@ public sealed class SqliteSchemaTests
         {
             await using (var legacy = Open(path))
             {
-                await SqliteMigrationRunner.ApplyAsync(
+                SqliteMigrationRunner.Apply(
                     legacy,
                     SqliteSchema.Migrations.Where(migration => migration.Version <= 2).ToArray());
 
                 await using var insert = legacy.CreateCommand();
                 insert.CommandText = """
                     INSERT INTO documents
-                        (tenant, collection, id, commit_seq, version, deleted, body, updated_at,
-                         document_id, commit_ulid, revision, context, updated_at_ms)
+                        (tenant, collection, id, commit_seq, version, deleted, body, updated_at)
                     VALUES
-                        ('tenant-a', 'users', 'user-1', 1, 2, 0, X'01', '1970-01-01T00:00:42+00:00',
-                         'user-1', 'commit-1', 1, X'', 0),
-                        ('tenant-a', 'users', 'user-1', 2, 5, 0, X'02', '1970-01-01T00:00:43+00:00',
-                         'user-1', 'commit-2', 1, X'', 0);
+                        ('tenant-a', 'users', 'user-1', 1, 2, 0, X'01', '1970-01-01T00:00:42+00:00'),
+                        ('tenant-a', 'users', 'user-1', 2, 5, 0, X'02', '1970-01-01T00:00:43+00:00');
                     """;
                 await insert.ExecuteNonQueryAsync();
             }

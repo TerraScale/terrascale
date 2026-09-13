@@ -288,7 +288,8 @@ public sealed class SqliteIndexCatalog
               UPDATE index_descriptors
               SET state = $next, planner_visible = $plannerVisible,
                   backfill_watermark = $backfillWatermark, updated_at = $updatedAt
-              WHERE descriptor_id = $descriptorId AND state = $expected;
+              WHERE descriptor_id = $descriptorId AND state = $expected
+                AND backfill_watermark <= $backfillWatermark;
               """;
         command.Parameters.AddWithValue("$descriptorId", descriptorId);
         command.Parameters.AddWithValue("$expected", StateText(expected));
