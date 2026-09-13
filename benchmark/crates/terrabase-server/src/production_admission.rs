@@ -282,7 +282,18 @@ fn storage_admission_inner_with_customer(
                 }
                 let id =
                     DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
-                let lease = member.acquire(&id).map_err(|_| "encrypted database unavailable")?;
+                // A replay only reconciles the durable admission manifest with
+                // storage that was already materialized before restart.  Do
+                // not let a replay create a new encrypted database (or bind a
+                // fresh primary identity) when the persisted files are absent;
+                // fail closed and leave the admission retryable instead.
+                let lease =
+                    if replaying.as_ref().is_some_and(|flag| flag.load(Ordering::Acquire)) {
+                        member.acquire_existing(&id)
+                    } else {
+                        member.acquire(&id)
+                    }
+                    .map_err(|_| "encrypted database unavailable")?;
                 // Preparation and acceptance are durable origin fences. Replay
                 // retains revoked encrypted entries for authorized maintenance.
                 if !lifecycle_allows_origin_activation(&lease, &tenant_id)? {
@@ -675,6 +686,9 @@ mod tests {
         ];
         let fenced_id = DatabaseId::from(fenced.database());
         let unrelated_id = DatabaseId::from(unrelated.database());
+        // The adapter must remain available for every encrypted open in this
+        // restart scenario, including the setup member and the reopened one.
+        let fixture = crate::test_keys::key_delivery();
         prepare_fenced_database(
             &root,
             &specs,
@@ -682,10 +696,18 @@ mod tests {
             &unrelated,
             fenced_id.clone(),
             unrelated_id.clone(),
+            fixture.provider.clone(),
         );
 
-        let mut keys = crate::test_keys::storage_keys(&fenced);
-        keys.extend(crate::test_keys::storage_keys(&unrelated));
+        // Keep the authenticated adapter alive through reopen. The ordinary
+        // one-shot key fixture intentionally removes its socket after setup,
+        // which cannot model a production restart/replay window.
+        let mut keys =
+            crate::test_keys::storage_keys_with_provider(&fenced, fixture.provider.clone());
+        keys.extend(crate::test_keys::storage_keys_with_provider(
+            &unrelated,
+            fixture.provider.clone(),
+        ));
         let reopened =
             Member::open_production(&root, specs, AdmissionLimits::new(4, 2), keys).unwrap();
         let writer = Writer(1);
@@ -735,10 +757,11 @@ mod tests {
         unrelated: &DatabaseScope,
         fenced_id: DatabaseId,
         unrelated_id: DatabaseId,
+        provider: terrabase::encryption::OciVaultKeyDelivery,
     ) {
         fs::create_dir_all(root).unwrap();
-        let mut keys = crate::test_keys::storage_keys(fenced);
-        keys.extend(crate::test_keys::storage_keys(unrelated));
+        let mut keys = crate::test_keys::storage_keys_with_provider(fenced, provider.clone());
+        keys.extend(crate::test_keys::storage_keys_with_provider(unrelated, provider));
         let member =
             Member::open_production(root, specs.clone(), AdmissionLimits::new(4, 2), keys).unwrap();
         let writer = Writer(1);

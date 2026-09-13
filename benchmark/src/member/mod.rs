@@ -1385,12 +1385,23 @@ impl Member {
         };
         if let Some(epoch) = writer_epoch {
             if engine.activate_origin_epoch(epoch).is_err() {
-                drop(local);
-                drop(global);
-                return Err(MemberError::EngineOpen {
-                    database: database.clone(),
-                    error: EngineOpenError::StorageUnavailable,
-                });
+                // A durably fenced database may still be opened to inspect
+                // its lifecycle state and preserve the fence alongside other
+                // active writers. Origin activation must remain refused, but
+                // the lease itself is valid for read/reconciliation paths.
+                let fenced = TenantId::try_new(&engine.database_owner().tenant().to_text())
+                    .ok()
+                    .map(|tenant| engine.scope_for(&tenant))
+                    .and_then(|scope| engine.lifecycle_state(&scope).ok())
+                    .is_some_and(|state| state.access_revoked());
+                if !fenced {
+                    drop(local);
+                    drop(global);
+                    return Err(MemberError::EngineOpen {
+                        database: database.clone(),
+                        error: EngineOpenError::StorageUnavailable,
+                    });
+                }
             }
         }
         let tenant = match TenantId::try_new(&engine.database_owner().tenant().to_text()) {

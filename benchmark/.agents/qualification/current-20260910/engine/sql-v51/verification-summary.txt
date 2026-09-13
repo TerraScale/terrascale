@@ -1,7 +1,0 @@
-Overlay: /tmp/terrabase-sql-v51.qSIPT8
-Command: nice -n 19 env CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/tmp/terrabase-sql-v51.qSIPT8/target cargo test --locked query::sql::sql_empty_alias_tests_v51::multi_alias_projection_retains_input_fields_but_order_by_skips_aliases --no-fail-fast -- --exact --nocapture
-Result: PASS, 1 passed, 0 failed; exact selector was nonzero and ran one test.
-Wiring: corrected fixture registered as a cfg(test) child of query::sql using path sql_empty_alias_tests_v51.rs.
-Preserved old v50 failed fixture hash: 40ded27b70783c1404c5ffde23022243c53545acca7718e4a362fa09078b7b6f.
-Corrected fixture hash: f31aa64d5fb0730df5a6bb39c0f705402277e4c9175702c359688b4cb58f368f.
-Shared source modified: no.

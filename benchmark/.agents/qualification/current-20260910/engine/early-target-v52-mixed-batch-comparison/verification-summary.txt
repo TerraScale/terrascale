@@ -1,3 +1,0 @@
-Verified existing binary SHA256: f0437257f945f1fe33f2911c83e556dbd6d6b3a5f5456edf71404aafd3993280.
-Ran only the two requested selectors without rebuilding; both passed: mixed_batch_uses_public_transaction_staging_and_replays_complete_receipt; mixed_batch_partial_install_is_hidden_and_recovers_before_registry_publication.
-The current shared SQL snapshot's broad failures are therefore not reproduced by the immutable early-target-v52 binary. This comparison does not qualify or repair current shared source.

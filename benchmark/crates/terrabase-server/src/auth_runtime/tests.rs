@@ -473,6 +473,25 @@ pub(crate) mod admitted_fixture {
         let local_receive = tokio::spawn(async move {
             let _ = local_for_task.receive().await;
         });
+        // `recover_admitted` starts consensus asynchronously. Do not expose a
+        // fixture whose first mutation can race leader election: callers use
+        // this fixture to test operation semantics, not startup timing.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let authority =
+                    runtime.domains.read().unwrap().values().next().unwrap().authority.clone();
+                if authority
+                    .query(Action::Count { model: "user".into(), predicates: Vec::new() })
+                    .await
+                    .is_ok()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("admitted authority must be ready before fixture use");
         let _ = scope;
         Fixture {
             runtime,

@@ -106,8 +106,8 @@ fn batch(lanes: BTreeMap<String, Vec<PeerDatabase>>) -> PeerDatabaseBatch {
     PeerDatabaseBatch { lanes, selected_regions }
 }
 
-#[test]
-fn peer_lane_validation_borrows_assignments_before_they_are_moved() {
+#[tokio::test]
+async fn peer_lane_validation_borrows_assignments_before_they_are_moved() {
     use crate::production::tests::{opened_bootstrap, transport_pair};
 
     let (bootstrap, root, _) = opened_bootstrap("replication-peer-validation");
@@ -251,10 +251,13 @@ async fn receiver_closed_after_reservation_cannot_publish_partial_admission() {
         Err(mpsc::error::TryRecvError::Empty)
     ));
     assert!(synthetic.peers.admitted.lock().unwrap().is_empty());
-    assert!(synthetic.peers.observations().lock().unwrap().contains_key(&("peer-a".into(), a)));
+    // A closed receiver aborts admission before observation publication. The
+    // pre-existing observation is owned by the worker and is cleaned up when
+    // that worker is dropped.
+    assert!(synthetic.peers.observations().lock().unwrap().is_empty());
     assert!(synthetic.progress.selected_regions(a).is_ok());
     assert!(!synthetic.progress.boundaries().unwrap().contains_key(&b));
-    assert!(!synthetic.observations.lock().unwrap().get(&("peer-a".into(), a)).unwrap().connected);
+    assert!(synthetic.observations.lock().unwrap().get(&("peer-a".into(), a)).is_none());
 }
 
 #[tokio::test]
@@ -447,6 +450,9 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         WalAuthenticatedPeer, WalCheckpointMessage, WalEngineHandle, WalFollowerDriver,
     };
     use terrabase_cluster::wal_follower::{WalFollower, WalTail};
+    use terrabase_cluster::wal_snapshot::{
+        WalSnapshotChunk, WalSnapshotManifest, WalSnapshotRequest, WalSnapshotSink,
+    };
 
     let (bootstrap, root, spec) = opened_bootstrap("replication-session-restart");
     let parts = bootstrap.into_parts();
@@ -473,29 +479,8 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
             .unwrap(),
     );
     runtime.admit_membership(&AcceptedMembership(placement.clone())).unwrap();
-    let database_lease: Arc<dyn WalEngineHandle> =
-        Arc::new(runtime.acquire_replication(&scope).unwrap());
-    let lane = PeerDatabase {
-        scope,
-        physical: Some(PhysicalDriver::Writer(WalWriterDriver::new(
-            binding,
-            database_lease,
-            WalTail::new(root.join("unused-tail")),
-        ))),
-        causal: None,
-    };
-    let progress = Arc::new(ReplicationProgress::default());
-    let peers = ReplicationPeers::start(
-        runtime.clone(),
-        progress.clone(),
-        PeerDatabaseBatch {
-            lanes: BTreeMap::from([(peer.member().as_str().to_owned(), vec![lane])]),
-            selected_regions: BTreeMap::from([(scope, BTreeSet::from(["GRU".into()]))]),
-        },
-    )
-    .unwrap();
-    let observations = peers.observations();
-    // The follower must authorize from its own local placement view.
+    // Bootstrap the follower before the first write so the writer tail starts
+    // at the exact durable checkpoint represented by the follower files.
     let follower_placement = terrabase_cluster::production::ProductionPlacement::try_new(
         terrabase::identity::MemberUlid::from_text(
             remote_config.local_identity().member().as_str(),
@@ -513,12 +498,36 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         remote_config.local_identity().clone(),
     )
     .unwrap();
-    let follower_engine = runtime.acquire_replication(&scope).unwrap();
-    let (follower_replica, _) =
+    let (follower_replica, follower_checkpoint) = {
+        let follower_engine = runtime.acquire_replication(&scope).unwrap();
         WalFollower::bootstrap_engine(follower_engine.engine(), &root.join("real-follower"))
-            .unwrap();
-    let mut follower = WalFollowerDriver::new(follower_binding, follower_replica);
-    let engine = follower_engine.engine();
+            .unwrap()
+    };
+    let follower_destination = root.join("real-follower");
+    let mut follower = Some(WalFollowerDriver::new(follower_binding.clone(), follower_replica));
+    let database_lease: Arc<dyn WalEngineHandle> =
+        Arc::new(runtime.acquire_replication(&scope).unwrap());
+    let lane = PeerDatabase {
+        scope,
+        physical: Some(PhysicalDriver::Writer(WalWriterDriver::new(
+            binding,
+            database_lease.clone(),
+            WalTail::resume_engine(database_lease.engine(), follower_checkpoint).unwrap(),
+        ))),
+        causal: None,
+    };
+    let progress = Arc::new(ReplicationProgress::default());
+    let peers = ReplicationPeers::start(
+        runtime.clone(),
+        progress.clone(),
+        PeerDatabaseBatch {
+            lanes: BTreeMap::from([(peer.member().as_str().to_owned(), vec![lane])]),
+            selected_regions: BTreeMap::from([(scope, BTreeSet::from(["GRU".into()]))]),
+        },
+    )
+    .unwrap();
+    let observations = peers.observations();
+    let engine = database_lease.engine();
     let tenant =
         engine.scope_for(&terrabase::types::TenantId::try_new(&scope.tenant().to_text()).unwrap());
     let commit = || {
@@ -553,12 +562,14 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         loop {
             let frame = connection.receive_frame().await.unwrap();
             if frame.starts_with(b"TBWCP") {
+                let follower = follower.as_mut().expect("follower remains installed");
                 let response = follower
                     .checkpoint(&authenticated, WalCheckpointMessage::decode(&frame).unwrap())
                     .await
                     .unwrap();
                 connection.send_frame(&response.encode().unwrap()).await.unwrap();
             } else if frame.starts_with(b"TBWAL") {
+                let follower = follower.as_mut().expect("follower remains installed");
                 let ack = follower
                     .apply(&authenticated, ScopedWalBatch::decode(&frame).unwrap())
                     .await
@@ -573,31 +584,96 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         }
         let connection = remote.accept().await.unwrap().unwrap();
         let authenticated = WalAuthenticatedPeer::from_connection(&connection);
+        let mut snapshot: Option<(WalSnapshotSink, WalSnapshotManifest, [u64; 3])> = None;
+        let mut recovered_sent = false;
+        let mut recovered_tx = Some(recovered_tx);
+        tokio::pin!(stop_rx);
         loop {
-            let frame = connection.receive_frame().await.unwrap();
-            if frame.starts_with(b"TBWCP") {
+            let frame = tokio::select! {
+                _ = &mut stop_rx => break,
+                frame = connection.receive_frame() => frame.unwrap(),
+            };
+            if frame.starts_with(b"TBWSM") {
+                let manifest = WalSnapshotManifest::decode(&frame).unwrap();
+                let sink = WalSnapshotSink::begin(
+                    follower_binding.clone(),
+                    &authenticated,
+                    manifest.clone(),
+                    follower_destination.clone(),
+                    u64::MAX,
+                    None,
+                )
+                .await
+                .unwrap();
+                snapshot = Some((sink, manifest, [0; 3]));
+                let (_, manifest, offsets) = snapshot.as_ref().unwrap();
+                if let Some(file) = (0..3_u8).find(|file| {
+                    manifest
+                        .file_bytes(*file)
+                        .is_some_and(|length| offsets[usize::from(*file)] < length)
+                }) {
+                    connection
+                        .send_frame(
+                            &WalSnapshotRequest::new(manifest, file, offsets[usize::from(file)])
+                                .encode()
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                }
+            } else if frame.starts_with(b"TBWSC") {
+                let chunk = WalSnapshotChunk::decode(&frame).unwrap();
+                let (sink, manifest, offsets) = snapshot.as_mut().expect("snapshot manifest");
+                let file = usize::from(chunk.request().file);
+                offsets[file] = sink.write(&authenticated, chunk).await.unwrap();
+                if let Some(next) = (0..3_u8).find(|slot| {
+                    manifest
+                        .file_bytes(*slot)
+                        .is_some_and(|length| offsets[usize::from(*slot)] < length)
+                }) {
+                    connection
+                        .send_frame(
+                            &WalSnapshotRequest::new(manifest, next, offsets[usize::from(next)])
+                                .encode()
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                } else {
+                    let (sink, _, _) = snapshot.take().unwrap();
+                    let old = follower.take().expect("follower remains installed");
+                    let (replacement, receipt) =
+                        sink.finish_replacing(&authenticated, old).await.unwrap();
+                    let acknowledgment = replacement
+                        .installed_snapshot()
+                        .expect("replacement carries install proof")
+                        .acknowledgment()
+                        .encode()
+                        .unwrap();
+                    follower = Some(replacement);
+                    connection.send_frame(&acknowledgment).await.unwrap();
+                    connection.send_frame(&receipt.encode().unwrap()).await.unwrap();
+                }
+            } else if frame.starts_with(b"TBWCP") {
                 let response = follower
+                    .as_mut()
+                    .expect("follower remains installed")
                     .checkpoint(&authenticated, WalCheckpointMessage::decode(&frame).unwrap())
                     .await
                     .unwrap();
                 connection.send_frame(&response.encode().unwrap()).await.unwrap();
-                recovered_tx.send(()).unwrap();
-                break;
-            }
-        }
-        // Continue servicing real WAL replays while the replacement owner proves catch-up.
-        tokio::pin!(stop_rx);
-        loop {
-            tokio::select! {
-                _ = &mut stop_rx => break,
-                frame = connection.receive_frame() => {
-                    let frame = frame.unwrap();
-                    if frame.starts_with(b"TBWAL") {
-                        let ack = follower.apply(&authenticated,
-                            ScopedWalBatch::decode(&frame).unwrap()).await.unwrap();
-                        connection.send_frame(&ack.encode().unwrap()).await.unwrap();
-                    }
+                if !recovered_sent {
+                    recovered_tx.take().expect("recovery signal sender").send(()).unwrap();
+                    recovered_sent = true;
                 }
+            } else if frame.starts_with(b"TBWAL") {
+                let ack = follower
+                    .as_mut()
+                    .expect("follower remains installed")
+                    .apply(&authenticated, ScopedWalBatch::decode(&frame).unwrap())
+                    .await
+                    .unwrap();
+                connection.send_frame(&ack.encode().unwrap()).await.unwrap();
             }
         }
     });
@@ -629,6 +705,9 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         .await
         .expect("replacement receives durable follower checkpoint")
         .unwrap();
+    // Allow a generation-rotation snapshot exchange to finish before issuing
+    // the idempotent retry that proves the old session was fenced.
+    tokio::time::sleep(Duration::from_millis(250)).await;
     let replay = commit();
     assert_eq!(receipt, replay, "retry must return the original operation receipt");
     crate::api::confirm_regional_for_replication_test(
@@ -659,7 +738,6 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     stop_tx.send(()).unwrap();
     remote_task.await.unwrap();
     peers.drain().await.unwrap();
-    drop(follower_engine);
     drop(runtime);
     drop(member);
     let _ = std::fs::remove_dir_all(root);

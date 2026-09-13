@@ -17,6 +17,8 @@ async fn seeded() -> (axum::Router, axum::http::HeaderValue, SessionToken) {
         .oneshot(
             Request::post("/api/v1/databases")
                 .header(AUTH, KEY)
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                 .expect("database request"),
         )
@@ -46,18 +48,22 @@ async fn malformed_session_tokens_are_rejected_by_sql_and_all_list_routes() {
     let (router, _, _) = seeded().await;
     for request in [
         Request::get("/api/v1/databases/prod/collections/users/documents")
+            .header(AUTH, KEY)
             .header(SESSION_HEADER.clone(), "not-a-token")
             .body(Body::empty())
             .expect("documents request"),
         Request::get("/api/v1/databases/prod/collections")
+            .header(AUTH, KEY)
             .header(SESSION_HEADER.clone(), "not-a-token")
             .body(Body::empty())
             .expect("collections request"),
         Request::get("/api/v1/databases/prod/collections/users/indexes")
+            .header(AUTH, KEY)
             .header(SESSION_HEADER.clone(), "not-a-token")
             .body(Body::empty())
             .expect("indexes request"),
         Request::post("/api/v1/databases/prod/sql")
+            .header(AUTH, KEY)
             .header(SESSION_HEADER.clone(), "not-a-token")
             .header("content-type", "application/json")
             .body(Body::from(r#"{"sql":"SELECT * FROM users"}"#))

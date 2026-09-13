@@ -19,6 +19,8 @@
 #   STACK_FRESH=1          wipe .terrascale/stack (data, certs, configs) before up
 #   STACK_DRY_RUN=1        print the plan without creating files or processes
 #   STACK_NO_BUILD=1       never invoke cargo (fails if the binary is missing)
+#   STACK_WAIT_SECS=N      readiness wait per piece (default 90; raise on a
+#                         loaded machine where dashboard boot exceeds it)
 #
 # Ports (fixed, documented in docs/development/local-stack.md):
 #   GRU  api 7101  tbep 8421  obs 9461
@@ -819,7 +821,7 @@ print_summary() {
 }
 
 wait_for_http() {
-  local name="$1" url="$2" deadline=$((SECONDS + 90))
+  local name="$1" url="$2" deadline=$((SECONDS + ${STACK_WAIT_SECS:-90}))
   while [ "$SECONDS" -lt "$deadline" ]; do
     # A dashboard root request legitimately returns an auth redirect (307).
     # Probe listener readiness without following that redirect into an

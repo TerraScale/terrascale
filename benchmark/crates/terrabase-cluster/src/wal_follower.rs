@@ -324,6 +324,12 @@ pub struct WalCheckpoint {
 }
 
 impl WalTail {
+    /// Returns a stable directory for replacement snapshot staging.
+    #[must_use]
+    pub fn staging_parent(&self) -> PathBuf {
+        self.location.parent().unwrap_or_else(|| Path::new(".")).to_owned()
+    }
+
     /// Restores an authenticated follower position after checking its complete
     /// checksum prefix against the live writer under its capture barrier.
     /// The caller must independently establish that both files share a snapshot.

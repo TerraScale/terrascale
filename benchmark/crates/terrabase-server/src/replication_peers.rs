@@ -12,7 +12,8 @@ use terrabase_cluster::wal_driver::{
     WalAuthenticatedPeer, WalCheckpointMessage, WalFollowerDriver, WalPhysicalBoundary,
     WalWriterDriver,
 };
-use terrabase_cluster::wal_quic::WalCaptureStep;
+use terrabase_cluster::wal_follower::WalFollowerError;
+use terrabase_cluster::wal_quic::{WalCaptureStep, WalQuicError};
 use terrabase_cluster::wal_route::WalReplicaBinding;
 use terrabase_cluster::wal_snapshot::{
     WalSnapshotAck, WalSnapshotChunk, WalSnapshotManifest, WalSnapshotRequest, WalSnapshotSink,
@@ -197,7 +198,8 @@ pub struct ReplicationPeers {
     drain_result: std::sync::Mutex<Option<Result<(), String>>>,
 }
 fn failure(error: impl std::fmt::Debug) -> String {
-    format!("replication peer: {error:?}")
+    let detail = format!("{error:?}");
+    format!("replication peer: {detail}")
 }
 impl ReplicationPeers {
     /// Starts workers after atomically validating and admitting one batch.
@@ -1015,7 +1017,21 @@ async fn session(
                 } else if bytes.starts_with(b"TBWCP") {
                     let message = WalCheckpointMessage::decode(&bytes).map_err(failure)?;
                     match lane.physical.as_mut() {
-                        Some(PhysicalDriver::Writer(writer) | PhysicalDriver::BootstrapWriter { writer, .. }) => { writer.resume(&peer, message).await.map_err(failure)?; resumed.insert(scope); }
+                        Some(PhysicalDriver::Writer(writer) | PhysicalDriver::BootstrapWriter { writer, .. }) => {
+                            match writer.resume(&peer, message).await {
+                                Ok(()) => { resumed.insert(scope); }
+                                Err(WalQuicError::Route(terrabase_cluster::wal_route::WalRouteError::Storage(error @ (WalFollowerError::GenerationMismatch | WalFollowerError::CaptureUnavailable)))) => {
+                                    let _ = error;
+                                    resumed.remove(&scope);
+                                    sent.remove(&scope);
+                                    sent_readiness.remove(&scope);
+                                    tokio::time::sleep(Duration::from_millis(10)).await;
+                                    let manifest = refresh_generation(lane).await?;
+                                    connection.send_frame(&manifest).await.map_err(failure)?;
+                                }
+                                Err(error) => return Err(failure(error)),
+                            }
+                        }
                         Some(PhysicalDriver::Follower(follower) | PhysicalDriver::InstalledFollower { driver: follower, .. }) => {
                             let receipt = follower.checkpoint(&peer, message).await.map_err(failure)?;
                             connection.send_frame(&receipt.encode().map_err(failure)?).await.map_err(failure)?;
@@ -1078,7 +1094,16 @@ async fn session(
                     progress.regional_covers(lane.scope, 0).map_err(failure)?;
                     if let Some(PhysicalDriver::Writer(writer) | PhysicalDriver::BootstrapWriter { writer, .. }) = lane.physical.as_mut() && resumed.contains(&lane.scope) {
                         if sent.get(&lane.scope).is_some_and(|at| at.elapsed() < Duration::from_secs(2)) { continue; }
-                        match writer.capture().await.map_err(failure)? {
+                        let engine_handle = writer.engine_handle();
+                        let capture = match writer.capture().await {
+                            Ok(step) => step,
+                            Err(WalQuicError::Route(terrabase_cluster::wal_route::WalRouteError::Storage(WalFollowerError::CaptureUnavailable))) => {
+                                tokio::time::sleep(Duration::from_millis(10)).await;
+                                continue;
+                            }
+                            Err(error) => return Err(failure(error)),
+                        };
+                        match capture {
                             WalCaptureStep::Batch(batch) => {
                                 connection.send_frame(&batch.encode().map_err(failure)?).await.map_err(failure)?;
                                 sent.insert(lane.scope, tokio::time::Instant::now());
@@ -1089,29 +1114,30 @@ async fn session(
                                 sent.remove(&lane.scope);
                                 sent_readiness.remove(&lane.scope);
                                 if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), lane.scope)) { facts.physical = None; facts.readiness = None; facts.physical_caught_up = false; }
-                                let Some(PhysicalDriver::BootstrapWriter { writer, source }) = lane.physical.as_mut() else { return Err("snapshot replacement lacks source authorization".into()); };
-                                let parent = source.staging_parent().to_owned();
-                                **source = writer.refresh_snapshot(&parent).await.map_err(failure)?;
-                                connection.send_frame(&source.manifest().encode().map_err(failure)?).await.map_err(failure)?;
+                                let manifest = refresh_generation(lane).await?;
+                                connection.send_frame(&manifest).await.map_err(failure)?;
                             },
                             WalCaptureStep::UpToDate => {
                                 let scope = lane.scope;
-                                let worker = Arc::clone(runtime);
+                                let worker = engine_handle.clone();
                                 let (tenant, frontier) = tokio::task::spawn_blocking(move || {
-                                    let engine = worker.acquire_replication(&scope).map_err(failure)?;
+                                    let engine = worker.engine();
                                     let tenant = engine.scope_for(&terrabase::types::TenantId::try_new(&scope.tenant().to_text()).map_err(failure)?);
                                     let frontier = engine.durable_origin_prefixes(&tenant).map_err(failure)?;
                                     Ok::<_, String>((tenant, frontier))
                                 }).await.map_err(failure)??;
                                 if let Some(sequence) = writer.durable_sequence(tenant.clone()).await.map_err(failure)? {
-                                    let retention_engine = runtime.acquire_replication(&scope).map_err(failure)?;
-                                    retention.acknowledge(&retention_engine, scope, connection.peer().member().as_str(), sequence.get()).map_err(failure)?;
+                                    retention.acknowledge(engine_handle.engine(), scope, connection.peer().member().as_str(), sequence.get()).map_err(failure)?;
                                     let proof = writer.physical_boundary(tenant).await.map_err(failure)?;
                                     if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical = proof; }
                                     if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical_caught_up = facts.physical.is_some(); }
                                     progress.advance_regional_from_peer(scope, connection.peer().member().as_str(), sequence.get());
                                     progress.advance_region_from_peer(scope, connection.peer().member().as_str(), runtime.transport().config().local_region().as_str(), &frontier).map_err(failure)?;
-                                    let selected_cut = select_cut(cuts, runtime, progress, observations, scope, &connection).await?;
+                                    let selected_cut = if lane.causal.is_some() {
+                                        select_cut(cuts, runtime, progress, observations, scope, &connection).await?
+                                    } else {
+                                        None
+                                    };
                                     let physical = observations.lock().map_err(failure)?.get(&(connection.peer().member().as_str().to_owned(), scope)).and_then(|facts| facts.physical.clone());
                                     if let Some((physical, cut)) = physical.zip(selected_cut) {
                                         let frame = ReadinessCutFrame::from_local(&cut, &physical).map_err(failure)?;
@@ -1192,6 +1218,36 @@ async fn session(
             }
         }
     }
+}
+
+/// Re-establishes a physical writer after its WAL generation was rotated.
+///
+/// A production writer normally already owns a snapshot source, while the
+/// plain writer variant is used by low-level compositions and tests. Both
+/// paths must enter the same bootstrap state before publishing the manifest;
+/// otherwise the next session cannot authorize replacement installation.
+async fn refresh_generation(lane: &mut PeerDatabase) -> Result<Vec<u8>, String> {
+    let physical = lane.physical.take().ok_or("snapshot replacement lacks writer")?;
+    let (mut writer, mut source) = match physical {
+        PhysicalDriver::BootstrapWriter { writer, source } => (writer, source),
+        PhysicalDriver::Writer(mut writer) => {
+            let parent = writer.staging_parent();
+            let source = writer.refresh_snapshot(&parent).await.map_err(failure)?;
+            let manifest = source.manifest().encode().map_err(failure)?;
+            lane.physical =
+                Some(PhysicalDriver::BootstrapWriter { writer, source: Box::new(source) });
+            return Ok(manifest);
+        }
+        other => {
+            lane.physical = Some(other);
+            return Err("snapshot replacement lacks source authorization".into());
+        }
+    };
+    let parent = source.staging_parent().to_owned();
+    *source = writer.refresh_snapshot(&parent).await.map_err(failure)?;
+    let manifest = source.manifest().encode().map_err(failure)?;
+    lane.physical = Some(PhysicalDriver::BootstrapWriter { writer, source });
+    Ok(manifest)
 }
 
 async fn handle_session_command(

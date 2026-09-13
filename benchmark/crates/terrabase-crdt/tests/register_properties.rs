@@ -149,3 +149,21 @@ fn register_decoder_rejects_candidate_that_observes_its_own_dot() {
         Err(DecodeError::NonCanonicalContext)
     );
 }
+
+#[test]
+fn lww_join_is_commutative_for_equivocating_equal_identities() {
+    let left = LwwRegister::from_candidate(candidate(9, 1, CausalContext::new(), 7, Some("left")));
+    let right = LwwRegister::from_candidate(candidate(9, 1, CausalContext::new(), 7, Some("right")));
+    let forward = left.join(&right);
+    let reverse = right.join(&left);
+    assert_eq!(forward, reverse);
+    assert_eq!(forward.materialize(), reverse.materialize());
+}
+
+#[test]
+fn mv_join_is_commutative_for_equivocating_equal_identities() {
+    let left = MvRegister::from_candidate(candidate(9, 1, CausalContext::new(), 7, Some("left")));
+    let right = MvRegister::from_candidate(candidate(9, 1, CausalContext::new(), 7, Some("right")));
+    assert_eq!(left.join(&right), right.join(&left));
+    assert_eq!(left.join(&right).materialize().len(), 1);
+}

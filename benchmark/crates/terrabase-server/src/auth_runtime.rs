@@ -405,10 +405,12 @@ impl AuthRuntime {
         let _lifecycle = self.lifecycle_lock.lock().await;
         self.dispatching.store(false, Ordering::Release);
         self.drain_dispatchers().await;
+        // Stop publishing domains before shutdown. Authority shutdown closes
+        // its shared SQLite store even when callers retain authority clones.
         let domains = self
             .domains
-            .read()
-            .map(|domains| domains.values().cloned().collect::<Vec<_>>())
+            .write()
+            .map(|mut domains| std::mem::take(&mut *domains).into_values().collect::<Vec<_>>())
             .unwrap_or_default();
         for domain in domains {
             let _ = domain.authority.shutdown().await;

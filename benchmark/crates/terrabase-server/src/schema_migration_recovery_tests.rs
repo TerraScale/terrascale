@@ -3,6 +3,9 @@ use crate::schema_api::{
     CollectionSchema, DatabaseIdentity, DurableSchemaRecord, SchemaDocument, SchemaTarget,
 };
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static ENGINE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn record(previous_schema: Option<CollectionSchema>, schema_version: u64) -> DurableSchemaRecord {
     let schema: CollectionSchema = serde_json::from_value(serde_json::json!({
@@ -36,9 +39,9 @@ fn record(previous_schema: Option<CollectionSchema>, schema_version: u64) -> Dur
 }
 
 fn engine() -> terrabase::Engine {
-    let root =
-        std::env::temp_dir().join(format!("terrabase-schema-recovery-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let sequence = ENGINE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir()
+        .join(format!("terrabase-schema-recovery-{}-{sequence}", std::process::id()));
     terrabase::Engine::open(terrabase::EngineConfig::durable(root).expect("durable config"))
         .expect("engine opens")
 }

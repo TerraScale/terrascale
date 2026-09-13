@@ -16,6 +16,8 @@ async fn call(app: &Router, method: &str, path: &str, body: &str) -> serde_json:
                 .uri(path)
                 .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
                 .header("content-type", "application/json")
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(body.to_owned()))
                 .unwrap(),
         )

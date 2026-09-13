@@ -128,6 +128,8 @@ mod webhook_metadata;
 mod write_usage;
 
 use std::{
+    fs::File,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -1376,14 +1378,45 @@ const INITIAL_ROOT_HEAD: &str = "sqlite3-00000000000000000000000000000000";
 /// Metadata key binding the `SQLite` schema to the location's owner record.
 const SCHEMA_BINDING_KEY: &str = "sqlite_schema_binding";
 
+/// Opens the backup through a stable descriptor. Once opened, replacing the
+/// pathname cannot redirect the bytes copied into the staging database.
+fn open_restore_backup(path: &Path) -> Result<File, ()> {
+    #[cfg(unix)]
+    {
+        let descriptor = rustix::fs::open(
+            path,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|_| ())?;
+        let file = File::from(descriptor);
+        if !file.metadata().map_err(|_| ())?.file_type().is_file() {
+            return Err(());
+        }
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        let file = std::fs::OpenOptions::new().read(true).open(path).map_err(|_| ())?;
+        if !file.metadata().map_err(|_| ())?.file_type().is_file() {
+            return Err(());
+        }
+        Ok(file)
+    }
+}
+
 /// Rebinds a verified backup inside a fresh, private staging location.
 pub(crate) fn import_backup_file(
     source: &Path,
+    expected_source_binding: &str,
     backup: &Path,
     target: &Path,
     child_owner: &crate::storage::DatabaseOwner,
 ) -> Result<(), ()> {
     let source_binding = database_binding(source).map_err(|_| ())?.ok_or(())?;
+    if source_binding != expected_source_binding {
+        return Err(());
+    }
     let target_binding = database_binding(target).map_err(|_| ())?.ok_or(())?;
     let file = target.join(DATABASE_FILE);
     let target_origin: String = Connection::open(&file)
@@ -1393,10 +1426,22 @@ pub(crate) fn import_backup_file(
             })
         })
         .map_err(|_| ())?;
-    if !std::fs::symlink_metadata(backup).map_err(|_| ())?.file_type().is_file() {
-        return Err(());
+    let mut backup_reader = open_restore_backup(backup)?;
+    // The staging Engine creates the destination main file before import. Any
+    // SQLite sidecars left by that open belong to the pre-import database and
+    // must not be allowed to journal-apply to the newly copied backup.
+    for suffix in ["-wal", "-journal", "-shm"] {
+        let sidecar = target.join(format!("{DATABASE_FILE}{suffix}"));
+        match std::fs::remove_file(&sidecar) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(()),
+        }
     }
-    std::fs::copy(backup, &file).map_err(|_| ())?;
+    let mut destination =
+        std::fs::OpenOptions::new().write(true).truncate(true).open(&file).map_err(|_| ())?;
+    io::copy(&mut backup_reader, &mut destination).map_err(|_| ())?;
+    destination.flush().map_err(|_| ())?;
     let mut connection = Connection::open(&file).map_err(|_| ())?;
     if validate_database_binding(&connection, &source_binding).map_err(|_| ())? {
         return Err(());

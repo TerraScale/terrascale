@@ -1,7 +1,0 @@
-Overlay: /tmp/terrabase-early-target-v52.7eYUji, derived from immutable /tmp/terrabase-v47-snapshot.9HytIc/terrabase.
-Patch: early-target-identity.patch, SHA256 1ea6f4c716f8a7a30bc0480be9333cfcf2457a9277ee7540cbbb8d42d9e190ba; git apply --check passed.
-New lifecycle selector: engine::shard_split::early_target_identity_tests — 6 passed, 0 failed.
-New registry selector: member::shard_registry::early_target_registry_tests — 1 passed, 0 failed.
-Existing regressions: primary_file_identity_is_persisted_with_first_source_publication; generated_identity_same_snapshot_preserves_customer_and_metadata_occ; generated_identity_marker_is_validated_and_codec_bound; generated_identity_rolls_back_and_rejects_replacement_or_tombstone — all 4 passed.
-Binary SHA256: f0437257f945f1fe33f2911c83e556dbd6d6b3a5f5456edf71404aafd3993280.
-Shared source modified: no.

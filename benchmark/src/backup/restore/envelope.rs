@@ -2,9 +2,10 @@
 
 use super::{
     BackupError, BackupReader, CollectionName, DocumentId, Engine, EngineConfig, Path, PathBuf,
-    Replay, RestoreIdentity, RestoreMarker, RestorePlan, RestoreTargetReservation, StagingDir,
-    TenantId, admit_target, publish_with_identity, read_restore_marker, reconcile_staging,
-    verify_manifest_logical_facts, verify_storage, write_marker,
+    Replay, RestoreIdentity, RestoreMarker, RestorePlan, RestoreTargetReservation,
+    StableConfiguredTarget, StagingDir, TenantId, admit_target, ensure_configured_target_directory,
+    publish_with_identity, read_restore_marker, reconcile_staging, verify_manifest_logical_facts,
+    verify_storage, write_marker,
 };
 use crate::backup::BackupEnvelope;
 use crate::member::AdmittedShardReadCut;
@@ -65,6 +66,16 @@ struct EnvelopeReplayFacts {
     files: Vec<RestoredFile>,
     documents: u64,
     family_records: u64,
+}
+
+fn validate_marker_identity(
+    marker: &RestoreMarker,
+    identity: &RestoreIdentity,
+) -> Result<(), BackupError> {
+    if marker.identity != *identity {
+        return Err(BackupError::ChecksumMismatch);
+    }
+    Ok(())
 }
 
 fn replay_envelope_files(
@@ -207,9 +218,18 @@ impl RestorePlan {
                 .map_err(|_| BackupError::DestinationUnavailable)?
                 .next()
                 .is_some();
+        // Pin an existing serving tree by descriptor before opening it. A
+        // pathname-only check can be raced by replacing the target with a
+        // symlink between inspection and Engine::open.
+        let stable_existing_target =
+            if replace { Some(StableConfiguredTarget::open(path)?) } else { None };
         if replace {
+            ensure_configured_target_directory(path)?;
+            let existing_config = stable_existing_target
+                .as_ref()
+                .map_or_else(|| target.clone(), |stable| target.clone().at_location(stable.path()));
             let engine =
-                Engine::open(target.clone()).map_err(|_| BackupError::DestinationUnavailable)?;
+                Engine::open(existing_config).map_err(|_| BackupError::DestinationUnavailable)?;
             let tenant = TenantId::try_new(&engine.database_owner().tenant().to_text())
                 .map_err(|_| BackupError::ManifestInvalid)?;
             let state = engine
@@ -276,7 +296,7 @@ impl RestorePlan {
             crate::backup::sync_directory(&staging.path().join("shards"))?;
         }
         crate::backup::sync_directory(staging.path())?;
-        publish_with_identity(&staging, path, replace)?;
+        publish_with_identity(&staging, path, replace, stable_existing_target.as_ref())?;
         if replace {
             staging.discard_replaced();
         }
@@ -316,10 +336,13 @@ pub fn verify_envelope_restore(
     let marker: RestoreMarker =
         serde_json::from_str(&value).map_err(|_| BackupError::ChecksumMismatch)?;
     drop(storage);
+    // Validate the durable operation identity even for legacy/non-envelope
+    // markers. Returning early on `envelope: None` would allow a marker from
+    // another restore operation to satisfy this routed verification seam.
+    validate_marker_identity(&marker, identity)?;
     let Some(envelope_marker) = marker.envelope else { return Ok(()) };
     let source = BackupEnvelope::decode(envelope_marker.source.as_bytes())?;
-    if marker.identity != *identity
-        || source.digest() != identity.expected_manifest_digest
+    if source.digest() != identity.expected_manifest_digest
         || cut.database_id != identity.target_database_id
         || cut.route_generation != Some(source.route_generation())
         || cut.participants.len() != source.participants().len()
@@ -374,6 +397,38 @@ mod tests {
     use crate::storage::DatabaseOwner;
     use crate::types::{DocumentValue, LocalDurability, OperationId};
     use std::sync::Arc;
+
+    #[test]
+    fn envelope_verification_rejects_non_envelope_marker_with_wrong_identity() {
+        let identity = RestoreIdentity {
+            operation_id: "restore".into(),
+            source_database_id: "source".into(),
+            target_database_id: "target".into(),
+            provider: "oci".into(),
+            selection: "selection".into(),
+            expected_manifest_digest: "digest".into(),
+            expected_journal_boundary: 1,
+            restore_epoch: 1,
+        };
+        let mut marker_identity = identity.clone();
+        marker_identity.operation_id = "other-restore".into();
+        let marker = RestoreMarker {
+            envelope: None,
+            identity: marker_identity,
+            target_sequence: 1,
+            logical_checksum: "checksum".into(),
+            restored_documents: 0,
+            restored_family_records: 0,
+            source_logical_checksum: "checksum".into(),
+            source_logical_documents: 0,
+            source_captured_unix_millis: 0,
+            source_retain_until_unix_millis: 0,
+        };
+        assert_eq!(
+            validate_marker_identity(&marker, &identity),
+            Err(BackupError::ChecksumMismatch)
+        );
+    }
 
     fn capture_restore_participants(
         workspace: &std::path::Path,

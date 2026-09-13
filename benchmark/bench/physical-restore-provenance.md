@@ -4,9 +4,11 @@ Measured on the shared local x86_64 workspace, using the debug test build and
 `nice -n 19`. The fixture seeds 100,000 documents, waits for the backup artifact,
 then times `restore_to_location`. Setup time is excluded from the restore
 duration below. These results do not qualify launch hardware or production
-encrypted restore.
+encrypted restore. The ordinary functional test reports this duration but does
+not fail on it; the explicit timing gate is ignored and must be run in release
+mode on the pinned benchmark host.
 
-| Run | Restore duration | Unchanged limit | Result |
+| Run | Restore duration | Recorded limit at run | Result |
 | --- | ---: | ---: | --- |
 | Provenance reset, full server suite | 13.421756086 s | 1 s | Failed |
 | Provenance reset, isolated test | 13.338558436 s | 1 s | Failed |
@@ -26,9 +28,15 @@ the retained implementation has no such index.
 The isolated command is:
 
 ```sh
-nice -n 19 cargo test --locked -p terrabase-server --lib \
-  backup::tests::branching_100k_documents_restores_under_one_second -- --exact
+nice -n 19 cargo test --locked --release -p terrabase-server --lib \
+  backup::tests::branching_100k_documents_restore_timing_gate -- --exact --ignored
 ```
+
+Forgejo runs this gate in `.forgejo/workflows/release-benchmark.yml` on every
+`main` push and release tag (and it is available for an explicit dispatch).
+That workflow verifies that the pinned runner has Litestream before starting;
+missing benchmark infrastructure is a failed qualification rather than a
+silent skipped test.
 
 The baseline includes workspace revision `546affae`. The candidate's
 `src/storage/sqlite/branch_provenance.rs` SHA-256 was

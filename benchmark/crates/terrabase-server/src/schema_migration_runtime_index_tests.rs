@@ -171,32 +171,37 @@ async fn production_tick_completes_large_descriptor_without_schema_record() {
     let engine = host.engine();
     let scope = document_scope(engine).unwrap();
     let collection = CollectionName::try_new("orders").unwrap();
-    let mut transaction = engine
-        .begin(
-            &scope,
-            engine.read_snapshot(&scope).unwrap(),
-            OperationId::try_new("runtime-index-seed").unwrap(),
-        )
-        .unwrap();
-    for index in 0..ROWS {
-        transaction
-            .put(
-                Document::new(
-                    DocumentId::try_new(&format!("order-{index:05}")).unwrap(),
-                    collection.clone(),
-                    DocumentValue::Object(std::collections::BTreeMap::from([(
-                        "account".to_owned(),
-                        DocumentValue::String(format!("account-{index}")),
-                    )])),
-                ),
-                ExpectedVersion::New,
+    // Backfill cursors advance at commit-sequence boundaries. Split the
+    // fixture across several intents so one governed pass cannot drain every
+    // row in a single sequence and make the descriptor active immediately.
+    for (chunk, start) in (0..ROWS).step_by(4_000).enumerate() {
+        let mut transaction = engine
+            .begin(
+                &scope,
+                engine.read_snapshot(&scope).unwrap(),
+                OperationId::try_new(&format!("runtime-index-seed-{chunk}")).unwrap(),
             )
             .unwrap();
+        for index in start..(start + 4_000).min(ROWS) {
+            transaction
+                .put(
+                    Document::new(
+                        DocumentId::try_new(&format!("order-{index:05}")).unwrap(),
+                        collection.clone(),
+                        DocumentValue::Object(std::collections::BTreeMap::from([(
+                            "account".to_owned(),
+                            DocumentValue::String(format!("account-{index}")),
+                        )])),
+                    ),
+                    ExpectedVersion::New,
+                )
+                .unwrap();
+        }
+        assert!(matches!(
+            transaction.commit(LocalDurability::Synced),
+            terrabase::CommitOutcome::Committed(_)
+        ));
     }
-    assert!(matches!(
-        transaction.commit(LocalDurability::Synced),
-        terrabase::CommitOutcome::Committed(_)
-    ));
     assert!(matches!(
         engine.register_index_field(&collection, "account"),
         Ok(terrabase::storage::DescriptorRegistration::Building)

@@ -1632,7 +1632,9 @@ async fn authenticate(
                     return ApiError::forbidden("access to the whole database").into_response();
                 }
             } else if (verb == Verbs::ADMIN
-                || (request.method() == Method::GET && request.uri().path() == "/api/v1/databases"))
+                || ((request.method() == Method::GET || request.method() == Method::HEAD)
+                    && request.uri().path() == "/api/v1/databases")
+                || matches!(request.uri().path(), "/api/v1/health" | "/api/v1/regions"))
                 && !principal.scope().admits_global(Verbs::ADMIN)
             {
                 return ApiError::forbidden("deployment administration").into_response();
@@ -3498,8 +3500,13 @@ pub(crate) fn document_host(
     let host = catalog
         .host_for(&state.scope.0, &state.scope.1, name)
         .map_err(|_| ApiError::storage_failure())?;
-    let tenant = terrabase::types::TenantId::try_new(host.tenant())
-        .map_err(|_| ApiError::storage_failure())?;
+    // Bind metering to the same logical tenant used by document operations.
+    // Local catalog hosts may be opened under a routing tenant while their
+    // unowned development engine intentionally serves the fixed local scope;
+    // using `host.tenant()` here would leave the placement invisible to the
+    // transaction and turn the first write into a commit-time StorageFailure.
+    let tenant =
+        document_scope(host.engine()).map_err(|()| ApiError::storage_failure())?.tenant().clone();
     let project = host.engine().database_owner().project().to_string();
     let placement = terrabase::usage::UsagePlacement::try_new(
         tenant,
@@ -3930,6 +3937,14 @@ async fn get_document(
             session.as_ref().map(terrabase::Session::session_token),
         );
     }
+    // A live document read must first cover the session frontier. This gate
+    // belongs before the revision probe so 304 and missing responses cannot
+    // bypass causal consistency by reading the participant directly.
+    if let Some(session) = &mut session
+        && let Err(error) = session.read_snapshot()
+    {
+        return session_error(error).into_response();
+    }
     let Ok(operation) = crate::read_operation::next() else {
         return ApiError::storage_failure().into_response();
     };
@@ -4201,6 +4216,11 @@ async fn put_document(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
+    // A supplied session frontier must be covered before staging any write;
+    // otherwise a future token could publish despite causal inconsistency.
+    if let Err(error) = session.read_snapshot() {
+        return session_error(error).into_response();
+    }
     let durability = match BatchDurability::prepare(
         &state,
         host.engine_host(),
@@ -5623,7 +5643,9 @@ fn local_tenant() -> Result<terrabase::types::TenantId, ()> {
 /// One engine's tenant scope for document operations: the member hosts
 /// each database under its stable tenant label, so one fixed label serves
 /// the local stack.
-fn document_scope(engine: &terrabase::Engine) -> Result<terrabase::types::TenantScope, ()> {
+pub(crate) fn document_scope(
+    engine: &terrabase::Engine,
+) -> Result<terrabase::types::TenantScope, ()> {
     let tenant = if engine.owner_scope_enforced() {
         terrabase::types::TenantId::try_new(&engine.database_owner().tenant().to_string())
             .map_err(|_| ())?
@@ -6388,7 +6410,9 @@ mod tests {
                 assert!(operation_ids.insert(id), "duplicate operation id: {id}");
                 assert_eq!(
                     operation.get("security"),
-                    Some(&if id == "view_websocket" {
+                    Some(&if id == "authorization_lease" {
+                        serde_json::json!([])
+                    } else if id == "view_websocket" {
                         serde_json::json!([{ "viewWebSocketCapability": [] }])
                     } else {
                         serde_json::json!([{ "bearerAuth": [] }])
@@ -6451,7 +6475,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(operation_count, 65, "registered route count changed");
+        assert_eq!(operation_count, 74, "registered route count changed");
     }
 
     #[test]
@@ -7056,6 +7080,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn scopes_bind_verb_and_database_in_the_gate() {
         use crate::api_keys::Scope;
         use crate::api_keys::Verbs;
@@ -7083,6 +7108,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, bootstrap)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
@@ -7157,6 +7184,8 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header(auth, prod_only)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"sneaky","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )

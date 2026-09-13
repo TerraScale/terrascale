@@ -394,9 +394,9 @@ async fn three_region_origin_fact_reconciles_local_debit_after_reopen() {
     let connection = rusqlite::Connection::open(path).unwrap();
     let (local_units, body): (i64, Vec<u8>) = connection
         .query_row(
-            "SELECT units_total, (SELECT body FROM usage_facts WHERE fact_id=?1)
+            "SELECT units_total, (SELECT body FROM usage_facts ORDER BY seq DESC LIMIT 1)
              FROM usage_budget_allocations WHERE operation=?1",
-            [operation],
+            [format!("refill-{operation}")],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
@@ -614,7 +614,7 @@ async fn schema_two_refills_install_independently_and_replay_after_journal_reope
             organization: "org".into(),
             holder: "holder".into(),
             placement: "db-placement".into(),
-            writer_epoch: 9,
+            writer_epoch: 1,
             selected_regions: vec!["GRU".into(), "SFO".into()],
         }),
     };

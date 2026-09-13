@@ -1111,7 +1111,10 @@ impl NativeRecoveryRuntime {
                     .await
                     .map_err(|_| NativeRecoveryError::Unavailable)?;
                 self.registry
-                    .resume(&operation.request.target_database_id, &operation.request.operation_id)
+                    .resume(
+                        &operation.request.target_database_id,
+                        &restore_reconcile_operation_id(&operation.request.operation_id),
+                    )
                     .map_err(|_| NativeRecoveryError::Unavailable)?;
                 operation.receipt = Some(receipt);
                 operation.phase = NativeRestorePhase::Complete;
@@ -1400,6 +1403,19 @@ impl NativeRecoveryRuntime {
         let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
         persistence::save_record_only(&connection, operation)
     }
+}
+
+/// Lifecycle operations are idempotent by operation identity. Recovery must
+/// use an identity distinct from the original restore resume: a lost result
+/// can leave the target paused after the original resume was recorded, and
+/// replaying that identity would return the old receipt without changing the
+/// state. Hashing also keeps the generated operation within the lifecycle
+/// operation's bounded identifier limit for arbitrary restore requests.
+fn restore_reconcile_operation_id(operation_id: &str) -> String {
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"terrabase/native-restore-reconcile/v1\0");
+    digest.update(operation_id.as_bytes());
+    format!("restore-reconcile-{}", digest.finalize().to_hex())
 }
 
 #[cfg(test)]

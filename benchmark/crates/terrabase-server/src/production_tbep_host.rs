@@ -245,7 +245,9 @@ mod tests {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let host = ProductionTbepHost::new(Arc::new(registry));
         let mut wrong = scope(&records[0]);
-        wrong.tenant = records[1].tenant_id.clone();
+        // The fixture intentionally shares one tenant across both admitted
+        // records; use the per-database project to make this scope invalid.
+        wrong.project = records[1].project_id.clone();
         assert!(matches!(
             host.bind_channel(&registry::ChannelBindRequest { scope: wrong }),
             Err(terrabase_tbep::HostingError::Refused(_))

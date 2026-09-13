@@ -2814,15 +2814,16 @@ mod tests {
             delivered: true,
             terminal: true,
         };
-        storage.record_attempt(&scope, &endpoint.id, &delivery, &successful).expect("attempt");
+        let claimed = storage.claim_delivery(&scope, &endpoint.id, &delivery, 42).expect("claim");
+        storage.record_attempt(&scope, &endpoint.id, &claimed, &successful).expect("attempt");
         storage
-            .record_attempt(&scope, &endpoint.id, &delivery, &successful)
+            .record_attempt(&scope, &endpoint.id, &claimed, &successful)
             .expect("identical retry");
         assert_eq!(
             storage.record_attempt(
                 &scope,
                 &endpoint.id,
-                &delivery,
+                &claimed,
                 &DeliveryAttempt { status: Some(500), delivered: false, ..successful }
             ),
             Err(StorageError::Conflict)

@@ -1443,8 +1443,14 @@ fn prepare_view(
     {
         return Err(ApiError::forbidden("read on the requested collection"));
     }
-    let tenant = terrabase::types::TenantId::try_new(host.tenant())
-        .map_err(|_| ApiError::storage_failure())?;
+    // Keep the materializer's read scope identical to document writes. A
+    // local engine can be routed through a delegated tenant in the catalog,
+    // but unowned engines still serve the fixed local tenant; using the
+    // catalog label would silently materialize an empty view.
+    let tenant = crate::api::document_scope(engine)
+        .map_err(|()| ApiError::storage_failure())?
+        .tenant()
+        .clone();
     let incremental = incremental::SqlMaterializer::for_plan(&plan)?;
     let mut identity = Vec::new();
     put_identity(&mut identity, b"database-incarnation", &engine.database_id().as_bytes());

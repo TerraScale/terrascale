@@ -1089,12 +1089,17 @@ async fn serve_admitted_production(
             auth_for_cleanup.as_deref(),
             &native_for_startup_cleanup,
             &member_for_startup_cleanup,
+            &metrics,
         )
         .await;
     }
     startup_result
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "startup cleanup owns each runtime component explicitly"
+)]
 async fn cleanup_failed_production_startup(
     recovery_worker: Option<crate::native_recovery::NativeRecoveryWorker>,
     native_stop: tokio::sync::watch::Sender<bool>,
@@ -1105,6 +1110,7 @@ async fn cleanup_failed_production_startup(
     auth: Option<&crate::auth_runtime::AuthRuntime>,
     native: &crate::native_backup_runtime::NativeBackupRuntime,
     member: &terrabase_cluster::production::ProductionMemberRuntime,
+    metrics: &terrabase::observability::MetricsRegistry,
 ) {
     if let Some(recovery_worker) = recovery_worker {
         let _ = recovery_worker.await_completion().await;
@@ -1119,6 +1125,10 @@ async fn cleanup_failed_production_startup(
     }
     let _ = native.drain_async().await;
     let _ = member.drain().await;
+    // Startup failures use the same drain path as an orderly shutdown. Once
+    // every owner has been joined, publish the terminal state so callers do
+    // not observe a permanently Draining runtime after resources are closed.
+    let _ = metrics.transition_service(ServiceState::Stopped);
 }
 
 fn parts_root_for_recovery(production: &crate::config::ProductionConfig) -> std::path::PathBuf {
@@ -2146,6 +2156,7 @@ mod tests {
             AdmittedBackupEngine, NativeBackupInput, NativeBackupRuntime,
         };
         use crate::native_recovery::{NativeRecoveryLimits, NativeRecoveryRuntime};
+        use aws_lc_rs::signature::KeyPair;
         use std::os::unix::fs::PermissionsExt;
         use terrabase::backup::object_store::{ObjectDestination, Provider};
         use terrabase::backup::{
@@ -2185,6 +2196,38 @@ mod tests {
             &root,
             &keys,
         );
+        // Production startup requires a typed write-budget verifier. Keep the
+        // fixture's signer material local to this isolated root so admission
+        // reaches the listener-startup failure under test.
+        let budget_key_der = aws_lc_rs::signature::EcdsaKeyPair::generate_pkcs8(
+            &aws_lc_rs::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+            &aws_lc_rs::rand::SystemRandom::new(),
+        )
+        .unwrap();
+        let budget_key = aws_lc_rs::signature::EcdsaKeyPair::from_pkcs8(
+            &aws_lc_rs::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+            budget_key_der.as_ref(),
+        )
+        .unwrap();
+        let mut budget_spki = vec![
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06,
+            0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+        ];
+        budget_spki.extend_from_slice(budget_key.public_key().as_ref());
+        let budget_key_id = hex::encode(
+            aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &budget_spki).as_ref(),
+        );
+        let budget_key_file = root.join("budget-spki.der");
+        std::fs::write(&budget_key_file, budget_spki).unwrap();
+        production.budget = Some(crate::config::ProductionBudgetConfig {
+            key_id: budget_key_id,
+            public_key_spki_file: budget_key_file,
+            policy_epoch: 1,
+            consent_epoch: 1,
+            pool_max_local_units: 1024,
+            pool_low_water_local_units: 128,
+            pool_lifetime_seconds: 900,
+        });
         let receipt_key = root.join("receipt-signing.key");
         let receipt_der = aws_lc_rs::signature::Ed25519KeyPair::generate_pkcs8(
             &aws_lc_rs::rand::SystemRandom::new(),

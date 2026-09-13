@@ -2589,8 +2589,11 @@ mod tests {
         let store = Arc::new(FakeStore::default());
         let service = SchemaService::new(Some(store.clone()));
         apply_request(&service, Some(MAX_SCHEMA_VERSION), None, "first").unwrap();
+        finish_initial_backfill(&service);
         let original = store.0.lock().unwrap()[&target()].clone();
-        assert_eq!(apply_request(&service, None, Some(1), "second").unwrap_err().status, 422);
+        let error = apply_request(&service, None, Some(1), "second").unwrap_err();
+        assert_eq!(error.status, 422);
+        assert_eq!(error.code, "invalid_schema");
         assert_eq!(store.0.lock().unwrap()[&target()], original);
     }
 

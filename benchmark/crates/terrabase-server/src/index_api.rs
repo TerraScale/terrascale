@@ -1965,22 +1965,23 @@ mod tests {
         let candidate = &recommended.recommendations[0].candidate_id;
         let other = IndexScope::try_new("other", &database, Some("users".into())).unwrap();
         assert!(service.recommend(&other, &principal, 10).unwrap().recommendations.is_empty());
-        assert_eq!(
-            service.apply(
+        let applied = service
+            .apply(
                 &scope,
                 &principal,
                 ApplyRequest {
                     candidate_id: candidate.clone(),
                     expected_generation: 0,
                     at_millis: 1,
-                }
-            ),
-            Err(IndexServiceError::NotReady)
-        );
-        assert_eq!(engine.auto_index_lifecycle_generation(&tenant).unwrap(), 0);
+                },
+            )
+            .expect("durable selection");
+        assert_eq!(applied.id, *candidate);
+        assert_eq!(applied.phase, IndexPhase::Selected);
+        assert_eq!(applied.generation, 1);
+        assert_eq!(engine.auto_index_lifecycle_generation(&tenant).unwrap(), 1);
         // Selection is durable and visible in the control catalog, but it
         // cannot claim planner activation or verified safety.
-        engine.auto_index_apply(&tenant, candidate, 0, 1).unwrap();
         let selected = service.list(&scope, &principal, 10).unwrap();
         assert_eq!(selected.indexes.len(), 1);
         assert_eq!(selected.indexes[0].phase, IndexPhase::Selected);

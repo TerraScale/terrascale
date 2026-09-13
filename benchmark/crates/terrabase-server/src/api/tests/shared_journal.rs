@@ -10,6 +10,8 @@ async fn pending_http_views_share_dispatch_and_cancel_the_last_worker() {
         .oneshot(
             Request::post("/api/v1/databases")
                 .header("authorization", key)
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                 .unwrap(),
         )
@@ -85,6 +87,8 @@ async fn distinct_sql_views_share_one_journal_pass() {
         .oneshot(
             Request::post("/api/v1/databases")
                 .header("authorization", key)
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                 .unwrap(),
         )
@@ -210,6 +214,8 @@ async fn irrelevant_rows_do_not_reexecute_unbounded_sql_views() {
         .oneshot(
             Request::post("/api/v1/databases")
                 .header("authorization", key)
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                 .unwrap(),
         )

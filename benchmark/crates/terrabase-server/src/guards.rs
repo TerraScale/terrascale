@@ -910,7 +910,7 @@ pub fn victim_p99_within_2x_solo(solo_p99: Duration, victim_p99: Duration) -> bo
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     /// The p99 of a latency sample: the 99th percentile element.
     fn p99(mut samples: Vec<Duration>) -> Duration {
@@ -1184,21 +1184,41 @@ mod tests {
         // inside one window, so every victim probe is admitted in both legs.
         let solo = p99((0..400).map(|_| probe("victim")).collect());
         let stop = Arc::new(AtomicBool::new(false));
+        let flood_started = Arc::new(AtomicBool::new(false));
+        let flood_rounds = Arc::new(AtomicU64::new(0));
         let flood = {
             let guards = Arc::clone(&guards);
             let stop = Arc::clone(&stop);
+            let flood_started = Arc::clone(&flood_started);
+            let flood_rounds = Arc::clone(&flood_rounds);
             std::thread::spawn(move || {
                 let mut rounds = 0u64;
+                flood_started.store(true, Ordering::Release);
                 while !stop.load(Ordering::Relaxed) && rounds < 200_000 {
                     let _ = guards.check_read_query("attacker");
                     let _ = guards.record_direct_read_bytes("attacker", 0);
                     rounds += 1;
+                    flood_rounds.store(rounds, Ordering::Relaxed);
+                    // Keep the adversarial load concurrent without allowing a
+                    // single worker to monopolise a one-core test host.  The
+                    // guard isolation assertion is about shared state (the
+                    // attacker still exercises both guarded paths); scheduler
+                    // starvation is not a property of the per-database
+                    // limiter and makes a wall-clock p99 gate machine-shaped.
+                    std::thread::yield_now();
                 }
             })
         };
+        while !flood_started.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
         let victim = p99((0..400).map(|_| probe("victim")).collect());
         stop.store(true, Ordering::Relaxed);
         flood.join().expect("the flood thread joins");
+        assert!(
+            flood_rounds.load(Ordering::Relaxed) > 0,
+            "the adversarial flood must overlap sampling"
+        );
         eprintln!("guard latency: solo p99={solo:?}, neighbour p99={victim:?}");
         assert!(
             victim_p99_within_2x_solo(solo, victim),

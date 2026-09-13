@@ -1,7 +1,0 @@
-Overlay: /tmp/terrabase-sql-v53.pZnkHx, copied from the current shared tree without shared writes.
-New SQL tests: query::sql_empty_schema_tests — 5 passed; query::sql::sql_alias_tests — 1 passed. The initial query::sql_alias_tests selector was a zero-test discovery because the accepted fixture is nested under query::sql; corrected selector is recorded in new-alias-correct-selector.log.
-Focused affected selectors: routed SQL exact cases (3) passed; routed MATCH exact case (1) passed; routed lowered exact case (1) passed. The lowered case was accidentally run twice in one loop; both runs passed, and no further rerun was made.
-Broad diagnostic member::shard_registry::tests was not accepted as a gate: 4 relevant tests passed but two unrelated mixed-batch tests failed at src/member/shard_registry.rs:574 with Conflict. See routed-sql.log; exact focused selectors are in affected-exact.log.
-Clippy: cargo clippy --locked --all-targets passed; one pre-existing warning in tests/shard_split_runtime.rs (field_reassign_with_default).
-Binary SHA256: bbe291574a73f2c6429a237ab15731d3eef5ae866f28dac04f1b03ced9022547.
-Shared source modified: no.

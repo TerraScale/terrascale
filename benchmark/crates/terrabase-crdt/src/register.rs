@@ -178,13 +178,15 @@ impl<T: CanonicalValue> LwwRegister<T> {
         if let Some(candidate) = other.winner.as_ref()
             && (self.winner.as_ref().is_some_and(|left| left.identity() == candidate.identity())
                 || !self.context.contains(candidate.dot()))
-            && !candidates
-                .iter()
-                .any(|existing: &Candidate<T>| existing.identity() == candidate.identity())
         {
             candidates.push(candidate.clone());
         }
-        let winner = candidates.into_iter().max_by(|left, right| left.key().cmp(&right.key()));
+        // A well-formed state cannot contain two different values for one
+        // causal identity, but `Candidate` is intentionally constructible at
+        // this crate boundary.  Tie-break equal identities by their
+        // canonical value bytes so a malformed/equivocating pair still joins
+        // commutatively and deterministically.
+        let winner = candidates.into_iter().max_by(compare_candidates);
         Self { context, winner }
     }
 
@@ -267,10 +269,13 @@ impl<T: CanonicalValue> MvRegister<T> {
         context.union(&other.context);
         let mut candidates = Vec::with_capacity(self.candidates.len() + other.candidates.len());
         for candidate in self.candidates.iter().chain(other.candidates.iter()) {
-            let duplicate = candidates
-                .iter()
-                .any(|existing: &Candidate<T>| existing.identity() == candidate.identity());
-            if duplicate {
+            if let Some(existing) = candidates
+                .iter_mut()
+                .find(|existing: &&mut Candidate<T>| existing.identity() == candidate.identity())
+            {
+                if compare_candidates(existing, candidate).is_lt() {
+                    *existing = candidate.clone();
+                }
                 continue;
             }
             let in_left =
@@ -286,7 +291,7 @@ impl<T: CanonicalValue> MvRegister<T> {
                 candidates.push(candidate.clone());
             }
         }
-        candidates.sort_by_key(Candidate::key);
+        candidates.sort_by(compare_candidates);
         Self { context, candidates }
     }
 
@@ -307,6 +312,28 @@ impl<T: CanonicalValue> MvRegister<T> {
         }
         Ok(Self { context, candidates })
     }
+}
+
+/// Compares candidates by their causal ordering and then canonical payload.
+/// The payload tie-break is only relevant for an invalid state that carries
+/// conflicting values for the same identity; it makes joins total and
+/// commutative instead of depending on argument order.
+fn compare_candidates<T: CanonicalValue>(left: &Candidate<T>, right: &Candidate<T>) -> std::cmp::Ordering {
+    let key = left.key().cmp(&right.key());
+    if key != std::cmp::Ordering::Equal {
+        return key;
+    }
+    let left_value = canonical_candidate_value(left);
+    let right_value = canonical_candidate_value(right);
+    left_value.cmp(&right_value)
+}
+
+fn canonical_candidate_value<T: CanonicalValue>(candidate: &Candidate<T>) -> Vec<u8> {
+    let mut bytes = vec![u8::from(candidate.value.is_some()), T::TYPE_TAG];
+    if let Some(value) = candidate.value() {
+        value.encode_value(&mut bytes);
+    }
+    bytes
 }
 
 impl<T: CanonicalValue> CanonicalEncode for LwwRegister<T> {

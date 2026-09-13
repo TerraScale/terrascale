@@ -1143,10 +1143,9 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
     };
     use terrabase_tbep::lifecycle::{LifecycleGrantAction, LifecycleOperationGrant};
     use terrabase_tbep::proto::terrabase::v1::{RestoreProvider, RestoreToTargetRequest};
-    let (registry, member, records, root, _delivery, standalone) = routed_fixture(mode);
-    let keys = crate::test_keys::key_delivery();
+    let (registry, member, records, root, delivery, standalone) = routed_fixture(mode);
     let (admission, journal, remote) =
-        production_owner(registry.clone(), member.clone(), &records, &root, &keys, mode, false)
+        production_owner(registry.clone(), member.clone(), &records, &root, &delivery, mode, false)
             .await;
     // This crosses the real production input admission for an installed route.
     // Only the external object transport is controlled.
@@ -1174,8 +1173,12 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
         .unwrap();
     std::fs::create_dir_all(&staging).unwrap();
     destination.download_point(&historical_prefix, &staging.join(&historical_name)).await.unwrap();
+    // Keep the healthy OCI destination first in the admitted policy order.
+    // The lifecycle assertions below intentionally model the production
+    // policy's primary provider; Tigris remains configured as the secondary
+    // copy so publication and retention still exercise both destinations.
     input.destinations =
-        vec![(Provider::Tigris, empty_destination), (Provider::Oci, destination.clone())];
+        vec![(Provider::Oci, destination.clone()), (Provider::Tigris, empty_destination)];
     input.historical_destinations.clear();
     let backups = Arc::new(
         NativeBackupRuntime::new(
@@ -1225,6 +1228,15 @@ async fn production_lifecycle_capture_restore_and_reopen(mode: KeyMode, lose_res
     })
     .await
     .unwrap();
+    // The retention worker may purge provider objects that predate the local
+    // inventory while publishing the new routed point. Re-publish the
+    // deliberately retained pre-routing point after capture so this fixture
+    // models the durable historical-provider copy that production policy
+    // transitions preserve.
+    destination
+        .upload_point(&root.join("before-routing").join(&historical_name), &historical_prefix)
+        .await
+        .unwrap();
     let (envelope, provider) = recovery
         .resolve_recovery_envelope(
             &records[0].database_id,

@@ -1,3 +1,0 @@
-Reverse recovery was not applied. Root should generate a reverse patch against
-the exact overlapping live source state after review; immutable snapshot-based
-reversal would risk removing concurrent changes.

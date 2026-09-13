@@ -179,6 +179,8 @@ mod tests {
                     .method(method)
                     .uri(path)
                     .header("authorization", KEY)
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(body.to_owned()))
                     .unwrap(),
             )

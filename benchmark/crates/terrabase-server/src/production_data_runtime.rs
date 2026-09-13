@@ -2146,9 +2146,9 @@ mod lifecycle_tests {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         use std::os::unix::net::UnixListener;
         use terrabase::encryption::CustomerKmsAdapter;
-        let root = std::env::current_dir()
-            .unwrap()
-            .join(format!(".production-kms-frame-{}", std::process::id()));
+        // Keep the socket comfortably below the platform UDS limit while
+        // retaining a private directory under the validated current root.
+        let root = std::env::current_dir().unwrap().join(format!(".kms-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o710)).unwrap();
         let socket = root.join("broker.sock");

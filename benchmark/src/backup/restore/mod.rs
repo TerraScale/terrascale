@@ -1669,6 +1669,7 @@ fn execute_configured_restore(
             identity,
             facts,
             replace_existing,
+            stable_existing_target.as_ref(),
         )
     })();
     match outcome {
@@ -1716,6 +1717,10 @@ fn build_configured_restore(
     Ok((reopened, replay.into_facts(verification)))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "restore finalization carries explicit durability and identity inputs"
+)]
 fn finish_configured_restore(
     reopened: Engine,
     staging: &StagingDir,
@@ -1724,6 +1729,7 @@ fn finish_configured_restore(
     identity: &RestoreIdentity,
     facts: RunFacts,
     replace_existing: bool,
+    stable_existing_target: Option<&StableConfiguredTarget>,
 ) -> Result<RunFacts, BackupError> {
     let selected = chain.last().ok_or(BackupError::ChainIncomplete)?;
     write_restore_metadata(&reopened, identity, &facts, selected)?;
@@ -1742,13 +1748,7 @@ fn finish_configured_restore(
             .map_err(|_| BackupError::DestinationUnavailable)?;
     }
     drop(reopened);
-    if replace_existing {
-        // EXCHANGE never follows the destination entry, but reject a
-        // symlink that appeared while replay was running rather than
-        // publishing across a changed pathname contract.
-        ensure_configured_target_directory(path)?;
-    }
-    publish_with_identity(staging, path, replace_existing)?;
+    publish_with_identity(staging, path, replace_existing, stable_existing_target)?;
     Ok(facts)
 }
 
@@ -1806,7 +1806,12 @@ fn ensure_configured_target_directory(target: &Path) -> Result<(), BackupError> 
 struct StableConfiguredTarget {
     #[cfg(unix)]
     directory: std::fs::File,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
     path: PathBuf,
+    target: PathBuf,
 }
 
 impl StableConfiguredTarget {
@@ -1814,6 +1819,7 @@ impl StableConfiguredTarget {
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::AsRawFd;
+            use std::os::unix::fs::MetadataExt;
 
             let descriptor = rustix::fs::open(
                 target,
@@ -1825,11 +1831,18 @@ impl StableConfiguredTarget {
             )
             .map_err(|_| BackupError::DestinationUnavailable)?;
             let directory = std::fs::File::from(descriptor);
+            let metadata = directory.metadata().map_err(|_| BackupError::DestinationUnavailable)?;
             // Inspect the pinned directory itself, not the procfs magic-link
             // entry: Engine ownership validation rejects symlink locations.
             // The descriptor remains the authority even if `target` is renamed.
             let path = PathBuf::from(format!("/proc/self/fd/{}/.", directory.as_raw_fd()));
-            Ok(Self { directory, path })
+            Ok(Self {
+                directory,
+                device: metadata.dev(),
+                inode: metadata.ino(),
+                path,
+                target: target.to_owned(),
+            })
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -1837,7 +1850,7 @@ impl StableConfiguredTarget {
             // Keep the same call shape on non-Linux builds.  Those targets
             // retain the adjacent no-follow checks, but use the pathname
             // because they do not expose Linux's descriptor path.
-            Ok(Self { path: target.to_owned() })
+            Ok(Self { path: target.to_owned(), target: target.to_owned() })
         }
     }
 
@@ -1847,6 +1860,23 @@ impl StableConfiguredTarget {
         #[cfg(unix)]
         let _ = &self.directory;
         &self.path
+    }
+
+    fn verify_path_identity(&self) -> Result<(), BackupError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = std::fs::symlink_metadata(&self.target)
+                .map_err(|_| BackupError::DestinationUnavailable)?;
+            if metadata.file_type().is_symlink()
+                || !metadata.is_dir()
+                || metadata.dev() != self.device
+                || metadata.ino() != self.inode
+            {
+                return Err(BackupError::TargetNotEmpty);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2232,7 +2262,18 @@ fn publish_with_identity(
     staging: &StagingDir,
     target: &Path,
     replace_existing: bool,
+    stable_existing_target: Option<&StableConfiguredTarget>,
 ) -> Result<(), BackupError> {
+    if replace_existing {
+        // Keep the final no-follow and inode check in the publication seam:
+        // callers must not validate a pathname and then perform unrelated
+        // work before EXCHANGE. The target reservation prevents cooperating
+        // restore workers from changing the entry during this window.
+        ensure_configured_target_directory(target)?;
+        stable_existing_target
+            .ok_or(BackupError::DestinationUnavailable)?
+            .verify_path_identity()?;
+    }
     if rustix::fs::renameat_with(
         rustix::fs::CWD,
         staging.path(),
@@ -3146,6 +3187,7 @@ mod publication_tests {
         assert!(pinned.lifecycle_state(&pinned.scope_for(&tenant)).unwrap().paused);
         assert_eq!(std::fs::read(outside.join("state")).unwrap(), b"attacker destination");
         assert_eq!(ensure_configured_target_directory(&target), Err(BackupError::TargetNotEmpty));
+        assert_eq!(stable.verify_path_identity(), Err(BackupError::TargetNotEmpty));
         drop(pinned);
         drop(stable);
         std::fs::remove_dir_all(root).unwrap();
@@ -3159,9 +3201,10 @@ mod publication_tests {
         std::fs::write(target.join("state"), b"previous").unwrap();
         let staging = StagingDir::create(&target).unwrap();
         std::fs::write(staging.path().join("state"), b"restored").unwrap();
+        let stable = StableConfiguredTarget::open(&target).unwrap();
 
         FAIL_NEXT_RESTORE_PARENT_SYNC.with(|fail| fail.set(true));
-        let result = publish_with_identity(&staging, &target, true);
+        let result = publish_with_identity(&staging, &target, true, Some(&stable));
         assert_eq!(result, Err(BackupError::DestinationUnavailable));
         assert_eq!(std::fs::read(target.join("state")).unwrap(), b"restored");
 
@@ -3180,8 +3223,9 @@ mod publication_tests {
         std::fs::write(target.join("state"), b"previous").unwrap();
         let staging = StagingDir::create(&target).unwrap();
         std::fs::write(staging.path().join("state"), b"restored").unwrap();
+        let stable = StableConfiguredTarget::open(&target).unwrap();
 
-        publish_with_identity(&staging, &target, true).unwrap();
+        publish_with_identity(&staging, &target, true, Some(&stable)).unwrap();
         staging.discard_replaced();
         assert_eq!(std::fs::read(target.join("state")).unwrap(), b"restored");
         assert!(!staging.path().exists());

@@ -16,6 +16,8 @@ async fn request(app: &Router, method: &str, path: &str, payload: &str) -> Respo
                 .uri(path)
                 .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
                 .header("content-type", "application/json")
+                .header("x-terrascale-tenant-id", "terrabase-local")
+                .header("x-terrascale-project-id", "local")
                 .body(Body::from(payload.to_owned()))
                 .unwrap(),
         )

@@ -142,6 +142,25 @@ pub struct WalWriterDriver {
 }
 
 impl WalWriterDriver {
+    /// Returns the directory used for temporary replacement snapshots.
+    ///
+    /// The tail location is the live database directory; keeping snapshot
+    /// staging beside it prevents a reconnect from depending on a process
+    /// global temporary directory or an unrelated worker's path.
+    #[must_use]
+    pub fn staging_parent(&self) -> std::path::PathBuf {
+        self.tail
+            .lock()
+            .map(|tail| tail.staging_parent())
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+    }
+
+    /// Returns the already-admitted engine handle owned by this writer lane.
+    /// Reusing it avoids opening a second storage lease during catch-up ticks.
+    #[must_use]
+    pub fn engine_handle(&self) -> Arc<dyn WalEngineHandle> {
+        self.engine.clone()
+    }
     /// Attaches a tail whose base snapshot was installed on the assigned follower.
     #[must_use]
     pub fn new(

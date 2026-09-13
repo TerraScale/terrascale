@@ -201,6 +201,55 @@ async fn hostile_jwt_claims_are_not_accepted_or_reflected() {
     );
 }
 
+#[tokio::test]
+async fn member_health_routes_require_global_administration_scope() {
+    let fixture = Fixture::new(&[read_registration("db-a")]);
+    fixture.create_database("db-a", &[RegionCode::GRU]);
+    for path in ["/api/v1/health", "/api/v1/regions"] {
+        let response = send(
+            fixture.router(),
+            authenticated_request(Method::GET, path, Body::empty(), READ_KEY),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "database scope admitted {path}");
+    }
+
+    let admin = Fixture::new(&[admin_registration()]);
+    admin
+        .state
+        .metrics
+        .transition_service(terrabase::observability::ServiceState::Serving)
+        .expect("serving");
+    for path in ["/api/v1/health", "/api/v1/regions"] {
+        let response = send(
+            admin.router(),
+            authenticated_request(Method::GET, path, Body::empty(), ADMIN_KEY),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "global admin denied {path}");
+    }
+}
+
+#[tokio::test]
+async fn database_listing_head_requires_global_administration_scope() {
+    let fixture = Fixture::new(&[read_registration("db-a")]);
+    fixture.create_database("db-a", &[RegionCode::GRU]);
+    let response = send(
+        fixture.router(),
+        authenticated_request(Method::HEAD, "/api/v1/databases", Body::empty(), READ_KEY),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let admin = Fixture::new(&[admin_registration()]);
+    let response = send(
+        admin.router(),
+        authenticated_request(Method::HEAD, "/api/v1/databases", Body::empty(), ADMIN_KEY),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 #[test]
 fn origin_proofs_accept_current_previous_and_reject_expired_or_wrong_scope() {
     let current = b"e17-origin-current-key";

@@ -1,8 +1,0 @@
-snapshot_source=/tmp isolated rsync copy; no builds run
-exclusions=.git,target,.agents,bench,node_modules,cache,sqlite/db outputs,tmp,results-baseline
-included=src,crates,tests,Cargo.toml,Cargo.lock,build.rs,.cargo configuration
-current_api_sha=53890a01450cd427265c28c9a984a667c0ecaa555feadeb9feac00e605d8ec97
-snapshot_api_sha=cd526170fc801452788e524e85c62b5586c181ac1abb8edcb74f5e94f2e12360
-snapshot_manifest_sha=76a7a5d95dd9a5e04152090d69f3f1c81cf22dde21ea4d1a6432f28903ff4546
-snapshot_manifest_repeat_sha=76a7a5d95dd9a5e04152090d69f3f1c81cf22dde21ea4d1a6432f28903ff4546
-Added required compile-time include_str fixture only; other bench source remains excluded.

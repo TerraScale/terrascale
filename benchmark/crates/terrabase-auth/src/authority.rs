@@ -236,6 +236,8 @@ impl AuthAuthority {
 
     /// Stop consensus tasks before closing the host's durable resources.
     pub async fn shutdown(&self) -> Result<(), AuthorityError> {
-        self.raft.shutdown().await.map_err(|_| AuthorityError::Unavailable)
+        let raft = self.raft.shutdown().await.map_err(|_| AuthorityError::Unavailable);
+        let storage = self.store.close().map_err(|_| AuthorityError::Unavailable);
+        raft.and(storage)
     }
 }

@@ -38,6 +38,15 @@ pub(super) async fn remote_points_with_keys(
         let bytes = keys.open_backup_envelope(&envelope).map_err(|_| FleetError::Capture)?;
         let manifest =
             super::super::BackupManifest::decode(&bytes).map_err(|_| FleetError::Capture)?;
+        // Routed captures publish participant manifests alongside the
+        // standalone whole-database points. Participant objects are valid
+        // only as members of their routed envelope and must not poison
+        // standalone point discovery for the provider.
+        if manifest.capture_kind()
+            == super::super::manifest::BackupCaptureKind::RoutedShardParticipant
+        {
+            continue;
+        }
         if prefix != format!("{database}/rp-{}", manifest.identity())
             || manifest.database_id() != database
             || manifest.capture_kind() != super::super::manifest::BackupCaptureKind::WholeDatabase

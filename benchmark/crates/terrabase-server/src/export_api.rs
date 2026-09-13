@@ -1646,7 +1646,9 @@ fn validate_state(state: &ExportJobState) -> Result<(), ExportError> {
 }
 
 fn validate_request(request: &ExportRequest) -> Result<(), ExportError> {
-    if request.format != TransferFormat::Native && request.scope != ExportScope::Documents {
+    if !matches!(request.format, TransferFormat::Native | TransferFormat::Jsonl)
+        && request.scope != ExportScope::Documents
+    {
         return Err(ExportError::InvalidRequest(
             "converted export formats require documents-only scope",
         ));
@@ -2485,7 +2487,11 @@ mod tests {
         assert_eq!(state.status, JobStatus::Accepted);
         assert!(state.error.is_none());
         assert!(service.status_async(&accepted.job_id).await.expect("status").is_some());
-        fs::remove_dir_all(root).expect("cleanup");
+        match fs::remove_dir_all(&root) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => panic!("cleanup: {error}"),
+        }
     }
 
     #[test]
@@ -2763,7 +2769,11 @@ mod tests {
             // The missing durable job makes the worker fail. Its reservation
             // must still be released so a subsequent attempt can execute.
             service.spawn_worker("same-job").expect("retry failed job");
-            tokio::task::spawn_blocking(|| {}).await.expect("retry drained");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            while store.loads.load(Ordering::SeqCst) < 2 {
+                assert!(std::time::Instant::now() < deadline, "retry worker did not drain");
+                tokio::task::yield_now().await;
+            }
             assert_eq!(store.loads.load(Ordering::SeqCst), 2);
         });
     }
@@ -2873,10 +2883,8 @@ mod tests {
                 region: RegionCode::FRA,
             },
             format: TransferFormat::Jsonl,
-            // JSONL is a converted format and therefore must use the
-            // documents-only scope before placement validation is reached.
-            // Keep this fixture valid through the earlier request checks so
-            // it specifically proves the placement boundary below.
+            // JSONL supports the complete logical scope, while placement is
+            // still checked before admission.
             scope: ExportScope::Documents,
             placement: PlacementLock::single(RegionCode::GRU),
             idempotency_key: None,
@@ -2884,6 +2892,29 @@ mod tests {
         assert!(matches!(validate_request(&request), Err(ExportError::PlacementMismatch)));
         assert!(ExportService::new(None, None, None, [0; 32]).is_err());
         let _ = service;
+    }
+
+    #[test]
+    fn jsonl_all_scope_is_supported_but_other_converted_formats_are_documents_only() {
+        let mut request = ExportRequest {
+            database: "db".into(),
+            destination: ExportDestination::File {
+                root: PathBuf::from("/tmp/export"),
+                region: RegionCode::GRU,
+            },
+            format: TransferFormat::Jsonl,
+            scope: ExportScope::All,
+            placement: PlacementLock::single(RegionCode::GRU),
+            idempotency_key: None,
+        };
+        assert!(validate_request(&request).is_ok());
+        request.format = TransferFormat::Csv;
+        assert!(matches!(
+            validate_request(&request),
+            Err(ExportError::InvalidRequest(
+                "converted export formats require documents-only scope"
+            ))
+        ));
     }
 }
 

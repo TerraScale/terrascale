@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::io::Cursor;
-use std::ops::RangeBounds;
+use std::ops::{Deref, DerefMut, RangeBounds};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -25,8 +25,24 @@ type Result<T> = std::result::Result<T, StorageError<u64>>;
 /// SQLite-backed Raft log and state machine. No in-memory durable fallback.
 #[derive(Clone)]
 pub struct SqliteStore {
-    connection: Arc<Mutex<Connection>>,
+    connection: Arc<Mutex<Option<Connection>>>,
     keys: Option<Arc<dyn terrabase::encryption::DatabaseKeySource>>,
+}
+
+struct ConnectionGuard<'a>(MutexGuard<'a, Option<Connection>>);
+
+impl Deref for ConnectionGuard<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("connection guard is constructed only for an open store")
+    }
+}
+
+impl DerefMut for ConnectionGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().expect("connection guard is constructed only for an open store")
+    }
 }
 
 fn storage(error: impl std::fmt::Display) -> StorageError<u64> {
@@ -181,10 +197,10 @@ impl SqliteStore {
             None => set_meta(&connection, "group_identity", &group_identity)?,
             _ => {}
         }
-        Ok(Self { connection: Arc::new(Mutex::new(connection)), keys: None })
+        Ok(Self { connection: Arc::new(Mutex::new(Some(connection))), keys: None })
     }
 
-    fn lock(&self) -> Result<MutexGuard<'_, Connection>> {
+    fn lock(&self) -> Result<ConnectionGuard<'_>> {
         let _timing = Timer::new("store.lock");
         if let Some(keys) = &self.keys {
             let lease = keys.current_lease().map_err(storage)?;
@@ -192,7 +208,21 @@ impl SqliteStore {
                 return Err(storage("auth storage key lease expired"));
             }
         }
-        self.connection.lock().map_err(|_| storage("auth SQLite lock poisoned"))
+        let connection =
+            self.connection.lock().map_err(|_| storage("auth SQLite lock poisoned"))?;
+        if connection.is_none() {
+            return Err(storage("auth SQLite store is closed"));
+        }
+        Ok(ConnectionGuard(connection))
+    }
+
+    /// Closes the shared connection after Raft has stopped. Retained store
+    /// clones fail closed instead of retaining a SQLite/VFS owner across reopen.
+    pub(crate) fn close(&self) -> Result<()> {
+        let mut connection =
+            self.connection.lock().map_err(|_| storage("auth SQLite lock poisoned"))?;
+        drop(connection.take());
+        Ok(())
     }
 
     /// Read local applied state. Callers must first confirm Raft's linearizable barrier.

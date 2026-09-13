@@ -2,7 +2,8 @@
 
 use std::{fs, path::Path};
 
-use super::{Engine, EngineConfig, EngineOpenError};
+use super::{Engine, EngineConfig, EngineOpenError, admission::EngineAdmissionGuard};
+use std::sync::Arc;
 
 impl Engine {
     /// Restores a complete `SQLite` backup of a local-stack database into an empty target.
@@ -27,6 +28,9 @@ impl Engine {
         config: EngineConfig,
     ) -> Result<(), EngineOpenError> {
         let target = config.location.clone();
+        let _restore_reservation =
+            super::branch_restore::BranchRestoreReservation::acquire(&target)?;
+        let _target_guard = Arc::new(EngineAdmissionGuard::acquire(&target)?);
         let metadata = fs::symlink_metadata(&target).map_err(|_| EngineOpenError::InvalidConfig)?;
         if !metadata.is_dir()
             || metadata.file_type().is_symlink()
@@ -37,7 +41,7 @@ impl Engine {
         if config.owner.is_some() {
             return Err(EngineOpenError::InvalidConfig);
         }
-        crate::storage::validate_local_restore_source(source)
+        let source_binding = crate::storage::validate_local_restore_source(source)
             .map_err(|_| EngineOpenError::InvalidConfig)?;
         let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
         let staging = parent.join(format!(".terrabase-restore-{}", crate::identity::generate()));
@@ -54,8 +58,14 @@ impl Engine {
             let staged = Self::open(staged_config.clone())?;
             let child_owner = staged.database_owner().clone();
             drop(staged);
-            crate::storage::import_backup_file(source, backup, &staging, &child_owner)
-                .map_err(|()| EngineOpenError::FormatMismatch)?;
+            crate::storage::import_backup_file(
+                source,
+                &source_binding,
+                backup,
+                &staging,
+                &child_owner,
+            )
+            .map_err(|()| EngineOpenError::FormatMismatch)?;
             // Import rewrites the SQLite provenance, but the resulting
             // database still has to pass complete Engine admission before it
             // can be published. This also replays durable lifecycle state
@@ -204,6 +214,80 @@ mod tests {
 
         assert_invalid_lifecycle_backup_is_not_published(&root, &source, &backup);
         assert_eq!(fs::read(&backup).expect("backup"), original, "source backup is immutable");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn physical_import_removes_stale_sqlite_sidecars_before_copy() {
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-physical-sidecars-{}", crate::identity::generate()));
+        let source = root.join("source");
+        let source_engine =
+            Engine::open(EngineConfig::durable(&source).expect("source config")).expect("source");
+        let backup = root.join("backup.sqlite3");
+        drop(source_engine);
+        fs::copy(super::super::database_file(&source), &backup).expect("backup");
+        let target = root.join("target");
+        let target_engine =
+            Engine::open(EngineConfig::durable(&target).expect("target config")).expect("target");
+        let child_owner = target_engine.database_owner().clone();
+        drop(target_engine);
+        let source_binding =
+            crate::storage::validate_local_restore_source(&source).expect("source validates");
+        for suffix in ["-wal", "-journal", "-shm"] {
+            fs::write(target.join(format!("terrabase.sqlite3{suffix}")), b"stale")
+                .expect("sidecar");
+        }
+
+        crate::storage::import_backup_file(
+            &source,
+            &source_binding,
+            &backup,
+            &target,
+            &child_owner,
+        )
+        .expect("import");
+        for suffix in ["-wal", "-journal", "-shm"] {
+            assert!(!target.join(format!("terrabase.sqlite3{suffix}")).exists());
+        }
+        drop(Engine::open(EngineConfig::durable(&target).expect("reopen config")).expect("reopen"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn physical_import_rejects_backup_symlink_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-physical-backup-link-{}", crate::identity::generate()));
+        let source = root.join("source");
+        let source_engine =
+            Engine::open(EngineConfig::durable(&source).expect("source config")).expect("source");
+        let backup = root.join("backup.sqlite3");
+        drop(source_engine);
+        fs::create_dir_all(&root).expect("root");
+        let original = root.join("original.sqlite3");
+        fs::copy(super::super::database_file(&source), &original).expect("backup");
+        symlink(&original, &backup).expect("backup symlink");
+        let target = root.join("target");
+        let target_engine =
+            Engine::open(EngineConfig::durable(&target).expect("target config")).expect("target");
+        let child_owner = target_engine.database_owner().clone();
+        drop(target_engine);
+        let source_binding =
+            crate::storage::validate_local_restore_source(&source).expect("source validates");
+
+        assert!(
+            crate::storage::import_backup_file(
+                &source,
+                &source_binding,
+                &backup,
+                &target,
+                &child_owner,
+            )
+            .is_err()
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
