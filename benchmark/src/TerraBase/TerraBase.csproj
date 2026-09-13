@@ -22,6 +22,7 @@
     <InternalsVisibleTo Include="TerraBase.Protocol.Tests" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="MessagePack" Version="3.1.8" />
   </ItemGroup>
 </Project>

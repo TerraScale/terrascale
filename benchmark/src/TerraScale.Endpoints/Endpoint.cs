@@ -36,6 +36,21 @@ internal static class EndpointActivation
         return ValueTask.CompletedTask;
     }
 
+    internal static void RegisterForDispose(HttpResponse response, object endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (endpoint is IAsyncDisposable asyncDisposable)
+        {
+            response.RegisterForDisposeAsync(asyncDisposable);
+        }
+        else if (endpoint is IDisposable disposable)
+        {
+            response.RegisterForDispose(disposable);
+        }
+    }
+
     internal static void DisposeSynchronously(object endpoint)
     {
         if (endpoint is IAsyncDisposable asyncDisposable)
@@ -113,17 +128,12 @@ public abstract class Endpoint<TRequest, TResponse> : IEndpoint, IRequestScopedE
         CancellationToken cancellationToken)
     {
         var endpoint = (Endpoint<TRequest, TResponse>)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
-        try
+        if (manuallyCreated)
         {
-            return await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
+            EndpointActivation.RegisterForDispose(context.Response, endpoint);
         }
-        finally
-        {
-            if (manuallyCreated)
-            {
-                await EndpointActivation.DisposeAsync(endpoint).ConfigureAwait(false);
-            }
-        }
+
+        return await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
     }
 }
 
@@ -189,17 +199,12 @@ public abstract class EndpointWithoutRequest<TResponse> : IEndpoint, IRequestSco
         CancellationToken cancellationToken)
     {
         var endpoint = (EndpointWithoutRequest<TResponse>)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
-        try
+        if (manuallyCreated)
         {
-            return await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
+            EndpointActivation.RegisterForDispose(context.Response, endpoint);
         }
-        finally
-        {
-            if (manuallyCreated)
-            {
-                await EndpointActivation.DisposeAsync(endpoint).ConfigureAwait(false);
-            }
-        }
+
+        return await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
     }
 }
 
@@ -247,19 +252,14 @@ public abstract class Endpoint<TRequest> : EndpointSenderEndpoint, IEndpoint, IR
         CancellationToken cancellationToken)
     {
         var endpoint = (Endpoint<TRequest>)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
-        try
+        if (manuallyCreated)
         {
-            using var scope = endpoint.BeginSendScope();
-            await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
-            return scope.Result ?? Results.NoContent();
+            EndpointActivation.RegisterForDispose(context.Response, endpoint);
         }
-        finally
-        {
-            if (manuallyCreated)
-            {
-                await EndpointActivation.DisposeAsync(endpoint).ConfigureAwait(false);
-            }
-        }
+
+        using var scope = endpoint.BeginSendScope();
+        await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
+        return scope.Result ?? Results.NoContent();
     }
 }
 
@@ -306,19 +306,14 @@ public abstract class EndpointWithoutRequest : EndpointSenderEndpoint, IEndpoint
         CancellationToken cancellationToken)
     {
         var endpoint = (EndpointWithoutRequest)EndpointActivation.Resolve(context.RequestServices, endpointType, out var manuallyCreated);
-        try
+        if (manuallyCreated)
         {
-            using var scope = endpoint.BeginSendScope();
-            await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
-            return scope.Result ?? Results.NoContent();
+            EndpointActivation.RegisterForDispose(context.Response, endpoint);
         }
-        finally
-        {
-            if (manuallyCreated)
-            {
-                await EndpointActivation.DisposeAsync(endpoint).ConfigureAwait(false);
-            }
-        }
+
+        using var scope = endpoint.BeginSendScope();
+        await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
+        return scope.Result ?? Results.NoContent();
     }
 }
 

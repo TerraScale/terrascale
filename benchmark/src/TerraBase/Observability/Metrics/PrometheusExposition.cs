@@ -9,6 +9,15 @@ public static class PrometheusMetrics
     /// <summary>The endpoint path owned by a TerraBase host.</summary>
     public const string Path = "/internal/metrics";
 
+    /// <summary>The liveness probe path owned by a TerraBase host.</summary>
+    public const string LivePath = "/live";
+
+    /// <summary>The startup probe path owned by a TerraBase host.</summary>
+    public const string StartupPath = "/startup";
+
+    /// <summary>The readiness probe path owned by a TerraBase host.</summary>
+    public const string ReadyPath = "/ready";
+
     /// <summary>The Prometheus 0.0.4 response content type.</summary>
     public const string ContentType = "text/plain; version=0.0.4; charset=utf-8";
 

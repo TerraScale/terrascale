@@ -29,23 +29,7 @@ public sealed class MetricsRegistry : IMetricsSource
         var seconds = Math.Max(0, duration.TotalSeconds);
         lock (gate)
         {
-            var series = requests.GetValueOrDefault((region, operation, outcome));
-            if (series is null)
-            {
-                series = new MutableSeries();
-                requests[(region, operation, outcome)] = series;
-            }
-
-            series.Total = checked(series.Total + 1);
-            series.SumSeconds += seconds;
-            for (var index = 0; index < PrometheusMetrics.RequestLatencyBuckets.Length; index++)
-            {
-                if (seconds <= PrometheusMetrics.RequestLatencyBuckets[index])
-                {
-                    series.Buckets[index] = checked(series.Buckets[index] + 1);
-                    break;
-                }
-            }
+            RecordRequestLocked(region, operation, outcome, seconds);
         }
     }
 
@@ -122,12 +106,33 @@ public sealed class MetricsRegistry : IMetricsSource
 
     internal void Complete(RequestScope scope, Outcome outcome)
     {
+        var seconds = Math.Max(0, Stopwatch.GetElapsedTime(scope.Started).TotalSeconds);
         lock (gate)
         {
             inFlight[scope.Operation] = Math.Max(0, inFlight.GetValueOrDefault(scope.Operation) - 1);
+            RecordRequestLocked(scope.Region, scope.Operation, outcome, seconds);
+        }
+    }
+
+    private void RecordRequestLocked(Region region, Operation operation, Outcome outcome, double seconds)
+    {
+        var series = requests.GetValueOrDefault((region, operation, outcome));
+        if (series is null)
+        {
+            series = new MutableSeries();
+            requests[(region, operation, outcome)] = series;
         }
 
-        RecordRequest(scope.Region, scope.Operation, outcome, Stopwatch.GetElapsedTime(scope.Started));
+        series.Total = checked(series.Total + 1);
+        series.SumSeconds += seconds;
+        for (var index = 0; index < PrometheusMetrics.RequestLatencyBuckets.Length; index++)
+        {
+            if (seconds <= PrometheusMetrics.RequestLatencyBuckets[index])
+            {
+                series.Buckets[index] = checked(series.Buckets[index] + 1);
+                break;
+            }
+        }
     }
 
     private static HistogramSnapshot ToSnapshot(MutableSeries series)

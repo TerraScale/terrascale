@@ -19,7 +19,23 @@ public sealed partial class EngineSupervisor
     /// <exception cref="EngineUnavailableException">The engine endpoint could not be established within the policy.</exception>
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        await this.recovery.WaitAsync(cancellationToken).ConfigureAwait(false);
+        lock (this.gate)
+        {
+            if (this.disposed || this.status == EngineStatus.Stopped)
+            {
+                throw new EngineUnavailableException("the engine supervisor is stopped");
+            }
+        }
+
+        try
+        {
+            await this.recovery.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException) when (this.Status == EngineStatus.Stopped)
+        {
+            throw new EngineUnavailableException("the engine supervisor is stopped");
+        }
+
         try
         {
             lock (this.gate)

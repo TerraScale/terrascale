@@ -58,6 +58,14 @@ public sealed class TerraBaseEngine : IAsyncDisposable
     public static TerraBaseEngine Open(string path, MetricsRegistry? metrics = null, TerraBaseOptions? options = null) =>
         new(new FileStorageProvider(path), metrics, options);
 
+    /// <summary>Opens a durable SQLite-backed engine.</summary>
+    /// <param name="path">The SQLite database file path.</param>
+    /// <param name="metrics">The metrics registry, or a new registry.</param>
+    /// <param name="options">The engine options.</param>
+    /// <returns>The opened engine.</returns>
+    public static TerraBaseEngine OpenSqlite(string path, MetricsRegistry? metrics = null, TerraBaseOptions? options = null) =>
+        new(new SqliteStorageProvider(path), metrics, options);
+
     /// <summary>The configured options.</summary>
     public TerraBaseOptions Options { get; }
 

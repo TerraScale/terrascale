@@ -85,7 +85,13 @@ public static class EndpointServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(app);
         var options = app.Services.GetRequiredService<EndpointOptions>();
         app.MapOpenApi(options.OpenApiRoute);
-        app.MapScalarApiReference(options.ScalarRoute, scalar => scalar.WithTitle(options.Title));
+        app.MapScalarApiReference(options.ScalarRoute, scalar =>
+        {
+            scalar
+                .WithTitle(options.Title)
+                .WithOpenApiRoutePattern(options.OpenApiRoute)
+                .AddDocument(options.Version, options.Title, options.OpenApiRoute, isDefault: true);
+        });
         return app;
     }
 

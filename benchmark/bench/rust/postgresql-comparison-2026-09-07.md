@@ -2,7 +2,7 @@
 
 **Usable PostgreSQL baselines: 0 of 20 retained receipts.** The retained measurements cannot establish TerraBase/PostgreSQL parity, a speed ratio, or a numerical optimization target. This audit reads existing files only; it runs no PostgreSQL, other database, SDK, or live benchmark. All historical receipts remain unchanged.
 
-The [history validator](src/history.rs) requires complete valid samples and assigned SHA-256 run, candidate, workload, and topology identities. Comparison also requires matching configuration, controlled host, time window, workload policy, boundary, durability, and configuration provenance. Its latest-attempt selection does not fall back to an earlier successful measurement after a failure. A receipt's `complete` status alone does not establish admission.
+The historical `bench/src/history.rs` validator required complete valid samples and assigned SHA-256 run, candidate, workload, and topology identities. Comparison also requires matching configuration, controlled host, time window, workload policy, boundary, durability, and configuration provenance. Its latest-attempt selection does not fall back to an earlier successful measurement after a failure. A receipt's `complete` status alone does not establish admission.
 
 ## Retained baseline inventory
 

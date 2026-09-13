@@ -125,4 +125,16 @@ public sealed class EngineSupervisorStartupTests
 
         await Assert.ThrowsAsync<EngineUnavailableException>(() => supervisor.ShutdownAsync(ShutdownReason.Operator()));
     }
+
+    /// <summary>A disposed supervisor cannot be started again.</summary>
+    [Test]
+    public async Task DisposedSupervisorRefusesStart()
+    {
+        var supervisor = new EngineSupervisor(
+            new EngineOptions { SocketPath = Path.Combine(Path.GetTempPath(), $"tbep-disposed-start-{Guid.NewGuid():N}.sock") },
+            new AuditLog());
+        await supervisor.DisposeAsync();
+
+        await Assert.ThrowsAsync<EngineUnavailableException>(() => supervisor.StartAsync());
+    }
 }

@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Endpoints.Tests;
@@ -127,6 +129,53 @@ public sealed class EndpointTests
         await app.StopAsync();
         await app.DisposeAsync();
     }
+
+    [Test]
+    public async Task CustomOpenApiDocumentAndScalarRoutesUseConfiguredDocument()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints([typeof(ProbeEndpoint)], options =>
+        {
+            options.Title = "Custom TerraScale API";
+            options.Version = "v2";
+            options.OpenApiRoute = "/docs/{documentName}.json";
+            options.ScalarRoute = "/reference";
+        });
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi();
+        await app.StartAsync();
+
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var document = JsonDocument.Parse(await client.GetStringAsync("/docs/v2.json"));
+        var scalar = await client.GetStringAsync("/reference/");
+
+        await Assert.That(document.RootElement.GetProperty("info").GetProperty("title").GetString()).IsEqualTo("Custom TerraScale API");
+        await Assert.That(document.RootElement.GetProperty("info").GetProperty("version").GetString()).IsEqualTo("v2");
+        await Assert.That(scalar).Contains("\"url\":\"docs/v2.json\"");
+
+        await app.StopAsync();
+        await app.DisposeAsync();
+    }
+
+    [Test]
+    public async Task ManuallyActivatedEndpointLivesThroughResultExecution()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints([typeof(DeferredResultEndpoint)]);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        await app.StartAsync();
+
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        var body = await client.GetStringAsync("/deferred-result");
+
+        await Assert.That(body).IsEqualTo("alive");
+        await app.StopAsync();
+        await app.DisposeAsync();
+    }
 }
 
 public sealed class ProbeEndpoint : EndpointWithoutRequest<string>
@@ -167,4 +216,29 @@ public sealed class ScopedProbeEndpoint(ScopedProbeDependency dependency) : Endp
 {
     public override void Configure() => Get("/scoped-probe");
     public override Task<string> HandleAsync(CancellationToken cancellationToken) => Task.FromResult(dependency.Id.ToString());
+}
+
+public sealed class DeferredResultEndpoint : EndpointWithoutRequest<IResult>, IAsyncDisposable
+{
+    private bool disposed;
+
+    public override void Configure() => Get("/deferred-result");
+
+    public override Task<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IResult>(new DeferredResult(this));
+
+    public ValueTask DisposeAsync()
+    {
+        this.disposed = true;
+        return ValueTask.CompletedTask;
+    }
+
+    private sealed class DeferredResult(DeferredResultEndpoint endpoint) : IResult
+    {
+        public async Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.ContentType = "text/plain";
+            await httpContext.Response.WriteAsync(endpoint.disposed ? "disposed" : "alive");
+        }
+    }
 }
