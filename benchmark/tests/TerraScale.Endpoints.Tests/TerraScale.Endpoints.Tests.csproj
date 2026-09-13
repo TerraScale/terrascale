@@ -6,10 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>preview</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**</DefaultItemExcludes>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.56.18" />
-    <ProjectReference Include="..\TerraScale.Endpoints\TerraScale.Endpoints.csproj" />
+    <ProjectReference Include="..\..\src\TerraScale.Endpoints\TerraScale.Endpoints.csproj" />
   </ItemGroup>
 </Project>

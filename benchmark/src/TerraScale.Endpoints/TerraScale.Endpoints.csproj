@@ -10,6 +10,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>preview</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**</DefaultItemExcludes>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <IsPackable>true</IsPackable>
   </PropertyGroup>

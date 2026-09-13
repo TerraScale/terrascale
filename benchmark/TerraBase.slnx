@@ -3,16 +3,21 @@
     <Project Path="TerraBase.csproj" />
   </Folder>
   <Folder Name="/Host/">
-    <Project Path="host/TerraBase.Protocol/TerraBase.Protocol.csproj" />
-    <Project Path="host/TerraBase.Api/TerraBase.Api.csproj" />
+    <Project Path="src/TerraBase.Protocol/TerraBase.Protocol.csproj" />
+    <Project Path="src/TerraBase.Api/TerraBase.Api.csproj" />
   </Folder>
   <Folder Name="/CLI/">
-    <Project Path="cli/TerraBase.Cli/TerraBase.Cli.csproj" />
+    <Project Path="src/TerraBase.Cli/TerraBase.Cli.csproj" />
+  </Folder>
+  <Folder Name="/Endpoints/">
+    <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/TerraBase.Tests/TerraBase.Tests.csproj" />
-    <Project Path="host/TerraBase.Protocol.Tests/TerraBase.Protocol.Tests.csproj" />
-    <Project Path="host/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj" />
-    <Project Path="cli/TerraBase.Cli.Tests/TerraBase.Cli.Tests.csproj" />
+    <Project Path="tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj" />
+    <Project Path="tests/TerraBase.Protocol.Tests/TerraBase.Protocol.Tests.csproj" />
+    <Project Path="tests/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj" />
+    <Project Path="tests/TerraBase.Cli.Tests/TerraBase.Cli.Tests.csproj" />
   </Folder>
 </Solution>

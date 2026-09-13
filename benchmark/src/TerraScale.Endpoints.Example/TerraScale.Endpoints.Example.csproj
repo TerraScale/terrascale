@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>preview</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**;**/bin/**</DefaultItemExcludes>
     <RootNamespace>TerraScale.Endpoints.Example</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
