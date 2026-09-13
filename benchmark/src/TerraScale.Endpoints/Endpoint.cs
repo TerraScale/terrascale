@@ -21,21 +21,6 @@ internal static class EndpointActivation
         return ActivatorUtilities.CreateInstance(services, endpointType);
     }
 
-    internal static ValueTask DisposeAsync(object endpoint)
-    {
-        if (endpoint is IAsyncDisposable asyncDisposable)
-        {
-            return asyncDisposable.DisposeAsync();
-        }
-
-        if (endpoint is IDisposable disposable)
-        {
-            disposable.Dispose();
-        }
-
-        return ValueTask.CompletedTask;
-    }
-
     internal static void RegisterForDispose(HttpResponse response, object endpoint)
     {
         ArgumentNullException.ThrowIfNull(response);
