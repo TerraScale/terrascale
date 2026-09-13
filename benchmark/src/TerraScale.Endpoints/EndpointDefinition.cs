@@ -44,19 +44,45 @@ public sealed class EndpointDefinition
     /// <summary>Sets a DELETE route.</summary>
     public EndpointDefinition Delete(string route) => this.Method(HttpMethods.Delete, route);
 
-    /// <summary>Sets one or more HTTP methods and the route pattern.</summary>
-    public EndpointDefinition Method(string method, string route)
+    /// <summary>Sets several HTTP verbs for the route.</summary>
+    public EndpointDefinition Verbs(params string[] methods)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(method);
+        ArgumentNullException.ThrowIfNull(methods);
+        if (methods.Length == 0 || methods.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("At least one HTTP method is required.", nameof(methods));
+        }
+
+        this.methods.Clear();
+        foreach (var method in methods)
+        {
+            this.methods.Add(method.ToUpperInvariant());
+        }
+
+        return this;
+    }
+
+    /// <summary>Sets the route without changing the selected verbs.</summary>
+    public EndpointDefinition Route(string route)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(route);
         if (!route.StartsWith('/'))
         {
             throw new ArgumentException("The endpoint route must start with '/'.", nameof(route));
         }
 
+        this.Route = route;
+        return this;
+    }
+
+    /// <summary>Sets one or more HTTP methods and the route pattern.</summary>
+    public EndpointDefinition Method(string method, string route)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(method);
+        ArgumentException.ThrowIfNullOrWhiteSpace(route);
+        this.Route(route);
         this.methods.Clear();
         this.methods.Add(method.ToUpperInvariant());
-        this.Route = route;
         return this;
     }
 
