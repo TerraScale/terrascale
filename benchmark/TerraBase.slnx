@@ -4,7 +4,7 @@
     <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
   </Folder>
   <Folder Name="/Examples/">
-    <Project Path="examples/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />
+    <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/TerraBase.Tests/TerraBase.Tests.csproj" />
