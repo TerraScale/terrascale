@@ -36,3 +36,19 @@ app.MapTerraScaleOpenApi();
 `AllowAnonymous`, `RequireAuthorization`, and `Metadata`. A precomputed
 `IEnumerable<Type>` can be supplied to avoid reflection scanning completely.
 OpenAPI is served at `/openapi/v1.json`; Scalar is served at `/scalar`.
+
+For FastEndpoints-style command handlers, derive from `Endpoint<TRequest>` (or
+`EndpointWithoutRequest`) and send a result from the handler:
+
+```csharp
+public sealed class EchoEndpoint : Endpoint<EchoRequest>
+{
+    public override void Configure() => Post("/echo");
+
+    public override async Task HandleAsync(EchoRequest request, CancellationToken ct)
+        => await Send.OkAsync(new { request.Value });
+}
+```
+
+`Send` is request-scoped and supports `OkAsync`, `CreatedAsync`,
+`AcceptedAsync`, `NotFoundAsync`, `NoContentAsync`, and `ResponseAsync`.

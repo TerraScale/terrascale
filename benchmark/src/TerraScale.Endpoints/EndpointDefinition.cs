@@ -10,6 +10,7 @@ public sealed class EndpointDefinition
     private string[]? acceptedContentTypes;
     private string[]? authorizationPolicies;
     private bool allowAnonymous;
+    private bool routeConfigured;
 
     /// <summary>The route pattern.</summary>
     public string Route { get; private set; } = "/";
@@ -56,14 +57,18 @@ public sealed class EndpointDefinition
         this.methods.Clear();
         foreach (var method in methods)
         {
-            this.methods.Add(method.ToUpperInvariant());
+            var normalized = method.ToUpperInvariant();
+            if (!this.methods.Contains(normalized, StringComparer.Ordinal))
+            {
+                this.methods.Add(normalized);
+            }
         }
 
         return this;
     }
 
     /// <summary>Sets the route without changing the selected verbs.</summary>
-    public EndpointDefinition Route(string route)
+    public EndpointDefinition WithRoute(string route)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(route);
         if (!route.StartsWith('/'))
@@ -72,6 +77,7 @@ public sealed class EndpointDefinition
         }
 
         this.Route = route;
+        this.routeConfigured = true;
         return this;
     }
 
@@ -80,7 +86,7 @@ public sealed class EndpointDefinition
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(method);
         ArgumentException.ThrowIfNullOrWhiteSpace(route);
-        this.Route(route);
+        this.WithRoute(route);
         this.methods.Clear();
         this.methods.Add(method.ToUpperInvariant());
         return this;
@@ -132,6 +138,10 @@ public sealed class EndpointDefinition
     {
         ArgumentNullException.ThrowIfNull(responseType);
         ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
+        if (statusCode is < 100 or > 599)
+        {
+            throw new ArgumentOutOfRangeException(nameof(statusCode), "The response status code must be between 100 and 599.");
+        }
         this.responses.Add((responseType, statusCode, contentType));
         return this;
     }
@@ -185,7 +195,7 @@ public sealed class EndpointDefinition
 
     internal RouteHandlerBuilder Map(IEndpointRouteBuilder routes, Delegate handler, Type? requestType, Type responseType)
     {
-        if (this.methods.Count == 0)
+        if (this.methods.Count == 0 || !this.routeConfigured)
         {
             throw new InvalidOperationException("An endpoint must select an HTTP method and route.");
         }

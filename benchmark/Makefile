@@ -15,7 +15,7 @@ build:
 	nice -n 19 dotnet build "$(SOLUTION)" --configuration "$(CONFIGURATION)" --nologo
 
 test:
-	nice -n 19 dotnet test "$(SOLUTION)" --configuration "$(CONFIGURATION)" --no-build --nologo
+	nice -n 19 dotnet test "$(SOLUTION)" --configuration "$(CONFIGURATION)" --no-build
 
 # Validate the checked-in producer bundle without invoking a retired Rust
 # generator. The archive packager validates manifest paths, file types,

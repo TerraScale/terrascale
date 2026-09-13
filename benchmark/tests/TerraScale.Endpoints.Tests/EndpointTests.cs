@@ -52,6 +52,22 @@ public sealed class EndpointTests
         await Assert.That(catalog.Count).IsEqualTo(1);
         await Assert.That(catalog.Types.Single()).IsEqualTo(typeof(ProbeEndpoint));
     }
+
+    [Test]
+    public async Task SenderStyleEndpointMapsAsARequestHandler()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.Services.AddSingleton(new EndpointCatalog([typeof(SenderProbeEndpoint)]));
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        await app.StartAsync();
+        var endpoint = app.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints)
+            .Single();
+        await Assert.That(endpoint.DisplayName).Contains("/sender-probe");
+        await app.StopAsync();
+        await app.DisposeAsync();
+    }
 }
 
 public sealed class ProbeEndpoint : EndpointWithoutRequest<string>
@@ -64,3 +80,14 @@ public sealed class InvalidEndpoint : EndpointWithoutRequest<string>
     public override void Configure() { }
     public override Task<string> HandleAsync(CancellationToken cancellationToken) => Task.FromResult("x");
 }
+
+public sealed class SenderProbeEndpoint : Endpoint<SenderProbeRequest>
+{
+    public override void Configure() { Post("/sender-probe"); AllowAnonymous(); Produces<SenderProbeResponse>(); }
+    public override async Task HandleAsync(SenderProbeRequest request, CancellationToken cancellationToken)
+    {
+        await Send.OkAsync(new SenderProbeResponse(request.Value));
+    }
+}
+public sealed record SenderProbeRequest(string Value);
+public sealed record SenderProbeResponse(string Value);
