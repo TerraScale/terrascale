@@ -17,7 +17,7 @@ namespace TerraBase.Storage.Schema;
 public static class SqliteSchema
 {
     /// <summary>The latest schema migration version.</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     /// <summary>The busy timeout applied to every SQLite connection.</summary>
     public const int BusyTimeoutMilliseconds = 60_000;
@@ -33,6 +33,7 @@ public static class SqliteSchema
         new SqliteMigration(1, "storage-core", StorageCoreSql),
         new SqliteMigration(2, "schema-and-auto-index-catalog", SchemaAndAutoIndexSql),
         new SqliteMigration(3, "document-publication-compatibility", DocumentPublicationCompatibilitySql),
+        new SqliteMigration(4, "document-publication-backfill", DocumentPublicationBackfillSql),
     ]);
 
     /// <summary>
@@ -315,6 +316,25 @@ public static class SqliteSchema
         INSERT INTO schema_metadata (key, value)
         VALUES ('schema_version', '3')
         ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+        """;
+
+    private static readonly string DocumentPublicationBackfillSql = """
+        UPDATE documents
+        SET revision = CASE WHEN revision < version THEN version ELSE revision END,
+            updated_at_ms = CASE
+                WHEN updated_at_ms <> 0 THEN updated_at_ms
+                ELSE COALESCE(CAST(strftime('%s', updated_at) AS INTEGER) * 1000, 0)
+            END;
+
+        INSERT INTO version_watermarks (tenant, collection, document_id, version)
+        SELECT tenant, collection, document_id, MAX(version)
+        FROM documents
+        GROUP BY tenant, collection, document_id
+        ON CONFLICT (tenant, collection, document_id)
+        DO UPDATE SET version = CASE
+            WHEN version_watermarks.version < excluded.version THEN excluded.version
+            ELSE version_watermarks.version
+        END;
         """;
 
     private static void ExecutePragma(SqliteConnection connection, string sql)

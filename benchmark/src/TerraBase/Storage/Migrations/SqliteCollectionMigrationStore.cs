@@ -259,7 +259,11 @@ public sealed class SqliteCollectionMigrationStore
             SET state = $state, cursor = $cursor, documents = $documents,
                 transformed = $transformed, pages = $pages, updated_at = $updatedAt
             WHERE tenant = $tenant AND collection = $collection AND migration_id = $migrationId
-              AND state = $state;
+              AND state = $state
+              AND cursor <= $cursor
+              AND documents <= $documents
+              AND transformed <= $transformed
+              AND pages <= $pages;
             """;
         AddIdentity(command, tenant, collection, migrationId);
         command.Parameters.AddWithValue("$state", StateText(state));

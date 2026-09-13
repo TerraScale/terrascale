@@ -22,6 +22,12 @@ public static class SqliteMigrationRunner
         foreach (var migration in catalog.Where(item => !applied.ContainsKey(item.Version)))
         {
             using var transaction = connection.BeginTransaction(deferred: false);
+            if (TryReadApplied(connection, transaction, migration.Version, out var recorded))
+            {
+                applied[migration.Version] = recorded;
+                transaction.Commit();
+                continue;
+            }
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = migration.Sql;
@@ -63,6 +69,13 @@ public static class SqliteMigrationRunner
         {
             cancellationToken.ThrowIfCancellationRequested();
             await using var transaction = connection.BeginTransaction(deferred: false);
+            var recorded = await TryReadAppliedAsync(connection, transaction, migration.Version, cancellationToken).ConfigureAwait(false);
+            if (recorded is not null)
+            {
+                applied[migration.Version] = recorded.Value;
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                continue;
+            }
             await using (var command = connection.CreateCommand())
             {
                 command.Transaction = transaction;
@@ -180,6 +193,43 @@ public static class SqliteMigrationRunner
         }
 
         return applied;
+    }
+
+    private static bool TryReadApplied(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        int version,
+        out (string Name, string Checksum) recorded)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT name, checksum FROM {MigrationTable} WHERE version = $version;";
+        command.Parameters.AddWithValue("$version", version);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            recorded = default;
+            return false;
+        }
+
+        recorded = (reader.GetString(0), reader.GetString(1));
+        return true;
+    }
+
+    private static async Task<(string Name, string Checksum)?> TryReadAppliedAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT name, checksum FROM {MigrationTable} WHERE version = $version;";
+        command.Parameters.AddWithValue("$version", version);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            ? (reader.GetString(0), reader.GetString(1))
+            : null;
     }
 
     private static void ValidateApplied(

@@ -75,6 +75,133 @@ public sealed class SqliteSchemaTests
     }
 
     [Test]
+    public async Task LegacyDocumentsAreBackfilledWhenTheSchemaAdvances()
+    {
+        var path = NewPath();
+        try
+        {
+            await using (var legacy = Open(path))
+            {
+                await SqliteMigrationRunner.ApplyAsync(
+                    legacy,
+                    SqliteSchema.Migrations.Where(migration => migration.Version <= 2).ToArray());
+
+                await using var insert = legacy.CreateCommand();
+                insert.CommandText = """
+                    INSERT INTO documents
+                        (tenant, collection, id, commit_seq, version, deleted, body, updated_at,
+                         document_id, commit_ulid, revision, context, updated_at_ms)
+                    VALUES
+                        ('tenant-a', 'users', 'user-1', 1, 2, 0, X'01', '1970-01-01T00:00:42+00:00',
+                         'user-1', 'commit-1', 1, X'', 0),
+                        ('tenant-a', 'users', 'user-1', 2, 5, 0, X'02', '1970-01-01T00:00:43+00:00',
+                         'user-1', 'commit-2', 1, X'', 0);
+                    """;
+                await insert.ExecuteNonQueryAsync();
+            }
+
+            await using var current = Open(path);
+            await SqliteSchema.EnsureCreatedAsync(current);
+
+            await Assert.That(Convert.ToInt64(Scalar(
+                current,
+                "SELECT revision FROM documents WHERE tenant = 'tenant-a' AND collection = 'users' AND id = 'user-1' AND commit_seq = 1;")))
+                .IsEqualTo(2L);
+            await Assert.That(Convert.ToInt64(Scalar(
+                current,
+                "SELECT revision FROM documents WHERE tenant = 'tenant-a' AND collection = 'users' AND id = 'user-1' AND commit_seq = 2;")))
+                .IsEqualTo(5L);
+            await Assert.That(Convert.ToInt64(Scalar(
+                current,
+                "SELECT updated_at_ms FROM documents WHERE tenant = 'tenant-a' AND collection = 'users' AND id = 'user-1' AND commit_seq = 2;")))
+                .IsEqualTo(43_000L);
+            await Assert.That(Convert.ToInt64(Scalar(
+                current,
+                "SELECT version FROM version_watermarks WHERE tenant = 'tenant-a' AND collection = 'users' AND document_id = 'user-1';")))
+                .IsEqualTo(5L);
+        }
+        finally
+        {
+            DeleteDatabase(path);
+        }
+    }
+
+    [Test]
+    public async Task ConcurrentMigrationAppliersRecheckAfterWaitingForTheWriteLock()
+    {
+        var path = NewPath();
+        var firstEntered = new ManualResetEventSlim();
+        var releaseFirst = new ManualResetEventSlim();
+        Task? firstTask = null;
+        Task? secondTask = null;
+        try
+        {
+            await using var first = Open(path);
+            await using var second = Open(path);
+            SqliteSchema.ConfigureConnection(first);
+            SqliteSchema.ConfigureConnection(second);
+            SqliteMigrationRunner.Apply(first, []);
+
+            first.CreateFunction("migration_gate", () =>
+            {
+                firstEntered.Set();
+                if (!releaseFirst.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("the migration race gate was not released");
+                }
+
+                return 1;
+            });
+            second.CreateFunction("migration_gate", () => 1);
+            var migration = new SqliteMigration(
+                1,
+                "race-proof",
+                "SELECT migration_gate(); CREATE TABLE race_proof (id INTEGER NOT NULL);");
+
+            firstTask = Task.Run(() => SqliteMigrationRunner.Apply(first, [migration]));
+            await Assert.That(await Task.Run(() => firstEntered.Wait(TimeSpan.FromSeconds(5)))).IsTrue();
+            secondTask = Task.Run(() => SqliteMigrationRunner.Apply(second, [migration]));
+            releaseFirst.Set();
+
+            try
+            {
+                await Task.WhenAll(firstTask, secondTask);
+            }
+            catch (Exception failure)
+            {
+                throw new InvalidOperationException(
+                    "concurrent migration appliers must not duplicate a migration receipt after waiting for BEGIN IMMEDIATE.",
+                    failure);
+            }
+
+            await Assert.That(Convert.ToInt64(Scalar(first, "SELECT COUNT(*) FROM schema_migrations;"))).IsEqualTo(1L);
+            await Assert.That(Convert.ToInt64(Scalar(first, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'race_proof';"))).IsEqualTo(1L);
+        }
+        finally
+        {
+            releaseFirst.Set();
+            if (firstTask is not null || secondTask is not null)
+            {
+                try
+                {
+                    await Task.WhenAll(
+                        firstTask ?? Task.CompletedTask,
+                        secondTask ?? Task.CompletedTask);
+                }
+                catch
+                {
+                    // The assertion above reports the original failure; cleanup
+                    // only releases a potentially blocked migration callback.
+                }
+            }
+
+            firstEntered.Dispose();
+            releaseFirst.Dispose();
+            DeleteDatabase(path);
+        }
+    }
+
+    [Test]
     public async Task MigrationNameDriftFailsClosed()
     {
         var path = NewPath();
