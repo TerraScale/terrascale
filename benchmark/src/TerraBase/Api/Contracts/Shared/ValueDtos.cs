@@ -46,31 +46,87 @@ public sealed record JsonValue
 
     /// <summary>Converts to the protocol's value.</summary>
     /// <returns>The <see cref="TbepValue"/>.</returns>
-    public TbepValue ToValue() => this switch
+    public TbepValue ToValue()
     {
-        { Null: not null } => TbepValue.Null,
-        { Boolean: { } b } => TbepValue.Of(b),
-        { Integer: { } i } => TbepValue.Of(i),
-        { Number: { } n } => TbepValue.Of(n),
-        { String: { } s } => TbepValue.Of(s),
-        { Array: { } items } => TbepValue.Of(items.Select(item => item.ToValue()).ToArray()),
-        { Object: { } fields } => TbepValue.Of(
-            fields.Select(field => new ObjectField(field.Key, field.Value.ToValue())).ToArray()),
-        _ => throw new JsonException("a value carries exactly one discriminator"),
-    };
+        var discriminatorCount =
+            (this.Null is not null ? 1 : 0)
+            + (this.Boolean is not null ? 1 : 0)
+            + (this.Integer is not null ? 1 : 0)
+            + (this.Number is not null ? 1 : 0)
+            + (this.String is not null ? 1 : 0)
+            + (this.Array is not null ? 1 : 0)
+            + (this.Object is not null ? 1 : 0);
+
+        if (discriminatorCount != 1 || this.Null is false)
+        {
+            throw new JsonException("a value carries exactly one discriminator");
+        }
+
+        if (this.Null is true)
+        {
+            return TbepValue.Null;
+        }
+
+        if (this.Boolean is { } boolean)
+        {
+            return TbepValue.Of(boolean);
+        }
+
+        if (this.Integer is { } integer)
+        {
+            return TbepValue.Of(integer);
+        }
+
+        if (this.Number is { } number)
+        {
+            return TbepValue.Of(number);
+        }
+
+        if (this.String is { } text)
+        {
+            return TbepValue.Of(text);
+        }
+
+        if (this.Array is { } items)
+        {
+            if (items.Any(static item => item is null))
+            {
+                throw new JsonException("an array cannot contain a null value discriminator");
+            }
+
+            return TbepValue.Of(items.Select(static item => item.ToValue()).ToArray());
+        }
+
+        if (this.Object is { } fields)
+        {
+            if (fields.Any(static field => field.Key is null || field.Value is null))
+            {
+                throw new JsonException("an object cannot contain a null field name or value");
+            }
+
+            return TbepValue.Of(
+                fields.Select(static field => new ObjectField(field.Key, field.Value.ToValue())).ToArray());
+        }
+
+        throw new JsonException("a value carries exactly one discriminator");
+    }
 
     /// <summary>Builds from the protocol's value.</summary>
     /// <param name="value">The <see cref="TbepValue"/>.</param>
     /// <returns>The JSON value.</returns>
-    public static JsonValue Of(TbepValue value) => value.Tag switch
+    public static JsonValue Of(TbepValue value)
     {
-        0 => new JsonValue { Null = true },
-        1 => new JsonValue { Boolean = (bool)value.Payload! },
-        2 => new JsonValue { Integer = (long)value.Payload! },
-        3 => new JsonValue { Number = (double)value.Payload! },
-        4 => new JsonValue { String = (string)value.Payload! },
-        5 => new JsonValue { Array = ((TbepValue[])value.Payload!).Select(Of).ToArray() },
-        6 => new JsonValue { Object = ((ObjectField[])value.Payload!).ToDictionary(field => field.Name, field => Of(field.Value)) },
-        _ => throw new JsonException($"unknown value tag {value.Tag}"),
-    };
+        ArgumentNullException.ThrowIfNull(value);
+        return value.Tag switch
+        {
+            0 => new JsonValue { Null = true },
+            1 => new JsonValue { Boolean = (bool)value.Payload! },
+            2 => new JsonValue { Integer = (long)value.Payload! },
+            3 => new JsonValue { Number = (double)value.Payload! },
+            4 => new JsonValue { String = (string)value.Payload! },
+            5 => new JsonValue { Array = ((TbepValue[])value.Payload!).Select(Of).ToArray() },
+            6 => new JsonValue { Object = ((ObjectField[])value.Payload!).ToDictionary(field => field.Name, field => Of(field.Value)) },
+            _ => throw new JsonException($"unknown value tag {value.Tag}"),
+        };
+    }
 }

@@ -50,6 +50,10 @@ public sealed class StreamsTests
 
         var sseOpened = await sse.ExpectAsync("opened");
         var wsOpened = await Ws.ExpectAsync(ws, "opened");
+        // Metadata does not advance the journal checkpoint. The replay
+        // begins at sequence 1, so both transports advertise the checkpoint
+        // immediately before it.
+        await Assert.That(sseOpened.Id).IsEqualTo("2");
         await Assert.That(sseOpened.Data.RootElement.GetProperty("startSequence").GetUInt64()).IsEqualTo(3ul);
         await Assert.That(wsOpened.RootElement.GetProperty("startSequence").GetUInt64()).IsEqualTo(3ul);
 
@@ -503,6 +507,27 @@ public sealed class StreamsTests
         var (status, _) = await HostHarness.SendAsync(caller, "/v1/streams/ws");
         await Assert.That(status).IsEqualTo(400);
     }
+
+    /// <summary>A concurrent close waits for the owner to finish source unsubscribe.</summary>
+    [Test]
+    public async Task ConcurrentCloseWaitsForSourceUnsubscribe()
+    {
+        var source = new BlockingBackboneSource();
+        var hub = new BackboneHub(source, new AuditLog());
+        var stream = await hub.OpenAsync("tenant-a", "principal-a", null, fromSequence: null);
+
+        var owner = hub.CloseAsync(stream, reason: "owner");
+        await source.UnsubscribeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var follower = hub.CloseAsync(stream, reason: "follower");
+
+        await Assert.That(follower.IsCompleted).IsFalse();
+        source.ReleaseUnsubscribe.TrySetResult();
+        await Task.WhenAll(owner, follower);
+
+        await Assert.That(source.UnsubscribeCalls).IsEqualTo(1);
+        await Assert.That(hub.OpenCount).IsEqualTo(0);
+        await Assert.That(stream.ReadAsync(TimeSpan.FromSeconds(1))).IsNull();
+    }
     /// <summary>
     /// Folds shed while a drop marker sat queued-but-unread survive the
     /// marker's delivery: the next region's marker carries a boundary no
@@ -589,6 +614,51 @@ public sealed class StreamsTests
         await host.Hub.CloseAsync(stream, reason: "test-complete").ConfigureAwait(false);
     }
 
+}
+
+/// <summary>A deterministic source fixture for the close lifecycle row.</summary>
+file sealed class BlockingBackboneSource : IBackboneSource
+{
+    /// <inheritdoc/>
+    public event Action<int>? GenerationLost
+    {
+        add { }
+        remove { }
+    }
+
+    /// <summary>Signals that source unsubscribe has started.</summary>
+    public TaskCompletionSource UnsubscribeStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Releases the blocked source unsubscribe.</summary>
+    public TaskCompletionSource ReleaseUnsubscribe { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Counts source unsubscribe calls.</summary>
+    public int UnsubscribeCalls => Volatile.Read(ref this.unsubscribeCalls);
+
+    private int unsubscribeCalls;
+
+    /// <inheritdoc/>
+    public Task<BackboneSourceSubscription> SubscribeAsync(
+        ulong subscriptionId,
+        string tenant,
+        string principal,
+        string[]? collections,
+        ulong? fromSequence,
+        IBackboneNotificationSink sink,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new BackboneSourceSubscription(subscriptionId, fromSequence ?? 1));
+
+    /// <inheritdoc/>
+    public async Task UnsubscribeAsync(
+        ulong subscriptionId,
+        string tenant,
+        string principal,
+        CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref this.unsubscribeCalls);
+        this.UnsubscribeStarted.TrySetResult();
+        await this.ReleaseUnsubscribe.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
 }
 
 /// <summary>The stream-queue reader half the drop row needs: drains with a bound.</summary>

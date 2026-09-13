@@ -67,11 +67,78 @@ public sealed class TbepChannelHostileFrameTests
         }
     }
 
+    /// <summary>A notification sink failure fails pending calls and closes the channel instead of faulting the reader task silently.</summary>
+    [Test]
+    public async Task NotificationSinkFailureFailsPendingCallAndClosesChannel()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"tbep-hostile-{Guid.NewGuid():N}.sock");
+        try
+        {
+            await using var engine = new HostileEngine(path, malformedFrame: false, sinkFailure: true);
+            await using var channel = TbepChannel.Connect(path);
+            await channel.BindChannelAsync("backend", "tenant-a");
+            await channel.BackboneSubscribeAsync(42, collections: null, fromSequence: null, new ThrowingSink());
+
+            var pending = channel.DocumentReadAsync("orders", "hostile");
+            await engine.SawReadRequest.WaitAsync(TimeSpan.FromSeconds(10));
+
+            var failure = await Assert.ThrowsAsync<TbepException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+            await Assert.That(failure).IsNotNull();
+            await Assert.That(channel.IsClosed).IsTrue();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Concurrent disposal is idempotent and fails an in-flight call before the transport is torn down.</summary>
+    [Test]
+    public async Task ConcurrentDisposeFailsPendingCallOnce()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"tbep-hostile-{Guid.NewGuid():N}.sock");
+        try
+        {
+            await using var engine = new HostileEngine(path, malformedFrame: false);
+            await using var channel = TbepChannel.Connect(path);
+            await channel.BindChannelAsync("backend", "tenant-a");
+
+            var pending = channel.DocumentReadAsync("orders", "held");
+            await engine.SawReadRequest.WaitAsync(TimeSpan.FromSeconds(10));
+
+            var firstDispose = channel.DisposeAsync().AsTask();
+            var secondDispose = channel.DisposeAsync().AsTask();
+            var failure = await Assert.ThrowsAsync<TbepException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+
+            await Assert.That(failure).IsNotNull();
+            await firstDispose.WaitAsync(TimeSpan.FromSeconds(10));
+            await secondDispose.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(channel.IsClosed).IsTrue();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private sealed class NoopSink : TbepChannel.ITbepNotificationSink
     {
         public void OnBatch(SubscriptionBatch batch)
         {
         }
+
+        public void OnTrigger(TriggerNotification trigger)
+        {
+        }
+
+        public void OnClosed(SubscriptionClosed closed)
+        {
+        }
+    }
+
+    private sealed class ThrowingSink : TbepChannel.ITbepNotificationSink
+    {
+        public void OnBatch(SubscriptionBatch batch) => throw new InvalidOperationException("sink failed");
 
         public void OnTrigger(TriggerNotification trigger)
         {
@@ -89,10 +156,12 @@ public sealed class TbepChannelHostileFrameTests
         private readonly TaskCompletionSource sawReadRequest = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly Task serving;
         private readonly bool malformedFrame;
+        private readonly bool sinkFailure;
 
-        public HostileEngine(string path, bool malformedFrame)
+        public HostileEngine(string path, bool malformedFrame, bool sinkFailure = false)
         {
             this.malformedFrame = malformedFrame;
+            this.sinkFailure = sinkFailure;
             this.listener.Bind(new UnixDomainSocketEndPoint(path));
             this.listener.Listen(1);
             this.serving = this.ServeAsync(this.stopped.Token);
@@ -130,6 +199,28 @@ public sealed class TbepChannelHostileFrameTests
                         break;
                     case "DocumentReadRequest":
                         this.sawReadRequest.TrySetResult();
+                        if (this.sinkFailure)
+                        {
+                            var notification = MessagePackSerializer.Serialize(
+                                new SubscriptionBatch
+                                {
+                                    SubscriptionId = 42,
+                                    FromSequence = 1,
+                                    Events = [],
+                                    NextSequence = 1,
+                                },
+                                TbepOptions.Strict);
+                            await TbepWire.WriteFrame(
+                                stream,
+                                TbepWire.Seal(
+                                    TbepRegistry.KindCode("SubscriptionBatch"),
+                                    correlation: 0,
+                                    causation: 42,
+                                    idempotency: null,
+                                    notification)).ConfigureAwait(false);
+                            return;
+                        }
+
                         if (this.malformedFrame)
                         {
                             await stream.WriteAsync(new byte[] { 1, 0, 0, 0, 0x91 }).ConfigureAwait(false);

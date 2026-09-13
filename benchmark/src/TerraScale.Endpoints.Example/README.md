@@ -1,6 +1,6 @@
 # TerraScale.Endpoints example
 
-Run with `dotnet run --project TerraScale.Endpoints.Example.csproj` and open `/scalar` or `/openapi/v1.json`.
+From the repository root, run `nice -n 19 dotnet run --project src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj` and open `/scalar` or `/openapi/v1.json`.
 
 The endpoint files demonstrate FastEndpoints-style `Configure()` declarations,
 `HandleAsync()` handlers, DI, custom binding, response metadata, anonymous access,

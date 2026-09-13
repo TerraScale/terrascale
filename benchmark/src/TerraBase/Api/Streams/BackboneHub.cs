@@ -142,8 +142,11 @@ public sealed class BackboneHub
             // Another close path owns the engine unsubscribe, or the
             // generation-loss path already ended this stream. Keep this
             // method idempotent so a pump's finally cannot issue a second
-            // lifecycle frame for the same subscription.
-            stream.Complete();
+            // lifecycle frame for the same subscription. Wait for the owner
+            // to finish its source unsubscribe before returning; otherwise a
+            // concurrent close could end the queue before the source's close
+            // notification reaches the consumer.
+            await stream.CloseFinished.ConfigureAwait(false);
             return;
         }
 
@@ -165,6 +168,7 @@ public sealed class BackboneHub
             // can reach the consumer before the queue is ended. If the
             // notification never arrives, this still wakes the pump.
             stream.Complete();
+            stream.MarkCloseFinished();
         }
 
         this.audit.Record(
@@ -233,9 +237,10 @@ public sealed class BackboneHub
 /// and the frame that triggered the shed always lands.
 /// </summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711", Justification = "BackboneStream is the documented protocol stream abstraction.")]
-public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
+public sealed class BackboneStream : IBackboneNotificationSink
 {
     private readonly BackboneHub hub;
+    private readonly TaskCompletionSource closeFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Channel<StreamEvent> queue = Channel.CreateBounded<StreamEvent>(
         new BoundedChannelOptions(BackboneHub.QueueDepth) { SingleReader = true, SingleWriter = false });
     private long dropped;
@@ -273,6 +278,9 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
 
     /// <summary>The dropped-frame count of this stream (surfaced, never hidden).</summary>
     public long Dropped => Volatile.Read(ref this.dropped);
+
+    /// <summary>Completes when the hub has finished the source-side close.</summary>
+    internal Task CloseFinished => this.closeFinished.Task;
 
     /// <summary>Waits for the next frame of the stream.</summary>
     /// <param name="cancellationToken">A cancellation token.</param>
@@ -331,7 +339,14 @@ public sealed class BackboneStream : TbepChannel.ITbepNotificationSink
 
         Volatile.Write(ref this.completing, true);
         this.queue.Writer.TryComplete();
+        if (generationLost)
+        {
+            this.MarkCloseFinished();
+        }
     }
+
+    /// <summary>Marks the source-side close complete for concurrent close callers.</summary>
+    internal void MarkCloseFinished() => this.closeFinished.TrySetResult();
 
     private void Offer(StreamEvent frame)
     {

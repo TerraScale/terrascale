@@ -12,7 +12,11 @@ public sealed record DocumentBodyDto(string Id, string Collection, ulong Version
     /// <summary>Builds from the protocol body.</summary>
     /// <param name="body">The protocol body.</param>
     /// <returns>The DTO.</returns>
-    public static DocumentBodyDto Of(DocumentBody body) => new(body.Id, body.Collection, body.Version, JsonValue.Of(body.Body));
+    public static DocumentBodyDto Of(DocumentBody body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        return new DocumentBodyDto(body.Id, body.Collection, body.Version, JsonValue.Of(body.Body));
+    }
 }
 
 /// <summary>The document read answer.</summary>

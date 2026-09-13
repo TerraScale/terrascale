@@ -150,7 +150,15 @@ public sealed partial class TypedApi
             return parsed;
         }
 
-        return lastEventId.Length > 0 && ulong.TryParse(lastEventId, out var lastSeen) ? lastSeen + 1 : null;
+        if (lastEventId.Length == 0 || !ulong.TryParse(lastEventId, out var lastSeen))
+        {
+            return null;
+        }
+
+        // A client can legally reconnect with the maximum representable
+        // event id. Saturate rather than wrapping to zero and replaying the
+        // entire journal.
+        return lastSeen == ulong.MaxValue ? ulong.MaxValue : lastSeen + 1;
     }
 
     private static ExpectedVersion Expected(HttpContext context)
