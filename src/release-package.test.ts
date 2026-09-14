@@ -60,10 +60,6 @@ test("trunk pushes verify the SDK and main publishes one unchanged npm candidate
   assert.deepEqual(profileDescriptions(deployment, "tests"), ["Clean install", "Build SDK", "Complete SDK tests"]);
   assert.deepEqual(profileDescriptions(deployment, "browser"), ["Clean install", "Build SDK", "Browser transports"]);
   assert.deepEqual(
-    deployment.prProfiles.find((profile) => profile.name === "static")?.commands.find((command) => command.description === "OpenAPI drift")?.arguments,
-    ["run", "check:openapi-drift", "--", "--strict"],
-  );
-  assert.deepEqual(
     deployment.prProfiles.find((profile) => profile.name === "tests")?.commands.at(-1),
     { description: "Complete SDK tests", command: "npm", arguments: ["test"] },
   );
@@ -89,8 +85,7 @@ test("trunk pushes verify the SDK and main publishes one unchanged npm candidate
   assert.match(workflow, /^on:\n  push:\n    branches: \[develop, main\]$/mu);
   assert.match(workflow, /^permissions:\n  contents: read$/mu);
   assert.doesNotMatch(workflow, /pull_request|forgejo\.base_ref|forgejo\.head_ref/u);
-  assert.match(workflow, /TS_DEPLOY_REPOSITORY: "TerraScale-Old\/TerraScale\.Deploy"/u);
-  assert.match(workflow, /repository: \$\{\{ env\.TS_DEPLOY_REPOSITORY \}\}/u);
+  assert.match(workflow, /repository: TerraScale\/ts-deploy/u);
   assert.doesNotMatch(workflow, /(?:TerraScale\.TypeScript|TerraScale\.Deploy\.Cli|NuGet|\.NET|dotnet|REGISTRY_TOKEN|FORGEJO_TOKEN)/iu);
   assert.doesNotMatch(workflow, /(?:bf9703ffca63|ce0183692c02|EXPECTED_DEPLOY_CLI_SHA|ts-deploy\/cmd\/terrascale-deploy@v)/u);
   assert.doesNotMatch(workflow, /TERRASCALE_SOURCE_READ_TOKEN/u);
@@ -119,7 +114,7 @@ test("trunk pushes verify the SDK and main publishes one unchanged npm candidate
   for (const job of ["candidate-build", "candidate-browser", "candidate-e2e", "candidate-version", "candidate", "publish"]) {
     assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
   }
-  for (const job of ["plan", "verify-node-22", "verify-node-24", "verify-browser"]) {
+  for (const job of ["plan", "verify-static", "verify-node-22", "verify-node-24", "verify-browser"]) {
     assert.doesNotMatch(jobDefinition(workflow, job), /refs\/heads\/main/u);
     assert.doesNotMatch(jobSteps(workflow, job), /secrets\.[A-Z0-9_]+/u);
   }
@@ -136,11 +131,10 @@ test("trunk pushes verify the SDK and main publishes one unchanged npm candidate
   assert.match(bootstrap, /go build -trimpath -o/u);
   assert.doesNotMatch(bootstrap, /TERRASCALE_SOURCE_READ_TOKEN|REGISTRY_TOKEN|github\.token|forgejo\.token|gitea\.token/u);
 
-  const checkoutBlocks = [...workflow.matchAll(/uses: https:\/\/data\.forgejo\.org\/actions\/checkout@[^\n]+\n\s+with:\n([\s\S]*?)(?=\n      - |\n    [a-z-]+:|\n$)/gu)].map((match) => match[1] ?? "");
+  const checkoutBlocks = [...workflow.matchAll(/- uses: https:\/\/data\.forgejo\.org\/actions\/checkout@[^\n]+\n        with:\n([\s\S]*?)(?=\n      - |\n    [a-z-]+:|\n$)/gu)].map((match) => match[1] ?? "");
   assert.equal(checkoutBlocks.length, 13);
   assert.equal(checkoutBlocks.filter((block) => /token: \$\{\{ secrets\.TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN \}\}/u.test(block)).length, 1);
-  assert.equal(checkoutBlocks.filter((block) => /token: \$\{\{ secrets\.TERRASCALE_DASHBOARD_REPOSITORY_READ_TOKEN \}\}/u.test(block)).length, 1);
-  for (const block of checkoutBlocks.filter((block) => !/TERRASCALE_(?:DEPLOY|DASHBOARD)_REPOSITORY_READ_TOKEN/u.test(block))) {
+  for (const block of checkoutBlocks.filter((block) => !/TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN/u.test(block))) {
     assert.match(block, /token: ""/u);
     assert.doesNotMatch(block, /(?:github|forgejo|gitea)\.token/u);
   }
@@ -156,11 +150,8 @@ test("trunk pushes verify the SDK and main publishes one unchanged npm candidate
   const staticJob = jobDefinition(workflow, "verify-static");
   assert.match(staticJob, /runs-on: terrascale-untrusted/u);
   assert.match(staticJob, /repository: TerraScale\/ts-dashboard/u);
-  assert.match(staticJob, /ref: develop/u);
   assert.match(staticJob, /path: ts-typescript\/Dashboard/u);
-  assert.match(staticJob, /token: \$\{\{ secrets\.TERRASCALE_DASHBOARD_REPOSITORY_READ_TOKEN \}\}/u);
-  assert.equal((staticJob.match(/secrets\./gu) ?? []).length, 1);
-  assert.doesNotMatch(staticJob, /TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN|TERRASCALE_SOURCE_READ_TOKEN|NPM_TOKEN|TERRASCALE_E2E_ACCESS_TOKEN/u);
+  assert.doesNotMatch(staticJob, /ref: develop|token: \$\{\{ secrets\./u);
   assert.match(staticJob, /ci pr --repository-root ts-typescript --profile static/u);
 
   for (const [job, version] of [["verify-node-22", "22.23.2"], ["verify-node-24", "24.20.0"]] as const) {

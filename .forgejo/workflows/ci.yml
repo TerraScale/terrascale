@@ -14,7 +14,7 @@ concurrency:
 # DEP-1 must provide an independently accepted replacement before this can run.
 # These sentinels keep the bootstrap fail-closed until that review is complete.
 env:
-  TS_DEPLOY_REPOSITORY: "TerraScale-Old/TerraScale.Deploy"
+  TS_DEPLOY_REPOSITORY: "TerraScale/ts-deploy"
   TS_DEPLOY_REVISION: "PENDING_DEP1_GREEN_COMMIT"
   TS_DEPLOY_EXPECTED_TREE: "PENDING_DEP1_GREEN_TREE"
 
@@ -128,10 +128,9 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           repository: TerraScale/ts-dashboard
-          ref: develop
           path: ts-typescript/Dashboard
           fetch-depth: 0
-          token: ${{ secrets.TERRASCALE_DASHBOARD_REPOSITORY_READ_TOKEN }}
+          token: ""
           persist-credentials: false
       - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
@@ -401,7 +400,6 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
-          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
