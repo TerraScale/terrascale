@@ -12,7 +12,7 @@ export type SchemaDocument = {
   readonly schema_version: UInt64Value;
   readonly migration?: {
     readonly operation_id: string;
-    readonly state: "pending" | "running" | "complete" | "failed";
+    readonly state: "pending" | "running" | "rolling_back" | "complete" | "failed";
     readonly steps: readonly { readonly kind: string; readonly from?: string; readonly to?: string; readonly index?: string }[];
     readonly total: UInt64Value;
     readonly completed: UInt64Value;
