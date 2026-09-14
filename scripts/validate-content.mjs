@@ -55,8 +55,8 @@ for (const phrase of [
 ]) {
   if (!englishMessages.includes(phrase)) failures.push(`messages/en.ts: missing catalog wording ${phrase}.`)
 }
-if (/annual|Stripe|name:\s*'(?:Developer|Scale|Business)'/i.test(`${pricing}\n${site}`)) {
-  failures.push('Public Alpha pricing: annual, Stripe, Developer, Scale, and Business pricing must stay removed.')
+if (/Stripe|name:\s*'(?:Developer|Scale|Business)'/i.test(`${pricing}\n${site}`)) {
+  failures.push('Public Alpha pricing: Stripe and the retired Developer, Scale, and Business plans must stay removed.')
 }
 
 for (const url of [

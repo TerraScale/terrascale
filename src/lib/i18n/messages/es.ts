@@ -157,9 +157,14 @@ export const es: Messages = {
     eyebrow: 'Precios',
     titleLead: 'Precios simples',
     titleAccent: 'que escalan contigo',
-    subtitle: 'Tres planes mensuales para Public Alpha. Enterprise sigue sin estar disponible.',
+    subtitle: 'Tres planes para Public Alpha. Enterprise sigue sin estar disponible.',
     badge: 'Más popular',
+    toggleLabel: 'Ciclo de facturación',
+    monthly: 'Mensual',
+    annual: 'Anual',
+    save: 'Dos meses gratis',
     suffixMonthly: '/mes',
+    suffixAnnual: '/año',
     plans: {
       starter: {
         description: 'Plan mensual con una prueba elegible de 30 días',

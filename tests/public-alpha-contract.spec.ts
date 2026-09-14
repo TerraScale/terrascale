@@ -247,13 +247,36 @@ test('pricing matches the Public Alpha plan catalog', async ({ page }) => {
   }
 
   await expect(page.getByText(/^(Developer|Scale|Business)$/, { exact: true })).toHaveCount(0)
-  await expect(page.getByText(/annual|Stripe/i)).toHaveCount(0)
+  await expect(page.getByText(/Stripe/i)).toHaveCount(0)
   await expect(page.getByText(/does not offer paid overages|without paid overages/i)).toBeVisible()
   await expect(page.getByText(/30-day trial/i).first()).toBeVisible()
 
   const enterprise = cards.filter({ hasText: 'Enterprise' })
   await expect(enterprise.getByText(/unavailable during Public Alpha/i)).toBeVisible()
   await expect(enterprise.getByText(/contact for future access/i)).toBeVisible()
+})
+
+test('pricing billing toggle switches between monthly and annual prices', async ({ page }) => {
+  await page.goto('/pricing')
+
+  const monthly = page.getByRole('tab', { name: /monthly/i })
+  const annual = page.getByRole('tab', { name: /annual/i })
+  await expect(monthly).toHaveAttribute('aria-selected', 'true')
+  await expect(annual).toHaveAttribute('aria-selected', 'false')
+
+  const starter = page.locator('.pricing-card[data-plan="starter"]')
+  await expect(starter.getByText('$5', { exact: true })).toBeVisible()
+  await expect(starter.getByText('/month', { exact: true })).toBeVisible()
+
+  await annual.click()
+  await expect(annual).toHaveAttribute('aria-selected', 'true')
+  await expect(monthly).toHaveAttribute('aria-selected', 'false')
+  await expect(starter.getByText('$50', { exact: true })).toBeVisible()
+  await expect(starter.getByText('/year', { exact: true })).toBeVisible()
+
+  await monthly.click()
+  await expect(monthly).toHaveAttribute('aria-selected', 'true')
+  await expect(starter.getByText('$5', { exact: true })).toBeVisible()
 })
 
 test('pricing keeps every plan state usable on mobile', async ({ page }) => {
