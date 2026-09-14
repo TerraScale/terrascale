@@ -2,11 +2,12 @@
 
 Status: **scaffold; no current C# benchmark receipt is admitted**.
 
-Evidence cutoff: **2026-09-14**. Source baseline: committed `HEAD`
-`89a7cb72` (`main`). The source tree is dirty because storage, indexing,
-reactive, replication, and backup slices are still being qualified. A receipt
-must record the exact commit, dirty state, and artifact digest that produced
-it. Runtime target: .NET 11 RC, C# only.
+The latest recorded validation snapshot is dated **2026-09-14** and tested
+revision `89a7cb722e59586f34ea98ead772b368599f4c6a` (`main`). The shared
+worktree has continued to change after that snapshot, so moving `HEAD` is not
+a benchmark result. Every receipt must record its exact revision, dirty state,
+and artifact digest. Runtime target:
+.NET 11 RC, C# only.
 
 The host path is not an end-to-end durable benchmark target: the default host
 uses `InMemoryStorageProvider`, the path overload uses the JSON
@@ -18,6 +19,14 @@ those boundaries explicit.
 Historical Rust and SQLite measurements belong to earlier source states and
 are excluded. The current private inter-node surface uses keyed MessagePack,
 but those contract tests and the JSON/SSE/WSS sync client are not throughput
+receipts.
+
+Research labels do not change benchmark identity: AIM is an ICDE 2023 paper
+with an arXiv posting dated 2026-05-29; RIB is a SIGMOD 2026 paper and is not
+implemented (the current scorer uses an internal variance proxy); Bf-Tree is a
+PVLDB 17 (2024) index that is absent from this source tree; DBSP is a PVLDB 16
+(2023) paper; and Enzyme is a SIGMOD 2026 paper (arXiv v1 2026-03-29, v2
+2026-04-30). Their experimental or production results are not TerraBase
 receipts.
 
 ## Admission rules
