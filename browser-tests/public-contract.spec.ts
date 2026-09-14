@@ -70,3 +70,47 @@ test("the packed browser client decodes the generated reactive protocol", async 
     title: "ready",
   });
 });
+
+test("the packed browser client decodes the generated reactive protocol", async ({ page }) => {
+  await page.goto("/browser-tests/fixture.html");
+
+  const observation = await page.evaluate(async () => {
+    const sdk = await import("/candidate/dist/index.js");
+    const protocol = await import("/candidate/dist/msgpack/generated/terrascale-sync-v2-msgpack.js");
+    const encoder = new TextEncoder();
+    const client = new sdk.TerraScaleSyncV2Client();
+    const opened = client.openSubscription({
+      subscription: "browser-view",
+      query: "from documents",
+      parameters: new Uint8Array(),
+    });
+    const items = [{ identity: "document-1", value: { title: encoder.encode("ready") } }];
+    const frame = protocol.encodeTerrascaleSyncV2MsgpackEnvelope({
+      features: 0,
+      correlation: 1n,
+      causation: 0n,
+      message: {
+        kind: "snapshot",
+        subscription: "browser-view",
+        snapshot: {
+          view_generation: 1n,
+          authorization_generation: 1n,
+          revision: 1n,
+          items: [{ identity: "document-1", fields: [{ path: "title", value: encoder.encode("ready") }] }],
+          digest: sdk.syncV2ResultDigest(items),
+          checkpoint: encoder.encode("browser-checkpoint"),
+        },
+      },
+    });
+    client.receive(frame);
+    return {
+      checkpoint: opened.subscription.view.getCheckpoint()?.toString(),
+      title: new TextDecoder().decode(opened.subscription.view.getItems()[0]?.value.title),
+    };
+  });
+
+  expect(observation).toEqual({
+    checkpoint: "[opaque SyncV2ViewCheckpoint]",
+    title: "ready",
+  });
+});

@@ -13,6 +13,7 @@ import { handleLocalMetadata } from "./handlers/metadata.js";
 import { handleLocalOnboarding } from "./handlers/onboarding.js";
 import { handleLocalOrganizations } from "./handlers/organizations.js";
 import { handleLocalPlatform } from "./handlers/platform.js";
+import { handleLocalQueues } from "./handlers/queues.js";
 import { localManifestRoutes } from "./route-manifest.generated.js";
 import type { TerraScaleSqliteStore } from "./store.js";
 import { handleLocalBetterAuthRequest } from "./better-auth.js";

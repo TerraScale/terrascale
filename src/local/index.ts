@@ -13,7 +13,6 @@ import type {
   OrganizationId,
   ProjectId,
 } from "../ids.js";
-import type { OrganizationPlan } from "../models.js";
 import { normalizeLocalBearerToken } from "./authentication.js";
 import { assertLocalSqliteEnvironment } from "./environment.js";
 import { parseOrganizationPlan } from "./plans.js";
@@ -56,7 +55,6 @@ export type TerraScaleLocalSeed = {
 
 export type TerraScaleLocalResetOptions = {
   readonly seed?: boolean;
-  readonly plan?: TerraScaleLocalPlan;
 };
 
 export { type LocalAuthenticationMode, type LocalServerAddress };

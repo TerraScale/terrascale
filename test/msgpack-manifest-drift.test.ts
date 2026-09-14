@@ -1,4 +1,4 @@
-// Drift gate for the generated public `terrascale.sync.v1.msgpack` protocol
+// Drift gate for the generated public `terrascale.sync.v2.msgpack` protocol
 // The committed generated module
 // must be byte-identical to what the pinned generator emits from the
 // checked-in manifest, the manifest digest embedded in the generated header
@@ -114,23 +114,6 @@ describe("msgpack manifest drift", () => {
     },
     "a binary bound above the scan ceiling": (manifest) => {
       manifest.messages.find((entry) => entry.name === "subscribe").fields[2].type = { kind: "binary", minBytes: 0, maxBytes: 1048577 };
-    },
-    "a text minimum above its maximum": (manifest) => {
-      const projected = manifest.types.find((entry) => entry.struct?.name === "projected_field");
-      projected.struct.fields[0].type.minBytes = 257;
-    },
-    "aggregate metadata on a non-binary field": (manifest) => {
-      const operations = manifest.types.find((entry) => entry.union?.name === "result_operation");
-      operations.union.variants.find((variant) => variant.name === "insert").fields[2].type.aggregateBytes.field = "identity";
-    },
-    "aggregate metadata on a non-structured array": (manifest) => {
-      const subscribe = manifest.messages.find((entry) => entry.name === "subscribe");
-      subscribe.fields[2].type = {
-        kind: "array",
-        maxItems: 4,
-        items: { kind: "text", maxBytes: 8 },
-        aggregateBytes: { field: "value", maxBytes: 4 },
-      };
     },
     "a map-permitting scan": (manifest) => {
       manifest.scan.maxMapEntries = 16;

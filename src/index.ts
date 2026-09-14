@@ -3,10 +3,8 @@ export * from "./factory.js";
 export * from "./models.js";
 export * from "./regions.js";
 export * from "./result.js";
-export * from "./schema.js";
-export * from "./sql.js";
-export * from "./sync/v1/client.js";
-export * from "./sync/v1/result-view.js";
+export * from "./sync/v2/client.js";
+export * from "./sync/v2/result-view.js";
 export { sdkRouteManifest } from "./client.js";
 export type {
   AccessClient,
