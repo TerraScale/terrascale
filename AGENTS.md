@@ -1,39 +1,11 @@
 AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 # TerraScale TypeScript SDK rules
 
-# SQLITE
-> @terrascale/sdk must support an explicitly enabled SQLite backend for local development only. TerraScale.Dashboard must use this SQLite mode for fast local development
-> until TerraBaseV2 is ready. SQLite must never be enabled in production, CI qualification, staging, or deployed environments, and it must not become a public production
-> database contract.
+This is the SDK to interact with TerraScale and TerraBase apis
 
 ## Repository role
 
 This repository owns the public `@terrascale/sdk` package
-
-## Service ownership
-
-- Dashboard is one full-stack Vinext TypeScript app. It owns Better Auth,
-  Organizations, Projects, Users, Payments, HTTP MCP, and those public product
-  routes.
-- `TerraScale.Database` is a separate C#/.NET 10 ASP.NET Core service. It owns
-  public database, query, placement, backup, usage, and reactive routes and is
-  the sole TBEP gateway.
-- Dashboard uses this SDK exactly as an external customer does. It receives no
-  private entrypoint, header, identity, tenant bypass, direct database access,
-  or in-process transport.
-
-The SDK may present one customer-facing base URL while edge routing sends typed
-paths to their owning service. One public origin does not merge runtime
-ownership.
-
-## Entrypoints
-
-- The root entrypoint contains ordinary customer operations.
-- The `admin` entrypoint contains typed role-protected public administration.
-- A named server-only `better-auth` entrypoint contains the Better Auth
-  database adapter and must be excluded from browser bundles.
-- Local development support stays explicitly opt-in under its named entrypoint.
-- Do not add Dashboard-named or generic request entrypoints.
 
 ## Better Auth adapter
 
