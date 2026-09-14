@@ -159,6 +159,28 @@ public sealed class ProductionPrimitivesTests
         await Assert.That(attempts).IsEqualTo(2);
     }
 
+    [Test]
+    public async Task SqliteJournalStreamsCanonicalBytesAcrossRestart()
+    {
+        var root = NewDirectory();
+        var path = Path.Combine(root, "journal.db");
+        try
+        {
+            await using (var provider = new SqliteStorageProvider(path))
+            {
+                using var body = JsonDocument.Parse("{\"value\":123}");
+                await provider.UpsertAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"), body.RootElement, DocumentPrecondition.Missing);
+            }
+            var rows = new List<ReplicationRecord>();
+            await foreach (var row in SqliteReplicationJournal.ReadAsync(path, "region-a")) rows.Add(row);
+            await Assert.That(rows.Count).IsEqualTo(1);
+            await Assert.That(rows[0].Body).IsNull();
+            await Assert.That(rows[0].CanonicalBody).IsNotNull();
+            await Assert.That(Encoding.UTF8.GetString(rows[0].CanonicalBody!.Value.Span)).IsEqualTo("{\"value\":123}");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     private static string NewDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "terrabase-tests", Guid.NewGuid().ToString("N"));

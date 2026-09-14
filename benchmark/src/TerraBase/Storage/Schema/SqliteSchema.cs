@@ -17,7 +17,7 @@ namespace TerraBase.Storage.Schema;
 public static class SqliteSchema
 {
     /// <summary>The latest schema migration version.</summary>
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     /// <summary>The busy timeout applied to every SQLite connection.</summary>
     public const int BusyTimeoutMilliseconds = 60_000;
@@ -34,6 +34,7 @@ public static class SqliteSchema
         new SqliteMigration(2, "schema-and-auto-index-catalog", SchemaAndAutoIndexSql),
         new SqliteMigration(3, "document-publication-compatibility", DocumentPublicationCompatibilitySql),
         new SqliteMigration(4, "document-publication-backfill", DocumentPublicationBackfillSql),
+        new SqliteMigration(5, "replication-causal-metadata", ReplicationCausalMetadataSql),
     ]);
 
     /// <summary>
@@ -68,6 +69,16 @@ public static class SqliteSchema
             throw new InvalidOperationException(
                 $"TerraBase requires SQLite WAL mode, but the connection reported '{journalMode ?? "<null>"}'.");
         }
+    }
+
+    /// <summary>Configures a read-only handle without attempting WAL changes.</summary>
+    public static void ConfigureReadOnlyConnection(SqliteConnection connection)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        if (connection.State != System.Data.ConnectionState.Open) connection.Open();
+        ExecutePragma(connection, "PRAGMA foreign_keys = ON;");
+        ExecutePragma(connection, $"PRAGMA busy_timeout = {BusyTimeoutMilliseconds};");
+        ExecutePragma(connection, "PRAGMA query_only = ON;");
     }
 
     /// <summary>Applies connection settings and all pending schema migrations.</summary>
@@ -338,6 +349,19 @@ public static class SqliteSchema
 
         INSERT INTO schema_metadata (key, value)
         VALUES ('schema_version', '4')
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+        """;
+
+    private static readonly string ReplicationCausalMetadataSql = """
+        ALTER TABLE publication_journal ADD COLUMN origin TEXT NOT NULL DEFAULT '';
+        ALTER TABLE publication_journal ADD COLUMN context BLOB NOT NULL DEFAULT X'';
+        ALTER TABLE publication_journal ADD COLUMN hlc INTEGER NOT NULL DEFAULT 0;
+
+        CREATE INDEX IF NOT EXISTS publication_journal_origin_sequence
+            ON publication_journal (origin, sequence);
+
+        INSERT INTO schema_metadata (key, value)
+        VALUES ('schema_version', '5')
         ON CONFLICT (key) DO UPDATE SET value = excluded.value;
         """;
 
