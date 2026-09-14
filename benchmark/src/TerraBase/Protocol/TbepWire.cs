@@ -20,7 +20,7 @@ public static partial class TbepWire
         WireFailure failure
     ) : Exception(reason)
     {
-        /// <summary>The failure class, mirroring the Rust envelope's rows.</summary>
+        /// <summary>The failure class, mirroring the engine envelope's rows.</summary>
         public WireFailure Failure { get; } = failure;
     }
 
@@ -96,7 +96,7 @@ public static partial class TbepWire
         public byte[] Body { get; } = body;
     }
 
-    /// <summary>Validates an idempotency key the way the Rust side does: non-empty, bounded, control-free.</summary>
+    /// <summary>Validates an idempotency key the way the engine side does: non-empty, bounded, control-free.</summary>
     /// <param name="key">The candidate key.</param>
     /// <exception cref="WireException">The key violates its limits.</exception>
     public static void ValidateIdempotency(string key)

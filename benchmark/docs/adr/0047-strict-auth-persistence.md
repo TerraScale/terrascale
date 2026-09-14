@@ -25,7 +25,7 @@ including a durable transaction lifecycle. The TypeScript HTTP client and
 server-only Better Auth adapter cover those operations, and Dashboard's
 production composition wires that adapter together with durable secondary
 storage. The dashboard development path still uses the temporary in-memory or
-explicit local SQLite composition; it remains development-only and is not
+explicit local file-backed composition; it remains development-only and is not
 production qualification evidence. Both local bridge implementations refuse
 transaction callbacks before executing effects because neither supports atomic
 callback transactions.
@@ -40,7 +40,7 @@ cluster quorum implementation was retired and is not a usable dependency.
 Use an established Raft implementation, evaluated against its maintained storage
 and network conformance tests, for a strict auth namespace within each database.
 Store its log, votes, snapshots, applied records, and idempotency outcomes in
-SQLite on OCI. Do not place user identity data in NATS or Workers. Use the
+the durable OCI store. Do not place user identity data in NATS or Workers. Use the
 existing authenticated member transport boundaries with a separate versioned
 data-replication protocol; TBEP remains control traffic.
 
@@ -66,7 +66,7 @@ handling; copying an old snapshot must not resurrect consumed credentials.
 
 Apply unique insert, conditional update, one-time consume, bounded batch
 transactions, index changes, and their stable idempotency outcomes in the same
-SQLite state-machine transaction. Deduplication binds tenant, database,
+durable state-machine transaction. Deduplication binds tenant, database,
 operation identity, and canonical request digest. Reusing a key with different
 input fails deterministically. A lost response is resolved by replaying the
 same identity, including the original one-time consume result.
@@ -151,7 +151,7 @@ initial settings require WAN latency and failover qualification.
 Auth pages support field projection, scalar sorting, and explicit one-level
 relations. Relation requests name both models' fields and the output field;
 model-name conventions do not infer relationships. Joins resolve against the
-same applied or staged SQLite snapshot before base-field projection. One-to-one
+same applied or staged durable snapshot before base-field projection. One-to-one
 joins return an object or null; one-to-many joins return an ID-ordered array.
 Joined fields survive base projection, and output-field collisions are rejected.
 

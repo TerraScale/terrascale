@@ -8,7 +8,7 @@ authority: ../../../GOAL.md
 
 ## Public operation coverage
 
-The Rust TerraBase member exposes every supported customer and
+The TerraBase member exposes every supported customer and
 administrative database operation through a named, typed REST contract. Public
 SDKs expose the same operation set, authorization requirements, errors,
 limits, idempotency behavior, durability choices, and reactive behavior where

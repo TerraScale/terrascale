@@ -106,8 +106,8 @@ public sealed record StorageWriteResult(WriteOutcome Outcome, Document? Document
 }
 
 /// <summary>
-/// The storage port used by the engine. Implementations can use SQLite,
-/// ZoneTree, or another durable backend without changing document operations.
+/// The storage port used by the engine. Implementations can use any durable
+/// backend without changing document operations.
 /// </summary>
 public interface IStorageProvider : IAsyncDisposable
 {

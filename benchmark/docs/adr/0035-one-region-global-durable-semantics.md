@@ -18,7 +18,7 @@ contract is configured. Neither class implies protection from complete loss of
 the only Region.
 
 This rule is part of admission and the public contract. It applies uniformly
-to the Rust member, TBEP, generated contracts, SDKs, and dashboard. No local
+to the member process, generated contracts, SDKs, and dashboard. No local
 two-member acknowledgement may be renamed `GlobalDurable`, and no retry may
 silently weaken the requested durability class.
 

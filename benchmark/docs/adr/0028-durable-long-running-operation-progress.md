@@ -37,7 +37,7 @@ units.
 ## Durability and fencing
 
 The component that owns a mutation owns its operation record. TerraBase
-persists engine work with the same durable SQLite transaction and journal
+persists engine work with the same durable transaction and journal
 boundaries used by the engine; the Orchestrator owns cross-Region allocation
 and placement operations. State, progress, result, error, and the resumable
 checkpoint update atomically or through an idempotent sequence that recovery

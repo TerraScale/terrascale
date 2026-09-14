@@ -1,8 +1,6 @@
 namespace TerraBase;
 
 using TerraBase.Replication;
-using TerraBase.Storage.Backup;
-using TerraBase.Storage.Compaction;
 
 /// <summary>Options used when opening a TerraBase engine.</summary>
 public sealed record TerraBaseOptions
@@ -63,14 +61,6 @@ public sealed class TerraBaseEngine : IAsyncDisposable
     public static TerraBaseEngine Open(string path, MetricsRegistry? metrics = null, TerraBaseOptions? options = null) =>
         new(new FileStorageProvider(path), metrics, options);
 
-    /// <summary>Opens a durable SQLite-backed engine.</summary>
-    /// <param name="path">The SQLite database file path.</param>
-    /// <param name="metrics">The metrics registry, or a new registry.</param>
-    /// <param name="options">The engine options.</param>
-    /// <returns>The opened engine.</returns>
-    public static TerraBaseEngine OpenSqlite(string path, MetricsRegistry? metrics = null, TerraBaseOptions? options = null) =>
-        new(new SqliteStorageProvider(path), metrics, options);
-
     /// <summary>The configured options.</summary>
     public TerraBaseOptions Options { get; }
 
@@ -82,22 +72,6 @@ public sealed class TerraBaseEngine : IAsyncDisposable
 
     /// <summary>The deterministic leaderless replication state machine.</summary>
     public LeaderlessReplicationEngine Replication { get; }
-
-    /// <summary>Creates a native online backup manager for a SQLite engine.</summary>
-    public SqliteBackupManager CreateBackupManager(SqliteBackupOptions options)
-    {
-        if (provider is not SqliteStorageProvider sqlite)
-            throw new NotSupportedException("Native SQLite backups require a SQLite storage provider.");
-        return new SqliteBackupManager(sqlite.StoragePath, options, Metrics);
-    }
-
-    /// <summary>Compacts the SQLite file while retaining WAL durability semantics.</summary>
-    public Task<SqliteCompactionResult> CompactAsync(SqliteCompactionOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        if (provider is not SqliteStorageProvider sqlite)
-            throw new NotSupportedException("SQLite compaction requires a SQLite storage provider.");
-        return SqliteCompactor.CompactAsync(sqlite.StoragePath, options, cancellationToken);
-    }
 
     /// <summary>
     /// Applies several document mutations through the configured provider as

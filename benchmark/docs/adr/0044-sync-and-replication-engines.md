@@ -8,7 +8,7 @@ session-token portions of ADR 0041 and the legacy query portions of ADR 0022.
 
 ## 0. Why these two engines are the product
 
-TerraScale sells two things nobody gets from SQLite alone: **writes in any
+TerraScale sells two things nobody gets from a single-region database alone: **writes in any
 Region converge everywhere without a leader** (replication engine) and
 **readers see query results update live at zero marginal cost per reader**
 (sync engine). Everything else is table stakes. Both engines sit on the same

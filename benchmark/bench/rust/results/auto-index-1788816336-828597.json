@@ -1,8 +1,0 @@
-{
-  "status": "failed",
-  "family": "auto-indexing",
-  "run_id": "1788816336-828597",
-  "error": "missing required TERRABASE_BENCH_TERRABASE_ENDPOINT",
-  "synthetic_pass": false,
-  "facts": []
-}

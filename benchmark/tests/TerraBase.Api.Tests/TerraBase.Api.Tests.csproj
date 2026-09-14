@@ -1,11 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- TerraBase.Api.Tests — the SE-08 host test family: the local     -->
-  <!-- gate and tenant-isolation suites, the SSE/WebSocket parity and   -->
-  <!-- resume rows, the engine-communication probes (red-then-green),  -->
-  <!-- supervision against a real engine process loss, the audit       -->
-  <!-- discipline, and the SE-04 golden sync vectors driven end to     -->
-  <!-- end through the host to the real Rust engine over UDS.           -->
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -22,7 +16,6 @@
 
   <ItemGroup>
     <PackageReference Include="TUnit" />
-    <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,9 +23,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The tracked SE-04 golden vectors and their integrity manifest are
-         copied beside the test binary. The live-engine rows still require
-         the separately provisioned Rust engine. -->
     <None Update="vectors\**\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

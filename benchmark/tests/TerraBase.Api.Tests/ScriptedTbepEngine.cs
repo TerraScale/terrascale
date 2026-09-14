@@ -11,7 +11,7 @@ using System.Text;
 /// <summary>
 /// The scripted engine fixture of the host test family: a real UDS
 /// server speaking TBEP over the SE-14 codec, mirroring the semantics
-/// of the Rust <c>SyncDeliveryHost</c> and <c>TbepServer</c> the
+/// of the attached engine protocol that the
 /// hermetic rows depend on — the channel binding (one bind per
 /// connection, refused while draining), the engine-enforced tenant
 /// isolation over the session and subscription lifecycle (the typed
@@ -19,7 +19,7 @@ using System.Text;
 /// streams with ordered batches and content-free triggers, the sync
 /// session lifecycle, and the supervision contract. Document, query,
 /// and family frames answer scripted outcomes (a fixture, not an
-/// engine); the real-engine rows run against the Rust process.
+/// engine); real-engine rows are outside this test fixture.
 /// </summary>
 public sealed class ScriptedTbepEngine : IAsyncDisposable
 {

@@ -1,17 +1,13 @@
-using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using TerraBase;
 
 IdentifierTests.Run();
-await SqliteStorageTests.Run();
 await StoragePortIsAtomicAndVersioned();
 await DurableStorageSurvivesCloseAndReopen();
 await ConcurrentFileStorageProvidersRetainWrites();
 await DurableStorageRecoversSnapshotsAndRejectsNullDocuments();
 await DurableStorageRetainsVersionAfterDeleteAndRecreate();
-await SqliteStorageMatchesRustJournalAndMetadataSurface();
-await TerraBase.Tests.SqliteMigrationTests.RunAsync();
 MetricsAreBoundedAndPrometheusCompatible();
 InFlightMetricsAreSnapshotAndPrometheusCompatible();
 HealthReportsRequireEveryRequiredComponent();
@@ -202,87 +198,6 @@ static async Task DurableStorageRetainsVersionAfterDeleteAndRecreate()
     finally
     {
         File.Delete(path);
-    }
-}
-
-static async Task SqliteStorageMatchesRustJournalAndMetadataSurface()
-{
-    var path = Path.Combine(Path.GetTempPath(), $"terrabase-sqlite-{Guid.NewGuid():N}.sqlite3");
-    var key = new DocumentKey(new TenantId("tenant-sqlite"), new CollectionId("users"), "user-1");
-    try
-    {
-        await using (var provider = new SqliteStorageProvider(path))
-        {
-            using var firstBody = JsonDocument.Parse("{\"name\":\"Ada\"}");
-            using var secondBody = JsonDocument.Parse("{\"name\":\"Grace\"}");
-            var created = await provider.UpsertAsync(key, firstBody.RootElement, DocumentPrecondition.Missing);
-            Assert(created.Document?.Version == 1, "SQLite writes must start at version one");
-            var updated = await provider.UpsertAsync(key, secondBody.RootElement, DocumentPrecondition.Version(1));
-            Assert(updated.Document?.Version == 2, "SQLite updates must advance the version");
-            var deleted = await provider.DeleteAsync(key, DocumentPrecondition.Version(2));
-            Assert(deleted.Outcome == WriteOutcome.Deleted, "SQLite deletes must commit a delete operation");
-        }
-
-        var header = new byte[16];
-        await using (var file = File.OpenRead(path))
-        {
-            var read = await file.ReadAsync(header);
-            Assert(read == header.Length, "SQLite storage must create a complete database header");
-        }
-
-        Assert(
-            Encoding.ASCII.GetString(header) == "SQLite format 3\0",
-            "the durable TerraBase store must be a SQLite database, not a serialized snapshot");
-
-        using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Mode=ReadOnly;Pooling=False");
-        connection.Open();
-        var tables = new HashSet<string>(StringComparer.Ordinal);
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table'";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                tables.Add(reader.GetString(0));
-            }
-        }
-
-        foreach (var requiredTable in new[] { "documents", "meta", "operation_facts", "schema_metadata", "family_metadata" })
-        {
-            Assert(tables.Contains(requiredTable), $"Rust SQLite storage must initialize the {requiredTable} table");
-        }
-
-        var documentColumns = new HashSet<string>(StringComparer.Ordinal);
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "PRAGMA table_info(documents)";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                documentColumns.Add(reader.GetString(1));
-            }
-        }
-
-        foreach (var requiredColumn in new[] { "tenant", "collection", "id", "commit_seq", "commit_ulid", "revision", "deleted", "body", "context" })
-        {
-            Assert(documentColumns.Contains(requiredColumn), $"Rust document journal must retain the {requiredColumn} column");
-        }
-
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "SELECT COUNT(*) FROM documents WHERE tenant = $tenant AND collection = $collection AND id = $id";
-            command.Parameters.AddWithValue("$tenant", key.Tenant.Value);
-            command.Parameters.AddWithValue("$collection", key.Collection.Value);
-            command.Parameters.AddWithValue("$id", key.DocumentId);
-            var rows = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
-            Assert(rows >= 3, "Rust SQLite storage must retain create, update, and tombstone journal rows");
-        }
-    }
-    finally
-    {
-        File.Delete(path);
-        File.Delete($"{path}-wal");
-        File.Delete($"{path}-shm");
     }
 }
 

@@ -496,7 +496,7 @@ thresholds are measured calibration, not persisted semantics.
 
 ## Library and dependency boundaries
 
-Implementation uses two deterministic Rust libraries:
+Implementation uses two deterministic libraries:
 
 ```text
 terrabase-causal
@@ -517,7 +517,7 @@ clients.
 
 `terrabase-replication-core` and `terrabase-sync-core` use these native
 contracts. `terrabase-sync-conformance`, the TBEP protobuf schema, generated
-Rust and Go bindings, vectors, benchmarks, gateway tests, and SDK conformance
+language bindings, vectors, benchmarks, gateway tests, and SDK conformance
 replace every Loro codec or type. No adapter translates live Loro state into
 native state because no customer data exists.
 

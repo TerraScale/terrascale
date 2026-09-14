@@ -20,7 +20,7 @@ it records what the competitor ships.
   custom OIDC/custom JWT; AI Gateway, AI Agents, Workflows, RAG, Rate
   Limiting, Tool Approval, Threads, Streaming, Usage Tracking; "Convex
   MCP Server"; Optimistic Updates; clients for React, React Native, Vue,
-  Nuxt, Svelte, Node.js, Bun, Python, Rust, Android Kotlin, iOS/macOS
+  Nuxt, Svelte, Node.js, Bun, Python, Android Kotlin, iOS/macOS
   Swift; Dashboard, Environment Variables, Custom Domains, Regions,
   Usage Limits, Abuse Protection; Audit Logging, Exception Reporting,
   Log Streams; Components; convex-test; Local Deployments; Self Hosting;

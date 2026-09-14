@@ -7,7 +7,7 @@ namespace TerraBase.Api;
 /// <summary>
 /// The production entry point of the TerraBase C# API host (SE-08): an
 /// ASP.NET Core host bound to loopback that speaks the TerraBase Engine
-/// Protocol to the Rust engine process over the required UDS binding
+/// Protocol to the attached engine process over the required UDS binding
 /// (PD-2026-08-26-11 D1) through the SE-14 client — the database's
 /// external surface in C# per the workspace stack policy.
 /// </summary>

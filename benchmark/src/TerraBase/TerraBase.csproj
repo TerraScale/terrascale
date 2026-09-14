@@ -21,7 +21,6 @@
     <InternalsVisibleTo Include="TerraBase.Protocol.Tests" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="MessagePack" />
 
     <!-- Explicit infrastructure dependencies are centrally versioned in

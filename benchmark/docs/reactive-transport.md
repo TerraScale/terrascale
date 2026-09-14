@@ -68,7 +68,7 @@ continue to share one canonical poll. A missing replay prefix wakes all pending
 views so each can take its exact-cut refill path.
 
 The last pending poll releases the worker, cancels queued work, and signals
-in-flight replay to stop at its next cancellation check. SQLite calls already
+in-flight replay to stop at its next cancellation check. Storage calls already
 running finish before replay can observe cancellation. Idle sources do no
 dispatcher replay work. A later poll starts from its observed source cut and
 checks the view before waiting, covering writes during the idle period.

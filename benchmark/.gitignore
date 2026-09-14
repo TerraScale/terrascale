@@ -1,7 +1,6 @@
 /target/
 **/target/
 /artifacts/
-/rust_out
 *.swp
 *.swo
 .DS_Store
@@ -9,7 +8,6 @@ __pycache__/
 *.pyc
 
 # Local, generated runtime and benchmark output.
-/bench/rust/results/
 /bench/results/
 /.terrascale/
 /bench/.member/

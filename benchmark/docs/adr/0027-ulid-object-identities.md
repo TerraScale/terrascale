@@ -71,7 +71,6 @@ cryptographic entropy and the full 128-bit value keep identities independent
 across processes and Regions. Entropy overflow waits for a later millisecond
 instead of wrapping.
 
-Rust enables the `ulid` crate's `std` feature and uses its default `rand`
 cryptographic RNG, seeded by the operating system. A shared mutex protects the
 crate's `Generator`; entropy overflow retries after a short sleep. The crate
 owns random generation, monotonic increments, and clock rollback handling.
@@ -105,7 +104,7 @@ applies to view plans, schemas, snapshots, chunks, and artifacts.
 
 ## Libraries and evidence
 
-Rust uses the `ulid` crate directly for ULID values and generation. Go bindings
+The implementation uses the ULID library directly for values and generation. Language bindings
 use a small repository-owned conversion layer over the fixed 16-byte protobuf
 field. Dependencies are pinned in their owning lockfiles. Boundary validation
 enforces strict parsing and fixed binary lengths. The

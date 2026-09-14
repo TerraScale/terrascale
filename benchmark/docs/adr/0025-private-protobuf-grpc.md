@@ -9,7 +9,7 @@ authority: direct workspace-owner instruction
 ## Decision
 
 Private TBEP uses generated protobuf messages and gRPC over HTTP/2. The schema
-of record is `crates/terrabase-tbep/proto/terrabase/v1/engine.proto`. Rust uses
+of record is the shared engine protocol schema. The implementation uses
 prost and tonic. The generated bindings in `terrabase-go` are the only network
 client bindings permitted to communicate with TerraBase over private TBEP;
 the orchestrator and CLI use them. Public clients call the member's public
@@ -36,9 +36,9 @@ enum uses a stable numeric identifier. Released identifiers are never reused.
 Compatible changes are additive. A semantic break requires a new negotiated
 major version.
 
-Rust generation runs during the crate build with pinned Rust dependencies and
+Protocol generation runs during the build with pinned dependencies and
 no system `protoc`. Go bindings are checked in under `terrabase-go` so its
-module can build without a Rust toolchain. CI regenerates both sides from the
+module can build without a separate toolchain. CI regenerates all consumers from the
 same schema, compares the result, records the schema digest, and fails on
 drift. Generated files never become schema authority.
 
@@ -97,8 +97,8 @@ no older private client or Member compatibility reader is retained.
 ## Required evidence
 
 Release evidence includes schema lint and breaking-change checks, reproducible
-Rust and Go generation, digest and drift checks, valid and error vectors, and
-live Rust-to-Go interchange. The live matrix covers mTLS identity, wrong trust
+Generation, digest and drift checks, valid and error vectors, and
+live consumer interchange. The live matrix covers mTLS identity, wrong trust
 roots, expiry, cancellation, overload, slow streams, restart, version skew,
 unknown fields, oversized messages, truncated input, malformed nested values,
 and redacted errors. UDS and TCP lanes record their different trust claims.

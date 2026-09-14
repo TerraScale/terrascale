@@ -7,9 +7,8 @@
 > explicitly implemented.
 
 `PlacementControlService` in the TBEP protobuf persists orchestrator placement
-intent in an owner-private SQLite journal. This implements the control-gRPC peer
-list handoff in ADR 0041. A response with `PENDING` proves only that the intent and
-retry receipt committed locally with SQLite `synchronous=FULL`. It does not prove
+intent in an owner-private durable journal. A response with `PENDING` proves
+only that the intent and retry receipt committed locally.  It does not prove
 membership acceptance, catch-up, writer fencing, replication, or readiness.
 ADR 0044 sections 2.1 and 2.6 still require those facts before data service.
 
@@ -17,7 +16,7 @@ The production daemon enables this listener with an explicit configuration:
 
 ```toml
 [control]
-proposal_journal = "/var/lib/terrabase/placement/proposals.sqlite"
+proposal_journal = "/var/lib/terrabase/placement/proposals.journal"
 orchestrator_principals = ["spiffe://terrascale.tech/production/orchestrator/gru-1"]
 observer_principals = ["spiffe://terrascale.tech/production/observer/gru-1"]
 ```
@@ -70,9 +69,9 @@ recorded after the original configuration was loaded.
 
 The first successful Stage requires expected revision zero. A replacement uses
 the current local revision and strictly increases both generation and epoch.
-SQLite serializes the CAS across connections. Staging and local promotion reload
-the durable catalog in an `IMMEDIATE` transaction before validation; stale
-process caches cannot overwrite another connection's admission. This is local ordering of pending
+The durable journal serializes the CAS across connections. Staging and local
+promotion reload the catalog before validation; stale process caches cannot
+overwrite another connection's admission. This is local ordering of pending
 intent, not a distributed election. The orchestrator must persist its intent and
 retry identity before contacting a member and preserve that identity after an
 unknown RPC outcome. Exact replay returns the original receipt even if later

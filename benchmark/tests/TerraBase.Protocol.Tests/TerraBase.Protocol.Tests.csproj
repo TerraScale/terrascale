@@ -3,7 +3,6 @@
   <!-- TerraBase.Protocol.Tests — the C# half of the TBEP conformance -->
   <!-- suite (SE-14, PD-2026-08-26-02 D4). The exact engine-published    -->
   <!-- corpus is vendored under this test project with a copy manifest;  -->
-  <!-- the project does not depend on an untracked Rust checkout.         -->
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>

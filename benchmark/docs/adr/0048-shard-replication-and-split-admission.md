@@ -4,7 +4,7 @@ Status: Proposed; requires integrated producer and consumer implementation befor
 
 ## Context
 
-An online split creates another SQLite file, not another logical database.
+An online split creates another durable storage file, not another logical database.
 `DatabaseRouteScope` currently identifies only tenant/project/database.
 `WalAssignment`, `WalReplicaBinding`, WAL envelopes and snapshots, causal
 bindings, and production peer progress consequently cannot distinguish the
@@ -102,7 +102,7 @@ These units stay distinct typed fields. A maximum sequence or an empty vector
 is not a proof of all of them. Baseline hashing covers retained state/history,
 causal state, schema/control state and retained operation/request outcomes,
 including original origin/sequence provenance needed by GlobalDurable retry
-confirmation. Source SQLite local sequence cannot replace that provenance or
+confirmation. Source local sequence cannot replace that provenance or
 become a target public document revision. The baseline format is owned by the
 engine snapshot/importer contract and must be finalized with that owner.
 

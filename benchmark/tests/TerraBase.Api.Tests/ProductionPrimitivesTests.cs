@@ -2,70 +2,12 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Replication;
-using TerraBase.Storage.Backup;
 using TerraBase.Sync;
-using TerraBase.Storage.Compaction;
 
 namespace TerraBase.Api.Tests;
 
 public sealed class ProductionPrimitivesTests
 {
-    [Test]
-    public async Task BackupSnapshotRestoresAndRejectsTampering()
-    {
-        var root = NewDirectory();
-        var database = Path.Combine(root, "data.db");
-        var backups = Path.Combine(root, "backups");
-        var restored = Path.Combine(root, "restored.db");
-        try
-        {
-            await using (var provider = new SqliteStorageProvider(database))
-            {
-                using var body = JsonDocument.Parse("{\"value\":42}");
-                await provider.UpsertAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"), body.RootElement, DocumentPrecondition.Missing);
-            }
-            await using var manager = new SqliteBackupManager(database, new SqliteBackupOptions { DirectoryPath = backups, RetainedSnapshots = 1 });
-            var snapshot = await manager.CreateSnapshotAsync();
-            await Assert.That(manager.Health.Healthy).IsTrue();
-            await Assert.That(manager.Health.RecoverableJournalSequence).IsEqualTo(snapshot.JournalSequence);
-            await SqliteBackupManager.RestoreAsync(snapshot.SnapshotPath, restored);
-            await using var reopened = new SqliteStorageProvider(restored);
-            var read = await reopened.ReadAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"));
-            await Assert.That(read?.Body.GetProperty("value").GetInt32()).IsEqualTo(42);
-
-            await File.AppendAllTextAsync(snapshot.SnapshotPath, "tampered");
-            await Assert.ThrowsAsync<InvalidDataException>(() => SqliteBackupManager.RestoreAsync(snapshot.SnapshotPath, Path.Combine(root, "bad.db")));
-        }
-        finally { Directory.Delete(root, recursive: true); }
-    }
-
-    [Test]
-    public async Task BackupReplicaPublishesArtifactsAtomicallyAndRejectsBadHashes()
-    {
-        var root = NewDirectory();
-        var database = Path.Combine(root, "data.db");
-        try
-        {
-            await using (var provider = new SqliteStorageProvider(database))
-            {
-                using var body = JsonDocument.Parse("{\"value\":9}");
-                await provider.UpsertAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"), body.RootElement, DocumentPrecondition.Missing);
-            }
-            var manager = new SqliteBackupManager(database, new SqliteBackupOptions { DirectoryPath = Path.Combine(root, "staging") });
-            await using (manager)
-            {
-                var replica = new FileBackupReplica(Path.Combine(root, "replica"));
-                var snapshot = await manager.ReplicateSnapshotAsync(replica);
-                await Assert.That(File.Exists(Path.Combine(root, "replica", Path.GetFileName(snapshot.SnapshotPath)))).IsTrue();
-                await using var bad = new MemoryStream(Encoding.UTF8.GetBytes("bad"));
-                await Assert.ThrowsAsync<InvalidDataException>(() => replica.PutAsync("bad", bad, new string('0', 64)));
-                await using var valid = new MemoryStream(Encoding.UTF8.GetBytes("valid"));
-                await Assert.ThrowsAsync<ArgumentException>(() => replica.PutAsync("../escape", valid, new string('0', 64)));
-            }
-        }
-        finally { Directory.Delete(root, recursive: true); }
-    }
-
     [Test]
     public async Task LeaderlessReplicationDefersDependenciesAndConvergesWithoutParsingCleanBytes()
     {
@@ -111,92 +53,11 @@ public sealed class ProductionPrimitivesTests
         await Assert.That(await transport.GetSnapshotAsync("/snapshot")).IsNotNull();
     }
 
-    [Test]
-    public async Task ShardedProviderRejectsCrossShardAtomicBatches()
-    {
-        var root = NewDirectory();
-        try
-        {
-            await using var provider = new ShardedSqliteStorageProvider(Path.Combine(root, "sharded"), 4);
-            using var mutationBody = JsonDocument.Parse("{\"value\":1}");
-            var mutations = Enumerable.Range(0, 32).Select(index => StorageMutation.Upsert(
-                new DocumentKey(new TenantId("tenant"), new CollectionId("items"), $"key-{index}"),
-                mutationBody.RootElement, DocumentPrecondition.Missing)).ToArray();
-            await Assert.ThrowsAsync<NotSupportedException>(() => provider.ApplyBatchAsync(mutations).AsTask());
-        }
-        finally { Directory.Delete(root, recursive: true); }
-    }
-
-    [Test]
-    public async Task SqliteCompactorMaintainsReadableData()
-    {
-        var root = NewDirectory();
-        var path = Path.Combine(root, "data.db");
-        try
-        {
-            await using (var provider = new SqliteStorageProvider(path))
-            {
-                using var body = JsonDocument.Parse("{\"value\":7}");
-                await provider.UpsertAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"), body.RootElement, DocumentPrecondition.Missing);
-            }
-            var result = await SqliteCompactor.CompactAsync(path);
-            await Assert.That(result.PageCount).IsGreaterThan(0);
-            await using var reopened = new SqliteStorageProvider(path);
-            await Assert.That(await reopened.ReadAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"))).IsNotNull();
-        }
-        finally { Directory.Delete(root, recursive: true); }
-    }
-
-    [Test]
-    public async Task PresignedReplicaRetriesTransientPutWithoutBufferingDatabaseFiles()
-    {
-        var attempts = 0;
-        using var client = new HttpClient(new CountingHandler(() => ++attempts == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK));
-        var replica = new PresignedHttpBackupReplica("oci", _ => new Uri("https://objects.example.test/upload"), client);
-        await using var content = new MemoryStream(Encoding.UTF8.GetBytes("artifact"));
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content.ToArray())).ToLowerInvariant();
-        await replica.PutAsync("snapshot.db", content, hash);
-        await Assert.That(attempts).IsEqualTo(2);
-    }
-
-    [Test]
-    public async Task SqliteJournalStreamsCanonicalBytesAcrossRestart()
-    {
-        var root = NewDirectory();
-        var path = Path.Combine(root, "journal.db");
-        try
-        {
-            await using (var provider = new SqliteStorageProvider(path))
-            {
-                using var body = JsonDocument.Parse("{\"value\":123}");
-                await provider.UpsertAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"), body.RootElement, DocumentPrecondition.Missing);
-            }
-            var rows = new List<ReplicationRecord>();
-            await foreach (var row in SqliteReplicationJournal.ReadAsync(path, "region-a")) rows.Add(row);
-            await Assert.That(rows.Count).IsEqualTo(1);
-            await Assert.That(rows[0].Body).IsNull();
-            await Assert.That(rows[0].CanonicalBody).IsNotNull();
-            await Assert.That(Encoding.UTF8.GetString(rows[0].CanonicalBody!.Value.Span)).IsEqualTo("{\"value\":123}");
-        }
-        finally { Directory.Delete(root, recursive: true); }
-    }
-
-    private static string NewDirectory()
-    {
-        var path = Path.Combine(Path.GetTempPath(), "terrabase-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(path);
-        return path;
-    }
-
     private sealed class StubHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}", Encoding.UTF8, "application/json") });
     }
 
-    private sealed class CountingHandler(Func<HttpStatusCode> status) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(status()));
-    }
+
 }

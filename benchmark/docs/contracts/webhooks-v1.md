@@ -57,7 +57,7 @@ fresh authorized database-key lease in an admitted Region. Endpoint deletion
 stops delivery before destroying the stored signing-key record. If key deletion
 fails, deletion responds with an error and can be retried.
 
-Webhook metadata and dispatch checkpoints use private SQLite records rather
+Webhook metadata and dispatch checkpoints use private durable records rather
 than customer document writes. The dispatcher consumes the retained revision
 stream, checkpoints complete pages, and recovers due deliveries after restart.
 Local tests do not qualify cross-Region metadata replication, dispatcher

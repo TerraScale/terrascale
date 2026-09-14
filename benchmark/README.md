@@ -52,9 +52,7 @@ and benchmark tables do not by themselves qualify an OCI or multi-Region
 production deployment. The current launch blockers and required evidence are
 tracked in the workspace [GOAL.md](../GOAL.md).
 
-The SQLite path includes an in-process Litestream-style backup manager
-(online snapshots, WAL generations, resumable segments, checksummed manifests,
-restore verification, and retention), a bounded WAL compactor, stable hash
+The file-backed path provides durable snapshots and recovery, stable hash
 sharding, and a leaderless causal merge engine. Sync clients accept HTTPS and
 upgrade to WSS, with SSE parsing for the same stream. These are runtime
 building blocks; object-store qualification and WAN failure evidence remain
