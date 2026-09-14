@@ -546,6 +546,98 @@ async fn malformed_msgpack_fails_closed_before_json_fallback() {
     assert_eq!(error.code, "malformed_frame");
 }
 
+#[tokio::test]
+async fn hostile_msgpack_lengths_and_nesting_fail_before_value_decode() {
+    let mut cases = Vec::new();
+
+    // The scanner must reject declared lengths and counts before attempting
+    // to advance the input cursor or allocate the declared payload.
+    cases.push(envelope_with_body(vec![0xc6, 0x00, 0x10, 0x00, 0x01]));
+    cases.push(envelope_with_body(vec![0xdb, 0x00, 0x04, 0x00, 0x01]));
+    cases.push(envelope_with_body(vec![0xdd, 0x00, 0x00, 0x27, 0x11]));
+
+    let mut deeply_nested = vec![0x91; 66];
+    deeply_nested.push(0xc0);
+    cases.push(envelope_with_body(deeply_nested));
+
+    for frame in cases {
+        let error = client(Mock::new([Ok(msgpack_response(frame))]))
+            .reactive()
+            .poll_from(&attached(), "r1")
+            .await
+            .expect_err("hostile MessagePack input must fail closed");
+        assert_eq!(error.kind, terrascale::ErrorKind::InvalidResponse);
+        assert_eq!(error.code, "malformed_frame");
+    }
+}
+
+#[tokio::test]
+async fn hostile_msgpack_corpus_and_complete_frame_bound_are_rejected() {
+    let corpus: serde_json::Value = serde_json::from_str(include_str!(
+        "../contracts/v1/conformance/msgpack/hostile-vectors.json"
+    ))
+    .expect("hostile MessagePack corpus");
+    for vector in corpus["vectors"].as_array().expect("hostile vectors") {
+        let frame = hex_bytes(vector["hex"].as_str().expect("hostile vector hex"));
+        let error = client(Mock::new([Ok(msgpack_response(frame))]))
+            .reactive()
+            .poll_from(&attached(), "r1")
+            .await
+            .expect_err("hostile corpus input must fail closed");
+        assert_eq!(error.kind, terrascale::ErrorKind::InvalidResponse);
+        let expected_code = match vector["code"].as_str().expect("hostile vector code") {
+            "unsupported_minor" | "unknown_feature" => "unsupported_version",
+            _ => "malformed_frame",
+        };
+        assert_eq!(
+            error.code, expected_code,
+            "hostile vector {}",
+            vector["code"]
+        );
+    }
+
+    let oversized = vec![0u8; 8 * 1024 * 1024 + 1];
+    let error = client(Mock::new([Ok(msgpack_response(oversized))]))
+        .reactive()
+        .poll_from(&attached(), "r1")
+        .await
+        .expect_err("oversized MessagePack frame must fail before scanning");
+    assert_eq!(error.kind, terrascale::ErrorKind::InvalidResponse);
+    assert_eq!(error.code, "invalid_response");
+}
+
+#[tokio::test]
+async fn every_server_message_vector_decodes_to_a_typed_poll_shape() {
+    let names = [
+        "snapshot",
+        "delta",
+        "reset",
+        "heartbeat",
+        "checkpoint_ack",
+        "authorization_changed",
+        "region_route_change",
+        "error",
+        "backpressure",
+    ];
+    for name in names {
+        let result = client(Mock::new([Ok(msgpack_response(message_fixture(name)))]))
+            .reactive()
+            .poll_from(&attached(), "r1")
+            .await;
+        match name {
+            "error" => assert_eq!(result.expect_err("error vector").code, "overloaded"),
+            "heartbeat" | "backpressure" => assert!(result.is_ok(), "{name}"),
+            _ => assert!(result.is_ok(), "{name}"),
+        }
+    }
+}
+
+fn envelope_with_body(body: Vec<u8>) -> Vec<u8> {
+    let mut frame = vec![0x97, 1, 0, 0, 4, 0, 0];
+    frame.extend(body);
+    frame
+}
+
 #[test]
 fn checkpoint_bound_is_one_to_4096_bytes() {
     assert!(terrascale::Checkpoint::try_new(Vec::new()).is_err());
