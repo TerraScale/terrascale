@@ -3,7 +3,7 @@
 Status: **scaffold; no current C# benchmark receipt is admitted**.
 
 Evidence cutoff: **2026-09-13**. Source baseline:
-`9d8fe3a8f9cbf4104851a1085369fe5d7fbc5710` (`main`). The source tree was
+`00d2141f1a612d651c60e25bc2280b022c89196e` (`main`). The source tree was
 dirty at the cutoff because the storage, indexing, reactive, replication, and
 backup slices were still being qualified. A future receipt must record the
 final commit and dirty state that produced it. Runtime target: .NET 11 RC,
