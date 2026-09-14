@@ -14,7 +14,7 @@ public sealed class TerraScaleMediaTypeContractTests
         var client = CreateClient(httpClient);
 
         _ = await client.Databases.ListAsync();
-        _ = await client.Regions.ListAsync();
+        _ = await client.Regions.HealthAsync();
 
         await Assert.That(handler.Requests).Count().IsEqualTo(2);
         await Assert.That(handler.Requests.All(static request =>
@@ -48,7 +48,7 @@ public sealed class TerraScaleMediaTypeContractTests
             var responseBody = requestUri.AbsolutePath switch
             {
                 "/api/v1/databases" => "{\"databases\":[]}",
-                "/api/v1/regions" => "{\"regions\":[{\"code\":\"GRU\",\"name\":\"Sao Paulo\",\"country\":\"BR\",\"latitude\":-23.43,\"longitude\":-46.47,\"available\":true}],\"hosts\":{\"GRU\":\"gru.api.terrascale.tech\"}}",
+                "/api/v1/health" => "{\"region\":\"GRU\",\"healthy\":true,\"version\":\"test\"}",
                 _ => throw new InvalidOperationException($"Unexpected media-type fixture route '{requestUri.AbsolutePath}'.")
             };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

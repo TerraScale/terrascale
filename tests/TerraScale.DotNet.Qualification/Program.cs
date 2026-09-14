@@ -55,6 +55,7 @@ else if (phase == "exercise")
 {
     var id = $"{runId}-dotnet-exercise";
     var created = await client.Documents.PutAsync(database, collection, id, new { sdk = "dotnet", runId, value = 1 }, new TerraScaleDocumentMutationOptions(CreateOnly: true, IdempotencyKey: $"{runId}-dotnet-create"));
+    var staleToken = created.ChangeToken == "1" ? "2" : "1";
     await Observe("missing_document", async () =>
     {
         try { await client.Documents.GetAsync(database, collection, $"{runId}-dotnet-missing"); throw new InvalidOperationException("missing document was found"); }
@@ -62,7 +63,7 @@ else if (phase == "exercise")
     });
     await Observe("stale_etag_denial", async () =>
     {
-        try { await client.Documents.PutAsync(database, collection, id, new { sdk = "dotnet", runId, value = 2 }, new TerraScaleDocumentMutationOptions(ExpectedChangeToken: "stale")); throw new InvalidOperationException("stale ETag was accepted"); }
+        try { await client.Documents.PutAsync(database, collection, id, new { sdk = "dotnet", runId, value = 2 }, new TerraScaleDocumentMutationOptions(ExpectedChangeToken: staleToken)); throw new InvalidOperationException("stale ETag was accepted"); }
         catch (TerraScaleApiException ex) when (JourneyChecks.IsStaleDenial(ex.StatusCode, ex.ErrorCode)) { }
     });
     var afterStale = await client.Documents.GetAsync(database, collection, id);

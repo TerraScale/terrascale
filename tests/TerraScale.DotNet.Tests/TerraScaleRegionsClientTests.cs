@@ -7,30 +7,29 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleRegionsClientTests
 {
     [Test]
-    public async Task ListAsync_UsesEdgeCatalogEnvelope()
+    public async Task ListAsync_RejectsUnsupportedRegionCatalog()
     {
         using var handler = new RecordingHandler("{\"regions\":[{\"code\":\"GRU\",\"name\":\"Sao Paulo\",\"country\":\"BR\",\"latitude\":-23.43,\"longitude\":-46.47,\"available\":true}],\"hosts\":{\"GRU\":\"gru.api.terrascale.tech\"}}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var catalog = await client.Regions.ListAsync();
+        var exception = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => client.Regions.ListAsync());
 
-        await Assert.That(handler.Request).IsEqualTo("https://api.example.invalid/api/v1/regions");
-        await Assert.That(catalog.Regions[0].Code).IsEqualTo("GRU");
-        await Assert.That(catalog.Regions[0].Name).IsEqualTo("Sao Paulo");
-        await Assert.That(catalog.Hosts["GRU"]).IsEqualTo("gru.api.terrascale.tech");
+        await Assert.That(exception).IsNotNull();
+        await Assert.That(handler.Request).IsNull();
     }
 
     [Test]
-    public async Task ListAsync_RejectsMissingCatalogFields()
+    public async Task ListAsync_RejectsUnsupportedRegionCatalogBeforeParsing()
     {
         using var handler = new RecordingHandler("{\"regions\":[{\"code\":\"GRU\",\"name\":\"Sao Paulo\",\"country\":\"BR\",\"latitude\":-23.43,\"longitude\":-46.47,\"available\":true}]}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var exception = await Assert.ThrowsAsync<System.Text.Json.JsonException>(() => client.Regions.ListAsync());
+        var exception = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => client.Regions.ListAsync());
 
         await Assert.That(exception).IsNotNull();
+        await Assert.That(handler.Request).IsNull();
     }
 
     [Test]
@@ -63,15 +62,16 @@ public sealed class TerraScaleRegionsClientTests
     }
 
     [Test]
-    public async Task CatalogAcceptsAdmittedRegionBeyondLaunchSet()
+    public async Task ListAsyncDoesNotCallUnmappedRoute()
     {
         using var handler = new RecordingHandler("{\"regions\":[{\"code\":\"IAD\",\"name\":\"Ashburn\",\"country\":\"US\",\"latitude\":38.9,\"longitude\":-77,\"available\":true}],\"hosts\":{\"IAD\":\"iad.api.terrascale.tech\"}}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var catalog = await client.Regions.ListAsync();
+        var exception = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => client.Regions.ListAsync());
 
-        await Assert.That(catalog.Regions[0].Code).IsEqualTo("IAD");
+        await Assert.That(exception).IsNotNull();
+        await Assert.That(handler.Request).IsNull();
     }
 
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
