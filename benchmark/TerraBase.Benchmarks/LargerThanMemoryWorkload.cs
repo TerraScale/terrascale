@@ -81,7 +81,7 @@ internal static class LargerThanMemoryWorkload
         {
             await using var handle = Open(storagePath, configuration.Backend);
             await SeedAsync(handle.Engine.Documents, keys, payload.RootElement, cancellationToken).ConfigureAwait(false);
-            var distribution = new KeyDistribution(keys.Count, configuration.ZipfExponent);
+            var distribution = new KeyDistribution(keys.Length, configuration.ZipfExponent);
             await RunOperationsAsync(
                 handle.Engine.Documents,
                 configuration,
@@ -550,7 +550,7 @@ internal static class LargerThanMemoryWorkload
         }
     }
 
-    private static IReadOnlyList<DocumentKey> CreateKeys(int count)
+    private static DocumentKey[] CreateKeys(int count)
     {
         var tenant = new TenantId("larger-than-memory-tenant");
         var collection = new CollectionId("larger-than-memory-collection");

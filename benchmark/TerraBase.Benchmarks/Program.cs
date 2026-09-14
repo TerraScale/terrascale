@@ -60,9 +60,9 @@ internal static class Program
         }
     }
 
-    private static string RequestedWorkload(IReadOnlyList<string> args)
+    private static string RequestedWorkload(string[] args)
     {
-        for (var index = 0; index < args.Count; index++)
+        for (var index = 0; index < args.Length; index++)
         {
             var argument = args[index];
             if (argument.StartsWith("--workload=", StringComparison.OrdinalIgnoreCase))
@@ -70,7 +70,7 @@ internal static class Program
                 return argument["--workload=".Length..];
             }
 
-            if (argument.Equals("--workload", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Count)
+            if (argument.Equals("--workload", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
             {
                 return args[index + 1];
             }
@@ -415,16 +415,16 @@ internal static class Program
         {
             if (options.Storage == StorageKind.Memory)
             {
-                return TerraBaseEngine.Open();
+                return TerraBaseEngine.Open(options: new TerraBaseOptions { AllowSchemaless = true });
             }
 
             var path = Path.Combine(receiptDirectory, "data", options.Storage.ToString(), $"{workload}-{temperature}");
             Directory.CreateDirectory(path);
             return options.Storage switch
             {
-                StorageKind.StorageEngine => TerraBaseEngine.OpenDurable(path),
-                StorageKind.ZoneTree => new TerraBaseEngine(new ZoneTreeStorageProvider(path)),
-                _ => throw new ArgumentOutOfRangeException(),
+                StorageKind.StorageEngine => TerraBaseEngine.OpenDurable(path, options: new TerraBaseOptions { AllowSchemaless = true }),
+                StorageKind.ZoneTree => new TerraBaseEngine(new ZoneTreeStorageProvider(path), options: new TerraBaseOptions { AllowSchemaless = true }),
+                _ => throw new ArgumentOutOfRangeException(nameof(workload), workload, "Unsupported storage backend."),
             };
         }
 
@@ -600,7 +600,7 @@ internal static class Program
             }
         }
 
-        private IReadOnlyList<DocumentKey> CreateKeys(int count)
+        private static DocumentKey[] CreateKeys(int count)
         {
             var tenant = new TenantId("benchmark-tenant");
             var collection = new CollectionId("benchmark-collection");
@@ -1016,17 +1016,17 @@ internal static class Program
             var builder = new StringBuilder();
             builder.AppendLine("# TerraBase benchmark receipt");
             builder.AppendLine();
-            builder.AppendLine($"Status: **{receipt.Status}**");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"Status: **{receipt.Status}**");
             builder.AppendLine();
-            builder.AppendLine($"Receipt JSON: `{Path.GetFileName(receiptPath)}`");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"Receipt JSON: `{Path.GetFileName(receiptPath)}`");
             builder.AppendLine();
             builder.AppendLine("## Environment");
             builder.AppendLine();
-            builder.AppendLine($"- Commit: `{receipt.Environment.GitCommit ?? "unavailable"}` (dirty: `{receipt.Environment.GitDirty?.ToString() ?? "unknown"}`)");
-            builder.AppendLine($"- Artifact SHA-256: `{receipt.Environment.ArtifactSha256 ?? "unavailable"}`");
-            builder.AppendLine($"- Runtime: {receipt.Environment.FrameworkDescription}; build `{receipt.Environment.BuildConfiguration}`; {receipt.Environment.OperatingSystem}; {receipt.Environment.Architecture}");
-            builder.AppendLine($"- CPU: {receipt.Environment.CpuModel}; {receipt.Environment.ProcessorCount} logical processors; available memory {receipt.Environment.AvailableMemoryBytes} bytes");
-            builder.AppendLine($"- GC: server `{receipt.Environment.ServerGc}`, latency mode `{receipt.Environment.GcLatencyMode}`");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"- Commit: `{receipt.Environment.GitCommit ?? "unavailable"}` (dirty: `{receipt.Environment.GitDirty?.ToString() ?? "unknown"}`)");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"- Artifact SHA-256: `{receipt.Environment.ArtifactSha256 ?? "unavailable"}`");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"- Runtime: {receipt.Environment.FrameworkDescription}; build `{receipt.Environment.BuildConfiguration}`; {receipt.Environment.OperatingSystem}; {receipt.Environment.Architecture}");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"- CPU: {receipt.Environment.CpuModel}; {receipt.Environment.ProcessorCount} logical processors; available memory {receipt.Environment.AvailableMemoryBytes} bytes");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"- GC: server `{receipt.Environment.ServerGc}`, latency mode `{receipt.Environment.GcLatencyMode}`");
             builder.AppendLine();
             builder.AppendLine("## Results");
             builder.AppendLine();
@@ -1051,12 +1051,12 @@ internal static class Program
                 if (result.Error is not null)
                 {
                     builder.AppendLine();
-                    builder.AppendLine($"Failure for `{result.Workload}`: `{result.Error.Replace("\n", " ", StringComparison.Ordinal)}`");
+                    builder.AppendLine(CultureInfo.InvariantCulture, $"Failure for `{result.Workload}`: `{result.Error.Replace("\n", " ", StringComparison.Ordinal)}`");
                 }
             }
 
             builder.AppendLine();
-            builder.AppendLine($"Command: `{receipt.Command}`");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"Command: `{receipt.Command}`");
             builder.AppendLine();
             builder.AppendLine("All percentile values are medians of per-sample percentiles. `Bytes written` is the observed StorageEngine WAL length increase; memory and ZoneTree storage report no WAL write measurement.");
             return builder.ToString();
@@ -1417,7 +1417,7 @@ internal static class Program
             var builder = Header("TerraBase larger-than-memory benchmark", receipt.Status, receipt.Environment, receipt.Command);
             builder.AppendLine("## Configuration");
             builder.AppendLine();
-            builder.AppendLine($"Backend: `{receipt.Configuration.Backend}`; dataset: `{receipt.Configuration.DatasetSize:N0}` rows; payload: `{receipt.Configuration.PayloadSize:N0}` bytes; memory cap: `{receipt.Configuration.MemoryCapBytes:N0}` bytes.");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"Backend: `{receipt.Configuration.Backend}`; dataset: `{receipt.Configuration.DatasetSize:N0}` rows; payload: `{receipt.Configuration.PayloadSize:N0}` bytes; memory cap: `{receipt.Configuration.MemoryCapBytes:N0}` bytes.");
             builder.AppendLine();
             builder.AppendLine("## Phase results");
             builder.AppendLine();
@@ -1425,7 +1425,7 @@ internal static class Program
             builder.AppendLine("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
             if (receipt.Result is null || receipt.Result.Samples.Count == 0)
             {
-                builder.AppendLine($"| — | — | — | {receipt.Result?.Status ?? "invalid"} | — | — | — | — | — | — | — | — | — | — |");
+                builder.AppendLine(CultureInfo.InvariantCulture, $"| — | — | — | {receipt.Result?.Status ?? "invalid"} | — | — | — | — | — | — | — | — | — | — |");
             }
             else
             {
@@ -1446,7 +1446,7 @@ internal static class Program
             if (!string.IsNullOrWhiteSpace(receipt.Result?.Error))
             {
                 builder.AppendLine();
-                builder.AppendLine($"Error: `{receipt.Result.Error!.Replace('\n', ' ')}`");
+                builder.AppendLine(CultureInfo.InvariantCulture, $"Error: `{receipt.Result.Error!.Replace('\n', ' ')}`");
             }
 
             return builder.ToString();
@@ -1460,7 +1460,7 @@ internal static class Program
             var builder = Header("TerraBase reactive subscription fan-out benchmark", receipt.Status, receipt.Environment, receipt.Command);
             builder.AppendLine("## Results");
             builder.AppendLine();
-            builder.AppendLine($"Subject: `{receipt.Result.Subject}`; boundary: `{receipt.Result.OperationBoundary}`; durable commit path: `{receipt.Result.DurableCommitPathAvailable}`.");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"Subject: `{receipt.Result.Subject}`; boundary: `{receipt.Result.OperationBoundary}`; durable commit path: `{receipt.Result.DurableCommitPathAvailable}`.");
             builder.AppendLine();
             builder.AppendLine("| Subscribers | Status | Responsive | Delivered frames | Egress bytes | p50 µs | p95 µs | p99 µs | Allocated bytes/frame | CPU ms | RSS after bytes | Unsupported reason |");
             builder.AppendLine("| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |");
@@ -1477,7 +1477,7 @@ internal static class Program
             if (!string.IsNullOrWhiteSpace(receipt.Result.UnsupportedReason))
             {
                 builder.AppendLine();
-                builder.AppendLine($"Unsupported reason: `{receipt.Result.UnsupportedReason}`");
+                builder.AppendLine(CultureInfo.InvariantCulture, $"Unsupported reason: `{receipt.Result.UnsupportedReason}`");
             }
 
             return builder.ToString();
@@ -1487,16 +1487,16 @@ internal static class Program
     private static StringBuilder Header(string title, string status, EnvironmentInfo environment, string command)
     {
         var builder = new StringBuilder();
-        builder.AppendLine($"# {title}");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"# {title}");
         builder.AppendLine();
-        builder.AppendLine($"Status: **{status}**");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"Status: **{status}**");
         builder.AppendLine();
-        builder.AppendLine($"- Commit: `{environment.GitCommit ?? "unavailable"}` (dirty: `{environment.GitDirty?.ToString() ?? "unknown"}`)");
-        builder.AppendLine($"- Artifact SHA-256: `{environment.ArtifactSha256 ?? "unavailable"}`");
-        builder.AppendLine($"- Runtime: {environment.FrameworkDescription}; build `{environment.BuildConfiguration}`; {environment.OperatingSystem}; {environment.Architecture}");
-        builder.AppendLine($"- CPU: {environment.CpuModel}; {environment.ProcessorCount} logical processors; available memory {environment.AvailableMemoryBytes} bytes");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"- Commit: `{environment.GitCommit ?? "unavailable"}` (dirty: `{environment.GitDirty?.ToString() ?? "unknown"}`)");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"- Artifact SHA-256: `{environment.ArtifactSha256 ?? "unavailable"}`");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"- Runtime: {environment.FrameworkDescription}; build `{environment.BuildConfiguration}`; {environment.OperatingSystem}; {environment.Architecture}");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"- CPU: {environment.CpuModel}; {environment.ProcessorCount} logical processors; available memory {environment.AvailableMemoryBytes} bytes");
         builder.AppendLine();
-        builder.AppendLine($"Command: `{command}`");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"Command: `{command}`");
         builder.AppendLine();
         return builder;
     }
