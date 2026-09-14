@@ -93,12 +93,15 @@ must not be labeled as end-to-end database performance.
 ## Results summary
 
 Fill one row per admitted subject and workload. Keep failed or invalid attempts
-in the receipt directory and add the reason here. The initial table remains
-empty by design.
+in the receipt directory and add the reason here. The rows below are the first
+admitted local receipts; they do not represent end-to-end distributed
+performance.
 
-| Workload | Subject | Status | Samples | Ops/s | p50 (µs) | p95 (µs) | p99 (µs) | Dataset / payload | Durability | Receipt |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
-| all listed workloads | — | pending | — | — | — | — | — | — | — | — |
+| Workload | Subject | Status | Samples | Ops/s | p50 (µs) | p95 (µs) | p99 (µs) | Allocated bytes/op | CPU % | RAM after bytes | Bytes written | Write amplification | Dataset / payload | Durability | Receipt |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
+| Point read | InMemoryStorageProvider | complete | 5 | 260,010.40 | 1.87 | 10.05 | 22.32 | 896.88 | 6.50 | 63,873,024 | — | — | 100 / 128 B | in-memory | [`receipt.json`](receipts/20260914-5b5d1767-memory-point-read/receipt.json) |
+| Conditional upsert | StorageEngine | complete | 5 | 40.41 | 23,816.13 | 30,250.68 | 36,456.07 | 8,713,948.64 | 3.07 | 98,619,392 | 67,153 | 9.46 | 100 / 128 B | synced WAL | [`receipt.json`](receipts/20260914-5b5d1767-storage-point-write/receipt.json) |
+| all other listed workloads | — | pending | — | — | — | — | — | — | — | — | — | — | — | — | — |
 
 ## Correctness and durability evidence
 
@@ -128,7 +131,7 @@ fields, not measured defaults.
 
 | Batch date (UTC) | Commit | Dirty tree | Artifact SHA-256 | Host / OS / architecture | CPU / memory envelope | Storage | Workload digest | Runner command | Receipt directory |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| — | — | — | — | — | — | — | — | — | — |
+| 2026-09-14 | `5b5d1767d16211794020a111eeb5467bd73b0e5f` | true (`.codex/` untracked) | `c7d202a8b3d790d92711c864a42c47a2ca65862465560ce7fda0bcb274ec66ac` | NixOS 26.05 / x64 | Intel Xeon E5-2660 v4, 46 logical CPUs, 20.9 GB available | local filesystem; in-memory and synced WAL | see receipt JSON | `nice -n 19 dotnet bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll ...` | [`bench/receipts`](receipts) |
 
 Do not add a ratio against PostgreSQL, RavenDB, an archived Rust build, or a
 historical SQLite run until both sides have matching workload, boundary,
