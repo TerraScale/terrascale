@@ -269,6 +269,148 @@ test("required bearer gate, health, unknown routes, reset/seed, binding, and rem
   );
 });
 
+test("the registered local Sync v2 client uses the runtime store", async () => {
+  await withTempRuntime(async (runtime) => {
+    const v2 = runtime.createSyncV2Session({
+      Collection: "tasks",
+      Principal: "user-a",
+      Tenant: "tenant-a",
+    });
+    await v2.connect();
+    const applied = await v2.executeMutation(
+      { Document: "task-1", Put: { state: "open" } },
+      "mutation-once",
+    );
+    const replay = await v2.executeMutation(
+      { Document: "task-1", Put: { state: "open" } },
+      "mutation-once",
+    );
+    assert.equal(applied.Outcome, "applied");
+    assert.deepEqual(replay, applied);
+    await assert.rejects(
+      v2.executeMutation({ Document: "task-1", Put: { state: "closed" } }, "mutation-once"),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("idempotency_key_reused"),
+    );
+    await v2.disconnect();
+  });
+});
+
+test("Sync v2 journals and idempotency replays stay isolated by principal and tenant", async () => {
+  await withTempRuntime(async (runtime) => {
+    const address = await started(runtime);
+    const post = async (
+      path: string,
+      principal: string,
+      tenant: string,
+      body: unknown,
+      idempotencyKey?: string,
+    ): Promise<Response> =>
+      fetch(`${address.origin}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-tb-principal": principal,
+          "x-tb-tenant": tenant,
+          ...(idempotencyKey === undefined ? {} : { "idempotency-key": idempotencyKey }),
+        },
+        body: JSON.stringify(body),
+      });
+    const open = async (
+      principal: string,
+      tenant: string,
+    ): Promise<{ readonly checkpoint: string; readonly sessionId: number }> => {
+      const response = await post("/v1/sync/sessions", principal, tenant, { collection: "shared" });
+      assert.equal(response.status, 200);
+      return (await response.json()) as { readonly checkpoint: string; readonly sessionId: number };
+    };
+    const sessionA = await open("principal-a", "tenant-a");
+    const sessionB = await open("principal-b", "tenant-b");
+    const mutationA = { document: "document-a", change: { put: [{ name: "owner", value: "a" }] } };
+    const mutationB = { document: "document-b", change: { put: [{ name: "owner", value: "b" }] } };
+    const appliedA = await post(
+      `/v1/sync/sessions/${sessionA.sessionId}/mutations`,
+      "principal-a",
+      "tenant-a",
+      mutationA,
+      "same-key",
+    );
+    const replayA = await post(
+      `/v1/sync/sessions/${sessionA.sessionId}/mutations`,
+      "principal-a",
+      "tenant-a",
+      mutationA,
+      "same-key",
+    );
+    const appliedB = await post(
+      `/v1/sync/sessions/${sessionB.sessionId}/mutations`,
+      "principal-b",
+      "tenant-b",
+      mutationB,
+      "same-key",
+    );
+    assert.equal(appliedA.status, 200);
+    assert.deepEqual(await replayA.json(), await appliedA.clone().json());
+    assert.equal(appliedB.status, 200);
+
+    const deltaA = await post(
+      `/v1/sync/sessions/${sessionA.sessionId}/delta`,
+      "principal-a",
+      "tenant-a",
+      { from: sessionA.checkpoint },
+    );
+    const deltaB = await post(
+      `/v1/sync/sessions/${sessionB.sessionId}/delta`,
+      "principal-b",
+      "tenant-b",
+      { from: sessionB.checkpoint },
+    );
+    const bodyA = (await deltaA.json()) as { readonly commits: number; readonly payload: string };
+    const bodyB = (await deltaB.json()) as { readonly commits: number; readonly payload: string };
+    assert.equal(bodyA.commits, 1);
+    assert.equal(bodyB.commits, 1);
+    assert.equal(
+      Buffer.from(bodyA.payload, "base64").toString("utf8").includes("document-a"),
+      true,
+    );
+    assert.equal(
+      Buffer.from(bodyA.payload, "base64").toString("utf8").includes("document-b"),
+      false,
+    );
+    assert.equal(
+      Buffer.from(bodyB.payload, "base64").toString("utf8").includes("document-b"),
+      true,
+    );
+    assert.equal(
+      Buffer.from(bodyB.payload, "base64").toString("utf8").includes("document-a"),
+      false,
+    );
+  });
+});
+
+test("reset and close disconnect every registered Sync v2 session", async () => {
+  await withTempRuntime(async (runtime) => {
+    const resetV2 = runtime.createSyncV2Session({
+      Collection: "tasks",
+      Principal: "user-reset",
+      Tenant: "tenant-lifecycle",
+    });
+    await resetV2.connect();
+    await runtime.reset();
+    assert.equal(resetV2.getStatus(), "closed");
+
+    const closeV2 = runtime.createSyncV2Session({
+      Collection: "tasks",
+      Principal: "user-close",
+      Tenant: "tenant-lifecycle",
+    });
+    await closeV2.connect();
+    await runtime.close();
+    assert.equal(closeV2.getStatus(), "closed");
+    assert.throws(() => runtime.createClient(), /runtime is closed/u);
+  });
+});
+
 test("project deletion cascades every project-scoped core resource", async () => {
   await withTempRuntime(async (runtime, databasePath) => {
     const root = runtime.createClient();

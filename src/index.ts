@@ -3,6 +3,8 @@ export * from "./factory.js";
 export * from "./models.js";
 export * from "./regions.js";
 export * from "./result.js";
+export * from "./sync/v2/conformance.js";
+export * from "./sync/v2/frame.js";
 export * from "./sync/v2/client.js";
 export * from "./sync/v2/result-view.js";
 export { sdkRouteManifest } from "./client.js";
