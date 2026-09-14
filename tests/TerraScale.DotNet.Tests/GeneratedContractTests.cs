@@ -83,4 +83,31 @@ public sealed class GeneratedContractTests
         await Assert.That(response).IsNotNull();
         await Assert.That(response!.Parent).IsEqualTo("main");
     }
+
+    [Test]
+    public async Task GeneratedSchemaAndQueryModelsKeepTypedJsonBranches()
+    {
+        var schema = JsonSerializer.Deserialize(
+            "{\"name\":\"orders\",\"fields\":[{\"name\":\"total\",\"type\":\"float\"}],\"mergePolicy\":\"hlc-tiebreak\",\"fts\":{\"fields\":[\"title\"]},\"ttl\":{\"field\":\"expires_at\"}}",
+            TerraScaleContractJsonContext.Default.CollectionSchema);
+
+        await Assert.That(schema).IsNotNull();
+        await Assert.That(schema!.Fields![0].Type).IsEqualTo(FieldType.Float);
+        await Assert.That(schema.MergePolicy).IsEqualTo(MergePolicy.HlcTiebreak);
+        await Assert.That(schema.Fts!.Fields).Contains("title");
+        await Assert.That(schema.Ttl!.Field).IsEqualTo("expires_at");
+
+        var query = JsonSerializer.Deserialize(
+            "{\"model\":\"orders\",\"predicates\":[{\"field\":\"status\",\"operator\":\"eq\",\"value\":\"open\"}],\"offset\":0,\"limit\":25,\"sortBy\":{\"field\":\"total\",\"direction\":\"desc\"}}",
+            TerraScaleContractJsonContext.Default.PageQuery);
+
+        await Assert.That(query).IsNotNull();
+        await Assert.That(query!.SortBy!.Direction).IsEqualTo(PageSortDirection.Desc);
+        await Assert.That(query.Predicates[0].Operator).IsEqualTo(PredicateOperatorSchema.Eq);
+
+        var importJson = JsonSerializer.Serialize(
+            new CreateImport(TransferFormat.MongoJson, "import-1"),
+            TerraScaleContractJsonContext.Default.CreateImport);
+        await Assert.That(importJson).IsEqualTo("{\"format\":\"mongo_json\",\"idempotency_key\":\"import-1\"}");
+    }
 }

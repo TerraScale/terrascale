@@ -18,12 +18,23 @@ public sealed class TerraScaleManagementImportsClient(TerraScaleClient client)
         return client.SendJsonAsync(
             HttpMethod.Post,
             Route(database),
-            new CreateImport(format.Trim(), idempotencyKey.Trim()),
+            new CreateImport(ParseFormat(format), idempotencyKey.Trim()),
             TerraScaleContractJsonContext.Default.CreateImport,
             TerraScaleContractJsonContext.Default.ImportJob,
             cancellationToken,
             idempotencyKey.Trim());
     }
+
+    private static TransferFormat ParseFormat(string value) => value.Trim() switch
+    {
+        "native" => TransferFormat.Native,
+        "jsonl" => TransferFormat.Jsonl,
+        "csv" => TransferFormat.Csv,
+        "mongo_json" => TransferFormat.MongoJson,
+        "cosmos_json" => TransferFormat.CosmosJson,
+        "dynamo_json" => TransferFormat.DynamoJson,
+        _ => throw new ArgumentException($"Unsupported import format '{value}'.", nameof(value)),
+    };
 
     public Task<IReadOnlyList<ImportJob>> ListAsync(string database, CancellationToken cancellationToken = default) =>
         client.SendJsonAsync(

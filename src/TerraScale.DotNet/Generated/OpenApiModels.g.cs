@@ -55,19 +55,28 @@ public sealed record BatchResponse(
     [property: JsonPropertyName("count"), JsonRequired] int Count
 );
 
+[JsonConverter(typeof(JsonStringEnumConverter<BillableMeter>))]
+public enum BillableMeter
+{
+    [JsonStringEnumMemberName("document_write_units")]
+    DocumentWriteUnits,
+    [JsonStringEnumMemberName("storage_byte_seconds")]
+    StorageByteSeconds,
+}
+
 public sealed record BranchListResponse(
     [property: JsonPropertyName("branches"), JsonRequired] IReadOnlyList<DatabaseRecord> Branches
 );
 
 public sealed record CollectionSchema(
     [property: JsonPropertyName("fields"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<FieldDescriptor>? Fields,
-    [property: JsonPropertyName("fts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Fts,
+    [property: JsonPropertyName("fts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FtsDescriptor? Fts,
     [property: JsonPropertyName("historyRetentionDays"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? HistoryRetentionDays,
     [property: JsonPropertyName("indexes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<SchemaIndexDescriptor>? Indexes,
-    [property: JsonPropertyName("mergePolicy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? MergePolicy,
+    [property: JsonPropertyName("mergePolicy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MergePolicy? MergePolicy,
     [property: JsonPropertyName("name"), JsonRequired] string Name,
     [property: JsonPropertyName("renames"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<FieldRename>? Renames,
-    [property: JsonPropertyName("ttl"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Ttl,
+    [property: JsonPropertyName("ttl"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TtlDescriptor? Ttl,
     [property: JsonPropertyName("version"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Version
 );
 
@@ -111,13 +120,13 @@ public sealed record CreateDatabaseRequest(
 );
 
 public sealed record CreateExport(
-    [property: JsonPropertyName("format"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Format,
+    [property: JsonPropertyName("format"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TransferFormat? Format,
     [property: JsonPropertyName("idempotency_key"), JsonRequired] string IdempotencyKey,
-    [property: JsonPropertyName("scope"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Scope
+    [property: JsonPropertyName("scope"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExportScope? Scope
 );
 
 public sealed record CreateImport(
-    [property: JsonPropertyName("format"), JsonRequired] string Format,
+    [property: JsonPropertyName("format"), JsonRequired] TransferFormat Format,
     [property: JsonPropertyName("idempotency_key"), JsonRequired] string IdempotencyKey
 );
 
@@ -258,7 +267,7 @@ public sealed record DevelopmentFaultRequest(
     [property: JsonPropertyName("confirmBranch"), JsonRequired] string ConfirmBranch,
     [property: JsonPropertyName("delayMs"), JsonRequired] long DelayMs,
     [property: JsonPropertyName("durationMs"), JsonRequired] long DurationMs,
-    [property: JsonPropertyName("fault"), JsonRequired] string Fault,
+    [property: JsonPropertyName("fault"), JsonRequired] FaultKind Fault,
     [property: JsonPropertyName("maxOperations"), JsonRequired] int MaxOperations
 );
 
@@ -296,33 +305,75 @@ public sealed record ExportAccepted(
     [property: JsonPropertyName("status_path"), JsonRequired] string StatusPath
 );
 
+[JsonConverter(typeof(JsonStringEnumConverter<ExportCancellation>))]
+public enum ExportCancellation
+{
+    [JsonStringEnumMemberName("available")]
+    Available,
+    [JsonStringEnumMemberName("requested")]
+    Requested,
+    [JsonStringEnumMemberName("complete")]
+    Complete,
+    [JsonStringEnumMemberName("unavailable")]
+    Unavailable,
+}
+
 public sealed record ExportList(
     [property: JsonPropertyName("exports"), JsonRequired] IReadOnlyList<ExportStatus> Exports,
     [property: JsonPropertyName("next_cursor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NextCursor
 );
 
+[JsonConverter(typeof(JsonStringEnumConverter<ExportPhase>))]
+public enum ExportPhase
+{
+    [JsonStringEnumMemberName("Documents")]
+    Documents,
+    [JsonStringEnumMemberName("History")]
+    History,
+    [JsonStringEnumMemberName("Done")]
+    Done,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<ExportScope>))]
+public enum ExportScope
+{
+    [JsonStringEnumMemberName("all")]
+    All,
+    [JsonStringEnumMemberName("documents")]
+    Documents,
+}
+
 public sealed record ExportStatus(
-    [property: JsonPropertyName("cancellation"), JsonRequired] string Cancellation,
+    [property: JsonPropertyName("cancellation"), JsonRequired] ExportCancellation Cancellation,
     [property: JsonPropertyName("created_at_millis"), JsonRequired] ulong CreatedAtMillis,
     [property: JsonPropertyName("error"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error,
     [property: JsonPropertyName("estimated_records"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ulong? EstimatedRecords,
     [property: JsonPropertyName("job_id"), JsonRequired] string JobId,
-    [property: JsonPropertyName("manifest"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Manifest,
+    [property: JsonPropertyName("manifest"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ArtifactFact? Manifest,
     [property: JsonPropertyName("pages"), JsonRequired] ulong Pages,
-    [property: JsonPropertyName("phase"), JsonRequired] string Phase,
+    [property: JsonPropertyName("phase"), JsonRequired] ExportPhase Phase,
     [property: JsonPropertyName("progress_basis_points"), JsonRequired] int ProgressBasisPoints,
     [property: JsonPropertyName("records"), JsonRequired] ulong Records,
     [property: JsonPropertyName("resume_cursor"), JsonRequired] string ResumeCursor,
-    [property: JsonPropertyName("status"), JsonRequired] string Status
+    [property: JsonPropertyName("status"), JsonRequired] JobStatus Status
 );
+
+[JsonConverter(typeof(JsonStringEnumConverter<FaultKind>))]
+public enum FaultKind
+{
+    [JsonStringEnumMemberName("unavailable")]
+    Unavailable,
+    [JsonStringEnumMemberName("latency")]
+    Latency,
+}
 
 public sealed record FieldDescriptor(
     [property: JsonPropertyName("fts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Fts,
     [property: JsonPropertyName("indexed"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Indexed,
-    [property: JsonPropertyName("mergePolicy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? MergePolicy,
+    [property: JsonPropertyName("mergePolicy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FieldType? MergePolicy,
     [property: JsonPropertyName("name"), JsonRequired] string Name,
     [property: JsonPropertyName("required"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Required,
-    [property: JsonPropertyName("type"), JsonRequired] string Type,
+    [property: JsonPropertyName("type"), JsonRequired] FieldType Type,
     [property: JsonPropertyName("unique"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Unique
 );
 
@@ -330,6 +381,35 @@ public sealed record FieldRename(
     [property: JsonPropertyName("from"), JsonRequired] string From,
     [property: JsonPropertyName("to"), JsonRequired] string To
 );
+
+[JsonConverter(typeof(JsonStringEnumConverter<FieldType>))]
+public enum FieldType
+{
+    [JsonStringEnumMemberName("string")]
+    String,
+    [JsonStringEnumMemberName("int")]
+    Int,
+    [JsonStringEnumMemberName("float")]
+    Float,
+    [JsonStringEnumMemberName("bool")]
+    Bool,
+    [JsonStringEnumMemberName("bytes")]
+    Bytes,
+    [JsonStringEnumMemberName("json")]
+    Json,
+    [JsonStringEnumMemberName("timestamp")]
+    Timestamp,
+    [JsonStringEnumMemberName("text")]
+    Text,
+    [JsonStringEnumMemberName("counter-pn")]
+    CounterPn,
+    [JsonStringEnumMemberName("set-add-wins")]
+    SetAddWins,
+    [JsonStringEnumMemberName("set-remove-wins")]
+    SetRemoveWins,
+    [JsonStringEnumMemberName("register-mv")]
+    RegisterMv,
+}
 
 public sealed record FtsDescriptor(
     [property: JsonPropertyName("fields"), JsonRequired] IReadOnlyList<string> Fields
@@ -382,9 +462,33 @@ public sealed record IndexDescriptor(
     [property: JsonPropertyName("state"), JsonRequired] string State
 );
 
+[JsonConverter(typeof(JsonStringEnumConverter<IndexKind>))]
+public enum IndexKind
+{
+    [JsonStringEnumMemberName("btree")]
+    Btree,
+    [JsonStringEnumMemberName("fts")]
+    Fts,
+}
+
 public sealed record IndexListResponse(
     [property: JsonPropertyName("indexes"), JsonRequired] IReadOnlyList<IndexDescriptor> Indexes
 );
+
+[JsonConverter(typeof(JsonStringEnumConverter<JobStatus>))]
+public enum JobStatus
+{
+    [JsonStringEnumMemberName("Accepted")]
+    Accepted,
+    [JsonStringEnumMemberName("Running")]
+    Running,
+    [JsonStringEnumMemberName("Cancelled")]
+    Cancelled,
+    [JsonStringEnumMemberName("Complete")]
+    Complete,
+    [JsonStringEnumMemberName("Failed")]
+    Failed,
+}
 
 public sealed record Lease(
     [property: JsonPropertyName("audience"), JsonRequired] string Audience,
@@ -399,17 +503,43 @@ public sealed record Lease(
     [property: JsonPropertyName("version"), JsonRequired] int Version
 );
 
+[JsonConverter(typeof(JsonStringEnumConverter<MergePolicy>))]
+public enum MergePolicy
+{
+    [JsonStringEnumMemberName("remove-wins")]
+    RemoveWins,
+    [JsonStringEnumMemberName("hlc-tiebreak")]
+    HlcTiebreak,
+    [JsonStringEnumMemberName("last-write-wins")]
+    LastWriteWins,
+}
+
 public sealed record MeterTotal(
-    [property: JsonPropertyName("meter"), JsonRequired] string Meter,
+    [property: JsonPropertyName("meter"), JsonRequired] BillableMeter Meter,
     [property: JsonPropertyName("units"), JsonRequired] string Units
 );
+
+[JsonConverter(typeof(JsonStringEnumConverter<MigrationState>))]
+public enum MigrationState
+{
+    [JsonStringEnumMemberName("pending")]
+    Pending,
+    [JsonStringEnumMemberName("running")]
+    Running,
+    [JsonStringEnumMemberName("rolling_back")]
+    RollingBack,
+    [JsonStringEnumMemberName("complete")]
+    Complete,
+    [JsonStringEnumMemberName("failed")]
+    Failed,
+}
 
 public sealed record MigrationStatus(
     [property: JsonPropertyName("completed"), JsonRequired] ulong Completed,
     [property: JsonPropertyName("message"), JsonRequired] string Message,
     [property: JsonPropertyName("next_cursor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NextCursor,
     [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
-    [property: JsonPropertyName("state"), JsonRequired] string State,
+    [property: JsonPropertyName("state"), JsonRequired] MigrationState State,
     [property: JsonPropertyName("steps"), JsonRequired] IReadOnlyList<MigrationStep> Steps,
     [property: JsonPropertyName("total"), JsonRequired] ulong Total
 );
@@ -445,9 +575,18 @@ public sealed record PageJoin(
     [property: JsonPropertyName("limit"), JsonRequired] int Limit,
     [property: JsonPropertyName("model"), JsonRequired] string Model,
     [property: JsonPropertyName("outputField"), JsonRequired] string OutputField,
-    [property: JsonPropertyName("relation"), JsonRequired] string Relation,
+    [property: JsonPropertyName("relation"), JsonRequired] PageJoinRelation Relation,
     [property: JsonPropertyName("toField"), JsonRequired] string ToField
 );
+
+[JsonConverter(typeof(JsonStringEnumConverter<PageJoinRelation>))]
+public enum PageJoinRelation
+{
+    [JsonStringEnumMemberName("one-to-one")]
+    OneToOne,
+    [JsonStringEnumMemberName("one-to-many")]
+    OneToMany,
+}
 
 public sealed record PageQuery(
     [property: JsonPropertyName("joins"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<PageJoin>? Joins,
@@ -456,26 +595,80 @@ public sealed record PageQuery(
     [property: JsonPropertyName("offset"), JsonRequired] int Offset,
     [property: JsonPropertyName("predicates"), JsonRequired] IReadOnlyList<PredicateInput> Predicates,
     [property: JsonPropertyName("select"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Select,
-    [property: JsonPropertyName("sortBy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? SortBy
+    [property: JsonPropertyName("sortBy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PageSort? SortBy
 );
 
 public sealed record PageSort(
-    [property: JsonPropertyName("direction"), JsonRequired] string Direction,
+    [property: JsonPropertyName("direction"), JsonRequired] PageSortDirection Direction,
     [property: JsonPropertyName("field"), JsonRequired] string Field
 );
 
+[JsonConverter(typeof(JsonStringEnumConverter<PageSortDirection>))]
+public enum PageSortDirection
+{
+    [JsonStringEnumMemberName("asc")]
+    Asc,
+    [JsonStringEnumMemberName("desc")]
+    Desc,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<PredicateConnectorSchema>))]
+public enum PredicateConnectorSchema
+{
+    [JsonStringEnumMemberName("AND")]
+    AND,
+    [JsonStringEnumMemberName("OR")]
+    OR,
+}
+
 public sealed record PredicateInput(
-    [property: JsonPropertyName("connector"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Connector,
+    [property: JsonPropertyName("connector"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PredicateConnectorSchema? Connector,
     [property: JsonPropertyName("field"), JsonRequired] string Field,
-    [property: JsonPropertyName("mode"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Mode,
-    [property: JsonPropertyName("operator"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Operator,
+    [property: JsonPropertyName("mode"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PredicateModeSchema? Mode,
+    [property: JsonPropertyName("operator"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PredicateOperatorSchema? Operator,
     [property: JsonPropertyName("value"), JsonRequired] JsonElement Value
 );
+
+[JsonConverter(typeof(JsonStringEnumConverter<PredicateModeSchema>))]
+public enum PredicateModeSchema
+{
+    [JsonStringEnumMemberName("sensitive")]
+    Sensitive,
+    [JsonStringEnumMemberName("insensitive")]
+    Insensitive,
+}
 
 public sealed record PredicateOnly(
     [property: JsonPropertyName("model"), JsonRequired] string Model,
     [property: JsonPropertyName("predicates"), JsonRequired] IReadOnlyList<PredicateInput> Predicates
 );
+
+[JsonConverter(typeof(JsonStringEnumConverter<PredicateOperatorSchema>))]
+public enum PredicateOperatorSchema
+{
+    [JsonStringEnumMemberName("eq")]
+    Eq,
+    [JsonStringEnumMemberName("ne")]
+    Ne,
+    [JsonStringEnumMemberName("lt")]
+    Lt,
+    [JsonStringEnumMemberName("lte")]
+    Lte,
+    [JsonStringEnumMemberName("gt")]
+    Gt,
+    [JsonStringEnumMemberName("gte")]
+    Gte,
+    [JsonStringEnumMemberName("in")]
+    In,
+    [JsonStringEnumMemberName("not_in")]
+    NotIn,
+    [JsonStringEnumMemberName("contains")]
+    Contains,
+    [JsonStringEnumMemberName("starts_with")]
+    StartsWith,
+    [JsonStringEnumMemberName("ends_with")]
+    EndsWith,
+}
 
 public sealed record PredicateUpdate(
     [property: JsonPropertyName("model"), JsonRequired] string Model,
@@ -524,7 +717,7 @@ public sealed record RotateWebhookSecret(
 public sealed record SchemaDocument(
     [property: JsonPropertyName("generation"), JsonRequired] ulong Generation,
     [property: JsonPropertyName("identity"), JsonRequired] DatabaseIdentity Identity,
-    [property: JsonPropertyName("migration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Migration,
+    [property: JsonPropertyName("migration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MigrationStatus? Migration,
     [property: JsonPropertyName("schema"), JsonRequired] CollectionSchema Schema,
     [property: JsonPropertyName("schema_version"), JsonRequired] ulong SchemaVersion,
     [property: JsonPropertyName("target"), JsonRequired] SchemaTarget Target
@@ -532,7 +725,7 @@ public sealed record SchemaDocument(
 
 public sealed record SchemaIndexDescriptor(
     [property: JsonPropertyName("fields"), JsonRequired] IReadOnlyList<string> Fields,
-    [property: JsonPropertyName("kind"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Kind,
+    [property: JsonPropertyName("kind"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IndexKind? Kind,
     [property: JsonPropertyName("name"), JsonRequired] string Name,
     [property: JsonPropertyName("unique"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Unique
 );
@@ -566,6 +759,23 @@ public sealed record SqlResponse(
 public sealed record TransactionIdentity(
     [property: JsonPropertyName("transactionId"), JsonRequired] string TransactionId
 );
+
+[JsonConverter(typeof(JsonStringEnumConverter<TransferFormat>))]
+public enum TransferFormat
+{
+    [JsonStringEnumMemberName("native")]
+    Native,
+    [JsonStringEnumMemberName("jsonl")]
+    Jsonl,
+    [JsonStringEnumMemberName("csv")]
+    Csv,
+    [JsonStringEnumMemberName("mongo_json")]
+    MongoJson,
+    [JsonStringEnumMemberName("cosmos_json")]
+    CosmosJson,
+    [JsonStringEnumMemberName("dynamo_json")]
+    DynamoJson,
+}
 
 public sealed record TtlDescriptor(
     [property: JsonPropertyName("field"), JsonRequired] string Field

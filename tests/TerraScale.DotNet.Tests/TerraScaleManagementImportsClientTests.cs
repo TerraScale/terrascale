@@ -28,6 +28,17 @@ public sealed class TerraScaleManagementImportsClientTests
     }
 
     [Test]
+    public async Task CreateAsync_RejectsUnknownContractFormatBeforeSending()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.Accepted, ImportJobJson);
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Management.Imports.CreateAsync("db", "unsupported", "import-key"));
+        await Assert.That(handler.Method).IsNull();
+    }
+
+    [Test]
     public async Task UploadAsync_UsesBinaryInputRouteAndPreservesPayload()
     {
         using var handler = new RecordingHandler(HttpStatusCode.Accepted, ImportJobJson);

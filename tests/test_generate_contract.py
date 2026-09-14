@@ -83,6 +83,67 @@ class GeneratorSchemaTests(unittest.TestCase):
         output = api.json_context()
         self.assertIn("[JsonSerializable(typeof(IReadOnlyList<string>))]", output)
 
+    def test_json_context_does_not_register_messagepack_response_shapes(self):
+        api = OpenApiGenerator({
+            "components": {"schemas": {
+                "ReactiveEnvelope": {
+                    "type": "array",
+                    "prefixItems": [{"type": "integer"}],
+                },
+            }},
+            "paths": {
+                "/reactive": {"get": {"operationId": "view_log", "responses": {
+                    "200": {"content": {"application/msgpack": {
+                        "schema": {"$ref": "#/components/schemas/ReactiveEnvelope"}
+                    }}}
+                }}}
+            },
+        })
+        output = api.json_context()
+        self.assertNotIn("ReactiveEnvelope", output)
+        self.assertNotIn("IReadOnlyList", output)
+
+    def test_nullable_reference_union_keeps_generated_type(self):
+        api = self.generator({
+            "PageSort": {
+                "type": "object",
+                "properties": {"field": {"type": "string"}},
+            },
+            "PageQuery": {
+                "type": "object",
+                "properties": {
+                    "sortBy": {
+                        "oneOf": [
+                            {"type": "null"},
+                            {"$ref": "#/components/schemas/PageSort"},
+                        ]
+                    }
+                },
+            },
+        })
+        output = api.models()
+        self.assertIn("PageSort? SortBy", output)
+        self.assertNotIn("JsonElement? SortBy", output)
+
+    def test_string_enums_are_generated_with_exact_wire_names(self):
+        api = self.generator({
+            "PageSortDirection": {
+                "type": "string",
+                "enum": ["asc", "desc"],
+            },
+            "PageSort": {
+                "type": "object",
+                "properties": {
+                    "direction": {"$ref": "#/components/schemas/PageSortDirection"}
+                },
+            },
+        })
+        output = api.models()
+        self.assertIn("public enum PageSortDirection", output)
+        self.assertIn('[JsonStringEnumMemberName("asc")]\n    Asc,', output)
+        self.assertIn("PageSortDirection? Direction", output)
+        self.assertIn("[JsonSerializable(typeof(PageSortDirection))]", api.json_context())
+
 
 if __name__ == "__main__":
     unittest.main()

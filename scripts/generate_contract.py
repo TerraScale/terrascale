@@ -155,10 +155,28 @@ class OpenApiGenerator:
                 result = "JsonElement"
             elif target.get("type") == "object":
                 result = pascal(schema["$ref"].rsplit("/", 1)[-1])
+            elif target.get("enum") is not None:
+                result = pascal(schema["$ref"].rsplit("/", 1)[-1])
             else:
                 result = self.type_name(target, owner)
         elif schema.get("oneOf") or schema.get("anyOf"):
-            result = "JsonElement"
+            # A nullable reference is still a useful generated type.  Keep
+            # genuinely polymorphic unions as JsonElement because they need
+            # an explicit discriminator/branch projection at the call site.
+            branches = schema.get("oneOf") or schema.get("anyOf")
+            nullable_branch = any(
+                isinstance(branch, dict) and branch.get("type") == "null"
+                for branch in branches
+            )
+            concrete = [
+                branch for branch in branches
+                if not (isinstance(branch, dict) and branch.get("type") == "null")
+            ]
+            if len(concrete) == 1:
+                result = self.type_name(concrete[0], owner)
+                nullable = nullable or nullable_branch
+            else:
+                result = "JsonElement"
         elif isinstance(schema.get("type"), list):
             non_null = [t for t in schema["type"] if t != "null"]
             result = self.type_name({**schema, "type": non_null[0] if non_null else "object"}, owner)
@@ -187,6 +205,19 @@ class OpenApiGenerator:
             return result + "?"
         return result
 
+    @staticmethod
+    def allows_null(schema: dict) -> bool:
+        if isinstance(schema, bool):
+            return False
+        schema_type = schema.get("type")
+        if schema_type == "null" or isinstance(schema_type, list) and "null" in schema_type:
+            return True
+        branches = schema.get("oneOf") or schema.get("anyOf") or []
+        return any(
+            isinstance(branch, dict) and branch.get("type") == "null"
+            for branch in branches
+        )
+
     def model_names(self) -> list[str]:
         return list(self.schemas) + list(self.inline)
 
@@ -199,6 +230,20 @@ class OpenApiGenerator:
         lines = [header("OpenAPI models"), "namespace TerraScale.DotNet.Generated;", "", "using System.Text.Json;", "using System.Text.Json.Serialization;", ""]
         for name in self.model_names():
             schema = self.model_schema(name)
+            if schema.get("type") == "string" and schema.get("enum") is not None:
+                lines.append(f"[JsonConverter(typeof(JsonStringEnumConverter<{pascal(name)}>))]")
+                lines.append(f"public enum {pascal(name)}")
+                lines.append("{")
+                allocated: set[str] = set()
+                for value in schema["enum"]:
+                    member = pascal(str(value))
+                    while member in allocated:
+                        member += "Value"
+                    allocated.add(member)
+                    lines.append(f"    [JsonStringEnumMemberName({string_literal(str(value))})]")
+                    lines.append(f"    {member},")
+                lines.append("}\n")
+                continue
             if schema.get("type") != "object":
                 continue
             required = set(schema.get("required", []))
@@ -206,7 +251,7 @@ class OpenApiGenerator:
             fields = []
             for field, definition in schema.get("properties", {}).items():
                 definition = dict(definition)
-                nullable = field not in required or "null" in definition.get("type", []) if isinstance(definition.get("type"), list) else field not in required
+                nullable = field not in required or self.allows_null(definition)
                 property_name = pascal(field)
                 while property_name == pascal(name) or property_name in allocated:
                     property_name += "Value"
@@ -228,7 +273,7 @@ class OpenApiGenerator:
         lines = [header("source-generated System.Text.Json metadata"), "namespace TerraScale.DotNet.Generated;", "", "using System.Text.Json;", "using System.Text.Json.Serialization;", "", "[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, GenerationMode = JsonSourceGenerationMode.Metadata)]"]
         for name in self.model_names():
             schema = self.model_schema(name)
-            if schema.get("type") == "object":
+            if schema.get("type") == "object" or (schema.get("type") == "string" and schema.get("enum") is not None):
                 lines.append(f"[JsonSerializable(typeof({pascal(name)}))]")
         # Some operations return a bare JSON array rather than an object. Keep
         # source-generated metadata for those response shapes as well.
