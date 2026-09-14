@@ -4,6 +4,7 @@ using System.Text.Json;
 using TerraBase.Replication;
 using TerraBase.Storage.Backup;
 using TerraBase.Sync;
+using TerraBase.Storage.Compaction;
 
 namespace TerraBase.Api.Tests;
 
@@ -68,6 +69,42 @@ public sealed class ProductionPrimitivesTests
         await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() => new SyncTransportOptions(new Uri("http://localhost"))));
         await using var transport = new SyncTransport(new SyncTransportOptions(new Uri("https://localhost")), new HttpClient(new StubHandler()));
         await Assert.That(await transport.GetSnapshotAsync("/snapshot")).IsNotNull();
+    }
+
+    [Test]
+    public async Task ShardedProviderRejectsCrossShardAtomicBatches()
+    {
+        var root = NewDirectory();
+        try
+        {
+            await using var provider = new ShardedSqliteStorageProvider(Path.Combine(root, "sharded"), 4);
+            using var mutationBody = JsonDocument.Parse("{\"value\":1}");
+            var mutations = Enumerable.Range(0, 32).Select(index => StorageMutation.Upsert(
+                new DocumentKey(new TenantId("tenant"), new CollectionId("items"), $"key-{index}"),
+                mutationBody.RootElement, DocumentPrecondition.Missing)).ToArray();
+            await Assert.ThrowsAsync<NotSupportedException>(() => provider.ApplyBatchAsync(mutations).AsTask());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
+    public async Task SqliteCompactorMaintainsReadableData()
+    {
+        var root = NewDirectory();
+        var path = Path.Combine(root, "data.db");
+        try
+        {
+            await using (var provider = new SqliteStorageProvider(path))
+            {
+                using var body = JsonDocument.Parse("{\"value\":7}");
+                await provider.UpsertAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"), body.RootElement, DocumentPrecondition.Missing);
+            }
+            var result = await SqliteCompactor.CompactAsync(path);
+            await Assert.That(result.PageCount).IsGreaterThan(0);
+            await using var reopened = new SqliteStorageProvider(path);
+            await Assert.That(await reopened.ReadAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"))).IsNotNull();
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static string NewDirectory()

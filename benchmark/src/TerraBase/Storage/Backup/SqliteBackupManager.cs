@@ -107,6 +107,20 @@ public sealed class SqliteBackupManager : IAsyncDisposable
         finally { gate.Release(); }
     }
 
+    /// <summary>Creates and uploads a complete immutable snapshot artifact pair.</summary>
+    public async Task<SqliteBackupManifest> ReplicateSnapshotAsync(IBackupReplica replica, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(replica);
+        var manifest = await CreateSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        await using (var snapshot = new FileStream(manifest.SnapshotPath, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            await replica.PutAsync(Path.GetFileName(manifest.SnapshotPath), snapshot, manifest.Sha256, cancellationToken).ConfigureAwait(false);
+        var manifestBytes = await File.ReadAllBytesAsync(manifest.SnapshotPath + ".json", cancellationToken).ConfigureAwait(false);
+        var manifestHash = Convert.ToHexString(SHA256.HashData(manifestBytes)).ToLowerInvariant();
+        await using var metadata = new MemoryStream(manifestBytes, writable: false);
+        await replica.PutAsync(Path.GetFileName(manifest.SnapshotPath) + ".json", metadata, manifestHash, cancellationToken).ConfigureAwait(false);
+        return manifest;
+    }
+
     /// <summary>
     /// Captures only complete WAL frames since the previous capture. The
     /// generation changes whenever SQLite rotates the WAL salt, matching the
@@ -160,6 +174,21 @@ public sealed class SqliteBackupManager : IAsyncDisposable
         finally { gate.Release(); }
     }
 
+    /// <summary>Captures and uploads one WAL segment when new frames exist.</summary>
+    public async Task<SqliteWalSegment?> ReplicateWalSegmentAsync(IBackupReplica replica, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(replica);
+        var segment = await CaptureWalSegmentAsync(cancellationToken).ConfigureAwait(false);
+        if (segment is null) return null;
+        await using (var content = new FileStream(segment.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            await replica.PutAsync(Path.GetFileName(segment.Path), content, segment.Sha256, cancellationToken).ConfigureAwait(false);
+        var metadata = await File.ReadAllBytesAsync(segment.Path + ".json", cancellationToken).ConfigureAwait(false);
+        var metadataHash = Convert.ToHexString(SHA256.HashData(metadata)).ToLowerInvariant();
+        await using var manifest = new MemoryStream(metadata, writable: false);
+        await replica.PutAsync(Path.GetFileName(segment.Path) + ".json", manifest, metadataHash, cancellationToken).ConfigureAwait(false);
+        return segment;
+    }
+
     /// <summary>Restores a verified snapshot to a new database path.</summary>
     public static async Task RestoreAsync(string snapshotPath, string destinationPath, CancellationToken cancellationToken = default)
     {
@@ -179,9 +208,26 @@ public sealed class SqliteBackupManager : IAsyncDisposable
         var parent = Path.GetDirectoryName(destinationPath) ?? throw new ArgumentException("Destination must have a parent.", nameof(destinationPath));
         Directory.CreateDirectory(parent);
         var temp = destinationPath + ".restore";
-        File.Copy(snapshotPath, temp, overwrite: true);
-        await FlushFileAsync(temp, cancellationToken).ConfigureAwait(false);
-        File.Move(temp, destinationPath, overwrite: true);
+        try
+        {
+            File.Copy(snapshotPath, temp, overwrite: true);
+            await FlushFileAsync(temp, cancellationToken).ConfigureAwait(false);
+            await using (var verification = Open(temp, SqliteOpenMode.ReadOnly))
+            {
+                await verification.OpenAsync(cancellationToken).ConfigureAwait(false);
+                await using var check = verification.CreateCommand();
+                check.CommandText = "PRAGMA integrity_check;";
+                var result = Convert.ToString(await check.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+                if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException($"Backup SQLite integrity check failed: {result ?? "<empty>"}.");
+            }
+            File.Move(temp, destinationPath, overwrite: true);
+        }
+        catch
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+            throw;
+        }
     }
 
     public IReadOnlyList<SqliteBackupManifest> ListSnapshots() =>
