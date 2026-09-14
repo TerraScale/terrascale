@@ -591,6 +591,149 @@ fn invalid_operations_reset_atomically() {
     assert_eq!(subscription.items().len(), 1);
 }
 
+#[test]
+fn numeric_revisions_are_ordered_and_stale_deltas_are_idempotent() {
+    let mut subscription = terrascale::Subscription::new("sub");
+    subscription.apply_snapshot(ViewSnapshot {
+        view_generation: 1,
+        authorization_generation: 1,
+        revision: "9".to_owned(),
+        items: vec![],
+        digest: "digest-9".to_owned(),
+        checkpoint: terrascale::Checkpoint::new(vec![1]),
+    });
+
+    let delta = ViewDelta {
+        view_generation: 1,
+        from_revision: "9".to_owned(),
+        to_revision: "10".to_owned(),
+        operations: vec![],
+        digest: "digest-10".to_owned(),
+        checkpoint: terrascale::Checkpoint::new(vec![2]),
+    };
+    assert_eq!(
+        subscription.apply_delta(delta.clone()),
+        ApplyOutcome::Applied
+    );
+    assert_eq!(subscription.revision(), Some("10"));
+
+    // A replay from an older cut is harmless after reconnect and must not
+    // force a fresh snapshot or roll the local state backward.
+    let stale = ViewDelta {
+        from_revision: "8".to_owned(),
+        to_revision: "9".to_owned(),
+        ..delta
+    };
+    assert_eq!(subscription.apply_delta(stale), ApplyOutcome::Duplicate);
+    assert_eq!(subscription.revision(), Some("10"));
+}
+
+#[tokio::test]
+async fn http_backpressure_is_a_typed_reset_without_retrying_429() {
+    let mock = Mock::new([
+        Ok(Response::json(
+            201,
+            &json!({
+                "view": "view-1",
+                "generation": 4,
+                "snapshot_chunks": [],
+                "log": "/api/v1/reactive/views/view-1/4/log",
+                "checkpoint": "Y3Ax",
+                "capability": "capability",
+                "offset": 1
+            }),
+        )),
+        Ok(Response::json(429, &json!({"code": "busy"}))),
+        Ok(Response::json(200, &PollResponse::default())),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+    let mut live = sdk
+        .reactive()
+        .subscribe_live(
+            &DatabaseScope::new("db"),
+            &Query::raw("SELECT * FROM users".to_owned(), vec![]),
+            SubscribeOptions::new(),
+        )
+        .await
+        .expect("attach");
+
+    assert!(matches!(
+        live.next().await.expect("backpressure reset"),
+        PollOutcome::Reset(ResetFrame {
+            reason: ResetReason::Backpressure,
+            ..
+        })
+    ));
+    assert_eq!(mock.requests.lock().expect("request mutex").len(), 2);
+}
+
+#[tokio::test]
+async fn bounded_transport_failures_surface_a_reconnect_reset() {
+    let mock = Mock::new([
+        Ok(Response::json(
+            201,
+            &json!({
+                "view": "view-1",
+                "generation": 4,
+                "snapshot_chunks": [],
+                "log": "/api/v1/reactive/views/view-1/4/log",
+                "checkpoint": "Y3Ax",
+                "capability": "capability",
+                "offset": 1
+            }),
+        )),
+        Err(Error::transport("connection reset")),
+        Err(Error::transport("connection reset")),
+        Err(Error::transport("connection reset")),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+    let mut live = sdk
+        .reactive()
+        .subscribe_live(
+            &DatabaseScope::new("db"),
+            &Query::raw("SELECT * FROM users".to_owned(), vec![]),
+            SubscribeOptions::new(),
+        )
+        .await
+        .expect("attach");
+
+    assert!(matches!(
+        live.next().await.expect("reconnect reset"),
+        PollOutcome::Reset(ResetFrame {
+            reason: ResetReason::Reconnect,
+            ..
+        })
+    ));
+    assert_eq!(mock.requests.lock().expect("request mutex").len(), 4);
+}
+
+#[tokio::test]
+async fn messagepack_backpressure_pause_is_a_typed_reset_and_resume_is_empty() {
+    let pause_mock = Mock::new([Ok(msgpack_response(message_fixture("backpressure")))]);
+    let pause = client(Arc::clone(&pause_mock))
+        .reactive()
+        .poll_from(&attached(), "1")
+        .await
+        .expect("backpressure pause frame");
+    assert!(matches!(
+        pause.reset,
+        Some(ResetFrame {
+            reason: ResetReason::Backpressure,
+            ..
+        })
+    ));
+
+    let resume = vec![0x97, 1, 0, 0, 11, 0, 0, 0x91, 2];
+    let resume_mock = Mock::new([Ok(msgpack_response(resume))]);
+    let resume = client(Arc::clone(&resume_mock))
+        .reactive()
+        .poll_from(&attached(), "1")
+        .await
+        .expect("backpressure resume frame");
+    assert!(resume.reset.is_none());
+    assert!(resume.deltas.is_empty());
+}
+
 #[tokio::test]
 async fn live_subscription_applies_deltas_and_surfaces_region_resets() {
     let mock = Mock::new([

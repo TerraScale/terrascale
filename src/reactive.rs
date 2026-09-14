@@ -8,9 +8,10 @@
 //! any mismatch returns a typed [`ResetReason`] with a fresh authorized
 //! snapshot (GOAL D-46).
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -293,14 +294,14 @@ impl CancellationToken {
     /// Request cancellation. In-flight HTTP futures are dropped by the
     /// polling operation, and no retry is started afterwards.
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
+        self.cancelled.store(true, AtomicOrdering::Release);
         self.notification.notify_waiters();
     }
 
     /// Whether cancellation was requested.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.cancelled.load(AtomicOrdering::Acquire)
     }
 
     pub(crate) async fn cancelled(&self) {
@@ -582,14 +583,35 @@ impl Subscription {
     /// report [`ApplyOutcome::ResetRequired`]; the caller re-attaches.
     #[must_use]
     pub fn apply_delta(&mut self, delta: ViewDelta) -> ApplyOutcome {
-        match (&self.generation, &self.revision) {
-            (Some(generation), _) if *generation != delta.view_generation => {
-                ApplyOutcome::ResetRequired(ResetReason::GenerationChanged)
+        let Some(generation) = self.generation else {
+            return ApplyOutcome::ResetRequired(ResetReason::Reconnect);
+        };
+        if generation != delta.view_generation {
+            return ApplyOutcome::ResetRequired(ResetReason::GenerationChanged);
+        }
+        let Some(revision) = self.revision.as_deref() else {
+            return ApplyOutcome::ResetRequired(ResetReason::Reconnect);
+        };
+
+        // Wire revisions are u64 values, but the JSON compatibility surface
+        // keeps them as strings. Compare numeric revisions numerically so a
+        // valid transition such as 9 -> 10 is not rejected lexicographically.
+        // Non-numeric legacy revisions retain their existing lexical ordering.
+        match compare_revisions(&delta.to_revision, revision) {
+            Ordering::Less => ApplyOutcome::Duplicate,
+            Ordering::Equal => {
+                if self.digest == delta.digest {
+                    ApplyOutcome::Duplicate
+                } else {
+                    ApplyOutcome::ResetRequired(ResetReason::ViewDiverged)
+                }
             }
-            (Some(generation), Some(revision))
-                if *generation == delta.view_generation && *revision == delta.from_revision =>
-            {
-                if delta.to_revision <= delta.from_revision {
+            Ordering::Greater => {
+                if compare_revisions(&delta.from_revision, revision) != Ordering::Equal {
+                    return ApplyOutcome::ResetRequired(ResetReason::Reconnect);
+                }
+                if compare_revisions(&delta.to_revision, &delta.from_revision) != Ordering::Greater
+                {
                     return ApplyOutcome::ResetRequired(ResetReason::InvalidOperations);
                 }
                 // Apply against a candidate so an invalid operation can never
@@ -606,17 +628,31 @@ impl Subscription {
                 self.checkpoint = Some(delta.checkpoint.clone());
                 ApplyOutcome::Applied
             }
-            (Some(_), Some(revision)) if *revision == delta.to_revision => {
-                if self.digest == delta.digest {
-                    ApplyOutcome::Duplicate
-                } else {
-                    ApplyOutcome::ResetRequired(ResetReason::ViewDiverged)
-                }
-            }
-            (Some(_), _) => ApplyOutcome::ResetRequired(ResetReason::Reconnect),
-            (None, _) => ApplyOutcome::ResetRequired(ResetReason::Reconnect),
         }
     }
+}
+
+fn compare_revisions(left: &str, right: &str) -> Ordering {
+    match (left.parse::<u64>(), right.parse::<u64>()) {
+        (Ok(left), Ok(right)) => left.cmp(&right),
+        _ => match (revision_suffix(left), revision_suffix(right)) {
+            (Some((left_prefix, left_number)), Some((right_prefix, right_number)))
+                if left_prefix == right_prefix =>
+            {
+                left_number.cmp(&right_number)
+            }
+            _ => left.cmp(right),
+        },
+    }
+}
+
+fn revision_suffix(value: &str) -> Option<(&str, u64)> {
+    let index = value.find(|character: char| character.is_ascii_digit())?;
+    let (prefix, suffix) = value.split_at(index);
+    (!suffix.is_empty())
+        .then(|| suffix.parse().ok())
+        .flatten()
+        .map(|number| (prefix, number))
 }
 
 fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) -> bool {
@@ -1419,7 +1455,22 @@ impl LiveSubscription {
             .revision()
             .unwrap_or(self.view.snapshot.revision.as_str());
         let response = if let Some(socket) = self.socket.as_mut() {
-            let bytes = socket.next(&self.cancellation).await?;
+            let bytes = match socket.next(&self.cancellation).await {
+                Ok(bytes) => bytes,
+                Err(error) if error.code == "slow_consumer" => {
+                    return Ok(PollOutcome::Reset(ResetFrame {
+                        reason: ResetReason::Backpressure,
+                        snapshot: None,
+                        checkpoint: self.state.checkpoint().cloned(),
+                        region: None,
+                        authorization_generation: None,
+                        removed: Vec::new(),
+                        digest: String::new(),
+                        detail: Some(error.message),
+                    }));
+                }
+                Err(error) => return Err(error),
+            };
             let value = decode_reactive_msgpack_json(&bytes)?;
             serde_json::from_value(value).map_err(|error| {
                 Error::invalid_response(format!(
@@ -1452,6 +1503,18 @@ impl LiveSubscription {
                     let reason = http_reset_reason(&error).expect("checked above");
                     return Ok(PollOutcome::Reset(ResetFrame {
                         reason,
+                        snapshot: None,
+                        checkpoint: self.state.checkpoint().cloned(),
+                        region: None,
+                        authorization_generation: None,
+                        removed: Vec::new(),
+                        digest: String::new(),
+                        detail: Some(error.message),
+                    }));
+                }
+                Err(error) if is_retryable(&error) => {
+                    return Ok(PollOutcome::Reset(ResetFrame {
+                        reason: ResetReason::Reconnect,
                         snapshot: None,
                         checkpoint: self.state.checkpoint().cloned(),
                         region: None,
@@ -1934,11 +1997,16 @@ fn decode_msgpack_message(reader: &mut MsgpackReader<'_>, tag: u32) -> Result<se
             if mode != 1 && mode != 2 {
                 return Err(msgpack_error("unknown backpressure mode"));
             }
-            Err(Error::new(
-                ErrorKind::Unavailable,
-                "slow_consumer",
-                "slow_consumer: Reactive server applied backpressure.",
-            ))
+            if mode == 1 {
+                Ok(serde_json::json!({
+                    "reset": {
+                        "reason": "backpressure",
+                        "detail": "Reactive server requested a bounded delivery pause."
+                    }
+                }))
+            } else {
+                Ok(serde_json::json!({}))
+            }
         }
         _ => Err(msgpack_error(
             "message is not a server-to-client reactive frame",
@@ -2249,7 +2317,7 @@ fn is_retryable(error: &Error) -> bool {
         ErrorKind::Transport | ErrorKind::Unavailable | ErrorKind::Server
     ) || error
         .status
-        .is_some_and(|status| matches!(status, 408 | 425 | 429))
+        .is_some_and(|status| matches!(status, 408 | 425))
 }
 
 /// `Shared::send_typed` annotates all decode failures with its route code.

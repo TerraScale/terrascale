@@ -228,7 +228,10 @@ fn encode_subscribe(
     parameters: &[u8],
     checkpoint: Option<&Checkpoint>,
 ) -> Vec<u8> {
-    let mut out = vec![0x97, 1, 0, 0, 1, 0, 0, 0x94];
+    // Correlation 1 is the first client request identity in the published
+    // vector. Causation remains zero because this opening request has no
+    // preceding server frame.
+    let mut out = vec![0x97, 1, 0, 0, 1, 0, 1, 0x94];
     put_str(&mut out, subscription);
     put_str(&mut out, query);
     put_bin(&mut out, parameters);
@@ -246,8 +249,8 @@ fn put_str(out: &mut Vec<u8>, value: &str) {
     } else if bytes.len() <= u8::MAX as usize {
         out.extend([0xd9, bytes.len() as u8]);
     } else {
-        out.extend([0xda]);
-        out.extend((bytes.len() as u16).to_be_bytes());
+        out.push(0xdb);
+        out.extend((bytes.len() as u32).to_be_bytes());
     }
     out.extend(bytes);
 }
@@ -284,7 +287,18 @@ mod tests {
     fn subscribe_encoding_matches_pinned_vector_shape() {
         assert_eq!(
             encode_subscribe("q", "q", &[1, 2], None),
-            vec![0x97, 1, 0, 0, 1, 0, 0, 0x94, 0xa1, b'q', 0xa1, b'q', 0xc4, 2, 1, 2, 0xc0,]
+            vec![0x97, 1, 0, 0, 1, 0, 1, 0x94, 0xa1, b'q', 0xa1, b'q', 0xc4, 2, 1, 2, 0xc0,]
         );
+    }
+
+    #[test]
+    fn subscribe_encoding_uses_str32_for_long_queries_without_truncation() {
+        let query = "q".repeat(65_536);
+        let encoded = encode_subscribe("s", &query, &[], None);
+
+        // Envelope (8 bytes), body array (1 byte), and subscription (2
+        // bytes) precede the query's string header.
+        assert_eq!(&encoded[10..15], &[0xdb, 0, 1, 0, 0]);
+        assert_eq!(encoded.len(), 8 + 1 + 2 + 5 + query.len() + 2);
     }
 }
