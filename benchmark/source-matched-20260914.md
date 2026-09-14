@@ -18,10 +18,13 @@ The executed dependency copies were `TerraBase.dll`
 `8af72765d5716dfc4fbb01afe2abe5623f700fdd5429567a39380f44ce614be9` and
 `TerraBase.ZoneTree.dll`
 `0b6cbd5a58e7c30c2ab8a9f60b7851cc432b67697f6eb0678e2fcc613076a92b`.
-The normal dependency build was also attempted and is currently blocked by
-unrelated concurrent edits in `RuntimeIndexCodec.cs` (CS1503) and
-`MagicOnionInterNodeClient.cs` (CA1068); this does not invalidate the retained
-focused benchmark artifact.
+The normal dependency build was also attempted against the moving dirty
+checkout and did not produce a current release receipt. The retained failure
+includes source/analyzer errors in the storage transaction, restore metadata,
+replication contract, and transport slices; see the current build evidence in
+`../.codex/evidence/operation-context-terrabase-build-20260914.log`. This does
+not invalidate the retained focused benchmark artifact, but it does mean these
+numbers must not be presented as a clean solution qualification.
 
 The host was NixOS 26.05 x64 with .NET 10.0.12, an Intel Xeon E5-2660 v4,
 46 logical processors, 20,937,965,568 bytes available to the runtime, and
@@ -110,37 +113,69 @@ commits one real durable transaction, captures its `ReactiveChangeSet`, and
 publishes it exactly once while retaining per-subscriber frame timestamps and
 egress bytes at counts 1, 10, 100, and 1,000.
 
+The separate durable commit-to-feed harness now has a complete retained
+receipt. It commits through `StorageEngine.ApplyBatchAsync`, waits for
+`StorageChangeFeedWorker`, and delivers the shared maintenance result to
+responsive subscribers:
+
+| Subscribers | Responsive | Delivered frames | Egress bytes | p50 (µs) | p95 (µs) | p99 (µs) | Allocated B/frame | Receipt |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 1 | 5 | 3,248 | 5,291.90 | 7,815.96 | 8,287.91 | 161,332.80 | [receipt](receipts/20260914-durable-subscriptions-final/subscriptions-receipt.json) |
+| 10 | 9 | 45 | 30,268 | 3,951.90 | 9,651.24 | 10,048.64 | 49,809.07 | [receipt](receipts/20260914-durable-subscriptions-final/subscriptions-receipt.json) |
+| 100 | 99 | 495 | 326,386 | 4,688.10 | 11,617.01 | 11,700.33 | 7,112.63 | [receipt](receipts/20260914-durable-subscriptions-final/subscriptions-receipt.json) |
+| 1,000 | 999 | 4,995 | 3,285,388 | 12,575.30 | 18,038.34 | 18,450.61 | 3,488.53 | [receipt](receipts/20260914-durable-subscriptions-final/subscriptions-receipt.json) |
+
+The durable receipt is local commit-to-hub evidence on a dirty tree with no
+enforced cgroup envelope. It does not qualify public HTTP/CDN delivery,
+multi-Region fan-out, or capacity planning.
+
+## Native restore and authenticated loopback
+
+The separate native restore receipt ran five full-plus-incremental PITR cases
+against local filesystem object-store and restore directories. Restore and
+activation had p50/p95 of 68.820/180.010 ms; activation plus a fresh
+`StorageEngine` reopen had p50/p95 of 76.270/189.350 ms. See
+[native-backup-summary.md](receipts/native-backup-20260914/native-backup-summary.md).
+This is a one-host filesystem fixture, not a production RTO, remote object-store,
+crash, or multi-Region recovery claim.
+
+The retained MagicOnion loopback receipt used two HTTPS/mTLS hosts, three
+32-publication samples, duplicate/reverse delivery, and separate durable
+directories. Every sample sent 64 pushes and received 64 durable acknowledgements;
+the destination finished at durable/applied frontier 32 after 62 deferred
+responses. See [summary.md](receipts/20260914-magic-onion-final/summary.md).
+The run does not qualify WAN latency, packet loss, crash recovery, partition
+healing, or saturation.
+
 ## Larger-than-memory exercise
 
 The runner requires an explicit memory cap and checks that the estimated logical
-dataset exceeds it. The host did not enforce that cap through a visible cgroup,
-so these are capacity-envelope exercises rather than larger-than-host-memory
-claims. In these retained receipts, `memoryCapBytes` is a configured workload
-threshold only; no `memory.max` or `cpu.max` value was recorded, and the RSS
-values are host process observations. The configured cap must not be read as an
-enforced resource floor.
+dataset exceeds it. A configured `memoryCapBytes` threshold is not itself a
+cgroup limit. The receipts below separate unbound fixture observations from a
+run with a measured cgroup limit; neither proves a dataset larger than host
+memory.
 
 | Backend | Rows × payload | Logical dataset (B) | Configured cap (B) | Samples | Status | Receipt |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| StorageEngine | 8,192 × 2,048 B | 17,006,592 | 8,388,608 | 5 | complete | [receipt](receipts/20260914-source-matched-larger-memory-storage-engine-8192/larger-memory-receipt.json) |
-| ZoneTree | 8,192 × 2,048 B | 17,006,592 | 4,194,304 | 5 | complete | [receipt](receipts/20260914-source-matched-larger-memory-zonetree-8192/larger-memory-receipt.json) |
+| StorageEngine | 8,192 × 2,048 B | 17,006,592 | 8,388,608 | 5 | complete, cgroup unavailable | [receipt](receipts/20260914-source-matched-larger-memory-storage-engine-8192/larger-memory-receipt.json) |
+| ZoneTree | 8,192 × 2,048 B | 17,006,592 | 4,194,304 | 5 | complete, cgroup unavailable | [receipt](receipts/20260914-source-matched-larger-memory-zonetree-8192/larger-memory-receipt.json) |
 
-These two larger-than-memory receipts belong to the earlier `a1da5903…`
-benchmark artifact batch; their identity is retained in each JSON receipt.
-Each receipt includes warm-cache, close/reopen, cold-cache, distribution-shift,
-sustained-write, and resource measurements. The generated summaries contain
-the phase-level p50/p95/p99, allocations, CPU, RSS, WAL deltas, and write
-amplification where available:
+The two receipts above have no embedded commit or artifact identity and belong
+to an earlier benchmark artifact batch. Keep them as unbound fixture
+observations only; their generated summaries contain phase-level p50/p95/p99,
+allocations, CPU, RSS, WAL deltas, and write amplification where available:
 
 - [StorageEngine summary](receipts/20260914-source-matched-larger-memory-storage-engine-8192/larger-memory-summary.md)
 - [ZoneTree summary](receipts/20260914-source-matched-larger-memory-zonetree-8192/larger-memory-summary.md)
 
 The retained 32,768-row StorageEngine receipt has status `failed` and no
-measured samples: its error is schema validation for the benchmark tenant and
-collection during seeding. A separate retry left an empty raw-sample file and
-has no receipt. The benchmark path now passes `AllowSchemaless = true`, and the
-8,192-row receipts were rebuilt after that benchmark-only fix; no successful
-32,768-row result exists.
+measured samples. A separate retry left an empty raw-sample file and has no
+receipt; no successful 32,768-row result exists.
+
+A current source-bound StorageEngine run under the `cgroup256` directory also
+failed before the first sample with `OutOfMemoryException` during WAL recovery;
+the receipt records no cgroup limit and must not be treated as capacity proof:
+[receipt](receipts/20260914-cgroup256-larger-memory-storage-engine-8192-run1/larger-memory-receipt.json).
 
 An explicit cgroup run was completed for ZoneTree under a user systemd scope
 with `MemoryMax=256M` (`memory.max=268,435,456` bytes). Its 8,192-row logical

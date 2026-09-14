@@ -72,26 +72,23 @@ Do not call a host-memory run larger-than-memory evidence. Use an explicit
 cgroup memory limit with the larger-than-memory workload and retain the limit
 in the receipt. A missing cgroup limit is recorded as unavailable.
 
-## First harness receipt
+## Source-matched harness receipt
 
-The following receipt was generated on 2026-09-14 with the command above,
+The retained source-matched v3 receipt was generated on 2026-09-14 with the command above,
 using five samples, 100 measured operations per sample, 100 incremental log
 entries, 256-byte payloads, .NET 10.0.12, NixOS 26.05 x64, Intel Xeon E5-2660
 v4, 46 logical processors, interactive non-server GC, and no visible cgroup
-memory or CPU limit.
+memory or CPU limit. It uses HEAD `9e84cc83827d1603bb307d23c6722761f1d029b4`
+with a dirty tree and runner artifact
+`9a4fd71e58057954c8b0840d2688c61bb89eb043a13fd5078dd3494e53962e3b`.
 
 | Boundary | Status | Samples | Throughput | p50 | p95 | p99 | Allocated bytes/op | CPU % | RSS after bytes | Backlog / log entries | Runner artifact SHA-256 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Replication lag | complete | 5 | 12,915.06 ops/s | 62.20 µs | 114.50 µs | 297.40 µs | 6,777.36 | 2.29 | 68,829,184 | 0 ops | `ea33602170aa0159efd87a042ce7f4c5276ec13f59bdf76231c0536bc1f45fb3` |
-| Restore time | complete | 5 | 407.51 restores/s | 1.96 ms | 3.17 ms | 4.31 ms | 378,557.60 | 2.40 | 80,539,648 | 100 entries | `ea33602170aa0159efd87a042ce7f4c5276ec13f59bdf76231c0536bc1f45fb3` |
-| Reactive fan-out | complete | 1/10/100/1000 | — | see receipt | — | — | see receipt | see receipt | see receipt | — | local durable feed | [`subscriptions-receipt.json`](receipts/20260914-durable-subscriptions-final/subscriptions-receipt.json) |
-
-Receipt directory: `/tmp/terrascale-recovery-final.Mz2fEv` during the initial
-measurement. Future admitted numbers belong in a retained `bench/receipts/`
-directory and must keep their raw JSONL files beside the receipt and summary.
+| Replication lag | complete | 5 | 12,248.15 ops/s | 67.30 µs | 133.00 µs | 205.80 µs | 6,452.40 | 2.30 | 69,169,152 | 0 ops | `9a4fd71e58057954c8b0840d2688c61bb89eb043a13fd5078dd3494e53962e3b` |
+| Restore time | complete | 5 | 319.78 restores/s | 2.93 ms | 5.19 ms | 7.39 ms | 516,785.20 | 2.59 | 81,612,800 | 100 entries | `9a4fd71e58057954c8b0840d2688c61bb89eb043a13fd5078dd3494e53962e3b` |
+| Reactive fan-out | complete | 1/10/100/1000 | — | see retained receipt | — | — | see retained receipt | see retained receipt | see retained receipt | — | local durable feed | [`subscriptions-summary.md`](receipts/20260914-durable-subscriptions-final/subscriptions-summary.md) |
 
 The durable subscription receipt is retained separately at
-`bench/receipts/20260914-durable-subscriptions/`. It reports p50/p95/p99
 delivery latency, origin evaluations, shared maintenance updates, allocations,
 CPU, RSS, egress, bounded backpressure, and resumable delivery for 1, 10, 100,
 and 1,000 subscribers.
@@ -106,16 +103,17 @@ nice -n 19 dotnet build bench/TerraBase.Benchmarks/TerraBase.Benchmarks.csproj \
 ```
 
 That focused command passed with zero warnings and errors. A full dependency
-build also attempted the same Release build but was blocked by the existing
-unrelated `Utf16ValueStringBuilder` error in
-`src/TerraBase/Observability/Metrics/PrometheusExposition.cs`; the broad build
-owner must rerun the normal command after that source issue is resolved.
+build was also attempted against the moving dirty checkout and remains blocked
+by current source/analyzer errors; see
+`../.codex/evidence/operation-context-terrabase-build-20260914.log`. The
+focused benchmark artifact is therefore a local fixture receipt, not a clean
+solution qualification.
 
 The measured replication lag is a useful regression signal for the local
 engine seam, but it cannot answer network or durable replication questions.
-The smallest next measurement for that question is an authenticated loopback
-through the real MagicOnion service with two durable engine directories,
-retaining send timestamp, durable acknowledgement, applied frontier, and
-destination frontier separately. The smallest next restore measurement is a
-StorageEngine snapshot/restore target on a fixed filesystem and a matching
-ZoneTree target once that adapter exists.
+The retained MagicOnion loopback receipt covers two HTTPS/mTLS hosts with
+separate durable directories, duplicate/reverse delivery, durable acknowledgements,
+deferred responses, and final durable/applied frontiers; it does not qualify
+WAN, crash, partition-healing, or saturation behavior. The retained native
+restore receipt covers a local filesystem target and clean reopen; it does not
+qualify remote object stores, power loss, or production RPO/RTO.
