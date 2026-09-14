@@ -10,8 +10,7 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 - When building rust always
   - Lower priority (recommended, yields to other work)
   - When running make and using the Makefile always use the lowest cpu priority
-- All of all layers for example the storage layer must use an interface and be abstract so we can either use SQLite, or ZoneTree or w/e
-
+- All of all layers for example the storage layer must use an interface and be abstract so we switch them with ease
 # Libraries
 - We should use MagincOnion for C# <-> C# comunnication
 - We should use TUnit for tests
