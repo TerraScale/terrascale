@@ -9,6 +9,7 @@ on:
 
 jobs:
   ci:
+    name: Run ts-landing checks
     uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
     with:
       repo: ts-landing
