@@ -11,17 +11,76 @@ concurrency:
   group: ${{ forgejo.workflow }}-${{ forgejo.repository }}-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
+# DEP-1 must provide an independently accepted replacement before this can run.
+# These sentinels keep the bootstrap fail-closed until that review is complete.
+env:
+  TS_DEPLOY_REPOSITORY: "TerraScale-Old/TerraScale.Deploy"
+  TS_DEPLOY_REVISION: "PENDING_DEP1_GREEN_COMMIT"
+  TS_DEPLOY_EXPECTED_TREE: "PENDING_DEP1_GREEN_TREE"
+
 jobs:
   bootstrap:
     name: deploy-cli
     runs-on: terrascale-builder
     timeout-minutes: 30
+    permissions: { contents: read }
     steps:
-      - name: Block until the replacement Deploy CLI passes DEP-1
+      - name: Require the least-privileged Deploy repository token
+        shell: bash
+        env:
+          TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN: ${{ secrets.TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN:-}" ]]; then
+            echo "X-10 is blocked: TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN is not configured." >&2
+            exit 1
+          fi
+
+      - name: Require the accepted Deploy commit and tree pin
         shell: bash
         run: |
-          echo "X-10 fail-closed: DEP-1 is reopened and no ts-deploy commit is authorized for consumers. Add the source checkout with TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN only after the replacement full commit and tree are independently green and Forgejo-qualified." >&2
-          exit 1
+          set -euo pipefail
+          if [[ ! "${TS_DEPLOY_REVISION}" =~ ^[0-9a-f]{40}$ || ! "${TS_DEPLOY_EXPECTED_TREE}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "X-10 fail-closed: DEP-1 is reopened and no ts-deploy commit is authorized for consumers. Replace TS_DEPLOY_REVISION and TS_DEPLOY_EXPECTED_TREE only after the replacement commit and tree pass independent review and Forgejo." >&2
+            exit 1
+          fi
+
+      - name: Check out the exact reviewed Deploy source
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: ${{ env.TS_DEPLOY_REPOSITORY }}
+          ref: ${{ env.TS_DEPLOY_REVISION }}
+          token: ${{ secrets.TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: ts-deploy
+
+      - uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: ts-deploy/go.mod
+          cache: false
+
+      - name: Build the exact reviewed Deploy CLI
+        shell: bash
+        working-directory: ts-deploy
+        env:
+          CGO_ENABLED: "0"
+          GOBIN: ${{ runner.temp }}/terrascale-deploy/bin
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TS_DEPLOY_REVISION}"
+          test "$(git rev-parse HEAD^{tree})" = "${TS_DEPLOY_EXPECTED_TREE}"
+          mkdir -p "${GOBIN}"
+          go build -trimpath -o "${GOBIN}/terrascale-deploy" ./cmd/terrascale-deploy
+          chmod 0755 "${GOBIN}/terrascale-deploy"
+
+      - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: deploy-cli
+          path: ${{ runner.temp }}/terrascale-deploy/bin
+          if-no-files-found: error
+          retention-days: 1
 
   plan:
     name: plan
@@ -35,6 +94,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
@@ -55,6 +115,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -67,8 +128,10 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           repository: TerraScale/ts-dashboard
+          ref: develop
           path: ts-typescript/Dashboard
           fetch-depth: 0
+          token: ${{ secrets.TERRASCALE_DASHBOARD_REPOSITORY_READ_TOKEN }}
           persist-credentials: false
       - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
@@ -87,6 +150,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -111,6 +175,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -135,6 +200,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -160,6 +226,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -187,8 +254,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x .tools/terrascale-deploy
-          candidate_command=(ci build-candidate)
-          .tools/terrascale-deploy "${candidate_command[@]}" --repository-root ts-typescript --target npm --expected-tree "${EXPECTED_TREE}" --receipt ts-typescript/artifacts/evidence/npm.build-receipt.json
+          .tools/terrascale-deploy ci build-candidate --repository-root ts-typescript --target npm --expected-tree "${EXPECTED_TREE}" --receipt ts-typescript/artifacts/evidence/npm.build-receipt.json
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: candidate-npm
@@ -209,6 +275,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -242,6 +309,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -277,6 +345,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -301,6 +370,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -331,6 +401,7 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 0
+          token: ""
           persist-credentials: false
           path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
