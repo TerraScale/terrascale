@@ -2,19 +2,15 @@
 
 Status: **scaffold; no current C# benchmark receipt is admitted**.
 
-The latest recorded validation snapshot is dated **2026-09-14** and tested
-revision `89a7cb722e59586f34ea98ead772b368599f4c6a` (`main`). The shared
-worktree has continued to change after that snapshot, so moving `HEAD` is not
-a benchmark result. Every receipt must record its exact revision, dirty state,
-and artifact digest. Runtime target:
-.NET 11 RC, C# only.
+The latest correctness snapshot is dated **2026-09-14** at revision
+`cf9796e31d3c8676a521290a56df1bd70db90422` (`main`). It is not a benchmark
+receipt. Every performance receipt must record its exact revision, dirty state,
+and artifact digest. Runtime target: .NET 10 with SDK 10.0.401, C# 14 only.
 
-The host path is not an end-to-end durable benchmark target: the default host
-uses `InMemoryStorageProvider`, the path overload uses the JSON
-`FileStorageProvider`, and `StorageEngine` is not wired into the host. The
-MagicOnion package and contract interfaces do not constitute a live
-TerraBase-to-TerraBase adapter or peer endpoint. Component rows below must keep
-those boundaries explicit.
+The default host requires `TERRABASE_DATA_PATH` and uses the durable
+`StorageEngine`; `ZONETREE` is an explicit alternative backend. Component rows
+below must still keep local-provider, host, and TerraBase-to-TerraBase network
+boundaries explicit.
 
 Historical Rust and SQLite measurements belong to earlier source states and
 are excluded. The current private inter-node surface uses keyed MessagePack,
