@@ -102,7 +102,6 @@ public sealed class TerraScaleDocumentsClientTests
         foreach (var options in new[]
         {
             new TerraScaleDocumentReadOptions(AllowStale: true),
-            new TerraScaleDocumentReadOptions(IfNoneMatch: "\"old\""),
             new TerraScaleDocumentReadOptions(Session: "session-1"),
             new TerraScaleDocumentReadOptions(At: 42),
         })
@@ -112,6 +111,23 @@ public sealed class TerraScaleDocumentsClientTests
         }
 
         await Assert.That(handler.Request).IsNull();
+    }
+
+    [Test]
+    public async Task ConditionalGetSendsIfNoneMatchAndSurfacesNotModified()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.NotModified, string.Empty, "\"r1\"");
+        using var http = new HttpClient(handler);
+        var client = CreateClient(http);
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Documents.GetAsync(
+            "orders",
+            "items",
+            "one",
+            new TerraScaleDocumentReadOptions(IfNoneMatch: " \"r1\" ")));
+
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.NotModified);
+        await Assert.That(handler.Request!.IfNoneMatch).IsEqualTo("\"r1\"");
     }
 
     [Test]

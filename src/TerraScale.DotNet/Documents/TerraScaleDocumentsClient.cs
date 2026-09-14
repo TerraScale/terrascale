@@ -24,12 +24,12 @@ public sealed class TerraScaleDocumentsClient
         var route = DocumentRoute(database, collection, documentId).RequestUri;
         ValidateReadOptions(options);
         if (options?.At is not null) return Gap<TerraScaleDocument>("document_read_point_in_time", cancellationToken);
-        if (options?.AllowStale == true || !string.IsNullOrWhiteSpace(options?.IfNoneMatch) || !string.IsNullOrWhiteSpace(options?.Session))
+        if (options?.AllowStale == true || !string.IsNullOrWhiteSpace(options?.Session))
             return Gap<TerraScaleDocument>("document_read_consistency", cancellationToken);
         if (client.AutomaticSessionConsistencyEnabled)
             return Gap<TerraScaleDocument>("document_read_consistency", cancellationToken);
         return client.SendAsync<JsonElement, TerraScaleDocument>(HttpMethod.Get, route, body: null, preferredRegion: null,
-            configureRequest: null,
+            configureRequest: request => ConfigureRead(request, options),
             (value, response) => client.ObserveDocumentRead(ReadDocument(value, response, database, collection, documentId), response), cancellationToken);
     }
 
@@ -92,6 +92,14 @@ public sealed class TerraScaleDocumentsClient
         if (options?.CreateOnly == true) request.Headers.TryAddWithoutValidation("If-None-Match", "*");
         if (!string.IsNullOrWhiteSpace(options?.ExpectedChangeToken)) request.Headers.TryAddWithoutValidation("If-Match", StrongEtag(options.ExpectedChangeToken));
         if (options?.Durability is { } durability) request.Headers.TryAddWithoutValidation("X-TerraScale-Durability", durability switch { TerraScaleDurability.Regional => "regional", TerraScaleDurability.Global => "global", _ => throw new ArgumentOutOfRangeException(nameof(options)) });
+    }
+
+    private static void ConfigureRead(HttpRequestMessage request, TerraScaleDocumentReadOptions? options)
+    {
+        if (!string.IsNullOrWhiteSpace(options?.IfNoneMatch))
+        {
+            request.Headers.TryAddWithoutValidation("If-None-Match", options.IfNoneMatch.Trim());
+        }
     }
 
     private static TerraScaleDocument ReadDocument(JsonElement value, HttpResponseMessage response, string database, string collection, string documentId)
