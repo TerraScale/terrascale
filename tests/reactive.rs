@@ -628,6 +628,33 @@ fn numeric_revisions_are_ordered_and_stale_deltas_are_idempotent() {
     assert_eq!(subscription.revision(), Some("10"));
 }
 
+#[test]
+fn canonical_delta_digest_mismatch_requires_view_reset() {
+    let mut subscription = terrascale::Subscription::new("sub");
+    subscription.apply_snapshot(ViewSnapshot {
+        view_generation: 1,
+        authorization_generation: 1,
+        revision: "1".to_owned(),
+        items: vec![],
+        digest: "0".repeat(64),
+        checkpoint: terrascale::Checkpoint::new(vec![1]),
+    });
+
+    let outcome = subscription.apply_delta(ViewDelta {
+        view_generation: 1,
+        from_revision: "1".to_owned(),
+        to_revision: "2".to_owned(),
+        operations: vec![],
+        digest: "f".repeat(64),
+        checkpoint: terrascale::Checkpoint::new(vec![2]),
+    });
+    assert_eq!(
+        outcome,
+        ApplyOutcome::ResetRequired(ResetReason::ViewDiverged)
+    );
+    assert_eq!(subscription.revision(), Some("1"));
+}
+
 #[tokio::test]
 async fn http_backpressure_is_a_typed_reset_without_retrying_429() {
     let mock = Mock::new([

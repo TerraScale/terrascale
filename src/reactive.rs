@@ -622,6 +622,9 @@ impl Subscription {
                         return ApplyOutcome::ResetRequired(ResetReason::InvalidOperations);
                     }
                 }
+                if is_digest(&delta.digest) && result_digest(&candidate) != delta.digest {
+                    return ApplyOutcome::ResetRequired(ResetReason::ViewDiverged);
+                }
                 self.items = candidate;
                 self.revision = Some(delta.to_revision.clone());
                 self.digest = delta.digest.clone();
@@ -655,6 +658,47 @@ fn revision_suffix(value: &str) -> Option<(&str, u64)> {
         .map(|number| (prefix, number))
 }
 
+fn is_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn result_digest(items: &[ResultItem]) -> String {
+    if items.is_empty() {
+        return "0".repeat(64);
+    }
+    let mut bytes = Vec::new();
+    for item in items {
+        push_u64(&mut bytes, item.identity.len() as u64);
+        bytes.extend_from_slice(item.identity.as_bytes());
+        let mut fields = item.value.iter().collect::<Vec<_>>();
+        fields.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
+        for (path, value) in fields {
+            push_u64(&mut bytes, path.len() as u64);
+            bytes.extend_from_slice(path.as_bytes());
+            push_u64(&mut bytes, value.len() as u64);
+            bytes.extend_from_slice(value);
+        }
+        bytes.push(0xff);
+    }
+
+    let mut digest = String::with_capacity(64);
+    for lane in 0..4_u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ lane.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        for byte in &bytes {
+            hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
+        }
+        for byte in hash.to_le_bytes() {
+            use std::fmt::Write as _;
+            write!(&mut digest, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+    }
+    digest
+}
+
+fn push_u64(bytes: &mut Vec<u8>, value: u64) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
 fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) -> bool {
     match operation {
         ViewOperation::Insert {
@@ -665,7 +709,12 @@ fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) -> bo
             if items.iter().any(|item| &item.identity == identity) {
                 return false;
             }
-            let index = (*position as usize).min(items.len());
+            let Ok(index) = usize::try_from(*position) else {
+                return false;
+            };
+            if index > items.len() {
+                return false;
+            }
             items.insert(
                 index,
                 ResultItem {
@@ -685,6 +734,13 @@ fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) -> bo
         }
         ViewOperation::Patch { identity, changes } => {
             if let Some(item) = items.iter_mut().find(|item| &item.identity == identity) {
+                if changes.iter().enumerate().any(|(index, change)| {
+                    changes[..index]
+                        .iter()
+                        .any(|previous| previous.path == change.path)
+                }) {
+                    return false;
+                }
                 for change in changes {
                     if let Some(value) = &change.value {
                         item.value.insert(change.path.clone(), value.clone());
@@ -705,7 +761,12 @@ fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) -> bo
         ViewOperation::Move { identity, position } => {
             if let Some(index) = items.iter().position(|item| &item.identity == identity) {
                 let item = items.remove(index);
-                let target = (*position as usize).min(items.len());
+                let Ok(target) = usize::try_from(*position) else {
+                    return false;
+                };
+                if target > items.len() {
+                    return false;
+                }
                 items.insert(target, item);
                 true
             } else {
