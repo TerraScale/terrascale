@@ -1,4 +1,8 @@
+using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
 
 namespace TerraBase.Benchmarks;
@@ -103,7 +107,7 @@ public static class ReceiptValidation
             ValidateConfiguration(receipt, errors);
         }
 
-        if (TryObject(receipt, "workloads", out var workloads))
+        if (TryArray(receipt, "workloads", out var workloads))
         {
             ValidateStorageReceipt(receipt, workloads, status, minimumSamples, errors);
         }
@@ -122,6 +126,21 @@ public static class ReceiptValidation
 
         return Result(errors, status);
     }
+
+    /// <summary>Validates a serializable receipt object.</summary>
+    public static ReceiptValidationResult Validate<TReceipt>(
+        TReceipt receipt,
+        int minimumSamples = MinimumMeasuredSamples)
+    {
+        ArgumentNullException.ThrowIfNull(receipt);
+        return Validate(JsonSerializer.SerializeToElement(receipt), minimumSamples);
+    }
+
+    /// <summary>Alias for callers that name the persisted artifact explicitly.</summary>
+    public static ReceiptValidationResult ValidateReceipt(
+        string receiptPath,
+        int minimumSamples = MinimumMeasuredSamples) =>
+        ValidateFile(receiptPath, minimumSamples);
 
     private static void ValidateCommonIdentity(
         JsonElement receipt,
@@ -174,13 +193,13 @@ public static class ReceiptValidation
             errors.Add("environment.gitDirty must record whether the source tree was dirty.");
         }
 
-        var processorCount = NumberProperty(environment, "processorCount", errors, required: requireClaimIdentity);
+        var processorCount = NumberProperty(environment, "processorCount", errors, required: requireClaimIdentity, path: "environment");
         if (requireClaimIdentity && (!processorCount.HasValue || processorCount.Value < 1 || processorCount.Value != Math.Truncate(processorCount.Value)))
         {
             errors.Add("environment.processorCount must be a positive integer.");
         }
 
-        var memory = NumberProperty(environment, "availableMemoryBytes", errors, required: requireClaimIdentity);
+        var memory = NumberProperty(environment, "availableMemoryBytes", errors, required: requireClaimIdentity, path: "environment");
         if (requireClaimIdentity && (!memory.HasValue || memory.Value <= 0 || memory.Value != Math.Truncate(memory.Value)))
         {
             errors.Add("environment.availableMemoryBytes must be a positive integer.");
@@ -294,7 +313,7 @@ public static class ReceiptValidation
 
             var workloadStatus = StringProperty(workload, "status", errors, required: true, path);
             var storage = StringProperty(workload, "storage", errors, required: true, path);
-            var workloadName = StringProperty(workload, "workload", errors, required: true, path);
+            StringProperty(workload, "workload", errors, required: true, path);
             RequiredText(workload, "temperature", errors, path);
             RequiredText(workload, "rawSamplesPath", errors, path);
 
@@ -356,10 +375,6 @@ public static class ReceiptValidation
                     errors);
             }
 
-            if (status == "complete" && storage is not null && workloadName is not null)
-            {
-                ValidateWalDefinition(storage, workloadName, samples, path, errors);
-            }
         }
     }
 
@@ -510,40 +525,6 @@ public static class ReceiptValidation
         }
     }
 
-    private static void ValidateWalDefinition(
-        string storage,
-        string workload,
-        JsonElement samples,
-        string path,
-        List<string> errors)
-    {
-        if (!string.Equals(storage, "StorageEngine", StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        // A WAL measurement is meaningful for a write boundary. For reads and
-        // scans, zero bytes is a valid observed delta and a null ratio carries
-        // no amplification claim.
-        if (!string.Equals(workload, "PointWrite", StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        var index = 0;
-        foreach (var sample in samples.EnumerateArray())
-        {
-            if (sample.ValueKind == JsonValueKind.Object &&
-                NullableNumberProperty(sample, "bytesWritten", errors, $"{path}.samples[{index}]") is null)
-            {
-                // A missing WAL observation is allowed to represent an
-                // unavailable instrument; it is never converted into zero.
-            }
-
-            index++;
-        }
-    }
-
     private static void ValidateUnsupportedReceipt(JsonElement receipt, List<string> errors)
     {
         var hasReason = false;
@@ -565,7 +546,7 @@ public static class ReceiptValidation
                     continue;
                 }
 
-                var status = StringProperty(workload, "status", errors, required: true, "workloads");
+                var status = StringProperty(workload, "status", errors, required: true, path: "workloads");
                 hasReason |= StringProperty(workload, "error", errors, required: false) is { Length: > 0 };
                 hasReason |= StringProperty(workload, "unsupportedReason", errors, required: false) is { Length: > 0 };
                 if (status is not null && !string.Equals(status, "unsupported", StringComparison.OrdinalIgnoreCase))
@@ -590,7 +571,7 @@ public static class ReceiptValidation
                     continue;
                 }
 
-                var status = StringProperty(item, "status", errors, required: true, "cases");
+                var status = StringProperty(item, "status", errors, required: true, path: "cases");
                 hasReason |= StringProperty(item, "error", errors, required: false) is { Length: > 0 };
                 hasReason |= StringProperty(item, "unsupportedReason", errors, required: false) is { Length: > 0 };
                 if (status is not null && !string.Equals(status, "unsupported", StringComparison.OrdinalIgnoreCase))
@@ -761,24 +742,46 @@ public static class ReceiptValidation
         return number;
     }
 
-    private static double? NumberProperty(JsonElement objectElement, string name, List<string> errors, bool required, string path, bool unused = false) =>
-        NumberProperty(objectElement, name, errors, required, path);
-
     private static bool TryObject(JsonElement objectElement, string name, out JsonElement value) =>
         TryGetProperty(objectElement, name, out value) && value.ValueKind == JsonValueKind.Object;
 
     private static bool TryArray(JsonElement objectElement, string name, out JsonElement value) =>
         TryGetProperty(objectElement, name, out value) && value.ValueKind == JsonValueKind.Array;
 
-    private static bool TryBoolean(JsonElement objectElement, string name, out bool value) =>
-        TryGetProperty(objectElement, name, out var property) && property.ValueKind == JsonValueKind.True
-            ? (value = true) == true
-            : TryGetProperty(objectElement, name, out property) && property.ValueKind == JsonValueKind.False
-                ? (value = false) == false
-                : (value = false) && false;
+    private static bool TryBoolean(JsonElement objectElement, string name, out bool value)
+    {
+        if (!TryGetProperty(objectElement, name, out var property))
+        {
+            value = false;
+            return false;
+        }
 
-    private static bool TryNumber(JsonElement objectElement, string name, out double value) =>
-        TryGetProperty(objectElement, name, out var property) && TryNumber(property, out value);
+        if (property.ValueKind == JsonValueKind.True)
+        {
+            value = true;
+            return true;
+        }
+
+        if (property.ValueKind == JsonValueKind.False)
+        {
+            value = false;
+            return true;
+        }
+
+        value = false;
+        return false;
+    }
+
+    private static bool TryNumber(JsonElement objectElement, string name, out double value)
+    {
+        if (TryGetProperty(objectElement, name, out var property) && TryNumber(property, out value))
+        {
+            return true;
+        }
+
+        value = 0;
+        return false;
+    }
 
     private static bool TryNumber(JsonElement value, out double number)
     {
