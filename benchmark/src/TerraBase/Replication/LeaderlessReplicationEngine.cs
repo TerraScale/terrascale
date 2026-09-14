@@ -151,7 +151,8 @@ public sealed class LeaderlessReplicationEngine
         // by a replica that happened to receive an older body later.
         var deleted = left.Deleted || right.Deleted;
         var body = deleted ? null : MergeBodies(left, right);
-        return winner with { Context = context, Body = body, CanonicalBody = null, Deleted = deleted };
+        var canonical = body is { } value ? JsonSerializer.SerializeToUtf8Bytes(value) : null;
+        return winner with { Context = context, Body = null, CanonicalBody = canonical, Deleted = deleted };
     }
 
     private static int Compare(ReplicationRecord left, ReplicationRecord right) =>

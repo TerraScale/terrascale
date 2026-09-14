@@ -26,6 +26,8 @@ public sealed class ProductionPrimitivesTests
             }
             await using var manager = new SqliteBackupManager(database, new SqliteBackupOptions { DirectoryPath = backups, RetainedSnapshots = 1 });
             var snapshot = await manager.CreateSnapshotAsync();
+            await Assert.That(manager.Health.Healthy).IsTrue();
+            await Assert.That(manager.Health.RecoverableJournalSequence).IsEqualTo(snapshot.JournalSequence);
             await SqliteBackupManager.RestoreAsync(snapshot.SnapshotPath, restored);
             await using var reopened = new SqliteStorageProvider(restored);
             var read = await reopened.ReadAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"));
@@ -33,6 +35,33 @@ public sealed class ProductionPrimitivesTests
 
             await File.AppendAllTextAsync(snapshot.SnapshotPath, "tampered");
             await Assert.ThrowsAsync<InvalidDataException>(() => SqliteBackupManager.RestoreAsync(snapshot.SnapshotPath, Path.Combine(root, "bad.db")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
+    public async Task BackupReplicaPublishesArtifactsAtomicallyAndRejectsBadHashes()
+    {
+        var root = NewDirectory();
+        var database = Path.Combine(root, "data.db");
+        try
+        {
+            await using (var provider = new SqliteStorageProvider(database))
+            {
+                using var body = JsonDocument.Parse("{\"value\":9}");
+                await provider.UpsertAsync(new DocumentKey(new TenantId("tenant"), new CollectionId("items"), "one"), body.RootElement, DocumentPrecondition.Missing);
+            }
+            var manager = new SqliteBackupManager(database, new SqliteBackupOptions { DirectoryPath = Path.Combine(root, "staging") });
+            await using (manager)
+            {
+                var replica = new FileBackupReplica(Path.Combine(root, "replica"));
+                var snapshot = await manager.ReplicateSnapshotAsync(replica);
+                await Assert.That(File.Exists(Path.Combine(root, "replica", Path.GetFileName(snapshot.SnapshotPath)))).IsTrue();
+                await using var bad = new MemoryStream(Encoding.UTF8.GetBytes("bad"));
+                await Assert.ThrowsAsync<InvalidDataException>(() => replica.PutAsync("bad", bad, new string('0', 64)));
+                await using var valid = new MemoryStream(Encoding.UTF8.GetBytes("valid"));
+                await Assert.ThrowsAsync<ArgumentException>(() => replica.PutAsync("../escape", valid, new string('0', 64)));
+            }
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -55,12 +84,23 @@ public sealed class ProductionPrimitivesTests
         await Assert.That(applied.BodyBytes).IsNotNull();
         b.Apply(first);
         b.Apply(dependent);
-        a.Apply(dependent);
+        var merged = a.Apply(dependent);
+        await Assert.That(merged.Outcome).IsEqualTo(ReplicationApplyOutcome.Applied);
+        await Assert.That(merged.Body).IsNull();
+        await Assert.That(merged.BodyBytes).IsNotNull();
         var left = a.Read(key);
         var right = b.Read(key);
         await Assert.That(left?.GetProperty("a").GetInt32()).IsEqualTo(1);
         await Assert.That(left?.GetProperty("b").GetInt32()).IsEqualTo(2);
         await Assert.That(right?.GetRawText()).IsEqualTo(left?.GetRawText());
+
+        var concurrentA = ReplicationRecord.FromCanonicalBytes(key, new("region-a", 2), new Dictionary<string, ulong>(), 10, false, Encoding.UTF8.GetBytes("{\"left\":true}"));
+        var concurrentB = ReplicationRecord.FromCanonicalBytes(key, new("region-b", 2), new Dictionary<string, ulong>(), 11, false, Encoding.UTF8.GetBytes("{\"right\":true}"));
+        var c1 = new LeaderlessReplicationEngine();
+        var c2 = new LeaderlessReplicationEngine();
+        c1.Apply(concurrentA); c1.Apply(concurrentB);
+        c2.Apply(concurrentB); c2.Apply(concurrentA);
+        await Assert.That(c1.Read(key)?.GetRawText()).IsEqualTo(c2.Read(key)?.GetRawText());
     }
 
     [Test]

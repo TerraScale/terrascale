@@ -27,6 +27,10 @@ public sealed record SqliteBackupManifest(
 /// <summary>A checksummed, resumable byte range from SQLite's WAL.</summary>
 public sealed record SqliteWalSegment(string Generation, long StartOffset, long EndOffset, string Sha256, string Path);
 
+/// <summary>Latest locally observed backup recovery state.</summary>
+public sealed record SqliteBackupHealth(bool Healthy, DateTimeOffset? LastSuccess, DateTimeOffset? LastFailure,
+    long? RecoverableJournalSequence, string? Error);
+
 /// <summary>Online, crash-safe SQLite snapshots with bounded retention.</summary>
 public sealed class SqliteBackupManager : IAsyncDisposable
 {
@@ -36,6 +40,7 @@ public sealed class SqliteBackupManager : IAsyncDisposable
     private readonly SemaphoreSlim gate = new(1, 1);
     private string? walGeneration;
     private long walOffset = 32;
+    private SqliteBackupHealth health = new(false, null, null, null, "no snapshot has completed");
 
     public SqliteBackupManager(string databasePath, SqliteBackupOptions options)
     {
@@ -97,7 +102,14 @@ public sealed class SqliteBackupManager : IAsyncDisposable
                 await File.WriteAllTextAsync(manifestPath, JsonSerializer.Serialize(manifest), cancellationToken).ConfigureAwait(false);
                 await FlushFileAsync(manifestPath, cancellationToken).ConfigureAwait(false);
                 await PruneAsync(cancellationToken).ConfigureAwait(false);
+                health = new SqliteBackupHealth(true, manifest.CreatedAt, health.LastFailure, manifest.JournalSequence, null);
                 return manifest;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                health = new SqliteBackupHealth(false, health.LastSuccess, DateTimeOffset.UtcNow,
+                    health.RecoverableJournalSequence, exception.Message);
+                throw;
             }
             finally
             {
@@ -105,6 +117,35 @@ public sealed class SqliteBackupManager : IAsyncDisposable
             }
         }
         finally { gate.Release(); }
+    }
+
+    /// <summary>Returns the latest backup state; healthy means a verified snapshot exists.</summary>
+    public SqliteBackupHealth Health => health;
+
+    /// <summary>
+    /// Runs the bounded backup loop: one verified base snapshot followed by
+    /// periodic WAL frame capture until cancellation. When a replica is
+    /// supplied, artifacts are uploaded only after local checksum validation.
+    /// </summary>
+    public async Task RunAsync(IBackupReplica? replica = null, CancellationToken cancellationToken = default)
+    {
+        if (replica is null) await CreateSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        else await ReplicateSnapshotAsync(replica, cancellationToken).ConfigureAwait(false);
+        using var timer = new PeriodicTimer(options.Interval);
+        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+        {
+            try
+            {
+                if (replica is null) await CaptureWalSegmentAsync(cancellationToken).ConfigureAwait(false);
+                else await ReplicateWalSegmentAsync(replica, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                health = new SqliteBackupHealth(false, health.LastSuccess, DateTimeOffset.UtcNow,
+                    health.RecoverableJournalSequence, exception.Message);
+                throw;
+            }
+        }
     }
 
     /// <summary>Creates and uploads a complete immutable snapshot artifact pair.</summary>
@@ -201,6 +242,10 @@ public sealed class SqliteBackupManager : IAsyncDisposable
         {
             var manifest = JsonSerializer.Deserialize<SqliteBackupManifest>(await File.ReadAllTextAsync(manifestPath, cancellationToken).ConfigureAwait(false))
                 ?? throw new InvalidDataException("Backup manifest is empty.");
+            if (!string.Equals(manifest.Format, FormatVersion, StringComparison.Ordinal))
+                throw new InvalidDataException($"Unsupported backup format '{manifest.Format}'.");
+            if (manifest.Bytes != new FileInfo(snapshotPath).Length)
+                throw new InvalidDataException("Backup manifest length does not match the snapshot.");
             var actual = await ComputeHashAsync(snapshotPath, cancellationToken).ConfigureAwait(false);
             if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(actual), Convert.FromHexString(manifest.Sha256)))
                 throw new InvalidDataException("Backup snapshot integrity verification failed.");
