@@ -19,7 +19,7 @@ test("CI delegates to the central ts-deploy reusable workflow", async () => {
     "utf8",
   );
 
-  // The whole pipeline — checkout, version-pinned ts-deploy install, and
+  // The whole pipeline — checkout, ts-deploy install, and
   // verification — lives in the reusable workflow this repository calls. The
   // caller owns only the job mapping, permissions, and secrets passthrough.
   assert.match(
@@ -33,7 +33,7 @@ test("CI delegates to the central ts-deploy reusable workflow", async () => {
     workflow,
     /^(?:\s*-?\s*run:.*\b(?:npm|make contracts|git diff --exit-code)\b|.*\b(?:check:(?:openapi|forbidden-surface|route-manifest|public-contract-fixture)|node --test|generate-(?:route-manifest|openapi))\b)/mu,
   );
-  // The install and digest verification steps moved into the reusable
+  // The install step moved into the reusable
   // workflow; nothing vendored remains in this repository.
   assert.doesNotMatch(workflow, /actions\/ts-deploy/u);
 });

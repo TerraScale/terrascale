@@ -3,7 +3,7 @@
 `@terrascale/sdk` is published to the public npm registry. The repository uses
 one `main` branch. Its [CI workflow](../.forgejo/workflows/ci.yml) calls the
 central `ts-deploy` reusable workflow, which checks out the event revision,
-installs the version-pinned `ts-deploy` binary, and runs
+installs the newest published `ts-deploy` release binary, and runs
 `ts-deploy ci --repo ts-typescript` on the `terrascale-builder` runner. There is
 no manual promotion or pull-request release workflow.
 
