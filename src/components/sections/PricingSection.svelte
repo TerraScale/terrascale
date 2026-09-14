@@ -22,6 +22,7 @@
     accent: string
     accentRgb: string
     price: number
+    annualPrice: number
     description: string
     features: string[]
     cta: string
@@ -36,10 +37,15 @@
       accent: catalogPlan.accent,
       accentRgb: catalogPlan.accentRgb,
       price: catalogPlan.price,
+      annualPrice: catalogPlan.annualPrice,
       popular: catalogPlan.popular,
       icon: catalogPlan.icon,
     }),
   )
+
+  let billing: 'monthly' | 'annual' = 'monthly'
+
+  $: suffix = billing === 'annual' ? $dict.pricing.suffixAnnual : $dict.pricing.suffixMonthly
 
   $: plans = planMeta.map((meta) => {
     const copy = $dict.pricing.plans[meta.slug]
@@ -65,6 +71,36 @@
         <span class="ts-text-gradient">{$dict.pricing.titleAccent}</span>
       </svelte:fragment>
     </SectionHeader>
+
+    <div class="pricing-toggle-wrap">
+      <div class="pricing-toggle" role="tablist" aria-label={$dict.pricing.toggleLabel}>
+        <div class="pricing-toggle__thumb" class:is-annual={billing === 'annual'} aria-hidden="true"></div>
+        <button
+          type="button"
+          class="pricing-toggle__btn"
+          class:is-active={billing === 'monthly'}
+          role="tab"
+          aria-selected={billing === 'monthly'}
+          on:click={() => (billing = 'monthly')}
+        >
+          {$dict.pricing.monthly}
+        </button>
+        <button
+          type="button"
+          class="pricing-toggle__btn"
+          class:is-active={billing === 'annual'}
+          role="tab"
+          aria-selected={billing === 'annual'}
+          on:click={() => (billing = 'annual')}
+        >
+          {$dict.pricing.annual}
+        </button>
+        <span class="pricing-toggle__save" class:is-active={billing === 'annual'}>
+          <Icon name="check" className="pricing-toggle__save-icon" />
+          {$dict.pricing.save}
+        </span>
+      </div>
+    </div>
 
     <div class="pricing-grid">
       {#each plans as plan (plan.name)}
@@ -93,9 +129,9 @@
 
           <div class="pricing-card__price-row">
             <div class="pricing-card__price">
-              <AnimatedPrice value={plan.price} />
+              <AnimatedPrice value={billing === 'annual' ? plan.annualPrice : plan.price} />
             </div>
-            <div class="pricing-card__suffix">{$dict.pricing.suffixMonthly}</div>
+            <div class="pricing-card__suffix">{suffix}</div>
           </div>
 
           <div class="pricing-card__divider"></div>
@@ -139,6 +175,93 @@
     max-width: 1240px;
     margin: 0 auto;
     padding: 0 40px;
+  }
+
+  .pricing-toggle-wrap {
+    display: flex;
+    justify-content: center;
+    margin: 40px 0 56px;
+  }
+
+  .pricing-toggle {
+    position: relative;
+    display: inline-flex;
+    background: var(--ts-glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--ts-glass-border);
+    border-radius: 999px;
+    padding: 5px;
+  }
+
+  .pricing-toggle__thumb {
+    position: absolute;
+    top: 5px;
+    bottom: 5px;
+    left: 5px;
+    width: calc(50% - 5px);
+    background: var(--ts-gradient-primary);
+    border-radius: 999px;
+    box-shadow: 0 4px 14px rgba(var(--ts-primary-rgb), 0.35);
+    transition: transform 240ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .pricing-toggle__thumb.is-annual {
+    transform: translateX(100%);
+  }
+
+  .pricing-toggle__btn {
+    position: relative;
+    z-index: 1;
+    padding: 11px 30px;
+    border: none;
+    background: transparent;
+    color: var(--ts-text-muted);
+    font-family: var(--ts-font-accent);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    transition: color 180ms ease;
+    border-radius: 999px;
+  }
+
+  .pricing-toggle__btn.is-active {
+    color: #fff;
+  }
+
+  .pricing-toggle__save {
+    position: absolute;
+    top: -11px;
+    right: -14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: #fff;
+    font-family: var(--ts-font-accent);
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    border: 1.5px solid var(--ts-bg-base);
+    white-space: nowrap;
+    transform: scale(1);
+    transition: transform 200ms ease;
+  }
+
+  .pricing-toggle__save.is-active {
+    transform: scale(1.05);
+  }
+
+  :global(.pricing-toggle__save-icon) {
+    width: 9px;
+    height: 9px;
+    color: #fff;
   }
 
   .pricing-grid {

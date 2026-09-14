@@ -157,9 +157,14 @@ export const ptBr: Messages = {
     eyebrow: 'Preços',
     titleLead: 'Preços simples',
     titleAccent: 'que escalam com VOCÊ',
-    subtitle: 'Três planos mensais para o Public Alpha. Enterprise continua indisponível.',
+    subtitle: 'Três planos para o Public Alpha. Enterprise continua indisponível.',
     badge: 'Mais popular',
+    toggleLabel: 'Ciclo de cobrança',
+    monthly: 'Mensal',
+    annual: 'Anual',
+    save: 'Dois meses grátis',
     suffixMonthly: '/mês',
+    suffixAnnual: '/ano',
     plans: {
       starter: {
         description: 'Plano mensal com um teste elegível de 30 dias',
