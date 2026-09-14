@@ -2,11 +2,26 @@ import type { TerraScaleSqliteStore } from "./store.js";
 
 export type LocalJsonObject = Record<string, unknown>;
 
+export type LocalAuthenticationMode = "permissive" | "required";
+
+export type LocalPrincipal = {
+  readonly userId: string;
+};
+
+export type LocalDatabaseIdentity = {
+  readonly databaseId: string;
+  readonly name: string;
+  readonly projectId: string;
+};
+
 export type LocalRequestContext = {
+  readonly authentication: LocalAuthenticationMode;
   readonly body: unknown;
   readonly method: string;
   readonly now: string;
   readonly pathname: string;
+  readonly principal: LocalPrincipal | undefined;
+  readonly resolvedDatabase: LocalDatabaseIdentity | undefined;
   readonly request: Request;
   readonly store: TerraScaleSqliteStore;
   readonly url: URL;

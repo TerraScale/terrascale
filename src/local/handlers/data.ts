@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   emptyResponse,
   jsonResponse,
@@ -5,11 +7,16 @@ import {
   objectBody,
   problemResponse,
   type LocalJsonObject,
+  type LocalDatabaseIdentity,
   type LocalRequestContext,
 } from "../context.js";
 import type { TerraScaleSqliteStore } from "../store.js";
+import { resolveLocalDatabase } from "../authorization.js";
 
-type Store = Pick<TerraScaleSqliteStore, "get" | "list" | "put" | "delete">;
+type Store = Pick<
+  TerraScaleSqliteStore,
+  "get" | "list" | "put" | "delete"
+>;
 type Entity = LocalJsonObject & { readonly id: string; readonly projectId: string };
 
 type StoredDocument = {
@@ -23,6 +30,29 @@ const documentKeyPrefix = "sdk-local/documents";
 
 function documentScope(database: string, collection: string): string {
   return `${database}/${collection}`;
+}
+
+/**
+ * Required-auth documents use the stored database identity rather than the
+ * route spelling. Legacy permissive name-keyed scopes remain separate so a
+ * deleted database name cannot silently bind its old documents to a new one.
+ */
+function databaseStorageScope(
+  context: LocalRequestContext,
+  database: string,
+): string | Response {
+  const resolved = context.resolvedDatabase ?? resolveLocalDatabase(context, database);
+  if (resolved instanceof Response) return resolved;
+  if (resolved === undefined) return database;
+  return canonicalDatabaseScope(resolved);
+}
+
+function canonicalDatabaseScope(identity: LocalDatabaseIdentity): string {
+  return `canonical:${createHash("sha256")
+    .update(identity.projectId)
+    .update("\u0000")
+    .update(identity.databaseId)
+    .digest("hex")}`;
 }
 
 function documentEntry(
@@ -114,7 +144,9 @@ export async function handleLocalData(context: LocalRequestContext): Promise<Res
     "/api/v1/databases/{name}/collections/{collection}/documents",
   );
   if (documents !== undefined) {
-    return listDocuments(context, documents.name!, documents.collection!);
+    const database = databaseStorageScope(context, documents.name!);
+    if (database instanceof Response) return database;
+    return listDocuments(context, database, documents.collection!);
   }
 
   const document = matchLocalRoute(
@@ -123,8 +155,10 @@ export async function handleLocalData(context: LocalRequestContext): Promise<Res
     "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
   );
   if (document !== undefined) {
-    const locator = {
-      database: document.name!,
+    const database = databaseStorageScope(context, document.name!);
+    if (database instanceof Response) return database;
+    const locator: DocumentLocator = {
+      database,
       collection: document.collection!,
       id: document.id!,
     };
@@ -142,15 +176,20 @@ export async function handleLocalData(context: LocalRequestContext): Promise<Res
     "/api/v1/databases/{name}/collections/{collection}/documents/{id}/history",
   );
   if (history !== undefined) {
-    return documentHistory(context, {
-      database: history.name!,
+    const database = databaseStorageScope(context, history.name!);
+    if (database instanceof Response) return database;
+    const locator: DocumentLocator = {
+      database,
       collection: history.collection!,
       id: history.id!,
-    });
+    };
+    return documentHistory(context, locator);
   }
 
   const sql = matchLocalRoute(context, "POST", "/api/v1/databases/{name}/sql");
   if (sql !== undefined) {
+    const database = databaseStorageScope(context, sql.name!);
+    if (database instanceof Response) return database;
     return jsonResponse({ columns: [], rows: [], rowCount: 0 });
   }
 

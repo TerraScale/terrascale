@@ -5,7 +5,8 @@ import {
   normalizeLocalBearerToken,
 } from "./authentication.js";
 import type { LocalHandler, LocalRequestContext } from "./context.js";
-import { emptyResponse, problemResponse } from "./context.js";
+import { emptyResponse, matchLocalRoute, problemResponse } from "./context.js";
+import { resolveLocalDatabase, resolveLocalPrincipal } from "./authorization.js";
 import { handleLocalAdmin } from "./handlers/admin.js";
 import { handleLocalBackups } from "./handlers/backups.js";
 import { handleLocalData } from "./handlers/data.js";
@@ -13,7 +14,6 @@ import { handleLocalMetadata } from "./handlers/metadata.js";
 import { handleLocalOnboarding } from "./handlers/onboarding.js";
 import { handleLocalOrganizations } from "./handlers/organizations.js";
 import { handleLocalPlatform } from "./handlers/platform.js";
-import { handleLocalQueues } from "./handlers/queues.js";
 import { localManifestRoutes } from "./route-manifest.generated.js";
 import type { TerraScaleSqliteStore } from "./store.js";
 import { handleLocalBetterAuthRequest } from "./better-auth.js";
@@ -125,15 +125,28 @@ export class TerraScaleLocalRouter {
     }
 
     const context: LocalRequestContext = {
+      authentication: this.#authentication,
       body,
       method,
       now: new Date().toISOString(),
       pathname,
+      principal: resolveLocalPrincipal(this.#store, request),
+      resolvedDatabase: undefined,
       request,
       store: this.#store,
       url,
     };
-    const replay = this.#replayIdempotent(context);
+    const database = dataDatabaseFor(context);
+    const resolvedDatabase = database === undefined
+      ? undefined
+      : resolveLocalDatabase(context, database);
+    if (resolvedDatabase instanceof Response) {
+      return withCors(request, resolvedDatabase);
+    }
+    const authorizedContext = resolvedDatabase === undefined
+      ? context
+      : { ...context, resolvedDatabase };
+    const replay = this.#replayIdempotent(authorizedContext);
     if (replay !== undefined) {
       return withCors(request, replay);
     }
@@ -146,7 +159,7 @@ export class TerraScaleLocalRouter {
       }
       for (const handler of localHandlers) {
         if (response !== undefined) break;
-        response = await handler(context);
+        response = await handler(authorizedContext);
         if (response !== undefined) {
           break;
         }
@@ -172,7 +185,7 @@ export class TerraScaleLocalRouter {
     }
 
     response ??= problemResponse(404, "route_not_found", `No public TerraScale route matches ${method} ${pathname}.`);
-    response = await this.#rememberIdempotent(context, response);
+    response = await this.#rememberIdempotent(authorizedContext, response);
     return withCors(request, response);
   }
 
@@ -324,6 +337,32 @@ function isAnonymousRoute(method: string, pathname: string): boolean {
   return method === "GET" && pathname === "/api/v1/regions";
 }
 
+function dataDatabaseFor(context: LocalRequestContext): string | undefined {
+  const documents = matchLocalRoute(
+    context,
+    "GET",
+    "/api/v1/databases/{name}/collections/{collection}/documents",
+  );
+  if (documents !== undefined) return documents.name;
+
+  const document = matchLocalRoute(
+    context,
+    context.method,
+    "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
+  );
+  if (document !== undefined) return document.name;
+
+  const history = matchLocalRoute(
+    context,
+    "GET",
+    "/api/v1/databases/{name}/collections/{collection}/documents/{id}/history",
+  );
+  if (history !== undefined) return history.name;
+
+  const sql = matchLocalRoute(context, "POST", "/api/v1/databases/{name}/sql");
+  return sql?.name;
+}
+
 function idempotencyKey(context: LocalRequestContext): string | undefined {
   if (!new Set(["DELETE", "PATCH", "POST", "PUT"]).has(context.method)) {
     return undefined;
@@ -336,12 +375,17 @@ function idempotencyScope(context: LocalRequestContext): string {
   const authorization = context.request.headers.get("authorization")?.trim() ?? "";
   const cookie = context.request.headers.get("cookie")?.trim() ?? "";
   const projectId = context.request.headers.get("x-terrascale-project-id")?.trim() ?? "";
+  const database = context.resolvedDatabase === undefined
+    ? ""
+    : `${context.resolvedDatabase.projectId}\n${context.resolvedDatabase.databaseId}`;
   return createHash("sha256")
     .update(authorization)
     .update("\n")
     .update(cookie)
     .update("\n")
     .update(projectId)
+    .update("\n")
+    .update(database)
     .digest("hex");
 }
 

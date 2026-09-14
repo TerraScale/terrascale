@@ -141,7 +141,7 @@ export class SyncV1ResultViewStore {
   #authorizationGeneration = 0n;
   #revision = 0n;
   #digest = emptyResultDigest();
-  #checkpoint: SyncV2ViewCheckpoint | undefined;
+  #checkpoint: SyncV1ViewCheckpoint | undefined;
   #hasSnapshot = false;
   #online = true;
   readonly #optimistic = new Map<string, readonly SyncV1ResultOperation[]>();
@@ -239,7 +239,7 @@ export class SyncV1ResultViewStore {
     }
     const removed = new Set(removals);
     if (replacement.items.some(item => removed.has(item.identity))) {
-      throw new SyncV2ViewError(
+      throw new SyncV1ViewError(
         "reset-required",
         "the authorization replacement restores an identity declared removed",
       );
@@ -299,12 +299,12 @@ export class SyncV1ResultViewStore {
     this.#notify();
   }
 
-  #assertSnapshotAdvances(snapshot: SyncV2ResultSnapshot): void {
+  #assertSnapshotAdvances(snapshot: SyncV1ResultSnapshot): void {
     if (!this.#hasSnapshot) return;
     if (snapshot.view_generation < this.#viewGeneration
       || snapshot.authorization_generation < this.#authorizationGeneration
-      || snapshot.revision < this.#revision) {
-      throw new SyncV2ViewError(
+      || (snapshot.view_generation === this.#viewGeneration && snapshot.revision < this.#revision)) {
+      throw new SyncV1ViewError(
         "reset-required",
         "the snapshot view, authorization, or revision generation regresses",
       );
@@ -312,7 +312,7 @@ export class SyncV1ResultViewStore {
     if (snapshot.view_generation === this.#viewGeneration
       && snapshot.authorization_generation === this.#authorizationGeneration
       && snapshot.revision === this.#revision) {
-      throw new SyncV2ViewError("reset-required", "the snapshot replays installed state");
+      throw new SyncV1ViewError("reset-required", "the snapshot replays installed state");
     }
   }
 

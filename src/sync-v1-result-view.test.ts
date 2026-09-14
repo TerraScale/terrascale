@@ -28,7 +28,7 @@ const snapshot = (
   checkpoint: new SyncV1ViewCheckpoint(`checkpoint-${generation}-${revision}`),
 });
 
-describe("current v2 authorized result view", () => {
+describe("current v1 authorized result view", () => {
   test("applies atomic insert/update/patch/remove/move revisions and ignores duplicates", () => {
     const store = new SyncV1ResultViewStore();
     store.bootstrap(snapshot([row("a", "a"), row("b", "b")]));

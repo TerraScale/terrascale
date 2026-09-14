@@ -14,6 +14,7 @@ import {
   SyncV1ViewError,
   syncV1ResultDigest,
   type SyncV1ResultItem,
+  type SyncV1WebSocket,
 } from "./index.js";
 
 const encoder = new TextEncoder();
@@ -50,6 +51,95 @@ function serverFrame(message: TerrascaleSyncV1MsgpackMessage): Uint8Array {
     causation: 0n,
     message,
   });
+}
+
+class FakeSocket implements SyncV1WebSocket {
+  binaryType = "";
+  readonly sent: Uint8Array[] = [];
+  #closed = false;
+  readonly #listeners = new Map<
+    "open" | "message" | "error" | "close",
+    Set<(event: unknown) => void>
+  >();
+
+  addEventListener(
+    type: "open" | "message" | "error" | "close",
+    listener: (event: unknown) => void,
+  ): void {
+    let listeners = this.#listeners.get(type);
+    if (listeners === undefined) {
+      listeners = new Set();
+      this.#listeners.set(type, listeners);
+    }
+    listeners.add(listener);
+  }
+
+  removeEventListener(
+    type: "open" | "message" | "error" | "close",
+    listener: (event: unknown) => void,
+  ): void {
+    this.#listeners.get(type)?.delete(listener);
+  }
+
+  send(data: Uint8Array | ArrayBuffer): void {
+    if (this.#closed) throw new Error("fake socket is closed");
+    this.sent.push(new Uint8Array(data));
+  }
+
+  close(code?: number, reason?: string): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.emit("close", { code, reason });
+  }
+
+  open(): void {
+    this.emit("open", {});
+  }
+
+  message(data: Uint8Array): void {
+    this.emit("message", { data });
+  }
+
+  get closed(): boolean {
+    return this.#closed;
+  }
+
+  private emit(type: "open" | "message" | "error" | "close", event: unknown): void {
+    for (const listener of this.#listeners.get(type) ?? []) listener(event);
+  }
+}
+
+function base64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
+}
+
+function attachedViewBody(generation: bigint): Record<string, unknown> {
+  const snapshot = wireSnapshot([item("row", `generation-${generation}`)], generation, generation);
+  return {
+    viewId: `orders-${generation}`,
+    generation: Number(generation),
+    capability: `cap-${generation}`,
+    checkpoint: base64(snapshot.checkpoint),
+    snapshot: {
+      view_generation: Number(snapshot.view_generation),
+      authorization_generation: Number(snapshot.authorization_generation),
+      revision: Number(snapshot.revision),
+      items: snapshot.items.map(entry => ({
+        identity: entry.identity,
+        fields: entry.fields.map(field => ({ path: field.path, value: base64(field.value) })),
+      })),
+      digest: snapshot.digest,
+      checkpoint: base64(snapshot.checkpoint),
+    },
+  };
+}
+
+async function waitFor(predicate: () => boolean, description: string): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${description}`);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+  }
 }
 
 describe("current reactive client", () => {
@@ -108,6 +198,137 @@ describe("current reactive client", () => {
     client.receive(serverFrame({ kind: "backpressure", mode: "pause" }));
     assert.deepEqual(opened.subscription.view.getItems().map(entry => entry.identity), ["b"]);
     assert.deepEqual(client.getSnapshot(), { online: false, paused: true, region: "FRA", subscriptions: 1 });
+  });
+
+  test("reopens a closed WebSocket and sends the subscribe handshake before becoming online", async () => {
+    const sockets: FakeSocket[] = [];
+    let attaches = 0;
+    const client = new TerraScaleSyncV1Client({
+      apiBaseUrl: "https://api.terrascale.tech",
+      fetch: async () => {
+        attaches += 1;
+        return Response.json(attachedViewBody(BigInt(attaches)), {
+          headers: { "x-terrascale-region": "GRU" },
+        });
+      },
+      webSocketFactory: (url, protocols) => {
+        const generation = sockets.length + 1;
+        assert.equal(url, `wss://gru.api.terrascale.tech/api/v1/reactive/views/orders-${generation}/${generation}/websocket`);
+        assert.deepEqual(protocols, ["terrascale.sync.v1", `terrascale.cap.cap-${generation}`]);
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        if (sockets.length === 1) queueMicrotask(() => socket.open());
+        return socket;
+      },
+    });
+    const live = await client.subscribe({
+      subscription: "orders",
+      databaseId: "db",
+      query: "select * from orders",
+      parameters: new Uint8Array(),
+      transport: "websocket",
+    });
+    assert.equal(client.getSnapshot().online, true);
+    assert.equal(sockets.length, 1);
+    assert.equal(sockets[0]!.sent.length, 1);
+
+    sockets[0]!.close(1006, "network");
+    assert.equal(client.getSnapshot().online, false);
+    const reconnecting = live.reconnect();
+    await waitFor(() => sockets.length === 2, "the replacement WebSocket");
+    assert.equal(client.getSnapshot().online, false);
+    sockets[1]!.open();
+    await reconnecting;
+
+    assert.equal(client.getSnapshot().online, true);
+    assert.equal(sockets[1]!.sent.length, 1);
+    const handshake = decodeTerrascaleSyncV1MsgpackEnvelope(sockets[1]!.sent[0]!);
+    assert.equal(handshake.message.kind, "subscribe");
+    assert.equal(handshake.message.subscription, "orders-2");
+    const changed = [item("row", "reconnected")];
+    sockets[1]!.message(serverFrame({
+      kind: "delta",
+      subscription: "orders-2",
+      view_generation: 2n,
+      from_revision: 2n,
+      to_revision: 3n,
+      operations: [{
+        kind: "update",
+        identity: "row",
+        fields: [{ path: "value", value: encoder.encode("reconnected") }],
+      }],
+      digest: syncV1ResultDigest(changed),
+      checkpoint: encoder.encode("checkpoint-2-3"),
+    }));
+    await waitFor(
+      () => decoder.decode(live.view.getItems()[0]?.value.value ?? new Uint8Array()) === "reconnected",
+      "the replacement delta",
+    );
+    assert.equal(live.view.getRevision(), 3n);
+    live.close();
+  });
+
+  test("reconnects a WebSocket after a region route change and uses the new member", async () => {
+    const sockets: FakeSocket[] = [];
+    let attaches = 0;
+    const client = new TerraScaleSyncV1Client({
+      apiBaseUrl: "https://api.terrascale.tech",
+      reconnectDelayMs: 0,
+      fetch: async () => {
+        attaches += 1;
+        const region = attaches === 1 ? "GRU" : "FRA";
+        return Response.json(attachedViewBody(BigInt(attaches)), {
+          headers: { "x-terrascale-region": region },
+        });
+      },
+      webSocketFactory: (url) => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        assert.match(url, new RegExp(`wss://${sockets.length === 1 ? "gru" : "fra"}\\.api\\.terrascale\\.tech/`));
+        if (sockets.length === 1) queueMicrotask(() => socket.open());
+        return socket;
+      },
+    });
+    const live = await client.subscribe({
+      subscription: "orders",
+      databaseId: "db",
+      query: "select * from orders",
+      parameters: new Uint8Array(),
+      transport: "websocket",
+    });
+
+    sockets[0]!.message(serverFrame({ kind: "region_route_change", region: "FRA" }));
+    await waitFor(() => sockets.length === 2, "the region-routed replacement WebSocket");
+    assert.equal(client.getSnapshot().online, false);
+    sockets[1]!.open();
+    await waitFor(() => client.getSnapshot().online, "the replacement handshake");
+
+    assert.equal(client.getSnapshot().region, "FRA");
+    assert.equal(sockets[1]!.sent.length, 1);
+    const handshake = decodeTerrascaleSyncV1MsgpackEnvelope(sockets[1]!.sent[0]!);
+    assert.equal(handshake.message.kind, "subscribe");
+    assert.equal(handshake.message.subscription, "orders-2");
+    const changed = [item("row", "rerouted")];
+    sockets[1]!.message(serverFrame({
+      kind: "delta",
+      subscription: "orders-2",
+      view_generation: 2n,
+      from_revision: 2n,
+      to_revision: 3n,
+      operations: [{
+        kind: "update",
+        identity: "row",
+        fields: [{ path: "value", value: encoder.encode("rerouted") }],
+      }],
+      digest: syncV1ResultDigest(changed),
+      checkpoint: encoder.encode("checkpoint-2-3"),
+    }));
+    await waitFor(
+      () => decoder.decode(live.view.getItems()[0]?.value.value ?? new Uint8Array()) === "rerouted",
+      "the region-routed delta",
+    );
+    assert.equal(live.view.getRevision(), 3n);
+    live.close();
   });
 
   test("rejects stale and replayed snapshots and resets across every monotonic counter", () => {

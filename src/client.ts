@@ -39,8 +39,6 @@ export class TerraScaleClient {
   readonly notifications: NotificationsClient;
   /** The separately named, contract-bound management surface. */
   readonly management: TerraScaleManagementClient;
-  /** Direct document CRUD against the public database API. */
-  readonly documents: DocumentsClient;
   /** Read-only parameterized SQL against a named database. */
   readonly sql: SqlClient;
   /** The canonical reactive view client backed by the sync v1 state machine. */
@@ -63,7 +61,6 @@ export class TerraScaleClient {
     this.usage = new UsageClient(this.#http);
     this.audit = new AuditClient(this.#http);
     this.notifications = new NotificationsClient(this.#http);
-    this.documents = new DocumentsClient(this.#http);
     this.sql = new SqlClient(this.#http);
     this.reactive = new TerraScaleSyncV1Client({
       ...(config.apiBaseUrl === undefined ? {} : { apiBaseUrl: config.apiBaseUrl }),
@@ -1085,117 +1082,6 @@ export class BackupsClient {
   }
 }
 
-export class DocumentsClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  list<TDocument extends Models.JsonValue = Models.JsonObject>(
-    scope: Models.RepositoryScoped,
-    query?: Models.DocumentListQuery,
-  ): Promise<TerraScaleResult<Models.DocumentPageResponse<TDocument>>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${repositoryRoot(scope)}/documents`,
-      routeName: "documents.list",
-      query,
-      consistency: "read",
-    });
-  }
-
-  create<TDocument extends Models.JsonValue = Models.JsonObject>(
-    scope: Models.RepositoryScoped,
-    data: TDocument,
-  ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${repositoryRoot(scope)}/documents`,
-      routeName: "documents.create",
-      body: { data },
-      consistency: "write",
-    });
-  }
-
-  get<TDocument extends Models.JsonValue = Models.JsonObject>(
-    scope: Models.RepositoryScoped,
-    documentId: Ulid,
-    options?: Models.DocumentReadOptions,
-  ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
-      routeName: "documents.get",
-      headers: documentReadHeaders(options),
-      signal: options?.signal,
-      consistency: "read",
-    });
-  }
-
-  put<TDocument extends Models.JsonValue = Models.JsonObject>(
-    scope: Models.RepositoryScoped,
-    documentId: Ulid,
-    data: TDocument,
-    options?: Models.DocumentMutationOptions,
-  ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
-    return this.#http.request({
-      method: "PUT",
-      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
-      routeName: "documents.put",
-      body: { data },
-      headers: documentMutationHeaders(options),
-      signal: options?.signal,
-      consistency: "write",
-    });
-  }
-
-  patch<TDocument extends Models.JsonValue = Models.JsonObject>(
-    scope: Models.RepositoryScoped,
-    documentId: Ulid,
-    data: TDocument,
-    options?: Models.DocumentMutationOptions,
-  ): Promise<TerraScaleResult<Models.DocumentResponse<TDocument>>> {
-    return this.#http.request({
-      method: "PATCH",
-      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
-      routeName: "documents.patch",
-      body: { data },
-      headers: documentMutationHeaders(options),
-      signal: options?.signal,
-      consistency: "write",
-    });
-  }
-
-  batch<TDocument extends Models.JsonValue = Models.JsonObject>(
-    scope: Models.RepositoryScoped,
-    request: Models.DocumentBatchRequest<TDocument>,
-  ): Promise<TerraScaleResult<Models.DocumentBatchResponse<TDocument>>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${repositoryRoot(scope)}/documents/batch`,
-      routeName: "documents.batch",
-      body: request,
-      consistency: "write",
-    });
-  }
-
-  delete(
-    scope: Models.RepositoryScoped,
-    documentId: Ulid,
-    options?: Models.DocumentMutationOptions,
-  ): Promise<TerraScaleResult<Models.DeletedDocumentResponse>> {
-    return this.#http.request({
-      method: "DELETE",
-      path: `${repositoryRoot(scope)}/documents/${ulidPathSegment(documentId)}`,
-      routeName: "documents.delete",
-      headers: documentMutationHeaders(options),
-      signal: options?.signal,
-      consistency: "write",
-    });
-  }
-}
-
 /** Named operations published by the TerraScale Database API document contract. */
 export class DatabaseDocumentsClient {
   readonly #http: TerraScaleHttp;
@@ -2211,7 +2097,7 @@ function requireJsonValue(value: unknown, path: string): Models.JsonValue {
   return object as Models.JsonObject;
 }
 
-function decodeRegionsResponse(value: unknown): Models.RegionsResponse {
+function decodeRegionCatalogResponse(value: unknown): Models.RegionCatalogResponse {
   const response = requireRecord(value, "response");
   assertAllowedKeys(response, ["regions", "hosts"], "response");
   if (!Array.isArray(response.regions)) {
@@ -2245,6 +2131,28 @@ function decodeRegionsResponse(value: unknown): Models.RegionsResponse {
     }
   }
   return { regions, hosts: decodedHosts };
+}
+
+function invalidRegionResponse<TValue>(
+  result: TerraScaleSuccess<unknown>,
+  error: unknown,
+): TerraScaleResult<TValue> {
+  const requestId = result.headers.get("x-request-id") ?? undefined;
+  return {
+    ok: false,
+    routeName: result.routeName,
+    status: result.status,
+    headers: result.headers,
+    error: {
+      kind: "invalid-response",
+      code: "invalid_response",
+      message: error instanceof Error ? error.message : "The Region response is invalid.",
+      status: result.status,
+      ...(requestId === undefined ? {} : { requestId }),
+    },
+    body: result.value,
+    ...(result.routing === undefined ? {} : { routing: result.routing }),
+  };
 }
 
 function decodeHealthResponse(value: unknown): Models.HealthResponse {

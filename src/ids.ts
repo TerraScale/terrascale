@@ -1,15 +1,4 @@
-/** Internal ULID validation used by the opt-in local development runtime. */
-export type Ulid = string;
-export type OrganizationId = string;
-export type ProjectId = string;
-export type DatabaseId = string;
-export type UserId = string;
-export type InvitationId = string;
-export type BackupId = string;
-export type BackupPolicyId = string;
-export type NotificationId = string;
-export type AuditEventId = string;
-export type RestoreId = string;
+declare const terraScaleBrand: unique symbol;
 
 export type Brand<TValue, TBrand extends string> = TValue & {
   readonly [terraScaleBrand]: TBrand;
@@ -42,11 +31,20 @@ export function isUlid(value: string): value is Ulid {
 }
 
 export function tryUlid(value: string): Ulid | undefined {
-  return ulidPattern.test(value) ? value : undefined;
+  const normalized = value.trim().toUpperCase();
+  return ulidPattern.test(normalized) ? (normalized as Ulid) : undefined;
 }
 
 export function toUlid(value: string): Ulid {
   const ulid = tryUlid(value);
-  if (ulid === undefined) throw new TypeError(`Not a valid ULID: ${value}`);
+
+  if (ulid === undefined) {
+    throw new TypeError(`Expected a 26-character ULID, received "${value}".`);
+  }
+
   return ulid;
+}
+
+export function ulidPathSegment(value: Ulid): string {
+  return encodeURIComponent(value);
 }
