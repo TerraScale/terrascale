@@ -96,3 +96,6 @@ Cloudflare credential in any other repository, is needed to publish this site.
 ## Assets
 
 Static assets live in `static/` and are served from root-relative URLs such as `/logo-principal.svg` or `/icons/lucide/menu.svg`.
+
+<!-- preview lane test 1789225418 -->
+<!-- second push 1789225604 -->
