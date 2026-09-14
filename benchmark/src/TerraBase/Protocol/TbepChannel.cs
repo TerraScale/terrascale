@@ -5,9 +5,7 @@
 namespace TerraBase.Protocol;
 
 using System.Linq;
-using System.Net.Sockets;
 using System.Threading;
-using System.Threading.Channels;
 
 /// <summary>
 /// The serving half of the TBEP client (SE-08): one engine connection

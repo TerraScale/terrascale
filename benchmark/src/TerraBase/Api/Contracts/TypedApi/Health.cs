@@ -4,8 +4,6 @@
 
 namespace TerraBase.Api;
 
-using TerraBase.Protocol;
-
 public sealed partial class TypedApi
 {
     // Health
