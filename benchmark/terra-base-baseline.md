@@ -1,10 +1,10 @@
 # TerraBase C# benchmark baseline
 
-Status: **scaffold; no current C# benchmark receipt is admitted**.
+Status: **partial local receipts; distributed qualification remains pending**.
 
 The latest correctness snapshot is dated **2026-09-14** at revision
-`cf9796e31d3c8676a521290a56df1bd70db90422` (`main`). It is not a benchmark
-receipt. Every performance receipt must record its exact revision, dirty state,
+`409cd9765a22382a90be63e3f6e417601e36821e` (`main`). It is not itself a
+benchmark receipt. Every performance receipt must record its exact revision, dirty state,
 and artifact digest. Runtime target: .NET 10 with SDK 10.0.401, C# 14 only.
 
 The default host requires `TERRABASE_DATA_PATH` and uses the durable
@@ -101,6 +101,8 @@ performance.
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
 | Point read | InMemoryStorageProvider | complete | 5 | 260,010.40 | 1.87 | 10.05 | 22.32 | 896.88 | 6.50 | 63,873,024 | — | — | 100 / 128 B | in-memory | [`receipt.json`](receipts/20260914-5b5d1767-memory-point-read/receipt.json) |
 | Conditional upsert | StorageEngine | complete | 5 | 40.41 | 23,816.13 | 30,250.68 | 36,456.07 | 8,713,948.64 | 3.07 | 98,619,392 | 67,153 | 9.46 | 100 / 128 B | synced WAL | [`receipt.json`](receipts/20260914-5b5d1767-storage-point-write/receipt.json) |
+| Point read | InMemoryStorageProvider | complete | 5 | 269,832.70 | 1.96 | 10.16 | 19.43 | 899.44 | 5.79 | 63,795,200 | — | — | 100 / 128 B | in-memory | [`receipt.json`](receipts/20260914-409cd976-memory-point-read/receipt.json) |
+| Conditional upsert | StorageEngine | complete | 5 | 40.66 | 24,282.18 | 30,333.18 | 35,801.61 | 8,714,390.40 | 3.05 | 98,693,120 | 67,158 | 9.46 | 100 / 128 B | synced WAL | [`receipt.json`](receipts/20260914-409cd976-storage-point-write/receipt.json) |
 | all other listed workloads | — | pending | — | — | — | — | — | — | — | — | — | — | — | — | — |
 
 ## Correctness and durability evidence
@@ -119,10 +121,10 @@ The current focused checks cover these local invariants:
 
 These checks do not qualify multi-Region durability, durable replication across
 restart, a concrete MagicOnion adapter, a real index backend, reactive network
-delivery, external object-store recovery, or a production RPO/RTO/SLO. No
-current receipt reports throughput, p50/p95/p99 latency, allocations, CPU/RAM,
-write amplification, replication lag, subscription fan-out cost, or restore
-time; the results table therefore remains `pending`.
+delivery, external object-store recovery, or a production RPO/RTO/SLO. The
+current receipts measure only local point reads and synced point writes; rows
+for replication lag, subscription fan-out cost, restore time, and distributed
+durability remain `pending`.
 
 ## Run metadata
 
@@ -132,6 +134,7 @@ fields, not measured defaults.
 | Batch date (UTC) | Commit | Dirty tree | Artifact SHA-256 | Host / OS / architecture | CPU / memory envelope | Storage | Workload digest | Runner command | Receipt directory |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-09-14 | `5b5d1767d16211794020a111eeb5467bd73b0e5f` | true (`.codex/` untracked) | `c7d202a8b3d790d92711c864a42c47a2ca65862465560ce7fda0bcb274ec66ac` | NixOS 26.05 / x64 | Intel Xeon E5-2660 v4, 46 logical CPUs, 20.9 GB available | local filesystem; in-memory and synced WAL | see receipt JSON | `nice -n 19 dotnet bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll ...` | [`bench/receipts`](receipts) |
+| 2026-09-14 | `409cd9765a22382a90be63e3f6e417601e36821e` | true (`.codex/` untracked) | `3574c8760d16d03a8dab9c488bd129d1ec30bb6c03bc99064d56b63b95625907` | NixOS 26.05 / x64 | Intel Xeon E5-2660 v4, 46 logical CPUs, 20.9 GB available | local filesystem; in-memory and synced WAL | see receipt JSON | `nice -n 19 dotnet bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll ...` | [`bench/receipts`](receipts) |
 
 Do not add a ratio against PostgreSQL, RavenDB, an archived Rust build, or a
 historical SQLite run until both sides have matching workload, boundary,

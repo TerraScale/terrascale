@@ -44,7 +44,7 @@
       "temperature": "Warm",
       "status": "complete",
       "error": null,
-      "rawSamplesPath": "/tmp/terrabase-bench-current-memory-20260914/raw-samples-Memory-PointRead-Warm.jsonl",
+      "rawSamplesPath": "bench/receipts/20260914-409cd976-memory-point-read/raw-samples-Memory-PointRead-Warm.jsonl",
       "workloadDigest": "cef5ac5f75b76664af745eccf4bf4353391e9e2189c63a73a58c451ed7a358ca",
       "startedAtUtc": "2026-09-14T07:09:08.369578+00:00",
       "finishedAtUtc": "2026-09-14T07:09:08.5315864+00:00",
@@ -169,5 +169,5 @@
     }
   ],
   "command": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll --storage memory --workload point-read --temperature warm --dataset-size 100 --payload-size 128 --samples 5 --warmup 50 --operations 100 --output /tmp/terrabase-bench-current-memory-20260914",
-  "receiptDirectory": "/tmp/terrabase-bench-current-memory-20260914"
+  "receiptDirectory": "bench/receipts/20260914-409cd976-memory-point-read"
 }

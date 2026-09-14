@@ -44,7 +44,7 @@
       "temperature": "Warm",
       "status": "complete",
       "error": null,
-      "rawSamplesPath": "/tmp/terrabase-bench-current-storage-20260914/raw-samples-StorageEngine-PointWrite-Warm.jsonl",
+      "rawSamplesPath": "bench/receipts/20260914-409cd976-storage-point-write/raw-samples-StorageEngine-PointWrite-Warm.jsonl",
       "workloadDigest": "0ab832b94b2d4f6af773d251cdfdc58f53f119e929676046324b12bd08070b79",
       "startedAtUtc": "2026-09-14T07:09:17.8589897+00:00",
       "finishedAtUtc": "2026-09-14T07:09:26.4501998+00:00",
@@ -169,5 +169,5 @@
     }
   ],
   "command": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll --storage storage-engine --workload point-write --temperature warm --dataset-size 100 --payload-size 128 --samples 5 --warmup 20 --operations 50 --output /tmp/terrabase-bench-current-storage-20260914",
-  "receiptDirectory": "/tmp/terrabase-bench-current-storage-20260914"
+  "receiptDirectory": "bench/receipts/20260914-409cd976-storage-point-write"
 }
