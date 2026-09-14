@@ -161,18 +161,60 @@ async fn create_requires_contract_provisioning_fields_before_transport() {
 }
 
 #[tokio::test]
-async fn schema_is_one_collection_schema_and_direct_path() {
-    let mock = Mock::new(vec![Response::json(
-        200,
-        &json!({"name":"orders","fields":[]}),
-    )]);
+async fn schema_management_uses_durable_schema_document_contract() {
+    let response = json!({
+        "generation": 7,
+        "identity": {"database_id": "db-1", "placement": ["GRU"]},
+        "migration": null,
+        "schema": {
+            "name": "orders",
+            "fields": [],
+            "fts": null,
+            "historyRetentionDays": 7,
+            "indexes": [],
+            "mergePolicy": "remove-wins",
+            "renames": [],
+            "ttl": null,
+            "version": 3
+        },
+        "schema_version": 3,
+        "target": {"database": "db-1", "branch": "main", "collection": "orders"}
+    });
+    let mock = Mock::new(vec![
+        Response::json(200, &response),
+        Response::json(200, &response),
+    ]);
     let sdk = client(Arc::clone(&mock));
-    let schema = terrascale::CollectionSchema::new("orders");
-    sdk.management()
+
+    let fetched = sdk
+        .management()
         .schemas()
-        .put("db 1", "orders", schema, None, OperationOptions::default())
+        .get("db 1", "orders", None)
         .await
-        .expect("schema");
+        .expect("schema get");
+    assert_eq!(fetched.generation, 7);
+    assert_eq!(fetched.identity.database_id, "db-1");
+    assert_eq!(fetched.target.collection, "orders");
+    assert_eq!(fetched.schema_version, 3);
+    assert_eq!(fetched.schema.name, "orders");
+
+    let schema = terrascale::CollectionSchema::new("orders");
+    let applied = sdk
+        .management()
+        .schemas()
+        .put(
+            "db 1",
+            "orders",
+            schema,
+            None,
+            OperationOptions {
+                idempotency_key: Some("schema-apply".into()),
+                cancellation: None,
+            },
+        )
+        .await
+        .expect("schema put");
+    assert_eq!(applied.generation, 7);
     let request = mock.last();
     assert_eq!(request.method, Method::Put);
     assert_eq!(
@@ -185,6 +227,10 @@ async fn schema_is_one_collection_schema_and_direct_path() {
             .get("collections")
             .is_none()
     );
+    assert!(request
+        .headers
+        .iter()
+        .any(|(name, value)| name == "idempotency-key" && value == "schema-apply"));
 }
 
 #[tokio::test]
