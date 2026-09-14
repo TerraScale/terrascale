@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraBase;
+using TerraBase.Reactive;
 
 internal static class Program
 {
@@ -23,6 +24,17 @@ internal static class Program
             if (CompressionWorkload.IsRequested(args))
             {
                 return await CompressionWorkload.RunAsync(args).ConfigureAwait(false);
+            }
+
+            var requestedWorkload = RequestedWorkload(args);
+            if (requestedWorkload.Equals("larger-memory", StringComparison.OrdinalIgnoreCase))
+            {
+                return await RunLargerMemoryAsync(args).ConfigureAwait(false);
+            }
+
+            if (requestedWorkload.Equals("subscriptions", StringComparison.OrdinalIgnoreCase))
+            {
+                return await RunSubscriptionsAsync(args).ConfigureAwait(false);
             }
 
             var options = BenchmarkOptions.Parse(args);
@@ -45,6 +57,191 @@ internal static class Program
             Console.Error.WriteLine($"Benchmark runner failed: {exception}");
             return 1;
         }
+    }
+
+    private static string RequestedWorkload(IReadOnlyList<string> args)
+    {
+        for (var index = 0; index < args.Count; index++)
+        {
+            var argument = args[index];
+            if (argument.StartsWith("--workload=", StringComparison.OrdinalIgnoreCase))
+            {
+                return argument["--workload=".Length..];
+            }
+
+            if (argument.Equals("--workload", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Count)
+            {
+                return args[index + 1];
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static async Task<int> RunLargerMemoryAsync(string[] args)
+    {
+        LargerMemoryOptions options;
+        try
+        {
+            options = LargerMemoryOptions.Parse(args);
+        }
+        catch (ArgumentException exception)
+        {
+            Console.Error.WriteLine($"Invalid larger-memory configuration: {exception.Message}");
+            LargerMemoryOptions.PrintHelp();
+            return 2;
+        }
+
+        var outputDirectory = Path.GetFullPath(options.OutputDirectory);
+        Directory.CreateDirectory(outputDirectory);
+        var environment = EnvironmentInfo.Create();
+        if (options.ShowHelp)
+        {
+            LargerMemoryOptions.PrintHelp();
+            return 0;
+        }
+
+        if (!string.Equals(environment.BuildConfiguration, "Release", StringComparison.OrdinalIgnoreCase))
+        {
+            var receipt = LargerMemoryReceipt.Invalid(options, environment, "Benchmark execution requires a Release artifact.");
+            await WriteStandaloneReceiptAsync(outputDirectory, "larger-memory", receipt, LargerMemoryMarkdown.Create(receipt)).ConfigureAwait(false);
+            return 2;
+        }
+
+        if (!options.MemoryCapBytesSpecified)
+        {
+            var receipt = LargerMemoryReceipt.Invalid(options, environment, "--memory-cap-bytes is required for the larger-memory workload so the resource budget is explicit.");
+            await WriteStandaloneReceiptAsync(outputDirectory, "larger-memory", receipt, LargerMemoryMarkdown.Create(receipt)).ConfigureAwait(false);
+            return 2;
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            cancellation.Cancel();
+        };
+        Console.CancelKeyPress += cancelHandler;
+        try
+        {
+            var result = await LargerThanMemoryWorkload.RunAsync(
+                options.ToConfiguration(),
+                outputDirectory,
+                cancellation.Token).ConfigureAwait(false);
+            var receipt = new LargerMemoryReceipt(
+                result.Status,
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                options,
+                environment,
+                result,
+                Environment.CommandLine,
+                outputDirectory);
+            await WriteStandaloneReceiptAsync(outputDirectory, "larger-memory", receipt, LargerMemoryMarkdown.Create(receipt)).ConfigureAwait(false);
+            return result.Status == "complete" ? 0 : 1;
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelHandler;
+        }
+    }
+
+    private static async Task<int> RunSubscriptionsAsync(string[] args)
+    {
+        SubscriptionCliOptions options;
+        try
+        {
+            options = SubscriptionCliOptions.Parse(args);
+        }
+        catch (ArgumentException exception)
+        {
+            Console.Error.WriteLine($"Invalid subscriptions configuration: {exception.Message}");
+            SubscriptionCliOptions.PrintHelp();
+            return 2;
+        }
+
+        var outputDirectory = Path.GetFullPath(options.OutputDirectory);
+        Directory.CreateDirectory(outputDirectory);
+        var environment = EnvironmentInfo.Create();
+        if (options.ShowHelp)
+        {
+            SubscriptionCliOptions.PrintHelp();
+            return 0;
+        }
+
+        if (!string.Equals(environment.BuildConfiguration, "Release", StringComparison.OrdinalIgnoreCase))
+        {
+            var receipt = SubscriptionReceipt.Invalid(options, environment, "Benchmark execution requires a Release artifact.");
+            await WriteStandaloneReceiptAsync(outputDirectory, "subscriptions", receipt, SubscriptionMarkdown.Create(receipt)).ConfigureAwait(false);
+            return 2;
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            cancellation.Cancel();
+        };
+        Console.CancelKeyPress += cancelHandler;
+        try
+        {
+            await using var hub = new ReactiveSubscriptionHub(new AllowAuthenticatedReactiveAuthorizer());
+            var scenario = new SubscriptionFanoutScenario<int, int>(
+                hub,
+                new ReactiveOperationId("benchmark.subscriptions"),
+                0,
+                new ReactiveAuthorization(new TenantId("benchmark-tenant"), "benchmark"),
+                static (_, _, _) => ValueTask.FromResult(0),
+                dependencies: null,
+                commitAsync: null,
+                durableCommitPathAvailable: false,
+                unsupportedReason: "The CLI has no durable commit-to-reactive source callback; use the embedding API to supply one.");
+            var runOptions = new SubscriptionFanoutOptions
+            {
+                SubscriberCounts = options.SubscriberCounts,
+                WarmupPublications = options.WarmupPublications,
+                MeasuredPublications = options.MeasuredPublications,
+            };
+            var result = await SubscriptionFanoutWorkload.RunAsync(scenario, runOptions, cancellation.Token).ConfigureAwait(false);
+            var rawPath = Path.Combine(outputDirectory, "subscriptions-raw-samples.jsonl");
+            await using (var raw = new StreamWriter(rawPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+            {
+                foreach (var item in result.Cases)
+                {
+                    await raw.WriteLineAsync(JsonSerializer.Serialize(item, RawJsonOptions)).ConfigureAwait(false);
+                }
+            }
+
+            var receipt = new SubscriptionReceipt(
+                result.Status,
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                options,
+                environment,
+                result,
+                rawPath,
+                Environment.CommandLine,
+                outputDirectory);
+            await WriteStandaloneReceiptAsync(outputDirectory, "subscriptions", receipt, SubscriptionMarkdown.Create(receipt)).ConfigureAwait(false);
+            return result.Status == "complete" ? 0 : 1;
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelHandler;
+        }
+    }
+
+    private static async Task WriteStandaloneReceiptAsync<T>(
+        string outputDirectory,
+        string name,
+        T receipt,
+        string markdown)
+    {
+        var receiptPath = Path.Combine(outputDirectory, $"{name}-receipt.json");
+        await File.WriteAllTextAsync(receiptPath, JsonSerializer.Serialize(receipt, JsonOptions)).ConfigureAwait(false);
+        await File.WriteAllTextAsync(Path.Combine(outputDirectory, $"{name}-summary.md"), markdown).ConfigureAwait(false);
+        Console.WriteLine($"Receipt: {receiptPath}");
+        Console.WriteLine($"Summary: {Path.Combine(outputDirectory, $"{name}-summary.md")}");
     }
 
     private sealed class BenchmarkRunner(BenchmarkOptions options)

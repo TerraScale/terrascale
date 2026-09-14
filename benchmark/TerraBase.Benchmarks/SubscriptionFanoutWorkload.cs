@@ -147,8 +147,8 @@ public static class SubscriptionFanoutWorkload
                     query,
                     scenario.Parameters,
                     scenario.Authorization,
-                    new ReactiveSubscriptionOptions { Delivery = delivery },
-                    cancellationToken).ConfigureAwait(false);
+                    subscriptionOptions: new ReactiveSubscriptionOptions { Delivery = delivery },
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
                 subscriptions.Add(subscription);
                 var snapshot = await subscription.ReadAsync(cancellationToken).ConfigureAwait(false);
                 if (snapshot.Kind != ReactiveFrameKind.Snapshot)
@@ -248,7 +248,7 @@ public static class SubscriptionFanoutWorkload
                                 RetainedRevisions = options.RetainedRevisions,
                             },
                         },
-                        cancellationToken).ConfigureAwait(false);
+                        cancellationToken: cancellationToken).ConfigureAwait(false);
                     var reconnect = await subscriptions[slowSubscriberIndex].ReadAsync(cancellationToken).ConfigureAwait(false);
                     reconnectFrameKind = reconnect.Kind.ToString();
                     reconnectBytes = JsonSerializer.SerializeToUtf8Bytes(reconnect).LongLength;
@@ -265,6 +265,7 @@ public static class SubscriptionFanoutWorkload
                 ResponsiveSubscribers: subscriberCount - (slowSubscriberIndex >= 0 ? 1 : 0),
                 Status: "complete",
                 OriginEvaluations: probe?.OriginEvaluations,
+                SharedMaintenanceUpdates: incrementalUpdates,
                 IncrementalUpdates: incrementalUpdates,
                 ChangedDocuments: changedDocuments,
                 DeliveredFrames: deliveredFrames,
@@ -306,6 +307,7 @@ public static class SubscriptionFanoutWorkload
                 ResponsiveSubscribers: null,
                 Status: "failed",
                 OriginEvaluations: probe?.OriginEvaluations,
+                SharedMaintenanceUpdates: null,
                 IncrementalUpdates: null,
                 ChangedDocuments: null,
                 DeliveredFrames: deliveredFrames == 0 ? null : deliveredFrames,
@@ -339,7 +341,7 @@ public static class SubscriptionFanoutWorkload
 
     private static async ValueTask<FrameObservation<TResult>[]> PublishAndReadAsync<TParameters, TResult>(
         SubscriptionFanoutScenario<TParameters, TResult> scenario,
-        IReadOnlyList<ReactiveSubscription<TResult>> subscriptions,
+        List<ReactiveSubscription<TResult>> subscriptions,
         SubscriptionFanoutOptions options,
         int slowSubscriberIndex,
         CancellationToken cancellationToken)
@@ -392,6 +394,7 @@ public static class SubscriptionFanoutWorkload
             ResponsiveSubscribers: null,
             Status: "unsupported",
             OriginEvaluations: null,
+            SharedMaintenanceUpdates: null,
             IncrementalUpdates: null,
             ChangedDocuments: null,
             DeliveredFrames: null,
@@ -414,7 +417,7 @@ public static class SubscriptionFanoutWorkload
             Error: null,
             UnsupportedReason: reason);
 
-    private static LatencyPercentiles Percentiles(IReadOnlyList<double> values)
+    private static LatencyPercentiles Percentiles(List<double> values)
     {
         if (values.Count == 0)
         {
@@ -428,14 +431,14 @@ public static class SubscriptionFanoutWorkload
             Percentile(ordered, 0.99));
     }
 
-    private static double Percentile(IReadOnlyList<double> values, double percentile)
+    private static double Percentile(double[] values, double percentile)
     {
-        if (values.Count == 1)
+        if (values.Length == 1)
         {
             return values[0];
         }
 
-        var position = (values.Count - 1) * percentile;
+        var position = (values.Length - 1) * percentile;
         var lower = (int)Math.Floor(position);
         var upper = (int)Math.Ceiling(position);
         if (lower == upper)
@@ -624,6 +627,7 @@ public sealed record SubscriptionFanoutCaseResult(
     int? ResponsiveSubscribers,
     string Status,
     long? OriginEvaluations,
+    long? SharedMaintenanceUpdates,
     long? IncrementalUpdates,
     long? ChangedDocuments,
     long? DeliveredFrames,

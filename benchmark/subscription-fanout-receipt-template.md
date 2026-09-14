@@ -45,12 +45,12 @@ frames and summarized without pooling. A missing value is `—`; it is not zero.
 When one subscriber is deliberately held back, `Responsive` excludes that
 subscriber and the separate backpressure/reconnect columns describe it.
 
-| Subscribers | Responsive | Status | Origin evaluations | Incremental updates | Changed documents | Delivered frames | Egress bytes | Allocated bytes | Allocated bytes/frame | CPU ms | Working-set before | Working-set after | Working-set delta | p50 delivery µs | p95 delivery µs | p99 delivery µs | Backpressure resets | Backpressure disconnects | Reconnect frame | Reconnect reset | Reconnect egress bytes | Error / unsupported reason |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- |
-| 1 | `<responsive>` | unsupported | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | `<reason>` |
-| 10 | `<responsive>` | unsupported | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | `<reason>` |
-| 100 | `<responsive>` | unsupported | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | `<reason>` |
-| 1000 | `<responsive>` | unsupported | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | `<reason>` |
+| Subscribers | Responsive | Status | Origin evaluations | Shared maintenance updates | Incremental updates | Changed documents | Delivered frames | Egress bytes | Allocated bytes | Allocated bytes/frame | CPU ms | Working-set before | Working-set after | Working-set delta | p50 delivery µs | p95 delivery µs | p99 delivery µs | Backpressure resets | Backpressure disconnects | Reconnect frame | Reconnect reset | Reconnect egress bytes | Error / unsupported reason |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- |
+| 1 | `<responsive>` | unsupported | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | `<reason>` |
+| 10 | `<responsive>` | unsupported | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | `<reason>` |
+| 100 | `<responsive>` | unsupported | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | `<reason>` |
+| 1000 | `<responsive>` | unsupported | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | `<reason>` |
 
 ## Correctness and limitations
 
@@ -62,8 +62,9 @@ subscriber and the separate backpressure/reconnect columns describe it.
   exactly one publication for that commit.
 - `Origin evaluations` comes from the query delegate's
   `SubscriptionFanoutProbe`. If no probe is supplied, the field remains `—`.
-- `Incremental updates` counts one shared delta per measured publication;
-  delivered frames count each responsive subscriber frame.
+- `Shared maintenance updates` and `Incremental updates` count one shared delta
+  per measured publication; delivered frames count each responsive subscriber
+  frame.
 - A synthetic change callback, an in-memory-only path, or a missing durable
   feed remains `unsupported` and must not be promoted to a throughput result.
 - Reconnect reset is recorded only when the old checkpoint is outside the

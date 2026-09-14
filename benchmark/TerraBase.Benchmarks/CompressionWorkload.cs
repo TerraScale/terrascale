@@ -26,7 +26,7 @@ internal static class CompressionWorkload
     private const string DefaultDurability = "in-memory primitive; no WAL or segment I/O";
     private static long blackHole;
 
-    public static bool IsRequested(IReadOnlyList<string> args)
+    public static bool IsRequested(string[] args)
     {
         for (var index = 0; index < args.Count; index++)
         {
@@ -504,6 +504,9 @@ internal static class CompressionWorkload
 
     private static double ToMicroseconds(TimeSpan elapsed) => elapsed.TotalMilliseconds * 1_000;
 
+    private static double ToMicroseconds(long stopwatchTicks) =>
+        stopwatchTicks * 1_000_000d / Stopwatch.Frequency;
+
     private static long Percentile(long[] sortedTicks, double percentile)
     {
         var index = (int)Math.Ceiling(sortedTicks.Length * percentile) - 1;
@@ -915,19 +918,19 @@ internal static class CompressionWorkload
             var builder = new StringBuilder();
             builder.AppendLine("# TerraBase compression benchmark receipt");
             builder.AppendLine();
-            builder.AppendLine($"Status: **{receipt.Status}**");
+            builder.AppendLine(FormattableString.Invariant($"Status: **{receipt.Status}**"));
             builder.AppendLine();
-            builder.AppendLine($"Receipt JSON: `{Path.GetFileName(receiptPath)}`");
-            builder.AppendLine($"Raw samples: `{Path.GetFileName(receipt.RawSamplesPath)}`");
+            builder.AppendLine(FormattableString.Invariant($"Receipt JSON: `{Path.GetFileName(receiptPath)}`"));
+            builder.AppendLine(FormattableString.Invariant($"Raw samples: `{Path.GetFileName(receipt.RawSamplesPath)}`"));
             builder.AppendLine();
             builder.AppendLine("## Environment");
             builder.AppendLine();
-            builder.AppendLine($"- Commit: `{receipt.Environment.GitCommit ?? "unavailable"}` (dirty: `{receipt.Environment.GitDirty?.ToString() ?? "unknown"}`)");
-            builder.AppendLine($"- Benchmark artifact SHA-256: `{receipt.Environment.ArtifactSha256 ?? "unavailable"}`");
-            builder.AppendLine($"- ZoneTree assembly SHA-256: `{receipt.Environment.ZoneTreeAssemblySha256 ?? "unavailable"}`");
-            builder.AppendLine($"- Runtime: {receipt.Environment.FrameworkDescription}; {receipt.Environment.Runtime}; {receipt.Environment.OperatingSystem}; {receipt.Environment.Architecture}; build `{receipt.Environment.BuildConfiguration}`");
-            builder.AppendLine($"- CPU: {receipt.Environment.CpuModel}; {receipt.Environment.ProcessorCount} logical processors; available memory {receipt.Environment.AvailableMemoryBytes:N0} bytes");
-            builder.AppendLine($"- GC: server `{receipt.Environment.ServerGc}`, latency mode `{receipt.Environment.GcLatencyMode}`");
+            builder.AppendLine(FormattableString.Invariant($"- Commit: `{receipt.Environment.GitCommit ?? "unavailable"}` (dirty: `{receipt.Environment.GitDirty?.ToString() ?? "unknown"}`)"));
+            builder.AppendLine(FormattableString.Invariant($"- Benchmark artifact SHA-256: `{receipt.Environment.ArtifactSha256 ?? "unavailable"}`"));
+            builder.AppendLine(FormattableString.Invariant($"- ZoneTree assembly SHA-256: `{receipt.Environment.ZoneTreeAssemblySha256 ?? "unavailable"}`"));
+            builder.AppendLine(FormattableString.Invariant($"- Runtime: {receipt.Environment.FrameworkDescription}; {receipt.Environment.Runtime}; {receipt.Environment.OperatingSystem}; {receipt.Environment.Architecture}; build `{receipt.Environment.BuildConfiguration}`"));
+            builder.AppendLine(FormattableString.Invariant($"- CPU: {receipt.Environment.CpuModel}; {receipt.Environment.ProcessorCount} logical processors; available memory {receipt.Environment.AvailableMemoryBytes:N0} bytes"));
+            builder.AppendLine(FormattableString.Invariant($"- GC: server `{receipt.Environment.ServerGc}`, latency mode `{receipt.Environment.GcLatencyMode}`"));
             builder.AppendLine();
             builder.AppendLine("## Case summary");
             builder.AppendLine();
@@ -949,10 +952,10 @@ internal static class CompressionWorkload
             }
 
             builder.AppendLine();
-            builder.AppendLine($"Command: `{receipt.Command}`");
+            builder.AppendLine(FormattableString.Invariant($"Command: `{receipt.Command}`"));
             builder.AppendLine();
             builder.AppendLine("Cold is the first operation for each profile/method/operation case. Warm rows are measured after the configured warmup and are retained individually; summary values use medians of per-sample values.");
-            builder.AppendLine($"Durability setting: `{receipt.Configuration.Durability}`; requested storage setting: `{receipt.Configuration.Storage}`.");
+            builder.AppendLine(FormattableString.Invariant($"Durability setting: `{receipt.Configuration.Durability}`; requested storage setting: `{receipt.Configuration.Storage}`."));
             return builder.ToString();
         }
 
@@ -963,7 +966,7 @@ internal static class CompressionWorkload
                 builder.Append('|').Append(item.Profile).Append(" | ")
                     .Append(item.PayloadBytes.ToString("N0", CultureInfo.InvariantCulture)).Append(" | ")
                     .Append(item.Method).Append(" | — | — | — | — | — | — | — |");
-                builder.AppendLine($" Failure: {item.Error?.Replace('\n', ' ') ?? "unknown"} |");
+                builder.AppendLine(FormattableString.Invariant($" Failure: {item.Error?.Replace('\n', ' ') ?? "unknown"} |"));
                 return;
             }
 

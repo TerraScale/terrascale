@@ -92,6 +92,7 @@ internal static class LargerThanMemoryWorkload
                 "warmup",
                 ReadWriteMix.ReadHeavy,
                 configuration.InitialDistribution,
+                randomSalt: 0,
                 cancellationToken).ConfigureAwait(false);
 
             await using var raw = new StreamWriter(rawPath, append: false, new UTF8Encoding(false));
@@ -633,7 +634,7 @@ internal static class LargerThanMemoryWorkload
             new Shift("zipf-write-heavy", 2_000, KeyDistributionKind.Zipf, ReadWriteMix.WriteOnly),
         ];
 
-        internal string ActiveStoragePath { get; private set; } = string.Empty;
+        internal string ActiveStoragePath { get; set; } = string.Empty;
 
         internal void Validate()
         {
