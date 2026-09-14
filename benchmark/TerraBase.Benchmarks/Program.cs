@@ -14,6 +14,7 @@ internal static class Program
     {
         WriteIndented = true,
     };
+    private static readonly JsonSerializerOptions RawJsonOptions = new(JsonSerializerDefaults.Web);
 
     private static async Task<int> Main(string[] args)
     {
@@ -116,7 +117,7 @@ internal static class Program
                 result.WorkloadDigest = digest;
                 await RunOperationsAsync(engine, workload, keys, payload.RootElement, options.WarmupOperations, null, 0, cancellationToken).ConfigureAwait(false);
 
-                await using var raw = new StreamWriter(rawPath, append: false, Encoding.UTF8);
+                await using var raw = new StreamWriter(rawPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 for (var sampleIndex = 0; sampleIndex < options.Samples; sampleIndex++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -128,7 +129,7 @@ internal static class Program
                         sampleIndex,
                         cancellationToken).ConfigureAwait(false);
                     result.Samples.Add(sample);
-                    await raw.WriteLineAsync(JsonSerializer.Serialize(sample, JsonOptions)).ConfigureAwait(false);
+                    await raw.WriteLineAsync(JsonSerializer.Serialize(sample, RawJsonOptions)).ConfigureAwait(false);
                     await raw.FlushAsync(cancellationToken).ConfigureAwait(false);
                     Console.WriteLine($"  sample {sampleIndex + 1}/{options.Samples}: {sample.ThroughputOpsPerSecond.ToString("F1", CultureInfo.InvariantCulture)} ops/s");
                 }
@@ -186,7 +187,7 @@ internal static class Program
             int sampleIndex,
             CancellationToken cancellationToken)
         {
-            var process = Process.GetCurrentProcess();
+            using var process = Process.GetCurrentProcess();
             process.Refresh();
             var processCpuBefore = process.TotalProcessorTime;
             var workingSetBefore = process.WorkingSet64;
@@ -403,11 +404,12 @@ internal static class Program
                         options.Concurrency = ParsePositive(value, name);
                         break;
                     case "seed":
-                        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out options.Seed))
+                        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seed))
                         {
                             throw new ArgumentException($"--{name} must be a 32-bit integer.");
                         }
 
+                        options.Seed = seed;
                         break;
                     case "output":
                         options.OutputDirectory = value;
@@ -472,7 +474,7 @@ internal static class Program
         }
 
         private static T ParseEnum<T>(string value, string name)
-            where T : struct, Enum => Enum.TryParse<T>(value, ignoreCase: true, out var parsed)
+            where T : struct, Enum => Enum.TryParse<T>(value.Replace("-", string.Empty, StringComparison.Ordinal), ignoreCase: true, out var parsed)
                 ? parsed
                 : throw new ArgumentException($"--{name} must be one of: {string.Join(", ", Enum.GetNames<T>())}.");
     }
@@ -562,11 +564,15 @@ internal static class Program
                 : null;
             var gitRoot = FindGitRoot();
             var commit = gitRoot is null ? null : RunGit(gitRoot, "rev-parse", "HEAD");
-            var dirty = gitRoot is null ? null : RunGit(gitRoot, "status", "--porcelain") is { } status && status.Length != 0;
+            bool? dirty = null;
+            if (gitRoot is not null)
+            {
+                dirty = RunGit(gitRoot, "status", "--porcelain") is { } status && status.Length != 0;
+            }
             var cpuModel = ReadCpuModel();
             return new EnvironmentInfo(
                 DateTimeOffset.UtcNow,
-                RuntimeInformation.FrameworkDescription,
+                Environment.Version.ToString(),
                 RuntimeInformation.FrameworkDescription,
                 RuntimeInformation.OSDescription,
                 RuntimeInformation.ProcessArchitecture.ToString(),
@@ -583,15 +589,23 @@ internal static class Program
 
         private static string? FindGitRoot()
         {
-            var current = new DirectoryInfo(Environment.CurrentDirectory);
-            while (current is not null)
+            var candidates = new[]
             {
-                if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+                new DirectoryInfo(Environment.CurrentDirectory),
+                new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory),
+            };
+            foreach (var candidate in candidates)
+            {
+                var current = candidate;
+                while (current is not null)
                 {
-                    return current.FullName;
-                }
+                    if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+                    {
+                        return current.FullName;
+                    }
 
-                current = current.Parent;
+                    current = current.Parent;
+                }
             }
 
             return null;
@@ -601,7 +615,7 @@ internal static class Program
         {
             try
             {
-                using var process = Process.Start(new ProcessStartInfo
+                var startInfo = new ProcessStartInfo
                 {
                     FileName = "git",
                     WorkingDirectory = workingDirectory,
@@ -609,16 +623,16 @@ internal static class Program
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
-                    ArgumentList = { },
-                });
+                };
+                foreach (var argument in arguments)
+                {
+                    startInfo.ArgumentList.Add(argument);
+                }
+
+                using var process = Process.Start(startInfo);
                 if (process is null)
                 {
                     return null;
-                }
-
-                foreach (var argument in arguments)
-                {
-                    process.StartInfo.ArgumentList.Add(argument);
                 }
 
                 process.WaitForExit();
