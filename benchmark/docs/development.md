@@ -1,8 +1,7 @@
 # Development contract
 
-The workspace [GOAL.md](../../GOAL.md) is the product authority and
-[AGENTS.md](../AGENTS.md) contains repository rules. Source and tests are the
-implementation authority.
+The workspace product authority and [AGENTS.md](../AGENTS.md) contain the
+repository rules. Source and tests are the implementation authority.
 
 TerraBase is a .NET 11 C# library and loopback observability host. The runtime
 contains the storage boundary, document store, replication and HTTPS sync

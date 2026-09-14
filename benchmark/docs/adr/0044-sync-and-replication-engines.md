@@ -226,7 +226,7 @@ the same causal position.
 ### 3.7 Delivery
 
 Encode-once immutable log responses with deterministic chunk boundaries and
-byte-identical MessagePack per `(view, generation, offset)`; origin
+byte-identical payloads per `(view, generation, offset)`; origin
 `singleflight` per key; `Cache-Control: private, max-age=0` with
 `Cloudflare-CDN-Cache-Control: public, max-age=<retention>, immutable`;
 `no-store` on empty long-poll timeouts (D-14/D-55). Optional WebSocket and
