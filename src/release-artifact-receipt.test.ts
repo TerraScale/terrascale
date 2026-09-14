@@ -436,7 +436,7 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
         treeDigest: buildIdentity.treeDigest,
       },
       deployCli: {
-        package: "TerraScale.Deploy.Cli",
+        package: "ts-deploy",
         version: "1.1.0",
         executableDigest: `sha256:${"3".repeat(64)}`,
       },

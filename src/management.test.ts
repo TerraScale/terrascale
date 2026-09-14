@@ -5,7 +5,7 @@ import {
   ManagementContractGapError,
   validatePlacementLock,
 } from "./management.js";
-import type { WebhookDelivery } from "./management-contracts.js";
+import type { SchemaDocument, WebhookDelivery } from "./management-contracts.js";
 
 const completeIndex = {
   field: "email",
@@ -26,6 +26,15 @@ const completeDelivery = {
   delivered: false,
   terminal: false,
 } satisfies WebhookDelivery;
+const rollingBackMigration = {
+  operation_id: "migration-1",
+  state: "rolling_back",
+  steps: [],
+  total: 10,
+  completed: 4,
+  next_cursor: "cursor-4",
+  message: "Restoring the previous schema version.",
+} satisfies NonNullable<SchemaDocument["migration"]>;
 const { write_index: _writeIndex, ...deliveryWithoutWriteIndex } = completeDelivery;
 // @ts-expect-error Producer deliveries require write_index.
 const incompleteDelivery: WebhookDelivery = deliveryWithoutWriteIndex;
@@ -33,6 +42,7 @@ void completeIndex;
 void incompleteIndex;
 void completeDelivery;
 void incompleteDelivery;
+void rollingBackMigration;
 
 function fixtureFetch(requests: Request[]): typeof fetch {
   return async (input) => {
@@ -298,6 +308,21 @@ it("carries schema generation preconditions and a stable apply identity", async 
   expect(() => client.schemas.put("db", "users", schema, { idempotencyKey: "key", ifMatch: 'W/"7"' })).toThrow(TypeError);
   expect(() => client.schemas.put("db", "other", schema, { idempotencyKey: "key" })).toThrow(TypeError);
   expect(requests).toHaveLength(1);
+});
+
+it("preserves the published rolling_back schema migration state", async () => {
+  const client = createTerraScaleManagementClient({
+    fetch: async () => Response.json({
+      generation: 1,
+      schema_version: 2,
+      schema: { name: "users", fields: [] },
+      migration: rollingBackMigration,
+    }),
+  });
+
+  const result = await client.schemas.get("db", "users");
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.value.migration?.state).toBe("rolling_back");
 });
 
 it("bounds recommendations and keeps export idempotency in the published request body", async () => {

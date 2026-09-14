@@ -169,7 +169,7 @@ function parseBuildReceipt(bytes) {
   }
   requireDigest(receipt.source.treeDigest, "Candidate source tree digest");
   if (
-    receipt.deployCli.package !== "TerraScale.Deploy.Cli" ||
+    receipt.deployCli.package !== "ts-deploy" ||
     typeof receipt.deployCli.version !== "string" ||
     !/^[0-9A-Za-z.-]{1,64}$/u.test(receipt.deployCli.version) ||
     receipt.deployCli.version.split(".").length < 3

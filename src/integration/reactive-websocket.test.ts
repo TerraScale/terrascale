@@ -22,6 +22,8 @@ function observe(subscription: SyncV1LiveSubscription, identity: string): Promis
 describe.skipIf(origin === undefined || accessToken === undefined)("real member browser WebSocket", () => {
   test("production URLs keep HTTP on sync and sockets on the attached member", async () => {
     const requests: URL[] = [];
+    const attachAuthorization: Array<string | null> = [];
+    const deliveryHeaders: Array<{ authorization: string | null; capability: string | null }> = [];
     const sockets: URL[] = [];
     let omitRegion = false;
     // Route production names to the isolated TCP member, preserving real
@@ -30,7 +32,16 @@ describe.skipIf(origin === undefined || accessToken === undefined)("real member 
       accessToken: accessToken!,
       fetch: async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : input.toString());
+        const headers = new Headers(init?.headers);
         requests.push(url);
+        if (url.pathname === "/api/v1/reactive/views") {
+          attachAuthorization.push(headers.get("authorization"));
+        } else if (url.pathname.includes("/snapshot/") || url.pathname.endsWith("/log")) {
+          deliveryHeaders.push({
+            authorization: headers.get("authorization"),
+            capability: headers.get("x-terrascale-capability"),
+          });
+        }
         const response = await globalThis.fetch(new URL(url.pathname + url.search, origin!), init);
         if (omitRegion && url.pathname === "/api/v1/reactive/views") {
           const headers = new Headers(response.headers);
@@ -60,6 +71,13 @@ describe.skipIf(origin === undefined || accessToken === undefined)("real member 
         assert.equal(url.origin, url.pathname === "/api/v1/reactive/views"
           ? "https://api.terrascale.tech" : "https://sync.api.terrascale.tech");
       }
+      assert.ok(attachAuthorization.length >= 2, "both live views must authenticate their attach");
+      const expectedAuthorization = accessToken!.startsWith("Bearer ")
+        ? accessToken!
+        : `Bearer ${accessToken!}`;
+      assert.ok(attachAuthorization.every(value => value === expectedAuthorization));
+      assert.ok(deliveryHeaders.length > 0, "the HTTP view must fetch a CDN snapshot or log");
+      assert.ok(deliveryHeaders.every(({ authorization, capability }) => authorization === null && capability !== null));
       omitRegion = true;
       await assert.rejects(client.subscribe({
         databaseId: "prod", query: "SELECT total FROM routing_probe LIMIT 10",
