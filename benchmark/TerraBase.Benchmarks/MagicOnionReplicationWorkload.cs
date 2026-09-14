@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Reflection;
+using System.Runtime;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -63,6 +66,7 @@ public static class MagicOnionReplicationWorkload
         var outputDirectory = Path.GetFullPath(options.OutputDirectory);
         Directory.CreateDirectory(outputDirectory);
         var startedAt = DateTimeOffset.UtcNow;
+        var environment = BuildEnvironmentIdentity();
         var samples = new List<MagicOnionReplicationSample>(options.Samples);
         var rawPath = Path.Combine(outputDirectory, "raw-samples.jsonl");
         await using var raw = new StreamWriter(
@@ -95,6 +99,7 @@ public static class MagicOnionReplicationWorkload
                 rawPath,
                 Environment.CommandLine,
                 outputDirectory,
+                environment,
                 exception.ToString());
             await WriteReceiptAsync(failed, outputDirectory).ConfigureAwait(false);
             Console.Error.WriteLine($"MagicOnion replication benchmark failed: {exception.Message}");
@@ -110,6 +115,7 @@ public static class MagicOnionReplicationWorkload
             rawPath,
             Environment.CommandLine,
             outputDirectory,
+            environment,
             Error: null);
         await WriteReceiptAsync(receipt, outputDirectory).ConfigureAwait(false);
         return 0;
@@ -394,6 +400,13 @@ public static class MagicOnionReplicationWorkload
         builder.AppendLine(CultureInfo.InvariantCulture, $"Receipt: `{receiptPath}`  ");
         builder.AppendLine(CultureInfo.InvariantCulture, $"Command: `{receipt.Command}`");
         builder.AppendLine();
+        builder.AppendLine(CultureInfo.InvariantCulture, $"Commit: `{receipt.Environment.GitCommit ?? "unavailable"}` (dirty: `{receipt.Environment.GitDirty?.ToString() ?? "unknown"}`)");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"Benchmark artifact SHA-256: `{receipt.Environment.ArtifactSha256 ?? "unavailable"}`");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"TerraBase artifact SHA-256: `{receipt.Environment.TerraBaseArtifactSha256 ?? "unavailable"}`");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"Runtime: {receipt.Environment.FrameworkDescription}; {receipt.Environment.Runtime}; {receipt.Environment.OperatingSystem}; {receipt.Environment.Architecture}; build `{receipt.Environment.BuildConfiguration}`");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"CPU: {receipt.Environment.CpuModel}; {receipt.Environment.ProcessorCount} logical processors; available memory {receipt.Environment.AvailableMemoryBytes:N0} bytes");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"GC: server `{receipt.Environment.ServerGc}`, latency mode `{receipt.Environment.GcLatencyMode}`");
+        builder.AppendLine();
         builder.AppendLine("Each sample uses two independent HTTPS/mTLS TerraBase hosts with separate durable directories. Source seeding and stream pull use MagicOnion; delivery to the destination uses one unary MagicOnion push per publication and optional duplicate delivery.");
         builder.AppendLine();
         builder.AppendLine("The protocol reports `DurableAcknowledged` in the push response and does not expose a separate server-side durable-ack timestamp. Durable-ack latency therefore uses the same client-observed push response boundary and is labelled accordingly.");
@@ -434,6 +447,99 @@ public static class MagicOnionReplicationWorkload
         }
 
         return null;
+    }
+
+    private static EnvironmentIdentity BuildEnvironmentIdentity()
+    {
+        var artifactPath = Assembly.GetExecutingAssembly().Location;
+        var terraBasePath = typeof(TerraBaseHost).Assembly.Location;
+        var gitRoot = FindGitRoot();
+        return new EnvironmentIdentity(
+            DateTimeOffset.UtcNow,
+            Environment.Version.ToString(),
+            RuntimeInformation.FrameworkDescription,
+            Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration ?? "unknown",
+            RuntimeInformation.OSDescription,
+            RuntimeInformation.ProcessArchitecture.ToString(),
+            ReadCpuModel(),
+            Environment.ProcessorCount,
+            GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
+            GCSettings.IsServerGC,
+            GCSettings.LatencyMode.ToString(),
+            gitRoot is null ? null : RunGit(gitRoot, "rev-parse", "HEAD"),
+            gitRoot is not null && !string.IsNullOrWhiteSpace(RunGit(gitRoot, "status", "--porcelain")),
+            string.IsNullOrWhiteSpace(artifactPath) ? null : artifactPath,
+            HashFile(artifactPath),
+            string.IsNullOrWhiteSpace(terraBasePath) ? null : terraBasePath,
+            HashFile(terraBasePath));
+    }
+
+    private static string? FindGitRoot()
+    {
+        var current = new DirectoryInfo(Environment.CurrentDirectory);
+        while (current is not null)
+        {
+            if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+                return current.FullName;
+            current = current.Parent;
+        }
+
+        return null;
+    }
+
+    private static string? RunGit(string workingDirectory, params string[] arguments)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "git",
+                WorkingDirectory = workingDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            foreach (var argument in arguments)
+                startInfo.ArgumentList.Add(argument);
+            using var process = Process.Start(startInfo);
+            if (process is null)
+                return null;
+            process.WaitForExit();
+            return process.ExitCode == 0 ? process.StandardOutput.ReadToEnd().Trim() : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? HashFile(string? path) =>
+        path is { Length: > 0 } && File.Exists(path)
+            ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant()
+            : null;
+
+    private static string ReadCpuModel()
+    {
+        try
+        {
+            if (File.Exists("/proc/cpuinfo"))
+            {
+                var line = File.ReadLines("/proc/cpuinfo")
+                    .FirstOrDefault(static value => value.StartsWith("model name", StringComparison.OrdinalIgnoreCase));
+                if (line is not null)
+                {
+                    var separator = line.IndexOf(':');
+                    return separator >= 0 ? line[(separator + 1)..].Trim() : line.Trim();
+                }
+            }
+        }
+        catch (IOException)
+        {
+            // The host model is optional metadata.
+        }
+
+        return "unknown";
     }
 
     private sealed class MagicOnionReplicationOptions
@@ -543,7 +649,27 @@ public static class MagicOnionReplicationWorkload
         string RawSamplesPath,
         string Command,
         string ReceiptDirectory,
+        EnvironmentIdentity Environment,
         string? Error);
+
+    private sealed record EnvironmentIdentity(
+        DateTimeOffset StartedAtUtc,
+        string Runtime,
+        string FrameworkDescription,
+        string BuildConfiguration,
+        string OperatingSystem,
+        string Architecture,
+        string CpuModel,
+        int ProcessorCount,
+        long AvailableMemoryBytes,
+        bool ServerGc,
+        string GcLatencyMode,
+        string? GitCommit,
+        bool? GitDirty,
+        string? ArtifactPath,
+        string? ArtifactSha256,
+        string? TerraBaseArtifactPath,
+        string? TerraBaseArtifactSha256);
 
     private sealed class MagicOnionPeerPair : IAsyncDisposable
     {

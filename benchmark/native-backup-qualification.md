@@ -22,6 +22,13 @@ with raw samples, local object-store artifacts, target generations, and the
 rendered summary beside it in
 [`native-backup-20260914`](receipts/native-backup-20260914/).
 
+The retained JSON is a correctness fixture only until it is rerun with the
+current Release benchmark. Its `environment` records runtime, OS,
+architecture, processor count, memory, and GC mode, but omits the required
+commit/dirty state, benchmark artifact path/digest, and CPU model. The current
+workload emits those fields; a new source-bound receipt is required before
+admitting the measurements as a complete benchmark claim.
+
 The run used .NET 10.0.12 on NixOS 26.05 x64 with 46 logical processors and
 128 snapshot documents. The full boundary was sequence 1 and the incremental
 boundary was sequence 9. PITR stopped at sequence 2 after one incremental log

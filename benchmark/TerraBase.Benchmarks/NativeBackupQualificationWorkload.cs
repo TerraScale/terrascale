@@ -522,6 +522,7 @@ public static class NativeBackupQualificationWorkload
         string BuildConfiguration,
         string OperatingSystem,
         string Architecture,
+        string CpuModel,
         int ProcessorCount,
         long AvailableMemoryBytes,
         bool ServerGc,
@@ -529,11 +530,14 @@ public static class NativeBackupQualificationWorkload
         string? GitCommit,
         bool? GitDirty,
         string? ArtifactPath,
-        string? ArtifactSha256)
+        string? ArtifactSha256,
+        string? TerraBaseArtifactPath,
+        string? TerraBaseArtifactSha256)
     {
         public static NativeEnvironment Create()
         {
             var artifactPath = Assembly.GetExecutingAssembly().Location;
+            var terraBasePath = typeof(StorageEngineBackupSource).Assembly.Location;
             var gitRoot = FindGitRoot();
             var commit = gitRoot is null ? null : RunGit(gitRoot, "rev-parse", "HEAD");
             bool? dirty = gitRoot is null ? null : RunGit(gitRoot, "status", "--porcelain") is { Length: > 0 };
@@ -544,6 +548,7 @@ public static class NativeBackupQualificationWorkload
                 Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration ?? "unknown",
                 RuntimeInformation.OSDescription,
                 RuntimeInformation.ProcessArchitecture.ToString(),
+                ReadCpuModel(),
                 Environment.ProcessorCount,
                 GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
                 GCSettings.IsServerGC,
@@ -551,7 +556,9 @@ public static class NativeBackupQualificationWorkload
                 commit,
                 dirty,
                 string.IsNullOrWhiteSpace(artifactPath) ? null : artifactPath,
-                HashFile(artifactPath));
+                HashFile(artifactPath),
+                string.IsNullOrWhiteSpace(terraBasePath) ? null : terraBasePath,
+                HashFile(terraBasePath));
         }
 
         private static string? FindGitRoot()
@@ -598,6 +605,29 @@ public static class NativeBackupQualificationWorkload
             path is { Length: > 0 } && File.Exists(path)
                 ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant()
                 : null;
+
+        private static string ReadCpuModel()
+        {
+            try
+            {
+                if (File.Exists("/proc/cpuinfo"))
+                {
+                    var line = File.ReadLines("/proc/cpuinfo")
+                        .FirstOrDefault(static value => value.StartsWith("model name", StringComparison.OrdinalIgnoreCase));
+                    if (line is not null)
+                    {
+                        var separator = line.IndexOf(':');
+                        return separator >= 0 ? line[(separator + 1)..].Trim() : line.Trim();
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                // The host model is optional metadata.
+            }
+
+            return "unknown";
+        }
     }
 
     private static class NativeMarkdown
@@ -612,8 +642,9 @@ public static class NativeBackupQualificationWorkload
             builder.AppendLine("## Measurement").AppendLine();
             builder.AppendLine(CultureInfo.InvariantCulture, $"- Source commit: `{receipt.Environment.GitCommit ?? "unavailable"}`; dirty `{receipt.Environment.GitDirty?.ToString() ?? "unknown"}`");
             builder.AppendLine(CultureInfo.InvariantCulture, $"- Benchmark artifact SHA-256: `{receipt.Environment.ArtifactSha256 ?? "unavailable"}`");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"- TerraBase artifact SHA-256: `{receipt.Environment.TerraBaseArtifactSha256 ?? "unavailable"}`");
             builder.AppendLine(CultureInfo.InvariantCulture, $"- Runtime: {receipt.Environment.FrameworkDescription}; build `{receipt.Environment.BuildConfiguration}`; {receipt.Environment.OperatingSystem}; {receipt.Environment.Architecture}");
-            builder.AppendLine(CultureInfo.InvariantCulture, $"- CPU: {receipt.Environment.ProcessorCount} logical processors; available memory {receipt.Environment.AvailableMemoryBytes:N0} bytes");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"- CPU: {receipt.Environment.CpuModel}; {receipt.Environment.ProcessorCount} logical processors; available memory {receipt.Environment.AvailableMemoryBytes:N0} bytes");
             builder.AppendLine(CultureInfo.InvariantCulture, $"- GC: server `{receipt.Environment.ServerGc}`; latency mode `{receipt.Environment.GcLatencyMode}`");
             if (receipt.Native is { } native)
             {

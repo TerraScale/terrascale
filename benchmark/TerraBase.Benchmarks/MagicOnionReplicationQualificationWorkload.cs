@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -240,13 +241,13 @@ public static class MagicOnionReplicationQualificationWorkload
                 sourceHost.Endpoint,
                 identity.DestinationClientPath,
                 identity.AuthorityPath,
-                identity.DestinationServerPath,
+                identity.SourceServerPath,
                 DestinationNode);
             await using var destinationClientBeforePartition = CreateClient(
                 destinationHost.Endpoint,
                 identity.SourceClientPath,
                 identity.AuthorityPath,
-                identity.SourceServerPath,
+                identity.DestinationServerPath,
                 SourceNode);
             var publications = CreatePublications(options.Operations);
             var seedStarted = Stopwatch.GetTimestamp();
@@ -294,7 +295,7 @@ public static class MagicOnionReplicationQualificationWorkload
                 destinationHost.Endpoint,
                 identity.SourceClientPath,
                 identity.AuthorityPath,
-                identity.SourceServerPath,
+                identity.DestinationServerPath,
                 SourceNode);
             var heartbeat = await HeartbeatAsync(destinationClient, "restart-heartbeat").ConfigureAwait(false);
             if (!heartbeat.Accepted || heartbeat.AppliedFrontier.Count != 0)
@@ -357,7 +358,7 @@ public static class MagicOnionReplicationQualificationWorkload
                 destinationHost.Endpoint,
                 identity.SourceClientPath,
                 identity.AuthorityPath,
-                identity.SourceServerPath,
+                identity.DestinationServerPath,
                 SourceNode);
             var restartedHeartbeat = await HeartbeatAsync(restartedDestinationClient, "restart-heartbeat-after-reorder").ConfigureAwait(false);
             if (!restartedHeartbeat.Accepted || restartedHeartbeat.AppliedFrontier.Count != 0)
@@ -653,6 +654,9 @@ public static class MagicOnionReplicationQualificationWorkload
         builder.AppendLine(CultureInfo.InvariantCulture, $"Receipt: `{receiptPath}`  ");
         builder.AppendLine(CultureInfo.InvariantCulture, $"Command: `{receipt.Command}`");
         builder.AppendLine();
+        builder.AppendLine(CultureInfo.InvariantCulture, $"Source commit: `{receipt.Environment.GitCommit ?? "unavailable"}`; dirty `{receipt.Environment.GitDirty}`; benchmark artifact SHA-256 `{receipt.Environment.BenchmarkArtifactSha256 ?? "unavailable"}`.");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"Runtime: {receipt.Environment.FrameworkDescription}; build `{receipt.Environment.BuildConfiguration}`; {receipt.Environment.OperatingSystem}; {receipt.Environment.Architecture}; CPU `{receipt.Environment.CpuModel}`; {receipt.Environment.ProcessorCount} logical processors; GC server `{receipt.Environment.ServerGc}`, latency `{receipt.Environment.GcLatencyMode}`.");
+        builder.AppendLine();
         builder.AppendLine("Topology: the driver launched two independent TerraBase benchmark child processes. `member-a` and `member-b` each ran a real HTTPS/HTTP2 MagicOnion peer host with mTLS admission and separate storage-engine WAL directories.");
         if (receipt.Result is { } seedResult)
         {
@@ -719,8 +723,11 @@ public static class MagicOnionReplicationQualificationWorkload
             RuntimeInformation.FrameworkDescription,
             RuntimeInformation.OSDescription,
             RuntimeInformation.ProcessArchitecture.ToString(),
+            ReadCpuModel(),
             Environment.ProcessorCount,
             GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
+            GCSettings.IsServerGC,
+            GCSettings.LatencyMode.ToString(),
             Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration ?? "unknown",
             benchmarkPath,
             HashFile(benchmarkPath),
@@ -728,6 +735,29 @@ public static class MagicOnionReplicationQualificationWorkload
             HashFile(terraBasePath),
             gitRoot is null ? null : RunGit(gitRoot, "rev-parse", "HEAD"),
             gitRoot is not null && !string.IsNullOrWhiteSpace(RunGit(gitRoot, "status", "--porcelain")));
+    }
+
+    private static string ReadCpuModel()
+    {
+        try
+        {
+            if (File.Exists("/proc/cpuinfo"))
+            {
+                var line = File.ReadLines("/proc/cpuinfo")
+                    .FirstOrDefault(static value => value.StartsWith("model name", StringComparison.OrdinalIgnoreCase));
+                if (line is not null)
+                {
+                    var separator = line.IndexOf(':');
+                    return separator >= 0 ? line[(separator + 1)..].Trim() : line.Trim();
+                }
+            }
+        }
+        catch (IOException)
+        {
+            // The host model is optional metadata.
+        }
+
+        return "unknown";
     }
 
     private static string? FindGitRoot()
@@ -1212,8 +1242,11 @@ public static class MagicOnionReplicationQualificationWorkload
         string FrameworkDescription,
         string OperatingSystem,
         string Architecture,
+        string CpuModel,
         int ProcessorCount,
         long AvailableMemoryBytes,
+        bool ServerGc,
+        string GcLatencyMode,
         string BuildConfiguration,
         string? BenchmarkArtifactPath,
         string? BenchmarkArtifactSha256,

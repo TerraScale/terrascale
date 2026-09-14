@@ -40,5 +40,12 @@ Each retained receipt directory contains:
 * `logs/` with stdout/stderr from every child generation;
 * `topology/` with the two durable directories and test certificates.
 
+The retained `20260914-magic-onion-qualification-local-v2` receipt has a
+Release artifact path and digest plus commit/dirty state, but its environment
+metadata omits CPU model and GC mode. It remains local correctness evidence
+until rerun with the current workload. The current generator records CPU
+model, server-GC state, and GC latency mode alongside the existing artifact and
+source identity.
+
 The qualification is local loopback process isolation. It does not claim WAN
 latency, kernel packet loss, cross-region failure domains, or OCI behavior.

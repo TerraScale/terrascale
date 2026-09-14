@@ -145,7 +145,9 @@ directories. Every sample sent 64 pushes and received 64 durable acknowledgement
 the destination finished at durable/applied frontier 32 after 62 deferred
 responses. See [summary.md](receipts/20260914-magic-onion-final/summary.md).
 The run does not qualify WAN latency, packet loss, crash recovery, partition
-healing, or saturation.
+healing, or saturation. Its retained receipt has no environment identity, so
+it is not an admitted source-bound performance claim until rerun with the
+current metadata-producing workload.
 
 ## Larger-than-memory exercise
 
