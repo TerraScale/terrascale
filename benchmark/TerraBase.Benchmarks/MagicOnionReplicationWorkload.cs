@@ -814,7 +814,7 @@ public static class MagicOnionReplicationWorkload
             {
                 TrustedServerCertificates = [ca],
                 ExpectedRemoteMemberId = sourceNodeId == "member-b" ? "member-a" : "member-b",
-                ExpectedRemoteCertificateFingerprint = Fingerprint(serverCertificate),
+                ExpectedRemoteCertificateFingerprints = [Fingerprint(serverCertificate)],
                 DefaultDatabaseUlid = Database,
             });
 

@@ -627,7 +627,7 @@ public static class MagicOnionReplicationQualificationWorkload
             {
                 TrustedServerCertificates = [authority],
                 ExpectedRemoteMemberId = sourceNodeId == SourceNode ? DestinationNode : SourceNode,
-                ExpectedRemoteCertificateFingerprint = Fingerprint(serverCertificate),
+                ExpectedRemoteCertificateFingerprints = [Fingerprint(serverCertificate)],
                 DefaultDatabaseUlid = Database,
             });
     }
