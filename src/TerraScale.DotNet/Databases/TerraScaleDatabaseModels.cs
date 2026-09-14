@@ -4,9 +4,9 @@ using System.Text.Json.Serialization;
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// Explicit acknowledgement required to delete a database. <see cref="Confirmation"/> must equal the target database id.
+/// Explicit acknowledgement and stable retry identity required to delete a database.
 /// </summary>
-public sealed record TerraScaleDeleteDatabaseOptions(string Confirmation);
+public sealed record TerraScaleDeleteDatabaseOptions(string Confirmation, string IdempotencyKey);
 
 /// <summary>
 /// Canonical TerraScale region codes accepted by project database placement APIs.

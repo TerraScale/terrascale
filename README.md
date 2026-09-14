@@ -1,6 +1,6 @@
 # TerraScale.DotNet
 
-The C#/.NET 10 client SDK for TerraScale. The workspace
+The C#/.NET 11 client SDK for TerraScale. The workspace
 [goal](../GOAL.md) defines the product and SDK responsibilities. Generated
 models and route metadata consume the pinned public contract published by
 terrabase; named clients implement customer operations against that contract.

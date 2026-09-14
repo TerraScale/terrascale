@@ -244,6 +244,30 @@ public sealed class TerraScaleClient
         return await ReadJsonResponseAsync(response, TerraScaleContractJsonContext.Default.SchemaDocument, activity: null, cancellationToken).ConfigureAwait(false);
     }
 
+    internal async Task<SchemaDocument> RollbackCollectionSchemaAsync(string route, string idempotencyKey, ulong expectedGeneration, CancellationToken cancellationToken)
+    {
+        using var response = await SendWithRetriesAsync(HttpMethod.Post, route,
+            static () => null, RequestAuthenticationMode.Authenticated,
+            request =>
+            {
+                request.Headers.IfMatch.Add(new EntityTagHeaderValue("\"" + expectedGeneration.ToString(CultureInfo.InvariantCulture) + "\""));
+            }, activity: null, cancellationToken, idempotencyKey, allowUnkeyedPutRetry: false).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.Accepted))
+        {
+            throw new TerraScaleApiException(
+                response.StatusCode,
+                "TerraScale schema rollback requires HTTP 200 or 202.",
+                errorCode: null,
+                requestId: ReadRequestId(response),
+                responseBody: null,
+                retryAfter: response.Headers.RetryAfter?.Delta);
+        }
+
+        return await ReadJsonResponseAsync(response, TerraScaleContractJsonContext.Default.SchemaDocument, activity: null, cancellationToken).ConfigureAwait(false);
+    }
+
     internal async Task<ExportDownload> DownloadExportArtifactAsync(string route, CancellationToken cancellationToken)
     {
         using var response = await SendWithRetriesAsync(HttpMethod.Get, route, static () => null, RequestAuthenticationMode.Authenticated,
@@ -643,7 +667,8 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken,
         string? idempotencyKeyOverride,
         bool allowUnkeyedPutRetry = true,
-        TerraScaleErrorContract errorContract = TerraScaleErrorContract.TerraBase)
+        TerraScaleErrorContract errorContract = TerraScaleErrorContract.TerraBase,
+        HttpStatusCode? expectedStatusCode = null)
     {
         ArgumentNullException.ThrowIfNull(responseFactory);
         using var activity = StartActivity(method, requestUri);
@@ -667,6 +692,18 @@ public sealed class TerraScaleClient
             allowUnkeyedPutRetry).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
+        if (response.IsSuccessStatusCode && expectedStatusCode is { } expected && response.StatusCode != expected)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
+            throw new TerraScaleApiException(
+                response.StatusCode,
+                $"TerraScale returned HTTP {(int)response.StatusCode}, but HTTP {(int)expected} was required.",
+                errorCode: null,
+                requestId: ReadRequestId(response),
+                responseBody: null,
+                retryAfter: response.Headers.RetryAfter?.Delta);
+        }
+
         var payload = await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken, errorContract).ConfigureAwait(false);
         return responseFactory(payload, response);
     }

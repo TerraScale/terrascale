@@ -16,5 +16,15 @@ public sealed class TerraScaleSchemaClient(TerraScaleClient client)
         return client.PutCollectionSchemaAsync(Route(database, collection), schema, idempotencyKey, expectedGeneration, cancellationToken);
     }
 
+    /// <summary>Rolls back the latest in-progress schema migration conditionally.</summary>
+    public Task<SchemaDocument> RollbackAsync(string database, string collection, string idempotencyKey, ulong expectedGeneration, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(collection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
+        return client.RollbackCollectionSchemaAsync(RollbackRoute(database, collection), idempotencyKey.Trim(), expectedGeneration, cancellationToken);
+    }
+
     private static string Route(string database, string collection) => TerraScaleManagementPaths.Collection(database, collection) + "/schema";
+    private static string RollbackRoute(string database, string collection) => Route(database, collection) + "/migration/rollback";
 }

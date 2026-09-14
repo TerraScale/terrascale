@@ -11,7 +11,7 @@ public sealed class TerraScaleManagementClientTests
     private static readonly string[] Operations =
     [
         "insert_unique", "compare_and_swap", "consume_one", "consume_matching", "count", "delete_many", "delete_one", "increment_one", "update_many", "update_one", "index", "find_page", "find_one", "begin_transaction", "commit_transaction", "rollback_transaction",
-        "database_usage", "get_schema", "put_schema", "list_indexes", "create_index", "delete_index", "index_recommendations",
+        "database_usage", "get_schema", "put_schema", "rollback_schema", "list_indexes", "create_index", "delete_index", "index_recommendations",
         "list_webhooks", "create_webhook", "delete_webhook", "list_deliveries", "replay_webhook", "rotate_secret",
         "list_exports", "create_export", "get_export", "resume_export", "download_export", "cancel_export",
         "development_fault", "clear_development_fault", "development_logs", "get_provisioning_operation", "create_database",
@@ -40,6 +40,12 @@ public sealed class TerraScaleManagementClientTests
                 {
                     await Assert.That(handler.IdempotencyKey).IsEqualTo("schema-key");
                     await Assert.That(handler.IfMatch).IsEqualTo("\"1\"");
+                }
+                if (operationId == "rollback_schema")
+                {
+                    await Assert.That(handler.IdempotencyKey).IsEqualTo("schema-key");
+                    await Assert.That(handler.IfMatch).IsEqualTo("\"1\"");
+                    await Assert.That(result).IsTypeOf<SchemaDocument>();
                 }
                 if (operationId == "create_database")
                 {
@@ -92,6 +98,17 @@ public sealed class TerraScaleManagementClientTests
     }
 
     [Test]
+    public async Task SchemaRollbackValidatesRequiredArguments()
+    {
+        using var http = new HttpClient();
+        var client = Client(http);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Management.Schema.RollbackAsync("", "collection", "rollback-key", 1));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Management.Schema.RollbackAsync("database", "", "rollback-key", 1));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Management.Schema.RollbackAsync("database", "collection", "", 1));
+    }
+
+    [Test]
     public async Task UInt64UsageAndRequiredFieldsRetainThePublishedContract()
     {
         const string json = "{\"tenant_id\":\"tenant\",\"database_id\":\"database\",\"snapshot_sequence\":18446744073709551615,\"storage_complete_through_millis\":null,\"meters\":[{\"meter\":\"document_write_units\",\"units\":\"18446744073709551616\"},{\"meter\":\"storage_byte_seconds\",\"units\":\"0\"}],\"reads\":{\"total_reads\":18446744073709551615}}";
@@ -140,6 +157,7 @@ public sealed class TerraScaleManagementClientTests
             case "database_usage": return await management.Usage.GetAsync("sample");
             case "get_schema": return await management.Schema.GetAsync("sample", "sample");
             case "put_schema": return await management.Schema.PutAsync("sample", "sample", Request(operation, TerraScaleContractJsonContext.Default.CollectionSchema), "schema-key", 1);
+            case "rollback_schema": return await management.Schema.RollbackAsync("sample", "sample", "schema-key", 1);
             case "list_indexes": return await management.Indexes.ListAsync("sample", "sample");
             case "create_index": return await management.Indexes.CreateAsync("sample", "sample", Request(operation, TerraScaleContractJsonContext.Default.CreateIndexRequest));
             case "delete_index": await management.Indexes.DeleteAsync("sample", "sample", "sample"); return null;
