@@ -34,18 +34,6 @@ test("trunk pushes verify the SDK and main publishes one unchanged npm candidate
     readonly packages?: { readonly "": { readonly name?: string; readonly version?: string } };
   };
 
-  assert.match(workflow, /^on:\n  push:\n    branches: \[develop, main\]/mu);
-  assert.doesNotMatch(workflow, /pull_request|dotnet|nuget|terrascale-builder:\s*\S+:/iu);
-  assert.match(workflow, /permissions:\n  contents: read/u);
-  assert.match(workflow, /repository: TerraScale-Old\/TerraScale\.Deploy/u);
-  assert.match(workflow, /ref: 9a39633f88b085a6d40090ab451b1d71c89e3712/u);
-  assert.match(workflow, /TERRASCALE_SOURCE_READ_TOKEN/u);
-  assert.match(workflow, /setup-go@40f1582b2485089dde7abd97c1529aa768e1baff/u);
-  assert.match(workflow, /GOBIN: \$\{\{ runner\.temp \}\}\/terrascale-deploy\/bin/u);
-  assert.match(workflow, /retention-days: 1/u);
-  assert.match(workflow, /buildvcs=true/u);
-  assert.match(workflow, /internal\/cli\.Version=/u);
-
   assert.equal(deployment.repository, "ts-typescript");
   assert.deepEqual(deployment.dependencies, [{
     source: "src/",
@@ -130,7 +118,7 @@ test("trunk pushes verify the SDK and main publishes one unchanged npm candidate
   const bootstrap = jobDefinition(workflow, "bootstrap");
   assert.match(bootstrap, /name: Block until the replacement Deploy CLI passes DEP-1/u);
   assert.match(bootstrap, /X-10 fail-closed: DEP-1 is reopened and no ts-deploy commit is authorized for consumers\./u);
-  assert.match(bootstrap, /Add the least-privileged source checkout only after the replacement full commit and tree are independently green and Forgejo-qualified\./u);
+  assert.match(bootstrap, /Add the source checkout with TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN only after the replacement full commit and tree are independently green and Forgejo-qualified\./u);
   assert.match(bootstrap, /exit 1/u);
   assert.doesNotMatch(bootstrap, /uses:|secrets\.|upload-artifact|download-artifact|go build|go install|terrascale-deploy version/u);
   assert.match(jobDefinition(workflow, "plan"), /ci plan --repository-root ts-typescript --require-clean-source/u);

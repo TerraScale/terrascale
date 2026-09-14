@@ -69,7 +69,7 @@ test("configured OpenAPI drift profile runs against the checked-out Dashboard sn
     assert.ok(command);
     assert.match(workflow, /repository: TerraScale\/ts-dashboard/u);
     assert.match(workflow, /path: ts-typescript\/Dashboard/u);
-    assert.doesNotMatch(workflow, /TERRASCALE_SOURCE_READ_TOKEN|TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN/u);
+    assert.doesNotMatch(workflow, /token: \$\{\{ secrets\.[A-Z0-9_]+ \}\}/u);
     assert.doesNotMatch(workflow, /TerraScale\.Dashboard/u);
 
     await mkdir(path.join(workspace, "scripts"), { recursive: true });

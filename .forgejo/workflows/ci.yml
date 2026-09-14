@@ -20,7 +20,7 @@ jobs:
       - name: Block until the replacement Deploy CLI passes DEP-1
         shell: bash
         run: |
-          echo "X-10 fail-closed: DEP-1 is reopened and no ts-deploy commit is authorized for consumers. Add the least-privileged source checkout only after the replacement full commit and tree are independently green and Forgejo-qualified." >&2
+          echo "X-10 fail-closed: DEP-1 is reopened and no ts-deploy commit is authorized for consumers. Add the source checkout with TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN only after the replacement full commit and tree are independently green and Forgejo-qualified." >&2
           exit 1
 
   plan:
