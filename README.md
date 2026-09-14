@@ -1,9 +1,10 @@
 # TerraScale TypeScript SDK
 
-`@terrascale/sdk` provides typed public TerraScale operations for browsers,
-Node.js 22 and 24, and Cloudflare Workers. The [workspace goal](../GOAL.md#ts-typescript) defines
-required capabilities; [release qualification](docs/release.md) distinguishes
-implemented checks from production evidence still required.
+`@terrascale/sdk` is the public TypeScript client for TerraScale.
+
+The workspace `../GOAL.md` is the sole architecture and delivery authority.
+This repository's [GOAL.md](GOAL.md) points to it and lists the local
+verification commands. An accepted target is not a released SDK capability.
 
 ## Service boundary
 
@@ -41,9 +42,12 @@ path.
 | `@terrascale/sdk/better-auth` | Server-only Better Auth adapter |
 | `@terrascale/sdk/local` | Explicit local development runtime |
 
-The export map in [package.json](package.json) is authoritative. Public clients
-expose named operations, not arbitrary request paths or a generic transport.
-The server-only Better Auth factory uses the named public auth operations:
+The Better Auth adapter accepts a typed Database API operation port and maps
+Better Auth's adapter contract to named unique-insert, compare-and-swap,
+one-time-consume, pagination, transaction, and migration operations. It is
+server-only and is excluded from browser bundles. The generated Database API
+implementation, pinned Better Auth compatibility and license checks, and
+adapter conformance are separate qualification gates.
 
 ```ts
 import { AuthPersistenceClient, createTerraScaleAuthAdapter } from "@terrascale/sdk/better-auth";
@@ -57,9 +61,12 @@ manifest owns every tag, field position, direction, and bound. The generated
 TypeScript module consumes that file. INT-3's Go codec must check the same
 manifest instead of copying a second frame definition.
 
-The source still contains the Loro/native-v2 implementation while this work is
-reviewed as a dependent PR stack. It is not a current public contract. The
-final mechanical stage deletes it without changing the 2.1 manifest or client.
+MessagePack encodes the envelope, subscription identities, revisions,
+checkpoints, and result-operation structure. Document bodies inside those
+frames remain raw TerraScale-canonical JSON bytes. The gateway does not
+transcode them into MessagePack objects. The production client must decode the
+envelope, then use one native `JSON.parse` for each document body. It must not
+double-decode or parse a MessagePack-encoded document.
 
 Protocol 2.1 is the first publishable wire contract. The pre-launch 2.0
 artifacts reassigned tags during development and are withdrawn. The decoder
@@ -84,6 +91,7 @@ SDK-2 supplies the production WebSocket transport and HTTP + MessagePack
 fallback. Until those transports pass browser and live gateway tests, this
 state machine alone is not a production transport. See
 [ADR 0025](docs/adr/0025-public-messagepack-manifest.md).
+There is no JSON WebSocket variant.
 
 REST starts at the global origin and can pin to a permitted Region. Placement
 repair must preserve authorization, session frontiers, and idempotency.
@@ -125,9 +133,10 @@ routes that global host to the nearest healthy Region. Region-pinned access
 uses `https://gru.api.terrascale.tech`, `https://sfo.api.terrascale.tech`, or
 `https://fra.api.terrascale.tech`.
 
-A database selects one through twenty active Regions, initially GRU, SFO, and
+At launch, a database selects one to three active Regions from GRU, SFO, and
 FRA. A preferred Region is a failover-capable hint. Strict affinity fails
-rather than silently serving from another Region.
+rather than silently serving from another Region. Support for Regions beyond
+those three is post-launch work.
 
 Automatic session consistency retains the latest opaque causal token inside
 one client instance and sends it on later eligible reads. A caller can request
@@ -160,7 +169,7 @@ await local.close();
 Importing `local` is the opt-in. Root, `admin`, and `better-auth`
 entrypoints never enable SQLite automatically.
 
-The local runtime does not prove TerraBase replication, RF=2 durability,
+The local runtime does not qualify TerraBase replication, RF=2 durability,
 failover, reactive conformance, authorization, usage, billing, external
 providers, or performance. Unsupported operations fail explicitly.
 
@@ -169,8 +178,9 @@ providers, or performance. Unsupported operations fail explicitly.
 The SDK implements only named operations published by the owning service.
 Dashboard-owned contracts and Database API contracts may share one edge origin
 and OpenAPI document, but their runtime ownership remains distinct.
-The public API `/api/v1` remains versioned; releases qualify the exact packed tarball
-so consumers receive the same server and browser surface that passed the repository gates.
+The public API `/api/v1` remains versioned. Releases qualify the exact packed tarball
+so consumers receive the same server and browser API that passed the repository
+gates.
 
 Each operation is gated against:
 
@@ -189,8 +199,8 @@ Unbacked operations remain omitted. Do not invent types or use a generic
 request to hide a contract gap.
 
 The repository decision records are under [`docs/adr/`](docs/adr/). Start with
-[GOAL.md](GOAL.md) for the current implementation, cross-repository gaps,
-parallel work waves, and production exit gates.
+the workspace [`GOAL.md`](../GOAL.md) for cross-repository tasks and production
+exit gates.
 
 ## Development
 
@@ -231,10 +241,11 @@ Integration tests target the fixed DevHost public routes. When the required
 base URLs or credentials are absent, they skip instead of using mocked HTTP.
 The new Database API needs fixed DevHost routes before its live tests can be
 current. OpenAPI drift and descriptor checks must use the owner-published
-Dashboard snapshot. A local emulator cannot substitute for that evidence.
+Dashboard snapshot. A local emulator cannot qualify a live contract.
 
 ## Releases
 
-The Orchestrator-owned `develop` to `main` promotion path builds and
-publishes the immutable package only after contract, conformance, security, and
-compatibility gates pass. See `docs/release.md`.
+The protected `develop` to `main` promotion builds and publishes one immutable
+package only after contract, conformance, security, and compatibility gates
+pass. The current automation is not authorized to publish until it uses the
+current delivery toolchain described in `docs/release.md`.

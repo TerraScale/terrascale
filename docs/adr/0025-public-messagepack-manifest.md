@@ -25,6 +25,14 @@ the language delivery boundary, with a 1 MiB aggregate document ceiling.
 authority. It declares the indexed envelope, message tags and directions,
 result operations, closed errors, field positions, and allocation bounds.
 
+MessagePack owns only the envelope and reactive control structure. Document
+bodies inside frames are raw TerraScale-canonical JSON bytes. The gateway
+passes those bytes through without transcoding. The production client must
+perform exactly one native `JSON.parse` for each document body after decoding
+the envelope. A MessagePack-encoded document body and double JSON decoding are
+both forbidden. WebSocket is the fast path, HTTP + MessagePack is the fallback,
+and there is no JSON WebSocket variant.
+
 `scripts/generate-msgpack-protocol.mjs` validates that manifest and emits the
 TypeScript types, validators, encoder, and decoder. Generated files are never
 edited by hand. INT-3 must make the Database API's Go codec check the same JSON
@@ -58,6 +66,6 @@ contract and may not receive new behavior.
 Changing any frame requires changing the manifest and regenerating the
 TypeScript module. The drift check rejects manual generated-file edits. The
 semantic corpus round-trips every message kind, and hostile byte tests gate the
-decoder. Committed 2.1 golden bytes independently pin every message kind and
-hostile boundary for the later Go implementation. A second handwritten frame
-codec or compatibility client is not allowed after the deletion stages land.
+decoder. Committed 2.1 golden bytes pin every message kind and hostile boundary
+for the later Go implementation independently of runtime round trips. A second
+handwritten frame codec or compatibility client is not allowed.

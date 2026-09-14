@@ -1,92 +1,79 @@
-# SDK release qualification
+# SDK release process
 
-`@terrascale/sdk` is published to the public npm registry. The repository uses
-one `main` branch. Its [CI workflow](../.forgejo/workflows/ci.yml) calls the
-central `ts-deploy` reusable workflow, which checks out the event revision,
-installs the newest published `ts-deploy` release binary, and runs
-`ts-deploy ci --repo ts-typescript` on the `terrascale-builder` runner. There is
-no manual promotion or pull-request release workflow.
+`@terrascale/sdk` publishes to the public npm registry. Forgejo package
+registries are not a distribution target.
 
-## Implemented checks and publication
+## Current status
 
-[Makefile](../Makefile) runs route/OpenAPI drift checks, a clean install,
-typecheck, build, and Vitest. Browser tests and artifact qualification exist
-as separate commands; `make check` does not run them.
+Production publication remains blocked until the current Go `ts-deploy` CLI and
+the protected `develop` to `main` process from the workspace `GOAL.md` are
+wired and qualified. Until then, this document defines the checks and release
+constraints, not an executable publish path.
 
-The `ts-deploy` npm path packs once, passes the candidate tarball to this
-repository's qualifier, verifies its hash after qualification, and publishes
-that same tarball with lifecycle scripts disabled. Failed qualification or
-changed bytes stop publication. Default candidate outputs use the ignored
-`artifacts/` directory so qualification can verify clean source.
+Do not weaken a gate or use the old workflow as release authority while that
+replacement is pending.
 
-This is the launch verification minimum. Browser, clean-consumer, and real-API
-qualification still need passing results. Broader compliance attestations are
-post-launch work and must not become an alternative release pipeline.
+## Required checks
 
-## Qualification procedure
-
-Run the repository gate and browser suite:
+Run the complete repository set from a clean checkout:
 
 ```bash
-make check
+npm install
+npm run typecheck
+npm run build
+npm test
+npm run check:openapi-drift && npm run check:route-manifest \
+  && npm run check:forbidden-surface
 npm run test:browser
 ```
 
-For diagnostic package qualification with explicit supported Node executables:
+Release automation must also pack the package once, install that exact tarball
+in a clean consumer, inspect its public exports, scan it for credentials, and
+run the package against the pinned Node.js 22 and 24 binaries. The browser lane
+uses pinned current Chromium, Firefox, and WebKit engines. A skipped or
+host-blocked required lane blocks publication.
 
-```bash
-npm run qualify:artifact -- --node /path/to/node22 --node /path/to/node24
-```
+The route manifest and OpenAPI descriptor must match the owner-published
+contracts. Dashboard owns identity and product routes. The Go Database API in
+`ts-internals` owns database and reactive routes. A missing contract stays
+missing from the SDK.
 
-Release mode reads exact executable paths from `TERRASCALE_NODE_22` and
-`TERRASCALE_NODE_24`, and verifies `TERRASCALE_NPM_ARCHIVE_INTEGRITY` against
-[scripts/npm-release-policy.ts](../scripts/npm-release-policy.ts). Run it with
-the declared Node 24 executable and reviewed npm installation:
+The reactive gate checks the generated `terrascale.sync.v2.msgpack` manifest,
+hostile decoding, golden bytes, and result-view behavior. MessagePack carries
+the envelope and operation structure. Document bodies remain raw
+TerraScale-canonical JSON bytes, and the client performs one native
+`JSON.parse` per body after decoding the envelope. WebSocket is the fast path,
+HTTP + MessagePack is the fallback, and there is no JSON WebSocket variant.
 
-```bash
-npm run qualify:artifact -- --release --tarball /absolute/path/to/candidate.tgz --output /absolute/path/to/qualification
-```
+The local SQLite runtime cannot qualify live API behavior, authorization,
+multi-Region durability, recovery, billing, or performance. Live integration
+configuration that is absent or invalid is a failed release prerequisite, not
+a passing result.
 
-Release qualification refuses dirty source, unsupported or mismatched
-runtimes, an existing output directory, and `--allow-dirty`. With `--tarball`,
-it copies the supplied bytes without repacking, installs them into a clean
-consumer, and verifies the original stayed unchanged. Without `--tarball`,
-it creates a new diagnostic candidate with `npm pack`.
+## Protected release
 
-The qualifier checks exports, scans packed contents for secrets, audits
-production dependencies, and verifies license and pinned contract evidence.
-The Better Auth export supports explicit `node` and `workerd` server
-conditions and rejects browser resolution. Its Workerd import graph contains
-no Node-only modules. A Node process selecting the Workerd export verifies
-package resolution; the real dashboard Worker journey remains separate
-runtime evidence.
+Agents commit green changes directly to `develop`. There are no pull requests.
+The owner promotes `develop` to `main` only after the required checks pass.
+That protected `main` run must:
 
-The record binds source, tarball, route/OpenAPI digests, Node executables,
-npm installation, and results. Diagnostic receipts and receipts with
-limitations cannot admit a release. npm publication is immutable. An
-interrupted publish has an unknown outcome until the registry and artifact
-records are inspected.
+1. build one immutable npm tarball from the promoted commit;
+2. bind the tarball to the exact commit, dependency lock, generated contracts,
+   Node binaries, npm version, and browser engines;
+3. verify that the package version is not already present on npm;
+4. run the release-only live checks without exposing their credentials to
+   ordinary branch jobs; and
+5. publish the already verified tarball with `--access public`.
 
-## Evidence required before public release
+The publish job receives only the npm credential and live-test secrets it
+needs. It removes inherited npm configuration and does not expose credentials
+to package inspection or browser bundles.
 
-- Contract generation, hostile decoding, and shared semantic/byte conformance
-  against the pinned producer contract, including all four customer SDKs.
-- Node 22/24, browser, clean-consumer, public export, and server-only boundary
-  checks on the exact package. Record actual browser engines and versions;
-  a Playwright project name alone does not establish branded browser coverage.
-- Real API success and denial, tenant isolation, retries, permission changes,
-  Region movement, reconnect, and expired-history behavior.
-- Better Auth exact-version, license, concurrency, migration, one-time consume,
-  revocation, and rollback evidence through its real public operation port.
-- Workspace launch qualification, security, operations, billing, and soak gates.
+If npm publication is interrupted or returns an uncertain result, inspect the
+public registry before retrying. npm versions are immutable. Never overwrite a
+published version or rebuild different bytes under the same version.
 
-Live tests require their documented API URL, access token, and project or
-organization identifiers. Missing configuration is a skipped gate and blocks
-required release evidence. Keep credentials out of logs and receipts.
+## Versioning
 
-## Versions
-
-The package version comes from `package.json`. Before 1.0, a source-breaking
-exported TypeScript change requires a minor version; compatible fixes use a
-patch. At launch, public contract support follows the workspace compatibility
-decision. Regenerate and qualify consumers when the producer contract changes.
+Use a patch version for backward-compatible changes. Before `1.0`, a
+source-breaking exported TypeScript change requires a minor version. Update
+`package.json` and `package-lock.json` together before promotion.

@@ -27,7 +27,7 @@ hostile input before constructing an unbounded public value and does not
 silently retry deterministic validation, authentication, authorization, or
 conflict failures.
 
-## Current evidence and gap
+## Current enforcement and gap
 
 The checked-in MessagePack manifest and decoder enforce the 8 MiB message,
 1 MiB parameter, 64 KiB projected-value, depth 64, 256 KiB scan-string, and
