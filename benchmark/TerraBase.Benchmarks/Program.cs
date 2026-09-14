@@ -20,6 +20,11 @@ internal static class Program
     {
         try
         {
+            if (CompressionWorkload.IsRequested(args))
+            {
+                return await CompressionWorkload.RunAsync(args).ConfigureAwait(false);
+            }
+
             var options = BenchmarkOptions.Parse(args);
             if (options.ShowHelp)
             {
@@ -61,13 +66,37 @@ internal static class Program
             try
             {
                 var environment = EnvironmentInfo.Create();
+                if (!string.Equals(environment.BuildConfiguration, "Release", StringComparison.OrdinalIgnoreCase))
+                {
+                    var invalid = new BenchmarkReceipt(
+                        Status: "invalid",
+                        StartedAtUtc: environment.StartedAtUtc,
+                        FinishedAtUtc: DateTimeOffset.UtcNow,
+                        Configuration: options,
+                        Environment: environment,
+                        Workloads: [new WorkloadResult
+                        {
+                            Storage = options.Storage.ToString(),
+                            Workload = "runner",
+                            Temperature = "—",
+                            Status = "invalid",
+                            Error = $"Benchmark execution requires a Release artifact; loaded '{environment.BuildConfiguration}'.",
+                            StartedAtUtc = environment.StartedAtUtc,
+                            FinishedAtUtc = DateTimeOffset.UtcNow,
+                        }],
+                        Command: Environment.CommandLine,
+                        ReceiptDirectory: receiptDirectory);
+                    await WriteReportsAsync(invalid, cancellation.Token).ConfigureAwait(false);
+                    return 2;
+                }
+
                 var results = new List<WorkloadResult>();
                 foreach (var workload in options.Workloads)
                 {
                     foreach (var temperature in options.Temperatures)
                     {
                         Console.WriteLine($"Running {options.Storage} {workload} {temperature} ({options.Samples} samples)...");
-                        results.Add(await RunWorkloadAsync(workload, temperature, environment, cancellation.Token).ConfigureAwait(false));
+                        results.Add(await RunWorkloadAsync(workload, temperature, cancellation.Token).ConfigureAwait(false));
                     }
                 }
 
@@ -80,11 +109,9 @@ internal static class Program
                     Workloads: results,
                     Command: Environment.CommandLine,
                     ReceiptDirectory: receiptDirectory);
+                await WriteReportsAsync(receipt, cancellation.Token).ConfigureAwait(false);
                 var receiptPath = Path.Combine(receiptDirectory, "receipt.json");
-                await File.WriteAllTextAsync(receiptPath, JsonSerializer.Serialize(receipt, JsonOptions), cancellation.Token).ConfigureAwait(false);
-
                 var markdownPath = Path.Combine(receiptDirectory, "summary.md");
-                await File.WriteAllTextAsync(markdownPath, MarkdownReport.Create(receipt, receiptPath), cancellation.Token).ConfigureAwait(false);
                 Console.WriteLine($"Receipt: {receiptPath}");
                 Console.WriteLine($"Summary: {markdownPath}");
                 return receipt.Status == "complete" ? 0 : 1;
@@ -95,10 +122,17 @@ internal static class Program
             }
         }
 
+        private async Task WriteReportsAsync(BenchmarkReceipt receipt, CancellationToken cancellationToken)
+        {
+            var receiptPath = Path.Combine(receiptDirectory, "receipt.json");
+            await File.WriteAllTextAsync(receiptPath, JsonSerializer.Serialize(receipt, JsonOptions), cancellationToken).ConfigureAwait(false);
+            var markdownPath = Path.Combine(receiptDirectory, "summary.md");
+            await File.WriteAllTextAsync(markdownPath, MarkdownReport.Create(receipt, receiptPath), cancellationToken).ConfigureAwait(false);
+        }
+
         private async Task<WorkloadResult> RunWorkloadAsync(
             Workload workload,
             Temperature temperature,
-            EnvironmentInfo environment,
             CancellationToken cancellationToken)
         {
             var rawPath = Path.Combine(receiptDirectory, $"raw-samples-{options.Storage}-{workload}-{temperature}.jsonl");
@@ -467,8 +501,8 @@ internal static class Program
         {
             Console.WriteLine("TerraBase real storage benchmark runner");
             Console.WriteLine("Options:");
-            Console.WriteLine("  --storage memory|storage-engine   Storage provider (default: memory)");
-            Console.WriteLine("  --workload point-read|point-write|scan|all");
+            Console.WriteLine("  --storage memory|storage-engine|zonetree   Storage provider (default: memory)");
+            Console.WriteLine("  --workload point-read|point-write|scan|compression|all");
             Console.WriteLine("  --temperature warm|cold|both      Warmup policy (default: warm)");
             Console.WriteLine("  --dataset-size N                  Seeded documents (default: 1000)");
             Console.WriteLine("  --payload-size N                  Payload string bytes (default: 256)");
@@ -595,6 +629,7 @@ internal static class Program
         DateTimeOffset StartedAtUtc,
         string Runtime,
         string FrameworkDescription,
+        string BuildConfiguration,
         string OperatingSystem,
         string Architecture,
         int ProcessorCount,
@@ -610,6 +645,8 @@ internal static class Program
         public static EnvironmentInfo Create()
         {
             var artifactPath = Assembly.GetExecutingAssembly().Location;
+            var buildConfiguration = Assembly.GetExecutingAssembly()
+                .GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration ?? "unknown";
             var artifactHash = File.Exists(artifactPath)
                 ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(artifactPath))).ToLowerInvariant()
                 : null;
@@ -625,6 +662,7 @@ internal static class Program
                 DateTimeOffset.UtcNow,
                 Environment.Version.ToString(),
                 RuntimeInformation.FrameworkDescription,
+                buildConfiguration,
                 RuntimeInformation.OSDescription,
                 RuntimeInformation.ProcessArchitecture.ToString(),
                 Environment.ProcessorCount,
@@ -719,16 +757,16 @@ internal static class Program
         }
     }
 
-    private sealed record FileMetrics(long TotalBytes, long WalBytes)
+    private sealed record FileMetrics(long TotalBytes, long? WalBytes)
     {
-        public static FileMetrics? TryRead(StorageKind storage, string receiptDirectory, Workload workload)
+        public static FileMetrics? TryRead(StorageKind storage, string receiptDirectory, Workload workload, Temperature temperature)
         {
-            if (storage != StorageKind.StorageEngine)
+            if (storage == StorageKind.Memory)
             {
                 return null;
             }
 
-            var root = Path.Combine(receiptDirectory, "storage-engine", workload.ToString());
+            var root = Path.Combine(receiptDirectory, "data", storage.ToString(), $"{workload}-{temperature}");
             if (!Directory.Exists(root))
             {
                 return null;
@@ -739,7 +777,9 @@ internal static class Program
                 var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToArray();
                 var total = files.Sum(static path => new FileInfo(path).Length);
                 var walPath = Path.Combine(root, "wal");
-                var wal = File.Exists(walPath) ? new FileInfo(walPath).Length : 0;
+                var wal = storage == StorageKind.StorageEngine && File.Exists(walPath)
+                    ? new FileInfo(walPath).Length
+                    : (long?)null;
                 return new FileMetrics(total, wal);
             }
             catch (IOException)
@@ -751,11 +791,12 @@ internal static class Program
 
     private static class WorkloadDigest
     {
-        public static string Create(BenchmarkOptions options, Workload workload, IReadOnlyList<DocumentKey> keys, JsonElement body)
+        public static string Create(BenchmarkOptions options, Workload workload, Temperature temperature, IReadOnlyList<DocumentKey> keys, JsonElement body)
         {
             var text = string.Join("\n", [
                 options.Storage.ToString(),
                 workload.ToString(),
+                temperature.ToString(),
                 options.DatasetSize.ToString(CultureInfo.InvariantCulture),
                 options.PayloadSize.ToString(CultureInfo.InvariantCulture),
                 options.Samples.ToString(CultureInfo.InvariantCulture),
@@ -785,19 +826,20 @@ internal static class Program
             builder.AppendLine();
             builder.AppendLine($"- Commit: `{receipt.Environment.GitCommit ?? "unavailable"}` (dirty: `{receipt.Environment.GitDirty?.ToString() ?? "unknown"}`)");
             builder.AppendLine($"- Artifact SHA-256: `{receipt.Environment.ArtifactSha256 ?? "unavailable"}`");
-            builder.AppendLine($"- Runtime: {receipt.Environment.FrameworkDescription}; {receipt.Environment.OperatingSystem}; {receipt.Environment.Architecture}");
+            builder.AppendLine($"- Runtime: {receipt.Environment.FrameworkDescription}; build `{receipt.Environment.BuildConfiguration}`; {receipt.Environment.OperatingSystem}; {receipt.Environment.Architecture}");
             builder.AppendLine($"- CPU: {receipt.Environment.CpuModel}; {receipt.Environment.ProcessorCount} logical processors; available memory {receipt.Environment.AvailableMemoryBytes} bytes");
             builder.AppendLine($"- GC: server `{receipt.Environment.ServerGc}`, latency mode `{receipt.Environment.GcLatencyMode}`");
             builder.AppendLine();
             builder.AppendLine("## Results");
             builder.AppendLine();
-            builder.AppendLine("| Storage | Workload | Status | Samples | Throughput ops/s | p50 µs | p95 µs | p99 µs | Allocated bytes/op | CPU % | RAM after bytes | Bytes written | Write amplification | Raw samples |");
-            builder.AppendLine("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |");
+            builder.AppendLine("| Storage | Workload | Temperature | Status | Samples | Cold start ms | Throughput ops/s | p50 µs | p95 µs | p99 µs | Allocated bytes/op | CPU % | RAM after bytes | Bytes written | Write amplification | Raw samples |");
+            builder.AppendLine("| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |");
             foreach (var result in receipt.Workloads)
             {
                 var samples = result.Samples;
-                builder.Append('|').Append(result.Storage).Append(" | ").Append(result.Workload).Append(" | ").Append(result.Status).Append(" | ");
+                builder.Append('|').Append(result.Storage).Append(" | ").Append(result.Workload).Append(" | ").Append(result.Temperature).Append(" | ").Append(result.Status).Append(" | ");
                 builder.Append(samples.Count.ToString(CultureInfo.InvariantCulture)).Append(" | ");
+                builder.Append(Format(result.ColdStartMilliseconds)).Append(" | ");
                 builder.Append(Format(Median(samples.Select(static sample => sample.ThroughputOpsPerSecond)))).Append(" | ");
                 builder.Append(Format(Median(samples.Select(static sample => sample.P50Microseconds)))).Append(" | ");
                 builder.Append(Format(Median(samples.Select(static sample => sample.P95Microseconds)))).Append(" | ");
@@ -818,7 +860,7 @@ internal static class Program
             builder.AppendLine();
             builder.AppendLine($"Command: `{receipt.Command}`");
             builder.AppendLine();
-            builder.AppendLine("All percentile values are medians of per-sample percentiles. `Bytes written` is the observed StorageEngine WAL length increase; memory storage reports no filesystem write measurement.");
+            builder.AppendLine("All percentile values are medians of per-sample percentiles. `Bytes written` is the observed StorageEngine WAL length increase; memory and ZoneTree storage report no WAL write measurement.");
             return builder.ToString();
         }
 
