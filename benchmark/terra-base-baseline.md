@@ -2,12 +2,18 @@
 
 Status: **scaffold; no current C# benchmark receipt is admitted**.
 
-Evidence cutoff: **2026-09-13**. Source baseline:
-`00d2141f1a612d651c60e25bc2280b022c89196e` (`main`). The source tree was
-dirty at the cutoff because the storage, indexing, reactive, replication, and
-backup slices were still being qualified. A future receipt must record the
-final commit and dirty state that produced it. Runtime target: .NET 11 RC,
-C# only.
+Evidence cutoff: **2026-09-14**. Source baseline: committed `HEAD`
+`89a7cb72` (`main`). The source tree is dirty because storage, indexing,
+reactive, replication, and backup slices are still being qualified. A receipt
+must record the exact commit, dirty state, and artifact digest that produced
+it. Runtime target: .NET 11 RC, C# only.
+
+The host path is not an end-to-end durable benchmark target: the default host
+uses `InMemoryStorageProvider`, the path overload uses the JSON
+`FileStorageProvider`, and `StorageEngine` is not wired into the host. The
+MagicOnion package and contract interfaces do not constitute a live
+TerraBase-to-TerraBase adapter or peer endpoint. Component rows below must keep
+those boundaries explicit.
 
 Historical Rust and SQLite measurements belong to earlier source states and
 are excluded. The current private inter-node surface uses keyed MessagePack,
@@ -103,9 +109,12 @@ The current focused checks cover these local invariants:
 | Replication and transport | [`ProductionPrimitivesTests.cs`](../tests/TerraBase.Api.Tests/ProductionPrimitivesTests.cs), [`ReplicationDeterministicTests.cs`](../tests/TerraBase.Tests/ReplicationDeterministicTests.cs), and [`InterNodeContractTests.cs`](../tests/TerraBase.Tests/InterNodeContractTests.cs) | Causal dependency deferral, canonical-byte convergence, anti-entropy/partition decisions, TLS requirement, bounded contracts, and MessagePack round trips. |
 | Backups | [`BackupTests.cs`](../tests/TerraBase.Tests/BackupTests.cs) | Full/incremental chain creation, resumable in-memory upload, PITR, plaintext/encrypted hashes, and AES-GCM restore. |
 
-These checks do not qualify multi-Region durability, a real index backend,
-reactive network delivery, external object-store recovery, or a production
-RPO/RTO/SLO.
+These checks do not qualify multi-Region durability, durable replication across
+restart, a concrete MagicOnion adapter, a real index backend, reactive network
+delivery, external object-store recovery, or a production RPO/RTO/SLO. No
+current receipt reports throughput, p50/p95/p99 latency, allocations, CPU/RAM,
+write amplification, replication lag, subscription fan-out cost, or restore
+time; the results table therefore remains `pending`.
 
 ## Run metadata
 
