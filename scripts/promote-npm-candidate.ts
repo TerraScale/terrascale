@@ -157,7 +157,7 @@ function parseBuildReceipt(bytes) {
   if (
     receipt.schemaVersion !== npmReleasePolicy.buildReceiptSchemaVersion ||
     receipt.mediaType !== npmReleasePolicy.buildReceiptMediaType ||
-    receipt.repository !== "TerraScale.TypeScript" ||
+    receipt.repository !== "ts-typescript" ||
     receipt.target !== npmReleasePolicy.buildTarget ||
     receipt.output.root !== npmReleasePolicy.outputRoot
   ) {

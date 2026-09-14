@@ -2,51 +2,27 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "vitest";
 
-test("develop and main pushes run the current verification and promotion workflow", async () => {
+test("develop and main pushes run trunk verification", async () => {
   const workflow = await readFile(
     new URL("../.forgejo/workflows/ci.yml", import.meta.url),
     "utf8",
   );
 
-  assert.match(workflow, /  push:\r?\n    branches: \[develop, main\]/);
-  assert.doesNotMatch(workflow, /pull_request|dotnet|nuget|image:.*terrascale-builder:[^\s]+/iu);
-  assert.match(workflow, /repository: TerraScale-Old\/TerraScale\.Deploy/u);
-  assert.match(workflow, /ref: 9a39633f88b085a6d40090ab451b1d71c89e3712/u);
-  assert.match(workflow, /TERRASCALE_SOURCE_READ_TOKEN/u);
-  for (const job of ["static", "build", "tests", "browser"]) {
-    assert.match(workflow, new RegExp(`  ${job}:\\n`, "u"));
-    assert.match(jobDefinition(workflow, job), /needs: bootstrap/u);
-    assert.match(jobDefinition(workflow, job), /runs-on: terrascale-untrusted/u);
-    assert.match(jobDefinition(workflow, job), /image: mcr\.microsoft\.com\/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
-    assert.match(jobDefinition(workflow, job), /node scripts\/provision-reviewed-npm\.mjs/u);
-    assert.match(jobDefinition(workflow, job), /npm install/u);
-  }
-  assert.match(jobDefinition(workflow, "static"), /repository: TerraScale\/ts-dashboard/u);
-  assert.match(jobDefinition(workflow, "static"), /ref: develop/u);
-  assert.match(jobDefinition(workflow, "static"), /path: Dashboard/u);
-  assert.match(jobDefinition(workflow, "static"), /npm run typecheck/u);
-  assert.match(jobDefinition(workflow, "static"), /npm run build/u);
-  assert.match(jobDefinition(workflow, "static"), /npm run check:openapi-drift/u);
-  assert.match(jobDefinition(workflow, "static"), /npm run check:route-manifest/u);
-  assert.match(jobDefinition(workflow, "static"), /npm run check:forbidden-surface/u);
-  assert.match(jobDefinition(workflow, "tests"), /npm test/u);
-  assert.match(jobDefinition(workflow, "browser"), /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
-  assert.match(jobDefinition(workflow, "browser"), /npm run test:browser/u);
-
-  assert.match(jobDefinition(workflow, "candidate"), /if: \$\{\{ forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main' \}\}/u);
-  assert.match(jobDefinition(workflow, "candidate"), /needs: \[bootstrap, static, build, tests, browser\]/u);
-  assert.match(jobDefinition(workflow, "candidate"), /ci build-candidate[\s\S]*--target npm/u);
-  assert.match(jobDefinition(workflow, "candidate"), /name: candidate-npm/u);
-  assert.match(jobDefinition(workflow, "browser-candidate"), /TERRASCALE_BROWSER_CANDIDATE_TARBALL/u);
-  assert.match(jobDefinition(workflow, "browser-candidate"), /npm run test:browser/u);
-  const publish = jobDefinition(workflow, "publish");
-  assert.match(publish, /needs: \[browser-candidate\]/u);
-  assert.match(publish, /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
-  assert.equal((workflow.match(/NPM_TOKEN/gu) ?? []).length, 2);
-  for (const job of ["static", "build", "tests", "browser", "candidate", "browser-candidate"]) {
-    assert.match(jobDefinition(workflow, job), /image: mcr\.microsoft\.com\/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
-    assert.doesNotMatch(jobDefinition(workflow, job), /(?:NPM_TOKEN|REGISTRY_(?:USER|TOKEN)|TERRASCALE_E2E_\w+)/u);
-  }
+  assert.match(workflow, /  push:\r?\n    branches: \[develop, main\]/u);
+  assert.doesNotMatch(workflow, /pull_request/u);
+  assert.doesNotMatch(workflow, /TerraScale-Old\/TerraScale\.Deploy/u);
+  assert.doesNotMatch(workflow, /repository:\s*TerraScale\/ts-deploy/u);
+  assert.doesNotMatch(workflow, /TERRASCALE_SOURCE_READ_TOKEN|TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN/u);
+  assert.doesNotMatch(workflow, /(?:bf9703ffca63|ce0183692c02|EXPECTED_DEPLOY_CLI_SHA|go-version-file|go build|go install|ts-deploy\/cmd\/terrascale-deploy@v)/u);
+  assert.match(workflow, /X-10 fail-closed: DEP-1 is reopened and no ts-deploy commit is authorized for consumers\./u);
+  assert.match(workflow, /Block until the replacement Deploy CLI passes DEP-1[\s\S]*exit 1/u);
+  assert.match(workflow, /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
+  assert.doesNotMatch(workflow, /git\.terrascale\.tech\/terrascale\/terrascale-builder/u);
+  assert.match(workflow, /verify-static:[\s\S]*--profile static/u);
+  assert.match(workflow, /verify-node-22:[\s\S]*--profile tests/u);
+  assert.match(workflow, /verify-node-24:[\s\S]*--profile tests/u);
+  assert.match(workflow, /verify-browser:[\s\S]*--profile browser/u);
+  assert.match(workflow, /candidate-build:[\s\S]*forgejo\.ref == 'refs\/heads\/main'/u);
 });
 
 function jobDefinition(workflow: string, job: string): string {

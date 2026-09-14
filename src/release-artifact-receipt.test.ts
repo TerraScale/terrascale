@@ -429,7 +429,7 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
     return {
       schemaVersion: 1,
       mediaType: buildMediaType,
-      repository: "TerraScale.TypeScript",
+      repository: "ts-typescript",
       source: {
         commit: buildIdentity.revision,
         tree: buildIdentity.tree,

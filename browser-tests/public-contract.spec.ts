@@ -1,4 +1,40 @@
 import { expect, test } from "@playwright/test";
+import { Buffer } from "node:buffer";
+
+import {
+  encodeTerrascaleSyncV2MsgpackEnvelope,
+  type TerrascaleSyncV2MsgpackMessage,
+} from "../src/msgpack/generated/terrascale-sync-v2-msgpack.js";
+
+function snapshotFrame(subscription: string): Uint8Array {
+  const encoder = new TextEncoder();
+  const items = [{ identity: "document-1", value: { title: encoder.encode("ready") } }];
+  return encodeTerrascaleSyncV2MsgpackEnvelope({
+    features: 0,
+    correlation: 2n,
+    causation: 1n,
+    message: {
+      kind: "snapshot",
+      subscription,
+      snapshot: {
+        view_generation: 1n,
+        authorization_generation: 1n,
+        revision: 1n,
+        items: [{ identity: "document-1", fields: [{ path: "title", value: items[0]!.value.title }] }],
+        digest: digest(items),
+        checkpoint: encoder.encode(`${subscription}-checkpoint`),
+      },
+    },
+  });
+}
+
+function digest(items: readonly { identity: string; value: Readonly<Record<string, Uint8Array>> }[]): string {
+  const bytes = new TextEncoder();
+  const payload = items.map(item => [item.identity, Object.entries(item.value).map(([path, value]) => [path, [...value]])]);
+  let hash = 2166136261;
+  for (const byte of bytes.encode(JSON.stringify(payload))) hash = Math.imul(hash ^ byte, 16777619);
+  return hash.toString(16).padStart(8, "0").repeat(8);
+}
 
 test("the browser entrypoint keeps regional routing behavior", async ({ page }) => {
   await page.goto("/browser-tests/fixture.html");
@@ -259,38 +295,26 @@ test("the browser entrypoint preserves the standard Database API error contract"
   });
 });
 
-test("the packed browser client decodes the generated reactive protocol", async ({ page }) => {
+test("the browser client sends and receives generated frames over WebSocket", async ({ page }) => {
+  await page.routeWebSocket("**/sync-ws", socket => {
+    socket.onMessage(() => socket.send(Buffer.from(snapshotFrame("websocket-view"))));
+  });
   await page.goto("/browser-tests/fixture.html");
 
   const observation = await page.evaluate(async () => {
     const sdk = await import("/candidate/dist/index.js");
-    const protocol = await import("/candidate/dist/msgpack/generated/terrascale-sync-v2-msgpack.js");
-    const encoder = new TextEncoder();
     const client = new sdk.TerraScaleSyncV2Client();
     const opened = client.openSubscription({
-      subscription: "browser-view",
+      subscription: "websocket-view",
       query: "from documents",
       parameters: new Uint8Array(),
     });
-    const items = [{ identity: "document-1", value: { title: encoder.encode("ready") } }];
-    const frame = protocol.encodeTerrascaleSyncV2MsgpackEnvelope({
-      features: 0,
-      correlation: 1n,
-      causation: 0n,
-      message: {
-        kind: "snapshot",
-        subscription: "browser-view",
-        snapshot: {
-          view_generation: 1n,
-          authorization_generation: 1n,
-          revision: 1n,
-          items: [{ identity: "document-1", fields: [{ path: "title", value: encoder.encode("ready") }] }],
-          digest: sdk.syncV2ResultDigest(items),
-          checkpoint: encoder.encode("browser-checkpoint"),
-        },
-      },
+    const transport = new sdk.TerraScaleSyncV2Transport({
+      client,
+      endpoint: `${location.origin.replace("http", "ws")}/sync-ws`,
     });
-    client.receive(frame);
+    await transport.connect();
+    await transport.send(opened.message, 1n);
     return {
       checkpoint: opened.subscription.view.getCheckpoint()?.toString(),
       title: new TextDecoder().decode(opened.subscription.view.getItems()[0]?.value.title),
@@ -301,4 +325,39 @@ test("the packed browser client decodes the generated reactive protocol", async 
     checkpoint: "[opaque SyncV2ViewCheckpoint]",
     title: "ready",
   });
+});
+
+test("the browser client falls back to HTTP+MessagePack when WebSocket setup fails", async ({ page }) => {
+  await page.route("**/sync-http", async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/msgpack",
+      body: Buffer.from(snapshotFrame("http-view")),
+    });
+  });
+  await page.goto("/browser-tests/fixture.html");
+
+  const observation = await page.evaluate(async () => {
+    const sdk = await import("/candidate/dist/index.js");
+    const client = new sdk.TerraScaleSyncV2Client();
+    const opened = client.openSubscription({
+      subscription: "http-view",
+      query: "from documents",
+      parameters: new Uint8Array(),
+    });
+    const transport = new sdk.TerraScaleSyncV2Transport({
+      client,
+      endpoint: `${location.origin}/sync-http`,
+      webSocketFactory: () => { throw new Error("WebSocket intentionally unavailable"); },
+    });
+    await transport.connect();
+    const response = await transport.send(opened.message, 1n);
+    return {
+      mode: transport.mode,
+      response: response?.message.kind,
+      title: new TextDecoder().decode(opened.subscription.view.getItems()[0]?.value.title),
+    };
+  });
+
+  expect(observation).toEqual({ mode: "http", response: "snapshot", title: "ready" });
 });

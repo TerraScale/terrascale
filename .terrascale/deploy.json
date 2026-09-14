@@ -1,0 +1,16 @@
+{
+  "repository": "ts-typescript",
+  "dependencies": [{ "source": "src/", "target": "ts-dashboard", "reason": "SDK changes require the dashboard build and browser E2E" }],
+  "prProfiles": [
+    { "name": "static", "resourceWeight": "light", "commands": [{ "description": "Clean install", "command": "npm", "arguments": ["ci"] }, { "description": "Typecheck", "command": "npm", "arguments": ["run", "typecheck"] }, { "description": "Build SDK", "command": "npm", "arguments": ["run", "build"] }, { "description": "Public contract fixture", "command": "npm", "arguments": ["run", "check:public-contract-fixture"] }, { "description": "OpenAPI drift", "command": "npm", "arguments": ["run", "check:openapi-drift"] }, { "description": "Route drift", "command": "npm", "arguments": ["run", "check:route-manifest"] }, { "description": "Forbidden SDK surface", "command": "npm", "arguments": ["run", "check:forbidden-surface"] }] },
+    { "name": "tests", "resourceWeight": "medium", "commands": [{ "description": "Clean install", "command": "npm", "arguments": ["ci"] }, { "description": "Build SDK", "command": "npm", "arguments": ["run", "build"] }, { "description": "Complete SDK tests", "command": "npm", "arguments": ["test"] }] },
+    { "name": "browser", "resourceWeight": "heavy", "commands": [{ "description": "Clean install", "command": "npm", "arguments": ["ci"] }, { "description": "Build SDK", "command": "npm", "arguments": ["run", "build"] }, { "description": "Browser transports", "command": "npm", "arguments": ["run", "test:browser"] }] }
+  ],
+  "releaseProfiles": [
+    { "name": "regression", "resourceWeight": "medium", "required": true, "commands": [{ "description": "Clean install", "command": "npm", "arguments": ["ci"] }, { "description": "Build SDK", "command": "npm", "arguments": ["run", "build"] }, { "description": "Forbidden SDK surface", "command": "npm", "arguments": ["run", "check:forbidden-surface"] }, { "description": "Unit and contract regression", "command": "npm", "arguments": ["run", "test:unit"] }] },
+    { "name": "release-e2e", "resourceWeight": "heavy", "required": true, "commands": [{ "description": "Clean install", "command": "npm", "arguments": ["ci"] }, { "description": "Build SDK", "command": "npm", "arguments": ["run", "build"] }, { "description": "Require live integration configuration", "command": "node", "arguments": ["scripts/require-release-e2e-config.mjs"] }, { "description": "Authenticated live API integration", "command": "npm", "arguments": ["run", "test:integration"] }] }
+  ],
+  "buildTargets": [{ "name": "npm", "resourceWeight": "medium", "outputPath": "artifacts/candidate", "commands": [{ "description": "Clean install", "command": "npm", "arguments": ["ci"] }, { "description": "Build SDK", "command": "npm", "arguments": ["run", "build"] }, { "description": "Forbidden SDK surface", "command": "npm", "arguments": ["run", "check:forbidden-surface"] }, { "description": "Unit and contract regression", "command": "npm", "arguments": ["run", "test:unit"] }, { "description": "Qualify npm release candidate", "command": "node", "arguments": ["scripts/qualify-npm-artifact.mjs", "--release", "--output", "artifacts/candidate"] }] }],
+  "candidate": { "genericPackageName": "ci-candidates-typescript", "retentionDays": 7 },
+  "promotion": { "strategy": "package", "endpoints": [] }
+}
