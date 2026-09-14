@@ -1258,6 +1258,8 @@ public sealed class TerraScaleClient
         }
     }
 
+    internal bool AutomaticSessionConsistencyEnabled => options.SessionConsistency == TerraScaleSessionConsistency.Automatic;
+
     internal TerraScaleDocument ObserveDocumentWrite(
         TerraScaleDocument document,
         HttpResponseMessage response,

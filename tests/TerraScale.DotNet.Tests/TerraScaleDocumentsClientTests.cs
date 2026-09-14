@@ -26,7 +26,7 @@ public sealed class TerraScaleDocumentsClientTests
     [Test]
     public async Task CallerDocumentKeyControlsRetryAndOverridesFactory()
     {
-        foreach (var method in new[] { "put", "patch", "batch", "delete" })
+        foreach (var method in new[] { "put", "patch", "delete" })
         {
             using var handler = new DroppedResponseHandler();
             using var http = new HttpClient(handler);
@@ -46,7 +46,6 @@ public sealed class TerraScaleDocumentsClientTests
                 {
                     case "put": await client.Documents.PutAsync("db", "items", "one", new { value = 1 }, options); break;
                     case "patch": await client.Documents.PatchAsync("db", "items", "one", new { value = 1 }, options); break;
-                    case "batch": await client.Documents.BatchAsync("db", "items", [TerraScaleDocumentBatchOperation.Delete("one")], options); break;
                     case "delete": await client.Documents.DeleteAsync("db", "items", "one", options); break;
                 }
             });
@@ -66,9 +65,9 @@ public sealed class TerraScaleDocumentsClientTests
     }
 
     [Test]
-    public async Task UpsertAsync_SendsRawJsonAndProjectsEtagAndSession()
+    public async Task UpsertAsync_SendsRawJsonAndProjectsEtag()
     {
-        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"revision\":\"r1\"}", "\"r1\"", "7");
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"revision\":\"r1\"}", "\"r1\"");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
@@ -77,28 +76,47 @@ public sealed class TerraScaleDocumentsClientTests
         await Assert.That(handler.Request?.RequestUri).IsEqualTo("https://api.example.invalid/api/v1/databases/orders/collections/items/documents/item%2F1");
         await Assert.That(handler.Request?.Body).IsEqualTo("{\"total\":3}");
         await Assert.That(document.ChangeToken).IsEqualTo("r1");
-        await Assert.That(document.SessionConsistencyToken).IsEqualTo("7");
+        await Assert.That(document.SessionConsistencyToken).IsNull();
     }
 
     [Test]
-    public async Task GetAsync_SendsIfNoneMatchAndSessionAndRequiresStrongEtag()
+    public async Task MutationExpectedChangeTokenUsesStrongEtagSyntax()
     {
-        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"total\":3}", "\"r1\"");
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"revision\":\"r2\"}", "\"r2\"");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var document = await client.Documents.GetAsync("orders", "items", "item-1", new TerraScaleDocumentReadOptions(IfNoneMatch: "\"old\"", Session: "7"));
+        await client.Documents.PutAsync("orders", "items", "item-1", new { total = 3 }, new TerraScaleDocumentMutationOptions(ExpectedChangeToken: "r1"));
 
-        await Assert.That(handler.Request?.IfNoneMatch).IsEqualTo("\"old\"");
-        await Assert.That(handler.Request?.Session).IsEqualTo("7");
-        await Assert.That(document.Data.GetProperty("total").GetInt32()).IsEqualTo(3);
-        await Assert.That(document.ChangeToken).IsEqualTo("r1");
+        await Assert.That(handler.Request?.IfMatch).IsEqualTo("\"r1\"");
     }
 
     [Test]
-    public async Task ExplicitSessionOverridesRememberedAutomaticSession()
+    public async Task GetAsync_RejectsUnsupportedReadOptions()
     {
-        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"revision\":\"r1\"}", "\"r1\"", "7");
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"total\":3}", "\"r1\"");
+        using var http = new HttpClient(handler);
+        var client = CreateClient(http);
+
+        foreach (var options in new[]
+        {
+            new TerraScaleDocumentReadOptions(AllowStale: true),
+            new TerraScaleDocumentReadOptions(IfNoneMatch: "\"old\""),
+            new TerraScaleDocumentReadOptions(Session: "session-1"),
+            new TerraScaleDocumentReadOptions(At: 42),
+        })
+        {
+            var exception = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => client.Documents.GetAsync("orders", "items", "one", options));
+            await Assert.That(exception).IsNotNull();
+        }
+
+        await Assert.That(handler.Request).IsNull();
+    }
+
+    [Test]
+    public async Task AutomaticSessionConsistencyIsRejectedForDocumentReads()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"total\":3}", "\"r1\"");
         using var http = new HttpClient(handler);
         var client = new TerraScaleClient(http, new TerraScaleClientOptions
         {
@@ -106,27 +124,31 @@ public sealed class TerraScaleDocumentsClientTests
             ApiKey = "test-key",
             SessionConsistency = TerraScaleSessionConsistency.Automatic
         });
-        await client.Documents.PutAsync("orders", "items", "one", new { value = 1 });
-        await client.Documents.GetAsync("orders", "items", "one");
-        await Assert.That(handler.Request!.Session).IsEqualTo("7");
 
-        await client.Documents.GetAsync("orders", "items", "one", new TerraScaleDocumentReadOptions(Session: "9"));
-        await Assert.That(handler.Request!.Session).IsEqualTo("9");
+        var exception = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => client.Documents.GetAsync("orders", "items", "one"));
+        await Assert.That(exception).IsNotNull();
+        await Assert.That(handler.Request).IsNull();
     }
 
     [Test]
-    public async Task BatchAsync_UsesPublishedOperationShapeAndRejectsMoreThan1000()
+    public async Task BatchAsync_RejectsUnsupportedOperation()
     {
         using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"committed\":1,\"count\":1}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var result = await client.Documents.BatchAsync("orders", "items", [TerraScaleDocumentBatchOperation.Upsert("item-1", new { ok = true })]);
+        var exception = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => client.Documents.BatchAsync("orders", "items", [TerraScaleDocumentBatchOperation.Upsert("item-1", new { ok = true })]));
+        await Assert.That(exception).IsNotNull();
+        await Assert.That(handler.Request).IsNull();
+    }
 
-        await Assert.That(handler.Request?.RequestUri).IsEqualTo("https://api.example.invalid/api/v1/databases/orders/collections/items/documents/batch");
-        await Assert.That(handler.Request?.Body).IsEqualTo("{\"operations\":[{\"op\":\"put\",\"id\":\"item-1\",\"value\":{\"ok\":true}}]}");
-        await Assert.That(result.Count).IsEqualTo(1);
-        var exception = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.Documents.BatchAsync("orders", "items", Enumerable.Repeat(TerraScaleDocumentBatchOperation.Delete("x"), 1001).ToArray()));
+    [Test]
+    public async Task HistoryAsync_RejectsUnsupportedOperation()
+    {
+        using var httpClient = new HttpClient(new RecordingHandler(HttpStatusCode.OK, "{\"history\":[]}"));
+        var client = CreateClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => client.Documents.HistoryAsync("orders", "items", "item-1"));
         await Assert.That(exception).IsNotNull();
     }
 
@@ -142,7 +164,7 @@ public sealed class TerraScaleDocumentsClientTests
         var createOnly = new TerraScaleDocumentMutationOptions(CreateOnly: true);
         await Assert.ThrowsAsync<ArgumentException>(() => client.Documents.PatchAsync("db", "items", "stable-id", new { ok = true }, createOnly));
         await Assert.ThrowsAsync<ArgumentException>(() => client.Documents.DeleteAsync("db", "items", "stable-id", createOnly));
-        await Assert.ThrowsAsync<ArgumentException>(() => client.Documents.BatchAsync("db", "items", [TerraScaleDocumentBatchOperation.Delete("stable-id")], createOnly));
+        await Assert.ThrowsAsync<TerraScaleContractGapException>(() => client.Documents.BatchAsync("db", "items", [TerraScaleDocumentBatchOperation.Delete("stable-id")], createOnly));
         await Assert.ThrowsAsync<ArgumentException>(() => client.Documents.PutAsync("db", "items", "stable-id", new { ok = true }, createOnly with { ExpectedChangeToken = "\"1\"" }));
     }
 
@@ -186,6 +208,19 @@ public sealed class TerraScaleDocumentsClientTests
         await Assert.ThrowsAsync<JsonException>(() => client.Documents.PutAsync("db", "items", "one", new { timestamp = new DateTime(2026, 1, 1) }));
     }
 
+    [Test]
+    public async Task ListAsyncPreservesUnsignedDocumentVersions()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"documents\":[{\"id\":\"large\",\"version\":18446744073709551615,\"value\":{\"ok\":true}}]}");
+        using var http = new HttpClient(handler);
+        var client = CreateClient(http);
+
+        var page = await client.Documents.ListAsync("orders", "items");
+
+        await Assert.That(page.Items).Count().IsEqualTo(1);
+        await Assert.That(page.Items[0].ChangeToken).IsEqualTo(ulong.MaxValue.ToString(CultureInfo.InvariantCulture));
+    }
+
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),
@@ -201,6 +236,7 @@ public sealed class TerraScaleDocumentsClientTests
             Request = new RecordedRequest(
                 request.RequestUri?.ToString() ?? throw new InvalidOperationException(),
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken),
+                request.Headers.TryGetValues("If-Match", out var ifMatchValues) ? ifMatchValues.Single() : null,
                 request.Headers.TryGetValues("If-None-Match", out var etagValues) ? etagValues.Single() : null,
                 request.Headers.TryGetValues("X-TerraScale-Session", out var sessionValues) ? sessionValues.Single() : null);
             var response = new HttpResponseMessage(statusCode) { Content = new StringContent(responseBody, Encoding.UTF8, "application/json") };
@@ -210,5 +246,5 @@ public sealed class TerraScaleDocumentsClientTests
         }
     }
 
-    private sealed record RecordedRequest(string RequestUri, string? Body, string? IfNoneMatch, string? Session);
+    private sealed record RecordedRequest(string RequestUri, string? Body, string? IfMatch, string? IfNoneMatch, string? Session);
 }

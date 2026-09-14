@@ -19,16 +19,8 @@ public sealed class TerraScaleRegionsClient
     }
 
     /// <summary>Returns the anonymous global region catalog and regional hosts.</summary>
-    public async Task<TerraScaleRegionCatalog> ListAsync(CancellationToken cancellationToken = default)
-    {
-        var response = await client.SendAnonymousJsonAsync(
-            HttpMethod.Get,
-            "/api/v1/regions",
-            TerraScaleRegionsJsonContext.Default.TerraScaleRegionCatalog,
-            cancellationToken).ConfigureAwait(false);
-        response.Validate();
-        return response;
-    }
+    public Task<TerraScaleRegionCatalog> ListAsync(CancellationToken cancellationToken = default) =>
+        Gap<TerraScaleRegionCatalog>("regions", cancellationToken);
 
     /// <summary>Returns the serving member's region and health.</summary>
     public async Task<TerraScaleRegionHealth> HealthAsync(CancellationToken cancellationToken = default)
@@ -41,6 +33,11 @@ public sealed class TerraScaleRegionsClient
         response.Validate();
         return response;
     }
+
+    private static Task<T> Gap<T>(string operation, CancellationToken cancellationToken) =>
+        cancellationToken.IsCancellationRequested
+            ? Task.FromCanceled<T>(cancellationToken)
+            : Task.FromException<T>(new TerraScaleContractGapException(operation));
 
 }
 

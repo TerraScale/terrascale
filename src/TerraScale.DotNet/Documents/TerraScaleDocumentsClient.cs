@@ -23,9 +23,13 @@ public sealed class TerraScaleDocumentsClient
     {
         var route = DocumentRoute(database, collection, documentId).RequestUri;
         ValidateReadOptions(options);
-        if (options?.At is { } at) route += "?at=" + at.ToString(CultureInfo.InvariantCulture);
+        if (options?.At is not null) return Gap<TerraScaleDocument>("document_read_point_in_time", cancellationToken);
+        if (options?.AllowStale == true || !string.IsNullOrWhiteSpace(options?.IfNoneMatch) || !string.IsNullOrWhiteSpace(options?.Session))
+            return Gap<TerraScaleDocument>("document_read_consistency", cancellationToken);
+        if (client.AutomaticSessionConsistencyEnabled)
+            return Gap<TerraScaleDocument>("document_read_consistency", cancellationToken);
         return client.SendAsync<JsonElement, TerraScaleDocument>(HttpMethod.Get, route, body: null, preferredRegion: null,
-            request => { ConfigureRead(request, database, documentId, options); ApplyReadHeaders(request, database, documentId, options); },
+            configureRequest: null,
             (value, response) => client.ObserveDocumentRead(ReadDocument(value, response, database, collection, documentId), response), cancellationToken);
     }
 
@@ -38,16 +42,7 @@ public sealed class TerraScaleDocumentsClient
 
     public Task<TerraScaleDocumentBatch> BatchAsync(string database, string collection, IReadOnlyList<TerraScaleDocumentBatchOperation> operations, CancellationToken cancellationToken = default) => BatchAsync(database, collection, operations, options: null, cancellationToken);
     public Task<TerraScaleDocumentBatch> BatchAsync(string database, string collection, IReadOnlyList<TerraScaleDocumentBatchOperation> operations, TerraScaleDocumentMutationOptions? options, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(operations);
-        ValidateMutationOptions(options);
-        if (operations.Count is < 1 or > MaxPageSize) throw new ArgumentOutOfRangeException(nameof(operations), "A document batch must contain between 1 and 1000 operations.");
-        return client.SendAsync<TerraScaleBatchResponse, TerraScaleDocumentBatch>(HttpMethod.Post, CollectionRoute(database, collection) + "/batch",
-            new TerraScaleBatchMutation(operations.Select(static operation => operation.ToWire()).ToArray()), preferredRegion: null,
-            request => ConfigureMutation(request, options),
-            (value, response) => client.ObserveDocumentBatch(new TerraScaleDocumentBatch(database.Trim(), collection.Trim(), [], TerraScaleRoutingObservation.From(response), value.Committed, value.Count), response, database), cancellationToken,
-            idempotencyKeyOverride: options?.IdempotencyKey?.Trim(), allowUnkeyedPutRetry: false);
-    }
+        => Gap<TerraScaleDocumentBatch>("batch_documents", cancellationToken);
 
     public Task<TerraScaleDocumentPage> ListAsync(string database, string collection, int limit = 100, string? after = null, CancellationToken cancellationToken = default)
     {
@@ -67,12 +62,7 @@ public sealed class TerraScaleDocumentsClient
     }
 
     public Task<IReadOnlyList<TerraScaleDocumentHistoryEntry>> HistoryAsync(string database, string collection, string documentId, int limit = 100, string? after = null, CancellationToken cancellationToken = default)
-    {
-        ValidatePage(limit, after);
-        var route = DocumentRoute(database, collection, documentId).RequestUri + "/history?limit=" + limit.ToString(CultureInfo.InvariantCulture);
-        if (!string.IsNullOrWhiteSpace(after)) route += "&after=" + Uri.EscapeDataString(after.Trim());
-        return client.SendAsync<TerraScaleHistoryResponse, IReadOnlyList<TerraScaleDocumentHistoryEntry>>(HttpMethod.Get, route, body: null, preferredRegion: null, configureRequest: null, static (value, _) => value.History, cancellationToken);
-    }
+        => Gap<IReadOnlyList<TerraScaleDocumentHistoryEntry>>("document_history", cancellationToken);
 
     private Task<TerraScaleDocument> WriteAsync<TDocument>(HttpMethod method, string database, string collection, string documentId, TDocument document, TerraScaleDocumentMutationOptions? options, CancellationToken cancellationToken)
     {
@@ -97,40 +87,28 @@ public sealed class TerraScaleDocumentsClient
         return $"/api/v1/databases/{Escape(database)}/collections/{Escape(collection)}/documents";
     }
 
-    private static void ConfigureRead(HttpRequestMessage request, string database, string documentId, TerraScaleDocumentReadOptions? options)
-    {
-        if (!string.IsNullOrWhiteSpace(options?.Session)) request.Headers.TryAddWithoutValidation("X-TerraScale-Session", options.Session.Trim());
-        if (!string.IsNullOrWhiteSpace(options?.IfNoneMatch)) request.Headers.TryAddWithoutValidation("If-None-Match", options.IfNoneMatch.Trim());
-        _ = database;
-        // SessionConsistency=Automatic is handled by the shared client, which
-        // retains opaque write tokens per database/document scope.
-    }
-
-    private void ApplyReadHeaders(HttpRequestMessage request, string database, string documentId, TerraScaleDocumentReadOptions? options) => client.ApplyDocumentReadHeaders(request, database, documentId, options);
-
     private static void ConfigureMutation(HttpRequestMessage request, TerraScaleDocumentMutationOptions? options)
     {
         if (options?.CreateOnly == true) request.Headers.TryAddWithoutValidation("If-None-Match", "*");
-        if (!string.IsNullOrWhiteSpace(options?.ExpectedChangeToken)) request.Headers.TryAddWithoutValidation("If-Match", options.ExpectedChangeToken.Trim());
+        if (!string.IsNullOrWhiteSpace(options?.ExpectedChangeToken)) request.Headers.TryAddWithoutValidation("If-Match", StrongEtag(options.ExpectedChangeToken));
         if (options?.Durability is { } durability) request.Headers.TryAddWithoutValidation("X-TerraScale-Durability", durability switch { TerraScaleDurability.Regional => "regional", TerraScaleDurability.Global => "global", _ => throw new ArgumentOutOfRangeException(nameof(options)) });
     }
 
     private static TerraScaleDocument ReadDocument(JsonElement value, HttpResponseMessage response, string database, string collection, string documentId)
     {
         var etag = RequiredEtag(response);
-        return new TerraScaleDocument(database.Trim(), collection.Trim(), documentId.Trim(), value.Clone(), null, Unquote(etag), ReadSession(response));
+        return new TerraScaleDocument(database.Trim(), collection.Trim(), documentId.Trim(), value.Clone(), null, Unquote(etag));
     }
 
     private static TerraScaleDocument ReadWriteResult(TerraScaleDocumentWriteResponse value, HttpResponseMessage response, string database, string collection, string documentId)
     {
         var etag = RequiredEtag(response);
         if (!string.Equals(value.Revision, Unquote(etag), StringComparison.Ordinal)) throw new JsonException("TerraScale document revision must match the strong ETag.");
-        return new TerraScaleDocument(database.Trim(), collection.Trim(), documentId.Trim(), default, null, value.Revision, ReadSession(response));
+        return new TerraScaleDocument(database.Trim(), collection.Trim(), documentId.Trim(), default, null, value.Revision);
     }
 
     private static TerraScaleDocumentPage ToPage(TerraScaleDocumentsResponse value, HttpResponseMessage response, string database, string collection) => new(database.Trim(), collection.Trim(), 0, value.Documents.Count, value.Documents.Count, value.Documents.Select(item => new TerraScaleDocument(database.Trim(), collection.Trim(), item.Id, item.Value.Clone(), null, item.Version.ToString(CultureInfo.InvariantCulture))).ToArray(), TerraScaleRoutingObservation.From(response));
     private static string RequiredEtag(HttpResponseMessage response) { var tag = response.Headers.ETag?.Tag; if (string.IsNullOrWhiteSpace(tag) || response.Headers.ETag!.IsWeak) throw new JsonException("TerraScale document responses require a strong ETag header."); return tag; }
-    private static string? ReadSession(HttpResponseMessage response) => response.Headers.TryGetValues("X-TerraScale-Session", out var values) ? values.FirstOrDefault()?.Trim() : null;
     private static void ValidateMutationOptions(TerraScaleDocumentMutationOptions? options, HttpMethod? method = null) { if (options is null) return; if (options.CreateOnly && (method != HttpMethod.Put || options.ExpectedChangeToken is not null)) throw new ArgumentException("CreateOnly is supported only for PUT and cannot be combined with ExpectedChangeToken.", nameof(options)); ValidateBounded(options.ExpectedChangeToken, "ExpectedChangeToken", 4096); ValidateBounded(options.IdempotencyKey, "IdempotencyKey", 128); if (options.Durability is not (null or TerraScaleDurability.Regional or TerraScaleDurability.Global)) throw new ArgumentOutOfRangeException(nameof(options)); }
     private static void ValidateReadOptions(TerraScaleDocumentReadOptions? options) { ValidateBounded(options?.Session, "Session", 4096); ValidateBounded(options?.IfNoneMatch, "IfNoneMatch", 4096); if (options?.At is < 0) throw new ArgumentOutOfRangeException(nameof(options), "At must be non-negative."); }
     private static void ValidatePage(int limit, string? after) { if (limit is <= 0 or > MaxPageSize) throw new ArgumentOutOfRangeException(nameof(limit), "Limit must be between 1 and 1000."); ValidateBounded(after, "after", 255); }
@@ -138,12 +116,17 @@ public sealed class TerraScaleDocumentsClient
     private static void ValidateBounded(string? value, string name, int maxBytes) { if (value is not null && (string.IsNullOrWhiteSpace(value) || Encoding.UTF8.GetByteCount(value.Trim()) > maxBytes)) throw new ArgumentException($"{name} must be at most {maxBytes} UTF-8 bytes.", name); }
     private static string Escape(string value) => Uri.EscapeDataString(value.Trim());
     private static string Unquote(string value) => value.Length >= 2 && value[0] == '"' && value[^1] == '"' ? value[1..^1] : value;
+    private static string StrongEtag(string value)
+    {
+        var token = value.Trim();
+        return token == "*" || token.Length >= 2 && token[0] == '"' && token[^1] == '"' ? token : $"\"{token}\"";
+    }
     private static Task<T> Gap<T>(string operation, CancellationToken cancellationToken) => cancellationToken.IsCancellationRequested ? Task.FromCanceled<T>(cancellationToken) : Task.FromException<T>(new TerraScaleContractGapException(operation));
 }
 
 internal sealed record TerraScaleDocumentWriteResponse([property: JsonRequired] string Revision);
 internal sealed record TerraScaleDocumentsResponse([property: JsonRequired] IReadOnlyList<TerraScaleDocumentWire> Documents);
-internal sealed record TerraScaleDocumentWire([property: JsonRequired] string Id, [property: JsonRequired] long Version, [property: JsonRequired] JsonElement Value);
+internal sealed record TerraScaleDocumentWire([property: JsonRequired] string Id, [property: JsonRequired] ulong Version, [property: JsonRequired] JsonElement Value);
 internal sealed record TerraScaleBatchMutation([property: JsonPropertyName("operations")] IReadOnlyList<TerraScaleDocumentBatchOperationWire> Operations);
 internal sealed record TerraScaleBatchResponse([property: JsonRequired] long Committed, [property: JsonRequired] int Count);
 internal sealed record TerraScaleHistoryResponse([property: JsonRequired] IReadOnlyList<TerraScaleDocumentHistoryEntry> History);
