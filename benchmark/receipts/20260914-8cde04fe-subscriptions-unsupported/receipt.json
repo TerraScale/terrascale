@@ -125,7 +125,7 @@
       }
     ]
   },
-  "rawSamplesPath": "/tmp/terrabase-bench-subscriptions-1789365890/subscriptions-raw-samples.jsonl",
+  "rawSamplesPath": "bench/receipts/20260914-8cde04fe-subscriptions-unsupported/raw-samples.jsonl",
   "command": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll --workload subscriptions --subscriber-counts 1,10,50 --warmup-publications 2 --publications 5 --output /tmp/terrabase-bench-subscriptions-1789365890",
   "receiptDirectory": "/tmp/terrabase-bench-subscriptions-1789365890"
 }

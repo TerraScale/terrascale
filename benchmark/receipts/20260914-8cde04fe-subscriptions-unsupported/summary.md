@@ -20,3 +20,5 @@ Subject: `ReactiveSubscriptionHub`; boundary: `durable commit -> one shared quer
 |50 | unsupported | — | — | — | — | — | — | — | — | — | The CLI has no durable commit-to-reactive source callback; use the embedding API to supply one. |
 
 Unsupported reason: `The CLI has no durable commit-to-reactive source callback; use the embedding API to supply one.`
+
+Raw samples: [`raw-samples.jsonl`](raw-samples.jsonl) (unsupported cases contain no measured latency or resource values).

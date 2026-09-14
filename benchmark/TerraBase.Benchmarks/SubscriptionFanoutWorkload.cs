@@ -356,7 +356,14 @@ public static class SubscriptionFanoutWorkload
                 cancellationToken))
             .ToArray();
         var changeSet = await scenario.CommitAsync!(cancellationToken).ConfigureAwait(false);
-        await scenario.Hub.PublishAsync(changeSet, cancellationToken).ConfigureAwait(false);
+        if (scenario.PublishCommittedAsync is { } publishCommittedAsync)
+        {
+            await publishCommittedAsync(changeSet, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await scenario.Hub.PublishAsync(changeSet, cancellationToken).ConfigureAwait(false);
+        }
         return await Task.WhenAll(responsive).ConfigureAwait(false);
     }
 
@@ -472,7 +479,8 @@ public sealed record SubscriptionFanoutScenario<TParameters, TResult>
         Func<CancellationToken, ValueTask<ReactiveChangeSet>>? commitAsync,
         SubscriptionFanoutProbe? probe = null,
         bool durableCommitPathAvailable = false,
-        string? unsupportedReason = null)
+        string? unsupportedReason = null,
+        Func<ReactiveChangeSet, CancellationToken, ValueTask>? publishCommittedAsync = null)
     {
         Hub = hub ?? throw new ArgumentNullException(nameof(hub));
         Operation = operation;
@@ -484,6 +492,7 @@ public sealed record SubscriptionFanoutScenario<TParameters, TResult>
         Probe = probe;
         DurableCommitPathAvailable = durableCommitPathAvailable;
         UnsupportedReason = unsupportedReason;
+        PublishCommittedAsync = publishCommittedAsync;
     }
 
     /// <summary>The shared subscription hub under test.</summary>
@@ -515,6 +524,14 @@ public sealed record SubscriptionFanoutScenario<TParameters, TResult>
 
     /// <summary>Reason to report when the durable path is unavailable.</summary>
     public string? UnsupportedReason { get; }
+
+    /// <summary>
+    /// Accepts a change set after the durable commit callback completes.
+    /// Supplying this callback lets the scenario wait for a durable feed worker
+    /// to publish the commit instead of publishing the same change a second
+    /// time through the benchmark harness.
+    /// </summary>
+    public Func<ReactiveChangeSet, CancellationToken, ValueTask>? PublishCommittedAsync { get; }
 }
 
 /// <summary>Configuration for the subscription fan-out workload.</summary>

@@ -16,7 +16,7 @@ Receipt JSON: `receipt.json`
 
 | Storage | Workload | Temperature | Status | Samples | Cold start ms | Throughput ops/s | p50 µs | p95 µs | p99 µs | Allocated bytes/op | CPU % | RAM after bytes | Bytes written | Write amplification | Raw samples |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-|Memory | PointRead | Warm | complete | 5 | — | 260010.40 | 1.87 | 10.05 | 22.32 | 896.88 | 6.50 | 63,873,024 | — | — | `raw-samples-Memory-PointRead-Warm.jsonl` |
+|Memory | PointRead | Warm | complete | 5 | — | 260010.40 | 1.87 | 10.05 | 22.32 | 896.88 | 6.50 | 63,873,024 | — | — | [`raw-samples.jsonl`](raw-samples.jsonl) |
 
 Command: `/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll --storage memory --workload point-read --temperature warm --dataset-size 100 --payload-size 128 --samples 5 --warmup 50 --operations 100 --output /tmp/terrabase-bench-memory-1789365718`
 

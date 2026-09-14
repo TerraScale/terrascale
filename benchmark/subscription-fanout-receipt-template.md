@@ -57,9 +57,12 @@ subscriber and the separate backpressure/reconnect columns describe it.
 - All subscribers in a case must use one identical query operation, parameter
   value, tenant, and authorization scope so that the hub can share one origin
   materialization.
-- The commit callback must return the durable commit's `ReactiveChangeSet` and
-  must not call `ReactiveSubscriptionHub.PublishAsync`; the harness performs
-  exactly one publication for that commit.
+- The commit callback must return the durable commit's `ReactiveChangeSet`. A
+  durable scenario supplies `PublishCommittedAsync` to wait for the
+  `StorageChangeFeedWorker` (or equivalent durable publisher); the harness
+  then avoids publishing the same commit a second time. A scenario without
+  that hook may use the harness's direct hub publication only when its commit
+  boundary is explicitly marked as non-durable.
 - `Origin evaluations` comes from the query delegate's
   `SubscriptionFanoutProbe`. If no probe is supplied, the field remains `—`.
 - `Shared maintenance updates` and `Incremental updates` count one shared delta

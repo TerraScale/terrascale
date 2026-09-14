@@ -44,7 +44,7 @@
       "temperature": "Warm",
       "status": "complete",
       "error": null,
-      "rawSamplesPath": "/tmp/terrabase-bench-memory-1789365718/raw-samples-Memory-PointRead-Warm.jsonl",
+      "rawSamplesPath": "bench/receipts/20260914-5b5d1767-memory-point-read/raw-samples.jsonl",
       "workloadDigest": "cef5ac5f75b76664af745eccf4bf4353391e9e2189c63a73a58c451ed7a358ca",
       "startedAtUtc": "2026-09-14T06:01:58.60364+00:00",
       "finishedAtUtc": "2026-09-14T06:01:58.7641649+00:00",

@@ -44,7 +44,7 @@
       "temperature": "Warm",
       "status": "complete",
       "error": null,
-      "rawSamplesPath": "/tmp/terrabase-bench-storage-1789365739/raw-samples-StorageEngine-PointWrite-Warm.jsonl",
+      "rawSamplesPath": "bench/receipts/20260914-5b5d1767-storage-point-write/raw-samples.jsonl",
       "workloadDigest": "0ab832b94b2d4f6af773d251cdfdc58f53f119e929676046324b12bd08070b79",
       "startedAtUtc": "2026-09-14T06:02:19.570913+00:00",
       "finishedAtUtc": "2026-09-14T06:02:27.9280415+00:00",

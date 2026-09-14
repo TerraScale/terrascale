@@ -7,7 +7,7 @@ provider point-operation runner:
 | --- | --- | --- | --- |
 | Replication lag | `LeaderlessReplicationEngine` | Source apply, source delta export, destination apply | In-memory process-local replication only; no network, durable acknowledgement, repair, or multi-region claim |
 | Restore time | `BackupManager` | Manifest chain load, checksum verification, and transactional in-memory target activation | In-memory object store and target only; no filesystem reopen, object-store network, crash recovery, or ZoneTree restore adapter claim |
-| Reactive fan-out | `ReactiveSubscriptionHub` | Existing `--workload subscriptions` runner | `unsupported` until a real durable commit-to-reactive callback is supplied |
+| Reactive fan-out | `ReactiveSubscriptionHub` | `StorageEngine.ApplyBatchAsync` -> `StorageChangeFeedWorker` -> hub -> subscriber frames | Local durable WAL and feed publication; no network or multi-region claim |
 
 Every measured receipt records the git revision and dirty state, runner DLL
 hash, TerraBase and ZoneTree assembly hashes, .NET runtime, OS and
@@ -33,7 +33,10 @@ per sample; `--log-entries` fixes the incremental restore chain size; and
 `--payload-size` fixes the snapshot and log payload size. The replication
 fixture uses one distinct document key per operation so the result measures
 the apply/export boundary rather than unbounded same-document CRDT candidate
-merge growth.
+merge growth. An exploratory same-key run on the same artifact did not finish
+within a 15-second bound at seven operations; that is an unresolved local
+merge-path regression signal, not a result this harness suppresses. A separate
+same-key workload is required before making a CRDT merge claim.
 
 The provider runner compares the TerraBase storage engine with the ZoneTree
 fork. Run the same workload, dataset, payload, sample, warmup, and concurrency
@@ -54,9 +57,9 @@ The provider receipt contains p50/p95/p99 latency, allocations per operation,
 process CPU and RSS, and write amplification when the selected backend exposes
 a WAL byte delta. ZoneTree's write amplification remains `—` until its
 provider exposes a comparable durable byte boundary. Vary `--concurrency` for
-vertical scaling. Vary the existing subscription runner's
-`--subscriber-counts` for horizontal fan-out scaling, while retaining its
-unsupported status when no durable callback is available:
+vertical scaling. The subscription runner uses a real local durable commit and
+change-feed worker; vary its `--subscriber-counts` for horizontal fan-out
+scaling:
 
 ```text
 nice -n 19 dotnet bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll \
@@ -81,11 +84,17 @@ memory or CPU limit.
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | Replication lag | complete | 5 | 12,915.06 ops/s | 62.20 µs | 114.50 µs | 297.40 µs | 6,777.36 | 2.29 | 68,829,184 | 0 ops | `ea33602170aa0159efd87a042ce7f4c5276ec13f59bdf76231c0536bc1f45fb3` |
 | Restore time | complete | 5 | 407.51 restores/s | 1.96 ms | 3.17 ms | 4.31 ms | 378,557.60 | 2.40 | 80,539,648 | 100 entries | `ea33602170aa0159efd87a042ce7f4c5276ec13f59bdf76231c0536bc1f45fb3` |
-| Reactive fan-out | unsupported | — | — | — | — | — | — | — | — | durable callback absent | existing subscription receipt |
+| Reactive fan-out | complete | 1/10/100/1000 | — | see receipt | — | — | see receipt | see receipt | see receipt | — | local durable feed | [`subscriptions-receipt.json`](receipts/20260914-durable-subscriptions-final/subscriptions-receipt.json) |
 
 Receipt directory: `/tmp/terrascale-recovery-final.Mz2fEv` during the initial
 measurement. Future admitted numbers belong in a retained `bench/receipts/`
 directory and must keep their raw JSONL files beside the receipt and summary.
+
+The durable subscription receipt is retained separately at
+`bench/receipts/20260914-durable-subscriptions/`. It reports p50/p95/p99
+delivery latency, origin evaluations, shared maintenance updates, allocations,
+CPU, RSS, egress, bounded backpressure, and resumable delivery for 1, 10, 100,
+and 1,000 subscribers.
 
 ## Verification and limits
 

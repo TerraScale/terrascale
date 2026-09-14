@@ -248,7 +248,10 @@ public static class RecoveryWorkload
             "benchmark-restore",
             CreatePayload(options.PayloadSize, options.Seed));
         var store = new InMemoryBackupObjectStore();
-        var manager = new BackupManager(store, new NoBackupEncryption());
+        using var signer = new HmacSha256BackupManifestSignatureProvider(
+            "terrabase-recovery-benchmark-trust-root-2026"u8,
+            "recovery-benchmark-root-v1");
+        var manager = new BackupManager(store, new NoBackupEncryption(), signer);
         var full = await manager.CreateFullBackupAsync(source, cancellationToken: cancellationToken).ConfigureAwait(false);
         var baseTime = full.Boundary.Timestamp;
         for (var index = 0; index < options.LogEntries; index++)

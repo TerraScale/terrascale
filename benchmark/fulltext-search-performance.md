@@ -1,8 +1,9 @@
 # FullTextSearch performance evidence
 
-This is a focused local Release benchmark for the cloned
-`TerraBase.ZoneTree.FullTextSearch` read/write paths. The source tree was
-already dirty from the parent task; the source revision was
+This is a focused local Release benchmark for the integrated FullTextSearch
+implementation in the `TerraBase.ZoneTree` assembly (public namespace
+`ZoneTree.FullTextSearch`). The source tree was already dirty from the parent
+task; the source revision was
 `7846bce1fab7a12db26b704fd7d37a365f72c932`. The benchmark ran on .NET
 10.0.12 / SDK 10.0.401, NixOS 26.05 x64, Intel Xeon E5-2660 v4, 46 logical
 processors, 20.9 GB available memory, workstation GC, and interactive latency
@@ -62,3 +63,7 @@ nice -n 19 dotnet test tests/TerraBase.ZoneTree.FullTextSearch.Tests/TerraBase.Z
 
 The build passed with zero warnings and errors. The FullTextSearch unit suite
 passed 72/72 tests. No analyzer settings or compression defaults were changed.
+The current benchmark runner records and validates the `TerraBase.ZoneTree`
+assembly identity;
+the `ZoneTree.FullTextSearch` namespace remains the upstream-compatible source
+namespace.

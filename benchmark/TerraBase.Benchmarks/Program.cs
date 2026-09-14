@@ -9,6 +9,8 @@ using System.Text.Json;
 using TerraBase;
 using TerraBase.Benchmarks;
 using TerraBase.Reactive;
+using TerraBase.Storage.ChangeFeed;
+using TerraBase.StorageEngine;
 
 internal static class Program
 {
@@ -22,6 +24,26 @@ internal static class Program
     {
         try
         {
+            if (NativeBackupQualificationWorkload.IsRequested(args))
+            {
+                return await NativeBackupQualificationWorkload.RunAsync(args).ConfigureAwait(false);
+            }
+
+            if (MagicOnionReplicationQualificationWorkload.IsReplicaHostRequested(args))
+            {
+                return await MagicOnionReplicationQualificationWorkload.RunReplicaHostAsync(args).ConfigureAwait(false);
+            }
+
+            if (MagicOnionReplicationQualificationWorkload.IsRequested(args))
+            {
+                return await MagicOnionReplicationQualificationWorkload.RunAsync(args).ConfigureAwait(false);
+            }
+
+            if (MagicOnionReplicationWorkload.IsRequested(args))
+            {
+                return await MagicOnionReplicationWorkload.RunAsync(args).ConfigureAwait(false);
+            }
+
             if (RecoveryWorkload.IsRequested(args))
             {
                 return await RecoveryWorkload.RunAsync(args).ConfigureAwait(false);
@@ -191,24 +213,88 @@ internal static class Program
         Console.CancelKeyPress += cancelHandler;
         try
         {
-            await using var hub = new ReactiveSubscriptionHub(new AllowAuthenticatedReactiveAuthorizer());
-            var scenario = new SubscriptionFanoutScenario<int, int>(
-                hub,
-                new ReactiveOperationId("benchmark.subscriptions"),
-                0,
-                new ReactiveAuthorization(new TenantId("benchmark-tenant"), "benchmark"),
-                static (_, _, _) => ValueTask.FromResult(0),
-                dependencies: null,
-                commitAsync: null,
-                durableCommitPathAvailable: false,
-                unsupportedReason: "The CLI has no durable commit-to-reactive source callback; use the embedding API to supply one.");
             var runOptions = new SubscriptionFanoutOptions
             {
                 SubscriberCounts = options.SubscriberCounts,
                 WarmupPublications = options.WarmupPublications,
                 MeasuredPublications = options.MeasuredPublications,
             };
-            var result = await SubscriptionFanoutWorkload.RunAsync(scenario, runOptions, cancellation.Token).ConfigureAwait(false);
+            SubscriptionFanoutRun result;
+            var storageRoot = Path.Combine(Path.GetTempPath(), $"terrabase-subscription-benchmark-{Guid.NewGuid():N}");
+            try
+            {
+                await using var storage = new StorageEngine(storageRoot);
+                var tenant = new TenantId("benchmark-tenant");
+                var collection = new CollectionId("items");
+                var key = new DocumentKey(tenant, collection, "fanout");
+                var initialBody = ParseJson("{\"value\":1}");
+                var initialResult = await storage.ApplyBatchAsync(
+                    [StorageMutation.Upsert(key, initialBody, DocumentPrecondition.Missing)],
+                    CreateCommitRequest("initial"),
+                    cancellation.Token).ConfigureAwait(false);
+                EnsureCommitted(initialResult, "initial benchmark document");
+                var initialCursor = storage.ChangeFeedCursor;
+                var authorizer = new AllowAuthenticatedReactiveAuthorizer();
+                await using var hub = new ReactiveSubscriptionHub(
+                    authorizer,
+                    new DocumentStore(storage, new MetricsRegistry()));
+                await using var worker = new StorageChangeFeedWorker(
+                    storage,
+                    hub,
+                    new StorageChangeFeedWorkerOptions
+                    {
+                        InitialCursor = initialCursor,
+                        PollInterval = TimeSpan.FromMilliseconds(1),
+                        RetryDelay = TimeSpan.FromMilliseconds(10),
+                    });
+                await worker.StartAsync(cancellation.Token).ConfigureAwait(false);
+
+                var authorization = new ReactiveAuthorization(tenant, "benchmark");
+                var probe = new SubscriptionFanoutProbe();
+                var version = 1UL;
+                var scenario = new SubscriptionFanoutScenario<int, int>(
+                    hub,
+                    new ReactiveOperationId("benchmark.subscriptions"),
+                    0,
+                    authorization,
+                    async (_, context, token) => (await context.ReadAsync(key, token).ConfigureAwait(false))?.Version is { } current
+                        ? checked((int)current)
+                        : 0,
+                    _ => new ReactiveDependencyCollection().Add(ReactiveDependency.ForDocument(key)),
+                    async token =>
+                    {
+                        var nextVersion = checked(version + 1);
+                        var body = ParseJson($"{{\"value\":{nextVersion}}}");
+                        var commit = await storage.ApplyBatchAsync(
+                            [StorageMutation.Upsert(key, body, DocumentPrecondition.Version(version))],
+                            CreateCommitRequest($"publication-{nextVersion}"),
+                            token).ConfigureAwait(false);
+                        EnsureCommitted(commit, $"benchmark publication {nextVersion}");
+                        version = nextVersion;
+                        var cursor = storage.ChangeFeedCursor;
+                        var after = new Document(key, body, nextVersion, DateTimeOffset.UtcNow);
+                        var change = ReactiveChange.ForDocument(
+                            key,
+                            WriteOutcome.Updated,
+                            nextVersion,
+                            before: null,
+                            after);
+                        return new ReactiveChangeSet(cursor.CommitSequence, [change]);
+                    },
+                    probe,
+                    durableCommitPathAvailable: true,
+                    publishCommittedAsync: (changeSet, token) =>
+                        WaitForReactivePublicationAsync(hub, worker, changeSet, token));
+                result = await SubscriptionFanoutWorkload.RunAsync(scenario, runOptions, cancellation.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (Directory.Exists(storageRoot))
+                {
+                    Directory.Delete(storageRoot, recursive: true);
+                }
+            }
+
             var rawPath = Path.Combine(outputDirectory, "subscriptions-raw-samples.jsonl");
             await using (var raw = new StreamWriter(rawPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
             {
@@ -234,6 +320,45 @@ internal static class Program
         finally
         {
             Console.CancelKeyPress -= cancelHandler;
+        }
+    }
+
+    private static StorageCommitRequest CreateCommitRequest(string operation)
+    {
+        var requestId = EntityId.New();
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(operation));
+        return new StorageCommitRequest(requestId, digest);
+    }
+
+    private static JsonElement ParseJson(string value)
+    {
+        using var document = JsonDocument.Parse(value);
+        return document.RootElement.Clone();
+    }
+
+    private static void EnsureCommitted(StorageBatchResult result, string operation)
+    {
+        if (result.Outcome != StorageBatchOutcome.Committed)
+        {
+            throw new InvalidOperationException($"The durable {operation} did not commit ({result.Outcome}).");
+        }
+    }
+
+    private static async ValueTask WaitForReactivePublicationAsync(
+        ReactiveSubscriptionHub hub,
+        StorageChangeFeedWorker worker,
+        ReactiveChangeSet changeSet,
+        CancellationToken cancellationToken)
+    {
+        while (hub.CurrentSequenceFor(changeSet.Database) < changeSet.Sequence)
+        {
+            if (worker.Completion.IsCompleted)
+            {
+                await worker.Completion.ConfigureAwait(false);
+                throw new InvalidOperationException("The durable change-feed worker exited before publishing the committed change.");
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(1), cancellationToken).ConfigureAwait(false);
         }
     }
 

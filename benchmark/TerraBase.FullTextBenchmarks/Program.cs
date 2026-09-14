@@ -9,6 +9,15 @@ using ZoneTree.FullTextSearch.SearchEngines;
 using ZoneTree.Options;
 
 var options = BenchmarkOptions.Parse(args);
+var benchmarkAssembly = Assembly.GetExecutingAssembly();
+var zoneTreeAssembly = typeof(HashedSearchEngine<>).Assembly;
+var zoneTreeAssemblyName = zoneTreeAssembly.GetName().Name;
+if (!string.Equals(zoneTreeAssemblyName, "TerraBase.ZoneTree", StringComparison.Ordinal))
+{
+    throw new InvalidOperationException(
+        $"The FullTextSearch benchmark must load TerraBase.ZoneTree, but loaded {zoneTreeAssemblyName ?? "<unknown>"}.");
+}
+
 var environment = new
 {
     Runtime = Environment.Version.ToString(),
@@ -19,10 +28,11 @@ var environment = new
     AvailableMemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
     ServerGc = GCSettings.IsServerGC,
     GcLatencyMode = GCSettings.LatencyMode.ToString(),
-    Assembly = Assembly.GetExecutingAssembly().Location,
-    ArtifactSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Assembly.GetExecutingAssembly().Location))).ToLowerInvariant(),
-    ZoneTreeAssembly = typeof(HashedSearchEngine<>).Assembly.Location,
-    ZoneTreeAssemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(HashedSearchEngine<>).Assembly.Location))).ToLowerInvariant(),
+    BenchmarkAssembly = benchmarkAssembly.Location,
+    ArtifactSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(benchmarkAssembly.Location))).ToLowerInvariant(),
+    TerraBaseZoneTreeAssembly = zoneTreeAssembly.Location,
+    TerraBaseZoneTreeAssemblyName = zoneTreeAssemblyName,
+    TerraBaseZoneTreeAssemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(zoneTreeAssembly.Location))).ToLowerInvariant(),
 };
 
 Console.WriteLine(JsonSerializer.Serialize(environment));

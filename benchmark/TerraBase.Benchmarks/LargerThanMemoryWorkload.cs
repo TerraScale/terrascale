@@ -541,7 +541,16 @@ internal static class LargerThanMemoryWorkload
 
         try
         {
-            return new EngineHandle(new TerraBaseEngine(provider), storageEngine, path, backend);
+            return new EngineHandle(
+                new TerraBaseEngine(
+                    provider,
+                    options: new TerraBaseOptions
+                    {
+                        AllowSchemaless = true,
+                    }),
+                storageEngine,
+                path,
+                backend);
         }
         catch
         {

@@ -1,0 +1,90 @@
+{
+  "status": "complete",
+  "startedAtUtc": "2026-09-14T17:40:49.0752209+00:00",
+  "finishedAtUtc": "2026-09-14T17:40:59.7130502+00:00",
+  "configuration": {
+    "operations": 4,
+    "outputDirectory": "bench/receipts/20260914-magic-onion-qualification-local-v2",
+    "showHelp": false
+  },
+  "result": {
+    "database": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "tenant": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+    "seedData": {
+      "origin": "member-a",
+      "collection": "magic-onion-qualification",
+      "documentIdPattern": "document-{sequence:D4}",
+      "sequenceCount": 4,
+      "causalContext": "sequence n requires member-a:n-1; sequence 1 has an empty context",
+      "bodySha256": "70b168a68a99e3920e742e370c2c43bef7beae0f34e1bd0b67f15e9c4c703ea6"
+    },
+    "topology": {
+      "sourceNode": "member-a",
+      "destinationNode": "member-b",
+      "sourcePort": 37893,
+      "destinationPort": 38901,
+      "sourceStoragePath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/member-a/data",
+      "destinationStoragePath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/member-b/data",
+      "authorityPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/ca.pfx",
+      "sourceServerPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/member-a-server.pfx",
+      "destinationServerPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/member-b-server.pfx",
+      "sourceClientPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/member-a-client.pfx",
+      "destinationClientPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/member-b-client.pfx",
+      "authorityFingerprint": "220C1F9D45FA3F406C96FBB1BD2CE6E7459921A295D9656279CDED6807B5F482",
+      "sourceServerFingerprint": "33639871CD66A53279DF2BE3F350D50C3542FFCED1DC7A50DDD299918B87F39B",
+      "destinationServerFingerprint": "CC1465223038E1B98990AAB9BC5640A250A2015869F28C013350421B9F68796D",
+      "sourceClientFingerprint": "C32931304BCCCFECA54E792B94F23438A3566E62EE50BC87E7579455B7E0EA03",
+      "destinationClientFingerprint": "EBA8247C186501E53E1F344948D76DB976ED599619FEC14C8557FB452149335B",
+      "sourceCommand": "/home/mariogk/.local/share/mise/dotnet-root/dotnet /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll --replica-host --node-id member-a --peer-node-id member-b --port 37893 --storage /home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/member-a/data --authority /home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/ca.pfx --server /home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/member-a-server.pfx --peer-client /home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/member-b-client.pfx",
+      "destinationCommand": "/home/mariogk/.local/share/mise/dotnet-root/dotnet /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll --replica-host --node-id member-b --peer-node-id member-a --port 38901 --storage /home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/member-b/data --authority /home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/ca.pfx --server /home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/member-b-server.pfx --peer-client /home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/topology/identity/member-a-client.pfx"
+    },
+    "operations": 4,
+    "seedDurableAcknowledged": true,
+    "seedDurableFrontier": 4,
+    "seedAppliedFrontier": 4,
+    "partitionFailureType": "InterNodeTransportException",
+    "restartVerified": true,
+    "finalDurableFrontier": 4,
+    "finalAppliedFrontier": 4,
+    "finalHeartbeatFrontier": 4,
+    "deferredResponses": 6,
+    "duplicateOutcomes": 3,
+    "durableAcknowledgementCount": 10,
+    "antiEntropyPulled": 4,
+    "sendP50Microseconds": 4671.599999999999,
+    "sendP95Microseconds": 116794.94999999998,
+    "repairLagMilliseconds": 2207.2452000000003,
+    "sourceStorageFiles": [
+      ".lock",
+      "CHANGE_FEED_STATE",
+      "format",
+      "wal"
+    ],
+    "destinationStorageFiles": [
+      ".lock",
+      "CHANGE_FEED_STATE",
+      "format",
+      "wal"
+    ]
+  },
+  "rawEventsPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2/raw-events.jsonl",
+  "command": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll --workload magic-onion-replication-qualification --operations 4 --output bench/receipts/20260914-magic-onion-qualification-local-v2",
+  "receiptDirectory": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260914-magic-onion-qualification-local-v2",
+  "environment": {
+    "runtime": "10.0.12",
+    "frameworkDescription": ".NET 10.0.12",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 46,
+    "availableMemoryBytes": 20937965568,
+    "buildConfiguration": "Release",
+    "benchmarkArtifactPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll",
+    "benchmarkArtifactSha256": "bbeb00f5f5be9df9d9d4086ca0b12a566d4c01d22901f35508dd95232634b510",
+    "terraBaseArtifactPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.dll",
+    "terraBaseArtifactSha256": "1e8bf20de00eec8ef8081a436938340598444279d491718eadec9ceb13dbdce5",
+    "gitCommit": "9e84cc83827d1603bb307d23c6722761f1d029b4",
+    "gitDirty": true
+  },
+  "nextDiagnosticStep": "Repeat this exact receipt under the project VM or Lightcracker network-fault harness, preserving the same seed and frontier assertions, before any OCI run.",
+  "error": null
+}

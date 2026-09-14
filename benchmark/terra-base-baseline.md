@@ -70,7 +70,7 @@ must not be labeled as end-to-end database performance.
 | Auto-index analysis | `AutomaticWorkloadAnalyzer` / candidate scorer | Analyze a bounded observation window and derive/score candidates | Fixed query-shape count, observation capacity, field sketch, and candidate count. |
 | Auto-index lifecycle | `AutomaticIndexCoordinator` | Select, invisible build, backfill, shadow verify, activate, rollback, retire | Use a recorded backend implementation; fake-backend tests are correctness evidence only. |
 | ZoneTree point lookup | `TerraBase.ZoneTree` | One point read after open/warm-up | Record tree options, key/value sizes, segment count, and persistence mode. |
-| Full-text lookup | `TerraBase.ZoneTree.FullTextSearch` | One parsed query against a fixed token corpus | Record tokenizer, corpus/token counts, query shape, and result count. |
+| Full-text lookup | `TerraBase.ZoneTree` (public namespace `ZoneTree.FullTextSearch`) | One parsed query against a fixed token corpus | Record tokenizer, corpus/token counts, query shape, and result count. |
 | Incremental filter | `IncrementalView` | Apply one committed transaction to a filter view | Fixed before/after images and view row count; report `Applied`, `Duplicate`, and `Conflict` separately. |
 | Incremental join | `IncrementalView` | Apply one endpoint change to a two-collection join | Fixed join fanout and affected-pair count. |
 | Incremental aggregate | `IncrementalView` | Apply one grouped aggregate update | Fixed group cardinality and affected groups. |

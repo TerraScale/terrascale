@@ -21,7 +21,7 @@ Use this profile for the first approved run:
 | Backend | `StorageEngine` |
 | Logical dataset | 32,768 documents × 2,048-byte payload |
 | Estimated logical bytes | about 67 MiB, excluding provider metadata and indexes |
-| Memory cap | 256 MiB cgroup limit |
+| Target memory cap | 256 MiB (requires an externally enforced cgroup limit) |
 | Samples | 5 post-warmup samples |
 | Operations per warm/cold phase | 2,000 |
 | Sustained writes per sample | 2,000 |
