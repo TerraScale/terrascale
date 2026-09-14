@@ -64,8 +64,11 @@ internal static class Program
                 var results = new List<WorkloadResult>();
                 foreach (var workload in options.Workloads)
                 {
-                    Console.WriteLine($"Running {options.Storage} {workload} ({options.Samples} samples)...");
-                    results.Add(await RunWorkloadAsync(workload, environment, cancellation.Token).ConfigureAwait(false));
+                    foreach (var temperature in options.Temperatures)
+                    {
+                        Console.WriteLine($"Running {options.Storage} {workload} {temperature} ({options.Samples} samples)...");
+                        results.Add(await RunWorkloadAsync(workload, temperature, environment, cancellation.Token).ConfigureAwait(false));
+                    }
                 }
 
                 var receipt = new BenchmarkReceipt(
@@ -94,47 +97,72 @@ internal static class Program
 
         private async Task<WorkloadResult> RunWorkloadAsync(
             Workload workload,
+            Temperature temperature,
             EnvironmentInfo environment,
             CancellationToken cancellationToken)
         {
-            var rawPath = Path.Combine(receiptDirectory, $"raw-samples-{options.Storage}-{workload}.jsonl");
+            var rawPath = Path.Combine(receiptDirectory, $"raw-samples-{options.Storage}-{workload}-{temperature}.jsonl");
             var result = new WorkloadResult
             {
                 Storage = options.Storage.ToString(),
                 Workload = workload.ToString(),
+                Temperature = temperature.ToString(),
                 RawSamplesPath = rawPath,
                 StartedAtUtc = DateTimeOffset.UtcNow,
             };
 
             try
             {
-                await using var engine = CreateEngine(workload);
-                using var payload = CreatePayload(options.PayloadSize);
-                var keys = CreateKeys(options.DatasetSize);
-                await SeedAsync(engine, keys, payload.RootElement, cancellationToken).ConfigureAwait(false);
-
-                var digest = WorkloadDigest.Create(options, workload, keys, payload.RootElement);
-                result.WorkloadDigest = digest;
-                await RunOperationsAsync(engine, workload, keys, payload.RootElement, options.WarmupOperations, null, 0, cancellationToken).ConfigureAwait(false);
-
-                await using var raw = new StreamWriter(rawPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-                for (var sampleIndex = 0; sampleIndex < options.Samples; sampleIndex++)
+                if (temperature == Temperature.Cold && options.Storage == StorageKind.Memory)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var sample = await RunSampleAsync(
-                        engine,
-                        workload,
-                        keys,
-                        payload.RootElement,
-                        sampleIndex,
-                        cancellationToken).ConfigureAwait(false);
-                    result.Samples.Add(sample);
-                    await raw.WriteLineAsync(JsonSerializer.Serialize(sample, RawJsonOptions)).ConfigureAwait(false);
-                    await raw.FlushAsync(cancellationToken).ConfigureAwait(false);
-                    Console.WriteLine($"  sample {sampleIndex + 1}/{options.Samples}: {sample.ThroughputOpsPerSecond.ToString("F1", CultureInfo.InvariantCulture)} ops/s");
+                    throw new InvalidOperationException("Cold temperature requires a durable storage backend; memory has no reopen boundary.");
                 }
 
-                result.Status = "complete";
+                var engine = CreateEngine(workload, temperature);
+                using var payload = CreatePayload(options.PayloadSize);
+                var keys = CreateKeys(options.DatasetSize);
+                try
+                {
+                    await SeedAsync(engine, keys, payload.RootElement, cancellationToken).ConfigureAwait(false);
+
+                    var digest = WorkloadDigest.Create(options, workload, temperature, keys, payload.RootElement);
+                    result.WorkloadDigest = digest;
+                    if (temperature == Temperature.Warm)
+                    {
+                        await RunOperationsAsync(engine, workload, keys, payload.RootElement, options.WarmupOperations, null, 0, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var coldStart = Stopwatch.GetTimestamp();
+                        await engine.DisposeAsync().ConfigureAwait(false);
+                        engine = CreateEngine(workload, temperature);
+                        result.ColdStartMilliseconds = Stopwatch.GetElapsedTime(coldStart).TotalMilliseconds;
+                    }
+
+                    await using var raw = new StreamWriter(rawPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                    for (var sampleIndex = 0; sampleIndex < options.Samples; sampleIndex++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var sample = await RunSampleAsync(
+                            engine,
+                            workload,
+                            temperature,
+                            keys,
+                            payload.RootElement,
+                            sampleIndex,
+                            cancellationToken).ConfigureAwait(false);
+                        result.Samples.Add(sample);
+                        await raw.WriteLineAsync(JsonSerializer.Serialize(sample, RawJsonOptions)).ConfigureAwait(false);
+                        await raw.FlushAsync(cancellationToken).ConfigureAwait(false);
+                        Console.WriteLine($"  sample {sampleIndex + 1}/{options.Samples}: {sample.ThroughputOpsPerSecond.ToString("F1", CultureInfo.InvariantCulture)} ops/s");
+                    }
+
+                    result.Status = "complete";
+                }
+                finally
+                {
+                    await engine.DisposeAsync().ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -151,16 +179,21 @@ internal static class Program
             return result;
         }
 
-        private TerraBaseEngine CreateEngine(Workload workload)
+        private TerraBaseEngine CreateEngine(Workload workload, Temperature temperature)
         {
             if (options.Storage == StorageKind.Memory)
             {
                 return TerraBaseEngine.Open();
             }
 
-            var path = Path.Combine(receiptDirectory, "storage-engine", workload.ToString());
+            var path = Path.Combine(receiptDirectory, "data", options.Storage.ToString(), $"{workload}-{temperature}");
             Directory.CreateDirectory(path);
-            return TerraBaseEngine.OpenDurable(path);
+            return options.Storage switch
+            {
+                StorageKind.StorageEngine => TerraBaseEngine.OpenDurable(path),
+                StorageKind.ZoneTree => new TerraBaseEngine(new ZoneTreeStorageProvider(path)),
+                _ => throw new ArgumentOutOfRangeException(),
+            };
         }
 
         private static async Task SeedAsync(
@@ -182,6 +215,7 @@ internal static class Program
         private async Task<SampleMeasurement> RunSampleAsync(
             TerraBaseEngine engine,
             Workload workload,
+            Temperature temperature,
             IReadOnlyList<DocumentKey> keys,
             JsonElement body,
             int sampleIndex,
@@ -192,7 +226,7 @@ internal static class Program
             var processCpuBefore = process.TotalProcessorTime;
             var workingSetBefore = process.WorkingSet64;
             var allocationsBefore = GC.GetTotalAllocatedBytes(false);
-            var storageBefore = FileMetrics.TryRead(options.Storage, receiptDirectory, workload);
+            var storageBefore = FileMetrics.TryRead(options.Storage, receiptDirectory, workload, temperature);
             var latencies = new long[options.OperationsPerSample];
             var bytesRead = 0L;
             var logicalBytes = 0L;
@@ -215,11 +249,12 @@ internal static class Program
             var processCpuAfter = process.TotalProcessorTime;
             var workingSetAfter = process.WorkingSet64;
             var allocationsAfter = GC.GetTotalAllocatedBytes(false);
-            var storageAfter = FileMetrics.TryRead(options.Storage, receiptDirectory, workload);
+            var storageAfter = FileMetrics.TryRead(options.Storage, receiptDirectory, workload, temperature);
             Array.Sort(latencies);
 
-            var bytesWritten = storageBefore is not null && storageAfter is not null
-                ? Math.Max(0, storageAfter.WalBytes - storageBefore.WalBytes)
+            var bytesWritten = storageBefore?.WalBytes is { } beforeWal
+                && storageAfter?.WalBytes is { } afterWal
+                ? Math.Max(0, afterWal - beforeWal)
                 : (long?)null;
             var writeAmplification = bytesWritten is > 0 && logicalBytes > 0
                 ? bytesWritten.Value / (double)logicalBytes
@@ -347,6 +382,7 @@ internal static class Program
     {
         public StorageKind Storage { get; private set; } = StorageKind.Memory;
         public IReadOnlyList<Workload> Workloads { get; private set; } = [Workload.PointRead, Workload.PointWrite, Workload.Scan];
+        public IReadOnlyList<Temperature> Temperatures { get; private set; } = [Temperature.Warm];
         public int DatasetSize { get; private set; } = 1_000;
         public int PayloadSize { get; private set; } = 256;
         public int Samples { get; private set; } = 5;
@@ -379,6 +415,11 @@ internal static class Program
                         options.Workloads = value.Equals("all", StringComparison.OrdinalIgnoreCase)
                             ? [Workload.PointRead, Workload.PointWrite, Workload.Scan]
                             : [ParseEnum<Workload>(value, name)];
+                        break;
+                    case "temperature":
+                        options.Temperatures = value.Equals("both", StringComparison.OrdinalIgnoreCase)
+                            ? [Temperature.Warm, Temperature.Cold]
+                            : [ParseEnum<Temperature>(value, name)];
                         break;
                     case "dataset-size":
                         options.DatasetSize = ParsePositive(value, name);
@@ -428,6 +469,7 @@ internal static class Program
             Console.WriteLine("Options:");
             Console.WriteLine("  --storage memory|storage-engine   Storage provider (default: memory)");
             Console.WriteLine("  --workload point-read|point-write|scan|all");
+            Console.WriteLine("  --temperature warm|cold|both      Warmup policy (default: warm)");
             Console.WriteLine("  --dataset-size N                  Seeded documents (default: 1000)");
             Console.WriteLine("  --payload-size N                  Payload string bytes (default: 256)");
             Console.WriteLine("  --samples N                       Post-warmup samples, minimum 5 (default: 5)");
@@ -483,6 +525,13 @@ internal static class Program
     {
         Memory,
         StorageEngine,
+        ZoneTree,
+    }
+
+    private enum Temperature
+    {
+        Warm,
+        Cold,
     }
 
     private enum Workload
@@ -496,12 +545,14 @@ internal static class Program
     {
         public string Storage { get; init; } = string.Empty;
         public string Workload { get; init; } = string.Empty;
+        public string Temperature { get; init; } = string.Empty;
         public string Status { get; set; } = "failed";
         public string? Error { get; set; }
         public string RawSamplesPath { get; init; } = string.Empty;
         public string? WorkloadDigest { get; set; }
         public DateTimeOffset StartedAtUtc { get; init; }
         public DateTimeOffset FinishedAtUtc { get; set; }
+        public double? ColdStartMilliseconds { get; set; }
         public List<SampleMeasurement> Samples { get; } = [];
     }
 
