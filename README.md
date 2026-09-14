@@ -39,13 +39,11 @@ npm run cf:pages:dev
 
 ## Deployment
 
-The site is verified and previewed by `ts-deploy` through this repository's
-Forgejo Actions workflow. Every run of the central reusable workflow
-(`TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main`) checks out this
-repository at the exact event revision and runs
-`ts-deploy ci --repo ts-landing`, which owns the repository's native
-verification set: `npm ci`, `npm run check`, `npm run build`, and `npm test`.
-There is no Makefile in that path.
+The site is deployed by `ts-deploy` from this repository's Forgejo Actions
+workflow. A push to `develop` runs `./ts-deploy ci --repo ts-landing`, which
+verifies the checkout with the native npm check, builds the site, signs one immutable
+candidate archive, publishes it to the Forgejo release, and only then deploys
+the extracted, byte-verified candidate to Cloudflare Pages.
 
 - Pages project: `ts-landing` (its `pages.dev` label is `terrascale-landing-page`)
 - Production branch: `main`
