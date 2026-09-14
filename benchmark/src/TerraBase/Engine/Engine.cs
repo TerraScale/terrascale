@@ -88,7 +88,7 @@ public sealed class TerraBaseEngine : IAsyncDisposable
     {
         if (provider is not SqliteStorageProvider sqlite)
             throw new NotSupportedException("Native SQLite backups require a SQLite storage provider.");
-        return new SqliteBackupManager(sqlite.StoragePath, options);
+        return new SqliteBackupManager(sqlite.StoragePath, options, Metrics);
     }
 
     /// <summary>Compacts the SQLite file while retaining WAL durability semantics.</summary>

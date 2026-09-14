@@ -147,6 +147,18 @@ public sealed class ProductionPrimitivesTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Test]
+    public async Task PresignedReplicaRetriesTransientPutWithoutBufferingDatabaseFiles()
+    {
+        var attempts = 0;
+        using var client = new HttpClient(new CountingHandler(() => ++attempts == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK));
+        var replica = new PresignedHttpBackupReplica("oci", _ => new Uri("https://objects.example.test/upload"), client);
+        await using var content = new MemoryStream(Encoding.UTF8.GetBytes("artifact"));
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content.ToArray())).ToLowerInvariant();
+        await replica.PutAsync("snapshot.db", content, hash);
+        await Assert.That(attempts).IsEqualTo(2);
+    }
+
     private static string NewDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "terrabase-tests", Guid.NewGuid().ToString("N"));
@@ -158,5 +170,11 @@ public sealed class ProductionPrimitivesTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}", Encoding.UTF8, "application/json") });
+    }
+
+    private sealed class CountingHandler(Func<HttpStatusCode> status) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(status()));
     }
 }

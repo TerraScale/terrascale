@@ -111,8 +111,10 @@ public sealed class PresignedHttpBackupReplica : IBackupReplica
             request.Headers.TryAddWithoutValidation("x-content-sha256", sha256);
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (response.IsSuccessStatusCode) return;
-            if (attempt >= maxAttempts || ((int)response.StatusCode is >= 400 and < 500))
-                throw new HttpRequestException($"Backup upload failed with {(int)response.StatusCode} ({response.ReasonPhrase}).");
+            var statusCode = (int)response.StatusCode;
+            var transient = statusCode is 408 or 425 or 429 or >= 500;
+            if (attempt >= maxAttempts || !transient)
+                throw new HttpRequestException($"Backup upload failed with {statusCode} ({response.ReasonPhrase}).");
             await Task.Delay(TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempt - 1)), cancellationToken).ConfigureAwait(false);
         }
     }
@@ -131,6 +133,6 @@ public sealed class PresignedHttpBackupReplica : IBackupReplica
         public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        protected override void Dispose(bool disposing) { }
+        protected override void Dispose(bool disposing) => base.Dispose(disposing);
     }
 }

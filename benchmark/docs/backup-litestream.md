@@ -21,6 +21,12 @@ offsets, and verified snapshots. TerraBase keeps these mechanics in-process so
 one bounded worker can share scheduling, encryption, and health state across
 database files.
 
+`IBackupReplica` separates artifact production from object storage. The
+filesystem replica is used for local drills; `PresignedHttpBackupReplica`
+provides bounded retrying HTTPS PUTs for OCI, Tigris, and other S3-compatible
+front ends without buffering a database in memory. Each PUT carries the
+expected SHA-256 and is retried only for transient failures.
+
 Replication keeps canonical UTF-8 bodies as bytes. Clean and dominated
 operations do not parse JSON. Only concurrent operations parse the two bodies
 needed for deterministic field merge, then retain the resulting state for

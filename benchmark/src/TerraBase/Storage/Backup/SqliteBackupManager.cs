@@ -37,12 +37,13 @@ public sealed class SqliteBackupManager : IAsyncDisposable
     private const string FormatVersion = "terrabase-sqlite-backup-v1";
     private readonly string databasePath;
     private readonly SqliteBackupOptions options;
+    private readonly MetricsRegistry? metrics;
     private readonly SemaphoreSlim gate = new(1, 1);
     private string? walGeneration;
     private long walOffset = 32;
     private SqliteBackupHealth health = new(false, null, null, null, "no snapshot has completed");
 
-    public SqliteBackupManager(string databasePath, SqliteBackupOptions options)
+    public SqliteBackupManager(string databasePath, SqliteBackupOptions options, MetricsRegistry? metrics = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         ArgumentNullException.ThrowIfNull(options);
@@ -50,6 +51,8 @@ public sealed class SqliteBackupManager : IAsyncDisposable
         if (options.Interval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(options));
         this.databasePath = Path.GetFullPath(databasePath);
         this.options = options with { DirectoryPath = Path.GetFullPath(options.DirectoryPath) };
+        this.metrics = metrics;
+        metrics?.SetComponentHealth(Component.Backup, HealthStatus.Degraded);
     }
 
     /// <summary>Creates one consistent snapshot and atomically publishes its manifest.</summary>
@@ -103,12 +106,14 @@ public sealed class SqliteBackupManager : IAsyncDisposable
                 await FlushFileAsync(manifestPath, cancellationToken).ConfigureAwait(false);
                 await PruneAsync(cancellationToken).ConfigureAwait(false);
                 health = new SqliteBackupHealth(true, manifest.CreatedAt, health.LastFailure, manifest.JournalSequence, null);
+                metrics?.SetComponentHealth(Component.Backup, HealthStatus.Healthy);
                 return manifest;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 health = new SqliteBackupHealth(false, health.LastSuccess, DateTimeOffset.UtcNow,
                     health.RecoverableJournalSequence, exception.Message);
+                metrics?.SetComponentHealth(Component.Backup, HealthStatus.Degraded);
                 throw;
             }
             finally
@@ -143,6 +148,7 @@ public sealed class SqliteBackupManager : IAsyncDisposable
             {
                 health = new SqliteBackupHealth(false, health.LastSuccess, DateTimeOffset.UtcNow,
                     health.RecoverableJournalSequence, exception.Message);
+                metrics?.SetComponentHealth(Component.Backup, HealthStatus.Degraded);
                 throw;
             }
         }
