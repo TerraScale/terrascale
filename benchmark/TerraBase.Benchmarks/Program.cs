@@ -22,6 +22,11 @@ internal static class Program
     {
         try
         {
+            if (RecoveryWorkload.IsRequested(args))
+            {
+                return await RecoveryWorkload.RunAsync(args).ConfigureAwait(false);
+            }
+
             if (CompressionWorkload.IsRequested(args))
             {
                 return await CompressionWorkload.RunAsync(args).ConfigureAwait(false);
