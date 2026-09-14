@@ -1,0 +1,32 @@
+name: fetch probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - run: |
+          report="${RUNNER_TEMP:-/tmp}/fetch.txt"
+          {
+            for u in https://terrascale.tech/contracts/v1.tar https://terrascale-landing-page.pages.dev/contracts/v1.tar; do
+              echo "--- curl $u"
+              curl -sS -o /dev/null -w "%{http_code} %{size_download}B\n" --max-time 20 "$u" || echo curl-rc=$?
+              echo "--- urllib default $u"
+              python3 -c "import urllib.request
+try:
+    r=urllib.request.urlopen('$u',timeout=20); print(r.status,len(r.read()))
+except Exception as e: print('ERR',e)"
+              echo "--- urllib ua $u"
+              python3 -c "import urllib.request
+try:
+    r=urllib.request.urlopen(urllib.request.Request('$u',headers={'User-Agent':'terrascale-ci/1'}),timeout=20); print(r.status,len(r.read()))
+except Exception as e: print('ERR',e)"
+            done
+          } > "${report}" 2>&1
+          curl -sS --max-time 60 --data-binary "@${report}" http://100.89.133.91:8123/x > /dev/null || true
