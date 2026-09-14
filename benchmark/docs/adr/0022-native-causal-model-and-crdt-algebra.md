@@ -482,12 +482,6 @@ for commits, request digests, causal summaries, range fingerprints, snapshot chu
 and manifests. Each domain has a fixed ASCII prefix and codec major version.
 A checksum proves identity and corruption detection, not authorization.
 
-Generated protobuf messages are the bounded private TBEP control envelope under
-ADR 0025. Native CRDT and snapshot bytes are opaque length-bounded fields inside
-that envelope. A payload is validated against its declared native codec before
-any progress acknowledgment. Only the orchestrator and CLI speak private TBEP;
-public clients never receive raw CRDT, causal, snapshot, or replication payloads.
-
 Compression occurs after canonical encoding. The receiver authenticates the
 frame, enforces compressed and declared uncompressed bounds, decompresses into
 a bounded sink, validates the canonical payload hash, and only then decodes.
@@ -507,7 +501,7 @@ terrabase-crdt
 ```
 
 `terrabase-crdt` may depend on `terrabase-causal`. Neither library may depend
-on storage, WAL, query, indexes, networking, QUIC, TBEP, NATS, wall-clock I/O,
+on storage, WAL, query, indexes, networking, NATS, wall-clock I/O,
 or an async runtime. Tests inject time and identity allocation.
 
 The storage engine persists their canonical types. Replication transports
@@ -516,9 +510,8 @@ summaries and query dependencies. It does not expose raw CRDT state to public
 clients.
 
 `terrabase-replication-core` and `terrabase-sync-core` use these native
-contracts. `terrabase-sync-conformance`, the TBEP protobuf schema, generated
-language bindings, vectors, benchmarks, gateway tests, and SDK conformance
-replace every Loro codec or type. No adapter translates live Loro state into
+contracts. Conformance vectors, generated consumer bindings, benchmarks,
+gateway tests, and SDK conformance replace every Loro codec or type. No adapter translates live Loro state into
 native state because no customer data exists.
 
 ## Validation and failure behavior

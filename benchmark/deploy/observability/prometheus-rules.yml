@@ -2,10 +2,8 @@
 #
 # The only alerting rules in this file page. Every cause-level signal remains
 # a dashboard fact; the OnCall router accepts only slo.burn_rate.* events.
-# The request counters are currently emitted by the private TBEP host-call
-# path, not by the public HTTP API or an external probe. Until the external
-# probe is wired, these recording rules are an explicitly named availability
-# proxy and must not be represented as the published D-75 SLO measurement.
+# The request counters are local instrumentation, not an external availability
+# probe. These recording rules are an explicitly named availability proxy.
 groups:
   - name: terrabase-slo-recordings
     interval: 30s

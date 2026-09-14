@@ -17,16 +17,9 @@
   <ItemGroup>
     <Compile Include="**/*.cs" Exclude="bin/**;obj/**" />
     <ProjectReference Include="..\TerraScale.Endpoints\TerraScale.Endpoints.csproj" />
-    <InternalsVisibleTo Include="TerraBase.Api.Tests" />
-    <InternalsVisibleTo Include="TerraBase.Protocol.Tests" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="MessagePack" />
-
-    <!-- Explicit infrastructure dependencies are centrally versioned in
-         Directory.Packages.props and used by the host composition root. -->
-    <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
-    <PackageReference Include="Microsoft.Extensions.ServiceDiscovery" />
+    <!-- Host telemetry dependencies are centrally versioned. -->
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />

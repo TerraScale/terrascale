@@ -16,8 +16,8 @@ it applies. An operation is not public until OpenAPI, the supported SDKs,
 public examples, contract tests, and the service implementation agree.
 
 The first release uses `/api/v1`. The member owns public REST and reactive
-wire encoding. Public clients use these versioned APIs, never private TBEP,
-direct storage, or OCI APIs. `terrabase-go` is the private control client for
+wire encoding. Public clients use these versioned APIs and never access direct
+storage or OCI APIs. `terrabase-go` is the private control client for
 the orchestrator; it is not a gateway on the customer request path.
 
 ## Compatibility window
@@ -39,9 +39,6 @@ deprecated contract remains fully authorized, monitored, tested, and supported
 until its published retirement date. TerraScale does not promise permanent
 readers, writers, or adapters for older public majors.
 
-Private TBEP spans only the current release. Its
-compatibility window does not extend public support and never appears in a
-public negotiation.
 
 ## Stable errors
 

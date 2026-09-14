@@ -18,11 +18,7 @@ public sealed class HostConfigurationTests
             "http://127.0.0.1:8420;http://0.0.0.0:8421",
         })
         {
-            await Assert.That(() => TerraBaseHost.Create(new EngineOptions
-            {
-                SocketPath = "/tmp/terrabase-host-test.sock",
-                ListenUrl = listenUrl,
-            })).Throws<ArgumentException>();
+            await Assert.That(() => TerraBaseHost.Create(listenUrl)).Throws<ArgumentException>();
         }
     }
 }

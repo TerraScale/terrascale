@@ -9,7 +9,6 @@
   <Folder Name="/Tests/">
     <Project Path="tests/TerraBase.Tests/TerraBase.Tests.csproj" />
     <Project Path="tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj" />
-    <Project Path="tests/TerraBase.Protocol.Tests/TerraBase.Protocol.Tests.csproj" />
     <Project Path="tests/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj" />
   </Folder>
 </Solution>

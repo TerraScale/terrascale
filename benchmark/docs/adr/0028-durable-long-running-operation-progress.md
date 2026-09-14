@@ -61,8 +61,7 @@ snapshot; DELETE requests cancellation only for cancellable operations.
 Completed work returns a typed result reference, and operation records honor
 an explicit retention policy.
 
-Private TBEP sends typed operation snapshots and deltas to the Orchestrator
-and CLI. Each update carries the operation ULID, progress generation,
+Operation consumers receive typed snapshots and deltas. Each update carries the operation ULID, progress generation,
 monotone update sequence, state, stage, units, timestamps, and typed result or
 error. If history is unavailable, the owner sends a fresh snapshot. Public
 SDKs expose the same typed operation behavior for wait, observe, refresh, and

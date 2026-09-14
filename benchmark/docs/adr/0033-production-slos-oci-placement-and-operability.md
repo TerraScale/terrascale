@@ -22,8 +22,7 @@ member pair.
 
 Members run on private regional networks. Cross-Region replication uses the
 member transport; private service routes provide access to Vault and Object
-Storage. Public ingress terminates only documented public services. A member,
-TBEP listener, Vault route, storage attachment, or backup endpoint never has a
+Storage. Public ingress terminates only documented public services. A member listener, Vault route, storage attachment, or backup endpoint never has a
 public ingress path.
 
 ## Availability and latency

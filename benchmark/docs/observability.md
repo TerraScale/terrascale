@@ -18,8 +18,7 @@ produces immutable snapshots with these metric families:
 | `terrabase_component_health` | `component` | Explicit component observations. |
 
 The local `DocumentStore` records reads, writes, and deletes with
-`region="unknown"`. This does not measure the public HTTP or remote TBEP request
-path. The registry's request scope tracks in-flight work internally, but its
+`region="unknown"`. This does not measure requests outside the local registry. The registry's request scope tracks in-flight work internally, but its
 snapshot does not export an in-flight family. Queue, WAL, commit, replication,
 backup, usage, clock, and egress families referenced by deployment templates are
 not implemented by this registry.
