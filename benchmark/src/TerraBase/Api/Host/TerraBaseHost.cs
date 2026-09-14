@@ -6,12 +6,17 @@ namespace TerraBase.Api;
 
 using System.Net;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using TerraScale.Endpoints;
 
 /// <summary>
 /// The API host assembly point: builds the ASP.NET Core application
 /// over one supervised engine endpoint. The production entry point
-/// (<see cref="Program"/>) and the test host share it, so the tested
+/// (<see cref="Program"/>) and test host share it, so the tested
 /// surface is the served surface.
 /// </summary>
 public static class TerraBaseHost
@@ -26,6 +31,19 @@ public static class TerraBaseHost
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls(options.ListenUrl);
         configure?.Invoke(builder);
+
+        // Configuration is available from appsettings.json, environment
+        // variables, and command-line providers. Bind the supplied engine
+        // options as the validated default for consumers resolved from DI.
+        builder.Services.AddSingleton(options);
+        builder.Services.AddOptions<EngineOptions>()
+            .Bind(builder.Configuration.GetSection("TerraBase:Engine"))
+            .ValidateDataAnnotations();
+        builder.Services.AddMemoryCache();
+        builder.Services.AddHttpClient("terrabase")
+            .AddStandardResilienceHandler();
+        builder.Services.AddServiceDiscovery();
+        ConfigureObservability(builder);
 
         var audit = new AuditLog();
         var supervisor = new EngineSupervisor(options, audit);
@@ -47,6 +65,32 @@ public static class TerraBaseHost
         app.MapTerraScaleEndpoints();
         app.MapTerraScaleOpenApi();
         return new HostBundle(app, supervisor, hub, audit);
+    }
+
+    private static void ConfigureObservability(WebApplicationBuilder builder)
+    {
+        builder.Logging.AddSentry(options =>
+        {
+            options.Dsn = builder.Configuration["Sentry:Dsn"]
+                ?? builder.Configuration["SENTRY_DSN"];
+            options.InitializeSdk = !string.IsNullOrWhiteSpace(options.Dsn);
+        });
+
+        var telemetry = builder.Services.AddOpenTelemetry()
+            .ConfigureResource(resource => resource.AddService("terrabase"))
+            .WithTracing(tracing => tracing
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation())
+            .WithMetrics(metrics => metrics
+                .AddAspNetCoreInstrumentation()
+                .AddRuntimeInstrumentation());
+
+        var endpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
+        if (Uri.TryCreate(endpoint, UriKind.Absolute, out var otlpEndpoint))
+        {
+            telemetry.WithTracing(tracing => tracing.AddOtlpExporter(exporter => exporter.Endpoint = otlpEndpoint));
+            telemetry.WithMetrics(metrics => metrics.AddOtlpExporter(exporter => exporter.Endpoint = otlpEndpoint));
+        }
     }
 
     private static void ValidateListenUrl(string listenUrl)

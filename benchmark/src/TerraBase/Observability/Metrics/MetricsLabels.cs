@@ -1,3 +1,5 @@
+using Ardalis.SmartEnum;
+
 namespace TerraBase;
 
 /// <summary>A closed Region vocabulary used by metrics and routing adapters.</summary>
@@ -14,6 +16,23 @@ public enum Region
 
     /// <summary>No admitted Region is known.</summary>
     Unknown,
+}
+
+/// <summary>Canonical Prometheus labels for admitted TerraBase regions.</summary>
+internal sealed class RegionMetricLabel : SmartEnum<RegionMetricLabel>
+{
+    public static readonly RegionMetricLabel Gru = new(nameof(Gru), Region.Gru, "GRU");
+    public static readonly RegionMetricLabel Sfo = new(nameof(Sfo), Region.Sfo, "SFO");
+    public static readonly RegionMetricLabel Fra = new(nameof(Fra), Region.Fra, "FRA");
+    public static readonly RegionMetricLabel Unknown = new(nameof(Unknown), Region.Unknown, "unknown");
+
+    private RegionMetricLabel(string name, Region region, string label)
+        : base(name, (int)region) => Label = label;
+
+    public string Label { get; }
+
+    public static string For(Region region) =>
+        TryFromValue((int)region, out var value) ? value.Label : Unknown.Label;
 }
 
 /// <summary>A closed operation vocabulary for aggregate request metrics.</summary>

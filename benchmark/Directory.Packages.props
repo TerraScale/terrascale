@@ -1,0 +1,53 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Microsoft Extensions (Core) -->
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.FileProviders.Physical" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Options.DataAnnotations" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Resilience" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.10.0" />
+
+    <!-- OpenTelemetry -->
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.18.0" />
+    <PackageVersion Include="Sentry.Extensions.Logging" Version="6.11.0" />
+
+    <!-- Validation and utilities -->
+    <PackageVersion Include="Ardalis.SmartEnum" Version="8.2.0" />
+    <PackageVersion Include="Testcontainers" Version="4.15.0" />
+    <PackageVersion Include="TUnit" Version="1.67.0" />
+    <PackageVersion Include="TUnit.Core" Version="1.67.0" />
+    <!-- TUnit.Core.Interfaces is no longer published independently; retain the
+         requested catalog entry for consumers that still reference it. -->
+    <PackageVersion Include="TUnit.Core.Interfaces" Version="1.8.9" />
+    <PackageVersion Include="Bogus" Version="35.6.5" />
+
+    <!-- Existing project dependencies -->
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageVersion Include="MessagePack" Version="3.1.8" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.17.3" />
+  </ItemGroup>
+</Project>

@@ -116,7 +116,7 @@ public sealed partial class MetricsSnapshot
 
     private static string Label<T>(T value) where T : struct, Enum => value switch
     {
-        Region region => region switch { Region.Gru => "GRU", Region.Sfo => "SFO", Region.Fra => "FRA", _ => "unknown" },
+        Region region => RegionMetricLabel.For(region),
         Operation operation => operation switch
         {
             Operation.Read => "read",

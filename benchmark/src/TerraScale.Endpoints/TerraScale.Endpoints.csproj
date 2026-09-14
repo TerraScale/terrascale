@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>TerraScale.Endpoints</RootNamespace>
     <PackageId>TerraScale.Endpoints</PackageId>
     <Description>Shared TerraScale endpoint authoring and ASP.NET Core mapping library.</Description>
@@ -22,7 +21,7 @@
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
-    <PackageReference Include="Scalar.AspNetCore" Version="2.11.2" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Scalar.AspNetCore" />
   </ItemGroup>
 </Project>

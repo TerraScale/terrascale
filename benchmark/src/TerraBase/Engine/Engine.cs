@@ -1,5 +1,9 @@
 namespace TerraBase;
 
+using TerraBase.Replication;
+using TerraBase.Storage.Backup;
+using TerraBase.Storage.Compaction;
+
 /// <summary>Options used when opening a TerraBase engine.</summary>
 public sealed record TerraBaseOptions
 {
@@ -34,6 +38,7 @@ public sealed class TerraBaseEngine : IAsyncDisposable
         Metrics = metrics ?? new MetricsRegistry();
         Options = options ?? new TerraBaseOptions();
         Documents = new DocumentStore(provider, Metrics);
+        Replication = new LeaderlessReplicationEngine();
         Metrics.SetComponentHealth(Component.Storage, HealthStatus.Healthy);
         Metrics.SetComponentHealth(Component.Replication, HealthStatus.Healthy);
         Metrics.SetComponentHealth(Component.Membership, HealthStatus.Healthy);
@@ -74,6 +79,25 @@ public sealed class TerraBaseEngine : IAsyncDisposable
 
     /// <summary>The abstract document operation surface.</summary>
     public DocumentStore Documents { get; }
+
+    /// <summary>The deterministic leaderless replication state machine.</summary>
+    public LeaderlessReplicationEngine Replication { get; }
+
+    /// <summary>Creates a native online backup manager for a SQLite engine.</summary>
+    public SqliteBackupManager CreateBackupManager(SqliteBackupOptions options)
+    {
+        if (provider is not SqliteStorageProvider sqlite)
+            throw new NotSupportedException("Native SQLite backups require a SQLite storage provider.");
+        return new SqliteBackupManager(sqlite.StoragePath, options);
+    }
+
+    /// <summary>Compacts the SQLite file while retaining WAL durability semantics.</summary>
+    public Task<SqliteCompactionResult> CompactAsync(SqliteCompactionOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        if (provider is not SqliteStorageProvider sqlite)
+            throw new NotSupportedException("SQLite compaction requires a SQLite storage provider.");
+        return SqliteCompactor.CompactAsync(sqlite.StoragePath, options, cancellationToken);
+    }
 
     /// <summary>
     /// Applies several document mutations through the configured provider as

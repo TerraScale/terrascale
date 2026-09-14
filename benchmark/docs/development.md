@@ -6,7 +6,7 @@ authority;
 [AGENTS.md](../AGENTS.md) contains the repository rules. Source and tests are
 the implementation authority.
 
-TerraBase is a .NET 10 C# host with a single runtime project. The host serves
+TerraBase is a .NET 11 C# host with a single runtime project. The host serves
 the typed API on a loopback ASP.NET Core listener and uses TBEP MessagePack over
 the configured Unix socket for its managed or attached engine boundary. SQL is
 the only query language, document writes retain causal and history semantics,
