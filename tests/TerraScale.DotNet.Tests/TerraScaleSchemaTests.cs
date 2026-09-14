@@ -108,4 +108,25 @@ public sealed class TerraScaleSchemaTests
         await Assert.That(schema.Collections[0].Fields[0].Required).IsTrue();
         await Assert.That(schema.Collections[0].Fields[0].Type).IsEqualTo(TerraScaleFieldType.String);
     }
+
+    [Test]
+    public async Task Schema_ParseAndSerializePreservesV1ServedVersionAndRenames()
+    {
+        var schema = TerraScaleSchema.Parse("""
+            {"collections":[{"name":"orders","fields":[],"indexes":[],"historyRetentionDays":7,"mergePolicy":"remove-wins","renames":[{"from":"legacy_status","to":"status"}],"version":9007199254740993}]}
+            """);
+
+        var collection = schema.Collections.Single();
+        await Assert.That(collection.Version).IsEqualTo(9007199254740993L);
+        await Assert.That(collection.Renames).IsNotNull();
+        await Assert.That(collection.Renames!).Count().IsEqualTo(1);
+        await Assert.That(collection.Renames[0].From).IsEqualTo("legacy_status");
+        await Assert.That(collection.Renames[0].To).IsEqualTo("status");
+
+        using var serialized = JsonDocument.Parse(schema.ToJson());
+        var wire = serialized.RootElement.GetProperty("collections").EnumerateArray().Single();
+        await Assert.That(wire.GetProperty("version").GetInt64()).IsEqualTo(9007199254740993L);
+        await Assert.That(wire.GetProperty("renames")[0].GetProperty("from").GetString()).IsEqualTo("legacy_status");
+        await Assert.That(wire.GetProperty("renames")[0].GetProperty("to").GetString()).IsEqualTo("status");
+    }
 }

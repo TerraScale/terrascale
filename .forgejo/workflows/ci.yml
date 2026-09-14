@@ -9,6 +9,7 @@ on:
 
 jobs:
   ci:
+    name: Run ts-dotnet checks
     uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
     with:
       repo: ts-dotnet
