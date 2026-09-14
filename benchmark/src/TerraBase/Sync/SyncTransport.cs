@@ -7,7 +7,7 @@ namespace TerraBase.Sync;
 
 public sealed record SyncTransportOptions
 {
-    public required Uri BaseUri { get; init; }
+    public Uri BaseUri { get; init; }
     public string? BearerToken { get; init; }
 
     public SyncTransportOptions(Uri baseUri, string? bearerToken = null)

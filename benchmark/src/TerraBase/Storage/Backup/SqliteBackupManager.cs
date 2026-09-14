@@ -60,7 +60,9 @@ public sealed class SqliteBackupManager : IAsyncDisposable
             var manifestPath = finalPath + ".json";
             try
             {
-                await using var source = Open(databasePath, SqliteOpenMode.ReadOnly);
+                // Litestream coordinates checkpoints through SQLite's write
+                // lock. A read-only handle cannot safely checkpoint a WAL.
+                await using var source = Open(databasePath, SqliteOpenMode.ReadWrite);
                 await source.OpenAsync(cancellationToken).ConfigureAwait(false);
                 SqliteSchema.ConfigureConnection(source);
                 if (options.CheckpointWal)
@@ -75,6 +77,13 @@ public sealed class SqliteBackupManager : IAsyncDisposable
                     await destination.OpenAsync(cancellationToken).ConfigureAwait(false);
                     SqliteSchema.ConfigureConnection(destination);
                     source.BackupDatabase(destination);
+                    // The destination connection is WAL-enabled by the
+                    // normal schema contract. Flush its WAL before moving
+                    // only the database file, otherwise restored data could
+                    // remain stranded in the temporary sidecar.
+                    await using var destinationCheckpoint = destination.CreateCommand();
+                    destinationCheckpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                    await destinationCheckpoint.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
                     await destination.CloseAsync().ConfigureAwait(false);
                 }
 
