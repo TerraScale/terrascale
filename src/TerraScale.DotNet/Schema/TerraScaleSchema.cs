@@ -259,6 +259,26 @@ public sealed record TerraScaleTtlDefinition
     public string Field { get; init; }
 }
 
+/// <summary>One field rename from the immediately previous collection schema.</summary>
+public sealed record TerraScaleFieldRename
+{
+    /// <summary>Creates a field rename declaration.</summary>
+    [JsonConstructor]
+    public TerraScaleFieldRename(string from, string to)
+    {
+        From = from;
+        To = to;
+    }
+
+    /// <summary>Previously declared field name.</summary>
+    [JsonPropertyName("from")]
+    public string From { get; init; }
+
+    /// <summary>Replacement field name.</summary>
+    [JsonPropertyName("to")]
+    public string To { get; init; }
+}
+
 /// <summary>Schema for one SQL collection/table.</summary>
 public sealed class TerraScaleCollectionSchema
 {
@@ -279,7 +299,9 @@ public sealed class TerraScaleCollectionSchema
         IReadOnlyList<TerraScaleIndexDefinition>? indexes = null,
         TerraScaleTtlDefinition? ttl = null,
         int historyRetentionDays = DefaultHistoryRetentionDays,
-        TerraScaleMergePolicy mergePolicy = TerraScaleMergePolicy.RemoveWins)
+        TerraScaleMergePolicy mergePolicy = TerraScaleMergePolicy.RemoveWins,
+        IReadOnlyList<TerraScaleFieldRename>? renames = null,
+        long? version = null)
     {
         Name = name;
         Fields = fields ?? [];
@@ -287,11 +309,18 @@ public sealed class TerraScaleCollectionSchema
         Ttl = ttl;
         HistoryRetentionDays = historyRetentionDays;
         MergePolicy = mergePolicy;
+        Renames = renames;
+        Version = version;
     }
 
     /// <summary>Collection/table name.</summary>
     [JsonPropertyName("name")]
     public string Name { get; }
+
+    /// <summary>Schema version pinned by the serving branch.</summary>
+    [JsonPropertyName("version")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? Version { get; }
 
     /// <summary>Declared extracted fields.</summary>
     [JsonPropertyName("fields")]
@@ -314,6 +343,11 @@ public sealed class TerraScaleCollectionSchema
     /// <summary>Default policy for fields without a typed CRDT kernel.</summary>
     [JsonPropertyName("mergePolicy")]
     public TerraScaleMergePolicy MergePolicy { get; }
+
+    /// <summary>Field renames from the immediately previous schema.</summary>
+    [JsonPropertyName("renames")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<TerraScaleFieldRename>? Renames { get; }
 
     /// <summary>Alias for <see cref="Ttl" />.</summary>
     [JsonIgnore]
@@ -665,6 +699,12 @@ internal static class TerraScaleSchemaValidation
         if (!Enum.IsDefined(collection.MergePolicy))
         {
             throw new ArgumentException("Collection has an unknown merge policy.", nameof(collection));
+        }
+
+        if (collection.Version is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(collection), collection.Version,
+                "Schema version must be non-negative.");
         }
 
         var fieldNames = new HashSet<string>(StringComparer.Ordinal);
