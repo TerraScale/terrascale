@@ -6,6 +6,7 @@
 
 use crate::client::SharedClient;
 use crate::error::{Error, ErrorKind, Result};
+use crate::generated_contract::models::SchemaDocument;
 use crate::regions::RegionCode;
 use crate::schema::CollectionSchema;
 use crate::transport::{Method, Request};
@@ -1003,7 +1004,7 @@ impl Collections {
     }
 }
 
-/// Schema GET and PUT return one collection schema, never a whole-database wrapper.
+/// Durable collection schema management from TerraBase's v1 contract.
 #[derive(Debug, Clone)]
 pub struct Schemas {
     shared: SharedClient,
@@ -1017,7 +1018,7 @@ impl Schemas {
         database_id: &str,
         collection: &str,
         _project_id: Option<&str>,
-    ) -> Result<CollectionSchema> {
+    ) -> Result<SchemaDocument> {
         let request = Request {
             route_name: "schemas.get".to_owned(),
             method: Method::Get,
@@ -1037,7 +1038,7 @@ impl Schemas {
         schema: CollectionSchema,
         _project_id: Option<&str>,
         options: OperationOptions,
-    ) -> Result<CollectionSchema> {
+    ) -> Result<SchemaDocument> {
         validate_schema(&schema, collection)?;
         let request = request_with_options(
             "schemas.put",
@@ -1058,7 +1059,7 @@ impl Schemas {
         schema: CollectionSchema,
         project_id: Option<&str>,
         options: OperationOptions,
-    ) -> Result<CollectionSchema> {
+    ) -> Result<SchemaDocument> {
         self.put(database_id, collection, schema, project_id, options)
             .await
     }
