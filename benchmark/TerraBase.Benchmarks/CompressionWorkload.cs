@@ -28,7 +28,7 @@ internal static class CompressionWorkload
 
     public static bool IsRequested(string[] args)
     {
-        for (var index = 0; index < args.Count; index++)
+        for (var index = 0; index < args.Length; index++)
         {
             var argument = args[index];
             if (argument.StartsWith("--workload=", StringComparison.OrdinalIgnoreCase))
@@ -36,7 +36,7 @@ internal static class CompressionWorkload
                 return argument["--workload=".Length..].Equals("compression", StringComparison.OrdinalIgnoreCase);
             }
 
-            if (argument.Equals("--workload", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Count)
+            if (argument.Equals("--workload", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
             {
                 return args[index + 1].Equals("compression", StringComparison.OrdinalIgnoreCase);
             }
@@ -186,16 +186,19 @@ internal static class CompressionWorkload
 
         try
         {
-            // The one-time round trip check only establishes that the measured
-            // input is usable. Corruption and malformed-frame behavior belongs
-            // to CompressionIntegrityTests, not this performance harness.
-            var compressed = DataCompression.Compress(method, options.CompressionLevel, payload).ToArray();
-            var restored = DataCompression.Decompress(method, compressed, payload.Length);
-            if (!restored.Span.SequenceEqual(payload.Span))
-            {
-                throw new InvalidDataException($"{method} did not restore the {profile.Name} payload.");
-            }
-
+            // The first compression and decompression calls are captured as
+            // cold measurements. The decoded output is checked after timing to
+            // establish that the measured input is usable. Corruption and
+            // malformed-frame behavior belongs to CompressionIntegrityTests,
+            // not this performance harness.
+            var coldCompression = MeasureCold(
+                options,
+                method,
+                CompressionOperation.Compress,
+                payload,
+                Memory<byte>.Empty,
+                cancellationToken);
+            var compressed = coldCompression.Output.ToArray();
             result.CompressedBytes = compressed.Length;
             result.CompressionRatio = compressed.Length / (double)payload.Length;
             result.Compression = await MeasureOperationAsync(
@@ -206,7 +209,20 @@ internal static class CompressionWorkload
                 payload,
                 compressed,
                 raw,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                coldCompression).ConfigureAwait(false);
+            var coldDecompression = MeasureCold(
+                options,
+                method,
+                CompressionOperation.Decompress,
+                payload,
+                compressed,
+                cancellationToken);
+            if (!coldDecompression.Output.Span.SequenceEqual(payload.Span))
+            {
+                throw new InvalidDataException($"{method} did not restore the {profile.Name} payload.");
+            }
+
             result.Decompression = await MeasureOperationAsync(
                 options,
                 profile,
@@ -215,7 +231,8 @@ internal static class CompressionWorkload
                 payload,
                 compressed,
                 raw,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                coldDecompression).ConfigureAwait(false);
             result.Status = "complete";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -240,21 +257,22 @@ internal static class CompressionWorkload
         Memory<byte> payload,
         Memory<byte> compressed,
         StreamWriter raw,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ColdMeasurement? coldMeasurement = null)
     {
         var result = new CompressionOperationResult
         {
             Operation = operation.ToString(),
         };
-        var cold = MeasureCold(
+        var cold = coldMeasurement ?? MeasureCold(
             options,
             method,
             operation,
             payload,
             compressed,
             cancellationToken);
-        result.Cold = cold;
-        await WriteRawAsync(raw, profile, method, operation, cold, cancellationToken).ConfigureAwait(false);
+        result.Cold = cold.Sample;
+        await WriteRawAsync(raw, profile, method, operation, cold.Sample, cancellationToken).ConfigureAwait(false);
 
         await RunBatchAsync(
             options,
@@ -285,7 +303,7 @@ internal static class CompressionWorkload
         return result;
     }
 
-    private static CompressionSample MeasureCold(
+    private static ColdMeasurement MeasureCold(
         CompressionOptions options,
         CompressionMethod method,
         CompressionOperation operation,
@@ -306,7 +324,7 @@ internal static class CompressionWorkload
         var cpu = process.TotalProcessorTime - cpuBefore;
         var allocations = Math.Max(0, GC.GetTotalAllocatedBytes(false) - allocationsBefore);
         var latencyMicroseconds = ToMicroseconds(elapsed);
-        return new CompressionSample
+        var sample = new CompressionSample
         {
             Phase = "cold",
             Sample = 0,
@@ -323,6 +341,7 @@ internal static class CompressionWorkload
             ProcessCpuPercent = CpuPercent(cpu, elapsed),
             OutputBytes = output.Length,
         };
+        return new ColdMeasurement(sample, output);
     }
 
     private static async Task<CompressionSample> MeasureWarmSampleAsync(
@@ -718,6 +737,8 @@ internal static class CompressionWorkload
         public CompressionSample? Cold { get; set; }
         public List<CompressionSample> WarmSamples { get; } = [];
     }
+
+    private sealed record ColdMeasurement(CompressionSample Sample, Memory<byte> Output);
 
     private sealed class CompressionSample
     {

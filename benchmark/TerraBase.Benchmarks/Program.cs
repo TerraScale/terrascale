@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraBase;
+using TerraBase.Benchmarks;
 using TerraBase.Reactive;
 
 internal static class Program
@@ -130,8 +131,8 @@ internal static class Program
                 cancellation.Token).ConfigureAwait(false);
             var receipt = new LargerMemoryReceipt(
                 result.Status,
-                DateTimeOffset.UtcNow,
-                DateTimeOffset.UtcNow,
+                result.StartedAtUtc,
+                result.FinishedAtUtc,
                 options,
                 environment,
                 result,
@@ -214,8 +215,8 @@ internal static class Program
 
             var receipt = new SubscriptionReceipt(
                 result.Status,
-                DateTimeOffset.UtcNow,
-                DateTimeOffset.UtcNow,
+                result.StartedAtUtc,
+                result.FinishedAtUtc,
                 options,
                 environment,
                 result,
@@ -1117,4 +1118,390 @@ internal static class Program
     }
 
     private static double ToMicroseconds(long stopwatchTicks) => stopwatchTicks * 1_000_000d / Stopwatch.Frequency;
+
+    private sealed class LargerMemoryOptions
+    {
+        public LargerThanMemoryWorkload.Backend Backend { get; private set; } = LargerThanMemoryWorkload.Backend.StorageEngine;
+        public int DatasetSize { get; private set; } = 32_768;
+        public int PayloadSize { get; private set; } = 2_048;
+        public long MemoryCapBytes { get; private set; } = 256L * 1024 * 1024;
+        public bool MemoryCapBytesSpecified { get; private set; }
+        public int Samples { get; private set; } = 5;
+        public int OperationsPerSample { get; private set; } = 2_000;
+        public int SustainedWriteOperations { get; private set; } = 2_000;
+        public int WarmupOperations { get; private set; } = 1_000;
+        public int Concurrency { get; private set; } = 1;
+        public int Seed { get; private set; } = 1337;
+        public double ZipfExponent { get; private set; } = 1.2;
+        public double ReadRatio { get; private set; } = 0.8;
+        public string OutputDirectory { get; private set; } = DefaultOutput("larger-memory");
+        public bool ShowHelp { get; private set; }
+
+        public static LargerMemoryOptions Parse(string[] args)
+        {
+            var options = new LargerMemoryOptions();
+            for (var index = 0; index < args.Length; index++)
+            {
+                var (name, value) = ReadOption(args, ref index);
+                switch (name)
+                {
+                    case "help":
+                        options.ShowHelp = true;
+                        break;
+                    case "workload":
+                        if (!value.Equals("larger-memory", StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new ArgumentException("--workload must be larger-memory.");
+                        }
+
+                        break;
+                    case "backend":
+                        options.Backend = ParseEnum<LargerThanMemoryWorkload.Backend>(value, name);
+                        break;
+                    case "dataset-size":
+                        options.DatasetSize = ParseInteger(value, name, 1);
+                        break;
+                    case "payload-size":
+                        options.PayloadSize = ParseInteger(value, name, 1);
+                        break;
+                    case "memory-cap-bytes":
+                        options.MemoryCapBytes = ParseLong(value, name, 1);
+                        options.MemoryCapBytesSpecified = true;
+                        break;
+                    case "samples":
+                        options.Samples = ParseInteger(value, name, 5);
+                        break;
+                    case "operations":
+                        options.OperationsPerSample = ParseInteger(value, name, 1);
+                        break;
+                    case "writes":
+                        options.SustainedWriteOperations = ParseInteger(value, name, 0);
+                        break;
+                    case "warmup":
+                        options.WarmupOperations = ParseInteger(value, name, 0);
+                        break;
+                    case "concurrency":
+                        options.Concurrency = ParseInteger(value, name, 1);
+                        break;
+                    case "seed":
+                        options.Seed = ParseInteger(value, name, int.MinValue);
+                        break;
+                    case "zipf-exponent":
+                        options.ZipfExponent = ParseDouble(value, name, greaterThanZero: true);
+                        break;
+                    case "read-ratio":
+                        options.ReadRatio = ParseDouble(value, name, greaterThanZero: false);
+                        if (options.ReadRatio is < 0 or > 1)
+                        {
+                            throw new ArgumentException("--read-ratio must be between zero and one.");
+                        }
+
+                        break;
+                    case "output":
+                        options.OutputDirectory = value;
+                        break;
+                    default:
+                        throw new ArgumentException($"Unknown option '--{name}'.");
+                }
+            }
+
+            return options;
+        }
+
+        public static void PrintHelp() => Console.WriteLine("""
+            TerraBase larger-than-memory benchmark
+              --workload larger-memory       Run this workload
+              --backend storage-engine|zonetree
+              --memory-cap-bytes N           Required explicit resource cap
+              --dataset-size N               Seeded documents (default: 32768)
+              --payload-size N               Payload string bytes (default: 2048)
+              --samples N                    Post-warmup samples, minimum 5
+              --operations N                 Operations per phase/sample
+              --writes N                     Sustained writes per sample
+              --warmup N                     Warmup operations
+              --concurrency N                Concurrent workers
+              --seed N                       Deterministic seed
+              --zipf-exponent N              Zipf exponent
+              --read-ratio N                 Read fraction from zero to one
+              --output DIR                   Receipt directory
+            """);
+
+        public LargerThanMemoryWorkload.Configuration ToConfiguration() => new()
+        {
+            Backend = Backend,
+            DatasetSize = DatasetSize,
+            PayloadSize = PayloadSize,
+            MemoryCapBytes = MemoryCapBytes,
+            Samples = Samples,
+            OperationsPerSample = OperationsPerSample,
+            SustainedWriteOperations = SustainedWriteOperations,
+            WarmupOperations = WarmupOperations,
+            Concurrency = Concurrency,
+            Seed = Seed,
+            ZipfExponent = ZipfExponent,
+            ReadRatio = ReadRatio,
+        };
+    }
+
+    private sealed class SubscriptionCliOptions
+    {
+        public IReadOnlyList<int> SubscriberCounts { get; private set; } = SubscriptionFanoutWorkload.DefaultSubscriberCounts;
+        public int WarmupPublications { get; private set; } = 2;
+        public int MeasuredPublications { get; private set; } = 5;
+        public string OutputDirectory { get; private set; } = DefaultOutput("subscriptions");
+        public bool ShowHelp { get; private set; }
+
+        public static SubscriptionCliOptions Parse(string[] args)
+        {
+            var options = new SubscriptionCliOptions();
+            for (var index = 0; index < args.Length; index++)
+            {
+                var (name, value) = ReadOption(args, ref index);
+                switch (name)
+                {
+                    case "help":
+                        options.ShowHelp = true;
+                        break;
+                    case "workload":
+                        if (!value.Equals("subscriptions", StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new ArgumentException("--workload must be subscriptions.");
+                        }
+
+                        break;
+                    case "subscriber-counts":
+                        options.SubscriberCounts = value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                            .Select(item => ParseInteger(item, name, 1))
+                            .ToArray();
+                        break;
+                    case "warmup-publications":
+                        options.WarmupPublications = ParseInteger(value, name, 0);
+                        break;
+                    case "publications":
+                    case "measured-publications":
+                        options.MeasuredPublications = ParseInteger(value, name, 1);
+                        break;
+                    case "output":
+                        options.OutputDirectory = value;
+                        break;
+                    default:
+                        throw new ArgumentException($"Unknown option '--{name}'.");
+                }
+            }
+
+            return options;
+        }
+
+        public static void PrintHelp() => Console.WriteLine("""
+            TerraBase reactive subscription fan-out benchmark
+              --workload subscriptions          Run this workload
+              --subscriber-counts 1,10,100,1000 Subscriber counts
+              --warmup-publications N           Warmup publications
+              --publications N                  Measured publications
+              --output DIR                      Receipt directory
+            The CLI reports unsupported until a durable commit callback is supplied through the embedding API.
+            """);
+    }
+
+    private static string DefaultOutput(string name) => Path.Combine(
+        "bench",
+        "receipts",
+        $"{name}-{DateTimeOffset.UtcNow:yyyyMMddTHHmmssZ}");
+
+    private static (string Name, string Value) ReadOption(string[] args, ref int index)
+    {
+        var argument = args[index];
+        if (argument is "--help" or "-h")
+        {
+            return ("help", string.Empty);
+        }
+
+        if (!argument.StartsWith("--", StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"Expected an option, got '{argument}'.");
+        }
+
+        var separator = argument.IndexOf('=');
+        if (separator > 2)
+        {
+            return (argument[2..separator], argument[(separator + 1)..]);
+        }
+
+        if (index + 1 >= args.Length || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"Option '{argument}' requires a value.");
+        }
+
+        return (argument[2..], args[++index]);
+    }
+
+    private static int ParseInteger(string value, string name, int minimum)
+    {
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) || parsed < minimum)
+        {
+            throw new ArgumentException($"--{name} must be an integer >= {minimum}.");
+        }
+
+        return parsed;
+    }
+
+    private static long ParseLong(string value, string name, long minimum)
+    {
+        if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) || parsed < minimum)
+        {
+            throw new ArgumentException($"--{name} must be an integer >= {minimum}.");
+        }
+
+        return parsed;
+    }
+
+    private static double ParseDouble(string value, string name, bool greaterThanZero)
+    {
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            || double.IsNaN(parsed)
+            || double.IsInfinity(parsed)
+            || (greaterThanZero ? parsed <= 0 : parsed < 0))
+        {
+            throw new ArgumentException($"--{name} must be a finite number {(greaterThanZero ? "greater than zero" : "zero or greater")}.");
+        }
+
+        return parsed;
+    }
+
+    private static T ParseEnum<T>(string value, string name)
+        where T : struct, Enum => Enum.TryParse<T>(value.Replace("-", string.Empty, StringComparison.Ordinal), true, out var parsed)
+            ? parsed
+            : throw new ArgumentException($"--{name} must be one of: {string.Join(", ", Enum.GetNames<T>())}.");
+
+    private sealed record LargerMemoryReceipt(
+        string Status,
+        DateTimeOffset StartedAtUtc,
+        DateTimeOffset FinishedAtUtc,
+        LargerMemoryOptions Configuration,
+        EnvironmentInfo Environment,
+        LargerThanMemoryWorkload.RunResult? Result,
+        string Command,
+        string ReceiptDirectory)
+    {
+        public static LargerMemoryReceipt Invalid(LargerMemoryOptions options, EnvironmentInfo environment, string error) =>
+            new("invalid", environment.StartedAtUtc, DateTimeOffset.UtcNow, options, environment, new LargerThanMemoryWorkload.RunResult
+            {
+                Status = "invalid",
+                Error = error,
+                StartedAtUtc = environment.StartedAtUtc,
+                FinishedAtUtc = DateTimeOffset.UtcNow,
+            }, global::System.Environment.CommandLine, Path.GetFullPath(options.OutputDirectory));
+    }
+
+    private sealed record SubscriptionReceipt(
+        string Status,
+        DateTimeOffset StartedAtUtc,
+        DateTimeOffset FinishedAtUtc,
+        SubscriptionCliOptions Configuration,
+        EnvironmentInfo Environment,
+        SubscriptionFanoutRun Result,
+        string RawSamplesPath,
+        string Command,
+        string ReceiptDirectory)
+    {
+        public static SubscriptionReceipt Invalid(SubscriptionCliOptions options, EnvironmentInfo environment, string error) =>
+            new("invalid", environment.StartedAtUtc, DateTimeOffset.UtcNow, options, environment,
+                new SubscriptionFanoutRun("invalid", "ReactiveSubscriptionHub", "CLI", false, environment.StartedAtUtc, DateTimeOffset.UtcNow, error, []),
+                string.Empty, global::System.Environment.CommandLine, Path.GetFullPath(options.OutputDirectory));
+    }
+
+    private static class LargerMemoryMarkdown
+    {
+        public static string Create(LargerMemoryReceipt receipt)
+        {
+            var builder = Header("TerraBase larger-than-memory benchmark", receipt.Status, receipt.Environment, receipt.Command);
+            builder.AppendLine("## Configuration");
+            builder.AppendLine();
+            builder.AppendLine($"Backend: `{receipt.Configuration.Backend}`; dataset: `{receipt.Configuration.DatasetSize:N0}` rows; payload: `{receipt.Configuration.PayloadSize:N0}` bytes; memory cap: `{receipt.Configuration.MemoryCapBytes:N0}` bytes.");
+            builder.AppendLine();
+            builder.AppendLine("## Phase results");
+            builder.AppendLine();
+            builder.AppendLine("| Sample | Phase | Kind | Status | Operations | Throughput ops/s | p50 µs | p95 µs | p99 µs | Allocated bytes/op | CPU % | RSS after bytes | WAL bytes | Write amplification |");
+            builder.AppendLine("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+            if (receipt.Result is null || receipt.Result.Samples.Count == 0)
+            {
+                builder.AppendLine($"| — | — | — | {receipt.Result?.Status ?? "invalid"} | — | — | — | — | — | — | — | — | — | — |");
+            }
+            else
+            {
+                foreach (var sample in receipt.Result.Samples)
+                {
+                    foreach (var phase in sample.Phases)
+                    {
+                        builder.Append('|').Append(sample.Sample).Append(" | ").Append(phase.Name).Append(" | ").Append(phase.Kind).Append(" | complete | ")
+                            .Append(phase.Operations).Append(" | ").Append(Format(phase.ThroughputOpsPerSecond)).Append(" | ")
+                            .Append(Format(phase.P50Microseconds)).Append(" | ").Append(Format(phase.P95Microseconds)).Append(" | ")
+                            .Append(Format(phase.P99Microseconds)).Append(" | ").Append(Format(phase.AllocatedBytesPerOperation)).Append(" | ")
+                            .Append(Format(phase.ProcessCpuPercent)).Append(" | ").Append(FormatLong(phase.ProcessWorkingSetBytesAfter)).Append(" | ")
+                            .Append(FormatLong(phase.WalBytesAfter)).Append(" | ").Append(Format(phase.WriteAmplification)).AppendLine(" |");
+                    }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(receipt.Result?.Error))
+            {
+                builder.AppendLine();
+                builder.AppendLine($"Error: `{receipt.Result.Error!.Replace('\n', ' ')}`");
+            }
+
+            return builder.ToString();
+        }
+    }
+
+    private static class SubscriptionMarkdown
+    {
+        public static string Create(SubscriptionReceipt receipt)
+        {
+            var builder = Header("TerraBase reactive subscription fan-out benchmark", receipt.Status, receipt.Environment, receipt.Command);
+            builder.AppendLine("## Results");
+            builder.AppendLine();
+            builder.AppendLine($"Subject: `{receipt.Result.Subject}`; boundary: `{receipt.Result.OperationBoundary}`; durable commit path: `{receipt.Result.DurableCommitPathAvailable}`.");
+            builder.AppendLine();
+            builder.AppendLine("| Subscribers | Status | Responsive | Delivered frames | Egress bytes | p50 µs | p95 µs | p99 µs | Allocated bytes/frame | CPU ms | RSS after bytes | Unsupported reason |");
+            builder.AppendLine("| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |");
+            foreach (var item in receipt.Result.Cases)
+            {
+                builder.Append('|').Append(item.Subscribers).Append(" | ").Append(item.Status).Append(" | ")
+                    .Append(FormatLong(item.ResponsiveSubscribers)).Append(" | ").Append(FormatLong(item.DeliveredFrames)).Append(" | ")
+                    .Append(FormatLong(item.EgressBytes)).Append(" | ").Append(Format(item.P50DeliveryLatencyMicroseconds)).Append(" | ")
+                    .Append(Format(item.P95DeliveryLatencyMicroseconds)).Append(" | ").Append(Format(item.P99DeliveryLatencyMicroseconds)).Append(" | ")
+                    .Append(Format(item.AllocatedBytesPerDeliveredFrame)).Append(" | ").Append(Format(item.ProcessCpuMilliseconds)).Append(" | ")
+                    .Append(FormatLong(item.ProcessWorkingSetBytesAfter)).Append(" | ").Append(item.UnsupportedReason ?? "—").AppendLine(" |");
+            }
+
+            if (!string.IsNullOrWhiteSpace(receipt.Result.UnsupportedReason))
+            {
+                builder.AppendLine();
+                builder.AppendLine($"Unsupported reason: `{receipt.Result.UnsupportedReason}`");
+            }
+
+            return builder.ToString();
+        }
+    }
+
+    private static StringBuilder Header(string title, string status, EnvironmentInfo environment, string command)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"# {title}");
+        builder.AppendLine();
+        builder.AppendLine($"Status: **{status}**");
+        builder.AppendLine();
+        builder.AppendLine($"- Commit: `{environment.GitCommit ?? "unavailable"}` (dirty: `{environment.GitDirty?.ToString() ?? "unknown"}`)");
+        builder.AppendLine($"- Artifact SHA-256: `{environment.ArtifactSha256 ?? "unavailable"}`");
+        builder.AppendLine($"- Runtime: {environment.FrameworkDescription}; build `{environment.BuildConfiguration}`; {environment.OperatingSystem}; {environment.Architecture}");
+        builder.AppendLine($"- CPU: {environment.CpuModel}; {environment.ProcessorCount} logical processors; available memory {environment.AvailableMemoryBytes} bytes");
+        builder.AppendLine();
+        builder.AppendLine($"Command: `{command}`");
+        builder.AppendLine();
+        return builder;
+    }
+
+    private static string Format(double? value) => value is null ? "—" : value.Value.ToString("F2", CultureInfo.InvariantCulture);
+
+    private static string FormatLong(long? value) => value is null ? "—" : value.Value.ToString("N0", CultureInfo.InvariantCulture);
 }
