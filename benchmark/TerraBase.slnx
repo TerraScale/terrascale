@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/Core/">
     <Project Path="src/TerraBase/TerraBase.csproj" />
+    <Project Path="src/TerraBase.ZoneTree/TerraBase.ZoneTree.csproj" />
+    <Project Path="src/TerraBase.ZoneTree.FullTextSearch/TerraBase.ZoneTree.FullTextSearch.csproj" />
     <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
   </Folder>
   <Folder Name="/Examples/">
@@ -10,5 +12,6 @@
     <Project Path="tests/TerraBase.Tests/TerraBase.Tests.csproj" />
     <Project Path="tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj" />
     <Project Path="tests/TerraBase.Api.Tests/TerraBase.Api.Tests.csproj" />
+    <Project Path="src/TerraBase.ZoneTree.Tests/TerraBase.ZoneTree.Tests.csproj" />
   </Folder>
 </Solution>

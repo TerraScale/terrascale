@@ -34,14 +34,19 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.18.0" />
     <PackageVersion Include="Sentry.Extensions.Logging" Version="6.11.0" />
 
+    <!-- RPC, serialization, identifiers, formatting, and logging -->
+    <PackageVersion Include="MagicOnion" Version="7.10.2" />
+    <PackageVersion Include="MessagePack" Version="3.1.8" />
+    <PackageVersion Include="Ulid" Version="1.4.1" />
+    <PackageVersion Include="ZString" Version="2.6.0" />
+    <PackageVersion Include="ZLogger" Version="2.5.10" />
+    <PackageVersion Include="NativeCompressions" Version="0.6.1" />
+
     <!-- Validation and utilities -->
     <PackageVersion Include="Ardalis.SmartEnum" Version="8.2.0" />
     <PackageVersion Include="Testcontainers" Version="4.15.0" />
     <PackageVersion Include="TUnit" Version="1.67.0" />
     <PackageVersion Include="TUnit.Core" Version="1.67.0" />
-    <!-- TUnit.Core.Interfaces is no longer published independently; retain the
-         requested catalog entry for consumers that still reference it. -->
-    <PackageVersion Include="TUnit.Core.Interfaces" Version="1.8.9" />
     <PackageVersion Include="Bogus" Version="35.6.5" />
 
     <!-- Existing project dependencies -->

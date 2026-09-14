@@ -27,5 +27,13 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
     <PackageReference Include="Sentry.Extensions.Logging" />
     <PackageReference Include="Ardalis.SmartEnum" />
+
+    <!-- RPC, wire serialization, identifiers, and allocation-conscious primitives. -->
+    <PackageReference Include="MagicOnion" />
+    <PackageReference Include="MessagePack" />
+    <PackageReference Include="Ulid" />
+    <PackageReference Include="ZString" />
+    <PackageReference Include="ZLogger" />
+    <PackageReference Include="NativeCompressions" />
   </ItemGroup>
 </Project>

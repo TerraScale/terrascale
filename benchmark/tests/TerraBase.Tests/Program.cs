@@ -3,11 +3,14 @@ using System.Text.Json;
 using TerraBase;
 
 IdentifierTests.Run();
+InterNodeContractTests.Run();
 await StoragePortIsAtomicAndVersioned();
 await DurableStorageSurvivesCloseAndReopen();
 await ConcurrentFileStorageProvidersRetainWrites();
 await DurableStorageRecoversSnapshotsAndRejectsNullDocuments();
 await DurableStorageRetainsVersionAfterDeleteAndRecreate();
+await ProductionReengineeringTests.RunAsync();
+await TransactionTests.RunAsync();
 MetricsAreBoundedAndPrometheusCompatible();
 InFlightMetricsAreSnapshotAndPrometheusCompatible();
 HealthReportsRequireEveryRequiredComponent();
