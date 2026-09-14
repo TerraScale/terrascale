@@ -11,7 +11,31 @@ export type NotificationId = string;
 export type AuditEventId = string;
 export type RestoreId = string;
 
-const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
+export type Brand<TValue, TBrand extends string> = TValue & {
+  readonly [terraScaleBrand]: TBrand;
+};
+
+export type Ulid = Brand<string, "Ulid">;
+
+export type OrganizationId = Ulid;
+export type ProjectId = Ulid;
+export type DatabaseId = Ulid;
+export type EnvironmentId = Ulid;
+export type RepositoryId = Ulid;
+export type DocumentId = Ulid;
+export type UserId = Ulid;
+export type InvitationId = Ulid;
+export type BackupId = Ulid;
+export type BackupPolicyId = Ulid;
+export type QueueId = Ulid;
+export type NotificationId = Ulid;
+export type AuditEventId = Ulid;
+export type RestoreId = Ulid;
+
+// A canonical 128-bit ULID cannot start above 7. Accepting 8-Z would admit
+// values larger than 2^128-1 even though the remaining characters are valid
+// Crockford Base32.
+const ulidPattern = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 
 export function isUlid(value: string): value is Ulid {
   return ulidPattern.test(value);

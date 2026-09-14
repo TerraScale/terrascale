@@ -70,7 +70,7 @@ test("the runtime requires explicit SQLite enablement and offers typed clients",
   });
 });
 
-test("SQLite-supported captured document and SQL routes execute through the real loopback server", async () => {
+test("all local Dashboard-contract routes execute through the real loopback server", async () => {
   await withTempRuntime(async (runtime) => {
     const address = await started(runtime);
     try {

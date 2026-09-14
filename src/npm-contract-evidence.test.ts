@@ -71,6 +71,7 @@ test("npm contract evidence refuses stale, malformed, or substituted inputs", as
       [{ descriptorVersion: 1 }, /version 2/u],
       [{ routeCount: 2, routes: [{}, {}] }, /routeCount values disagree/u],
       [{ routes: [] }, /descriptor routes must match/u],
+      [{ excludedContracts: ["database", "database"] }, /must not contain duplicates/u],
       [{ sources: { ...validDescriptor.sources, openApiSha256: "A".repeat(64) } }, /lowercase/u],
       [{ sources: { ...validDescriptor.sources, routeManifestSha256: "b".repeat(64) } }, /does not bind/u],
     ] as const) {

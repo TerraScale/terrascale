@@ -8,6 +8,7 @@ import {
   err,
   ok,
   type TerraScaleError,
+  type TerraScaleErrorCategory,
   type TerraScaleResult,
   type TerraScaleValidationIssue,
   sanitizeDiagnostic,
@@ -22,6 +23,7 @@ export type TerraScaleRouteName =
   | `admin.${string}`
   | `audit.${string}`
   | `backups.${string}`
+  | `databaseDocuments.${string}`
   | `databaseBranches.${string}`
   | `databases.${string}`
   | `documents.${string}`
@@ -154,14 +156,8 @@ export class TerraScaleHttp {
         let fetchStarted = false;
         try {
           options.signal?.throwIfAborted();
-          const requestBase = this.baseUrl(requestRegionHint);
-          const globalFirstContact = this.isGlobalFirstContact(requestBase, requestRegionHint);
-          const url = buildUrl(requestBase, options.path, options.query);
-          const headers = await withCancellation(
-            this.buildHeaders({ ...options, regionHint: requestRegionHint }, idempotencyKey),
-            options.signal,
-          );
-          options.signal?.throwIfAborted();
+          const url = buildUrl(this.baseUrl(), options.path, options.query);
+          const headers = await this.buildHeaders(options, idempotencyKey);
           const requestInit: RequestInit = {
             method: options.method,
             headers,
@@ -766,11 +762,9 @@ function parseDocumentValue(raw: string): unknown {
 }
 
 function errorFromResponse(response: Response, body: unknown): TerraScaleError {
-  // Error responses are producer-controlled. Sanitize before extracting any
-  // published fields so hostile values cannot enter `message`, `fix`, or
-  // validation metadata and rely on a later result-level pass to clean them.
-  const safeBody = sanitizeHttpDiagnostic(body);
-  const source = unwrapErrorBody(safeBody);
+  const source = unwrapErrorBody(body);
+  const category = errorCategory(source);
+  const traceId = stringProperty(source, "traceId");
   const code =
     stringProperty(source, "code") ??
     stringProperty(source, "errorCode") ??
@@ -787,52 +781,42 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
       stringProperty(source, "detail") ??
       stringProperty(source, "title") ??
       (response.statusText || "The TerraScale API request failed."),
-    ...(fix === undefined ? {} : { fix }),
+    category,
+    detail: stringProperty(source, "detail"),
+    suggestedAction: stringProperty(source, "suggestedAction"),
+    docsUrl: stringProperty(source, "docsUrl"),
+    traceId,
     status: response.status,
     target: stringProperty(source, "target"),
     requestId:
       stringProperty(source, "requestId") ??
-      stringProperty(source, "traceId") ??
-      requestIdFrom(response.headers),
+      requestIdFrom(response.headers) ??
+      (category === undefined ? traceId : undefined),
     validation,
     details: safeBody,
   };
 }
 
-const diagnosticTokenKey = /(?:^|[._-])(?:token|jwt|signature)(?:$|[._-])/iu;
-const diagnosticUrl = /https?:\/\/[^\s<>"']+/giu;
-
-/** Apply HTTP-specific rules before error fields are extracted. */
-function sanitizeHttpDiagnostic(value: unknown): unknown {
-  return sanitizeHttpDiagnosticValue(sanitizeDiagnostic(value), "", new WeakSet<object>(), 0);
-}
-
-function sanitizeHttpDiagnosticValue(
-  value: unknown,
-  key: string,
-  seen: WeakSet<object>,
-  depth: number,
-): unknown {
-  if (diagnosticTokenKey.test(key)) return "[redacted]";
-  if (typeof value === "string") {
-    return value.replace(diagnosticUrl, (candidate) => {
-      try {
-        const url = new URL(candidate.replace(/[).,;]+$/u, ""));
-        return url.search !== "" || url.hash !== "" ? "[redacted URL]" : candidate;
-      } catch {
-        return candidate;
-      }
-    });
+function errorCategory(source: Record<string, unknown>): TerraScaleErrorCategory | undefined {
+  const value = stringProperty(source, "category");
+  switch (value) {
+    case "Validation":
+    case "Authentication":
+    case "Authorization":
+    case "NotFound":
+    case "Conflict":
+    case "RateLimit":
+    case "Schema":
+    case "Query":
+    case "Placement":
+    case "AutoFix":
+    case "AutoIndex":
+    case "Sandbox":
+    case "System":
+      return value;
+    default:
+      return undefined;
   }
-  if (value === null || typeof value !== "object") return value;
-  if (depth >= 12 || seen.has(value)) return "[redacted]";
-  seen.add(value);
-  if (Array.isArray(value)) return value.map((entry) => sanitizeHttpDiagnosticValue(entry, "", seen, depth + 1));
-  const output: Record<string, unknown> = {};
-  for (const [entryKey, entryValue] of Object.entries(value)) {
-    output[entryKey] = sanitizeHttpDiagnosticValue(entryValue, entryKey, seen, depth + 1);
-  }
-  return output;
 }
 
 function unwrapErrorBody(body: unknown): Record<string, unknown> {

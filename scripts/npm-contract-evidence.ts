@@ -21,14 +21,18 @@ export async function loadNpmContractEvidence(repositoryRoot, packedRouteManifes
   if (!Number.isSafeInteger(descriptor.routeCount) || descriptor.routeCount < 1) {
     throw new Error("SDK OpenAPI descriptor routeCount must be a positive safe integer.");
   }
-  if (descriptor.routeCount !== routeManifest.routeCount) {
+  if (!Array.isArray(routeManifest.routes) || routeManifest.routes.length !== routeManifest.routeCount) {
+    throw new Error("SDK route manifest routes must match its declared routeCount.");
+  }
+  const excludedContracts = descriptorExcludedContracts(descriptor);
+  const descriptorRouteCount = routeManifest.routes.filter(
+    (route) => !excludedContracts.has(route?.contract),
+  ).length;
+  if (descriptor.routeCount !== descriptorRouteCount) {
     throw new Error("SDK OpenAPI descriptor and route manifest routeCount values disagree.");
   }
   if (!Array.isArray(descriptor.routes) || descriptor.routes.length !== descriptor.routeCount) {
     throw new Error("SDK OpenAPI descriptor routes must match its declared routeCount.");
-  }
-  if (!Array.isArray(routeManifest.routes) || routeManifest.routes.length !== routeManifest.routeCount) {
-    throw new Error("SDK route manifest routes must match its declared routeCount.");
   }
 
   const sources = requireObject(descriptor.sources, "SDK OpenAPI descriptor sources");
@@ -55,6 +59,18 @@ export async function loadNpmContractEvidence(repositoryRoot, packedRouteManifes
     routeManifestSha256,
     routeCount: descriptor.routeCount,
   };
+}
+
+function descriptorExcludedContracts(descriptor) {
+  const values = descriptor.excludedContracts ?? [];
+  if (!Array.isArray(values) || values.some((value) => typeof value !== "string" || value.length === 0)) {
+    throw new Error("SDK OpenAPI descriptor excludedContracts must contain nonempty strings.");
+  }
+  const excluded = new Set(values);
+  if (excluded.size !== values.length) {
+    throw new Error("SDK OpenAPI descriptor excludedContracts must not contain duplicates.");
+  }
+  return excluded;
 }
 
 function parseObject(bytes, name) {

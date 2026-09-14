@@ -13,6 +13,7 @@ export type {
   AuditClient,
   BackupsClient,
   DatabaseBranchesClient,
+  DatabaseDocumentsClient,
   DatabasesClient,
   NotificationsClient,
   OnboardingClient,

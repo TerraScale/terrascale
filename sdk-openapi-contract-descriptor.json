@@ -1,7 +1,9 @@
 {
   "descriptorVersion": 2,
-  "contractVersion": "v1",
-  "routeCount": 73,
+  "excludedContracts": [
+    "database"
+  ],
+  "routeCount": 91,
   "routes": [
     {
       "base": "api",
@@ -34733,8 +34735,7 @@
     }
   ],
   "sources": {
-    "openApiSha256": "a0577d2d9575d3205e53f9d8c7c844debcc2c36dfa1d9a9ccf0b4c564d137c07",
-    "edgeOpenApiSha256": "ea10c9124b918774a408c05cc5e6c2d51e7f2f8da512d3a46bc39929581137bc",
-    "routeManifestSha256": "165195073921ac8c718d4f653321c3736a3c1cd8502348aa2fcdf6eaf7dcfbf9"
+    "openApiSha256": "f9b2207696282e832eeae08e2e7168924442fdb65098e9521e97ff910fa91131",
+    "routeManifestSha256": "5ae55e6b485b1606b645393937d5dcb0c865c4cfcb89a3b664631a2eb398e41f"
   }
 }

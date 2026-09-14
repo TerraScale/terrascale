@@ -1,3 +1,21 @@
+import type {
+  AuditEventId,
+  BackupId,
+  BackupPolicyId,
+  Brand,
+  DatabaseId,
+  DocumentId,
+  EnvironmentId,
+  InvitationId,
+  NotificationId,
+  OrganizationId,
+  ProjectId,
+  QueueId,
+  RepositoryId,
+  RestoreId,
+  Ulid,
+  UserId,
+} from "./ids.js";
 import type { TerraScaleRegion, TerraScaleRegionCode } from "./regions.js";
 
 /** Structural brands remain available for generated schema IDs. */
@@ -59,6 +77,11 @@ export type Page<TItem> = {
   readonly totalCount?: number;
   readonly nextCursor?: string | null;
 };
+
+export type Int64String = `${bigint}`;
+
+/** Canonical unsigned 64-bit decimal text returned by the Database API. */
+export type Uint64String = Brand<string, "Uint64String">;
 
 export type ProjectScoped = {
   readonly projectId?: ProjectId | undefined;
@@ -439,6 +462,194 @@ export type RestoreJobResponse = {
 };
 
 export type RestoreListQuery = PageRequest;
+
+export type RepositoryScoped = {
+  readonly repositoryId: RepositoryId;
+};
+
+export type RepositoryDefinition = {
+  readonly repositoryId: RepositoryId;
+  readonly name: string;
+  readonly databaseId: DatabaseId;
+  readonly environmentId?: EnvironmentId | null;
+  readonly collection: string;
+  readonly schemaValidationEnabled: boolean;
+  readonly createdAt: Timestamp;
+  readonly updatedAt: Timestamp;
+};
+
+export type CreateRepositoryRequest = {
+  readonly name: string;
+  readonly databaseId?: DatabaseId;
+  readonly environmentId?: EnvironmentId;
+  readonly collection?: string;
+  readonly schemaValidationEnabled?: boolean;
+  readonly schema?: string;
+};
+
+export type DeletedRepositoryResponse = {
+  readonly repositoryId: RepositoryId;
+  readonly name: string;
+  readonly deleted: boolean;
+  readonly documentsDeleted: number;
+};
+
+export type DocumentResponse<TDocument extends JsonValue = JsonObject> = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly id: DocumentId;
+  readonly data: TDocument;
+  readonly lastModified?: Timestamp | null;
+  readonly changeToken?: string | null;
+  readonly sessionConsistencyToken?: string | null;
+};
+
+export type DocumentReadOptions = {
+  readonly allowStale?: boolean;
+  readonly signal?: AbortSignal;
+};
+
+export type DocumentMutationOptions = {
+  readonly expectedChangeToken?: string;
+  readonly signal?: AbortSignal;
+};
+
+export type DocumentPageResponse<TDocument extends JsonValue = JsonObject> = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly skip: number;
+  readonly take: number;
+  readonly total: number;
+  readonly items: readonly DocumentResponse<TDocument>[];
+};
+
+export type DocumentListQuery = PageRequest;
+
+export type DocumentBatchOperationRequest<TDocument extends JsonValue = JsonObject> = {
+  readonly operation: "create" | "delete" | "patch" | "upsert" | string;
+  readonly documentId?: DocumentId;
+  readonly data?: TDocument;
+};
+
+export type DocumentBatchRequest<TDocument extends JsonValue = JsonObject> = {
+  readonly operations: readonly DocumentBatchOperationRequest<TDocument>[];
+};
+
+export type DocumentBatchOperationResponse<TDocument extends JsonValue = JsonObject> = {
+  readonly index: number;
+  readonly operation: string;
+  readonly id: DocumentId;
+  readonly document?: DocumentResponse<TDocument> | null;
+  readonly deleted?: DeletedDocumentResponse | null;
+};
+
+export type DeletedDocumentResponse = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly id: DocumentId;
+  readonly deleted: boolean;
+  readonly sessionConsistencyToken?: string | null;
+};
+
+/** The durability classes published by the Database API document contract. */
+export type DatabaseDocumentDurability = "regional" | "global";
+
+/** The two path dimensions shared by the Database API document operations. */
+export type DatabaseDocumentScope = {
+  readonly database: string;
+  readonly collection: string;
+};
+
+/** Options shared by Database API document mutations. */
+export type DatabaseDocumentMutationOptions = {
+  /** A canonical uppercase ULID reused for every retry of this logical mutation. */
+  readonly idempotencyKey: Ulid;
+  readonly signal?: AbortSignal | undefined;
+};
+
+export type DatabaseDocumentDeleteOptions = DatabaseDocumentMutationOptions & {
+  readonly durability?: DatabaseDocumentDurability | undefined;
+};
+
+export type DatabaseDocumentWriteRequest<
+  TDocument extends JsonValue = JsonValue,
+> = {
+  readonly body: TDocument;
+  readonly durability?: DatabaseDocumentDurability | undefined;
+};
+
+export type DatabaseDocumentReadOptions = {
+  readonly signal?: AbortSignal | undefined;
+};
+
+/** The exact successful body returned by `documents.read`. */
+export type DatabaseDocumentReadResponse<
+  TDocument extends JsonValue = JsonValue,
+> = {
+  readonly database: string;
+  readonly collection: string;
+  readonly id: string;
+  /** A canonical unsigned 64-bit decimal string. */
+  readonly version: Uint64String;
+  readonly body: TDocument;
+  /** A canonical unsigned 64-bit decimal string, or null when unavailable. */
+  readonly position: Uint64String | null;
+};
+
+/** The exact successful body returned by Database API document mutations. */
+export type DatabaseDocumentWriteResponse = {
+  readonly database: string;
+  readonly collection: string;
+  readonly id: string;
+  /** A canonical unsigned 64-bit decimal string. */
+  readonly version: Uint64String;
+  /** A canonical unsigned 64-bit decimal string. */
+  readonly sequence: Uint64String;
+  readonly operationId: string;
+  readonly acknowledgement: "regional" | "global" | "backup" | null;
+  readonly backup: "none" | "full" | "partial" | null;
+};
+
+export type DocumentBatchResponse<TDocument extends JsonValue = JsonObject> = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly results: readonly DocumentBatchOperationResponse<TDocument>[];
+};
+
+export type QueryRequest = {
+  readonly query: string;
+  readonly skip?: number;
+  readonly take?: number;
+};
+
+export type RepositorySchema = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly databaseId: DatabaseId;
+  readonly environmentId?: EnvironmentId | null;
+  readonly collection: string;
+  readonly enabled: boolean;
+  readonly schema: string;
+};
+
+export type ConfigureRepositorySchemaRequest = {
+  readonly enabled?: boolean;
+  readonly schema?: string | null;
+};
+
+export type ValidateRepositorySchemaRequest = {
+  readonly maxErrorMessages?: number;
+  readonly maxDocumentsToValidate?: number;
+};
+
+export type RepositorySchemaValidationResponse = {
+  readonly repositoryId: RepositoryId;
+  readonly repository: string;
+  readonly databaseId: DatabaseId;
+  readonly environmentId?: EnvironmentId | null;
+  readonly collection: string;
+  readonly operationId: Ulid;
+};
 
 export type AccessRole = "member" | "owner" | "viewer";
 

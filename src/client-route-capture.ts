@@ -13,28 +13,20 @@ const pathTemplateSegments = new Map<string, string>([
   [sampleIds.documentId, "{id}"],
 ]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("import-1", "{id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}").set("operation-1", "{operation_id}").set("auth-user", "{model}");
 
-/** Canonical producer operations not implemented by this SDK slice. */
-export const expectedContractGapRouteNames = [
-  "databases.authorizationLease",
-  "databases.rollbackSchema",
-  "databases.websocket",
-] as const;
+const sampleDatabaseDocument = {
+  database: "sdk2-database",
+  collection: "sdk2-collection",
+  documentId: "sdk2-document",
+  idempotencyKey: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
+} as const;
 
-/** Operations exercised by the real reactive TCP journey. */
-export const reactiveTransportRouteNames = [
-  "reactive.attachView",
-  "reactive.viewLog",
-  "reactive.snapshot",
-  "reactive.viewWebsocket",
-] as const;
-
-export type ContractGapExpectation = {
-  readonly code: "contract_gap";
-  readonly routeName: (typeof expectedContractGapRouteNames)[number];
-};
-
-export const contractGapExpectations: readonly ContractGapExpectation[] =
-  expectedContractGapRouteNames.map((routeName) => ({ code: "contract_gap", routeName }));
+const pathTemplateSegments = new Map<string, string>(
+  Object.entries(sampleIds).map(([name, value]) => [value, `{${name}}`]),
+);
+pathTemplateSegments.set("SFO", "{regionCode}");
+pathTemplateSegments.set(sampleDatabaseDocument.database, "{database}");
+pathTemplateSegments.set(sampleDatabaseDocument.collection, "{collection}");
+pathTemplateSegments.set(sampleDatabaseDocument.documentId, "{documentId}");
 
 export type CapturedSdkRoute = {
   readonly base: TerraScaleBase;
@@ -43,6 +35,8 @@ export type CapturedSdkRoute = {
   readonly operation: string;
   readonly pathTemplate: string;
   readonly routeName: TerraScaleRouteName;
+  readonly contract?: "database" | undefined;
+  readonly openApiOperationId?: string | undefined;
   readonly sourceContract: {
     readonly body:
       | { readonly kind: "void" }
@@ -55,7 +49,10 @@ export type CapturedSdkRoute = {
 
 type CaptureOperation = {
   readonly client: string;
-  readonly invoke: (client: TerraScaleClient, management: TerraScaleManagementClient, auth: AuthPersistenceClient) => Promise<unknown>;
+  readonly contract?: "database" | undefined;
+  readonly openApiOperationId?: string | undefined;
+  readonly defaultProject?: boolean;
+  readonly invoke: (client: TerraScaleClient) => Promise<unknown>;
   readonly operation: string;
   readonly routeName: TerraScaleRouteName;
 };
@@ -67,9 +64,10 @@ export async function capturePublicClientRoutes(): Promise<readonly CapturedSdkR
 
 export async function exercisePublicClientRoutes(fetch: FetchLike, onResult?: (routeName: TerraScaleRouteName, result: unknown) => void, routeNames?: readonly TerraScaleRouteName[]): Promise<readonly CapturedSdkRoute[]> {
   const routes: CapturedSdkRoute[] = [];
-  for (const operation of captureOperations) {
-    if (routeNames !== undefined && !routeNames.includes(operation.routeName)) continue;
-    routes.push(await captureRoute(operation, fetch, true, onResult));
+  for (const operation of captureOperations.filter(
+    (candidate) => candidate.contract !== "database",
+  )) {
+    routes.push(await captureRoute(operation, fetch, true));
   }
   return routes;
 }
@@ -105,9 +103,16 @@ async function captureRoute(operation: CaptureOperation, routeFetch?: FetchLike,
     base: capturedMetric.base,
     client: operation.client,
     method: capturedRequest.method,
-    operation: operation.operation,
-    pathTemplate: pathToTemplate(new URL(capturedRequest.url).pathname).replace(/\{name\}(?=\/auth\/)/u, "{database}"),
-    routeName: operation.routeName,
+    operation:
+      operation.variant === undefined
+        ? operation.operation
+        : `${operation.operation}:${operation.variant}`,
+    pathTemplate: pathToTemplate(new URL(capturedRequest.url).pathname),
+    routeName: capturedMetric.routeName,
+    ...(operation.contract === undefined ? {} : { contract: operation.contract }),
+    ...(operation.openApiOperationId === undefined
+      ? {}
+      : { openApiOperationId: operation.openApiOperationId }),
     sourceContract: await capturedSourceContract(capturedRequest),
   };
 }
@@ -136,7 +141,7 @@ async function capturedSourceContract(request: Request): Promise<CapturedSdkRout
 }
 
 const safeContractValueNames = new Set([
-  "accept", "content-type", "cursor", "idempotency-key", "latitude", "limit", "longitude", "organizationid", "range", "skip", "take", "unreadonly", "x-terrascale-delete-confirmation", "x-terrascale-project-id",
+  "accept", "content-type", "cursor", "deletedocuments", "durability", "idempotency-key", "latitude", "limit", "longitude", "maxmessages", "organizationid", "range", "skip", "take", "unreadonly", "x-terrascale-delete-confirmation", "x-terrascale-preferred-region", "x-terrascale-project-id",
 ]);
 
 export function canonicalContractHeaders(headers: Headers): readonly { readonly name: string; readonly value: string }[] {
@@ -421,7 +426,508 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) => client.regions.list(),
   },
   {
-    client: "health", operation: "health", routeName: "health.health",
-    invoke: (client) => client.regions.health(),
+    client: "regions",
+    operation: "get",
+    invoke: (client) => client.regions.get("SFO"),
+  },
+  {
+    client: "savedQueries",
+    operation: "list",
+    defaultProject: true,
+    invoke: (client) => client.savedQueries.list(),
+  },
+  {
+    client: "savedQueries",
+    operation: "create",
+    defaultProject: true,
+    invoke: (client) =>
+      client.savedQueries.create({
+        name: "Active users",
+        query: "SELECT * FROM users WHERE active = true",
+        repositoryId: sampleIds.repositoryId,
+      }),
+  },
+  {
+    client: "savedQueries",
+    operation: "get",
+    defaultProject: true,
+    invoke: (client) => client.savedQueries.get(sampleIds.savedQueryId),
+  },
+  {
+    client: "savedQueries",
+    operation: "update",
+    defaultProject: true,
+    invoke: (client) =>
+      client.savedQueries.update(sampleIds.savedQueryId, {
+        name: "Active users",
+        query: "SELECT * FROM users WHERE active = true",
+        revision: "opaque-revision",
+      }),
+  },
+  {
+    client: "savedQueries",
+    operation: "delete",
+    defaultProject: true,
+    invoke: (client) => client.savedQueries.delete(sampleIds.savedQueryId),
+  },
+  {
+    client: "databases",
+    operation: "list",
+    defaultProject: true,
+    invoke: (client) => client.databases.list(),
+  },
+  {
+    client: "databases",
+    operation: "create",
+    defaultProject: true,
+    invoke: (client) => client.databases.create({ name: "primary" }),
+  },
+  {
+    client: "databases",
+    operation: "get",
+    defaultProject: true,
+    invoke: (client) => client.databases.get(sampleIds.databaseId),
+  },
+  {
+    client: "databases",
+    operation: "delete",
+    defaultProject: true,
+    invoke: (client) => client.databases.delete(sampleIds.databaseId, { confirm: true }),
+  },
+  {
+    client: "databaseBranches",
+    operation: "getCapability",
+    defaultProject: true,
+    invoke: (client) => client.databaseBranches.getCapability(),
+  },
+  {
+    client: "databaseBranches",
+    operation: "requestClone",
+    defaultProject: true,
+    invoke: (client) => client.databaseBranches.requestClone({ sourceDatabaseId: sampleIds.databaseId }),
+  },
+  {
+    client: "queues",
+    operation: "list",
+    defaultProject: true,
+    invoke: (client) => client.queues.list(),
+  },
+  {
+    client: "queues",
+    operation: "create",
+    defaultProject: true,
+    invoke: (client) => client.queues.create({ name: "jobs", kind: "queue" }),
+  },
+  {
+    client: "queues",
+    operation: "get",
+    defaultProject: true,
+    invoke: (client) => client.queues.get(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "delete",
+    defaultProject: true,
+    invoke: (client) => client.queues.delete(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "purge",
+    defaultProject: true,
+    invoke: (client) => client.queues.purge(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "publish",
+    defaultProject: true,
+    invoke: (client) => client.queues.publish(sampleIds.queueId, { data: { task: "index" } }),
+  },
+  {
+    client: "queues",
+    operation: "peek",
+    defaultProject: true,
+    invoke: (client) => client.queues.peek(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "receive",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.receive(sampleIds.queueId, { consumerName: "worker", maxMessages: 1 }),
+  },
+  {
+    client: "queues",
+    operation: "complete",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.complete(sampleIds.queueId, { receipt: "opaque", region: "SFO" }),
+  },
+  {
+    client: "queues",
+    operation: "abandon",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.abandon(sampleIds.queueId, { receipt: "opaque", region: "SFO" }, 1),
+  },
+  {
+    client: "queues",
+    operation: "deadLetter",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.deadLetter(sampleIds.queueId, { receipt: "opaque", region: "SFO" }),
+  },
+  {
+    client: "queues",
+    operation: "renewLock",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.renewLock(sampleIds.queueId, { receipt: "opaque", region: "SFO" }),
+  },
+  {
+    client: "databases",
+    operation: "listEnvironments",
+    defaultProject: true,
+    invoke: (client) => client.databases.listEnvironments(sampleIds.databaseId),
+  },
+  {
+    client: "databases",
+    operation: "createEnvironment",
+    defaultProject: true,
+    invoke: (client) =>
+      client.databases.createEnvironment(sampleIds.databaseId, {
+        name: "Preview",
+        kind: "Preview",
+      }),
+  },
+  {
+    client: "databases",
+    operation: "getEnvironment",
+    defaultProject: true,
+    invoke: (client) =>
+      client.databases.getEnvironment(sampleIds.databaseId, sampleIds.environmentId),
+  },
+  {
+    client: "databases",
+    operation: "deleteEnvironment",
+    defaultProject: true,
+    invoke: (client) =>
+      client.databases.deleteEnvironment(sampleIds.databaseId, sampleIds.environmentId),
+  },
+  {
+    client: "repositories",
+    operation: "list",
+    invoke: (client) => client.repositories.list(),
+  },
+  {
+    client: "repositories",
+    operation: "create",
+    invoke: (client) =>
+      client.repositories.create({
+        name: "users",
+        databaseId: sampleIds.databaseId,
+        environmentId: sampleIds.environmentId,
+        collection: "Users",
+      }),
+  },
+  {
+    client: "repositories",
+    operation: "get",
+    invoke: (client) => client.repositories.get({ repositoryId: sampleIds.repositoryId }),
+  },
+  {
+    client: "repositories",
+    operation: "delete",
+    invoke: (client) =>
+      client.repositories.delete({ repositoryId: sampleIds.repositoryId }, { deleteDocuments: true }),
+  },
+  {
+    client: "backups",
+    operation: "configurePolicy",
+    defaultProject: true,
+    invoke: (client) =>
+      client.backups.configurePolicy(sampleIds.databaseId, {
+        fullBackupCron: "0 2 * * *",
+        incrementalBackupCron: "0 */6 * * *",
+        retentionDays: 30,
+        disabled: false,
+      }),
+  },
+  {
+    client: "backups",
+    operation: "planBackup",
+    defaultProject: true,
+    invoke: (client) =>
+      client.backups.planBackup(sampleIds.databaseId, {
+        operationSessionId: "backup-operation-session",
+      }),
+  },
+  {
+    client: "backups",
+    operation: "executeBackup",
+    defaultProject: true,
+    invoke: (client) =>
+      client.backups.executeBackup(
+        sampleIds.databaseId,
+        {
+          operationSessionId: "backup-operation-session",
+          confirmationToken: "backup-confirmation-token",
+        },
+        "backup-execution-key",
+      ),
+  },
+  {
+    client: "backups",
+    operation: "listBackups",
+    defaultProject: true,
+    invoke: (client) => client.backups.listBackups(sampleIds.databaseId, { skip: 0, take: 25 }),
+  },
+  {
+    client: "backups",
+    operation: "getBackup",
+    defaultProject: true,
+    invoke: (client) => client.backups.getBackup(sampleIds.databaseId, sampleIds.backupId),
+  },
+  {
+    client: "backups",
+    operation: "listRestorePoints",
+    defaultProject: true,
+    invoke: (client) => client.backups.listRestorePoints(sampleIds.databaseId),
+  },
+  {
+    client: "backups",
+    operation: "startRestore",
+    defaultProject: true,
+    invoke: (client) =>
+      client.backups.startRestore(sampleIds.databaseId, {
+        backupId: sampleIds.backupId,
+        idempotencyKey: "restore-1",
+      }),
+  },
+  {
+    client: "backups",
+    operation: "getRestore",
+    defaultProject: true,
+    invoke: (client) => client.backups.getRestore(sampleIds.databaseId, sampleIds.restoreId),
+  },
+  {
+    client: "backups",
+    operation: "listRestores",
+    defaultProject: true,
+    invoke: (client) => client.backups.listRestores(sampleIds.databaseId, { skip: 0, take: 25 }),
+  },
+  {
+    client: "documents",
+    operation: "list",
+    invoke: (client) =>
+      client.documents.list({ repositoryId: sampleIds.repositoryId }, { skip: 0, take: 25 }),
+  },
+  {
+    client: "databaseDocuments",
+    contract: "database",
+    openApiOperationId: "documents.read",
+    operation: "read",
+    invoke: (client) =>
+      client.databaseDocuments.read(
+        sampleDatabaseDocument,
+        sampleDatabaseDocument.documentId,
+      ),
+  },
+  {
+    client: "databaseDocuments",
+    contract: "database",
+    openApiOperationId: "documents.create",
+    operation: "create",
+    invoke: (client) =>
+      client.databaseDocuments.create(
+        sampleDatabaseDocument,
+        sampleDatabaseDocument.documentId,
+        { body: { name: "Ada" }, durability: "global" },
+        { idempotencyKey: sampleDatabaseDocument.idempotencyKey },
+      ),
+  },
+  {
+    client: "databaseDocuments",
+    contract: "database",
+    openApiOperationId: "documents.patch",
+    operation: "patch",
+    invoke: (client) =>
+      client.databaseDocuments.patch(
+        sampleDatabaseDocument,
+        sampleDatabaseDocument.documentId,
+        { body: { title: "Engineer" }, durability: "regional" },
+        { idempotencyKey: sampleDatabaseDocument.idempotencyKey },
+      ),
+  },
+  {
+    client: "databaseDocuments",
+    contract: "database",
+    openApiOperationId: "documents.delete",
+    operation: "delete",
+    invoke: (client) =>
+      client.databaseDocuments.delete(
+        sampleDatabaseDocument,
+        sampleDatabaseDocument.documentId,
+        { idempotencyKey: sampleDatabaseDocument.idempotencyKey, durability: "global" },
+      ),
+  },
+  {
+    client: "documents",
+    operation: "create",
+    invoke: (client) =>
+      client.documents.create({ repositoryId: sampleIds.repositoryId }, { name: "Ada" }),
+  },
+  {
+    client: "documents",
+    operation: "get",
+    invoke: (client) =>
+      client.documents.get({ repositoryId: sampleIds.repositoryId }, sampleIds.documentId),
+  },
+  {
+    client: "documents",
+    operation: "put",
+    invoke: (client) =>
+      client.documents.put(
+        { repositoryId: sampleIds.repositoryId },
+        sampleIds.documentId,
+        { name: "Grace" },
+      ),
+  },
+  {
+    client: "documents",
+    operation: "patch",
+    invoke: (client) =>
+      client.documents.patch(
+        { repositoryId: sampleIds.repositoryId },
+        sampleIds.documentId,
+        { title: "Engineer" },
+      ),
+  },
+  {
+    client: "documents",
+    operation: "batch",
+    invoke: (client) =>
+      client.documents.batch(
+        { repositoryId: sampleIds.repositoryId },
+        { operations: [{ operation: "create", data: { name: "Katherine" } }] },
+      ),
+  },
+  {
+    client: "documents",
+    operation: "delete",
+    invoke: (client) =>
+      client.documents.delete({ repositoryId: sampleIds.repositoryId }, sampleIds.documentId),
+  },
+  {
+    client: "query",
+    operation: "execute",
+    invoke: (client) =>
+      client.query.execute({ repositoryId: sampleIds.repositoryId }, { query: "from Users" }),
+  },
+  {
+    client: "schema",
+    operation: "get",
+    invoke: (client) => client.schema.get({ repositoryId: sampleIds.repositoryId }),
+  },
+  {
+    client: "schema",
+    operation: "validate",
+    invoke: (client) =>
+      client.schema.validate({ repositoryId: sampleIds.repositoryId }, { maxErrorMessages: 5 }),
+  },
+  {
+    client: "schema",
+    operation: "configure",
+    invoke: (client) =>
+      client.schema.configure(
+        { repositoryId: sampleIds.repositoryId },
+        { enabled: true, schema: "{\"type\":\"object\"}" },
+      ),
+  },
+  {
+    client: "access",
+    operation: "listTeamMembers",
+    defaultProject: true,
+    invoke: (client) => client.access.listTeamMembers(undefined, { skip: 0, take: 25 }),
+  },
+  {
+    client: "access",
+    operation: "addTeamMember",
+    defaultProject: true,
+    invoke: (client) => client.access.addTeamMember({ userId: sampleIds.userId, role: "owner" }),
+  },
+  {
+    client: "access",
+    operation: "updateTeamMember",
+    defaultProject: true,
+    invoke: (client) => client.access.updateTeamMember(sampleIds.userId, { role: "member" }),
+  },
+  {
+    client: "access",
+    operation: "removeTeamMember",
+    defaultProject: true,
+    invoke: (client) => client.access.removeTeamMember(sampleIds.userId),
+  },
+  {
+    client: "usage",
+    operation: "getProjectUsage",
+    defaultProject: true,
+    invoke: (client) => client.usage.getProjectUsage(),
+  },
+  {
+    client: "usage",
+    operation: "getOrganizationUsage",
+    invoke: (client) => client.usage.getOrganizationUsage(sampleIds.organizationId),
+  },
+  {
+    client: "usage",
+    operation: "getProjectUsageWorkload",
+    defaultProject: true,
+    invoke: (client) => client.usage.getProjectUsageWorkload("24h"),
+  },
+  {
+    client: "usage",
+    operation: "getProjectLatency",
+    defaultProject: true,
+    invoke: (client) => client.usage.getProjectLatency(undefined, { latitude: -23.55, longitude: -46.63 }),
+  },
+  {
+    client: "usage",
+    operation: "getProjectUsageHistory",
+    defaultProject: true,
+    invoke: (client) => client.usage.getProjectUsageHistory("30d"),
+  },
+  {
+    client: "audit",
+    operation: "list",
+    defaultProject: true,
+    invoke: (client) => client.audit.list(undefined, { skip: 0, take: 25 }),
+  },
+  {
+    client: "audit",
+    operation: "get",
+    defaultProject: true,
+    invoke: (client) => client.audit.get(sampleIds.auditEventId),
+  },
+  {
+    client: "notifications",
+    operation: "list",
+    invoke: (client) =>
+      client.notifications.list({
+        skip: 0,
+        take: 25,
+        unreadOnly: true,
+        organizationId: sampleIds.organizationId,
+      }),
+  },
+  {
+    client: "notifications",
+    operation: "markRead",
+    invoke: (client) => client.notifications.markRead(sampleIds.notificationId),
+  },
+  {
+    client: "notifications",
+    operation: "markAllRead",
+    invoke: (client) =>
+      client.notifications.markAllRead({ organizationId: sampleIds.organizationId }),
   },
 ];

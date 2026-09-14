@@ -52,6 +52,52 @@ adapter conformance are separate qualification gates.
 ```ts
 import { AuthPersistenceClient, createTerraScaleAuthAdapter } from "@terrascale/sdk/better-auth";
 
+## Database documents
+
+`databaseDocuments` follows the Go Database API contract directly. The
+currently published operations read, create, merge-patch, and delete one
+document at
+`/api/v1/databases/{database}/collections/{collection}/documents/{documentId}`.
+They are separate from the older repository-scoped `documents` client, which
+remains available for the Dashboard-owned contract.
+
+~~~ts
+import { createTerraScaleClient, toUlid } from "@terrascale/sdk";
+
+const client = createTerraScaleClient({
+  accessToken: process.env.TERRASCALE_ACCESS_TOKEN,
+});
+const scope = { database: "app", collection: "users" };
+const idempotencyKey = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FB0");
+
+await client.databaseDocuments.create(
+  scope,
+  "user-1",
+  { body: { name: "Ada" }, durability: "global" },
+  { idempotencyKey },
+);
+~~~
+
+Database, collection, and document identifiers must contain 1 to 64 UTF-8
+bytes and no control characters. Each mutation requires a canonical uppercase
+ULID, reused unchanged across retries. Create and patch put durability in the
+JSON body. Delete sends it as the published query parameter.
+The current gateway has a configurable request-body ceiling. It does not yet
+publish the launch 1 MiB document limit or an attachment route, so this SDK
+does not promise a large-value upload operation.
+
+The Database API publishes document `version`, journal `sequence`, and nullable
+journal `position` as canonical unsigned 64-bit decimal strings. A value is
+`"0"` or a nonzero decimal string without leading zeroes, has at most 20
+digits, and is no greater than `"18446744073709551615"`; `position` may also
+be `null`. The SDK rejects numeric JSON values, malformed decimal text, and
+overflow as `invalid_response` without converting the metadata to JavaScript
+numbers.
+
+Database API failures expose the standard `TERRASCALE-####` code, category,
+detail, suggested action, documentation URL, trace ID, and field errors through
+the typed result. The response's `X-Request-Id` remains a separate request ID.
+
 ## Reactive protocol
 
 The current reactive candidate is `TerraScaleSyncV2Client`. It decodes
@@ -121,6 +167,8 @@ only when the operation's public contract permits no generated identity.
 Keys are nonblank and at most 128 characters. A retry reuses the same key for
 one logical attempt. Reusing a key with different input is a typed conflict.
 Replay retention and response headers follow the owning public contract.
+Database document mutations use the narrower gateway contract: a canonical
+uppercase ULID is mandatory.
 
 Mutations retry only when the operation is documented as idempotent. Validation,
 authentication, authorization, and deterministic conflict failures are not
@@ -176,11 +224,10 @@ providers, or performance. Unsupported operations fail explicitly.
 ## Public contract discipline
 
 The SDK implements only named operations published by the owning service.
-Dashboard-owned contracts and Database API contracts may share one edge origin
-and OpenAPI document, but their runtime ownership remains distinct.
-The public API `/api/v1` remains versioned. Releases qualify the exact packed tarball
-so consumers receive the same server and browser API that passed the repository
-gates.
+Dashboard-owned contracts and Database API contracts share one edge origin,
+but their runtime ownership and OpenAPI documents remain distinct. The public API `/api/v1`
+remains versioned. Releases qualify the exact packed tarball so consumers receive the same
+server and browser API that passed the repository gates.
 
 Each operation is gated against:
 
@@ -199,8 +246,8 @@ Unbacked operations remain omitted. Do not invent types or use a generic
 request to hide a contract gap.
 
 The repository decision records are under [`docs/adr/`](docs/adr/). Start with
-the workspace [`GOAL.md`](../GOAL.md) for cross-repository tasks and production
-exit gates.
+the in-repository [`GOAL.md`](GOAL.md), which points workspace contributors to
+the cross-repository authority and production exit gates.
 
 ## Development
 
@@ -239,9 +286,12 @@ node --test test/msgpack-corpus-roundtrip.test.mjs
 
 Integration tests target the fixed DevHost public routes. When the required
 base URLs or credentials are absent, they skip instead of using mocked HTTP.
-The new Database API needs fixed DevHost routes before its live tests can be
-current. OpenAPI drift and descriptor checks must use the owner-published
-Dashboard snapshot. A local emulator cannot qualify a live contract.
+Database API live tests also need fixed DevHost routes and credentials. The
+default OpenAPI gate checks the owner-published Dashboard snapshot and the
+checked-out `ts-internals` Database API document, including a complete
+contract fingerprint for each covered Database operation. Auth-storage routes stay
+listed as explicit SDK-3/INT-4 deferrals until their durable contract lands. A
+local emulator cannot qualify a live contract.
 
 ## Releases
 

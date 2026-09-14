@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export async function generateOpenApiContractDescriptor({ manifestPath, specPath, specPaths = {} }) {
-  const [manifestBytes, specBytes, edgeSpecBytes] = await Promise.all([
+export async function generateOpenApiContractDescriptor({
+  manifestPath,
+  specPath,
+  excludedContracts = [],
+  includeFullOperation = false,
+}) {
+  const [manifestBytes, specBytes] = await Promise.all([
     readFile(path.resolve(process.cwd(), manifestPath)),
     readFile(path.resolve(process.cwd(), specPath)),
     specPaths.edge === undefined ? undefined : readFile(path.resolve(process.cwd(), specPaths.edge)),
@@ -15,9 +20,9 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
     throw new Error("Route manifest and OpenAPI spec must contain routes and paths.");
   }
 
-  const routes = manifest.routes.map((route) => {
-    const routeSpec = specs[route.producer ?? "terrabase"] ?? spec;
-    const operation = findOperation(routeSpec, route);
+  const excluded = new Set(excludedContracts);
+  const routes = manifest.routes.filter((route) => !excluded.has(route.contract)).map((route) => {
+    const operation = findOperation(spec, route);
     if (operation === undefined) {
       throw new Error(`SDK route has no OpenAPI operation: ${route.method} ${route.pathTemplate}.`);
     }
@@ -34,6 +39,9 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
       method: route.method,
       operation: route.operation,
       operationId: operation.operationId,
+      openApiContract: includeFullOperation
+        ? completeOperationDescriptor(operation, spec)
+        : undefined,
       parameters: [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])]
         .map((parameter) => parameterDescriptor(parameter, routeSpec))
         .sort(compareParameter),
@@ -47,9 +55,12 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
     }, routeSpec);
   }).sort((left, right) => `${left.method} ${left.pathTemplate} ${left.routeName}`.localeCompare(`${right.method} ${right.pathTemplate} ${right.routeName}`));
 
-  return {
+  return canonicalize({
+    contractProfile: includeFullOperation ? "complete-operation" : undefined,
     descriptorVersion: 2,
-    ...(typeof manifest.contractVersion === "string" ? { contractVersion: manifest.contractVersion } : {}),
+    excludedContracts: excludedContracts.length === 0
+      ? undefined
+      : [...new Set(excludedContracts)].sort(),
     routeCount: routes.length,
     routes,
     sources: {
@@ -57,6 +68,32 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
       ...(edgeSpecBytes === undefined ? {} : { edgeOpenApiSha256: sha256(edgeSpecBytes) }),
       routeManifestSha256: sha256(manifestBytes),
     },
+  };
+}
+
+export function fingerprintOpenApiContractDescriptor(descriptor) {
+  if (
+    !descriptor ||
+    descriptor.contractProfile !== "complete-operation" ||
+    !Array.isArray(descriptor.routes) ||
+    descriptor.routes.some((route) => !route?.openApiContract) ||
+    !descriptor.sources
+  ) {
+    throw new Error(
+      "A complete-operation OpenAPI contract descriptor is required for fingerprinting.",
+    );
+  }
+  return {
+    descriptorVersion: 2,
+    routeCount: descriptor.routeCount,
+    routes: descriptor.routes.map((route) => ({
+      method: route.method,
+      pathTemplate: route.pathTemplate,
+      routeName: route.routeName,
+      operationId: route.operationId,
+      contractSha256: sha256(JSON.stringify(route)),
+    })),
+    sources: descriptor.sources,
   };
 }
 
@@ -79,8 +116,35 @@ function assertSdkContract(route, request, responses) {
   }
 }
 
-export async function writeOpenApiContractDescriptor({ manifestPath, outputPath, specPath, specPaths }) {
-  const descriptor = await generateOpenApiContractDescriptor({ manifestPath, specPath, specPaths });
+function completeOperationDescriptor(operation, spec) {
+  const requirements = operation.security ?? spec.security ?? [];
+  if (!Array.isArray(requirements)) {
+    throw new Error("OpenAPI security requirements must be an array.");
+  }
+  const declaredSchemes = spec.components?.securitySchemes ?? {};
+  const schemeNames = [...new Set(
+    requirements.flatMap((requirement) => Object.keys(requirement ?? {})),
+  )].sort();
+  const schemes = Object.fromEntries(schemeNames.map((name) => {
+    if (!Object.hasOwn(declaredSchemes, name)) {
+      throw new Error(`OpenAPI security scheme cannot be resolved: ${name}.`);
+    }
+    return [name, declaredSchemes[name]];
+  }));
+  return { operation, security: { requirements, schemes } };
+}
+
+export async function writeOpenApiContractDescriptor({
+  manifestPath,
+  outputPath,
+  specPath,
+  excludedContracts = [],
+}) {
+  const descriptor = await generateOpenApiContractDescriptor({
+    manifestPath,
+    specPath,
+    excludedContracts,
+  });
   await writeFile(outputPath, `${JSON.stringify(descriptor, null, 2)}\n`);
   return descriptor;
 }
