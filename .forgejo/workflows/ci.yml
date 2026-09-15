@@ -10,8 +10,24 @@ on:
 jobs:
   ci:
     name: Run ts-docs checks
-    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
-    with:
-      repo: ts-docs
-    secrets: inherit
     runs-on: terrascale-builder
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up the repository Node version
+        uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          check-latest: false
+      - name: Install locked dependencies
+        run: nice -n 10 npm ci
+      - name: Build the VitePress site
+        run: nice -n 10 npm run build
+      - name: Run docs and starter verification
+        run: nice -n 10 npm test
