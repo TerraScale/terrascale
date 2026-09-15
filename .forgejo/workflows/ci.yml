@@ -3,6 +3,7 @@ name: TypeScript SDK native checks
 on:
   push:
     branches: [develop, main]
+  workflow_dispatch:
 
 permissions:
   contents: read
