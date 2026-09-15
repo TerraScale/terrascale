@@ -41,23 +41,27 @@ npm run cf:pages:dev
 
 The site is deployed by `ts-deploy` from this repository's Forgejo Actions
 workflow. A push to `develop` runs `./ts-deploy ci --repo ts-landing`, which
-verifies the checkout with `make check`, builds the site, signs one immutable
+verifies the checkout with the native npm check, builds the site, signs one immutable
 candidate archive, publishes it to the Forgejo release, and only then deploys
 the extracted, byte-verified candidate to Cloudflare Pages.
 
-- Pages project: `terrascale-landing-page`
+- Pages project: `ts-landing` (its `pages.dev` label is `terrascale-landing-page`)
 - Production branch: `main`
 - Build output: `build/`
 - Pages client: the Wrangler pinned in `package-lock.json`
 
-There is no separate deploy command to remember and no deployment credential in
-this repository. The workflow binds `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID` from Forgejo Actions secrets, and `ts-deploy` resolves
-them at deploy time only; a missing value fails closed before Wrangler starts.
-The project name, production branch, and output directory live in
-`ts-deploy`'s site kind, which is the single source of truth for the
-destination. A `wrangler.toml` in this working tree is a local development
-convenience only and plays no part in deployment.
+A pull request additionally publishes one Cloudflare Pages preview deployment on
+the pull request head branch and posts its URL as a single
+`<!-- ts-deploy-preview -->` comment, updated in place on every push. The
+non-production branch label is what makes the deployment a preview: it routes no
+production traffic and leaves nothing to clean up when the pull request closes.
+
+There is no separate deploy command to remember and no Cloudflare credential in
+this repository. The reusable workflow binds `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` from Forgejo Actions secrets and resolves them only when
+the preview runs; a missing value fails closed before Wrangler starts. A
+`wrangler.toml` in this working tree pins the same Pages project name for the
+local preview, and plays no part in the pipeline.
 
 This repo is intentionally configured for static output only. Do not assume
 Cloudflare Functions, Workers, or SSR are part of the deployment flow unless the
@@ -90,3 +94,6 @@ Cloudflare credential in any other repository, is needed to publish this site.
 ## Assets
 
 Static assets live in `static/` and are served from root-relative URLs such as `/logo-principal.svg` or `/icons/lucide/menu.svg`.
+
+<!-- preview lane test 1789225418 -->
+<!-- second push 1789225604 -->

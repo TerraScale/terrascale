@@ -67,6 +67,7 @@ export const es: Messages = {
         links: {
           terms: 'Términos',
           privacy: 'Privacidad',
+          acceptableUse: 'Uso aceptable',
           dataProcessingTerms: 'Términos de tratamiento de datos',
           support: 'Soporte',
         },

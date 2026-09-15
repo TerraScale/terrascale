@@ -65,6 +65,7 @@ export const en = {
         links: {
           terms: 'Terms',
           privacy: 'Privacy',
+          acceptableUse: 'Acceptable Use',
           dataProcessingTerms: 'Data Processing Terms',
           support: 'Support',
         },
