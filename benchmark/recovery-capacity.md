@@ -1,7 +1,7 @@
 # Recovery and capacity benchmark harness
 
-The benchmark project has two measured boundaries that are separate from the
-provider point-operation runner:
+The benchmark project has these measured boundaries separate from the provider
+point-operation runner:
 
 | Boundary | Subject | Measured path | Claim boundary |
 | --- | --- | --- | --- |
@@ -9,12 +9,25 @@ provider point-operation runner:
 | Restore time | `BackupManager` | Manifest chain load, checksum verification, and transactional in-memory target activation | In-memory object store and target only; no filesystem reopen, object-store network, crash recovery, or ZoneTree restore adapter claim |
 | Reactive fan-out | `ReactiveSubscriptionHub` | `StorageEngine.ApplyBatchAsync` -> `StorageChangeFeedWorker` -> hub -> subscriber frames | Local durable WAL and feed publication; no network or multi-region claim |
 
-Every measured receipt records the git revision and dirty state, runner DLL
-hash, TerraBase and ZoneTree assembly hashes, .NET runtime, OS and
-architecture, CPU model, logical processor count, available memory, cgroup
-limits when visible, GC mode, command, and raw JSONL samples. Percentiles in
-the generated summary are medians of per-sample percentiles. A missing
-measurement remains `null`/`—`.
+The source-matched v3 recovery receipt and the retained durable subscription
+receipt record git revision and dirty state, runner DLL hash, assembly hashes
+where applicable, runtime, host, resource observations, command, and raw JSONL
+samples. The separately retained MagicOnion and native-backup receipts are
+complete runs but omit git and benchmark-artifact identity; those gaps remain
+explicit below. Percentiles in the source-matched generated summary are medians
+of per-sample percentiles. A missing measurement remains `null`/`—`.
+
+## Retained receipt identities
+
+These identity fields describe the named dated receipts used by this document;
+they do not make a dirty-tree or unbound fixture a release qualification.
+
+| Boundary | Receipt | Status | Git identity | Benchmark artifact identity |
+| --- | --- | --- | --- | --- |
+| Replication lag and in-memory restore | [`source-matched-v3 recovery`](receipts/20260914-source-matched-v3-recovery/recovery-receipt.json) | complete | present: `9e84cc83827d1603bb307d23c6722761f1d029b4`, dirty | present: `9a4fd71e58057954c8b0840d2688c61bb89eb043a13fd5078dd3494e53962e3b` |
+| Local durable subscription fan-out | [`durable subscriptions`](receipts/20260914-durable-subscriptions-final/subscriptions-receipt.json) | complete | present: `9e84cc83827d1603bb307d23c6722761f1d029b4`, dirty | present: `bb2dde0ca26db0c408039d16ff5d8ebaf50dcf31b3ceb7d583ee5a720819dbdb` |
+| MagicOnion loopback replication | [`MagicOnion final`](receipts/20260914-magic-onion-final/receipt.json) | complete | missing | missing |
+| Native filesystem restore | [`native backup`](receipts/native-backup-20260914/native-backup-receipt.json) | complete | missing | missing |
 
 ## Commands
 
@@ -68,6 +81,13 @@ nice -n 19 dotnet bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Bench
   --output bench/receipts/<fanout-run>
 ```
 
+For provider rows, `warm` means that the seeded engine receives the configured
+warmup operations before measured samples while remaining open. `cold` means
+that the seeded durable engine is disposed and reopened before measured samples;
+the reopen is timed separately and the operating-system page cache is not
+cleared. These labels describe local process and durable-path phases, not a host
+restart or a guarantee about cache state.
+
 Do not call a host-memory run larger-than-memory evidence. Use an explicit
 cgroup memory limit with the larger-than-memory workload and retain the limit
 in the receipt. A missing cgroup limit is recorded as unavailable.
@@ -86,12 +106,15 @@ with a dirty tree and runner artifact
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | Replication lag | complete | 5 | 12,248.15 ops/s | 67.30 µs | 133.00 µs | 205.80 µs | 6,452.40 | 2.30 | 69,169,152 | 0 ops | `9a4fd71e58057954c8b0840d2688c61bb89eb043a13fd5078dd3494e53962e3b` |
 | Restore time | complete | 5 | 319.78 restores/s | 2.93 ms | 5.19 ms | 7.39 ms | 516,785.20 | 2.59 | 81,612,800 | 100 entries | `9a4fd71e58057954c8b0840d2688c61bb89eb043a13fd5078dd3494e53962e3b` |
-| Reactive fan-out | complete | 1/10/100/1000 | — | see retained receipt | — | — | see retained receipt | see retained receipt | see retained receipt | — | local durable feed | [`subscriptions-summary.md`](receipts/20260914-durable-subscriptions-final/subscriptions-summary.md) |
+| Reactive fan-out | complete | 1/10/100/1000 | — | see retained receipt | — | — | see retained receipt | see retained receipt | see retained receipt | — | `bb2dde0ca26db0c408039d16ff5d8ebaf50dcf31b3ceb7d583ee5a720819dbdb` |
 
 The durable subscription receipt is retained separately at
-delivery latency, origin evaluations, shared maintenance updates, allocations,
-CPU, RSS, egress, bounded backpressure, and resumable delivery for 1, 10, 100,
-and 1,000 subscribers.
+[`subscriptions-summary.md`](receipts/20260914-durable-subscriptions-final/subscriptions-summary.md)
+and records delivery latency, origin evaluations, shared maintenance updates,
+allocations, CPU, RSS, egress, bounded backpressure, and resumable delivery for
+1, 10, 100, and 1,000 subscribers. It is the complete local durable receipt
+listed above; the earlier [source-matched v3 subscription receipt](receipts/20260914-source-matched-v3-subscriptions/subscriptions-receipt.json)
+remains an explicit unsupported attempt.
 
 ## Verification and limits
 
@@ -111,9 +134,12 @@ solution qualification.
 
 The measured replication lag is a useful regression signal for the local
 engine seam, but it cannot answer network or durable replication questions.
-The retained MagicOnion loopback receipt covers two HTTPS/mTLS hosts with
-separate durable directories, duplicate/reverse delivery, durable acknowledgements,
-deferred responses, and final durable/applied frontiers; it does not qualify
-WAN, crash, partition-healing, or saturation behavior. The retained native
-restore receipt covers a local filesystem target and clean reopen; it does not
-qualify remote object stores, power loss, or production RPO/RTO.
+The retained [MagicOnion loopback receipt](receipts/20260914-magic-onion-final/summary.md)
+is complete and covers two HTTPS/mTLS hosts with separate durable directories,
+duplicate/reverse delivery, durable acknowledgements, deferred responses, and
+final durable/applied frontiers; its git and artifact identity are missing, and
+it does not qualify WAN, crash, partition-healing, or saturation behavior. The
+retained [native restore receipt](receipts/native-backup-20260914/native-backup-summary.md)
+is complete and covers a local filesystem target and clean reopen; its git and
+artifact identity are missing, and it does not qualify remote object stores,
+power loss, or production RPO/RTO.

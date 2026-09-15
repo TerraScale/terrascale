@@ -18,6 +18,11 @@ The executed dependency copies were `TerraBase.dll`
 `8af72765d5716dfc4fbb01afe2abe5623f700fdd5429567a39380f44ce614be9` and
 `TerraBase.ZoneTree.dll`
 `0b6cbd5a58e7c30c2ab8a9f60b7851cc432b67697f6eb0678e2fcc613076a92b`.
+The provider and process-local recovery v3 rows below use this runner identity;
+the earlier vertical sweep remains separately identified as its `a1da5903…`
+artifact batch. The separately retained subscription, MagicOnion, and
+native-backup receipts carry their own identity metadata; a missing commit or
+artifact identity is left missing rather than inferred from this batch.
 The normal dependency build was also attempted against the moving dirty
 checkout and did not produce a current release receipt. The retained failure
 includes source/analyzer errors in the storage transaction, restore metadata,
@@ -32,10 +37,12 @@ interactive non-server GC. No cgroup `memory.max` or `cpu.max` was visible.
 RSS is therefore a process observation, and the larger-than-memory runs below
 are configured-cap exercises rather than host-memory-capacity claims.
 
-All result rows below use five post-warmup samples. Percentiles and scalar
-metrics are medians of the five per-sample values; raw samples remain beside
-each receipt. Blank write-amplification values mean that the provider did not
-expose a comparable durable WAL byte boundary.
+The provider and process-local recovery rows use five post-warmup samples;
+their percentiles and scalar metrics are medians of the five per-sample values.
+The separately retained subscription, MagicOnion, and native-backup receipts
+use the sample or publication counts stated with each receipt. Raw samples
+remain beside each receipt. Blank write-amplification values mean that the
+provider did not expose a comparable durable WAL byte boundary.
 
 ## Provider throughput and latency
 
@@ -45,6 +52,13 @@ sample. Point writes used 100 documents with 128-byte payloads and 100 measured
 operations per sample. StorageEngine and ZoneTree used both warm and cold
 durable phases. In-memory storage has no reopen boundary and was measured warm
 only.
+
+For the durable provider rows, `warm` seeds the engine, runs the configured
+warmup operations, and then records the measured samples while that engine
+remains open. `cold` seeds the durable path, disposes the engine, reopens the
+same path, records that reopen separately, and then records samples without a
+warmup pass. The cold phase does not clear the operating-system page cache or
+simulate a host restart; these are local process and durable-path phase labels.
 
 | Provider | Workload | Phase | Ops/s | p50 (µs) | p95 (µs) | p99 (µs) | Allocated B/op | CPU % | RSS after (B) | Bytes written | Write amplification | Receipt |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -100,23 +114,21 @@ object-store RTO claim.
 
 ## Subscription fan-out
 
-The horizontal subscriber-count matrix was executed for 1, 10, 100, and 1,000
-subscribers. Every case is `unsupported`, with no latency, allocation, CPU,
-RSS, or egress value emitted. The CLI cannot supply the durable commit to
-reactive source callback required by this boundary, so it is not valid to
-replace these missing values with a synthetic in-memory publication result.
+The original source-matched v3 CLI receipt was executed for 1, 10, 100, and
+1,000 subscribers, but its status is `unsupported` for every case. It records
+no latency, allocation, CPU, RSS, or egress values because the CLI did not
+provide the durable commit-to-reactive source callback. Preserve that receipt
+as the historical unsupported attempt; it is separate from the complete local
+durable run below.
 
 [Unsupported receipt](receipts/20260914-source-matched-v3-subscriptions/subscriptions-receipt.json)
 
-The smallest next fan-out measurement is an embedding or service harness that
-commits one real durable transaction, captures its `ReactiveChangeSet`, and
-publishes it exactly once while retaining per-subscriber frame timestamps and
-egress bytes at counts 1, 10, 100, and 1,000.
-
-The separate durable commit-to-feed harness now has a complete retained
-receipt. It commits through `StorageEngine.ApplyBatchAsync`, waits for
+The separate durable commit-to-feed harness has a complete retained receipt.
+It commits through `StorageEngine.ApplyBatchAsync`, waits for
 `StorageChangeFeedWorker`, and delivers the shared maintenance result to
-responsive subscribers:
+responsive subscribers. Its receipt records commit `9e84cc83827d1603bb307d23c6722761f1d029b4`
+with `gitDirty: true` and runner artifact SHA-256
+`bb2dde0ca26db0c408039d16ff5d8ebaf50dcf31b3ceb7d583ee5a720819dbdb`.
 
 | Subscribers | Responsive | Delivered frames | Egress bytes | p50 (µs) | p95 (µs) | p99 (µs) | Allocated B/frame | Receipt |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -125,29 +137,33 @@ responsive subscribers:
 | 100 | 99 | 495 | 326,386 | 4,688.10 | 11,617.01 | 11,700.33 | 7,112.63 | [receipt](receipts/20260914-durable-subscriptions-final/subscriptions-receipt.json) |
 | 1,000 | 999 | 4,995 | 3,285,388 | 12,575.30 | 18,038.34 | 18,450.61 | 3,488.53 | [receipt](receipts/20260914-durable-subscriptions-final/subscriptions-receipt.json) |
 
-The durable receipt is local commit-to-hub evidence on a dirty tree with no
-enforced cgroup envelope. It does not qualify public HTTP/CDN delivery,
-multi-Region fan-out, or capacity planning.
+For the local durable boundary, these complete rows are measured commit-to-hub
+evidence on a dirty tree with no enforced cgroup envelope. They do not qualify
+public HTTP/CDN delivery, multi-Region fan-out, or capacity planning.
 
 ## Native restore and authenticated loopback
 
-The separate native restore receipt ran five full-plus-incremental PITR cases
-against local filesystem object-store and restore directories. Restore and
-activation had p50/p95 of 68.820/180.010 ms; activation plus a fresh
-`StorageEngine` reopen had p50/p95 of 76.270/189.350 ms. See
+The separate native restore receipt has status `complete` and ran five
+full-plus-incremental PITR cases against local filesystem object-store and
+restore directories. Restore and activation had p50/p95 of 68.820/180.010 ms;
+activation plus a fresh `StorageEngine` reopen had p50/p95 of 76.270/189.350 ms.
+Its JSON does not contain `gitCommit`, `gitDirty`, or a benchmark artifact
+digest, so this remains a complete but source/artifact-unbound local fixture.
+See
 [native-backup-summary.md](receipts/native-backup-20260914/native-backup-summary.md).
 This is a one-host filesystem fixture, not a production RTO, remote object-store,
 crash, or multi-Region recovery claim.
 
-The retained MagicOnion loopback receipt used two HTTPS/mTLS hosts, three
-32-publication samples, duplicate/reverse delivery, and separate durable
-directories. Every sample sent 64 pushes and received 64 durable acknowledgements;
-the destination finished at durable/applied frontier 32 after 62 deferred
-responses. See [summary.md](receipts/20260914-magic-onion-final/summary.md).
-The run does not qualify WAN latency, packet loss, crash recovery, partition
-healing, or saturation. Its retained receipt has no environment identity, so
-it is not an admitted source-bound performance claim until rerun with the
-current metadata-producing workload.
+The retained MagicOnion loopback receipt has status `complete` and used two
+HTTPS/mTLS hosts, three 32-publication samples, duplicate/reverse delivery,
+and separate durable directories. Every sample sent 64 pushes and received 64
+durable acknowledgements; the destination finished at durable/applied frontier
+32 after 62 deferred responses. See
+[summary.md](receipts/20260914-magic-onion-final/summary.md). Its JSON has no
+environment object, git commit, dirty state, or artifact digest, so retain the
+measurements as a complete but source/artifact-unbound local fixture. The run
+does not qualify WAN latency, packet loss, crash recovery, partition healing,
+or saturation.
 
 ## Larger-than-memory exercise
 
@@ -214,8 +230,7 @@ The smallest next measurements are:
 2. Capture a short `dotnet-trace` or equivalent CPU/lock profile during the
    concurrency-4 point-read case. The current plateau does not justify a code
    change by itself.
-3. Connect the subscription runner to the real durable commit callback and
-   repeat the horizontal subscriber matrix.
-4. Restore a fixed backup chain into a filesystem-backed target and object
-   store, retaining bytes read and replayed, to turn the in-memory restore
-   result into an RTO measurement.
+3. Repeat the complete local durable subscription run under an enforced CPU and
+   memory envelope before using it for capacity planning.
+4. Extend the retained native restore fixture with controlled remote object
+   store and target measurements before making any broader recovery claim.
