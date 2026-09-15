@@ -40,7 +40,11 @@ nice -n 19 dotnet bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Bench
 The harness directly measures `DataCompression`, in memory, with no WAL,
 segment, file-system, or backup framing. Warm values are medians across nine
 samples; p50/p95/p99 are microseconds per operation and allocations are bytes
-per operation.
+per operation. This primitive table uses one generated payload per profile and
+reuses it for that case's measured operations; the repeated-record caveat in
+the retained [real-caller report](compression-real-callers-20260915.md) does
+not apply because these are single-payload observations without a record
+batch.
 
 | Payload | Method | Operation | Output bytes | p50 / p95 / p99 (µs) | Allocated B/op |
 | ---: | --- | --- | ---: | ---: | ---: |
@@ -127,31 +131,38 @@ then writes a two-int length header and the compressed bytes
 ([`LiveBackupRecordBatchWriter.cs`](../src/TerraBase.ZoneTree/Backup/LiveBackupRecordBatchWriter.cs:69)).
 The reader allocates the decompressed block and copies it again with
 `ToArray()` ([`LiveBackupRecordBatchReader.cs`](../src/TerraBase.ZoneTree/Backup/LiveBackupRecordBatchReader.cs:105)).
-These are source-backed allocation hypotheses; no end-to-end writer/reader
-latency or allocation receipt exists in this qualification.
+These remain source-backed allocation hypotheses about the product path. The
+retained 2026-09-15 [real-caller receipt](compression-real-callers-20260915.md)
+now measures writer and reader latency, allocations, process CPU, and stored
+bytes for the local record-batch caller under `None`, `LZ4`, and `Zstd`. That
+receipt is component evidence from an artifact with no recorded source commit;
+it does not establish production live-backup capacity or device I/O.
 
 LZ4 is therefore not selected by any current default in storage, WAL, live
 backup, or FullTextSearch. Its current implicit compatibility use is the
 legacy multipart metadata fallback, while new multipart metadata uses Zstd
 ([`MultiPartMetadataCodec.cs`](../src/TerraBase.ZoneTree/Segments/MultiPart/MultiPartMetadataCodec.cs:7)).
 
-## Decision, confidence, and smallest next measurement
+## Decision and confidence
 
 The measured evidence supports retaining Zstd as the default for disk segments,
 WAL, live-backup record batches, and FullTextSearch segments. LZ4 should remain
 an explicit profile until a workload demonstrates that its CPU and allocation
 cost is acceptable for the target data shape. Confidence is high for the
 primitive and FullTextSearch observations, medium for the storage baseline,
-and low for any live-backup throughput conclusion because its framed path was
-not measured.
+and medium for the retained local live-backup caller result. Production
+live-backup throughput remains unqualified because the receipt is a single-host
+component run without a source commit, per-case RSS, or a device I/O boundary.
 
-The smallest next measurement is one source-matched backup harness using a
-1 MiB block and fixed serialized records, run with `Zstd0`, `LZ4` level 3, and
-`None`. It should report writer and reader p50/p95/p99, throughput, allocated
-bytes per record, and stored/uncompressed bytes at concurrency 1, then repeat
-at a small contention point (for example four workers). The same harness can
-also add `LZ4` to the FullTextSearch compression sweep, resolving the two
-remaining selection gaps without changing product code.
+The retained real-caller receipt closes the local writer/reader measurement gap
+for 1 MiB record batches at concurrency 1, subject to its repeated-value input,
+first-use cache labels, and one-operation-per-sample timing boundary described
+in [its method notes](compression-real-callers-20260915.md). A broader follow-up
+should use independently varied record values, repeat the caller under an
+enforced resource envelope, and add the filesystem or object-store boundary
+before using it for capacity planning. The same harness can also add `LZ4` to
+the FullTextSearch compression sweep, resolving that remaining selection gap
+without changing product code.
 
 ## Validation
 
