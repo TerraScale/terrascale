@@ -57,7 +57,7 @@ authorization, placement, session and requested durability requirements.
   and [GlobalDurable admission](../../../terrabase/docs/adr/0035-one-region-global-durable-semantics.md):
   local physical RF=2 plus cross-Region causal dependencies; GlobalDurable needs
   at least two active selected Regions and durability in every selected Region.
-- [Backup decision](../../../terrabase/docs/adr/0046-native-rust-backup-subsystem.md):
+- [Backup implementation boundary](../../../terrabase/src/TerraBase/Backup/BackupManager.cs):
   native backup target, approved destinations and independent restore/residency
   qualification. Replacement and qualification gates remain authoritative.
 - [Proxy entrypoint](../../../ts-proxy/src/index.ts) and
