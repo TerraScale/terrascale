@@ -392,6 +392,39 @@ describe("TerraScaleHttp request policy", () => {
     assert.deepEqual(requests.map(request => request.method), ["POST", "POST", "POST"]);
   });
 
+  test("retries the Cloudflare origin-connectivity statuses before surfacing a deterministic response", async () => {
+    // 520-524 are returned by the edge before a request reaches the origin
+    // (Cloudflare's dashboard custom domain surfaced 522/523 in production), so
+    // an idempotent read must replay them like any other transient gateway
+    // failure instead of handing the edge error to the caller.
+    const statuses = [520, 521, 522, 523, 524, 400];
+    const requests: Request[] = [];
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      maxRetryAttempts: 5,
+      retryDelayMs: 0,
+      fetch: async input => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        const status = statuses[requests.length - 1];
+        if (status === undefined) throw new Error("The retry test received more requests than expected.");
+        return Response.json(
+          { code: `status_${status}`, message: `Response ${status}` },
+          { status },
+        );
+      },
+    });
+
+    const result = await http.request({
+      method: "GET",
+      path: "/api/v1/regions",
+      routeName: "regions.list",
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.status, 400);
+    assert.equal(requests.length, statuses.length);
+  });
+
   test("rejects browser opaque redirects and preserves conditional 304 reads", async () => {
     const opaque = new Response(null);
     Object.defineProperty(opaque, "type", { value: "opaqueredirect" });

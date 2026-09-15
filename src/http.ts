@@ -482,7 +482,13 @@ function canRepairPlacement(
   return method === "GET" || (retryableRead && method === "POST") || idempotencyKey !== undefined;
 }
 
-const retryableStatuses = new Set([408, 429, 500, 502, 503, 504]);
+// Transient failures that a bounded, idempotent retry can repair. 502/503/504
+// are the standard gateway statuses; 520-524 are Cloudflare's origin
+// connectivity class (520 unknown, 521 origin down, 522 connection timed out,
+// 523 origin unreachable, 524 origin timeout) and are returned before the
+// request reaches the Worker. 525/526 are TLS/certificate configuration errors
+// and stay deterministic rather than retried.
+const retryableStatuses = new Set([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 
 function validateSessionToken(value: unknown): value is string {
   if (typeof value !== "string") return false;
