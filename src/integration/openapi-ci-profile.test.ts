@@ -1,57 +1,32 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "vitest";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const run = promisify(execFile);
 
-test("the CI workflow delegates contract and verification gates to ts-deploy", async () => {
+test("native CI runs the Dashboard and Database OpenAPI gates", async () => {
   const workflow = await readFile(path.join(repositoryRoot, ".forgejo", "workflows", "ci.yml"), "utf8");
 
-  assert.match(workflow, /^  push:\r?\n    branches: \[main\]$/mu);
-  assert.match(workflow, /^\s+pull_request:\r?\n    branches: \[main\]$/mu);
-  assert.match(workflow, /^\s+workflow_dispatch:/mu);
-  assert.doesNotMatch(workflow, /^\s*(?:container|strategy|matrix):/mu);
-  assert.doesNotMatch(
-    workflow,
-    /^(?:\s*-?\s*run:.*\b(?:npm|make contracts|git diff --exit-code)\b|.*\b(?:check:(?:openapi|forbidden-surface|route-manifest|public-contract-fixture)|node --test|generate-(?:route-manifest|openapi))\b)/mu,
-  );
-  const databaseSpecPath = path.join(
-    workspace,
-    "ts-internals",
-    "src",
-    "database",
-    "api",
-    "openapi.v1.json",
-  );
-
-  try {
-    await mkdir(scriptsRoot, { recursive: true });
-    await mkdir(path.dirname(specPath), { recursive: true });
-    await mkdir(path.dirname(databaseSpecPath), { recursive: true });
-    await cp(
-      path.join(repositoryRoot, "scripts", "openapi-contract-paths.mjs"),
-      path.join(scriptsRoot, "openapi-contract-paths.mjs"),
-    );
-    await writeFile(specPath, "{}\n", "utf8");
-    await writeFile(databaseSpecPath, "{}\n", "utf8");
-
-    const moduleUrl = pathToFileURL(path.join(scriptsRoot, "openapi-contract-paths.mjs")).href;
-    const result = await run(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        `import { canonicalDashboardOpenApiSpec, canonicalDatabaseOpenApiSpec } from ${JSON.stringify(moduleUrl)}; console.log(canonicalDashboardOpenApiSpec); console.log(canonicalDatabaseOpenApiSpec);`,
-      ],
-      { cwd: sdkRoot },
-    );
-
-    assert.deepEqual(result.stdout.trim().split("\n"), [specPath, databaseSpecPath]);
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
+  assert.match(workflow, /^  push:\r?\n    branches: \[develop, main\]$/mu);
+  assert.doesNotMatch(workflow, /^\s+(?:pull_request|workflow_dispatch|schedule|workflow_call):/mu);
+  const staticJob = jobDefinition(workflow, "static");
+  assert.match(staticJob, /repository: TerraScale\/ts-dashboard/u);
+  assert.match(staticJob, /path: Dashboard/u);
+  assert.match(staticJob, /token: ""/u);
+  assert.match(staticJob, /persist-credentials: false/u);
+  assert.match(staticJob, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/u);
+  assert.match(staticJob, /npm run check:openapi-contract-descriptor -- Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u);
+  assert.match(staticJob, /npm run check:openapi-drift -- Dashboard\/docs\/product\/openapi\/server\.openapi\.json sdk-route-manifest\.json --exclude-contract=database/u);
+  assert.match(staticJob, /TERRASCALE_DATABASE_OPENAPI_SPEC: \$\{\{ vars\.TERRASCALE_DATABASE_OPENAPI_SPEC \}\}/u);
+  assert.match(staticJob, /--strict --require-spec-coverage/u);
+  assert.match(staticJob, /check-database-openapi-contract-descriptor\.mjs/u);
+  assert.doesNotMatch(workflow, /(?:ts-deploy|secrets\.|NPM_TOKEN|TERRASCALE_E2E_)/u);
 });
 
 test("configured OpenAPI drift profile runs against the checked-out Dashboard snapshot", async () => {
@@ -67,9 +42,9 @@ test("configured OpenAPI drift profile runs against the checked-out Dashboard sn
       .find((profile) => profile.name === "static")
       ?.commands.find((candidate) => candidate.description === "OpenAPI drift");
     assert.ok(command);
-    assert.deepEqual(command.arguments, ["run", "check:openapi-drift", "--", "--strict"]);
+    assert.deepEqual(command.arguments, ["run", "check:openapi-drift"]);
     assert.match(workflow, /repository: TerraScale\/ts-dashboard/u);
-    assert.match(workflow, /path: ts-typescript\/Dashboard/u);
+    assert.match(workflow, /path: Dashboard/u);
     const dashboardCheckout = workflow.match(/repository: TerraScale\/ts-dashboard[\s\S]*?persist-credentials: false/u)?.[0] ?? "";
     assert.match(dashboardCheckout, /token: ""/u);
     assert.doesNotMatch(dashboardCheckout, /(?:github|forgejo|gitea)\.token|secrets\./u);
@@ -283,3 +258,11 @@ type DeployConfiguration = {
     }[];
   }[];
 };
+
+function jobDefinition(workflow: string, job: string): string {
+  const start = workflow.indexOf(`  ${job}:\n`);
+  assert.notEqual(start, -1, `Workflow job ${job} is missing.`);
+  const remaining = workflow.slice(start);
+  const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]+:\n/u);
+  return next === -1 ? remaining : remaining.slice(0, next + 1);
+}

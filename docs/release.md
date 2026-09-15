@@ -5,20 +5,28 @@ registries are not a distribution target.
 
 ## Current status
 
-Production publication remains blocked until the current Go `ts-deploy` CLI and
-the protected `develop` to `main` process from the workspace `GOAL.md` are
-wired and qualified. Until then, this document defines the checks and release
-constraints, not an executable publish path.
+Native CI is active for pushes to `develop` and `main`. The static contract
+gates, the Node.js `22.23.2` and `24.20.0` matrix, and the browser lane run on
+the `terrascale-builder` Docker runner with the pinned Playwright image. The
+jobs check out the event revision without credentials and do not receive npm,
+release, or live API secrets.
 
-Do not weaken a gate or use the old workflow as release authority while that
-replacement is pending.
+Production publication remains blocked. The unchanged
+`scripts/promote-npm-candidate.ts` verifier requires a real reviewed
+`ts-deploy` build receipt bound to the source tree, output files, checksums,
+and qualification evidence, and native CI currently has no accepted producer
+for that receipt. The native workflow therefore has no candidate, admission,
+or publish path.
+
+Do not weaken the verifier or publish npm bytes while that producer contract is
+pending.
 
 ## Required checks
 
 Run the complete repository set from a clean checkout:
 
 ```bash
-npm install
+npm ci
 npm run typecheck
 npm run build
 npm test
@@ -50,11 +58,11 @@ multi-Region durability, recovery, billing, or performance. Live integration
 configuration that is absent or invalid is a failed release prerequisite, not
 a passing result.
 
-## Protected release
+## Protected release when publication is restored
 
 Agents commit green changes directly to `develop`. There are no pull requests.
-The owner promotes `develop` to `main` only after the required checks pass.
-That protected `main` run must:
+The owner may restore a main-only release graph after accepting a native receipt
+producer and promoting `develop` to `main`. That protected `main` run must:
 
 1. build one immutable npm tarball from the promoted commit;
 2. bind the tarball to the exact commit, dependency lock, generated contracts,
@@ -64,9 +72,9 @@ That protected `main` run must:
    ordinary branch jobs; and
 5. publish the already verified tarball with `--access public`.
 
-The publish job receives only the npm credential and live-test secrets it
-needs. It removes inherited npm configuration and does not expose credentials
-to package inspection or browser bundles.
+The final publish job receives only the npm credential. Live-test secrets remain
+scoped to their verification job, and the publish job removes inherited npm
+configuration before invoking the unchanged promotion verifier.
 
 If npm publication is interrupted or returns an uncertain result, inspect the
 public registry before retrying. npm versions are immutable. Never overwrite a

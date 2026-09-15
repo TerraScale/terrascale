@@ -2,29 +2,93 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "vitest";
 
-test("develop and main pushes run trunk verification", async () => {
+test("develop and main pushes run native trunk verification", async () => {
   const workflow = await readFile(
     new URL("../.forgejo/workflows/ci.yml", import.meta.url),
     "utf8",
   );
 
-  assert.match(workflow, /  push:\r?\n    branches: \[develop, main\]/u);
-  assert.doesNotMatch(workflow, /pull_request/u);
-  assert.match(workflow, /repository: TerraScale\/ts-deploy/u);
-  assert.doesNotMatch(workflow, /(?:TerraScale-Old\/TerraScale\.Deploy|bf9703ffca63|ce0183692c02|EXPECTED_DEPLOY_CLI_SHA|ts-deploy\/cmd\/terrascale-deploy@v)/u);
-  assert.match(workflow, /X-10 fail-closed: DEP-1 is reopened and no ts-deploy commit is authorized for consumers\./u);
-  assert.match(workflow, /TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN: \$\{\{ secrets\.TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN \}\}/u);
-  assert.match(workflow, /Check out the exact reviewed Deploy source[\s\S]*token: \$\{\{ secrets\.TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN \}\}[\s\S]*persist-credentials: false/u);
-  assert.match(workflow, /Require the accepted Deploy commit and tree pin[\s\S]*exit 1/u);
-  assert.doesNotMatch(workflow, /TERRASCALE_SOURCE_READ_TOKEN/u);
-  assert.doesNotMatch(workflow, /(?:github|forgejo|gitea)\.token/u);
-  assert.match(workflow, /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
-  assert.doesNotMatch(workflow, /git\.terrascale\.tech\/terrascale\/terrascale-builder/u);
-  assert.match(workflow, /verify-static:[\s\S]*--profile static/u);
-  assert.match(workflow, /verify-node-22:[\s\S]*--profile tests/u);
-  assert.match(workflow, /verify-node-24:[\s\S]*--profile tests/u);
-  assert.match(workflow, /verify-browser:[\s\S]*--profile browser/u);
-  assert.match(workflow, /candidate-build:[\s\S]*forgejo\.ref == 'refs\/heads\/main'/u);
+  assert.match(workflow, /^  push:\r?\n    branches: \[develop, main\]$/mu);
+  assert.match(workflow, /^permissions:\r?\n  contents: read$/mu);
+  assert.doesNotMatch(
+    workflow,
+    /pull_request|workflow_dispatch|schedule|workflow_call/u,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /(?:ts-deploy|TERRASCALE_DEPLOY|NPM_TOKEN|TERRASCALE_E2E_|REGISTRY_TOKEN|secrets\.)/u,
+  );
+
+  const jobs = ["static", "node", "browser"];
+  for (const job of jobs) {
+    const definition = jobDefinition(workflow, job);
+    assert.match(definition, /runs-on: terrascale-builder/u);
+    assert.match(definition, /timeout-minutes: (?:45|60)/u);
+    assert.match(
+      definition,
+      /image: mcr\.microsoft\.com\/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u,
+    );
+    assert.match(definition, /actions\/checkout@v6\.1\.0/u);
+    assert.match(definition, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/u);
+    assert.match(definition, /ref: \$\{\{ forgejo\.sha \}\}/u);
+    assert.match(definition, /token: ""/u);
+    assert.match(definition, /persist-credentials: false/u);
+  }
+
+  const staticJob = jobDefinition(workflow, "static");
+  for (const command of [
+    "npm run typecheck",
+    "npm run build",
+    "npm run check:public-contract-fixture",
+    "npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json",
+    "npm run check:openapi-drift -- Dashboard/docs/product/openapi/server.openapi.json sdk-route-manifest.json --exclude-contract=database",
+    "npm run check:route-manifest",
+    "npm run check:forbidden-surface",
+  ]) {
+    assert.match(staticJob, new RegExp(escapeRegExp(command), "u"));
+  }
+  assert.match(
+    staticJob,
+    /repository: TerraScale\/ts-dashboard[\s\S]*path: Dashboard/u,
+  );
+  assert.match(
+    staticJob,
+    /TERRASCALE_DATABASE_OPENAPI_SPEC: \$\{\{ vars\.TERRASCALE_DATABASE_OPENAPI_SPEC \}\}/u,
+  );
+  assert.match(
+    staticJob,
+    /SKIPPED: Database API OpenAPI source is not configured/u,
+  );
+  assert.match(staticJob, /--strict --require-spec-coverage/u);
+
+  const nodeJob = jobDefinition(workflow, "node");
+  assert.match(
+    nodeJob,
+    /strategy:\r?\n      fail-fast: false\r?\n      matrix:/u,
+  );
+  assert.match(nodeJob, /node: \["22\.23\.2", "24\.20\.0"\]/u);
+  assert.match(nodeJob, /node-version: \$\{\{ matrix\.node \}\}/u);
+  assert.match(
+    nodeJob,
+    /test "\$\(node --version\)" = "v\$\{\{ matrix\.node \}\}"/u,
+  );
+  assert.match(nodeJob, /architecture: process\.arch/u);
+  assert.match(nodeJob, /uname -m/u);
+  assert.match(nodeJob, /npm run build/u);
+  assert.match(nodeJob, /npm test/u);
+
+  const browserJob = jobDefinition(workflow, "browser");
+  assert.match(browserJob, /node-version-file: \.node-version/u);
+  assert.match(browserJob, /test "\$\(node --version\)" = v24\.20\.0/u);
+  assert.match(browserJob, /architecture: process\.arch/u);
+  assert.match(browserJob, /uname -m/u);
+  assert.match(browserJob, /npm run build/u);
+  assert.match(browserJob, /npm run test:browser/u);
+
+  assert.doesNotMatch(
+    workflow,
+    /(?:candidate|admit|publish|promote-npm-candidate)/iu,
+  );
 });
 
 function jobDefinition(workflow: string, job: string): string {
@@ -33,4 +97,8 @@ function jobDefinition(workflow: string, job: string): string {
   const remaining = workflow.slice(start);
   const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]+:\n/u);
   return next === -1 ? remaining : remaining.slice(0, next + 1);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
