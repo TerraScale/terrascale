@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { page } from '$app/stores'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import LanguageSelector from '@/components/LanguageSelector.svelte'
@@ -13,10 +14,12 @@
   $: columns = footerColumns.map((column) => ({
     column,
     title: $dict.footer.columns[column.key].title,
-    links: column.links.map((link) => ({
-      link,
-      name: ($dict.footer.columns[column.key].links as Record<string, string>)[link.key] ?? link.key,
-    })),
+    links: column.links
+      .filter((link) => !(link.key === 'acceptableUse' && $page.url.pathname === '/'))
+      .map((link) => ({
+        link,
+        name: ($dict.footer.columns[column.key].links as Record<string, string>)[link.key] ?? link.key,
+      })),
   }))
   $: socials = socialLinks.map((social) => ({
     social,
