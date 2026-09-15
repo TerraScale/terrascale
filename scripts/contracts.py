@@ -363,7 +363,9 @@ def load_producer(source: str, url: str, archive_sha256: str, temporary: Path) -
     if parsed.scheme not in ("http", "https"):
         fail("CONTRACT_URL must use http or https")
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        # Cloudflare rejects the default "Python-urllib" user-agent with 403.
+        request = urllib.request.Request(url, headers={"User-Agent": "terrascale-ci/1"})
+        with urllib.request.urlopen(request, timeout=30) as response:
             payload = response.read(MAX_ARCHIVE_BYTES + 1)
     except Exception as error:  # noqa: BLE001
         fail(f"could not download CONTRACT_URL: {error}")

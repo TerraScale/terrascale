@@ -21,6 +21,16 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # The contract bundle is pinned by CONTRACT_VERSION + CONTRACT_ARCHIVE_SHA256
+      # and downloaded from the organization CONTRACT_URL, exactly as the retired
+      # central ts-deploy workflow did via the old Makefile contracts target.
+      - name: Materialize the pinned contract bundle
+        env:
+          CONTRACT_URL: ${{ vars.CONTRACT_URL }}
+        run: >-
+          CONTRACT_ARCHIVE_SHA256="$(tr -d '[:space:]' < CONTRACT_ARCHIVE_SHA256)"
+          python3 scripts/contracts.py --version "$(tr -d '[:space:]' < CONTRACT_VERSION)"
+
       - name: Build the Release solution
         run: nice -n 10 dotnet build TerraScale.DotNet.slnx --configuration Release --nologo
 
