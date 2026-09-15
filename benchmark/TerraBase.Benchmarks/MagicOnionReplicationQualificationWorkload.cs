@@ -167,9 +167,17 @@ public static class MagicOnionReplicationQualificationWorkload
             $"https://127.0.0.1:{options.Port}",
             builder =>
             {
-                builder.Configuration["TERRABASE_DATA_PATH"] = options.StoragePath;
                 builder.Configuration["TERRABASE_ALLOW_SCHEMALESS"] = "true";
                 builder.Configuration["TERRABASE_REGION"] = options.NodeId == SourceNode ? "GRU" : "SFO";
+                builder.Configuration["TERRABASE_DATABASE_PATH"] = options.StoragePath;
+                builder.Configuration["TERRABASE_DATABASE_ROUTE"] = Database.ToString();
+                builder.Configuration["TERRABASE_DATABASE_TENANT"] = Tenant.ToString();
+                builder.Configuration["TERRABASE_DATABASE_ULID"] = Database.ToString();
+                builder.Configuration["TERRABASE_DATABASE_BACKEND"] = "storage-engine";
+                builder.Configuration["TERRABASE_DATABASE_MODE"] = "explicit";
+                builder.Configuration["TERRABASE_DATABASE_HOME_REGION"] = "GRU";
+                builder.Configuration["TERRABASE_DATABASE_SELECTED_REGIONS"] = "GRU,SFO";
+                builder.Configuration["TERRABASE_INTERNAL_DATABASE_ID"] = Database.ToString();
             },
             peerOptions);
 

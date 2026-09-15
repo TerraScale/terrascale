@@ -68,11 +68,29 @@ internal static class CompressionWorkload
         try
         {
             var environment = CompressionEnvironment.Create();
-            var receipt = await RunBenchmarkAsync(
-                options,
-                outputDirectory,
-                environment,
-                cancellation.Token).ConfigureAwait(false);
+            CompressionReceipt? receipt = null;
+            var realCallersComplete = true;
+            if (options.Caller is CompressionCaller.Primitive or CompressionCaller.All)
+            {
+                receipt = await RunBenchmarkAsync(
+                    options,
+                    outputDirectory,
+                    environment,
+                    cancellation.Token).ConfigureAwait(false);
+            }
+
+            if (options.Caller is CompressionCaller.All or CompressionCaller.DiskSegment or CompressionCaller.LiveBackup)
+            {
+                realCallersComplete = await CompressionCallerWorkload.RunAsync(
+                    options.ToCallerOptions(),
+                    outputDirectory,
+                    cancellation.Token).ConfigureAwait(false);
+            }
+            if (receipt is null)
+            {
+                return realCallersComplete ? 0 : 1;
+            }
+
             var receiptPath = Path.Combine(outputDirectory, "compression-receipt.json");
             await File.WriteAllTextAsync(
                 receiptPath,
@@ -86,7 +104,7 @@ internal static class CompressionWorkload
                 CancellationToken.None).ConfigureAwait(false);
             Console.WriteLine($"Compression receipt: {receiptPath}");
             Console.WriteLine($"Compression summary: {markdownPath}");
-            return receipt.Status == "complete" ? 0 : 1;
+            return receipt.Status == "complete" && realCallersComplete ? 0 : 1;
         }
         finally
         {
@@ -116,7 +134,7 @@ internal static class CompressionWorkload
                 var payload = CreatePayload(profile, options.Seed);
                 Console.WriteLine($"Running compression {profile.Name} ({profile.SizeBytes:N0} bytes)...");
 
-                foreach (var method in new[] { CompressionMethod.LZ4, CompressionMethod.None })
+                foreach (var method in options.Methods)
                 {
                     var result = await RunCaseAsync(
                         options,
@@ -136,7 +154,7 @@ internal static class CompressionWorkload
             cases.Add(new CompressionCaseResult
             {
                 Profile = "benchmark",
-                Method = "LZ4 vs None",
+                Method = string.Join(" vs ", options.Methods),
                 Status = "failed",
                 Error = "Cancelled by user.",
             });
@@ -146,7 +164,7 @@ internal static class CompressionWorkload
             cases.Add(new CompressionCaseResult
             {
                 Profile = "benchmark",
-                Method = "LZ4 vs None",
+                Method = string.Join(" vs ", options.Methods),
                 Status = "failed",
                 Error = exception.ToString(),
             });
@@ -181,7 +199,8 @@ internal static class CompressionWorkload
             Profile = profile.Name,
             PayloadBytes = payload.Length,
             Method = method.ToString(),
-            CompressionLevel = options.CompressionLevel,
+            CompressionLevel = CompressionLevelFor(method, options),
+            SourceMode = SourceModeFor(method),
         };
 
         try
@@ -317,7 +336,7 @@ internal static class CompressionWorkload
         var cpuBefore = process.TotalProcessorTime;
         var allocationsBefore = GC.GetTotalAllocatedBytes(false);
         var started = Stopwatch.GetTimestamp();
-        var output = Execute(operation, method, options.CompressionLevel, payload, compressed);
+        var output = Execute(operation, method, CompressionLevelFor(method, options), payload, compressed);
         Volatile.Write(ref blackHole, output.Length);
         var elapsed = Stopwatch.GetElapsedTime(started);
         process.Refresh();
@@ -340,6 +359,8 @@ internal static class CompressionWorkload
             ProcessCpuMilliseconds = cpu.TotalMilliseconds,
             ProcessCpuPercent = CpuPercent(cpu, elapsed),
             OutputBytes = output.Length,
+            InputBytes = operation == CompressionOperation.Compress ? payload.Length : compressed.Length,
+            StoredBytes = output.Length,
         };
         return new ColdMeasurement(sample, output);
     }
@@ -388,6 +409,8 @@ internal static class CompressionWorkload
             ProcessCpuMilliseconds = cpu.TotalMilliseconds,
             ProcessCpuPercent = CpuPercent(cpu, elapsed),
             OutputBytes = Volatile.Read(ref blackHole),
+            InputBytes = operation == CompressionOperation.Compress ? payload.Length : compressed.Length,
+            StoredBytes = Volatile.Read(ref blackHole),
         };
     }
 
@@ -413,7 +436,7 @@ internal static class CompressionWorkload
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var started = Stopwatch.GetTimestamp();
-                    var output = Execute(operation, method, options.CompressionLevel, payload, compressed);
+                    var output = Execute(operation, method, CompressionLevelFor(method, options), payload, compressed);
                     Volatile.Write(ref blackHole, output.Length);
                     if (latencies is not null)
                     {
@@ -439,6 +462,13 @@ internal static class CompressionWorkload
             _ => throw new ArgumentOutOfRangeException(nameof(operation)),
         };
     }
+
+    private static int CompressionLevelFor(CompressionMethod method, CompressionOptions options) => method switch
+    {
+        CompressionMethod.None => 0,
+        CompressionMethod.Zstd => 0,
+        _ => options.CompressionLevel,
+    };
 
     private static async Task WriteRawAsync(
         StreamWriter raw,
@@ -549,6 +579,13 @@ internal static class CompressionWorkload
         public int Concurrency { get; private set; } = 1;
         public int Seed { get; private set; } = 1337;
         public int CompressionLevel { get; private set; } = 3;
+        public CompressionCaller Caller { get; private set; } = CompressionCaller.Primitive;
+        public string? Profile { get; private set; }
+        public CompressionMethod? Method { get; private set; }
+        public CompressionCallerPhase Phase { get; private set; } = CompressionCallerPhase.All;
+        public bool ConcurrencySpecified { get; private set; }
+        public IReadOnlyList<CompressionMethod> Methods { get; } =
+            [CompressionMethod.None, CompressionMethod.LZ4, CompressionMethod.Zstd];
         public string OutputDirectory { get; private set; } = Path.Combine(
             "bench",
             "receipts",
@@ -595,6 +632,26 @@ internal static class CompressionWorkload
                         break;
                     case "concurrency":
                         options.Concurrency = ParseInteger(value, name, 1);
+                        options.ConcurrencySpecified = true;
+                        break;
+                    case "caller":
+                        options.Caller = value.ToLowerInvariant() switch
+                        {
+                            "primitive" => CompressionCaller.Primitive,
+                            "disk-segment" or "disk" => CompressionCaller.DiskSegment,
+                            "live-backup" or "backup" => CompressionCaller.LiveBackup,
+                            "all" => CompressionCaller.All,
+                            _ => throw new ArgumentException("--caller must be primitive, disk-segment, live-backup, or all."),
+                        };
+                        break;
+                    case "profile":
+                        options.Profile = ParseProfile(value);
+                        break;
+                    case "method":
+                        options.Method = ParseMethod(value);
+                        break;
+                    case "phase":
+                        options.Phase = ParsePhase(value);
                         break;
                     case "seed":
                         if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seed))
@@ -625,13 +682,21 @@ internal static class CompressionWorkload
                 }
             }
 
+            if ((options.Profile is not null || options.Method is not null ||
+                 options.Phase != CompressionCallerPhase.All) &&
+                options.Caller != CompressionCaller.LiveBackup)
+            {
+                throw new ArgumentException(
+                    "--profile, --method, and --phase require --caller live-backup.");
+            }
+
             return options;
         }
 
         public static void PrintHelp()
         {
             Console.WriteLine("TerraBase DataCompression benchmark runner");
-            Console.WriteLine("Compares NativeCompressions LZ4 with CompressionMethod.None at the primitive boundary.");
+            Console.WriteLine("Compares None, NativeCompressions LZ4, and native Zstandard at primitive and real caller boundaries.");
             Console.WriteLine("Options:");
             Console.WriteLine("  --workload compression           Run this harness");
             Console.WriteLine("  --storage memory|storage-engine  Retained in metadata; primitive runs in memory");
@@ -639,9 +704,76 @@ internal static class CompressionWorkload
             Console.WriteLine("  --warmup N                       Warmup operations per case (default: 500)");
             Console.WriteLine("  --operations N                   Operations per sample (default: 1000)");
             Console.WriteLine("  --concurrency N                  Concurrent workers (default: 1)");
+            Console.WriteLine("  --caller primitive|disk-segment|live-backup|all (default: primitive)");
+            Console.WriteLine("  --profile NAME                   Live-backup profile selector");
+            Console.WriteLine("  --method none|lz4|zstd           Live-backup compression method selector");
+            Console.WriteLine("  --phase all|cold-write|cold-read|warm-write|warm-read (default: all)");
             Console.WriteLine("  --seed N                         Deterministic document/random payload seed (default: 1337)");
             Console.WriteLine("  --level N                        LZ4 compression level 0-12 (default: 3)");
             Console.WriteLine("  --output DIR                     Receipt directory");
+        }
+
+        public CompressionCallerOptions ToCallerOptions() => new(
+            Samples,
+            WarmupOperations,
+            OperationsPerSample,
+            Concurrency,
+            ConcurrencySpecified,
+            Seed,
+            CompressionLevel,
+            Caller,
+            Profile,
+            Method,
+            Phase);
+
+        private static string ParseProfile(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new ArgumentException("--profile must not be empty.");
+            }
+
+            var profile = CompressionCallerPayloadProfile.All.FirstOrDefault(
+                candidate => candidate.Name.Equals(value.Trim(), StringComparison.OrdinalIgnoreCase));
+            return profile?.Name ?? throw new ArgumentException(
+                $"Unknown --profile '{value}'. Expected one of: " +
+                string.Join(", ", CompressionCallerPayloadProfile.All.Select(static item => item.Name)) + ".");
+        }
+
+        private static CompressionMethod ParseMethod(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new ArgumentException("--method must not be empty.");
+            }
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "none" => CompressionMethod.None,
+                "lz4" => CompressionMethod.LZ4,
+                "zstd" or "zstandard" => CompressionMethod.Zstd,
+                _ => throw new ArgumentException(
+                    $"Unknown --method '{value}'. Expected none, lz4, or zstd."),
+            };
+        }
+
+        private static CompressionCallerPhase ParsePhase(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new ArgumentException("--phase must not be empty.");
+            }
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "all" => CompressionCallerPhase.All,
+                "cold-write" => CompressionCallerPhase.ColdWrite,
+                "cold-read" => CompressionCallerPhase.ColdRead,
+                "warm-write" => CompressionCallerPhase.WarmWrite,
+                "warm-read" => CompressionCallerPhase.WarmRead,
+                _ => throw new ArgumentException(
+                    $"Unknown --phase '{value}'. Expected all, cold-write, cold-read, warm-write, or warm-read."),
+            };
         }
 
         private static (string Name, string Value) ReadOption(string[] args, ref int index, string argument)
@@ -686,9 +818,12 @@ internal static class CompressionWorkload
     {
         public static IReadOnlyList<PayloadProfile> All { get; } =
         [
-            new("small-document", SmallDocumentBytes, PayloadKind.Document),
-            new("large-document", LargeDocumentBytes, PayloadKind.Document),
-            new("incompressible-block", IncompressibleBlockBytes, PayloadKind.IncompressibleBlock),
+            new("4KiB-compressible", SmallDocumentBytes, PayloadKind.Document),
+            new("4KiB-incompressible", SmallDocumentBytes, PayloadKind.IncompressibleBlock),
+            new("256KiB-compressible", LargeDocumentBytes, PayloadKind.Document),
+            new("256KiB-incompressible", LargeDocumentBytes, PayloadKind.IncompressibleBlock),
+            new("4MiB-compressible", IncompressibleBlockBytes, PayloadKind.Document),
+            new("4MiB-incompressible", IncompressibleBlockBytes, PayloadKind.IncompressibleBlock),
         ];
     }
 
@@ -703,6 +838,14 @@ internal static class CompressionWorkload
         Compress,
         Decompress,
     }
+
+    private static string SourceModeFor(CompressionMethod method) => method switch
+    {
+        CompressionMethod.None => "DataCompression primitive passthrough",
+        CompressionMethod.LZ4 => "LZ4 frame; 4 MiB block; declared content size; content and block checksums",
+        CompressionMethod.Zstd => "Zstandard native frame; level 0; default NativeCompressions options",
+        _ => method.ToString(),
+    };
 
     private sealed class CompressionReceipt
     {
@@ -723,6 +866,7 @@ internal static class CompressionWorkload
         public int PayloadBytes { get; init; }
         public string Method { get; init; } = string.Empty;
         public int CompressionLevel { get; init; }
+        public string SourceMode { get; init; } = string.Empty;
         public string Status { get; set; } = "failed";
         public string? Error { get; set; }
         public int? CompressedBytes { get; set; }
@@ -756,6 +900,8 @@ internal static class CompressionWorkload
         public double ProcessCpuMilliseconds { get; init; }
         public double ProcessCpuPercent { get; init; }
         public long OutputBytes { get; init; }
+        public long InputBytes { get; init; }
+        public long StoredBytes { get; init; }
     }
 
     private sealed class CompressionRawSample
@@ -955,8 +1101,8 @@ internal static class CompressionWorkload
             builder.AppendLine();
             builder.AppendLine("## Case summary");
             builder.AppendLine();
-            builder.AppendLine("| Profile | Payload bytes | Method | Operation | Compressed bytes | Cold p50/p95/p99 µs | Warm median p50/p95/p99 µs | Warm alloc/op | Warm CPU ms/op | Warm ops/s |");
-            builder.AppendLine("| --- | ---: | --- | --- | ---: | --- | --- | ---: | ---: | ---: |");
+            builder.AppendLine("| Profile | Payload bytes | Method | Operation | Compressed bytes | Cold p50/p95/p99 µs | Warm median p50/p95/p99 µs | Warm alloc/op | Warm CPU ms/op | Warm ops/s | Source mode |");
+            builder.AppendLine("| --- | ---: | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- |");
             foreach (var item in receipt.Cases)
             {
                 AppendSummaryRows(builder, item);
@@ -965,8 +1111,8 @@ internal static class CompressionWorkload
             builder.AppendLine();
             builder.AppendLine("## Warm samples");
             builder.AppendLine();
-            builder.AppendLine("| Profile | Method | Operation | Sample | Operations | p50 µs | p95 µs | p99 µs | Allocated bytes | CPU ms | CPU % | Output bytes |");
-            builder.AppendLine("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+            builder.AppendLine("| Profile | Method | Operation | Sample | Operations | p50 µs | p95 µs | p99 µs | Allocated bytes | CPU ms | CPU % | Input bytes | Stored bytes |");
+            builder.AppendLine("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
             foreach (var item in receipt.Cases)
             {
                 AppendSampleRows(builder, item);
@@ -977,6 +1123,8 @@ internal static class CompressionWorkload
             builder.AppendLine();
             builder.AppendLine("Cold is the first operation for each profile/method/operation case. Warm rows are measured after the configured warmup and are retained individually; summary values use medians of per-sample values.");
             builder.AppendLine(FormattableString.Invariant($"Durability setting: `{receipt.Configuration.Durability}`; requested storage setting: `{receipt.Configuration.Storage}`."));
+            builder.AppendLine();
+            builder.AppendLine("Source mode/settings: None is the DataCompression passthrough; LZ4 uses the source adapter's 4 MiB frame block, declared content size, and content and block checksums; Zstandard uses native NativeCompressions options at level 0. Suggested profiler invocation for the verified slow 4 MiB incompressible LZ4 case: `dotnet-trace collect --process-id <pid> --providers Microsoft-DotNETCore-SampleProfiler` while running a focused `--caller primitive --operations 20 --samples 5 --warmup 5 --concurrency 1` command. This harness does not claim a profiler run.");
             return builder.ToString();
         }
 
@@ -1011,7 +1159,8 @@ internal static class CompressionWorkload
                 .Append(FormatTriplet(MedianSample(warm))).Append(" | ")
                 .Append(Format(Median(warm.Select(static sample => sample.AllocatedBytesPerOperation)))).Append(" | ")
                 .Append(Format(Median(warm.Select(static sample => sample.ProcessCpuMilliseconds / Math.Max(sample.Operations, 1))))).Append(" | ")
-                .Append(Format(Median(warm.Select(static sample => sample.ThroughputOpsPerSecond)))).AppendLine(" |");
+                .Append(Format(Median(warm.Select(static sample => sample.ThroughputOpsPerSecond)))).Append(" | ")
+                .Append(item.SourceMode).AppendLine(" |");
         }
 
         private static void AppendSampleRows(StringBuilder builder, CompressionCaseResult item)
@@ -1031,7 +1180,8 @@ internal static class CompressionWorkload
                         .Append(Format(sample.P95Microseconds)).Append(" | ").Append(Format(sample.P99Microseconds)).Append(" | ")
                         .Append(sample.AllocatedBytes.ToString("N0", CultureInfo.InvariantCulture)).Append(" | ")
                         .Append(Format(sample.ProcessCpuMilliseconds)).Append(" | ").Append(Format(sample.ProcessCpuPercent)).Append(" | ")
-                        .Append(sample.OutputBytes.ToString("N0", CultureInfo.InvariantCulture)).AppendLine(" |");
+                        .Append(sample.InputBytes.ToString("N0", CultureInfo.InvariantCulture)).Append(" | ")
+                        .Append(sample.StoredBytes.ToString("N0", CultureInfo.InvariantCulture)).AppendLine(" |");
                 }
             }
         }

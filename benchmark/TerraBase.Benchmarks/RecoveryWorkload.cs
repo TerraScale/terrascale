@@ -251,7 +251,14 @@ public static class RecoveryWorkload
         using var signer = new HmacSha256BackupManifestSignatureProvider(
             "terrabase-recovery-benchmark-trust-root-2026"u8,
             "recovery-benchmark-root-v1");
-        var manager = new BackupManager(store, new NoBackupEncryption(), signer);
+        var encryption = new NoBackupEncryption();
+        var encryptionResolver = new BackupEncryptionKeyResolver([
+            new BackupEncryptionKeyResolverEntry(source.SourceId, null, encryption),
+        ]);
+        var signatureResolver = new BackupManifestSignatureKeyResolver([
+            new BackupManifestSignatureKeyResolverEntry(source.SourceId, null, signer),
+        ]);
+        var manager = new BackupManager(store, encryption, signer, encryptionResolver, signatureResolver);
         var full = await manager.CreateFullBackupAsync(source, cancellationToken: cancellationToken).ConfigureAwait(false);
         var baseTime = full.Boundary.Timestamp;
         for (var index = 0; index < options.LogEntries; index++)

@@ -736,7 +736,7 @@ public static class MagicOnionReplicationWorkload
             {
                 source = TerraBaseHost.Create(
                     "https://127.0.0.1:0",
-                    builder => ConfigureBuilder(builder, sourcePath),
+                    builder => ConfigureBuilder(builder, sourcePath, database, tenant),
                     CreatePeerOptions(
                         sourceServer,
                         ca,
@@ -747,7 +747,7 @@ public static class MagicOnionReplicationWorkload
                         tenant));
                 destination = TerraBaseHost.Create(
                     "https://127.0.0.1:0",
-                    builder => ConfigureBuilder(builder, destinationPath),
+                    builder => ConfigureBuilder(builder, destinationPath, database, tenant),
                     CreatePeerOptions(
                         destinationServer,
                         ca,
@@ -846,9 +846,22 @@ public static class MagicOnionReplicationWorkload
                 MaximumBatchBytes = 8 * 1024 * 1024,
             };
 
-        private static void ConfigureBuilder(WebApplicationBuilder builder, string path)
+        private static void ConfigureBuilder(
+            WebApplicationBuilder builder,
+            string path,
+            EntityId database,
+            EntityId tenant)
         {
-            builder.Configuration["TERRABASE_DATA_PATH"] = path;
+            builder.Configuration["TERRABASE_REGION"] = "GRU";
+            builder.Configuration["TERRABASE_DATABASE_PATH"] = path;
+            builder.Configuration["TERRABASE_DATABASE_ROUTE"] = database.ToString();
+            builder.Configuration["TERRABASE_DATABASE_TENANT"] = tenant.ToString();
+            builder.Configuration["TERRABASE_DATABASE_ULID"] = database.ToString();
+            builder.Configuration["TERRABASE_DATABASE_BACKEND"] = "storage-engine";
+            builder.Configuration["TERRABASE_DATABASE_MODE"] = "explicit";
+            builder.Configuration["TERRABASE_DATABASE_HOME_REGION"] = "GRU";
+            builder.Configuration["TERRABASE_DATABASE_SELECTED_REGIONS"] = "GRU";
+            builder.Configuration["TERRABASE_INTERNAL_DATABASE_ID"] = database.ToString();
             builder.Configuration["TERRABASE_ALLOW_SCHEMALESS"] = "true";
         }
 

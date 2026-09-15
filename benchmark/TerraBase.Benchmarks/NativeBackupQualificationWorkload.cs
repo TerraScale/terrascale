@@ -110,7 +110,14 @@ public static class NativeBackupQualificationWorkload
         using var signer = new HmacSha256BackupManifestSignatureProvider(
             "terrabase-native-backup-qualification-trust-root-2026"u8,
             "native-backup-qualification-root-v1");
-        var manager = new BackupManager(store, new NoBackupEncryption(), signer);
+        var encryption = new NoBackupEncryption();
+        var encryptionResolver = new BackupEncryptionKeyResolver([
+            new BackupEncryptionKeyResolverEntry("native-qualification", null, encryption),
+        ]);
+        var signatureResolver = new BackupManifestSignatureKeyResolver([
+            new BackupManifestSignatureKeyResolverEntry("native-qualification", null, signer),
+        ]);
+        var manager = new BackupManager(store, encryption, signer, encryptionResolver, signatureResolver);
 
         BackupManifest full;
         BackupManifest incremental;

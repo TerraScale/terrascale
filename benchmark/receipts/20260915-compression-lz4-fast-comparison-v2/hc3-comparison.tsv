@@ -1,0 +1,17 @@
+comparison=HC3 exact row
+baseline_path=/home/mariogk/Projects/TerraScale/.codex/evidence/compression-callers-timing-v2-smoke-20260915-sdk10/warm-median-summary.tsv
+baseline_filter=live-backup-record-batch/4MiB-incompressible/LZ4/warm-write/n=5
+baseline_level=LZ4 level 3 (from baseline receipt)
+candidate_level=LZ4 level 0
+field	HC3_baseline	candidate_median	candidate_minus_baseline	candidate_div_baseline
+elapsedMilliseconds	30377.4794	1979.6591	-28397.8203	0.06516864266
+throughputOpsPerSecond	0.6584	10.10274951	9.444349509	15.34439476
+p50Microseconds	1505954.75	95727.205	-1410227.545	0.06356579107
+p95Microseconds	1569561.72	135315.19	-1434246.53	0.08621208601
+p99Microseconds	1622091.2	153017.132	-1469074.068	0.09433324834
+allocatedBytesPerOperation	135272355.6	135273914	1558.4	1.00001152
+allocatedBytesPerRecord	16909044.45	16909239.25	194.8	1.00001152
+processCpuMillisecondsPerOperation	1485.0951	106.329	-1378.7661	0.07159743507
+processCpuPercent	48.88603727	54.44511443	5.559077156	1.113715029
+workerSchedulingMilliseconds	0.6342	1.2962	0.662	2.043834752
+workerJoinMilliseconds	0.0209	1.8469	1.826	88.36842105
