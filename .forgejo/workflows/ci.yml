@@ -25,12 +25,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up the repository Go toolchain
-        uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
+      - name: Report the image Go toolchain
+        run: nice -n 10 go version
 
       - name: Verify the checked out source revision
         run: |
