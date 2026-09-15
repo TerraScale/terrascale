@@ -10,8 +10,49 @@ on:
 jobs:
   ci:
     name: Run ts-rust checks
-    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
-    with:
-      repo: ts-rust
-    secrets: inherit
     runs-on: terrascale-builder
+    timeout-minutes: 30
+    env:
+      FORGEJO_SHA: ${{ forgejo.sha }}
+    steps:
+      - name: Check out the source revision
+        uses: https://data.forgejo.org/actions/checkout@v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify the checked out source revision
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "${FORGEJO_SHA:?event SHA is required}"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Verify the pinned contract bundle
+        run: |
+          set -eu
+          nice -n 10 python3 scripts/contracts.py --version v1 --source contracts/v1
+          git diff --exit-code -- contracts/v1 src/generated_contract.rs
+
+      - name: Verify the pinned Rust toolchain
+        run: |
+          set -eu
+          case "$(rustc --version)" in
+            "rustc 1.97.1 "*) ;;
+            *) echo "unexpected Rust toolchain: $(rustc --version)" >&2; exit 1 ;;
+          esac
+          host="$(rustc -vV | awk '/^host:/ { print $2 }')"
+          case "${host}" in
+            x86_64-*|aarch64-*) printf 'rust=%s host=%s\n' "$(rustc --version)" "${host}" ;;
+            *) echo "unsupported Rust host: ${host}" >&2; exit 1 ;;
+          esac
+
+      - name: Check Rust formatting
+        run: nice -n 10 cargo fmt --all --check
+
+      - name: Build and lint all workspace targets and features
+        run: nice -n 10 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run the locked workspace test suite
+        run: nice -n 10 cargo test --locked --workspace --all-features
