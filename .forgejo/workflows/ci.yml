@@ -7,15 +7,31 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ts-landing-${{ forgejo.workflow }}-${{ forgejo.repository }}-${{ forgejo.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
-    name: Run ts-landing checks
-    uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
-    with:
-      repo: ts-landing
-      # The callee sees workflow_call instead of this trigger; pass it through
-      # so the preview lane can gate on it.
-      event_name: ${{ forgejo.event_name }}
-      git_ref: ${{ forgejo.ref }}
-    secrets: inherit
+    name: verify/ts-landing
     runs-on: terrascale-builder
+    timeout-minutes: 30
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up the pinned Node.js version
+        uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          check-latest: false
+      - name: Install the locked dependencies
+        run: nice -n 10 npm ci
+      - name: Run the build, validators, and type checks
+        run: nice -n 10 npm run check
+      - name: Check formatting and lint rules
+        run: nice -n 10 npm run lint
