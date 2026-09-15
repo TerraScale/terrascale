@@ -13,5 +13,9 @@ jobs:
     uses: TerraScale/ts-deploy/.forgejo/workflows/deploy.yml@main
     with:
       repo: ts-landing
+      # The callee sees workflow_call instead of this trigger; pass it through
+      # so the preview lane can gate on it.
+      event_name: ${{ forgejo.event_name }}
+      git_ref: ${{ forgejo.ref }}
     secrets: inherit
     runs-on: terrascale-builder
