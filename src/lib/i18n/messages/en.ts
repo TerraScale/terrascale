@@ -156,9 +156,14 @@ export const en = {
     eyebrow: 'Pricing',
     titleLead: 'Simple pricing',
     titleAccent: 'That scales with YOU',
-    subtitle: 'Three monthly plans for Public Alpha. Enterprise remains unavailable.',
+    subtitle: 'Three plans for Public Alpha. Enterprise remains unavailable.',
     badge: 'Most Popular',
+    toggleLabel: 'Billing cycle',
+    monthly: 'Monthly',
+    annual: 'Annual',
+    save: 'Two months free',
     suffixMonthly: '/month',
+    suffixAnnual: '/year',
     plans: {
       starter: {
         description: 'Monthly plan with one eligible 30-day trial',
