@@ -1,44 +1,7 @@
-using System.Collections.Immutable;
-using System.Globalization;
 using TerraScale.Dashboard2;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.ApiKeys;
-
-/// <summary>One row of the unified credentials table (API keys + M2M clients).</summary>
-public sealed record CredentialView(
-    string Kind,              // key | m2m
-    string Id,
-    string Name,
-    string Prefix,
-    string LastFour,
-    string[] Scopes,
-    string DatabaseId,
-    string CreatedByEmail,
-    string? LastUsedAt,
-    string? ExpiresAt,
-    string Status);
-
-public sealed record ApiKeysPageModel(
-    int ActiveKeys,
-    int Expiring,
-    int M2mClients,
-    IReadOnlyList<(string Id, string Name)> Databases,
-    IReadOnlyList<CredentialView> Credentials,
-    bool HasAnyCredentials,
-    string Query,
-    string Kind,
-    string Status,
-    string DatabaseId,
-    string? CreateKind,
-    string? Error,
-    string? Toast,
-    string? SecretId,
-    string? SecretName,
-    string? SecretValue) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
 
 public sealed class ApiKeysPageEndpoint(DashboardStore store)
     : SlicePageEndpoint<ApiKeysSlice, ApiKeysPageModel>(store, "/api-keys")
@@ -114,17 +77,5 @@ public sealed class ApiKeysPageEndpoint(DashboardStore store)
                 databaseNames.GetValueOrDefault(c.DatabaseId, c.DatabaseId)).ToLowerInvariant();
             return search.Contains(term);
         })];
-    }
-}
-
-/// <summary>Port of formatUtcDateTime (en, UTC, medium date + short time).</summary>
-public static class ApiKeyFormatting
-{
-    public static string UtcDateTime(string? value, string fallback = "Never")
-    {
-        if (string.IsNullOrEmpty(value)) return fallback;
-        return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date)
-            ? date.UtcDateTime.ToString("MMM d, yyyy, h:mm tt", CultureInfo.InvariantCulture)
-            : value;
     }
 }

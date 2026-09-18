@@ -1,28 +1,13 @@
-namespace TerraScale.Dashboard2.Features.Databases
-{
-public sealed record DatabaseRow(
-    string Id,
-    string Name,
-    string Regions,
-    string? BackupRegion,
-    string Replication,
-    string Status,
-    string StatusTone,
-    bool Provisioning,
-    string? OperationId,
-    string CreatedAt,
-    int Version);
+using System.Collections.Immutable;
+using TerraScale.Dashboard2.Features.Databases;
 
-public sealed record LatencyRow(string Region, string Estimate);
-}
+namespace TerraScale.Dashboard2;
 
-namespace TerraScale.Dashboard2
-{
 public sealed partial class DashboardStore
 {
     /// <summary>Maps a stored database to the list/detail view the original
     /// DatabaseResource carries (provisioning-state status + replication label).</summary>
-    public Features.Databases.DatabaseRow ToRow(DashboardDatabase database)
+    public DatabaseRow ToRow(DashboardDatabase database)
     {
         var regions = new List<string> { database.PrimaryRegion };
         if (database.BackupRegion is { } backup)
@@ -36,7 +21,7 @@ public sealed partial class DashboardStore
             "Provisioning" => "provisioning",
             _ => database.Status.ToLowerInvariant(),
         };
-        return new Features.Databases.DatabaseRow(
+        return new DatabaseRow(
             Id: database.Id,
             Name: database.Name,
             Regions: string.Join(",", regions),
@@ -58,10 +43,10 @@ public sealed partial class DashboardStore
     };
 
     /// <summary>Inter-region round-trip estimates for the detail page latency table.</summary>
-    public System.Collections.Immutable.ImmutableArray<Features.Databases.LatencyRow> LatencyFor(DashboardDatabase database)
+    public ImmutableArray<LatencyRow> LatencyFor(DashboardDatabase database)
     {
         var primary = Regions.First(r => r.Code == database.PrimaryRegion);
-        var rows = new List<Features.Databases.LatencyRow> { new(primary.Code, $"{primary.LatencyMs} ms") };
+        var rows = new List<LatencyRow> { new(primary.Code, $"{primary.LatencyMs} ms") };
         if (database.BackupRegion is { } backup && Regions.FirstOrDefault(r => r.Code == backup) is { } backupRegion)
         {
             rows.Add(new(backupRegion.Code, $"{Math.Max(primary.LatencyMs, backupRegion.LatencyMs) + 18} ms"));
@@ -89,5 +74,4 @@ public sealed partial class DashboardStore
             backupsDisabled.Remove(databaseId);
         }
     }
-}
 }

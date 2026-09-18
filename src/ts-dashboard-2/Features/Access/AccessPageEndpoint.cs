@@ -4,55 +4,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Access;
 
-// --- View records (1:1 with src/features/access/access-data.ts views) ---
-
-public sealed record AccessMemberView(
-    string Id,
-    string Email,
-    string DisplayName,
-    bool IsOrganizationOwner,
-    string RoleLabel,
-    string JoinedAtText,
-    string Initials);
-
-public sealed record AccessInvitationView(
-    string InvitationId,
-    string Email,
-    string Role,
-    string Status,
-    string StatusLabel,
-    string ExpiresAtText);
-
-public sealed record AccessTeamMemberView(
-    string UserId,
-    string Email,
-    string DisplayName,
-    string Role,
-    string JoinedAtText);
-
-public sealed record AccessProjectView(
-    string Id,
-    string Name,
-    bool IsCurrent,
-    string CreatedAtText);
-
-public sealed record AccessPageModel(
-    string OrganizationLine,
-    int MemberCount,
-    int GroupCount,
-    int ProjectCount,
-    IReadOnlyList<AccessMemberView> Members,
-    IReadOnlyList<string> Roles,
-    IReadOnlyList<string> Permissions,
-    IReadOnlyList<AccessProjectView> Projects,
-    IReadOnlyList<AccessInvitationView> Invitations,
-    IReadOnlyList<AccessTeamMemberView> TeamMembers,
-    bool FiltersActive,
-    string? Error = null) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
-
 public sealed class AccessPageEndpoint(DashboardStore store) : SlicePageEndpoint<AccessSlice, AccessPageModel>(store, "/access")
 {
     protected override AccessPageModel Load()
