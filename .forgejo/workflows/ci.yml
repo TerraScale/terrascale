@@ -30,8 +30,8 @@ jobs:
           node-version-file: .node-version
           check-latest: false
       - name: Install the locked dependencies
-        run: nice -n 10 npm ci
+        run: npm ci
       - name: Run the build, validators, and type checks
-        run: nice -n 10 npm run check
+        run: npm run check
       - name: Check formatting and lint rules
-        run: nice -n 10 npm run lint
+        run: npm run lint
