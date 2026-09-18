@@ -2,12 +2,179 @@
 @{
     var shell = Model.Shell;
 }
+@functions
+{
+    private static string IndexStateTone(string state) => state switch
+    {
+        "active" or "pinned" => "ts-badge-success",
+        "building" => "ts-badge-info",
+        "forbidden" or "retired" or "abandoned" => "ts-badge-danger",
+        _ => "ts-badge-warning",
+    };
+}
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel">
+        <div class="ts-stack-xs">
+            <h2 class="ts-title-22">Indexes</h2>
+            <p class="ts-page-desc">Understand query templates by frequency and logical cost, then review evidence-backed index lifecycle state.</p>
+        </div>
+    </section>
+
+    <section class="ts-panel">
         <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Indexes</h2>
-            <p class="ts-panel-subtitle">Port pending — this surface renders once its 1:1 port lands.</p>
+            <h3 class="ts-panel-title">Query performance and indexes</h3>
+            <p class="ts-panel-subtitle">orders</p>
+        </div>
+        <div class="ts-panel-pad ts-stack-lg">
+            <section class="ts-stack-sm" aria-labelledby="index-states-title">
+                <h3 id="index-states-title" class="ts-section-h3">Index state</h3>
+                @if (Model.Indexes.Length == 0)
+                {
+                    <div class="ts-empty">
+                        <span class="ts-empty-title">No indexes</span>
+                        <span class="ts-ui">Visible, building, and retired indexes will appear here.</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="ts-table-frame">
+                        <table class="ts-table">
+                            <thead>
+                                <tr>
+                                    <th>Index</th>
+                                    <th>State</th>
+                                    <th>Logical cost</th>
+                                    <th>Build watermark</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var index in Model.Indexes)
+                                {
+                                    <tr>
+                                        <td>
+                                            <div class="ts-stack-xs">
+                                                <strong>@index.Name</strong>
+                                                <span class="ts-code-meta">@string.Join(", ", index.Fields)</span>
+                                            </div>
+                                        </td>
+                                        <td><span class="ts-badge @IndexStateTone(index.State)">@index.State</span></td>
+                                        <td class="ts-table-num">@(index.LogicalCost?.ToString() ?? "-")</td>
+                                        <td class="ts-meta">@(index.State == "building"
+                                            ? $"{index.BackfillRemaining} remaining{(index.BuildWatermark is { } watermark ? $" · {watermark}" : "")}"
+                                            : index.MeasuredAt ?? "-")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+
+            <section class="ts-stack-sm" aria-labelledby="query-templates-title">
+                <h3 id="query-templates-title" class="ts-section-h3">Query templates</h3>
+                @if (Model.Templates.Length == 0)
+                {
+                    <div class="ts-empty">
+                        <span class="ts-empty-title">No query evidence</span>
+                        <span class="ts-ui">Template frequency and logical cost arrive from the TerraBase producer.</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="ts-table-frame">
+                        <table class="ts-table">
+                            <thead>
+                                <tr>
+                                    <th>Template</th>
+                                    <th>Count</th>
+                                    <th>Logical cost</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var template in Model.Templates)
+                                {
+                                    <tr>
+                                        <td><span class="ts-code-meta">@template.Sql</span></td>
+                                        <td class="ts-table-num">@template.QueryCount.ToString("N0")</td>
+                                        <td class="ts-table-num">@template.TotalLogicalCost.ToString("N0")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+
+            <section class="ts-stack-sm" aria-labelledby="index-recommendations-title">
+                <h3 id="index-recommendations-title" class="ts-section-h3">Recommendations</h3>
+                @if (Model.Recommendations.Length == 0)
+                {
+                    <div class="ts-empty">
+                        <span class="ts-empty-title">No index recommendations</span>
+                        <span class="ts-ui">Measured query templates do not have a useful candidate yet.</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="ts-table-frame">
+                        <table class="ts-table">
+                            <thead>
+                                <tr>
+                                    <th>Candidate</th>
+                                    <th>Evidence</th>
+                                    <th>State</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var recommendation in Model.Recommendations)
+                                {
+                                    <tr>
+                                        <td><span class="ts-code-meta">@(recommendation.Fields.Length == 0 ? "-" : string.Join(", ", recommendation.Fields))</span></td>
+                                        <td>
+                                            <div class="ts-stack-xs">
+                                                <span>@recommendation.Reason</span>
+                                                <span class="ts-meta">@(recommendation.ExpectedCostReduction is { } reduction ? $"{reduction}% lower logical cost" : "-")</span>
+                                            </div>
+                                        </td>
+                                        <td><span class="ts-badge @(recommendation.State == "forbidden" ? "ts-badge-danger" : recommendation.State == "pinned" ? "ts-badge-success" : "ts-badge-neutral")">@recommendation.State</span></td>
+                                        <td>
+                                            <div class="ts-row-actions">
+                                                @if (recommendation.State == "recommended" && recommendation.Fields.Length > 0)
+                                                {
+                                                    <form method="post" action="/api/v1/dashboard/indexes/recommendations/apply">
+                                                        <input type="hidden" name="recommendationId" value="@recommendation.Id" />
+                                                        <button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Apply</button>
+                                                    </form>
+                                                }
+                                                else
+                                                {
+                                                    <button class="ts-btn ts-btn-primary ts-btn-sm" type="button" disabled="disabled">Apply</button>
+                                                }
+                                                <button class="ts-btn ts-btn-outline ts-btn-sm" type="button" disabled="disabled" title="Index lifecycle controls are unavailable until the producer contract lands.">Pin</button>
+                                                <button class="ts-btn ts-btn-destructive ts-btn-sm" type="button" disabled="disabled" title="Index lifecycle controls are unavailable until the producer contract lands.">Forbid</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+
+            @{
+                var migration = Model.Migration;
+                var total = Math.Max(0, migration.Total);
+                var percent = total > 0 ? Math.Min(100, (int)Math.Round((double)migration.Completed / total * 100)) : migration.State == "complete" ? 100 : 0;
+            }
+            <div class="ts-alert @(migration.State == "failed" ? "ts-alert-danger" : "ts-alert-info")" role="alert" data-code="index_migration_progress">
+                <span class="ts-alert-title">@Icons.Info(16) Migration · @migration.State</span>
+                <span class="ts-alert-body">@migration.Completed.ToString("N0") / @(total > 0 ? total.ToString("N0") : "?") · @percent%@(migration.Watermark is { } mWatermark ? $" · watermark {mWatermark}" : "")</span>
+            </div>
+
+            <p class="ts-meta">Every state transition is evidence-backed and journaled across regions. Pin and forbid controls remain unavailable until the producer publishes lifecycle mutations.</p>
         </div>
     </section>
 </div>
