@@ -36,4 +36,18 @@
       // Clipboard unavailable (insecure context); ignore.
     }
   });
+
+  document.addEventListener("click", (event) => {
+    const toggle = event.target.closest("[data-toggle-type]");
+    if (!toggle) return;
+    const input = toggle.parentElement?.querySelector("input");
+    if (!input) return;
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    toggle.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    const svg = toggle.querySelector("svg");
+    if (svg) {
+      svg.style.opacity = show ? "0.45" : "";
+    }
+  });
 })();
