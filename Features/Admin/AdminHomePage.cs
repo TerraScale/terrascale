@@ -3,13 +3,16 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Admin;
 
-public sealed record AdminHomePageModel : IPageModel
+/// <summary>/admin redirects to the users inventory, mirroring app/admin/page.tsx.</summary>
+public sealed class AdminHomePageEndpoint : EndpointWithoutRequest<IResult>
 {
-    public ShellModel Shell { get; init; } = null!;
-}
+    public override void Configure()
+    {
+        Get("/admin");
+        Summary("Redirects to the admin users page");
+        Tags("Pages");
+    }
 
-public sealed class AdminHomePageEndpoint(DashboardStore store)
-    : SlicePageEndpoint<AdminHomeSlice, AdminHomePageModel>(store, "/admin")
-{
-    protected override AdminHomePageModel Load() => new() { Shell = ShellFactory.Create(Store, PageRoute) };
+    public override Task<IResult> HandleAsync(CancellationToken ct) =>
+        Task.FromResult<IResult>(Results.Redirect("/admin/users", false, false));
 }
