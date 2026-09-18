@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>14.0</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>TerraScale.Dashboard2</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RazorSlices" Version="0.11.3" />
+  </ItemGroup>
+
+  <!-- Prefer the sibling ts-libs checkout; fall back to the forgejo NuGet feed. -->
+  <ItemGroup Condition="Exists('../ts-libs/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj')">
+    <ProjectReference Include="../ts-libs/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="!Exists('../ts-libs/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj')">
+    <PackageReference Include="TerraScale.Endpoints" Version="1.0.0" />
+  </ItemGroup>
+
+</Project>

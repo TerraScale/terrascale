@@ -1,0 +1,62 @@
+@inherits RazorSlice<LoginPageModel>
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in · TerraScale</title>
+    <link rel="icon" href="/brand/logo-icon-blue.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/css/terrascale.css" />
+</head>
+<body>
+<main class="ts-login">
+    <div class="ts-login-map" aria-hidden="true">
+        <div class="ts-login-map-dots"></div>
+        <div class="ts-login-map-glow"></div>
+    </div>
+    <div class="ts-login-column">
+        <div class="ts-auth-card">
+            <div class="ts-auth-brand">
+                <img src="/brand/logo-terrascale-auth.svg" alt="TerraScale" decoding="async" />
+            </div>
+            <div>
+                <h1 class="ts-auth-title">Sign in</h1>
+                <p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
+            </div>
+            @if (Model.Error is { } error)
+            {
+                <div class="ts-alert ts-alert-danger" role="alert">
+                    <span class="ts-alert-title">@Icons.CircleAlert(16) Sign-in failed</span>
+                    <span class="ts-alert-body">@error</span>
+                </div>
+            }
+            <form class="ts-form" method="post" action="/api/v1/auth/password/login">
+                <input type="hidden" name="redirectTo" value="/" />
+                <div class="ts-field">
+                    <label class="ts-label" for="email">Email</label>
+                    <input class="ts-input" type="email" id="email" name="email" autocomplete="email" required placeholder="you@company.com" value="mario@terrascale.tech" />
+                </div>
+                <div class="ts-field">
+                    <label class="ts-label" for="password">Password</label>
+                    <input class="ts-input" type="password" id="password" name="password" autocomplete="current-password" required placeholder="••••••••" />
+                    <a class="ts-link ts-meta" href="/reset-password">Forgot your password?</a>
+                </div>
+                <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Sign in</button>
+            </form>
+            <div class="ts-auth-sep">or continue with</div>
+            <div class="ts-row" style="justify-content:center">
+                <a class="ts-btn ts-btn-outline" href="/api/v1/auth/external-login/begin?provider=github"><img class="ts-oauth-icon" src="/brand/github.svg" alt="" aria-hidden="true" /> GitHub</a>
+                <a class="ts-btn ts-btn-outline" href="/api/v1/auth/external-login/begin?provider=google"><img class="ts-oauth-icon" src="/brand/google.svg" alt="" aria-hidden="true" /> Google</a>
+            </div>
+            <p class="ts-auth-footer">New to TerraScale? <a class="ts-link" href="/login?mode=register">Create account</a></p>
+        </div>
+        <nav class="ts-auth-footer-links" aria-label="Footer">
+            <a href="/docs">Support</a>
+            <a href="/legal/privacy">Privacy</a>
+            <a href="/legal/terms">Terms</a>
+        </nav>
+    </div>
+</main>
+<script src="/js/terrascale.js" defer></script>
+</body>
+</html>

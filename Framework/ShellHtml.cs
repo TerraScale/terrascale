@@ -1,0 +1,227 @@
+using System.Text;
+using Microsoft.AspNetCore.Html;
+
+namespace TerraScale.Dashboard2;
+
+/// <summary>
+/// Shell chrome renderer: the document skeleton, sidebar, project switcher,
+/// account menu, and data sub-nav, straight from C# so pages never deal with
+/// layout plumbing. A page slice opens with <c>@@Html.Raw(ShellHtml.Top(Model.Shell))</c>
+/// and closes with <c>@@Html.Raw(ShellHtml.Bottom(Model.Shell))</c>. Markup
+/// lives here only for chrome; page content stays in the .cshtml slices.
+/// </summary>
+public static class ShellHtml
+{
+    public static HtmlString Top(ShellModel shell)
+    {
+        var dataSubNav = shell.Route?.Id == RouteId.Data ? " data-datasubnav" : "";
+        var builder = new StringBuilder("""
+            <!DOCTYPE html>
+            <html lang="en" data-theme="dark">
+            <head>
+                <meta charset="utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+            """);
+        builder.AppendLine($"    <title>{Escape(shell.PageTitle)} · TerraScale</title>");
+        builder.AppendLine("""
+                <link rel="icon" href="/brand/logo-icon-blue.svg" type="image/svg+xml" />
+                <link rel="stylesheet" href="/css/terrascale.css" />
+                <script type="module" src="/js/datastar.js"></script>
+            </head>
+            <body>
+            """);
+        builder.AppendLine("    <div class=\"ts-shell\"" + dataSubNav + " data-signals=\"{navOpen:false}\" data-class=\"nav-open:navOpen\">");
+        builder.AppendLine("""        <div class="ts-nav-backdrop" data-on-click="navOpen=false"></div>""");
+        builder.Append(Sidebar(shell));
+        if (shell.Route?.Id == RouteId.Data)
+        {
+            builder.Append(DataSubNav(shell));
+        }
+
+        builder.AppendLine("        <div class=\"ts-inset\">");
+        builder.AppendLine("""            <div class="ts-dotwave" aria-hidden="true"></div>""");
+        builder.AppendLine("""            <button type="button" class="ts-fab ts-fab-nav" aria-label="Open navigation" data-on-click="navOpen=!navOpen">""" + Icons.PanelLeft(18).Value + "</button>");
+        builder.AppendLine("            <main class=\"ts-main\">");
+        builder.AppendLine($"                <h1 class=\"ts-page-title\">{Escape(shell.PageTitle)}</h1>");
+        return new HtmlString(builder.ToString());
+    }
+
+    public static HtmlString Bottom(ShellModel shell)
+    {
+        var builder = new StringBuilder("            </main>\n");
+        if (shell.Route is { HasCreate: true } route)
+        {
+            var createHref = route.CreateAction switch
+            {
+                "database" => "/databases?create=1",
+                "query" => "/data?create=1",
+                "api-key" => "/api-keys?create=1",
+                "invitation" => "/access?create=1",
+                "project" => "/organization?create=1",
+                _ => "#",
+            };
+            builder.AppendLine($"""                <a class="ts-fab ts-fab-create" href="{createHref}" aria-label="{Escape(route.PrimaryAction)}">{Icons.Plus(18).Value}<span class="ts-fab-label">Create</span></a>""");
+        }
+
+        builder.AppendLine("        </div>");
+        builder.AppendLine("    </div>");
+        builder.AppendLine("""    <script src="/js/terrascale.js" defer></script>""");
+        builder.AppendLine("</body>");
+        builder.AppendLine("</html>");
+        return new HtmlString(builder.ToString());
+    }
+
+    private static string Sidebar(ShellModel shell)
+    {
+        var builder = new StringBuilder("        <aside class=\"ts-sidebar\">\n");
+        builder.AppendLine("            <div class=\"ts-sidebar-header\">");
+        builder.Append(ProjectControls(shell));
+        builder.AppendLine("            </div>");
+        builder.AppendLine("""            <div class="ts-sidebar-content">""");
+        builder.AppendLine("                <ul class=\"ts-nav\">");
+        foreach (var route in NavRoute.Main)
+        {
+            builder.Append(NavItem(shell, route));
+        }
+
+        builder.AppendLine("                </ul>");
+        if (shell.Store.OwnerSession)
+        {
+            builder.AppendLine("""                <hr class="ts-separator" />""");
+            builder.AppendLine("""                <div class="ts-sidebar-group-label">Owner</div>""");
+            builder.AppendLine("                <ul class=\"ts-nav\">");
+            foreach (var route in NavRoute.Admin)
+            {
+                builder.Append(NavItem(shell, route));
+            }
+
+            builder.AppendLine("                </ul>");
+        }
+
+        builder.AppendLine("            </div>");
+        builder.AppendLine("            <div class=\"ts-sidebar-footer\">");
+        builder.AppendLine("""                <a class="ts-sidebar-brand" href="/" aria-label="TerraScale Dashboard"><img src="/brand/logo-terrascale-blue.svg" alt="" aria-hidden="true" decoding="async" /></a>""");
+        builder.Append(AccountMenu(shell));
+        builder.AppendLine("            </div>");
+        builder.AppendLine("        </aside>");
+        return builder.ToString();
+    }
+
+    private static string NavItem(ShellModel shell, NavRoute route)
+    {
+        var active = shell.ActiveHref == route.Href;
+        var icon = Icon(route.Icon);
+        int? count = route.Id switch
+        {
+            RouteId.Databases => shell.Store.ProjectDatabases(shell.Store.ActiveProjectId).Length,
+            RouteId.Organization => shell.Store.Projects.Length,
+            _ => null,
+        };
+        var builder = new StringBuilder($"                    <li class=\"ts-nav-item\">");
+        builder.Append($"""<a class="ts-nav-link" href="{route.Href}" style="--ts-nav-accent:{route.Accent}"{(active ? " aria-current=\"page\"" : "")}>""");
+        builder.Append("""<span class="ts-nav-indicator" aria-hidden="true"></span>""");
+        builder.Append($"""<span class="ts-nav-icon">{icon}</span>""");
+        builder.Append($"<span>{Escape(route.Label)}</span></a>");
+        if (count is > 0)
+        {
+            var tone = active ? "ts-nav-count-active" : "ts-nav-count-neutral";
+            builder.Append($"""<span class="ts-nav-count {tone}" aria-hidden="true">{(count > 99 ? "99+" : count.ToString())}</span>""");
+        }
+
+        builder.AppendLine("</li>");
+        return builder.ToString();
+    }
+
+    private static string ProjectControls(ShellModel shell)
+    {
+        var store = shell.Store;
+        var project = store.ActiveProject;
+        var databases = store.ProjectDatabases(project.Id);
+        var builder = new StringBuilder("""                <div class="ts-project-controls">""");
+        builder.AppendLine("""                    <div class="ts-current-project">""");
+        builder.AppendLine("""                        <div class="ts-current-project-top">""");
+        builder.AppendLine("""                            <div class="ts-current-project-name"><span class="ts-status-dot" aria-hidden="true"></span><span class="ts-project-name">""" + Escape(project.Name) + "</span></div>");
+        builder.AppendLine("""                            <span class="ts-active-label">Active</span>""");
+        builder.AppendLine("                        </div>");
+        builder.AppendLine("""                        <div class="ts-project-meta">""");
+        builder.AppendLine($"""                            <span class="ts-project-meta-item">{Icons.Globe(12).Value} {Escape(project.Region)}</span>""");
+        builder.AppendLine($"""                            <span class="ts-project-meta-item">{Icons.Database(12).Value} {databases.Length} databases</span>""");
+        builder.AppendLine("                        </div>");
+        builder.AppendLine("                    </div>");
+        builder.AppendLine("""                    <details class="ts-menu">""");
+        builder.AppendLine($"""                        <summary class="ts-btn ts-btn-secondary ts-btn-sm ts-project-switch">{Icons.RefreshCw(14).Value} Switch project {Icons.ChevronDown(14).Value}</summary>""");
+        builder.AppendLine("                        <div class=\"ts-menu-panel\">");
+        foreach (var option in store.Projects)
+        {
+            var current = option.Id == project.Id ? $"""<span class="ts-badge ts-badge-accent">Current</span>""" : "";
+            builder.AppendLine($"                            <form method=\"post\" action=\"/api/v1/dashboard/switch-project\">");
+            builder.AppendLine($"                                <input type=\"hidden\" name=\"projectId\" value=\"{option.Id}\" />");
+            builder.AppendLine($"                                <input type=\"hidden\" name=\"returnUrl\" value=\"{shell.ActiveHref}\" />");
+            builder.AppendLine("                                <button type=\"submit\" class=\"ts-project-option\">");
+            builder.AppendLine($"""                                    <span class="ts-project-option-heading"><span class="ts-project-option-name">{Escape(option.Name)}</span>{current}</span>""");
+            builder.AppendLine($"""                                    <span class="ts-project-meta"><span class="ts-project-meta-item">{Icons.Globe(12).Value} {option.Region}</span><span class="ts-project-meta-item">{Icons.Database(12).Value} {store.ProjectDatabases(option.Id).Length}</span></span>""");
+            builder.AppendLine("                                </button>");
+            builder.AppendLine("                            </form>");
+        }
+
+        builder.AppendLine("""                            <div class="ts-project-footer"><a class="ts-project-footer-link" href="/organization?create=1">""" + Icons.Plus(14).Value + " Create project</a></div>");
+        builder.AppendLine("                        </div>");
+        builder.AppendLine("                    </details>");
+        builder.AppendLine("                </div>");
+        return builder.ToString();
+    }
+
+    private static string AccountMenu(ShellModel shell)
+    {
+        var unread = shell.UnreadNotifications;
+        var unreadDot = unread > 0 ? """<span class="ts-account-unread-dot" aria-hidden="true"></span>""" : "";
+        var unreadBadge = unread > 0 ? $"""<span class="ts-menu-badge">{unread}</span>""" : "";
+        return $"""
+                    <details class="ts-menu ts-menu-end ts-account">
+                        <summary class="ts-account-trigger" aria-label="Account menu">
+                            <span class="ts-account-avatar" aria-hidden="true">{Escape(shell.AccountInitials)}</span>
+                            <span class="ts-account-meta">
+                                <span class="ts-account-name">{Escape(shell.AccountName)}</span>
+                                <span class="ts-account-email">{Escape(shell.AccountEmail)}</span>
+                            </span>
+                            {unreadDot}
+                            <span class="ts-account-chevron">{Icons.ChevronUp(14).Value}</span>
+                        </summary>
+                        <div class="ts-menu-panel">
+                            <a class="ts-menu-item" href="/notifications"><span class="ts-menu-item-icon">{Icons.Bell(16).Value}</span><span class="ts-menu-label">Notifications</span>{unreadBadge}</a>
+                            <a class="ts-menu-item" href="/settings"><span class="ts-menu-item-icon">{Icons.Settings(16).Value}</span><span class="ts-menu-label">Settings</span></a>
+                            <hr class="ts-menu-separator" />
+                            <form method="post" action="/api/v1/auth/logout">
+                                <button type="submit" class="ts-menu-item"><span class="ts-menu-item-icon">{Icons.LogOut(16).Value}</span><span class="ts-menu-label">Sign out</span></button>
+                            </form>
+                        </div>
+                    </details>
+            """;
+    }
+
+    private static string DataSubNav(ShellModel shell)
+    {
+        var view = shell.ActiveHref.StartsWith("/data", StringComparison.OrdinalIgnoreCase);
+        if (!view)
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder("""        <aside class="ts-datasubnav" aria-label="Data views">""");
+        builder.AppendLine("""            <div class="ts-datasubnav-header">Data Explorer</div>""");
+        builder.AppendLine("""            <div class="ts-datasubnav-menu">""");
+        builder.AppendLine("""                <a class="ts-nav-link" href="/data" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("BookOpen", 16) + """</span><span>Saved queries</span></a>""");
+        builder.AppendLine("""                <a class="ts-nav-link" href="/data?view=table" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("Table", 16) + """</span><span>Collection documents</span></a>""");
+        builder.AppendLine("""                <a class="ts-nav-link" href="/data?view=editor" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("FileText", 16) + """</span><span>Document editor</span></a>""");
+        builder.AppendLine("""                <a class="ts-nav-link" href="/data?view=sql" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("Terminal", 16) + """</span><span>SQL console</span></a>""");
+        builder.AppendLine("            </div>");
+        builder.AppendLine("        </aside>");
+        return builder.ToString();
+    }
+
+    private static string Icon(string name, int size = 18) =>
+        (((typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as HtmlString) ?? Icons.Circle(size)).Value ?? "");
+
+    private static string Escape(string value) =>
+        value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+}
