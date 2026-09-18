@@ -7,11 +7,11 @@ This document is the contract for porting one faithfully.
 
 | Concern | File |
 | --- | --- |
-| Page model + page endpoint | `Features/<Feature>/<Page>Page.cs` (one file, both) |
-| Page template | `Features/<Feature>/<Page>Slice.cshtml` |
-| Mutations / API | `Features/<Feature>/<Action>Endpoint.cs` — **one endpoint class per file** |
-| Feature store data | `Features/<Feature>/<Feature>Store.cs` — `DashboardStore` is `partial`; extend it there |
-| Core entities + seed | `Models.cs` (root) — read-mostly; prefer feature partials for additions |
+| Page model + page endpoint | `src/ts-dashboard-2/Features/<Feature>/<Page>PageModel.cs` + `<Page>PageEndpoint.cs` (one type per file) |
+| Page template | `src/ts-dashboard-2/Features/<Feature>/<Page>Slice.cshtml` |
+| Mutations / API | `src/ts-dashboard-2/Features/<Feature>/<Action>Endpoint.cs` — **one endpoint class per file** |
+| Feature store data | `src/ts-dashboard-2/Features/<Feature>/<Feature>Store.cs` — `DashboardStore` is `partial`; extend it there |
+| Core entities + seed | `Framework/DashboardStore.cs` — read-mostly; prefer feature partials for additions |
 | Shell chrome (sidebar, head, FABs) | `Framework/ShellHtml.cs` — pages never re-render it |
 | CSS framework | `wwwroot/css/terrascale.css` — the ONLY stylesheet; append a `/* ===== Feature: <X> ===== */` section at the end if a pattern is missing |
 | Icons (lucide, exact SVG) | `Icons.cs` — `@Icons.KeyRound(18)` renders raw SVG |
@@ -42,7 +42,7 @@ public sealed class DatabasesPageEndpoint(DashboardStore store)
 }
 ```
 
-Routes are discovered automatically — **never touch `Program.cs`**.
+Routes are discovered automatically — **never touch `src/ts-dashboard-2/Program.cs`**.
 
 ## Rules
 

@@ -3,30 +3,36 @@
 C# port of the TerraScale dashboard (ts-dashboard), 1:1 in design, pages,
 and features. Dark-only design system v1 rendered from a single CSS file.
 
+See `AGENTS.md` for the full conventions (feature slices, one type per file,
+one endpoint per file, CI/deploy).
+
 ## Stack
 
-- **C# / .NET 10** with **Razor Slices** templates (`Features/*/**.cshtml`)
+- **C# / .NET 10** with **Razor Slices** templates (`src/ts-dashboard-2/Features/*/**.cshtml`)
 - **TerraScale.Endpoints** — every route is an endpoint class, one per file,
-  discovered at startup (local `ts-libs` checkout preferred, forgejo NuGet fallback)
+  discovered at startup (local `ts-libs` checkout preferred, vendored
+  `src/ts-dashboard-2/nuget/` package fallback)
 - **terrascale.css** — the whole design system in one stylesheet:
-  tokens, base, components, and the dashboard shell (`wwwroot/css/terrascale.css`)
+  tokens, base, components, and the dashboard shell (`src/ts-dashboard-2/wwwroot/css/terrascale.css`)
 - **Datastar** (`wwwroot/js/datastar.js`) — the front/back communication layer;
   slices declare `data-*` attributes, endpoints stream `Datastar.Stream(...)` events
-- Server-rendered SVG charts (`Charts.cs`) and lucide icon set (`Icons.cs`)
+- Server-rendered SVG charts (`Framework/Charts.cs`) and lucide icon set (`Framework/Icons.cs`)
 
 ## Layout
 
-- `Features/<Feature>/<Page>Page.cs` — model record + page endpoint in one file
-- `Features/<Feature>/<Page>Slice.cshtml` — the page template next to it
-- `Features/<Feature>/<Action>Endpoint.cs` — one file per API/mutation endpoint
-- `Framework/` — `SlicePageEndpoint`, `ShellHtml` (sidebar/shell chrome)
-- `Models.cs` — `DashboardStore`: seeded in-memory demo data powering pages
-- `wwwroot/css/terrascale.css` — the single-file CSS framework
+- `src/ts-dashboard-2/Features/<Feature>/` — the feature slice: one endpoint
+  per file (`<Page>PageEndpoint.cs`, `<Action>Endpoint.cs`), one DTO per file
+  (`<Page>PageModel.cs`, row records), the `<Page>Slice.cshtml` view, and the
+  feature's `DashboardStore` partial
+- `src/ts-dashboard-2/Framework/` — `SlicePageEndpoint`, `ShellHtml`, shell,
+  store core, icons, charts
+- `src/ts-dashboard-2/wwwroot/css/terrascale.css` — the single-file CSS framework
+- `ts-dashboard-2.slnx` — solution at the repo root
 
 ## Run
 
 ```
-dotnet run
+dotnet run --project src/ts-dashboard-2
 # open http://localhost:5000 → redirected to /login
 # demo credentials: mario@terrascale.tech / terrascale
 ```
