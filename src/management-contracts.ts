@@ -21,6 +21,22 @@ export type SchemaDocument = {
   };
 };
 
+/** A previously authenticated producer lease, with its original absolute expiry. */
+export type Lease = {
+  readonly version: number;
+  readonly tenantId: string;
+  readonly epoch: string;
+  readonly featureEpoch: string;
+  readonly audience: string;
+  readonly region: string;
+  /** Unix epoch milliseconds when the lease was issued. */
+  readonly issuedAt: Int64Value;
+  /** Unix epoch milliseconds after which the lease is no longer valid. */
+  readonly validUntil: Int64Value;
+  readonly keyId: string;
+  readonly signature: string;
+};
+
 export type DatabaseUsageSummary = {
   readonly tenant_id: string;
   readonly database_id: string;

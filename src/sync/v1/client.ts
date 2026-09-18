@@ -1,4 +1,5 @@
-import { canonicalRegionCode, regionalApiBaseUrl } from "../../regions.js";
+import type { TerraScaleDiscoveryRouter } from "../../discovery.js";
+import { canonicalRegionCode, regionalApiBaseUrl, type TerraScaleRegionCode } from "../../regions.js";
 import {
   decodeTerrascaleSyncV1MsgpackEnvelope,
   encodeTerrascaleSyncV1MsgpackEnvelope,
@@ -52,7 +53,7 @@ export type SyncV1OpenSubscriptionOptions = {
 };
 
 /** The reactive transport. HTTP is the cacheable, bounded default. */
-export type SyncV1Transport = "http" | "websocket";
+export type SyncV1Transport = "http" | "websocket" | "server-sent-events";
 
 export type SyncV1AccessToken = string | (() => string | undefined | Promise<string | undefined>);
 
@@ -73,6 +74,8 @@ export type SyncV1ClientOptions = {
   readonly apiBaseUrl?: string;
   /** The global CDN origin. Reactive delivery never uses a regional host. */
   readonly syncBaseUrl?: string;
+  /** Regional endpoint resolver (ADR 0050 §5.7); undefined keeps the global attach. */
+  readonly discoveryRouter?: TerraScaleDiscoveryRouter;
   readonly fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readonly accessToken?: SyncV1AccessToken;
   /** Authenticated attach scope; never sent to snapshot or log delivery. */
@@ -169,9 +172,12 @@ export class TerraScaleSyncV1ClientError extends Error {
 export class TerraScaleSyncV1Client {
   readonly #subscriptions = new Map<string, SyncV1Subscription>();
   readonly #live = new Map<string, LiveSubscriptionState>();
+  /** In-flight subscribes by identity; concurrent identical callers join them. */
+  readonly #pendingSubscribes = new Map<string, Promise<SyncV1LiveSubscription>>();
   readonly #fetch: ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) | undefined;
   readonly #apiBaseUrl: string;
   readonly #syncBaseUrl: string;
+  readonly #discoveryRouter: TerraScaleDiscoveryRouter | undefined;
   readonly #accessToken: SyncV1AccessToken | undefined;
   readonly #tenantId: string | undefined;
   readonly #projectId: string | undefined;
@@ -187,6 +193,7 @@ export class TerraScaleSyncV1Client {
     this.#fetch = options.fetch ?? globalThis.fetch?.bind(globalThis);
     this.#apiBaseUrl = normalizeOrigin(options.apiBaseUrl ?? "https://api.terrascale.tech", options.fetch !== undefined);
     this.#syncBaseUrl = normalizeOrigin(options.syncBaseUrl ?? "https://sync.api.terrascale.tech", options.fetch !== undefined);
+    this.#discoveryRouter = options.discoveryRouter;
     this.#accessToken = options.accessToken;
     this.#tenantId = options.tenantId;
     this.#projectId = options.projectId;
@@ -246,24 +253,59 @@ export class TerraScaleSyncV1Client {
   public closeSubscription(subscription: string): Extract<SyncV1Message, { readonly kind: "unsubscribe" }> {
     const current = this.#requireSubscription(subscription);
     const live = this.#live.get(subscription);
-    if (live !== undefined) {
-      live.closed = true;
-      live.abortController.abort();
+    if (live === undefined) {
+      this.#subscriptions.delete(subscription);
+      current.view.setOnline(false);
+      if (this.#subscriptions.size === 0) this.#online = false;
+      return Object.freeze({ kind: "unsubscribe", subscription });
+    }
+    const viewId = live.viewId;
+    // Refcounted consumers keep the shared view alive: only the release that
+    // actually tears it down may drop the subscription entry or take the
+    // client offline (a live view must keep answering acknowledgements).
+    if (!this.#releaseLiveSubscription(live)) {
+      return Object.freeze({ kind: "unsubscribe", subscription: viewId });
     }
     this.#live.delete(subscription);
-    current.view.setOnline(false);
     this.#subscriptions.delete(subscription);
+    current.view.setOnline(false);
     if (this.#subscriptions.size === 0) this.#online = false;
-    return Object.freeze({ kind: "unsubscribe", subscription: live?.viewId ?? subscription });
+    return Object.freeze({ kind: "unsubscribe", subscription: viewId });
+  }
+
+  /** Drops one consumer; returns true when the last consumer released the view. */
+  #releaseLiveSubscription(state: LiveSubscriptionState): boolean {
+    state.consumers -= 1;
+    if (state.consumers > 0 && !state.closed) return false;
+    state.closed = true;
+    state.abortController.abort();
+    return true;
+  }
+
+  /**
+   * A terminal loop exit (authentication, permission, slow consumer, remote
+   * error, or a refused fresh reattach) leaves a view with no running loop.
+   * Tear it down so an identical subscribe attaches fresh instead of
+   * deduplicating onto a dead handle that masks the terminal error forever.
+   */
+  #killLiveState(state: LiveSubscriptionState): void {
+    state.closed = true;
+    state.abortController.abort();
+    this.#live.delete(state.opened.subscription.id);
+    this.#subscriptions.delete(state.opened.subscription.id);
+    state.opened.subscription.view.setOnline(false);
+    if (this.#subscriptions.size === 0) this.#online = false;
   }
 
   /**
    * Attaches to the canonical shared view and starts bounded HTTP long-polling.
-   * WebSocket is an explicit override. HTTP remains the cacheable default.
+   * WebSocket and server-sent events are explicit overrides. HTTP remains the
+   * cacheable default. Identical subscriptions — live or still attaching —
+   * deduplicate onto one attach; consumers are refcounted.
    */
   public async subscribe(options: SyncV1SubscribeOptions): Promise<SyncV1LiveSubscription> {
     const transport = options.transport ?? "http";
-    if (transport !== "http" && transport !== "websocket") {
+    if (transport !== "http" && transport !== "websocket" && transport !== "server-sent-events") {
       throw new TerraScaleSyncV1ClientError("invalid_state", `unsupported reactive transport '${String(transport)}'`);
     }
     if (this.#fetch === undefined) {
@@ -273,6 +315,41 @@ export class TerraScaleSyncV1Client {
     if (databaseId === undefined || databaseId.trim().length === 0) {
       throw new TerraScaleSyncV1ClientError("invalid_state", "databaseId is required for a reactive view attach");
     }
+    // Identical subscriptions are deduplicated onto one live subscription
+    // (ADR 0050 §5.7): the protocol binds the view into the socket path, so
+    // the dedup unit is the subscription, never the socket. Consumers are
+    // refcounted; the last release tears the attached view down.
+    const shared = this.#findIdenticalLiveSubscription(databaseId, options, transport);
+    if (shared !== undefined) {
+      shared.consumers += 1;
+      return this.#publicLiveSubscription(shared);
+    }
+    // Concurrent identical subscribes race past the live-state lookup (a
+    // state enters #live only after its attach resolves); join the pending
+    // attach instead of colliding on the subscription name.
+    const identity = subscribeIdentity(databaseId, options, transport);
+    const pending = this.#pendingSubscribes.get(identity);
+    if (pending !== undefined) {
+      await pending;
+      const joined = this.#findIdenticalLiveSubscription(databaseId, options, transport);
+      if (joined === undefined) return this.subscribe(options);
+      joined.consumers += 1;
+      return this.#publicLiveSubscription(joined);
+    }
+    const created = this.#subscribe(databaseId, transport, options);
+    this.#pendingSubscribes.set(identity, created);
+    try {
+      return await created;
+    } finally {
+      this.#pendingSubscribes.delete(identity);
+    }
+  }
+
+  async #subscribe(
+    databaseId: string,
+    transport: SyncV1Transport,
+    options: SyncV1SubscribeOptions,
+  ): Promise<SyncV1LiveSubscription> {
     // Free local reads: hydrate the durable view before any network work so
     // cached rows are readable immediately and attach can resume the persisted
     // checkpoint instead of re-attaching from a full snapshot.
@@ -350,6 +427,10 @@ export class TerraScaleSyncV1Client {
       socket: undefined,
       etag: undefined,
       etagOffset: undefined,
+      attachRegion: attached.region,
+      attachDiscovered: attached.fromDiscovery === true,
+      consumers: 1,
+      consecutiveFailures: 0,
       loop: undefined,
       reset: initialReset,
     };
@@ -394,6 +475,7 @@ export class TerraScaleSyncV1Client {
 
     const live = this.#publicLiveSubscription(state);
     if (options.autoStart !== false && transport === "http") state.loop = this.#pollLoop(state, options.signal);
+    if (options.autoStart !== false && transport === "server-sent-events") state.loop = this.#sseLoop(state, options.signal);
     return live;
   }
 
@@ -512,11 +594,22 @@ export class TerraScaleSyncV1Client {
           resultSnapshot(envelope.message.snapshot),
         );
         break;
-      case "region_route_change":
+      case "region_route_change": {
         this.#region = envelope.message.region;
         this.setOnline(false);
-        for (const state of this.#live.values()) state.regionMoved = true;
+        if (state === undefined) break;
+        // The frame arrived on this subscription's wire: only this state's
+        // database may demote the region, never an unrelated database that
+        // happens to share it (ADR 0050 §5.7).
+        state.regionMoved = true;
+        const target = canonicalRegionCode(envelope.message.region);
+        if (target !== undefined) {
+          this.#discoveryRouter?.reportRegionMove(state.databaseId, state.attachRegion, target);
+        } else if (state.attachRegion !== undefined) {
+          this.#discoveryRouter?.reportRegionFailure(state.databaseId, state.attachRegion);
+        }
         break;
+      }
       case "backpressure":
         this.#paused = envelope.message.mode === "pause";
         break;
@@ -578,41 +671,83 @@ export class TerraScaleSyncV1Client {
     return current;
   }
 
+  /** A live view with the same identity (database, name, statement, parameters, transport). */
+  #findIdenticalLiveSubscription(
+    databaseId: string,
+    options: SyncV1SubscribeOptions,
+    transport: SyncV1Transport,
+  ): LiveSubscriptionState | undefined {
+    const parameters = new Uint8Array(options.parameters);
+    for (const state of this.#live.values()) {
+      if (state.closed || state.databaseId !== databaseId || state.transport !== transport) continue;
+      if (state.opened.subscription.id !== options.subscription) continue;
+      if (state.opened.message.query !== options.query) continue;
+      if (!bytesEqual(state.opened.message.parameters, parameters)) continue;
+      return state;
+    }
+    return undefined;
+  }
+
   async #attach(
     databaseId: string,
     message: Extract<SyncV1Message, { readonly kind: "subscribe" }>,
     signal?: AbortSignal,
   ): Promise<AttachedView> {
+    // ADR 0050 §5.7: attach goes directly to the discovered regional
+    // endpoint. A discovery miss (failure, timeout, or cache expiry) keeps
+    // the global origin; the response region header then derives the member
+    // exactly as before.
+    const router = this.#discoveryRouter;
+    const resolved = router === undefined ? undefined : await router.resolveBase(databaseId, false);
+    const attachBase = resolved?.baseUrl ?? this.#apiBaseUrl;
     const headers = await this.#headers("application/json", undefined);
     if (this.#tenantId !== undefined) headers.set("x-terrascale-tenant-id", this.#tenantId);
     if (this.#projectId !== undefined) headers.set("x-terrascale-project-id", this.#projectId);
     headers.set("Content-Type", "application/json");
-    const response = await this.#request(
-      `${this.#apiBaseUrl}/api/v1/reactive/views`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          databaseId,
-          subscription: message.subscription,
-          statement: message.query,
-          parameters: bytesToBase64(message.parameters),
-          checkpoint: message.checkpoint === null ? null : bytesToBase64(message.checkpoint),
-        }),
-        ...(signal === undefined ? {} : { signal }),
-      },
-      "reactive view attach",
-    );
-    if (!response.ok) throw await this.#httpError(response, "reactive view attach");
-    let value: unknown;
     try {
-      value = await response.json();
+      const response = await this.#request(
+        `${attachBase}/api/v1/reactive/views`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            databaseId,
+            subscription: message.subscription,
+            statement: message.query,
+            parameters: bytesToBase64(message.parameters),
+            checkpoint: message.checkpoint === null ? null : bytesToBase64(message.checkpoint),
+          }),
+          ...(signal === undefined ? {} : { signal }),
+        },
+        "reactive view attach",
+      );
+      if (!response.ok) throw await this.#httpError(response, "reactive view attach");
+      let value: unknown;
+      try {
+        value = await response.json();
+      } catch (error) {
+        throw new TerraScaleSyncV1ClientError("protocol_error", "reactive attach was not valid JSON", { cause: error });
+      }
+      const region = canonicalRegionCode(response.headers.get("x-terrascale-region") ?? undefined);
+      // A view capability is region-bound: it embeds the region that minted
+      // it. Because the attach POST targeted one specific endpoint, the
+      // derived member origin and the capability agree by construction — the
+      // response header confirms the region, and a missing header falls back
+      // to the attach base itself (already regional under discovery) instead
+      // of the global origin.
+      const memberOrigin = region === undefined ? attachBase : regionalApiBaseUrl(attachBase, region);
+      const attached = decodeAttachedView(value, this.#syncBaseUrl, message.subscription, memberOrigin);
+      attached.region = region ?? resolved?.region;
+      attached.fromDiscovery = resolved !== undefined;
+      return attached;
     } catch (error) {
-      throw new TerraScaleSyncV1ClientError("protocol_error", "reactive attach was not valid JSON", { cause: error });
+      if (resolved !== undefined && error instanceof TerraScaleSyncV1ClientError && error.code === "transport") {
+        // A transport failure against a discovered regional endpoint demotes
+        // that region; the next attach resolves to the next eligible endpoint.
+        router?.reportRegionFailure(databaseId, resolved.region);
+      }
+      throw error;
     }
-    const region = canonicalRegionCode(response.headers.get("x-terrascale-region") ?? undefined);
-    const memberOrigin = region === undefined ? this.#apiBaseUrl : regionalApiBaseUrl(this.#apiBaseUrl, region);
-    return decodeAttachedView(value, this.#syncBaseUrl, message.subscription, memberOrigin);
   }
 
   async #getBytes(url: string, state: LiveSubscriptionState, signal?: AbortSignal): Promise<Uint8Array | undefined> {
@@ -677,17 +812,7 @@ export class TerraScaleSyncV1Client {
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (state.closed) return undefined;
       if (bytes.length === 0) return undefined;
-      let envelope: SyncV1Envelope;
-      try {
-        envelope = this.#receive(bytes, state);
-      } catch (error) {
-        if (error instanceof TerraScaleSyncV1ClientError && error.reset !== undefined) state.reset = error.reset;
-        throw error;
-      }
-      if (envelope.message.kind === "reset") {
-        state.reset = { reason: normalizeResetReason(envelope.message.reason), subscription: state.opened.subscription.id };
-      }
-      return envelope;
+      return this.#applyFrame(bytes, state);
     } catch (error) {
       if (error instanceof TerraScaleSyncV1ClientError && error.code === "reset_required") {
         if (state.freshRequired) throw error;
@@ -708,6 +833,22 @@ export class TerraScaleSyncV1Client {
     }
   }
 
+  /** Applies one decoded log/snapshot/stream frame and records authoritative resets. */
+  #applyFrame(bytes: Uint8Array, state: LiveSubscriptionState): SyncV1Envelope {
+    let envelope: SyncV1Envelope;
+    try {
+      envelope = this.#receive(bytes, state);
+    } catch (error) {
+      if (error instanceof TerraScaleSyncV1ClientError && error.reset !== undefined) state.reset = error.reset;
+      throw error;
+    }
+    if (envelope.message.kind === "reset") {
+      state.reset = { reason: normalizeResetReason(envelope.message.reason), subscription: state.opened.subscription.id };
+    }
+    state.consecutiveFailures = 0;
+    return envelope;
+  }
+
   async #pollLoop(state: LiveSubscriptionState, signal?: AbortSignal): Promise<void> {
     while (!state.closed && !signal?.aborted) {
       try {
@@ -718,7 +859,13 @@ export class TerraScaleSyncV1Client {
         if (envelope === undefined) await delay(100, signal);
         if (state.regionMoved) {
           state.regionMoved = false;
-          await this.#reconnect(state, signal);
+          // A server-directed move waits through the same backoff as a
+          // failure: contradictory route-change servers must not drive an
+          // unbounded attach storm.
+          await this.#backoff(state, signal);
+          if (!state.closed && !signal?.aborted) {
+            await this.#reconnect(state, signal);
+          }
         }
       } catch (error) {
         if (state.closed || signal?.aborted) return;
@@ -728,11 +875,15 @@ export class TerraScaleSyncV1Client {
         if (error instanceof TerraScaleSyncV1ClientError &&
           (error.code === "authentication_expired" || error.code === "permission_denied" || error.code === "slow_consumer" || error.code === "remote_error")) {
           if (error.reset !== undefined) state.reset = error.reset;
+          this.#killLiveState(state);
           return;
         }
-        if (error instanceof TerraScaleSyncV1ClientError && error.code === "reset_required" && state.freshRequired) return;
+        if (error instanceof TerraScaleSyncV1ClientError && error.code === "reset_required" && state.freshRequired) {
+          this.#killLiveState(state);
+          return;
+        }
         this.setOnline(false);
-        await delay(this.#reconnectDelayMs, signal);
+        await this.#backoff(state, signal);
         if (!state.closed && !signal?.aborted) {
           try {
             await this.#reconnect(state, signal);
@@ -742,6 +893,140 @@ export class TerraScaleSyncV1Client {
         }
       }
     }
+  }
+
+  /**
+   * Keeps one server-sent-events stream per attached view. The server ending
+   * the stream (a terminal `error` event or a dropped connection) ends that
+   * session; this loop then reattaches from the last checkpoint and reopens
+   * the stream, mirroring the long-poll loop's transport-failure semantics.
+   */
+  async #sseLoop(state: LiveSubscriptionState, signal?: AbortSignal): Promise<void> {
+    while (!state.closed && !signal?.aborted) {
+      let rerouted = false;
+      try {
+        await this.#readSseStream(state, signal);
+        rerouted = state.regionMoved === true;
+      } catch (error) {
+        if (state.closed || signal?.aborted) return;
+        if (error instanceof TerraScaleSyncV1ClientError && error.reset !== undefined) {
+          state.reset = error.reset;
+        }
+        if (error instanceof TerraScaleSyncV1ClientError &&
+          (error.code === "authentication_expired" || error.code === "permission_denied" || error.code === "slow_consumer" || error.code === "remote_error")) {
+          this.#killLiveState(state);
+          return;
+        }
+        if (error instanceof TerraScaleSyncV1ClientError && error.code === "reset_required" && state.freshRequired) {
+          this.#killLiveState(state);
+          return;
+        }
+      }
+      if (state.closed || signal?.aborted) return;
+      if (rerouted) {
+        state.regionMoved = false;
+        try {
+          // Server-directed moves back off exactly like failures (bounded
+          // reattach rate under contradictory route-change servers).
+          await this.#backoff(state, signal);
+          if (state.closed || signal?.aborted) return;
+          await this.#reconnect(state, signal);
+        } catch {
+          continue;
+        }
+        continue;
+      }
+      this.setOnline(false);
+      await this.#backoff(state, signal);
+      if (state.closed || signal?.aborted) return;
+      try {
+        await this.#reconnect(state, signal);
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  /**
+   * Reads the view's server-sent-events stream until the server ends it.
+   * Framing: `id: {nextOffset}` plus `data: {base64 msgpack envelope}`; a
+   * terminal `error` event carries the error code; `: ping` comments and any
+   * other fields are ignored. The stream URL is derived from the log URL's
+   * origin, and the offset always resumes from the installed revision, which
+   * is also what a `Last-Event-ID` reconnect would carry.
+   */
+  async #readSseStream(state: LiveSubscriptionState, signal?: AbortSignal): Promise<void> {
+    const linked = linkAbortSignals(state.abortController.signal, signal);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const url = new URL(state.logUrl);
+      url.pathname = canonicalViewPath(state.viewId, state.generation, "stream");
+      url.search = `offset=${state.opened.subscription.view.getRevision().toString(10)}`;
+      const response = await this.#request(
+        url,
+        {
+          method: "GET",
+          headers: await this.#headers("text/event-stream", state.capability),
+          signal: linked.signal,
+        },
+        "reactive sse stream",
+      );
+      if (state.closed) return;
+      if (!response.ok) throw await this.#httpError(response, "reactive sse stream");
+      if (response.body === null || response.body === undefined) {
+        throw new TerraScaleSyncV1ClientError("protocol_error", "reactive sse stream has no body");
+      }
+      reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      let eventName: string | undefined;
+      let data = "";
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.value !== undefined) buffered += decoder.decode(chunk.value, { stream: true });
+        if (chunk.done) return;
+        for (let newline = buffered.indexOf("\n"); newline >= 0; newline = buffered.indexOf("\n")) {
+          const line = buffered.slice(0, newline).replace(/\r$/u, "");
+          buffered = buffered.slice(newline + 1);
+          if (line === "") {
+            if (data.length === 0) {
+              eventName = undefined;
+              continue;
+            }
+            const dispatched = eventName;
+            const payload = data;
+            eventName = undefined;
+            data = "";
+            if (dispatched === "error") {
+              state.reset = {
+                reason: normalizeResetReason(payload),
+                subscription: state.opened.subscription.id,
+                message: payload,
+              };
+              return;
+            }
+            this.#applyFrame(base64ToBytes(payload, "reactive sse data"), state);
+            if (state.regionMoved || state.closed) return;
+            continue;
+          }
+          if (line.startsWith(":")) continue;
+          const separator = line.indexOf(":");
+          const field = separator < 0 ? line : line.slice(0, separator);
+          const value = separator < 0 ? "" : line.slice(separator + 1).replace(/^ /u, "");
+          if (field === "event") eventName = value;
+          else if (field === "data") data += value;
+          // `id` repeats the resume offset the installed revision already tracks.
+        }
+      }
+    } finally {
+      linked.dispose();
+      await reader?.cancel().catch(() => undefined);
+    }
+  }
+
+  /** One reconnect wait: exponential backoff with jitter over the failure count. */
+  async #backoff(state: LiveSubscriptionState, signal?: AbortSignal): Promise<void> {
+    await delay(syncV1ReconnectDelayMs(this.#reconnectDelayMs, state.consecutiveFailures++), signal);
   }
 
   async #reconnect(state: LiveSubscriptionState, signal?: AbortSignal): Promise<void> {
@@ -777,6 +1062,8 @@ export class TerraScaleSyncV1Client {
     state.logUrl = attached.logUrl;
     state.snapshotUrls = attached.snapshotUrls;
     state.websocketUrl = attached.websocketUrl;
+    state.attachRegion = attached.region;
+    state.attachDiscovered = attached.fromDiscovery === true;
     if (attached.snapshot !== undefined) {
       installAttachedSnapshot(state.opened.subscription.view, attached.snapshot);
     } else {
@@ -788,6 +1075,7 @@ export class TerraScaleSyncV1Client {
     if (state.transport === "websocket") await this.#openWebSocket(state, signal);
     state.freshRequired = false;
     state.regionMoved = false;
+    state.consecutiveFailures = 0;
     this.setOnline(true);
   }
 
@@ -858,7 +1146,7 @@ export class TerraScaleSyncV1Client {
             if (state.closed || state.socket !== socket) return;
             this.#receive(frame, state);
             if (state.regionMoved && !state.closed && state.socket === socket) {
-              await delay(this.#reconnectDelayMs, state.abortController.signal);
+              await this.#backoff(state, state.abortController.signal);
               if (!state.closed && state.socket === socket) await this.#reconnect(state);
             }
           } catch (error) {
@@ -876,6 +1164,7 @@ export class TerraScaleSyncV1Client {
         this.setOnline(false);
         if (!opened && !settled) {
           settled = true;
+          this.#reportRegionalTransportFailure(state);
           reject(new TerraScaleSyncV1ClientError("transport", "WebSocket connection failed", { cause: event }));
         }
       };
@@ -890,6 +1179,7 @@ export class TerraScaleSyncV1Client {
         this.setOnline(false);
         if (!opened && !settled) {
           settled = true;
+          this.#reportRegionalTransportFailure(state);
           reject(new TerraScaleSyncV1ClientError("transport", "WebSocket closed before it opened"));
         }
       };
@@ -900,6 +1190,13 @@ export class TerraScaleSyncV1Client {
       state.abortController.signal.addEventListener("abort", abort, { once: true });
       signal?.addEventListener("abort", abort, { once: true });
     });
+  }
+
+  /** A pre-open WebSocket failure against a discovered member demotes that region. */
+  #reportRegionalTransportFailure(state: LiveSubscriptionState): void {
+    if (state.attachDiscovered && state.attachRegion !== undefined) {
+      this.#discoveryRouter?.reportRegionFailure(state.databaseId, state.attachRegion);
+    }
   }
 
   #publicLiveSubscription(state: LiveSubscriptionState): SyncV1LiveSubscription {
@@ -917,8 +1214,7 @@ export class TerraScaleSyncV1Client {
       reconnect: () => this.#reconnect(state),
       close: () => {
         if (state.closed) return;
-        state.closed = true;
-        state.abortController.abort();
+        if (!this.#releaseLiveSubscription(state)) return;
         state.socket?.close(1000, "closed");
         state.socket = undefined;
         this.#live.delete(state.opened.subscription.id);
@@ -996,6 +1292,10 @@ type AttachedView = {
   readonly logUrl: string;
   readonly snapshot: TerrascaleSyncV1MsgpackSnapshot | undefined;
   readonly websocketUrl: string | undefined;
+  /** Region that minted the capability: the attach header, else the discovered region. */
+  region?: TerraScaleRegionCode | undefined;
+  /** True when the attach POST targeted a discovered regional endpoint. */
+  fromDiscovery?: boolean | undefined;
 };
 
 type LiveSubscriptionState = {
@@ -1014,6 +1314,12 @@ type LiveSubscriptionState = {
   socket: SyncV1WebSocket | undefined;
   etag: string | undefined;
   etagOffset: bigint | undefined;
+  attachRegion: TerraScaleRegionCode | undefined;
+  attachDiscovered: boolean;
+  /** Deduplicated consumers sharing this attached view (ADR 0050 §5.7). */
+  consumers: number;
+  /** Consecutive transport failures since the last delivered frame or attach. */
+  consecutiveFailures: number;
   regionMoved?: boolean;
   reset: SyncV1Reset | undefined;
   loop: Promise<void> | undefined;
@@ -1139,9 +1445,11 @@ function resultOperation(operation: TerrascaleSyncV1MsgpackResultOperation): Syn
       return {
         kind: "Patch",
         identity: operation.identity,
+        // The generated msgpack reader already copies each binary value out
+        // of the frame buffer, so these bytes are frame-independent.
         changes: operation.changes.map(change => ({
           path: change.path,
-          value: change.value === null ? null : new Uint8Array(change.value),
+          value: change.value,
         })),
       };
     case "remove":
@@ -1162,7 +1470,9 @@ function projectedValue(
         `projected field '${field.path}' appears more than once`,
       );
     }
-    value[field.path] = new Uint8Array(field.value);
+    // The generated msgpack reader already copies each binary value out of
+    // the frame buffer, so no second per-field copy is needed here.
+    value[field.path] = field.value;
   }
   return value;
 }
@@ -1215,6 +1525,25 @@ async function socketFrame(event: unknown): Promise<Uint8Array | undefined> {
   return undefined;
 }
 
+/** The reconnect backoff ceiling (ADR 0050 §5.9). */
+export const syncV1ReconnectBackoffCapMs = 30_000;
+
+/**
+ * One reconnect wait after `consecutiveFailures` transport failures:
+ * min(baseMs * 2^failures, 30 s), jittered to [0.8, 1.2] of the step so
+ * reconnect storms decorrelate. `consecutiveFailures` counts the failures
+ * before this wait, so the first reconnect waits roughly the base delay.
+ */
+export function syncV1ReconnectDelayMs(
+  baseMs: number,
+  consecutiveFailures: number,
+  random: () => number = Math.random,
+): number {
+  const exponent = Math.min(Math.max(consecutiveFailures, 0), 32);
+  const step = Math.min(baseMs * 2 ** exponent, syncV1ReconnectBackoffCapMs);
+  return Math.min(step * (0.8 + random() * 0.4), syncV1ReconnectBackoffCapMs);
+}
+
 async function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (milliseconds === 0) return;
   await new Promise<void>((resolve, reject) => {
@@ -1234,11 +1563,24 @@ async function delay(milliseconds: number, signal?: AbortSignal): Promise<void> 
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
-  const chunk = 0x8000;
+  // Stay far below every engine's spread-argument ceiling.
+  const chunk = 0x800;
   for (let offset = 0; offset < bytes.length; offset += chunk) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
   }
   return globalThis.btoa(binary);
+}
+
+function base64ToBytes(value: string, field: string): Uint8Array {
+  let binary: string;
+  try {
+    binary = globalThis.atob(value);
+  } catch (error) {
+    throw new TerraScaleSyncV1ClientError("protocol_error", `${field} is not valid base64`, { cause: error });
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
 function bytesFromUnknown(value: unknown, field: string): Uint8Array {
@@ -1476,6 +1818,11 @@ function decodeInlineSnapshot(value: unknown, checkpoint: Uint8Array | undefined
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((byte, index) => byte === right[index]);
+}
+
+/** The deduplication identity of one subscribe: transport, database, name, statement, parameters. */
+function subscribeIdentity(databaseId: string, options: SyncV1SubscribeOptions, transport: SyncV1Transport): string {
+  return `${transport}|${databaseId}|${options.subscription}|${options.query}|${bytesToBase64(new Uint8Array(options.parameters))}`;
 }
 
 function normalizeResetReason(value: string): SyncV1ResultResetReason {

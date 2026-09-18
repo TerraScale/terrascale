@@ -298,7 +298,8 @@ it("rejects an empty import upload before making a request", () => {
 
 it("carries schema generation preconditions and a stable apply identity", async () => {
   const requests: Request[] = [];
-  const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });
+  // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+  const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests), routing: { enabled: false } });
   const schema = { name: "users", fields: [], historyRetentionDays: 30, mergePolicy: "remove-wins" } as const;
   await client.schemas.put("db", "users", schema, { idempotencyKey: "apply-one", ifMatch: '"7"' });
   expect(requests[0]?.headers.get("if-match")).toBe('"7"');
@@ -323,6 +324,56 @@ it("preserves the published rolling_back schema migration state", async () => {
   const result = await client.schemas.get("db", "users");
   expect(result.ok).toBe(true);
   if (result.ok) expect(result.value.migration?.state).toBe("rolling_back");
+});
+
+it("rolls back a schema migration with the required identity and generation preconditions", async () => {
+  const requests: Request[] = [];
+  const client = createTerraScaleManagementClient({
+    fetch: async input => {
+      const request = new Request(input);
+      requests.push(request);
+      return Response.json({ generation: 2, schema_version: 1, schema: { name: "users", fields: [] } }, { status: 202 });
+    },
+  });
+
+  const admitted = await client.schemas.rollback("db", "users", { idempotencyKey: "rollback-one", ifMatch: '"7"' });
+  expect(admitted.ok).toBe(true);
+  if (admitted.ok) expect(admitted.status).toBe(202);
+  expect(new URL(requests[0]!.url).pathname).toBe("/api/v1/databases/db/collections/users/schema/migration/rollback");
+  expect(requests[0]?.method).toBe("POST");
+  expect(requests[0]?.headers.get("if-match")).toBe('"7"');
+  expect(requests[0]?.headers.get("idempotency-key")).toBe("rollback-one");
+  expect(await requests[0]?.text()).toBe("");
+  expect(() => client.schemas.rollback("db", "users", { idempotencyKey: "", ifMatch: '"7"' })).toThrow(TypeError);
+  expect(() => client.schemas.rollback("db", "users", { idempotencyKey: "key", ifMatch: "7" })).toThrow(TypeError);
+  expect(() => client.schemas.rollback("db", "users", { idempotencyKey: "key", ifMatch: 'W/"7"' })).toThrow(TypeError);
+  expect(requests).toHaveLength(1);
+});
+
+it("reads an authorization lease with lossless int64 timestamps and no auth requirement", async () => {
+  const requests: Request[] = [];
+  const client = createTerraScaleManagementClient({
+    fetch: async input => {
+      const request = new Request(input);
+      requests.push(request);
+      return new Response(
+        '{"version":1,"tenantId":"tenant-1","epoch":"epoch-1","featureEpoch":"feature-epoch-1","audience":"producer","region":"GRU","issuedAt":9007199254740993,"validUntil":9223372036854775807,"keyId":"key-1","signature":"signature"}',
+        { headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const result = await client.authorization.getLease("tenant-1");
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.value.issuedAt).toBe(9007199254740993n);
+    expect(result.value.validUntil).toBe(9223372036854775807n);
+    expect(result.value.version).toBe(1);
+    expect(result.value.signature).toBe("signature");
+  }
+  expect(new URL(requests[0]!.url).pathname).toBe("/api/v1/authorization/leases/tenant-1");
+  expect(requests[0]?.headers.has("authorization")).toBe(false);
+  expect(() => client.authorization.getLease(" ")).toThrow(TypeError);
 });
 
 it("bounds recommendations and keeps export idempotency in the published request body", async () => {
@@ -474,6 +525,8 @@ it("uses per-call project scope and forwards management pagination", async () =>
   const requests: Request[] = [];
   const client = createTerraScaleManagementClient({
     projectId: "configured-project",
+    // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+    routing: { enabled: false },
     fetch: async input => { requests.push(new Request(input)); return Response.json({ databases: [] }); },
   });
   await client.databases.list("call-project", { skip: 5, take: 10 });

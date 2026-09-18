@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "vitest";
 import { createTerraScaleClient } from "./factory.js";
+import { TerraScaleDiscoveryRouter, TerraScaleRoutingCache } from "./discovery.js";
 
 import {
   decodeTerrascaleSyncV1MsgpackEnvelope,
@@ -12,6 +13,7 @@ import {
   TerraScaleSyncV1Client,
   TerraScaleSyncV1ClientError,
   SyncV1ViewError,
+  syncV1ReconnectDelayMs,
   syncV1ResultDigest,
   type SyncV1ResultItem,
   type SyncV1WebSocket,
@@ -111,6 +113,17 @@ class FakeSocket implements SyncV1WebSocket {
 
 function base64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
+}
+
+/** One text/event-stream response whose chunks land exactly as written. */
+function sseResponse(chunks: readonly string[], leaveOpen = false): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      if (!leaveOpen) controller.close();
+    },
+  });
+  return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream; charset=utf-8" } });
 }
 
 function attachedViewBody(generation: bigint): Record<string, unknown> {
@@ -752,5 +765,408 @@ describe("current reactive client", () => {
     assert.equal(pollCount, 1);
     assert.deepEqual(live.view.getItems().map(entry => entry.identity), ["new"]);
     assert.deepEqual(live.reset, { reason: "generation-changed", subscription: "reset" });
+  });
+
+  test("streams server-sent events from the log origin with capability and auth headers", async () => {
+    const requests: Request[] = [];
+    const changed = [item("row", "streamed")];
+    const delta = serverFrame({
+      kind: "delta",
+      subscription: "orders-1",
+      view_generation: 1n,
+      from_revision: 1n,
+      to_revision: 2n,
+      operations: [{ kind: "update", identity: "row", fields: [{ path: "value", value: encoder.encode("streamed") }] }],
+      digest: syncV1ResultDigest(changed),
+      checkpoint: encoder.encode("checkpoint-1-2"),
+    });
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (request.method === "POST") return Response.json(attachedViewBody(1n));
+      return sseResponse([": ping\n\n", "id: 2\nda", `ta: ${base64(delta)}\n\n`], true);
+    };
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://member.example",
+      accessToken: "session-token",
+      fetch,
+    }).reactive;
+    const live = await client.subscribe({
+      subscription: "orders",
+      databaseId: "db-1",
+      query: "select * from orders",
+      parameters: new Uint8Array(),
+      transport: "server-sent-events",
+    });
+    assert.equal(live.transport, "server-sent-events");
+    await waitFor(() => live.view.getRevision() === 2n, "the streamed delta");
+    assert.equal(decoder.decode(live.view.getItems()[0]!.value.value), "streamed");
+    const stream = requests[1]!;
+    assert.equal(requests[0]!.headers.get("authorization"), "Bearer session-token");
+    assert.equal(new URL(stream.url).pathname, "/api/v1/reactive/views/orders-1/1/stream");
+    assert.equal(new URL(stream.url).searchParams.get("offset"), "1");
+    assert.equal(stream.headers.get("accept"), "text/event-stream");
+    assert.equal(stream.headers.get("x-terrascale-capability"), "cap-1");
+    assert.equal(stream.headers.get("authorization"), "Bearer session-token");
+    live.close();
+  });
+
+  test("treats a terminal error event as a typed reset and reattaches from the last offset", async () => {
+    const streams: Request[] = [];
+    let attaches = 0;
+    const deltaTo = (view: string, generation: bigint, to: bigint, value: string) => serverFrame({
+      kind: "delta",
+      subscription: view,
+      view_generation: generation,
+      from_revision: to - 1n,
+      to_revision: to,
+      operations: [{ kind: "update", identity: "row", fields: [{ path: "value", value: encoder.encode(value) }] }],
+      digest: syncV1ResultDigest([item("row", value)]),
+      checkpoint: encoder.encode(`checkpoint-${generation}-${to}`),
+    });
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      if (request.method === "POST") {
+        attaches += 1;
+        return Response.json(attachedViewBody(BigInt(attaches)));
+      }
+      streams.push(request);
+      return attaches === 1
+        ? sseResponse([
+          `id: 2\ndata: ${base64(deltaTo("orders-1", 1n, 2n, "before-error"))}\n\n`,
+          "id: 2\nevent: error\ndata: reactive_unavailable\n\n",
+        ])
+        : sseResponse([`id: 3\ndata: ${base64(deltaTo("orders-2", 2n, 3n, "resumed"))}\n\n`], true);
+    };
+    const client = new TerraScaleSyncV1Client({ reconnectDelayMs: 0, fetch });
+    const live = await client.subscribe({
+      subscription: "orders",
+      databaseId: "db",
+      query: "select * from orders",
+      parameters: new Uint8Array(),
+      transport: "server-sent-events",
+    });
+    await waitFor(() => streams.length === 2, "the replacement stream");
+    assert.equal(attaches, 2);
+    assert.equal(new URL(streams[0]!.url).pathname, "/api/v1/reactive/views/orders-1/1/stream");
+    assert.equal(new URL(streams[0]!.url).searchParams.get("offset"), "1");
+    assert.equal(new URL(streams[1]!.url).pathname, "/api/v1/reactive/views/orders-2/2/stream");
+    assert.equal(new URL(streams[1]!.url).searchParams.get("offset"), "2");
+    await waitFor(() => live.view.getRevision() === 3n, "the resumed delta");
+    assert.equal(decoder.decode(live.view.getItems()[0]!.value.value), "resumed");
+    assert.deepEqual(live.reset, { reason: "checkpoint-expired", subscription: "orders", message: "reactive_unavailable" });
+    assert.equal(client.getSnapshot().online, true);
+    live.close();
+  });
+
+  test("reattaches from the installed revision after the stream is dropped", async () => {
+    const streams: Request[] = [];
+    let attaches = 0;
+    const deltaTo = (view: string, generation: bigint, to: bigint, value: string) => serverFrame({
+      kind: "delta",
+      subscription: view,
+      view_generation: generation,
+      from_revision: to - 1n,
+      to_revision: to,
+      operations: [{ kind: "update", identity: "row", fields: [{ path: "value", value: encoder.encode(value) }] }],
+      digest: syncV1ResultDigest([item("row", value)]),
+      checkpoint: encoder.encode(`checkpoint-${generation}-${to}`),
+    });
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      if (request.method === "POST") {
+        attaches += 1;
+        return Response.json(attachedViewBody(BigInt(attaches)));
+      }
+      streams.push(request);
+      return attaches === 1
+        ? sseResponse([`id: 2\ndata: ${base64(deltaTo("orders-1", 1n, 2n, "dropped"))}\n\n`])
+        : sseResponse([`id: 3\ndata: ${base64(deltaTo("orders-2", 2n, 3n, "recovered"))}\n\n`], true);
+    };
+    const client = new TerraScaleSyncV1Client({ reconnectDelayMs: 0, fetch });
+    const live = await client.subscribe({
+      subscription: "orders",
+      databaseId: "db",
+      query: "select * from orders",
+      parameters: new Uint8Array(),
+      transport: "server-sent-events",
+    });
+    await waitFor(() => streams.length === 2, "the replacement stream after the drop");
+    assert.equal(new URL(streams[1]!.url).searchParams.get("offset"), "2");
+    await waitFor(() => live.view.getRevision() === 3n, "the recovered delta");
+    assert.equal(decoder.decode(live.view.getItems()[0]!.value.value), "recovered");
+    assert.equal(live.reset, undefined);
+    live.close();
+  });
+});
+
+describe("reactive discovery routing, backoff, and deduplication (ADR 0050 §5.7)", () => {
+  const fra = { region: "FRA", url: "https://fra.api.terrascale.tech" };
+  const gru = { region: "GRU", url: "https://gru.api.terrascale.tech" };
+
+  function discoveryRouter(
+    endpoints: readonly { region: string; url: string }[],
+    options: { fail?: boolean } = {},
+  ): TerraScaleDiscoveryRouter {
+    return new TerraScaleDiscoveryRouter({
+      origin: "https://api.terrascale.tech",
+      discoveryBaseUrl: undefined,
+      fetch: options.fail === true
+        ? async () => new Response("unavailable", { status: 503 })
+        : async () => Response.json({
+          v: 1,
+          database: "db",
+          branch: "main",
+          revision: 1,
+          updated: 1,
+          residency: null,
+          placement: "known",
+          refreshSeconds: 300,
+          endpoints: endpoints.map((endpoint, index) => ({
+            region: endpoint.region,
+            url: endpoint.url,
+            priority: index + 1,
+            capabilities: ["read", "reactive"],
+          })),
+        }),
+      timeoutMs: 30_000,
+      discoveryTimeoutMs: 1_000,
+    }, new TerraScaleRoutingCache());
+  }
+
+  test("attaches directly to the discovered regional endpoint", async () => {
+    const attachUrls: string[] = [];
+    const client = new TerraScaleSyncV1Client({
+      apiBaseUrl: "https://api.terrascale.tech",
+      discoveryRouter: discoveryRouter([fra, gru]),
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        if (request.method !== "POST") return new Response(null, { status: 204 });
+        attachUrls.push(request.url);
+        return Response.json(attachedViewBody(1n), { headers: { "x-terrascale-region": "FRA" } });
+      },
+    });
+    const live = await client.subscribe({
+      subscription: "orders", databaseId: "db", query: "select * from orders",
+      parameters: new Uint8Array(), autoStart: false,
+    });
+    assert.deepEqual(attachUrls, ["https://fra.api.terrascale.tech/api/v1/reactive/views"]);
+    // Reactive delivery (snapshot/log) still targets the sync origin.
+    assert.equal(new URL(live.logUrl).origin, "https://sync.api.terrascale.tech");
+    live.close();
+  });
+
+  test("falls back to the global attach origin when discovery cannot answer", async () => {
+    const attachUrls: string[] = [];
+    const client = new TerraScaleSyncV1Client({
+      apiBaseUrl: "https://api.terrascale.tech",
+      discoveryRouter: discoveryRouter([fra], { fail: true }),
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        if (request.method !== "POST") return new Response(null, { status: 204 });
+        attachUrls.push(request.url);
+        return Response.json(attachedViewBody(1n), { headers: { "x-terrascale-region": "GRU" } });
+      },
+      webSocketFactory: (url) => {
+        assert.equal(new URL(url).hostname, "gru.api.terrascale.tech");
+        const socket = new FakeSocket();
+        queueMicrotask(() => socket.open());
+        return socket;
+      },
+    });
+    const live = await client.subscribe({
+      subscription: "orders", databaseId: "db", query: "select * from orders",
+      parameters: new Uint8Array(), transport: "websocket",
+    });
+    assert.deepEqual(attachUrls, ["https://api.terrascale.tech/api/v1/reactive/views"]);
+    assert.equal(client.getSnapshot().online, true);
+    live.close();
+  });
+
+  test("reports the discovered region on attach transport failure and reattaches to the next endpoint", async () => {
+    const router = discoveryRouter([fra, gru]);
+    const attachUrls: string[] = [];
+    const client = new TerraScaleSyncV1Client({
+      apiBaseUrl: "https://api.terrascale.tech",
+      discoveryRouter: router,
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        if (request.method !== "POST") return new Response(null, { status: 204 });
+        attachUrls.push(request.url);
+        if (request.url.startsWith("https://fra.api.terrascale.tech")) throw new TypeError("connection reset");
+        return Response.json(attachedViewBody(1n), { headers: { "x-terrascale-region": "GRU" } });
+      },
+    });
+    const options = {
+      subscription: "orders", databaseId: "db", query: "select * from orders",
+      parameters: new Uint8Array(), autoStart: false,
+    } as const;
+    await assert.rejects(
+      () => client.subscribe(options),
+      (error: unknown) => error instanceof TerraScaleSyncV1ClientError && error.code === "transport",
+    );
+    assert.equal(router.cachedDocument("db")?.endpoints[0]?.region, "GRU");
+    const live = await client.subscribe(options);
+    assert.deepEqual(attachUrls, [
+      "https://fra.api.terrascale.tech/api/v1/reactive/views",
+      "https://gru.api.terrascale.tech/api/v1/reactive/views",
+    ]);
+    live.close();
+  });
+
+  test("reports the discovered region when the regional WebSocket fails before it opens", async () => {
+    const router = discoveryRouter([fra, gru]);
+    const client = new TerraScaleSyncV1Client({
+      apiBaseUrl: "https://api.terrascale.tech",
+      discoveryRouter: router,
+      // No region header: the member origin and reported region come from the
+      // discovered endpoint itself (the capability is region-bound).
+      fetch: async () => Response.json(attachedViewBody(1n)),
+      webSocketFactory: (url) => {
+        assert.equal(new URL(url).hostname, "fra.api.terrascale.tech");
+        const socket = new FakeSocket();
+        queueMicrotask(() => socket.close(1006, "network"));
+        return socket;
+      },
+    });
+    await assert.rejects(
+      () => client.subscribe({
+        subscription: "orders", databaseId: "db", query: "select * from orders",
+        parameters: new Uint8Array(), transport: "websocket",
+      }),
+      (error: unknown) => error instanceof TerraScaleSyncV1ClientError && error.code === "transport",
+    );
+    assert.equal(router.cachedDocument("db")?.endpoints[0]?.region, "GRU");
+  });
+
+  test("reattaches to the next discovered endpoint after a region route change", async () => {
+    const router = discoveryRouter([fra, gru]);
+    const attachUrls: string[] = [];
+    const sockets: FakeSocket[] = [];
+    const client = new TerraScaleSyncV1Client({
+      apiBaseUrl: "https://api.terrascale.tech",
+      reconnectDelayMs: 0,
+      discoveryRouter: router,
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        if (request.method !== "POST") return new Response(null, { status: 204 });
+        attachUrls.push(request.url);
+        const region = request.url.startsWith("https://fra.api.terrascale.tech") ? "FRA" : "GRU";
+        return Response.json(attachedViewBody(BigInt(attachUrls.length)), { headers: { "x-terrascale-region": region } });
+      },
+      webSocketFactory: (url) => {
+        assert.equal(new URL(url).hostname, sockets.length === 0 ? "fra.api.terrascale.tech" : "gru.api.terrascale.tech");
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        if (sockets.length === 1) queueMicrotask(() => socket.open());
+        return socket;
+      },
+    });
+    const live = await client.subscribe({
+      subscription: "orders", databaseId: "db", query: "select * from orders",
+      parameters: new Uint8Array(), transport: "websocket",
+    });
+    sockets[0]!.message(serverFrame({ kind: "region_route_change", region: "GRU" }));
+    await waitFor(() => sockets.length === 2, "the replacement WebSocket on the next endpoint");
+    assert.deepEqual(attachUrls, [
+      "https://fra.api.terrascale.tech/api/v1/reactive/views",
+      "https://gru.api.terrascale.tech/api/v1/reactive/views",
+    ]);
+    sockets[1]!.open();
+    await waitFor(() => client.getSnapshot().online, "the replacement handshake");
+    assert.equal(client.getSnapshot().region, "GRU");
+    live.close();
+  });
+
+  test("reconnect backoff grows exponentially with bounded jitter and caps at 30 s", () => {
+    const at = (u: number) => () => u;
+    const epsilon = 1e-9;
+    for (let failures = 0; failures <= 10; failures += 1) {
+      const step = Math.min(250 * 2 ** failures, 30_000);
+      for (let u = 0; u <= 1; u += 0.25) {
+        const delay = syncV1ReconnectDelayMs(250, failures, at(u));
+        assert.ok(delay >= 0.8 * step - epsilon, `failure ${failures} jitter ${u}: ${delay} >= 0.8 * ${step}`);
+        assert.ok(delay <= 1.2 * step + epsilon, `failure ${failures} jitter ${u}: ${delay} <= 1.2 * ${step}`);
+      }
+    }
+    assert.equal(syncV1ReconnectDelayMs(250, 0, at(0.5)), 250);
+    assert.equal(syncV1ReconnectDelayMs(250, 1, at(0.5)), 500);
+    assert.equal(syncV1ReconnectDelayMs(250, 2, at(0.5)), 1_000);
+    assert.equal(syncV1ReconnectDelayMs(250, 6, at(0.5)), 16_000);
+    assert.equal(syncV1ReconnectDelayMs(1_000, 5, at(0.5)), 30_000);
+    assert.equal(syncV1ReconnectDelayMs(10_000, 2, at(1)), 30_000);
+  });
+
+  test("the HTTP poll loop reconnects through backoff after a transport failure", async () => {
+    let attaches = 0;
+    let logRequests = 0;
+    const recovered = [item("row", "recovered")];
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      if (request.method === "POST") {
+        attaches += 1;
+        return Response.json(attachedViewBody(1n));
+      }
+      logRequests += 1;
+      if (logRequests === 1) throw new TypeError("connection reset");
+      if (logRequests > 2) return new Response(null, { status: 204 });
+      return new Response(serverFrame({
+        kind: "delta",
+        subscription: "orders-1",
+        view_generation: 1n,
+        from_revision: 1n,
+        to_revision: 2n,
+        operations: [{ kind: "update", identity: "row", fields: [{ path: "value", value: encoder.encode("recovered") }] }],
+        digest: syncV1ResultDigest(recovered),
+        checkpoint: encoder.encode("checkpoint-1-2"),
+      }).buffer as ArrayBuffer, { headers: { "content-type": "application/msgpack" } });
+    };
+    const client = new TerraScaleSyncV1Client({ apiBaseUrl: "https://member.example", reconnectDelayMs: 10, fetch });
+    const live = await client.subscribe({
+      subscription: "orders", databaseId: "db", query: "select * from orders", parameters: new Uint8Array(),
+    });
+    await waitFor(() => live.view.getRevision() === 2n, "the post-backoff delta");
+    assert.equal(attaches, 2);
+    assert.equal(client.getSnapshot().online, true);
+    live.close();
+  });
+
+  test("deduplicates identical subscriptions onto one attach and socket", async () => {
+    const sockets: FakeSocket[] = [];
+    let attaches = 0;
+    const client = new TerraScaleSyncV1Client({
+      apiBaseUrl: "https://api.terrascale.tech",
+      fetch: async () => {
+        attaches += 1;
+        return Response.json(attachedViewBody(BigInt(attaches)), { headers: { "x-terrascale-region": "GRU" } });
+      },
+      webSocketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        queueMicrotask(() => socket.open());
+        return socket;
+      },
+    });
+    const options = {
+      subscription: "orders", databaseId: "db", query: "select * from orders",
+      parameters: new Uint8Array(), transport: "websocket",
+    } as const;
+    const first = await client.subscribe(options);
+    const second = await client.subscribe(options);
+    assert.equal(attaches, 1);
+    assert.equal(sockets.length, 1);
+    assert.equal(second.id, first.id);
+    assert.equal(second.view, first.view);
+    assert.equal(client.getSnapshot().subscriptions, 1);
+
+    first.close();
+    assert.equal(sockets[0]!.closed, false);
+    assert.equal(client.getSnapshot().online, true);
+    assert.equal(client.getSnapshot().subscriptions, 1);
+
+    second.close();
+    assert.equal(sockets[0]!.closed, true);
+    assert.equal(client.getSnapshot().subscriptions, 0);
+    assert.equal(client.getSnapshot().online, false);
   });
 });

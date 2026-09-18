@@ -131,13 +131,13 @@ The current client:
   gates.
 
 Delivery uses the pinned producer transports: authenticated HTTP attach plus
-cacheable snapshot reads and bounded long-poll log reads, with an optional
-direct WebSocket upgrade to the attached member. HTTP is the default; pass
+cacheable snapshot reads and bounded long-poll log reads, with optional direct
+push upgrades to the attached member. HTTP is the default; pass
 `transport: "websocket"` (and optionally `webSocketFactory` in environments
-without a global `WebSocket`) to upgrade. See
-[ADR 0025](docs/adr/0025-public-messagepack-manifest.md).
-There is no JSON WebSocket variant and no SSE transport; the producer contract
-publishes HTTP and WebSocket only.
+without a global `WebSocket`) or `transport: "server-sent-events"` to upgrade.
+See [ADR 0025](docs/adr/0025-public-messagepack-manifest.md).
+There is no JSON WebSocket variant; binary MessagePack envelopes are the only
+wire schema.
 
 The reactive hooks bind the same observer to both frameworks:
 `useQuery`/`useMutation` from `@terrascale/sdk/react` and
@@ -145,10 +145,12 @@ The reactive hooks bind the same observer to both frameworks:
 implementing the Svelte store contract, so `$query.data` auto-subscribes
 without a runtime dependency).
 
-REST starts at the global origin and can pin to a permitted Region. Placement
-repair must preserve authorization, session frontiers, and idempotency.
-`preferredRegion` is a failover-capable hint; `regionAffinity: "strict"`
-requires a preferred Region and refuses silent regional fallback.
+REST discovers eligible regional endpoints once per routing scope and then
+connects directly (ADR 0050); the global origin remains the fallback.
+Placement repair must preserve authorization, session frontiers, and
+idempotency. `preferredRegion` is a failover-capable hint;
+`regionAffinity: "strict"` requires a preferred Region and refuses silent
+regional fallback.
 
 Use `idempotencyKeyFactory` or an operation's `idempotencyKey` for retryable
 mutations. Keys are nonblank and at most 128 characters; retries retain one
@@ -183,15 +185,36 @@ automatic retry candidates.
 
 ## Region and session behavior
 
-The default public API origin is `https://api.terrascale.tech`. Cloudflare
-routes that global host to the nearest healthy Region. Region-pinned access
-uses `https://gru.api.terrascale.tech`, `https://sfo.api.terrascale.tech`, or
-`https://fra.api.terrascale.tech`.
+The default public API origin is `https://api.terrascale.tech`. Per
+[ADR 0050](../terrabase/docs/adr/0050-sdk-discovery-and-direct-regional-routing.md),
+the SDK's first database-scoped request performs one metadata
+`GET /api/v1/discovery` call against that origin and then connects
+**directly** to the ranked regional endpoint —
+`https://gru.api.terrascale.tech`, `https://sfo.api.terrascale.tech`, or
+`https://fra.api.terrascale.tech` — for every subsequent query, mutation, and
+reactive connection. Discovery never runs before every query: the routing
+document is cached per database/branch/project/tenant scope for its refresh
+policy, concurrent lookups share one request, and a healthy connection is
+kept across refreshes. If discovery itself fails or times out (bounded at
+3 s), the request falls back to the global origin, which still proxies for
+unpinned callers.
+
+Routing documents carry a routing revision, a refresh policy, and eligible
+endpoints with per-region capabilities; a draining replica keeps reads but
+loses writes, and mutations skip it automatically. A member `421` still
+repairs placement once (ADR 0043 §4) and schedules a corrective
+rediscovery. Never-failover rules are absolute: the SDK only fails over
+within the document's eligible endpoints for the same database.
 
 At launch, a database selects one to three active Regions from GRU, SFO, and
-FRA. A preferred Region is a failover-capable hint. Strict affinity fails
-rather than silently serving from another Region. Support for Regions beyond
-those three is post-launch work.
+FRA. A preferred Region is a failover-capable hint honoured only when it is
+eligible in the routing document. Strict affinity (`regionAffinity: "strict"`
+with `preferredRegion`) pins at construction and never uses discovery.
+Custom origins keep ADR 0043 behavior unless `routing.baseUrl` or
+`routing.enabled` opts in. `requestTimeoutMs` (default 30 s) bounds every
+request including retries; retry and reconnect backoff is exponential with
+jitter. A `401` with a function `accessToken` provider re-resolves the token
+once and replays only when the token changed.
 
 Automatic session consistency retains the latest opaque causal token inside
 one client instance and sends it on later eligible reads. A caller can request

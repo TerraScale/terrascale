@@ -4,7 +4,8 @@ import { AuthTransactionOperationLimitError, AuthTransactionOutcomeUnknownError,
 
 it("stages named auth operations with stable keys and commits without the staging header", async () => {
   const requests: Request[] = [];
-  const client = createAuthPersistenceClient({ fetch: async input => {
+  // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+  const client = createAuthPersistenceClient({ routing: { enabled: false }, fetch: async input => {
     requests.push(new Request(input));
     return Response.json({ record: null, matched: true });
   } });
@@ -20,7 +21,8 @@ it("stages named auth operations with stable keys and commits without the stagin
 
 it("returns deterministic transaction conflicts without automatic replay", async () => {
   let calls = 0;
-  const client = createAuthPersistenceClient({ maxRetryAttempts: 2, fetch: async () => {
+  // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+  const client = createAuthPersistenceClient({ maxRetryAttempts: 2, routing: { enabled: false }, fetch: async () => {
     calls++;
     return Response.json({ error: { code: "transaction_conflict", message: "conflict", fix: "resolve identity" } }, { status: 409 });
   } });
@@ -32,7 +34,8 @@ it("returns deterministic transaction conflicts without automatic replay", async
 
 it("stages findOne only with an explicit transaction identity and stable key", async () => {
   const requests: Request[] = [];
-  const client = createAuthPersistenceClient({ fetch: async input => {
+  // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+  const client = createAuthPersistenceClient({ routing: { enabled: false }, fetch: async input => {
     requests.push(new Request(input));
     return Response.json({ record: { id: "one" }, matched: true });
   } });
@@ -48,7 +51,7 @@ it("stages findOne only with an explicit transaction identity and stable key", a
 
 it("bounds begin labels in UTF-8 bytes and preserves the returned transaction identity", async () => {
   let calls = 0;
-  const client = createAuthPersistenceClient({ fetch: async () => {
+  const client = createAuthPersistenceClient({ routing: { enabled: false }, fetch: async () => {
     calls++;
     return Response.json({ record: null, matched: true, transactionId: "é".repeat(50) + "#42", expiresAtMs: 30_000 });
   } });
@@ -61,7 +64,8 @@ it("bounds begin labels in UTF-8 bytes and preserves the returned transaction id
 
 it("maps predicate auth routes and keeps ordinary queries read-scoped", async () => {
   const requests: Request[] = [];
-  const client = createAuthPersistenceClient({ fetch: async input => {
+  // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+  const client = createAuthPersistenceClient({ routing: { enabled: false }, fetch: async input => {
     requests.push(new Request(input));
     return Response.json({ record: null, matched: true, count: 2 });
   } });
@@ -95,7 +99,8 @@ it("retries ordinary auth query reads after transient failures without adding mu
   const requests: Request[] = [];
   const attempts = new Map<string, number>();
   let factoryCalls = 0;
-  const client = createAuthPersistenceClient({ maxRetryAttempts: 1, retryDelayMs: 0, idempotencyKeyFactory: () => {
+  // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+  const client = createAuthPersistenceClient({ maxRetryAttempts: 1, retryDelayMs: 0, routing: { enabled: false }, idempotencyKeyFactory: () => {
     factoryCalls++;
     return "unexpected-global-key";
   }, fetch: async input => {
@@ -121,7 +126,8 @@ it("retries ordinary auth query reads after transient failures without adding mu
 
 it("does not retry ordinary auth queries on denial statuses", async () => {
   let calls = 0;
-  const client = createAuthPersistenceClient({ maxRetryAttempts: 2, retryDelayMs: 0, fetch: async () => {
+  // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+  const client = createAuthPersistenceClient({ maxRetryAttempts: 2, retryDelayMs: 0, routing: { enabled: false }, fetch: async () => {
     calls++;
     return Response.json({ error: { code: "forbidden", message: "denied" } }, { status: 403 });
   } });

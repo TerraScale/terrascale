@@ -59,6 +59,7 @@ export class TerraScaleClient {
     this.audit = new AuditClient(this.#http);
     this.notifications = new NotificationsClient(this.#http);
     this.sql = new SqlClient(this.#http);
+    const discoveryRouter = this.#http.discoveryRouter;
     this.reactive = new TerraScaleSyncV1Client({
       ...(config.apiBaseUrl === undefined ? {} : { apiBaseUrl: config.apiBaseUrl }),
       ...(config.syncBaseUrl === undefined ? {} : { syncBaseUrl: config.syncBaseUrl }),
@@ -66,6 +67,7 @@ export class TerraScaleClient {
       ...(config.accessToken === undefined ? {} : { accessToken: config.accessToken }),
       ...(config.tenantId === undefined ? {} : { tenantId: config.tenantId }),
       ...(config.projectId === undefined ? {} : { projectId: config.projectId }),
+      ...(discoveryRouter === undefined ? {} : { discoveryRouter }),
     });
 
     // Keep these additional public surfaces out of the ordinary client route

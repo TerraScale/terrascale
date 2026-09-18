@@ -104,6 +104,21 @@ test("management uint64 fields preserve full range and reject out-of-range value
   }
 });
 
+test("non-whitelisted fields keep the lossy JSON number on precise routes", async () => {
+  const raw = '{"generation":3,"schema_version":1,"schema":{"version":9007199254740993},"float":1.25}';
+  const result = await createTerraScaleManagementClient({
+    fetch: async () => new Response(raw, { headers: { "content-type": "application/json" } }),
+  }).schemas.get("demo", "orders");
+  assert.ok(result.ok);
+  const ordinary = JSON.parse(raw) as { schema: { version: number }; float: number };
+  // The whitelisted generation is precise; every other number is exactly what
+  // a plain JSON.parse of the same text produces.
+  assert.equal(result.value.generation, 3);
+  assert.equal(result.value.schema?.version, ordinary.schema.version);
+  assert.ok(typeof result.value.schema?.version === "number");
+  assert.equal((result.value as { float?: number }).float, ordinary.float);
+});
+
 test("index backfill remaining preserves unsafe uint64 values", async () => {
   const client = createTerraScaleManagementClient({
     fetch: async () => new Response(

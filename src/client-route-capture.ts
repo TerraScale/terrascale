@@ -11,12 +11,10 @@ const pathTemplateSegments = new Map<string, string>([
   [sampleIds.database, "{name}"],
   [sampleIds.collection, "{collection}"],
   [sampleIds.documentId, "{id}"],
-]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("import-1", "{id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}").set("operation-1", "{operation_id}").set("auth-user", "{model}");
+]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("import-1", "{id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}").set("operation-1", "{operation_id}").set("auth-user", "{model}").set("tenant-1", "{tenant}");
 
 /** Canonical producer operations not implemented by this SDK slice. */
 export const expectedContractGapRouteNames = [
-  "databases.authorizationLease",
-  "databases.rollbackSchema",
   "databases.websocket",
 ] as const;
 
@@ -281,6 +279,14 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "databases", operation: "putSchema", routeName: "databases.putSchema",
     invoke: (_client, management) => management.schemas.put(sampleIds.database, sampleIds.collection, { name: sampleIds.collection, fields: [], historyRetentionDays: 30, mergePolicy: "remove-wins" }, { idempotencyKey: "schema-apply-1", ifMatch: '"1"' }),
+  },
+  {
+    client: "databases", operation: "rollbackSchema", routeName: "databases.rollbackSchema",
+    invoke: (_client, management) => management.schemas.rollback(sampleIds.database, sampleIds.collection, { idempotencyKey: "schema-rollback-1", ifMatch: '"1"' }),
+  },
+  {
+    client: "databases", operation: "authorizationLease", routeName: "databases.authorizationLease",
+    invoke: (_client, management) => management.authorization.getLease("tenant-1"),
   },
   {
     client: "databases", operation: "listWebhooks", routeName: "databases.listWebhooks",

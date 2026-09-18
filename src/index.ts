@@ -1,4 +1,5 @@
 export * from "./config.js";
+export * from "./discovery.js";
 export * from "./factory.js";
 export * from "./models.js";
 export * from "./regions.js";

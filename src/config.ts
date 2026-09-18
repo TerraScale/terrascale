@@ -1,4 +1,5 @@
 import type { ProjectId } from "./models.js";
+import { defaultDiscoveryTimeoutMs, defaultRequestTimeoutMs, type TerraScaleRoutingOptions } from "./discovery.js";
 import { isRegisteredLocalRuntimeFetch } from "./local-runtime-capability.js";
 import { parseRegionCode, type TerraScaleRegionCode } from "./regions.js";
 
@@ -28,6 +29,10 @@ export type TerraScaleRuntimeConfig = {
   readonly regionAffinity?: "failover" | "strict" | undefined;
   readonly maxRetryAttempts?: number | undefined;
   readonly retryDelayMs?: number | undefined;
+  /** SDK-driven discovery and direct regional routing (ADR 0050). */
+  readonly routing?: TerraScaleRoutingOptions | undefined;
+  /** Bounded per-request timeout covering all retries; default 30000 ms, 0 disables. */
+  readonly requestTimeoutMs?: number | undefined;
   readonly sqlite?: TerraScaleSqliteRuntimeConfig | undefined;
 };
 
@@ -40,6 +45,8 @@ export type ResolvedTerraScaleRuntimeConfig = {
   readonly regionAffinity: "failover" | "strict";
   readonly maxRetryAttempts: number;
   readonly retryDelayMs: number;
+  readonly routing: TerraScaleRoutingOptions;
+  readonly requestTimeoutMs: number;
   readonly sqlite?: TerraScaleSqliteRuntimeConfig | undefined;
 };
 
@@ -81,6 +88,21 @@ export function resolveRuntimeConfig(
     throw new TypeError("retryDelayMs must be a finite number between 0 and 30000.");
   }
 
+  const routingTimeoutMs = config.routing?.timeoutMs ?? defaultDiscoveryTimeoutMs;
+  if (!Number.isFinite(routingTimeoutMs) || routingTimeoutMs < 100 || routingTimeoutMs > 30_000) {
+    throw new TypeError("routing.timeoutMs must be a finite number between 100 and 30000.");
+  }
+  const routing: TerraScaleRoutingOptions = {
+    ...(config.routing?.baseUrl === undefined ? {} : { baseUrl: normalizeBaseUrl(config.routing.baseUrl) }),
+    ...(config.routing?.enabled === undefined ? {} : { enabled: config.routing.enabled }),
+    timeoutMs: routingTimeoutMs,
+  };
+
+  const requestTimeoutMs = config.requestTimeoutMs ?? defaultRequestTimeoutMs;
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 0 || requestTimeoutMs > 300_000) {
+    throw new TypeError("requestTimeoutMs must be an integer between 0 and 300000.");
+  }
+
   const globalApiBaseUrl = normalizeBaseUrl(config.apiBaseUrl ?? "https://api.terrascale.tech");
   const apiBaseUrl = regionAffinity === "strict"
     ? strictRegionalBaseUrl(globalApiBaseUrl, preferredRegion!)
@@ -94,6 +116,8 @@ export function resolveRuntimeConfig(
     regionAffinity,
     maxRetryAttempts,
     retryDelayMs,
+    routing,
+    requestTimeoutMs,
     ...(config.sqlite === undefined ? {} : { sqlite: config.sqlite }),
   };
 }

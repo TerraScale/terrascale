@@ -419,6 +419,13 @@ export type SchemaOperationOptions = {
   readonly signal?: AbortSignal;
 };
 
+/** The rollback admission contract: a stable identity plus the strong ETag of the immediately preceding GET schema. */
+export type SchemaRollbackOptions = {
+  readonly idempotencyKey: string;
+  readonly ifMatch: string;
+  readonly signal?: AbortSignal;
+};
+
 export class ManagementSchemasClient {
   readonly #http: TerraScaleHttp;
   constructor(http: TerraScaleHttp) { this.#http = http; }
@@ -437,6 +444,32 @@ export class ManagementSchemasClient {
       body: schema, idempotencyKey: options.idempotencyKey,
       ...(options.ifMatch === undefined ? {} : { headers: { "if-match": options.ifMatch } }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  }
+
+  /** Rolls back the latest in-progress migration; 202 admits the rollback and 200 replays a completed one. */
+  rollback(databaseId: string, collection: string, options: SchemaRollbackOptions): Promise<TerraScaleResult<Contracts.SchemaDocument>> {
+    requireText(options?.idempotencyKey, "idempotencyKey", 256);
+    if (!/^"[0-9]+"$/u.test(options?.ifMatch ?? "")) throw new TypeError("ifMatch must be a strong schema generation ETag.");
+    return this.#http.request({
+      method: "POST", path: `${collectionPath(databaseId, collection)}/schema/migration/rollback`, routeName: "databases.rollbackSchema",
+      idempotencyKey: options.idempotencyKey, headers: { "if-match": options.ifMatch },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  }
+}
+
+/** Anonymous authorization lease reads for previously authenticated producers. */
+export class ManagementAuthorizationClient {
+  readonly #http: TerraScaleHttp;
+  constructor(http: TerraScaleHttp) { this.#http = http; }
+
+  /** Returns the tenant's previously authenticated lease; the route never renews one on a reader's behalf. */
+  getLease(tenant: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.Lease>> {
+    requireText(tenant, "tenant", 255);
+    return this.#http.request({
+      method: "GET", path: `${apiRoot}/authorization/leases/${idSegment(tenant, "tenant")}`,
+      routeName: "databases.authorizationLease", signal: options.signal,
     });
   }
 }
@@ -698,6 +731,7 @@ export class TerraScaleManagementClient {
   readonly development: ManagementDevelopmentClient;
   readonly webhooks: ManagementWebhooksClient;
   readonly usage: ManagementUsageClient;
+  readonly authorization: ManagementAuthorizationClient;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.#http = new TerraScaleHttp(config);
@@ -712,6 +746,7 @@ export class TerraScaleManagementClient {
     this.development = new ManagementDevelopmentClient(this.#http);
     this.webhooks = new ManagementWebhooksClient(this.#http);
     this.usage = new ManagementUsageClient(this.#http);
+    this.authorization = new ManagementAuthorizationClient(this.#http);
   }
 
   get config() { return this.#http.config; }

@@ -5,6 +5,12 @@ import {
   type TerraScaleRuntimeConfig,
 } from "./config.js";
 import {
+  composeAbortSignals,
+  TerraScaleDiscoveryRouter,
+  discoveryActive,
+  parseRoutingDatabase,
+} from "./discovery.js";
+import {
   err,
   ok,
   type TerraScaleError,
@@ -80,6 +86,8 @@ export class TerraScaleHttp {
   readonly #requestMetricRecorder: TerraScaleRuntimeConfig["requestMetricRecorder"];
   #pinnedRegion: TerraScaleRegionCode | undefined;
   #sessionToken: string | undefined;
+  /** SDK-driven discovery router (ADR 0050); undefined keeps the ADR 0043 path. */
+  readonly #router: TerraScaleDiscoveryRouter | undefined;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.config = resolveRuntimeConfig(config);
@@ -95,6 +103,23 @@ export class TerraScaleHttp {
     this.#pinnedRegion = undefined;
     const configuredSession = (config as TerraScaleRuntimeConfig & { readonly sessionToken?: unknown }).sessionToken;
     this.#sessionToken = validateSessionToken(configuredSession) ? configuredSession.trim() : undefined;
+    this.#router = this.config.regionAffinity !== "strict" && discoveryActive(this.config.routing, this.config.apiBaseUrl)
+      ? new TerraScaleDiscoveryRouter({
+        origin: this.config.apiBaseUrl,
+        discoveryBaseUrl: this.config.routing.baseUrl,
+        fetch: fetchHandler,
+        timeoutMs: this.config.requestTimeoutMs,
+        discoveryTimeoutMs: this.config.routing.timeoutMs ?? 3_000,
+        ...(this.config.projectId === undefined ? {} : { projectId: this.config.projectId }),
+        ...(this.config.tenantId === undefined ? {} : { tenantId: this.config.tenantId }),
+        ...(this.config.preferredRegion === undefined ? {} : { preferredRegion: this.config.preferredRegion }),
+      })
+      : undefined;
+  }
+
+  /** The discovery router, shared with the reactive client for one config. */
+  get discoveryRouter(): TerraScaleDiscoveryRouter | undefined {
+    return this.#router;
   }
 
   /** Region learned from trusted first-contact/421 response headers. */
@@ -148,27 +173,47 @@ export class TerraScaleHttp {
         : options.body instanceof Uint8Array
           ? options.body
           : JSON.stringify(options.body);
+      // ADR 0050: database-scoped requests route through discovery to a
+      // direct regional endpoint; the global origin remains the fallback.
+      const routingDatabase = this.#router === undefined ? null : parseRoutingDatabase(options.path);
+      const needsWrite = isMutation(options.method) && !(options.retryableRead === true && options.method === "POST");
+      // One bounded deadline covers every attempt (ADR 0050 §5.9).
+      const deadline = this.config.requestTimeoutMs > 0 ? AbortSignal.timeout(this.config.requestTimeoutMs) : undefined;
       let attempt = 0;
       let repaired421 = false;
+      let authRefreshed = false;
       let requestRegionHint = options.regionHint;
       while (true) {
         let responseReceived = false;
         let fetchStarted = false;
+        let routedRegion: TerraScaleRegionCode | undefined;
+        let attemptStartedAt = startedAt;
+        // The token this attempt actually sends; the 401 replay compares a
+        // re-resolved token against it, never against a shared latest value
+        // that concurrent requests keep overwriting.
+        const sentToken: { value: string | undefined } = { value: undefined };
         try {
           options.signal?.throwIfAborted();
-          const requestBase = this.baseUrl(requestRegionHint);
+          const routedBase = routingDatabase === null || this.#router === undefined
+            ? undefined
+            : await this.#router.resolveBase(routingDatabase, needsWrite);
+          const requestBase = routedBase?.baseUrl ?? this.baseUrl(requestRegionHint);
+          routedRegion = routedBase?.region;
+          attemptStartedAt = performance.now();
           const globalFirstContact = this.isGlobalFirstContact(requestBase, requestRegionHint);
           const url = buildUrl(requestBase, options.path, options.query);
           const headers = await withCancellation(
-            this.buildHeaders({ ...options, regionHint: requestRegionHint }, idempotencyKey),
+            this.buildHeaders({ ...options, regionHint: requestRegionHint }, idempotencyKey, sentToken),
             options.signal,
           );
+          const composed = composeAbortSignals([options.signal, deadline]);
+          const attemptSignal = composed.signal;
           options.signal?.throwIfAborted();
           const requestInit: RequestInit = {
             method: options.method,
             headers,
             redirect: "manual",
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(attemptSignal === undefined ? {} : { signal: attemptSignal }),
           };
           if (requestBody !== undefined) {
             headers.set("content-type", headers.get("content-type") ?? "application/json");
@@ -177,13 +222,21 @@ export class TerraScaleHttp {
 
           const request = new Request(url, requestInit);
           fetchStarted = true;
-          const response = await this.#fetch(request);
+          let response: Response;
+          try {
+            response = await this.#fetch(request);
+          } finally {
+            composed.dispose();
+          }
           responseReceived = true;
           if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
             throw new TypeError("The TerraScale API returned an unsupported HTTP redirect.");
           }
           const body = await readResponseBody(response, options.routeName);
           this.observeSession(response.headers);
+          if (routedRegion !== undefined && response.status < 500) {
+            this.#router?.recordLatency(routedRegion, performance.now() - attemptStartedAt);
+          }
           this.recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
 
           // Conditional reads use 304 as a successful cache hit. There is no
@@ -224,6 +277,11 @@ export class TerraScaleHttp {
 
           if (response.status === 421 && !repaired421 && this.config.regionAffinity !== "strict") {
             const repaired = placementRegion(response.headers);
+            if (routingDatabase !== null && this.#router !== undefined) {
+              // The member is authoritative (ADR 0043 §2): adopt its
+              // placement immediately and schedule a corrective refresh.
+              this.#router.notePlacement(routingDatabase, placementRegions(response.headers), 0);
+            }
             if (repaired !== undefined && repaired !== (requestRegionHint ?? this.#pinnedRegion)) {
               this.#pinnedRegion = repaired;
               // A 421 advertises placement, but does not prove that the
@@ -242,8 +300,29 @@ export class TerraScaleHttp {
             }
           }
 
+          // Bounded authentication refresh (ADR 0050 §5.6): a 401 never
+          // executed the request, so one re-resolution and replay is safe
+          // for every method — but only once and only when the token moved
+          // relative to the token this attempt actually sent.
+          if (response.status === 401 && !authRefreshed && typeof this.#accessToken === "function") {
+            const refreshed = await resolveAccessToken(this.#accessToken);
+            if (refreshed !== undefined && refreshed.length > 0 && refreshed !== sentToken.value) {
+              authRefreshed = true;
+              attempt++;
+              continue;
+            }
+          }
+
           const errorBody = sanitizeHttpDiagnostic(body.ok ? body.value : body.raw);
           const error = errorFromResponse(response, errorBody);
+          if (retryableStatuses.has(response.status) && routedRegion !== undefined && routingDatabase !== null) {
+            // A regional endpoint implicated by a retryable failure moves
+            // behind the eligible alternatives (ADR 0050 §5.3).
+            this.#router?.reportRegionFailure(routingDatabase, routedRegion);
+          }
+          if (deadline?.aborted) {
+            return err(options.routeName, error, response.status, response.headers, errorBody);
+          }
           if (this.canRetry(options.method, idempotencyKey, attempt, response.status, options.retryableRead)) {
             const delayMs = retryDelay(response, this.config.retryDelayMs, attempt);
             // Preserve the server response when its backoff exceeds our automatic
@@ -263,7 +342,13 @@ export class TerraScaleHttp {
             errorBody,
           );
         } catch (error) {
-          if (fetchStarted && !responseReceived && !options.signal?.aborted && this.canRetry(options.method, idempotencyKey, attempt, undefined, options.retryableRead)) {
+          if (
+            fetchStarted && !responseReceived && !options.signal?.aborted && deadline?.aborted !== true &&
+            routingDatabase !== null && routedRegion !== undefined
+          ) {
+            this.#router?.reportRegionFailure(routingDatabase, routedRegion);
+          }
+          if (fetchStarted && !responseReceived && !options.signal?.aborted && deadline?.aborted !== true && this.canRetry(options.method, idempotencyKey, attempt, undefined, options.retryableRead)) {
             await delayForRetry(retryDelay(undefined, this.config.retryDelayMs, attempt), options.signal);
             attempt++;
             continue;
@@ -305,6 +390,7 @@ export class TerraScaleHttp {
   private async buildHeaders<TBody>(
     options: TerraScaleRequestOptions<TBody>,
     idempotencyKey: string | undefined,
+    sentToken: { value: string | undefined },
   ): Promise<Headers> {
     validateInternalHeaders(options.headers);
     const headers = new Headers();
@@ -329,6 +415,7 @@ export class TerraScaleHttp {
     }
 
     const token = await resolveAccessToken(this.#accessToken);
+    sentToken.value = token;
 
     if (token !== undefined && token.length > 0) {
       headers.set("authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
@@ -518,6 +605,18 @@ function placementRegion(headers: Headers): TerraScaleRegionCode | undefined {
   return undefined;
 }
 
+/** All regions in a placement header, order preserved (home first, ADR 0043 §1). */
+function placementRegions(headers: Headers): TerraScaleRegionCode[] {
+  const raw = headers.get("x-terrascale-placement");
+  if (raw === null) return [];
+  const regions: TerraScaleRegionCode[] = [];
+  for (const candidate of raw.split(",")) {
+    const region = canonicalRegionCode(candidate.trim());
+    if (region !== undefined && !regions.includes(region)) regions.push(region);
+  }
+  return regions;
+}
+
 function retryDelay(response: Response | undefined, baseDelayMs: number, attempt: number): number {
   const retryAfter = response?.headers.get("retry-after");
   if (retryAfter !== null && retryAfter !== undefined) {
@@ -532,7 +631,12 @@ function retryDelay(response: Response | undefined, baseDelayMs: number, attempt
     }
   }
 
-  return Math.min(baseDelayMs * (2 ** attempt), 30_000);
+  // Computed backoff carries jitter (ADR 0050 §5.9) so concurrent clients
+  // that fail together do not retry in lockstep; server-provided
+  // Retry-After timing is honoured exactly and never jittered.
+  const exponential = Math.min(baseDelayMs * (2 ** attempt), 30_000);
+  const jitterRatio = 0.8 + Math.random() * 0.4;
+  return Math.round(Math.min(exponential * jitterRatio, 30_000));
 }
 
 function withCancellation<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -646,34 +750,62 @@ async function readResponseBody(response: Response, routeName: TerraScaleRouteNa
 
 function parseSuccessResponse(raw: string, routeName: TerraScaleRouteName): unknown {
   if (routeName === "databases.getDocument") return parseDocumentValue(raw);
-  // Keep response metadata and ordinary DTOs on the normal JSON contract.
-  const ordinary: unknown = JSON.parse(raw);
   const integerPaths = responseUint64Paths[routeName];
   const signedPaths = responseInt64Paths[routeName];
+  const rowsKey = routeName === "databases.executeSql" ? "rows"
+    : routeName === "databases.listDocuments" ? "documents" : undefined;
+  if (integerPaths === undefined && signedPaths === undefined && rowsKey === undefined) {
+    // Keep response metadata and ordinary DTOs on the normal JSON contract.
+    return JSON.parse(raw);
+  }
+  // Decode the lossless view once, then derive the ordinary view from it:
+  // every BigInt becomes the same lossy number a plain JSON.parse of the same
+  // text would have produced, before the whitelisted paths are re-installed.
+  const precise = parseDocumentValue(raw);
+  const ordinary: unknown = lossyNumberView(precise);
   if (integerPaths !== undefined || signedPaths !== undefined) {
-    const precise = parseDocumentValue(raw);
     for (const fieldPath of integerPaths ?? []) installIntegerField(ordinary, precise, fieldPath.split("."), false);
     for (const fieldPath of signedPaths ?? []) installIntegerField(ordinary, precise, fieldPath.split("."), true);
-    // Document list rows also contain a recursive JsonValue payload. Preserve
-    // its lossless integer handling after installing the int64 version field.
-    if (routeName !== "databases.listDocuments") return ordinary;
   }
-  const key = routeName === "databases.executeSql" ? "rows"
-    : routeName === "databases.listDocuments" ? "documents" : undefined;
-  if (key === undefined || !isRecord(ordinary)) return ordinary;
-  const rows = ordinary[key];
+  if (rowsKey === undefined || !isRecord(ordinary)) return ordinary;
+  // Document list and SQL rows also carry a recursive JsonValue payload.
+  // Preserve its lossless integer handling after installing typed fields.
+  const rows = ordinary[rowsKey];
   if (!Array.isArray(rows)) return ordinary;
-  const precise = parseDocumentValue(raw);
   if (!isRecord(precise)) return ordinary;
-  const preciseRows: unknown = precise[key];
+  const preciseRows: unknown = precise[rowsKey];
   if (!Array.isArray(preciseRows)) return ordinary;
   return {
     ...ordinary,
-    [key]: rows.map((row: unknown, index: number) => {
+    [rowsKey]: rows.map((row: unknown, index: number) => {
       const exact: unknown = preciseRows[index];
       return isRecord(row) && isRecord(exact) ? { ...row, value: exact.value } : row;
     }),
   };
+}
+
+/** Structural copy that keeps BigInt-free subtrees shared with the precise
+ * view and converts every BigInt to its nearest double, which is exactly the
+ * value a plain JSON.parse of the same source text produces. */
+function lossyNumberView(value: unknown): unknown {
+  if (typeof value === "bigint") return Number(value);
+  if (Array.isArray(value)) {
+    let copy: unknown[] | undefined;
+    for (let index = 0; index < value.length; index++) {
+      const converted = lossyNumberView(value[index]);
+      if (converted !== value[index]) (copy ??= [...value])[index] = converted;
+    }
+    return copy ?? value;
+  }
+  if (isRecord(value)) {
+    let copy: Record<string, unknown> | undefined;
+    for (const key of Object.keys(value)) {
+      const converted = lossyNumberView(value[key]);
+      if (converted !== value[key]) (copy ??= { ...value })[key] = converted;
+    }
+    return copy ?? value;
+  }
+  return value;
 }
 
 const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {
@@ -697,6 +829,7 @@ const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly
   "databases.rollbackTransaction": ["expiresAtMs"],
   "databases.getSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
   "databases.putSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
+  "databases.rollbackSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
   "databases.databaseUsage": ["snapshot_sequence", "storage_complete_through_millis", "reads.total_reads"],
   "databases.indexRecommendations": ["generation", "recommendations.*.generation", "recommendations.*.maintenance_cost"],
   "databases.listIndexes": ["indexes.*.backfill_remaining"],
@@ -721,6 +854,7 @@ const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly
 };
 
 const responseInt64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {
+  "databases.authorizationLease": ["issuedAt", "validUntil"],
   "databases.listDocuments": ["documents.*.version"],
   "databases.batchDocuments": ["committed"],
   "databases.listDatabases": ["databases.*.created_at"],

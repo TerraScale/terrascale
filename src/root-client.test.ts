@@ -27,6 +27,8 @@ describe("root database clients", () => {
     const requests: Request[] = [];
     const client = createTerraScaleClient({
       accessToken: "secret-token",
+      // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+      routing: { enabled: false },
       fetch: async (input) => {
         const request = new Request(input);
         requests.push(request.clone());
@@ -62,6 +64,8 @@ describe("root database clients", () => {
   test("lists and executes SQL with canonical parameter objects", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleClient({
+    // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+    routing: { enabled: false },
       fetch: async (input) => {
         const request = new Request(input);
         requests.push(request);
@@ -89,6 +93,8 @@ describe("root database clients", () => {
   test("uses the published document history and batch routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleClient({
+    // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+    routing: { enabled: false },
       fetch: async (input, init) => {
         const request = new Request(input, init);
         requests.push(request.clone());
@@ -125,6 +131,8 @@ describe("root database clients", () => {
     const controller = new AbortController();
     controller.abort();
     const client = createTerraScaleClient({
+    // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+    routing: { enabled: false },
       fetch: async () => {
         calls++;
         return response({});
@@ -140,6 +148,8 @@ describe("root database clients", () => {
   test("wires the root reactive surface to the canonical sync v1 attach", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleClient({
+    // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+    routing: { enabled: false },
       fetch: async (input, init) => {
         const request = new Request(input, init);
         requests.push(request.clone());
@@ -179,6 +189,8 @@ describe("root database clients", () => {
   test("wires the root management import consumer to the binary producer route", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleClient({
+    // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+    routing: { enabled: false },
       fetch: async (input, init) => {
         const request = new Request(input, init);
         requests.push(request.clone());
@@ -205,6 +217,8 @@ describe("root database clients", () => {
   test("rejects invalid direct identifiers and bounds before fetch", async () => {
     let calls = 0;
     const client = createTerraScaleClient({
+    // Pins the legacy ADR 0043 transport path; discovery has its own suites.
+    routing: { enabled: false },
       fetch: async () => {
         calls++;
         return response({});
