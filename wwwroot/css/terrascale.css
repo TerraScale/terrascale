@@ -2165,11 +2165,13 @@ details.ts-menu[open] > summary.ts-account-trigger {
   display: grid;
   grid-template-columns: 1fr;
   min-height: 100svh;
+  background-color: var(--ts-canvas);
+  color: var(--ts-ink);
 }
 
 @media (min-width: 64rem) {
   .ts-login {
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(28rem, 26vw);
   }
 }
 
@@ -2177,28 +2179,44 @@ details.ts-menu[open] > summary.ts-account-trigger {
   position: relative;
   display: none;
   overflow: hidden;
-  border-right: 1px solid var(--ts-line);
+  isolation: isolate;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
 }
 
 @media (min-width: 64rem) {
   .ts-login-map {
-    display: block;
+    display: flex;
   }
-}
-
-.ts-login-map-dots {
-  position: absolute;
-  inset: 0;
-  background-image: radial-gradient(circle, color-mix(in oklab, var(--ts-accent-soft) 45%, transparent) 1px, transparent 1.6px);
-  background-size: 26px 26px;
-  opacity: 0.4;
-  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 30%, transparent 75%);
 }
 
 .ts-login-map-glow {
   position: absolute;
+  inset: 5% -8%;
+  z-index: -1;
+  background-image: radial-gradient(ellipse at center, rgba(37, 99, 235, 0.2) 0%, rgba(37, 99, 235, 0.07) 52%, transparent 78%);
+  filter: blur(32px);
+}
+
+.ts-login-map-frame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  aspect-ratio: 17 / 10;
+  width: min(1600px, calc(100% - 2rem));
+  -webkit-mask-image: radial-gradient(ellipse 98% 94% at 50% 50%, #000 0%, #000 76%, rgba(0, 0, 0, 0.5) 92%, transparent 100%);
+  mask-image: radial-gradient(ellipse 98% 94% at 50% 50%, #000 0%, #000 76%, rgba(0, 0, 0, 0.5) 92%, transparent 100%);
+}
+
+.ts-region-map {
+  position: absolute;
   inset: 0;
-  background-image: var(--ts-ambient-glow);
+  width: 100%;
+  height: 100%;
+  opacity: 0.78;
+  filter: saturate(0.9);
 }
 
 .ts-login-column {
@@ -2206,22 +2224,181 @@ details.ts-menu[open] > summary.ts-account-trigger {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  padding: 40px var(--ts-lg);
+  border-left: 1px solid color-mix(in oklab, var(--ts-accent) 40%, transparent);
+  min-width: 0;
+}
+
+@media (min-width: 80rem) {
+  .ts-login-column {
+    padding-inline: var(--ts-xxl);
+  }
+}
+
+@media (min-width: 96rem) {
+  .ts-login-column {
+    padding-inline: var(--ts-xxxl);
+  }
+}
+
+.ts-auth-heading {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.ts-auth-form {
+  display: grid;
   gap: var(--ts-lg);
-  padding: var(--ts-xl) var(--ts-lg);
+}
+
+.ts-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+  min-height: 20px;
+}
+
+.ts-inline-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding-inline: 4px;
+  color: var(--ts-accent-soft);
+  font-size: var(--ts-fs-ui);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--ts-accent-soft) 60%, transparent);
+  text-underline-offset: 4px;
+  transition: color 200ms ease-out;
+}
+
+.ts-inline-link:active {
+  color: var(--ts-ink);
+}
+
+.ts-input-group {
+  display: flex;
+  align-items: center;
+}
+
+.ts-input-group .ts-input {
+  padding-right: 44px;
+}
+
+.ts-input-adornment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-left: -40px;
+  border: 0;
+  border-radius: var(--ts-radius-control);
+  background-color: transparent;
+  color: var(--ts-ink-muted);
+  cursor: pointer;
+  transition: background-color 200ms ease-out, color 200ms ease-out;
+}
+
+.ts-input-adornment:hover {
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
+}
+
+.ts-auth-submit-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: var(--ts-md);
+}
+
+.ts-auth-submit {
+  flex: 1 1 0%;
+}
+
+.ts-auth-create {
+  flex-shrink: 0;
+}
+
+.ts-auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ts-auth-divider > span:first-child,
+.ts-auth-divider > span:last-child {
+  flex: 1 1 0%;
+  height: 1px;
+  background-color: var(--ts-ink-muted);
+  opacity: 0.7;
+}
+
+.ts-auth-divider-label {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-auth-providers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ts-md);
+}
+
+.ts-auth-provider {
+  justify-content: center;
+  height: var(--ts-control-h-lg);
+  min-width: 0;
+  padding-inline: 12px;
+  box-shadow: var(--ts-shadow-sm);
+}
+
+.ts-auth-provider img {
+  width: 20px;
+  height: 20px;
+}
+
+.ts-auth-locale-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-auth-locale {
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-input-fill);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-meta);
+  padding: 6px 10px;
 }
 
 .ts-auth-footer-links {
   display: flex;
-  gap: var(--ts-lg);
-  font-size: var(--ts-fs-meta);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
 }
 
 .ts-auth-footer-links a {
-  color: var(--ts-ink-muted);
+  color: var(--ts-accent-soft);
+  font-weight: var(--ts-fw-medium);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--ts-accent-soft) 60%, transparent);
+  text-underline-offset: 4px;
+  padding-inline: 4px;
 }
 
 .ts-auth-footer-links a:hover {
-  color: var(--ts-ink);
+  text-decoration-color: var(--ts-accent-soft);
 }
 
 .ts-oauth-icon {

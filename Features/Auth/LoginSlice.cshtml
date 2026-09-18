@@ -11,15 +11,17 @@
 <body>
 <main class="ts-login">
     <div class="ts-login-map" aria-hidden="true">
-        <div class="ts-login-map-dots"></div>
         <div class="ts-login-map-glow"></div>
+        <div class="ts-login-map-frame">
+            <img class="ts-region-map" src="/brand/region-map.svg" alt="" decoding="async" />
+        </div>
     </div>
     <div class="ts-login-column">
         <div class="ts-auth-card">
             <div class="ts-auth-brand">
-                <img src="/brand/logo-terrascale-auth.svg" alt="TerraScale" decoding="async" />
+                <img src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async" />
             </div>
-            <div>
+            <div class="ts-auth-heading">
                 <h1 class="ts-auth-title">Sign in</h1>
                 <p class="ts-auth-subtitle">Access your databases and cloud operations.</p>
             </div>
@@ -30,31 +32,47 @@
                     <span class="ts-alert-body">@error</span>
                 </div>
             }
-            <form class="ts-form" method="post" action="/api/v1/auth/password/login">
+            <form class="ts-auth-form" method="post" action="/api/v1/auth/password/login" novalidate>
                 <input type="hidden" name="redirectTo" value="/" />
                 <div class="ts-field">
-                    <label class="ts-label" for="email">Email</label>
-                    <input class="ts-input" type="email" id="email" name="email" autocomplete="email" required placeholder="you@company.com" value="mario@terrascale.tech" />
+                    <div class="ts-field-head">
+                        <label class="ts-label" for="email">Email</label>
+                    </div>
+                    <input class="ts-input" type="email" id="email" name="email" autocomplete="email" required placeholder="name@company.com" />
                 </div>
                 <div class="ts-field">
-                    <label class="ts-label" for="password">Password</label>
-                    <input class="ts-input" type="password" id="password" name="password" autocomplete="current-password" required placeholder="••••••••" />
-                    <a class="ts-link ts-meta" href="/reset-password">Forgot your password?</a>
+                    <div class="ts-field-head">
+                        <label class="ts-label" for="password">Password</label>
+                        <a class="ts-inline-link" href="/reset-password">Forgot password</a>
+                    </div>
+                    <div class="ts-input-group">
+                        <input class="ts-input" type="password" id="password" name="password" autocomplete="current-password" required placeholder="Enter your password" />
+                        <button class="ts-input-adornment" type="button" data-toggle-type="password" aria-label="Show password">@Icons.Eye(18)</button>
+                    </div>
                 </div>
-                <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Sign in</button>
+                <div class="ts-auth-submit-row">
+                    <a class="ts-btn ts-btn-outline ts-btn-lg ts-auth-create" href="/onboarding">Create account</a>
+                    <button class="ts-btn ts-btn-primary ts-btn-lg ts-auth-submit" type="submit">Sign in</button>
+                </div>
+                <div class="ts-auth-divider" aria-hidden="true"><span></span><span class="ts-auth-divider-label">Or continue with</span><span></span></div>
+                <div class="ts-auth-providers">
+                    <button class="ts-btn ts-btn-outline ts-auth-provider" type="button" aria-label="Continue with passkey" title="Continue with passkey">@Icons.Fingerprint(18) Passkey</button>
+                    <a class="ts-btn ts-btn-outline ts-auth-provider" href="/api/v1/auth/external-login/begin?provider=google" role="button" aria-label="Continue with Google" title="Continue with Google"><img src="/brand/google.svg" alt="" aria-hidden="true" /></a>
+                    <a class="ts-btn ts-btn-outline ts-auth-provider" href="/api/v1/auth/external-login/begin?provider=github" role="button" aria-label="Continue with GitHub" title="Continue with GitHub"><img src="/brand/github.svg" alt="" aria-hidden="true" /></a>
+                </div>
             </form>
-            <div class="ts-auth-sep">or continue with</div>
-            <div class="ts-row" style="justify-content:center">
-                <a class="ts-btn ts-btn-outline" href="/api/v1/auth/external-login/begin?provider=github"><img class="ts-oauth-icon" src="/brand/github.svg" alt="" aria-hidden="true" /> GitHub</a>
-                <a class="ts-btn ts-btn-outline" href="/api/v1/auth/external-login/begin?provider=google"><img class="ts-oauth-icon" src="/brand/google.svg" alt="" aria-hidden="true" /> Google</a>
+            <div class="ts-auth-locale-footer">
+                <select id="auth-locale" class="ts-auth-locale" aria-label="Language">
+                    <option value="en" selected>English</option>
+                    <option value="pt-BR">Português (Brasil)</option>
+                </select>
+                <nav class="ts-auth-footer-links" aria-label="Authentication links">
+                    <a href="/docs">Support</a>
+                    <a href="/legal/privacy">Privacy</a>
+                    <a href="/legal/terms">Terms</a>
+                </nav>
             </div>
-            <p class="ts-auth-footer">New to TerraScale? <a class="ts-link" href="/login?mode=register">Create account</a></p>
         </div>
-        <nav class="ts-auth-footer-links" aria-label="Footer">
-            <a href="/docs">Support</a>
-            <a href="/legal/privacy">Privacy</a>
-            <a href="/legal/terms">Terms</a>
-        </nav>
     </div>
 </main>
 <script src="/js/terrascale.js" defer></script>
