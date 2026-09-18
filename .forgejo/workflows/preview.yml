@@ -8,7 +8,7 @@ concurrency:
 jobs:
   preview:
     if: github.event.action != 'closed'
-    runs-on: ubuntu-latest
+    runs-on: terrascale-builder
     steps:
       - uses: actions/checkout@v4
       - name: Install flyctl
@@ -38,7 +38,7 @@ jobs:
             "$GITHUB_API_URL/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/comments"
   cleanup:
     if: github.event.action == 'closed'
-    runs-on: ubuntu-latest
+    runs-on: terrascale-builder
     steps:
       - name: Install flyctl
         run: curl -sL https://fly.io/install.sh | sh
