@@ -1684,8 +1684,8 @@ pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::V
     let mut cursor = 0;
     scan_msgpack(bytes, &mut cursor, 0)?;
     if cursor != bytes.len() {
-        return Err(Error::invalid_response(
-            "reactive MessagePack frame has trailing bytes",
+        return Err(msgpack_error(
+            "trailing bytes after the complete reactive frame",
         ));
     }
     let mut reader = MsgpackReader { bytes, cursor: 0 };
@@ -2103,7 +2103,10 @@ fn decode_msgpack_snapshot(reader: &mut MsgpackReader<'_>) -> Result<serde_json:
         reader.array(2)?;
         let identity = reader.text(256)?;
         let fields = decode_msgpack_fields(reader)?;
-        items.push(serde_json::json!({"identity": identity, "fields": fields}));
+        items.push(serde_json::json!({
+            "identity": identity,
+            "value": fields_to_value_map(fields)
+        }));
     }
     let digest = reader.text(64)?;
     let checkpoint = BASE64.encode(reader.binary(1, MAX_CHECKPOINT_BYTES)?);
