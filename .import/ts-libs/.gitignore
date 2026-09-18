@@ -1,0 +1,28 @@
+/target/
+**/target/
+/artifacts/
+*.swp
+*.swo
+.DS_Store
+__pycache__/
+*.pyc
+
+# Local, generated runtime and benchmark output.
+/bench/results/
+/.terrascale/
+/bench/.member/
+/bench/.member-*/
+
+# Fleet builder worktrees (never tracked).
+/.worktrees/
+/.claude/
+.codex-worktrees/
+
+# Private generated CI release candidates and signatures
+/.terrascale-develop-release/
+
+# .NET build output
+bin/
+obj/
+TestResults/
+.codex/

@@ -1,0 +1,81 @@
+name: ts-libs CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Run ts-libs checks and publish packages
+    runs-on: terrascale-builder
+    timeout-minutes: 15
+    steps:
+      - name: Check out the source revision
+        uses: https://data.forgejo.org/actions/checkout@v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build ts-libs with strict diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          nice -n 10 dotnet build TerraScale.Libs.slnx \
+            --configuration Release \
+            --nologo \
+            -p:EnableNETAnalyzers=true \
+            -p:Nullable=enable \
+            -p:TreatWarningsAsErrors=true \
+            -p:AnalysisLevel=latest-recommended
+
+      - name: Verify ts-libs formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          nice -n 10 dotnet format style TerraScale.Libs.slnx \
+            --verify-no-changes \
+            --no-restore
+
+      - name: Run the TerraScale.Endpoints tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          nice -n 10 dotnet run \
+            --project tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj \
+            --configuration Release \
+            --framework net10.0 \
+            --no-build \
+            --no-restore \
+            -- \
+            --minimum-expected-tests 1
+
+      - name: Pack TerraScale.Endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf -- artifacts/packages
+          nice -n 10 dotnet pack src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
+            --configuration Release \
+            --no-build \
+            --nologo \
+            --output artifacts/packages
+          ls -1 artifacts/packages
+
+      - name: Publish packages to the Forgejo NuGet registry
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          TERRASCALE_BOT_TOKEN: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The job token cannot write packages; the organization bot token
+          # carries the package write grant for the registry.
+          nice -n 10 dotnet nuget push artifacts/packages/*.nupkg \
+            --source "https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json" \
+            --api-key "${TERRASCALE_BOT_TOKEN:?organization bot token is required}" \
+            --skip-duplicate
