@@ -40,10 +40,8 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal(typeof client.savedQueries.update, "function");
   assert.equal(typeof client.databaseBranches.getCapability, "function");
   assert.equal(typeof client.databaseBranches.requestClone, "function");
-  assert.equal(typeof client.queues.list, "function");
-  assert.equal(typeof client.queues.create, "function");
-  assert.equal(Object.values(client).length, 17);
-  for (const removedClient of ["auth", "apiKeys", "m2m", "billing", "pricing", "security"]) {
+  assert.equal(Object.values(client).length, 12);
+  for (const removedClient of ["auth", "apiKeys", "m2m", "billing", "pricing", "queues", "query", "schema", "security"]) {
     assert.equal(removedClient in client, false);
   }
   for (const removedOnboardingMethod of [
@@ -57,12 +55,10 @@ test("built package keeps all public clients on typed operations without a runti
   }
   const savedQueries: sdk.SavedQueriesClient = client.savedQueries;
   const databaseBranches: sdk.DatabaseBranchesClient = client.databaseBranches;
-  const queues: sdk.QueuesClient = client.queues;
   const databaseDocuments: sdk.DatabaseDocumentsClient = client.databaseDocuments;
   const savedQuery: sdk.ProjectSavedQueryResponse | undefined = undefined;
   assert.equal(savedQueries, client.savedQueries);
   assert.equal(databaseBranches, client.databaseBranches);
-  assert.equal(queues, client.queues);
   assert.equal(databaseDocuments, client.databaseDocuments);
   assert.equal(savedQuery, undefined);
 
@@ -89,6 +85,7 @@ test("built package keeps all public clients on typed operations without a runti
     "./sql",
     "./management",
     "./react",
+    "./svelte",
     "./tanstack",
     "./better-auth",
     "./local",

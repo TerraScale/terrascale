@@ -53,7 +53,7 @@ async function putFor(
   databaseName: string,
   id: string,
   value: unknown,
-  headers: Record<string, string>,
+  headers: Record<string, string> = {},
 ): Promise<Response> {
   return router.fetch(
     new Request(documentUrlFor(databaseName, id), {

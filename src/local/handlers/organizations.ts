@@ -1,5 +1,5 @@
 import type * as Models from "../../models.js";
-import type { OrganizationId, ProjectId, Ulid, UserId } from "../../ids.js";
+import type { Ulid } from "../../ids.js";
 import { normalizeRegionCodes, parseRegionCode } from "../../regions.js";
 import {
   jsonResponse,
@@ -18,7 +18,7 @@ import type { TerraScaleSqliteStore } from "../store.js";
  * free to choose its table layout (and also makes old local databases safe to
  * read when a DTO gains an optional field).
  */
-const LOCAL_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV" as UserId;
+const LOCAL_USER_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV" as Models.UserId;
 const LOCAL_USER_EMAIL = "local@example.test";
 const LOCAL_USER_NAME = "Local User";
 const LOCAL_SCOPE = "local";
@@ -47,7 +47,7 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
     }
     const plan = parseOrganizationPlan(body.plan);
     const actor = localActor(context);
-    const organizationId = (await store.nextUlid()) as OrganizationId;
+    const organizationId = (await store.nextUlid()) as Models.OrganizationId;
     const organization: Models.Organization = {
       organizationId,
       name,
@@ -161,12 +161,12 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
     } catch (error) {
       return problemResponse(400, "invalid_request", regionValidationMessage(error));
     }
-    const projectId = (await store.nextUlid()) as ProjectId;
+    const projectId = (await store.nextUlid()) as Models.ProjectId;
     const slug = nonBlank(body.slug);
     const actor = localActor(context);
     const project: Models.Project = {
       projectId,
-      organizationId: match.organizationId! as OrganizationId,
+      organizationId: match.organizationId!,
       name,
       ownerUserIds: [actor.userId],
       regions: selectedRegions,
@@ -220,8 +220,8 @@ export const handleLocalOrganizations: LocalHandler = async (context) => {
     const invitationProjectId = nonBlank(body.projectId);
     const invitation: Models.Invitation = {
       invitationId,
-      organizationId: match.organizationId! as OrganizationId,
-      ...(invitationProjectId === undefined ? { projectId: null } : { projectId: invitationProjectId as ProjectId }),
+      organizationId: match.organizationId!,
+      ...(invitationProjectId === undefined ? { projectId: null } : { projectId: invitationProjectId }),
       email,
       role: "Member",
       status: "Pending",
@@ -377,7 +377,7 @@ async function getProject(
  * authenticated caller so an existing development workspace stays manageable
  * after the ownership migration.
  */
-function withSessionOwner<T extends { readonly ownerUserIds: readonly UserId[] }>(
+function withSessionOwner<T extends { readonly ownerUserIds: readonly Models.UserId[] }>(
   record: T,
   actor: LocalActor,
 ): T {
@@ -421,7 +421,7 @@ function ownerMember(
  * configurable local default user.
  */
 type LocalActor = {
-  readonly userId: UserId;
+  readonly userId: Models.UserId;
   readonly email: string;
   readonly displayName: string;
 };
@@ -438,7 +438,7 @@ function localActor(context: LocalRequestContext): LocalActor {
         .list<Record<string, unknown>>("better-auth", "user")
         .find((row) => row.id === userId);
       return {
-        userId: userId as UserId,
+        userId: userId as Models.UserId,
         email: typeof user?.email === "string" ? user.email : LOCAL_USER_EMAIL,
         displayName: typeof user?.name === "string" ? user.name : LOCAL_USER_NAME,
       };
@@ -446,7 +446,7 @@ function localActor(context: LocalRequestContext): LocalActor {
   }
   const stored = context.store.getMeta<string>("local.defaultUserId");
   return {
-    userId: (typeof stored === "string" && stored.length > 0 ? stored : LOCAL_USER_ID) as UserId,
+    userId: (typeof stored === "string" && stored.length > 0 ? stored : LOCAL_USER_ID) as Models.UserId,
     email: LOCAL_USER_EMAIL,
     displayName: LOCAL_USER_NAME,
   };

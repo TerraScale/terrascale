@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 
-import { toUlid, type Ulid } from "./ids.js";
+import { toUlid } from "./ids.js";
 import type { TerraScaleResult } from "./result.js";
 import {
   createTerraScaleSqliteRuntime,
@@ -40,7 +40,7 @@ async function withRuntime<T>(work: (runtime: TerraScaleSqliteRuntime, path: str
   }
 }
 
-function client(runtime: TerraScaleSqliteRuntime, projectId?: Ulid) {
+function client(runtime: TerraScaleSqliteRuntime, projectId?: string) {
   return runtime.createClient({
     accessToken: "local-test-token",
     ...(projectId === undefined ? {} : { projectId }),

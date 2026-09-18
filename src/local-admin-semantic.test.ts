@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 
-import { toUlid, type DatabaseId, type OrganizationId, type ProjectId, type Ulid } from "./ids.js";
+import { toUlid } from "./ids.js";
 import {
   createTerraScaleSqliteRuntime,
   type TerraScaleSqliteRuntime,
@@ -47,10 +47,10 @@ test("AdminClient has semantic SQLite coverage across its complete public surfac
   await withTempPath(async (databasePath) => {
     const email = `admin-semantic-${randomUUID()}@example.test`;
     const userId = toUlid("01J00000000000000000000003");
-    let organizationId = "" as OrganizationId;
-    let projectId = "" as ProjectId;
-    let databaseId = "" as DatabaseId;
-    let supportNoteId = "" as Ulid;
+    let organizationId = "";
+    let projectId = "";
+    let databaseId = "";
+    let supportNoteId = "";
 
     const seed = new TerraScaleSqliteStore(databasePath);
     seed.put("users", "global", userId, {

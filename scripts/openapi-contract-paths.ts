@@ -28,7 +28,11 @@ export async function resolveEdgeContractBundle(): Promise<ContractBundle> {
   if (source === undefined) {
     throw new Error("contracts: edge contract source is not published; set EDGE_CONTRACT_SOURCE.");
   }
-  return validateContractBundle(path.resolve(process.cwd(), source), async () => undefined, "edge");
+  let root = path.resolve(process.cwd(), source);
+  // Producer checkouts keep the bundle under contracts/edge/v1; CI stages the
+  // version directory itself. Accept both layouts, nothing looser.
+  if (!await existsManifest(root) && await existsManifest(path.join(root, version))) root = path.join(root, version);
+  return validateContractBundle(root, async () => undefined, "edge");
 }
 
 type ContractManifest = {

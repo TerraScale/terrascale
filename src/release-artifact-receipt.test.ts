@@ -41,7 +41,9 @@ test("release qualification mode requires its exact clean two-runtime contract",
   );
 });
 
-test("promotion accepts one fully bound candidate and rejects hostile receipt substitutions", async () => {
+// Promotion validates the exact publish toolchain; it is reproducible only on
+// the pinned Node 24 runtime and skips elsewhere (CI pins the matrix versions).
+test.skipIf(process.version !== nodeVersions[24])("promotion accepts one fully bound candidate and rejects hostile receipt substitutions", async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-npm-receipt-test-"));
   const checkout = path.join(workspace, "sdk");
   try {

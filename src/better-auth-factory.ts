@@ -193,9 +193,15 @@ async function installIndex(
 }
 
 async function installIndexRequest(port: Port, request: AuthUniqueIndex): Promise<void> {
-  const value = unwrap(await port.index(request, {
-    idempotencyKey: `better-auth-index-${globalThis.crypto.randomUUID()}`,
-  }));
+  // Deterministic on purpose: the install is idempotent by request identity,
+  // so a stable key lets a retry replay instead of double-registering, and it
+  // keeps this path free of randomness — Better Auth runs adapter operations
+  // during plugin init, which can execute while workerd still applies its
+  // global-scope restrictions (where crypto.randomUUID throws).
+  const idempotencyKey = `better-auth-index-${request.model}-${[...request.fields]
+    .sort()
+    .join("-")}`;
+  const value = unwrap(await port.index(request, { idempotencyKey }));
   if (value.matched !== true || value.record !== null) {
     throw new TypeError("Auth index operation returned an invalid success result.");
   }

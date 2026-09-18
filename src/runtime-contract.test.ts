@@ -50,6 +50,10 @@ test("package metadata declares the supported Node and browser matrix", async ()
     types: "./dist/react/index.d.ts",
     import: "./dist/react/index.js",
   });
+  assert.deepEqual(packageJson.exports?.["./svelte"], {
+    types: "./dist/svelte/index.d.ts",
+    import: "./dist/svelte/index.js",
+  });
   assert.deepEqual(packageJson.exports?.["./tanstack"], {
     types: "./dist/tanstack/index.d.ts",
     import: "./dist/tanstack/index.js",

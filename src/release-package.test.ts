@@ -43,21 +43,19 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
   }]);
   assert.deepEqual(deployment.prProfiles.map((profile) => profile.name), ["static", "tests", "browser"]);
   assert.deepEqual(profileDescriptions(deployment, "static"), [
-    "Product name policy tests",
-    "Tracked product name sweep",
     "Clean install",
     "Typecheck",
     "Build SDK",
     "Public contract fixture",
     "OpenAPI contract descriptor",
-    "OpenAPI drift",
     "Route drift",
     "Forbidden SDK surface",
   ]);
-  assert.deepEqual(deployment.prProfiles.find((profile) => profile.name === "static")?.commands.slice(0, 2), [
-    { description: "Product name policy tests", command: "node", arguments: ["--test", "test/product-name-check.test.mjs"] },
-    { description: "Tracked product name sweep", command: "node", arguments: ["scripts/check-product-name.mjs", "--tracked-only"] },
-  ]);
+  assert.deepEqual(deployment.prProfiles.find((profile) => profile.name === "static")?.commands.at(-1), {
+    description: "Forbidden SDK surface",
+    command: "npm",
+    arguments: ["run", "check:forbidden-surface"],
+  });
   assert.deepEqual(profileDescriptions(deployment, "tests"), ["Clean install", "Build SDK", "Complete SDK tests"]);
   assert.deepEqual(profileDescriptions(deployment, "browser"), ["Clean install", "Build SDK", "Browser transports"]);
   assert.deepEqual(
@@ -79,7 +77,7 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
   assert.deepEqual(deployment.buildTargets[0]?.commands.at(-1), {
     description: "Qualify npm release candidate",
     command: "node",
-    arguments: ["scripts/qualify-npm-artifact.mjs", "--release", "--output", "artifacts/candidate"],
+    arguments: ["scripts/qualify-npm-artifact.ts", "--release", "--output", "artifacts/candidate"],
   });
   assert.doesNotMatch(deploymentJson, /"command": "npm", "arguments": \["pack"/u);
   assert.equal(packageMetadata.packageManager, "npm@11.18.0");
@@ -88,8 +86,9 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
   assert.equal(lock.packages?.[""]?.version, "0.3.0");
   assert.equal(deployment.releaseProfiles.every((profile) => profile.required), true);
   assert.match(workflow, /^on:\n  push:\n    branches: \[develop, main\]$/mu);
+  assert.match(workflow, /^  workflow_dispatch:\n$/mu);
   assert.match(workflow, /^permissions:\n  contents: read$/mu);
-  assert.doesNotMatch(workflow, /pull_request|workflow_dispatch|schedule|workflow_call/u);
+  assert.doesNotMatch(workflow, /pull_request|schedule|workflow_call/u);
   assert.doesNotMatch(
     workflow,
     /(?:ts-deploy|TERRASCALE_DEPLOY|NPM_TOKEN|TERRASCALE_E2E_|REGISTRY_TOKEN|secrets\.)/u,
@@ -112,21 +111,20 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
   }
 
   const staticJob = jobDefinition(workflow, "static");
-  assert.match(staticJob, /repository: TerraScale\/ts-dashboard[\s\S]*path: Dashboard/u);
   for (const command of [
     "npm run typecheck",
     "npm run build",
     "npm run check:public-contract-fixture",
-    "npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json",
-    "npm run check:openapi-drift -- Dashboard/docs/product/openapi/server.openapi.json sdk-route-manifest.json --exclude-contract=database",
+    "npm run check:openapi-contract-descriptor",
     "npm run check:route-manifest",
     "npm run check:forbidden-surface",
   ]) {
     assert.match(staticJob, new RegExp(escapeRegExp(command), "u"));
   }
-  assert.match(staticJob, /TERRASCALE_DATABASE_OPENAPI_SPEC: \$\{\{ vars\.TERRASCALE_DATABASE_OPENAPI_SPEC \}\}/u);
-  assert.match(staticJob, /SKIPPED: Database API OpenAPI source is not configured/u);
-  assert.match(staticJob, /--strict --require-spec-coverage/u);
+  for (const job of [staticJob, jobDefinition(workflow, "node")]) {
+    assert.match(job, /repository: TerraScale\/ts-rust/u);
+    assert.match(job, /repository: TerraScale\/ts-proxy/u);
+  }
 
   const nodeJob = jobDefinition(workflow, "node");
   assert.match(nodeJob, /strategy:\r?\n      fail-fast: false\r?\n      matrix:/u);
@@ -379,7 +377,7 @@ const collection = terrascaleCollectionOptions({
   getKey: row => String(row.id),
   transport: { send: frame => { frames.push(frame); } },
   mutate: async request => {
-    assert.equal(request.operation, "update");
+    assert.equal(request.operation, "insert");
     assert.equal(typeof request.idempotencyKey, "string");
     assert.equal(request.signal.aborted, false);
     return { status: "rejected", error: new Error("controlled producer rejection") };
@@ -392,9 +390,9 @@ const cleanup = collection.adapter.options.sync.sync({
 await new Promise(resolve => setTimeout(resolve, 0));
 assert.equal(frames.length, 1);
 await assert.rejects(
-  collection.onUpdate({ transaction: {
+  collection.onInsert({ transaction: {
     id: "tx-packaged",
-    mutations: [{ type: "update", key: "todo-1", original: { id: "todo-1", done: false }, modified: { id: "todo-1", done: true } }],
+    mutations: [{ type: "insert", mutationId: "m-1", key: "todo-1", modified: { id: "todo-1", done: true } }],
   } }),
   /controlled producer rejection/u,
 );

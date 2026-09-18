@@ -1,5 +1,6 @@
 import type { ResolvedTerraScaleRuntimeConfig, TerraScaleRuntimeConfig } from "./config.js";
 import { TerraScaleHttp, type TerraScaleRouteName } from "./http.js";
+import type { Ulid } from "./ids.js";
 import { TerraScaleManagementClient } from "./management.js";
 import type * as Models from "./models.js";
 import {
@@ -31,8 +32,6 @@ export class TerraScaleClient {
   readonly backups: BackupsClient;
   readonly documents: DocumentsClient;
   readonly databaseDocuments: DatabaseDocumentsClient;
-  readonly query: QueryClient;
-  readonly schema: SchemaClient;
   readonly access: AccessClient;
   readonly usage: UsageClient;
   readonly audit: AuditClient;
@@ -55,8 +54,6 @@ export class TerraScaleClient {
     this.backups = new BackupsClient(this.#http);
     this.documents = new DocumentsClient(this.#http);
     this.databaseDocuments = new DatabaseDocumentsClient(this.#http);
-    this.query = new QueryClient(this.#http);
-    this.schema = new SchemaClient(this.#http);
     this.access = new AccessClient(this.#http);
     this.usage = new UsageClient(this.#http);
     this.audit = new AuditClient(this.#http);
@@ -1100,7 +1097,6 @@ export class DatabaseDocumentsClient {
       path: databaseDocumentRoot(scope, documentId),
       routeName: "databaseDocuments.read",
       signal: options?.signal,
-      consistency: "read",
     });
     return result.then((response) =>
       decodePublicResult(
@@ -1126,7 +1122,6 @@ export class DatabaseDocumentsClient {
       body: request,
       signal: options.signal,
       idempotencyKey,
-      consistency: "write",
     });
     return result.then((response) =>
       decodePublicResult(
@@ -1152,7 +1147,6 @@ export class DatabaseDocumentsClient {
       body: request,
       signal: options.signal,
       idempotencyKey,
-      consistency: "write",
     });
     return result.then((response) =>
       decodePublicResult(
@@ -1177,7 +1171,6 @@ export class DatabaseDocumentsClient {
       query: options.durability === undefined ? undefined : { durability: options.durability },
       signal: options.signal,
       idempotencyKey,
-      consistency: "write",
     });
     return result.then((response) =>
       decodePublicResult(
@@ -1186,67 +1179,6 @@ export class DatabaseDocumentsClient {
         "The Database document write response is invalid.",
       ),
     );
-  }
-}
-
-export class QueryClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  execute<TDocument extends Models.JsonValue = Models.JsonObject>(
-    scope: Models.RepositoryScoped,
-    request: Models.QueryRequest,
-  ): Promise<TerraScaleResult<Models.DocumentPageResponse<TDocument>>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${repositoryRoot(scope)}/tql`,
-      routeName: "query.execute",
-      body: request,
-      consistency: "read",
-    });
-  }
-}
-
-export class SchemaClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  get(scope: Models.RepositoryScoped): Promise<TerraScaleResult<Models.RepositorySchema>> {
-    return this.#http.request({
-      method: "GET",
-      path: `${repositoryRoot(scope)}/schema`,
-      routeName: "schema.get",
-    });
-  }
-
-  validate(
-    scope: Models.RepositoryScoped,
-    request: Models.ValidateRepositorySchemaRequest = {},
-  ): Promise<TerraScaleResult<Models.RepositorySchemaValidationResponse>> {
-    return this.#http.request({
-      method: "POST",
-      path: `${repositoryRoot(scope)}/schema/validate`,
-      routeName: "schema.validate",
-      body: request,
-    });
-  }
-
-  configure(
-    scope: Models.RepositoryScoped,
-    request: Models.ConfigureRepositorySchemaRequest,
-  ): Promise<TerraScaleResult<Models.RepositorySchema>> {
-    return this.#http.request({
-      method: "PUT",
-      path: `${repositoryRoot(scope)}/schema`,
-      routeName: "schema.configure",
-      body: request,
-    });
   }
 }
 

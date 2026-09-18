@@ -38,6 +38,7 @@ path.
 | `@terrascale/sdk/sql` | Parameterized SQL builders |
 | `@terrascale/sdk/management` | Database and collection management |
 | `@terrascale/sdk/react` | React integration |
+| `@terrascale/sdk/svelte` | Svelte integration |
 | `@terrascale/sdk/tanstack` | TanStack integration |
 | `@terrascale/sdk/better-auth` | Server-only Better Auth adapter |
 | `@terrascale/sdk/local` | Explicit local development runtime |
@@ -100,12 +101,13 @@ the typed result. The response's `X-Request-Id` remains a separate request ID.
 
 ## Reactive protocol
 
-The current reactive candidate is `TerraScaleSyncV2Client`. It decodes
-the generated `terrascale.sync.v2.msgpack` frames and applies authorized
-snapshots and result operations to bounded result views. The checked-in JSON
-manifest owns every tag, field position, direction, and bound. The generated
-TypeScript module consumes that file. INT-3's Go codec must check the same
-manifest instead of copying a second frame definition.
+The current reactive client is `TerraScaleSyncV1Client`, exposed as
+`client.reactive` and `TerraScaleSyncV1Client`. It decodes the generated
+`terrascale.sync.v1.msgpack` frames and applies authorized snapshots and
+result operations to bounded result views. The checked-in JSON manifest owns
+every tag, field position, direction, and bound. The generated TypeScript
+module consumes that file. INT-3's Go codec must check the same manifest
+instead of copying a second frame definition.
 
 MessagePack encodes the envelope, subscription identities, revisions,
 checkpoints, and result-operation structure. Document bodies inside those
@@ -113,11 +115,6 @@ frames remain raw TerraScale-canonical JSON bytes. The gateway does not
 transcode them into MessagePack objects. The production client must decode the
 envelope, then use one native `JSON.parse` for each document body. It must not
 double-decode or parse a MessagePack-encoded document.
-
-Protocol 2.1 is the first publishable wire contract. The pre-launch 2.0
-artifacts reassigned tags during development and are withdrawn. The decoder
-rejects 2.0 before reading a message body, and 2.0 decoders reject 2.1. Tags
-in 2.1 are stable and future compatible changes must append new tags.
 
 The current client:
 
@@ -133,11 +130,20 @@ The current client:
 - passes the hostile-decode, semantic corpus, manifest-drift, unit, and browser
   gates.
 
-SDK-2 supplies the production WebSocket transport and HTTP + MessagePack
-fallback. Until those transports pass browser and live gateway tests, this
-state machine alone is not a production transport. See
+Delivery uses the pinned producer transports: authenticated HTTP attach plus
+cacheable snapshot reads and bounded long-poll log reads, with an optional
+direct WebSocket upgrade to the attached member. HTTP is the default; pass
+`transport: "websocket"` (and optionally `webSocketFactory` in environments
+without a global `WebSocket`) to upgrade. See
 [ADR 0025](docs/adr/0025-public-messagepack-manifest.md).
-There is no JSON WebSocket variant.
+There is no JSON WebSocket variant and no SSE transport; the producer contract
+publishes HTTP and WebSocket only.
+
+The reactive hooks bind the same observer to both frameworks:
+`useQuery`/`useMutation` from `@terrascale/sdk/react` and
+`createQuery`/`createMutation` stores from `@terrascale/sdk/svelte` (any object
+implementing the Svelte store contract, so `$query.data` auto-subscribes
+without a runtime dependency).
 
 REST starts at the global origin and can pin to a permitted Region. Placement
 repair must preserve authorization, session frontiers, and idempotency.
@@ -153,7 +159,8 @@ and deterministic conflicts are not automatic retry candidates.
 selected Region and is unavailable for a single-Region database. These are
 server guarantees that require live qualification, not client-side promises.
 
-The public API `/api/v1` is versioned. Release qualification must cover the
+The public API `/api/v1` is versioned. The SDK runs on Node.js 22 and 24.
+Release qualification must cover the
 exact packed tarball and the current stable major versions of Chrome, Firefox, Safari, and Edge.
 
 ## Development and contracts

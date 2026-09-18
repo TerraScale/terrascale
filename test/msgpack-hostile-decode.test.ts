@@ -16,7 +16,7 @@
 
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { describe, test } from "node:test";
+import { describe, test } from "vitest";
 
 import { TerrascaleMsgpackError } from "../src/msgpack/runtime/bounded-msgpack.js";
 import {
@@ -28,7 +28,7 @@ import {
 
 const encoder = new TextEncoder();
 const goldenHostileFixture = JSON.parse(await readFile(
-  new URL("./fixtures/terrascale.sync.v2.msgpack/hostile-vectors.json", import.meta.url),
+  new URL("./fixtures/terrascale.sync.v1.msgpack/hostile-vectors.json", import.meta.url),
   "utf8",
 ));
 
@@ -121,8 +121,8 @@ const bin32Header = (length) => [
 
 /** A hand-built heartbeat envelope: [major, minor, features, tag, corr, caus, []]. */
 const heartbeatEnvelope = (overrides = {}) => {
-  const major = overrides.major ?? [0x02];
-  const minor = overrides.minor ?? [0x01];
+  const major = overrides.major ?? [0x01];
+  const minor = overrides.minor ?? [0x00];
   const features = overrides.features ?? [0x00];
   const tag = overrides.tag ?? [0x06];
   const correlation = overrides.correlation ?? u64(1n);
@@ -166,8 +166,9 @@ describe("msgpack hostile decode", () => {
       "unknown_enum",
       "unknown_variant",
     ];
-    assert.equal(goldenHostileFixture.protocol, "terrascale.sync.v2.msgpack");
-    assert.equal(goldenHostileFixture.version, "2.1");
+    assert.equal(goldenHostileFixture.protocol, "terrascale.sync.v1.msgpack");
+    assert.equal(goldenHostileFixture.version, "1.0");
+    assert.equal(goldenHostileFixture.manifestSha256, terrascaleSyncV1MsgpackManifestSha256);
     assert.deepEqual(
       goldenHostileFixture.vectors.map(vector => vector.code).sort(),
       [...expectedCodes].sort(),
@@ -193,8 +194,8 @@ describe("msgpack hostile decode", () => {
     // semantic readers must agree on the value regardless of encoding width.
     const decoded = decodeTerrascaleSyncV1MsgpackEnvelope(
       heartbeatEnvelope({
-        major: [0xcd, 0x00, 0x02],
-        minor: [0xcc, 0x01],
+        major: [0xcd, 0x00, 0x01],
+        minor: [0xcc, 0x00],
         features: [0xce, 0x00, 0x00, 0x00, 0x00],
         tag: [0xcd, 0x00, 0x06],
         correlation: [0xcc, 0x2a],
@@ -305,6 +306,38 @@ describe("msgpack hostile decode", () => {
     );
   });
 
+  test("the aggregate projected-value bound is enforced by the raw decoder", () => {
+    const valueLength = 524_289;
+    const body = bytes(
+      [0x92], str("view"),
+      [0x96], u64(1n), u64(1n), u64(1n),
+      [0x91], [0x92], str("document"), [0x92],
+      [0x92], str("first"), bin32Header(valueLength), new Uint8Array(valueLength),
+      [0x92], str("second"), bin32Header(valueLength), new Uint8Array(valueLength),
+      str("a".repeat(64)), [0xc4, 0x01, 0x00],
+    );
+    expectRejection(
+      "limit_binary",
+      heartbeatEnvelope({ tag: [0x03], body }),
+      "projected values above their aggregate binary bound",
+    );
+  });
+
+  test("an empty projected path is rejected by the raw decoder", () => {
+    const body = bytes(
+      [0x92], str("view"),
+      [0x96], u64(1n), u64(1n), u64(1n),
+      [0x91], [0x92], str("document"), [0x91],
+      [0x92], str(""), [0xc4, 0x00],
+      str("a".repeat(64)), [0xc4, 0x01, 0x00],
+    );
+    expectRejection(
+      "invalid_shape",
+      heartbeatEnvelope({ tag: [0x03], body }),
+      "empty projected path",
+    );
+  });
+
   // --- deep nesting --------------------------------------------------------------
 
   test("nesting beyond the depth ceiling is rejected by the structural scan", () => {
@@ -369,7 +402,7 @@ describe("msgpack hostile decode", () => {
     // 0xff is the negative fixint -1: not a u32 at all, so it fails as an
     // unsafe integer — still fail-closed before any body field is read.
     expectRejection("unsafe_integer", heartbeatEnvelope({ major: [0xff] }), "major -1 (0xff)");
-    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x00] }), "withdrawn pre-launch minor 0");
+    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x01] }), "unsupported minor 1");
     expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x02] }), "future minor 2");
     expectRejection("unsafe_integer", heartbeatEnvelope({ major: f64(3) }), "skewed major as a float");
   });

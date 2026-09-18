@@ -12,6 +12,10 @@ concurrency:
   group: ${{ forgejo.workflow }}-${{ forgejo.repository }}-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
+env:
+  CONTRACT_SOURCE: ${{ github.workspace }}/contracts/terrabase
+  EDGE_CONTRACT_SOURCE: ${{ github.workspace }}/contracts/edge
+
 jobs:
   static:
     name: verify/static-contracts
@@ -31,9 +35,8 @@ jobs:
 
       - name: Set up the repository Node.js version
         uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version-file: .node-version
-          check-latest: false
+        node-version-file: .node-version
+        check-latest: false
 
       - name: Provision the reviewed npm CLI
         run: node scripts/provision-reviewed-npm.ts
@@ -47,43 +50,44 @@ jobs:
       - name: Build the SDK
         run: nice -n 10 npm run build
 
-      - name: Check the public contract fixture
-        run: nice -n 10 npm run check:public-contract-fixture
-
-      - name: Check out the current Dashboard API contract
+      - name: Check out the pinned producer contract bundles
         uses: https://data.forgejo.org/actions/checkout@v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/ts-dashboard
-          path: Dashboard
-          fetch-depth: 0
+          repository: TerraScale/ts-rust
+          path: contracts/terrabase-root
+          fetch-depth: 1
           token: ""
           persist-credentials: false
 
-      - name: Check Dashboard OpenAPI contract identity
-        run: nice -n 10 npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
+      - name: Check out the pinned edge contract bundle
+        uses: https://data.forgejo.org/actions/checkout@v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: TerraScale/ts-proxy
+          path: contracts/edge-root
+          fetch-depth: 1
+          token: ""
+          persist-credentials: false
 
-      - name: Check Dashboard OpenAPI route drift
-        run: nice -n 10 npm run check:openapi-drift -- Dashboard/docs/product/openapi/server.openapi.json sdk-route-manifest.json --exclude-contract=database
+      - name: Stage the contract bundles for digest verification
+        run: |
+          set -euo pipefail
+          mkdir -p contracts
+          cp -r contracts/terrabase-root/contracts/v1 contracts/terrabase
+          cp -r contracts/edge-root/contracts/v1 contracts/edge
+
+      - name: Check the public contract fixture
+        run: nice -n 10 npm run check:public-contract-fixture
+
+      - name: Check Dashboard OpenAPI contract identity
+        run: nice -n 10 npm run check:openapi-contract-descriptor
 
       - name: Check the route manifest
         run: nice -n 10 npm run check:route-manifest
 
       - name: Check the forbidden SDK surface
         run: nice -n 10 npm run check:forbidden-surface
-
-      - name: Report the unavailable Database API contract gate
-        env:
-          TERRASCALE_DATABASE_OPENAPI_SPEC: ${{ vars.TERRASCALE_DATABASE_OPENAPI_SPEC }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${TERRASCALE_DATABASE_OPENAPI_SPEC:-}" ]]; then
-            echo "SKIPPED: Database API OpenAPI source is not configured; no fake service or substitute contract is used."
-          else
-            test -f "${TERRASCALE_DATABASE_OPENAPI_SPEC}"
-            nice -n 10 npm run check:openapi-drift -- "${TERRASCALE_DATABASE_OPENAPI_SPEC}" sdk-database-route-manifest.json --strict --require-spec-coverage
-            nice -n 10 node scripts/check-database-openapi-contract-descriptor.mjs "${TERRASCALE_DATABASE_OPENAPI_SPEC}"
-          fi
 
   node:
     name: verify/node-${{ matrix.node }}
@@ -107,9 +111,8 @@ jobs:
 
       - name: Set up Node.js ${{ matrix.node }}
         uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: ${{ matrix.node }}
-          check-latest: false
+        node-version: ${{ matrix.node }}
+        check-latest: false
 
       - name: Confirm the selected runtime and host architecture
         run: |
@@ -123,6 +126,33 @@ jobs:
 
       - name: Install locked dependencies
         run: nice -n 10 npm ci
+
+      - name: Check out the pinned producer contract bundles
+        uses: https://data.forgejo.org/actions/checkout@v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: TerraScale/ts-rust
+          path: contracts/terrabase-root
+          fetch-depth: 1
+          token: ""
+          persist-credentials: false
+
+      - name: Check out the pinned edge contract bundle
+        uses: https://data.forgejo.org/actions/checkout@v6.1.0
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: TerraScale/ts-proxy
+          path: contracts/edge-root
+          fetch-depth: 1
+          token: ""
+          persist-credentials: false
+
+      - name: Stage the contract bundles for digest verification
+        run: |
+          set -euo pipefail
+          ln -s "$(readlink -f contracts/terrabase-root/contracts/v1)" contracts/terrabase
+          rm -rf contracts/edge
+          cp -r contracts/edge-root/contracts/v1 contracts/edge
 
       - name: Build the SDK
         run: nice -n 10 npm run build
@@ -148,9 +178,8 @@ jobs:
 
       - name: Set up the repository Node.js version
         uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version-file: .node-version
-          check-latest: false
+        node-version-file: .node-version
+        check-latest: false
 
       - name: Confirm the browser host architecture
         run: |

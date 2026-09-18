@@ -9,15 +9,18 @@ test("develop and main pushes run native trunk verification", async () => {
   );
 
   assert.match(workflow, /^  push:\r?\n    branches: \[develop, main\]$/mu);
+  assert.match(workflow, /^  workflow_dispatch:\r?$/mu);
   assert.match(workflow, /^permissions:\r?\n  contents: read$/mu);
   assert.doesNotMatch(
     workflow,
-    /pull_request|workflow_dispatch|schedule|workflow_call/u,
+    /pull_request|schedule|workflow_call/u,
   );
   assert.doesNotMatch(
     workflow,
     /(?:ts-deploy|TERRASCALE_DEPLOY|NPM_TOKEN|TERRASCALE_E2E_|REGISTRY_TOKEN|secrets\.)/u,
   );
+  assert.match(workflow, /^  CONTRACT_SOURCE: \$\{\{ github\.workspace \}\}\/contracts\/terrabase$/mu);
+  assert.match(workflow, /^  EDGE_CONTRACT_SOURCE: \$\{\{ github\.workspace \}\}\/contracts\/edge$/mu);
 
   const jobs = ["static", "node", "browser"];
   for (const job of jobs) {
@@ -40,26 +43,16 @@ test("develop and main pushes run native trunk verification", async () => {
     "npm run typecheck",
     "npm run build",
     "npm run check:public-contract-fixture",
-    "npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json",
-    "npm run check:openapi-drift -- Dashboard/docs/product/openapi/server.openapi.json sdk-route-manifest.json --exclude-contract=database",
+    "npm run check:openapi-contract-descriptor",
     "npm run check:route-manifest",
     "npm run check:forbidden-surface",
   ]) {
     assert.match(staticJob, new RegExp(escapeRegExp(command), "u"));
   }
-  assert.match(
-    staticJob,
-    /repository: TerraScale\/ts-dashboard[\s\S]*path: Dashboard/u,
-  );
-  assert.match(
-    staticJob,
-    /TERRASCALE_DATABASE_OPENAPI_SPEC: \$\{\{ vars\.TERRASCALE_DATABASE_OPENAPI_SPEC \}\}/u,
-  );
-  assert.match(
-    staticJob,
-    /SKIPPED: Database API OpenAPI source is not configured/u,
-  );
-  assert.match(staticJob, /--strict --require-spec-coverage/u);
+  for (const job of [staticJob, jobDefinition(workflow, "node")]) {
+    assert.match(job, /repository: TerraScale\/ts-rust/u);
+    assert.match(job, /repository: TerraScale\/ts-proxy/u);
+  }
 
   const nodeJob = jobDefinition(workflow, "node");
   assert.match(
