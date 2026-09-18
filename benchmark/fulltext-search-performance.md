@@ -1,5 +1,12 @@
 # FullTextSearch performance evidence
 
+Status: **superseded** — the durable engine path no longer uses the
+`HashedSearchEngine` measured here; see
+[fulltext-sqlite-parity-20260917.md](fulltext-sqlite-parity-20260917.md)
+for the current `DurableFullTextIndex` vs SQLite FTS5 comparison. The
+numbers below remain historical evidence for the upstream
+`TerraBase.ZoneTree` search engine itself.
+
 This is a focused local Release benchmark for the integrated FullTextSearch
 implementation in the `TerraBase.ZoneTree` assembly (public namespace
 `ZoneTree.FullTextSearch`). The source tree was already dirty from the parent

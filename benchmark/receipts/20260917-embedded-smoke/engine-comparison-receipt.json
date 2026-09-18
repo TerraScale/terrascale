@@ -1,0 +1,102 @@
+{
+  "status": "failed",
+  "startedAtUtc": "2026-09-18T00:23:05.1647173+00:00",
+  "finishedAtUtc": "2026-09-18T00:23:07.1911725+00:00",
+  "configuration": {
+    "storage": "terrabase-http\u002Bsdk-hosts\u002Bsqlite/litedb/turso-embedded",
+    "outputDirectory": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260917-embedded-smoke",
+    "datasetSize": 1000,
+    "payloadSize": 256,
+    "samples": 5,
+    "warmupOperations": 1000,
+    "operationsPerSample": 10000,
+    "concurrencyLanes": [
+      1,
+      16
+    ],
+    "seed": 1337,
+    "workloads": [
+      "Read",
+      "Query",
+      "Write",
+      "Mixed"
+    ],
+    "temperatures": [
+      "warm"
+    ]
+  },
+  "environment": {
+    "startedAtUtc": "2026-09-18T00:23:05.1610678+00:00",
+    "runtime": "10.0.11",
+    "frameworkDescription": ".NET 10.0.11",
+    "buildConfiguration": "Release",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 4,
+    "availableMemoryBytes": 4294967296,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "serverGc": false,
+    "gcLatencyMode": "Interactive",
+    "gitCommit": "145fd96c43009c9c7bd0ef6b9705cd50056f713b",
+    "gitDirty": true,
+    "artifactPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll",
+    "artifactSha256": "5b60a8999b56de577546db5ec34d8248aed8cfd7dcde48e258c2a0a98467bf0b"
+  },
+  "comparators": [
+    {
+      "engine": "sqlite",
+      "package": "Microsoft.Data.Sqlite",
+      "version": "10.0.12",
+      "assemblySha256": "b98d957462be432895b00dccca012d3c127e118d3d4262418014b92c7bbd66cf",
+      "nativeRuntimeSha256": null
+    },
+    {
+      "engine": "litedb",
+      "package": "LiteDB",
+      "version": "6.0.0-prerelease.181\u002BBranch.dev.Sha.a50661a9d1a25b5713586d0096c6325d76bf5dfe.a50661a9d1a25b5713586d0096c6325d76bf5dfe",
+      "assemblySha256": "161aa0c8acd86287b4c796fd2c92e637246f39450a45ff6d2ee06d6a8894e66b",
+      "nativeRuntimeSha256": null
+    },
+    {
+      "engine": "turso",
+      "package": "Turso.Data.Sqlite.Provider",
+      "version": "0.8.0-pre.11",
+      "assemblySha256": "14cb8c93db582aa0638e6774d7a0433aca3f5346d8cfa8d06985ac12bd06c314",
+      "nativeRuntimeSha256": "4be766c05ff6a48959498df47f66212f829d761cd0074276dc6aae23097a6985"
+    }
+  ],
+  "cases": [
+    {
+      "engine": "terrabase-sdk",
+      "synchronous": null,
+      "engineNotes": null,
+      "lane": "read",
+      "concurrency": 1,
+      "status": "failed",
+      "error": "System.InvalidOperationException: The embedded server requires the hosting application context to be an HttpContext.\n   at TerraBase.Api.EmbeddedTerraBaseServer.StartAsync[TContext](IHttpApplication\u00601 application, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Api/Host/Embedded/EmbeddedTerraBaseServer.cs:line 37\n   at Microsoft.AspNetCore.Hosting.GenericWebHostService.StartAsync(CancellationToken cancellationToken)\n   at Microsoft.Extensions.Hosting.Internal.Host.\u003CStartAsync\u003Eb__14_1(IHostedService service, CancellationToken token)\n   at Microsoft.Extensions.Hosting.Internal.Host.ForeachService[T](IEnumerable\u00601 services, CancellationToken token, Boolean concurrent, Boolean abortOnFirstException, List\u00601 exceptions, Func\u00603 operation)\n   at Microsoft.Extensions.Hosting.Internal.Host.StartAsync(CancellationToken cancellationToken)\n   at TerraBase.Benchmarks.EngineComparisonWorkload.TerrabaseHttpBackend.CreateBenchmarkEmbeddedHostAsync(String storagePath, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 873\n   at TerraBase.Benchmarks.EngineComparisonWorkload.TerrabaseHttpBackend.CreateBenchmarkEmbeddedHostAsync(String storagePath, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 879\n   at TerraBase.Benchmarks.EngineComparisonWorkload.TerrabaseSdkBackend.OpenAsync(String storagePath, Int32 datasetSize, Int32 payloadSize, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/TerrabaseSdkBackend.cs:line 73\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 501\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 576\n   at TerraBase.Benchmarks.EngineComparisonWorkload.RunCaseAsync(ComparisonOptions options, CaseDefinition definition, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 453",
+      "rawSamplesPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260917-embedded-smoke/raw-samples-terrabase-sdk-read-c1.jsonl",
+      "workloadDigest": null,
+      "queryPlan": null,
+      "startedAtUtc": "2026-09-18T00:23:05.1975324+00:00",
+      "finishedAtUtc": "2026-09-18T00:23:06.8884254+00:00",
+      "samples": []
+    },
+    {
+      "engine": "terrabase-sdk",
+      "synchronous": null,
+      "engineNotes": null,
+      "lane": "read",
+      "concurrency": 16,
+      "status": "failed",
+      "error": "System.InvalidOperationException: The embedded server requires the hosting application context to be an HttpContext.\n   at TerraBase.Api.EmbeddedTerraBaseServer.StartAsync[TContext](IHttpApplication\u00601 application, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/Api/Host/Embedded/EmbeddedTerraBaseServer.cs:line 37\n   at Microsoft.AspNetCore.Hosting.GenericWebHostService.StartAsync(CancellationToken cancellationToken)\n   at Microsoft.Extensions.Hosting.Internal.Host.\u003CStartAsync\u003Eb__14_1(IHostedService service, CancellationToken token)\n   at Microsoft.Extensions.Hosting.Internal.Host.ForeachService[T](IEnumerable\u00601 services, CancellationToken token, Boolean concurrent, Boolean abortOnFirstException, List\u00601 exceptions, Func\u00603 operation)\n   at Microsoft.Extensions.Hosting.Internal.Host.StartAsync(CancellationToken cancellationToken)\n   at TerraBase.Benchmarks.EngineComparisonWorkload.TerrabaseHttpBackend.CreateBenchmarkEmbeddedHostAsync(String storagePath, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 873\n   at TerraBase.Benchmarks.EngineComparisonWorkload.TerrabaseHttpBackend.CreateBenchmarkEmbeddedHostAsync(String storagePath, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 879\n   at TerraBase.Benchmarks.EngineComparisonWorkload.TerrabaseSdkBackend.OpenAsync(String storagePath, Int32 datasetSize, Int32 payloadSize, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/TerrabaseSdkBackend.cs:line 73\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 501\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 576\n   at TerraBase.Benchmarks.EngineComparisonWorkload.RunCaseAsync(ComparisonOptions options, CaseDefinition definition, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 453",
+      "rawSamplesPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260917-embedded-smoke/raw-samples-terrabase-sdk-read-c16.jsonl",
+      "workloadDigest": null,
+      "queryPlan": null,
+      "startedAtUtc": "2026-09-18T00:23:06.9102273+00:00",
+      "finishedAtUtc": "2026-09-18T00:23:07.1762049+00:00",
+      "samples": []
+    }
+  ],
+  "command": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll --workload engine-comparison --engines terrabase-sdk --lanes read --output bench/receipts/20260917-embedded-smoke",
+  "receiptDirectory": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260917-embedded-smoke"
+}

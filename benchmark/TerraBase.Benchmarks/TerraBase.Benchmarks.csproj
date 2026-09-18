@@ -15,4 +15,23 @@
   <ItemGroup>
     <ProjectReference Include="../../src/TerraBase/TerraBase.csproj" />
   </ItemGroup>
+
+  <!-- The ts-dotnet SDK engine lane references the sibling TerraScale.DotNet
+       project directly, so CI environments without the workspace layout still
+       build (the reference and the lane compile only when the project exists). -->
+  <PropertyGroup>
+    <TerraScaleSdkProject>../../../ts-dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj</TerraScaleSdkProject>
+  </PropertyGroup>
+  <PropertyGroup Condition="Exists('$(TerraScaleSdkProject)')">
+    <DefineConstants>$(DefineConstants);TERRASCALE_SDK</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(TerraScaleSdkProject)')">
+    <ProjectReference Include="$(TerraScaleSdkProject)" SetTargetFramework="TargetFramework=net10.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="LiteDB" />
+    <PackageReference Include="Turso.Data.Sqlite.Provider" />
+  </ItemGroup>
 </Project>

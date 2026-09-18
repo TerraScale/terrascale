@@ -10,6 +10,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../src/TerraBase/TerraBase.csproj" />
     <ProjectReference Include="../../src/TerraBase.ZoneTree/TerraBase.ZoneTree.csproj" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,117 @@
+{
+  "status": "failed",
+  "startedAtUtc": "2026-09-18T00:24:26.0025986+00:00",
+  "finishedAtUtc": "2026-09-18T00:24:27.9599929+00:00",
+  "configuration": {
+    "storage": "terrabase-http\u002Bsdk-hosts\u002Bsqlite/litedb/turso-embedded",
+    "outputDirectory": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260917-embedded-smoke3",
+    "datasetSize": 1000,
+    "payloadSize": 256,
+    "samples": 5,
+    "warmupOperations": 1000,
+    "operationsPerSample": 10000,
+    "concurrencyLanes": [
+      1,
+      16
+    ],
+    "seed": 1337,
+    "workloads": [
+      "Read",
+      "Query",
+      "Write",
+      "Mixed"
+    ],
+    "temperatures": [
+      "warm"
+    ]
+  },
+  "environment": {
+    "startedAtUtc": "2026-09-18T00:24:25.9987462+00:00",
+    "runtime": "10.0.11",
+    "frameworkDescription": ".NET 10.0.11",
+    "buildConfiguration": "Release",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 4,
+    "availableMemoryBytes": 4294967296,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "serverGc": false,
+    "gcLatencyMode": "Interactive",
+    "gitCommit": "145fd96c43009c9c7bd0ef6b9705cd50056f713b",
+    "gitDirty": true,
+    "artifactPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll",
+    "artifactSha256": "fbc5e92d0f242562f71995f5428ecb9c22066ae43c8885fccabca6a520f3280d"
+  },
+  "comparators": [
+    {
+      "engine": "sqlite",
+      "package": "Microsoft.Data.Sqlite",
+      "version": "10.0.12",
+      "assemblySha256": "b98d957462be432895b00dccca012d3c127e118d3d4262418014b92c7bbd66cf",
+      "nativeRuntimeSha256": null
+    },
+    {
+      "engine": "litedb",
+      "package": "LiteDB",
+      "version": "6.0.0-prerelease.181\u002BBranch.dev.Sha.a50661a9d1a25b5713586d0096c6325d76bf5dfe.a50661a9d1a25b5713586d0096c6325d76bf5dfe",
+      "assemblySha256": "161aa0c8acd86287b4c796fd2c92e637246f39450a45ff6d2ee06d6a8894e66b",
+      "nativeRuntimeSha256": null
+    },
+    {
+      "engine": "turso",
+      "package": "Turso.Data.Sqlite.Provider",
+      "version": "0.8.0-pre.11",
+      "assemblySha256": "14cb8c93db582aa0638e6774d7a0433aca3f5346d8cfa8d06985ac12bd06c314",
+      "nativeRuntimeSha256": "4be766c05ff6a48959498df47f66212f829d761cd0074276dc6aae23097a6985"
+    }
+  ],
+  "cases": [
+    {
+      "engine": "terrabase-sdk",
+      "synchronous": null,
+      "engineNotes": null,
+      "lane": "read",
+      "concurrency": 1,
+      "status": "failed",
+      "error": "TerraScale.DotNet.TerraScaleApiException: TerraScale API returned HTTP 500 InternalServerError.\n   at TerraScale.DotNet.TerraScaleClient.ReadJsonResponseAsync[TResponse](HttpResponseMessage response, Activity activity, CancellationToken cancellationToken, TerraScaleErrorContract errorContract)\n   at TerraScale.DotNet.TerraScaleClient.SendPreparedJsonAsync[TResponse,TResult](HttpMethod method, String requestUri, Byte[] payload, Action\u00601 configureRequest, Func\u00603 responseFactory, CancellationToken cancellationToken, String idempotencyKeyOverride, Boolean allowUnkeyedPutRetry)\n   at TerraBase.Benchmarks.EngineComparisonWorkload.TerrabaseSdkBackend.SeedAsync(Int32 index, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/TerrabaseSdkBackend.cs:line 104\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 524\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 576\n   at TerraBase.Benchmarks.EngineComparisonWorkload.RunCaseAsync(ComparisonOptions options, CaseDefinition definition, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 453",
+      "rawSamplesPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260917-embedded-smoke3/raw-samples-terrabase-sdk-read-c1.jsonl",
+      "workloadDigest": null,
+      "queryPlan": null,
+      "startedAtUtc": "2026-09-18T00:24:26.0223986+00:00",
+      "finishedAtUtc": "2026-09-18T00:24:27.5610017+00:00",
+      "samples": []
+    },
+    {
+      "engine": "terrabase-sdk",
+      "synchronous": null,
+      "engineNotes": null,
+      "lane": "query",
+      "concurrency": 1,
+      "status": "failed",
+      "error": "TerraScale.DotNet.TerraScaleApiException: TerraScale API returned HTTP 500 InternalServerError.\n   at TerraScale.DotNet.TerraScaleClient.ReadJsonResponseAsync[TResponse](HttpResponseMessage response, Activity activity, CancellationToken cancellationToken, TerraScaleErrorContract errorContract)\n   at TerraScale.DotNet.TerraScaleClient.SendPreparedJsonAsync[TResponse,TResult](HttpMethod method, String requestUri, Byte[] payload, Action\u00601 configureRequest, Func\u00603 responseFactory, CancellationToken cancellationToken, String idempotencyKeyOverride, Boolean allowUnkeyedPutRetry)\n   at TerraBase.Benchmarks.EngineComparisonWorkload.TerrabaseSdkBackend.SeedAsync(Int32 index, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/TerrabaseSdkBackend.cs:line 104\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 524\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 576\n   at TerraBase.Benchmarks.EngineComparisonWorkload.RunCaseAsync(ComparisonOptions options, CaseDefinition definition, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 453",
+      "rawSamplesPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260917-embedded-smoke3/raw-samples-terrabase-sdk-query-c1.jsonl",
+      "workloadDigest": null,
+      "queryPlan": null,
+      "startedAtUtc": "2026-09-18T00:24:27.5670593+00:00",
+      "finishedAtUtc": "2026-09-18T00:24:27.7446323+00:00",
+      "samples": []
+    },
+    {
+      "engine": "terrabase-sdk",
+      "synchronous": null,
+      "engineNotes": null,
+      "lane": "read",
+      "concurrency": 16,
+      "status": "failed",
+      "error": "TerraScale.DotNet.TerraScaleApiException: TerraScale API returned HTTP 500 InternalServerError.\n   at TerraScale.DotNet.TerraScaleClient.ReadJsonResponseAsync[TResponse](HttpResponseMessage response, Activity activity, CancellationToken cancellationToken, TerraScaleErrorContract errorContract)\n   at TerraScale.DotNet.TerraScaleClient.SendPreparedJsonAsync[TResponse,TResult](HttpMethod method, String requestUri, Byte[] payload, Action\u00601 configureRequest, Func\u00603 responseFactory, CancellationToken cancellationToken, String idempotencyKeyOverride, Boolean allowUnkeyedPutRetry)\n   at TerraBase.Benchmarks.EngineComparisonWorkload.TerrabaseSdkBackend.SeedAsync(Int32 index, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/TerrabaseSdkBackend.cs:line 104\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 524\n   at TerraBase.Benchmarks.EngineComparisonWorkload.PrepareCaseAsync(ComparisonOptions options, CaseDefinition definition, ComparisonCaseResult result, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 576\n   at TerraBase.Benchmarks.EngineComparisonWorkload.RunCaseAsync(ComparisonOptions options, CaseDefinition definition, String outputDirectory, CancellationToken cancellationToken) in /home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/EngineComparisonWorkload.cs:line 453",
+      "rawSamplesPath": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260917-embedded-smoke3/raw-samples-terrabase-sdk-read-c16.jsonl",
+      "workloadDigest": null,
+      "queryPlan": null,
+      "startedAtUtc": "2026-09-18T00:24:27.7507579+00:00",
+      "finishedAtUtc": "2026-09-18T00:24:27.9537725+00:00",
+      "samples": []
+    }
+  ],
+  "command": "/home/mariogk/Projects/TerraScale/terrabase/bench/TerraBase.Benchmarks/bin/Release/net10.0/TerraBase.Benchmarks.dll --workload engine-comparison --engines terrabase-sdk --lanes read,query --output bench/receipts/20260917-embedded-smoke3",
+  "receiptDirectory": "/home/mariogk/Projects/TerraScale/terrabase/bench/receipts/20260917-embedded-smoke3"
+}

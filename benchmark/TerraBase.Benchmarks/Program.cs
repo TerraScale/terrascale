@@ -54,6 +54,16 @@ internal static class Program
                 return await CompressionWorkload.RunAsync(args).ConfigureAwait(false);
             }
 
+            if (EngineComparisonWorkload.IsRequested(args))
+            {
+                return await EngineComparisonWorkload.RunAsync(args).ConfigureAwait(false);
+            }
+
+            if (AutomaticIndexWorkload.IsRequested(args))
+            {
+                return await AutomaticIndexWorkload.RunAsync(args).ConfigureAwait(false);
+            }
+
             var requestedWorkload = RequestedWorkload(args);
             if (requestedWorkload.Equals("larger-memory", StringComparison.OrdinalIgnoreCase))
             {
@@ -697,34 +707,34 @@ internal static class Program
             switch (workload)
             {
                 case Workload.PointRead:
-                {
-                    var document = await engine.Documents.ReadAsync(key, cancellationToken).ConfigureAwait(false)
-                        ?? throw new InvalidOperationException($"Point read missed seeded key {key.DocumentId}.");
-                    return new OperationResult(
-                        ReadBytes: Encoding.UTF8.GetByteCount(document.Body.GetRawText()),
-                        LogicalBytes: Encoding.UTF8.GetByteCount(document.Body.GetRawText()));
-                }
+                    {
+                        var document = await engine.Documents.ReadAsync(key, cancellationToken).ConfigureAwait(false)
+                            ?? throw new InvalidOperationException($"Point read missed seeded key {key.DocumentId}.");
+                        return new OperationResult(
+                            ReadBytes: Encoding.UTF8.GetByteCount(document.Body.GetRawText()),
+                            LogicalBytes: Encoding.UTF8.GetByteCount(document.Body.GetRawText()));
+                    }
                 case Workload.PointWrite:
-                {
-                    var result = await engine.Documents.UpsertAsync(key, body, DocumentPrecondition.Any, cancellationToken).ConfigureAwait(false);
-                    if (result.Outcome is not (WriteOutcome.Created or WriteOutcome.Updated))
                     {
-                        throw new InvalidOperationException($"Point write failed for {key.DocumentId}: {result.Outcome}.");
-                    }
+                        var result = await engine.Documents.UpsertAsync(key, body, DocumentPrecondition.Any, cancellationToken).ConfigureAwait(false);
+                        if (result.Outcome is not (WriteOutcome.Created or WriteOutcome.Updated))
+                        {
+                            throw new InvalidOperationException($"Point write failed for {key.DocumentId}: {result.Outcome}.");
+                        }
 
-                    var bytes = Encoding.UTF8.GetByteCount(body.GetRawText());
-                    return new OperationResult(ReadBytes: 0, LogicalBytes: bytes);
-                }
+                        var bytes = Encoding.UTF8.GetByteCount(body.GetRawText());
+                        return new OperationResult(ReadBytes: 0, LogicalBytes: bytes);
+                    }
                 case Workload.Scan:
-                {
-                    long bytes = 0;
-                    await foreach (var document in engine.Documents.ScanAsync(key.Tenant, key.Collection, cancellationToken).ConfigureAwait(false))
                     {
-                        bytes += Encoding.UTF8.GetByteCount(document.Body.GetRawText());
-                    }
+                        long bytes = 0;
+                        await foreach (var document in engine.Documents.ScanAsync(key.Tenant, key.Collection, cancellationToken).ConfigureAwait(false))
+                        {
+                            bytes += Encoding.UTF8.GetByteCount(document.Body.GetRawText());
+                        }
 
-                    return new OperationResult(ReadBytes: bytes, LogicalBytes: bytes);
-                }
+                        return new OperationResult(ReadBytes: bytes, LogicalBytes: bytes);
+                    }
                 default:
                     throw new ArgumentOutOfRangeException(nameof(workload));
             }
