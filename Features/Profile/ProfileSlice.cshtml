@@ -16,8 +16,11 @@
                     <p class="ts-muted ts-ui ts-break-words">@Model.Email · @primaryRole · @Model.ActiveOrganizationName</p>
                 </div>
             </div>
-            <div class="ts-stack-12 ts-min-width">
-                <form method="post" action="/api/v1/dashboard/profile" class="ts-form ts-form-inline-row">
+            <div class="ts-stack-12 ts-min-width" data-signals="{ profileEditing: false }">
+                <div class="ts-actions-row" data-show="!profileEditing">
+                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="profileEditing = true">@Icons.Pencil(16) @t("Edit")</button>
+                </div>
+                <form method="post" action="/api/v1/dashboard/profile" class="ts-form ts-form-inline-row" data-show="profileEditing">
                     <div class="ts-field">
                         <label class="ts-label" for="displayName">@t("Display name")</label>
                         <input class="ts-input" id="displayName" name="name" value="@Model.Name" />
@@ -27,14 +30,15 @@
                         <input class="ts-input" id="phoneNumber" name="phoneNumber" value="@Model.PhoneNumber" />
                     </div>
                     <div class="ts-form-actions">
-                        <button class="ts-btn ts-btn-primary" type="submit">@t("Save")</button>
+                        <button type="button" class="ts-btn ts-btn-secondary" data-on-click="profileEditing = false">@t("Cancel")</button>
+                        <button class="ts-btn ts-btn-primary" type="submit">@Icons.Save(16) @t("Save")</button>
                     </div>
                 </form>
                 <dl class="ts-summary-terms">
                     <div class="ts-summary-term"><dt>@t("Roles")</dt><dd>@Model.Roles.Length</dd></div>
                     <div class="ts-summary-term"><dt>@t("Permissions")</dt><dd>@Model.Permissions.Length</dd></div>
                     <div class="ts-summary-term"><dt>@t("Sessions")</dt><dd>@Model.Sessions.Length</dd></div>
-                    <div class="ts-summary-term"><dt>@t("Loaded")</dt><dd>2026-09-18 10:24 UTC</dd></div>
+                    <div class="ts-summary-term"><dt>@t("Loaded")</dt><dd>@Model.LoadedAtText</dd></div>
                 </dl>
             </div>
         </div>
@@ -53,21 +57,25 @@
             <div class="ts-stack-20">
                 <section class="ts-panel">
                     <div class="ts-panel-header">
-                        <h3 class="ts-panel-title">@t("Email change")</h3>
+                        <h3 class="ts-panel-title">@t("Email and contact")</h3>
+                        <p class="ts-panel-subtitle">@t("Update your sign-in email after re-authenticating")</p>
                     </div>
-                    <form method="post" action="/api/v1/dashboard/profile/email-change" class="ts-form ts-padded">
-                        <div class="ts-field">
-                            <label class="ts-label" for="newEmail">@t("New email")</label>
-                            <input class="ts-input" id="newEmail" name="newEmail" type="email" autocomplete="email" />
-                        </div>
-                        <div class="ts-field">
-                            <label class="ts-label" for="emailPassword">@t("Current password")</label>
-                            <input class="ts-input" id="emailPassword" name="password" type="password" autocomplete="current-password" />
-                        </div>
-                        <div class="ts-form-actions">
-                            <button class="ts-btn ts-btn-secondary" type="submit">@t("Send verification code")</button>
-                        </div>
-                    </form>
+                    <div class="ts-padded">
+                        <div class="ts-email-heading">@Icons.Mail(16) @t("Email change")</div>
+                        <form method="post" action="/api/v1/dashboard/profile/email-change" class="ts-form">
+                            <div class="ts-field">
+                                <label class="ts-label" for="newEmail">@t("New email")</label>
+                                <input class="ts-input" id="newEmail" name="newEmail" type="email" autocomplete="email" />
+                            </div>
+                            <div class="ts-field">
+                                <label class="ts-label" for="emailPassword">@t("Current password")</label>
+                                <input class="ts-input" id="emailPassword" name="password" type="password" autocomplete="current-password" />
+                            </div>
+                            <div class="ts-form-actions">
+                                <button class="ts-btn ts-btn-secondary" type="submit">@t("Send verification code")</button>
+                            </div>
+                        </form>
+                    </div>
                 </section>
                 <section class="ts-panel">
                     <div class="ts-panel-header">
@@ -116,18 +124,13 @@
                 </div>
                 <div class="ts-claims-grid">
                     <div class="ts-claim-list">
-                        <span class="ts-claim-title">@t("Roles")</span>
                         @foreach (var role in Model.Roles)
                         {
-                            <code class="ts-claim-value">@role</code>
+                            <p class="ts-ui">@t("Roles"): <code class="ts-mono">@role</code></p>
                         }
                     </div>
                     <div class="ts-claim-list">
-                        <span class="ts-claim-title">@t("Permissions")</span>
-                        @foreach (var permission in Model.Permissions)
-                        {
-                            <code class="ts-claim-value">@permission</code>
-                        }
+                        <p class="ts-ui">@t("Permissions"): <code class="ts-mono">@string.Join(", ", Model.Permissions)</code></p>
                     </div>
                 </div>
             </section>
