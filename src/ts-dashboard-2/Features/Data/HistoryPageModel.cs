@@ -1,5 +1,4 @@
 using TerraScale.Dashboard2;
-using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Data;
 
@@ -11,10 +10,4 @@ public sealed record HistoryPageModel(DocumentHistoryState History) : IPageModel
     {
         Shell = ShellFactory.Create(store, "/history"),
     };
-}
-
-public sealed class HistoryPageEndpoint(DashboardStore store)
-    : SlicePageEndpoint<HistorySlice, HistoryPageModel>(store, "/history")
-{
-    protected override HistoryPageModel Load() => HistoryPageModel.From(Store);
 }
