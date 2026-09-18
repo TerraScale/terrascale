@@ -207,4 +207,6 @@ public static class Icons
     public const string Trash2Svg = """<path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>""";
     public static HtmlString FileJson(int size = 18) => new(SvgText(FileJsonSvg, size));
     public const string FileJsonSvg = """<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1"></path><path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1"></path>""";
+    public static HtmlString CheckCheck(int size = 18) => new(SvgText(CheckCheckSvg, size));
+    public const string CheckCheckSvg = """<path d="M18 6 7 17l-5-5"></path><path d="m22 10-7.5 7.5L13 16"></path>""";
 }

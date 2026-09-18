@@ -1,13 +1,194 @@
 @inherits RazorSlice<AuditPageModel>
 @{
     var shell = Model.Shell;
+    Microsoft.AspNetCore.Html.HtmlString Icon(string name, int size = 15) => (typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as Microsoft.AspNetCore.Html.HtmlString) ?? Icons.Circle(size);
+    string RangeHref(string range)
+    {
+        var query = new System.Collections.Generic.List<string>();
+        if (Model.Action != "all") { query.Add("action=" + Uri.EscapeDataString(Model.Action)); }
+        if (Model.Search.Length > 0) { query.Add("search=" + Uri.EscapeDataString(Model.Search)); }
+        if (Model.Severity != "all") { query.Add("severity=" + Uri.EscapeDataString(Model.Severity)); }
+        query.Add("range=" + range);
+        return "/audit?" + string.Join("&", query);
+    }
+    string Percent(int value, int total) => total is 0 ? "0" : Math.Round(value * 100.0 / total).ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Audit</h2>
-            <p class="ts-panel-subtitle">Port pending — this surface renders once its 1:1 port lands.</p>
+        <div class="ts-row-between ts-audit-intro">
+            <div class="ts-stack-sm">
+                <h2 class="ts-audit-title">Audit</h2>
+                <p class="ts-muted">Project control-plane events loaded from persisted TerraScale metadata. Loaded @DashboardStore.FormatUtcDateTime("2026-09-18T10:00:00Z").</p>
+                <div class="ts-row ts-meta">
+                    @Icons.ShieldCheck(14)
+                    <span>Retention @Model.RetentionDays days@(Model.OldestTime is { } oldest ? $" · earliest event {DashboardStore.FormatUtcDateTime(oldest)}" : "")</span>
+                </div>
+            </div>
+            <div class="ts-audit-metrics">
+                <div class="ts-metric"><span class="ts-muted">Events</span><span class="ts-metric-inline">@Model.Rows.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
+                <div class="ts-metric"><span class="ts-muted">High risk</span><span class="ts-metric-inline ts-text-danger">@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
+                <div class="ts-metric"><span class="ts-muted">Warnings</span><span class="ts-metric-inline ts-text-warning">@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
+                <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/audit/export?format=csv">@Icons.Download(14) Export CSV</a>
+            </div>
+        </div>
+    </section>
+
+    <section class="ts-panel">
+        <div class="ts-panel-header ts-row-between">
+            <div>
+                <h2 class="ts-panel-title">Recent activity</h2>
+                <p class="ts-panel-subtitle">Project @(Model.ProjectId.Length > 12 ? Model.ProjectId[..12] + "…" : Model.ProjectId) · audit events</p>
+            </div>
+            <a class="ts-btn ts-btn-ghost ts-btn-sm" href="/audit">@Icons.Filter(16) Reset filters</a>
+        </div>
+
+        <form method="get" action="/audit" class="ts-audit-form">
+            <div class="ts-field">
+                <label class="ts-label" for="audit-search">Search</label>
+                <input class="ts-input" id="audit-search" name="search" type="search" value="@Model.Search" placeholder="Actor, action, resource, or source" />
+            </div>
+            <div class="ts-field">
+                <label class="ts-label" for="audit-action">Action type</label>
+                <select class="ts-select" id="audit-action" name="action">
+                    @foreach (var option in Model.ActionOptions)
+                    {
+                        <option value="@option" selected="@(option == Model.Action)">@(option == "all" ? "All actions" : option)</option>
+                    }
+                </select>
+            </div>
+            <div class="ts-field">
+                <label class="ts-label" for="audit-severity">Severity</label>
+                <select class="ts-select" id="audit-severity" name="severity">
+                    @foreach (var option in DashboardStore.AuditSeverityOptions)
+                    {
+                        <option value="@option" selected="@(option == Model.Severity)">@(option switch { "all" => "All severities", "info" => "Info", "warn" => "Warning", _ => "Critical severity" })</option>
+                    }
+                </select>
+            </div>
+            <input type="hidden" name="range" value="@Model.Range" />
+            <div class="ts-field ts-audit-form-actions">
+                <button class="ts-btn ts-btn-secondary" type="submit">Apply filters</button>
+            </div>
+        </form>
+
+        <div class="ts-row-between">
+            <div class="ts-row ts-muted">
+                @Icons.Calendar(15)
+                <span>Range</span>
+                <div class="ts-filter-group" role="group" aria-label="Audit date range">
+                    @foreach (var option in DashboardStore.AuditRangeOptions)
+                    {
+                        <a class="ts-filter-link @(Model.Range == option ? "ts-filter-active" : null)" href="@RangeHref(option)" aria-current="@(Model.Range == option ? "page" : null)">@option</a>
+                    }
+                </div>
+            </div>
+            <span class="ts-meta">Showing @Model.Rows.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) of @Model.AllEvents.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) events</span>
+        </div>
+
+        @if (Model.Rows.Count is 0)
+        {
+            <div class="ts-empty">
+                <span class="ts-empty-icon">@Icons.ScrollText(28)</span>
+                <span class="ts-empty-title">No audit events</span>
+                <span class="ts-meta">The TerraScale Dashboard API returned no persisted audit events matching this view.</span>
+            </div>
+        }
+        else
+        {
+            <div class="ts-table-wrap">
+                <table class="ts-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Actor</th>
+                            <th>Action</th>
+                            <th>Resource</th>
+                            <th>Source</th>
+                            <th>Severity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Model.Rows)
+                        {
+                            <tr>
+                                <td class="ts-table-mono ts-nowrap"><time datetime="@row.Time">@row.TimeLabel</time></td>
+                                <td>
+                                    <div class="ts-stack-xs">
+                                        <span class="ts-table-strong">@row.Actor</span>
+                                        <span class="ts-meta">@(row.ActorType == "service" ? "Service" : "User")</span>
+                                    </div>
+                                </td>
+                                <td><span class="ts-row ts-row-tight ts-muted">@(Icon(row.ActionIcon)) <code class="ts-mono">@row.Action</code></span></td>
+                                <td>@(row.Target.Length > 0 ? row.Target : "-")</td>
+                                <td class="ts-table-mono">@row.Source</td>
+                                <td>
+                                    <div class="ts-row ts-row-tight">
+                                        <span class="ts-badge ts-badge-@row.SeverityTone">@row.SeverityLabel</span>
+                                        @if (row.Failure)
+                                        {
+                                            <span class="ts-badge ts-badge-danger">Failed</span>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <section class="ts-grid ts-audit-two-pane">
+        <div class="ts-panel">
+            <div class="ts-panel-header ts-row-between">
+                <div>
+                    <h2 class="ts-panel-title">Retention</h2>
+                    <p class="ts-panel-subtitle">Persisted audit evidence window</p>
+                </div>
+                <span class="ts-badge ts-badge-info">@Model.RetentionDays d</span>
+            </div>
+            <div class="ts-stack-lg">
+                <div class="ts-stack-md">
+                    <div class="ts-metric"><span class="ts-muted">Window covered</span><span class="ts-metric-inline">@Model.RetentionDays rolling days</span></div>
+                    <div class="ts-metric"><span class="ts-muted">Oldest retained event</span><span class="ts-metric-inline">@(Model.OldestTime is { } oldestRetained ? DashboardStore.FormatUtcDateTime(oldestRetained) : "None")</span></div>
+                    <div class="ts-metric"><span class="ts-muted">Export formats</span><span class="ts-metric-inline">CSV, JSON</span></div>
+                </div>
+                <div class="ts-row">
+                    <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/audit/export?format=csv">Export CSV</a>
+                    <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/audit/export?format=json">Export JSON</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="ts-panel">
+            <div class="ts-panel-header">
+                <h2 class="ts-panel-title">Severity breakdown</h2>
+                <p class="ts-panel-subtitle">Events in current view</p>
+            </div>
+            <div class="ts-stack-md">
+                <div class="ts-severity-box">
+                    <div class="ts-row-between">
+                        <span class="ts-row ts-row-tight">@Icons.ShieldCheck(16) Info</span>
+                        <span class="ts-metric-inline">@(Model.Rows.Count(r => r.Severity == "info"))</span>
+                    </div>
+                    <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-info" style="width:@(Percent(Model.Rows.Count(r => r.Severity == "info"), Model.Rows.Count))%"></div></div>
+                </div>
+                <div class="ts-severity-box">
+                    <div class="ts-row-between">
+                        <span class="ts-row ts-row-tight">@Icons.ShieldAlert(16) Warning</span>
+                        <span class="ts-metric-inline">@Model.Warn</span>
+                    </div>
+                    <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-warning" style="width:@(Percent(Model.Warn, Model.Rows.Count))%"></div></div>
+                </div>
+                <div class="ts-severity-box">
+                    <div class="ts-row-between">
+                        <span class="ts-row ts-row-tight">@Icons.Shield(16) Critical severity</span>
+                        <span class="ts-metric-inline">@Model.Critical</span>
+                    </div>
+                    <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-danger" style="width:@(Percent(Model.Critical, Model.Rows.Count))%"></div></div>
+                </div>
+            </div>
         </div>
     </section>
 </div>

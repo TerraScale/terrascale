@@ -2291,3 +2291,230 @@ details.ts-menu[open] > summary.ts-account-trigger {
   color: var(--ts-accent-soft);
 }
 
+
+/* ===== Feature: Usage/Audit/Notifications ===== */
+
+/* Stat card grids: 2-up on tablet, 4-up on desktop (usage summary + billing). */
+.ts-usage-stats { gap: var(--ts-md); }
+
+.ts-billing-grid { gap: var(--ts-md); }
+
+.ts-metric-value-sm {
+    font-size: var(--ts-fs-page-title);
+}
+
+.ts-metric-inline {
+    font-size: var(--ts-fs-panel-title);
+    font-weight: var(--ts-fw-semibold);
+    font-family: var(--ts-font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--ts-ink);
+}
+
+.ts-text-danger { color: var(--ts-danger); }
+.ts-text-warning { color: var(--ts-warning); }
+
+.ts-usage-charts {
+    gap: var(--ts-lg);
+}
+
+@media (min-width: 64rem) {
+    .ts-usage-charts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* Horizontal bar list (measured usage / region placement / coverage). */
+.ts-bar-list {
+    display: grid;
+    gap: var(--ts-md);
+}
+
+.ts-bar-row {
+    display: grid;
+    grid-template-columns: minmax(90px, auto) 1fr auto;
+    align-items: center;
+    gap: var(--ts-md);
+}
+
+.ts-bar-label {
+    font-size: var(--ts-fs-ui);
+    color: var(--ts-ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ts-bar-track {
+    height: 8px;
+    border-radius: var(--ts-radius-pill);
+    background-color: var(--ts-surface-muted);
+    overflow: hidden;
+}
+
+.ts-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: var(--ts-radius-pill);
+    background-color: var(--ts-chart-1);
+    min-width: 2px;
+}
+
+.ts-bar-fill-2 { background-color: var(--ts-chart-2); }
+
+.ts-bar-value {
+    font-size: var(--ts-fs-meta);
+    color: var(--ts-ink-muted);
+    min-width: 3.5em;
+    text-align: right;
+}
+
+/* Audit intro: title + metric well on the right. */
+.ts-audit-title {
+    font-size: var(--ts-fs-page-title);
+    font-weight: var(--ts-fw-bold);
+}
+
+.ts-audit-intro > div {
+    min-width: 0;
+}
+
+.ts-audit-metrics {
+    display: grid;
+    gap: var(--ts-sm);
+    padding: var(--ts-md);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: var(--ts-surface-muted);
+    justify-items: start;
+}
+
+.ts-audit-form {
+    display: grid;
+    gap: var(--ts-md);
+    grid-template-columns: 1fr;
+    align-items: end;
+}
+
+@media (min-width: 64rem) {
+    .ts-audit-form { grid-template-columns: 2fr 1fr 1fr auto; }
+}
+
+.ts-audit-form-actions {
+    justify-content: flex-end;
+    display: flex;
+}
+
+.ts-audit-two-pane { gap: var(--ts-lg); }
+
+@media (min-width: 64rem) {
+    .ts-audit-two-pane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ts-severity-box {
+    display: grid;
+    gap: var(--ts-sm);
+}
+
+/* Range filter chip group. */
+.ts-filter-group {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--ts-radius-control);
+    border: 1px solid var(--ts-line);
+    background-color: var(--ts-surface);
+}
+
+.ts-filter-link {
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 var(--ts-sm);
+    border-radius: var(--ts-radius-badge);
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+    font-family: var(--ts-font-mono);
+    text-decoration: none;
+    transition: background-color var(--ts-t-control) var(--ts-ease), color var(--ts-t-control) var(--ts-ease);
+}
+
+.ts-filter-link:hover {
+    color: var(--ts-ink);
+    text-decoration: none;
+}
+
+.ts-filter-active {
+    background-color: var(--ts-surface-muted);
+    color: var(--ts-ink);
+}
+
+.ts-nowrap { white-space: nowrap; }
+
+.ts-row-tight { gap: var(--ts-gap-tight); }
+
+.ts-flex-wrap { flex-wrap: wrap; }
+
+.ts-table-strong {
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-semibold);
+}
+
+/* Notification inbox rows. */
+.ts-notification {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--ts-md);
+    padding: var(--ts-md);
+    border-radius: var(--ts-radius-panel);
+    border: 1px solid var(--ts-line);
+    background-color: var(--ts-surface);
+    box-shadow: var(--ts-card-edge);
+}
+
+.ts-notification-unread {
+    border-color: color-mix(in oklab, var(--ts-accent) 30%, transparent);
+}
+
+.ts-notification-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--ts-radius-control);
+    border: 1px solid var(--ts-line);
+    background-color: var(--ts-surface-muted);
+    color: var(--ts-ink-muted);
+}
+
+.ts-notification-unread .ts-notification-icon {
+    color: var(--ts-accent-soft);
+    border-color: color-mix(in oklab, var(--ts-accent) 24%, transparent);
+}
+
+.ts-notification-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ts-xs);
+    flex: 1;
+    min-width: 0;
+}
+
+.ts-notification-title {
+    font-size: var(--ts-fs-ui);
+    color: var(--ts-ink);
+}
+
+.ts-notification-text {
+    font-size: var(--ts-fs-ui);
+    color: var(--ts-ink-muted);
+}
+
+.ts-notification-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ts-xs);
+    font-size: var(--ts-fs-meta);
+    color: var(--ts-ink-muted);
+}

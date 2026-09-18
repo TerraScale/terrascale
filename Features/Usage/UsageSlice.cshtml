@@ -1,14 +1,300 @@
 @inherits RazorSlice<UsagePageModel>
 @{
     var shell = Model.Shell;
+    Microsoft.AspNetCore.Html.HtmlString Icon(string name, int size = 15) => (typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as Microsoft.AspNetCore.Html.HtmlString) ?? Icons.Circle(size);
+    string ToneClass(string compatibility) => compatibility switch
+    {
+        "current" => "ts-badge-info",
+        "compatible" => "ts-badge-success",
+        "exceeds" => "ts-badge-warning",
+        _ => "ts-badge-neutral",
+    };
+    string CompatibilityLabel(string compatibility) => compatibility switch
+    {
+        "current" => "Current plan",
+        "compatible" => "Within limits",
+        "exceeds" => "Over current usage",
+        _ => "Pending usage",
+    };
+    string InvoiceTone(string status) => status == "paid" ? "ts-badge-success" : "ts-badge-warning";
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
+    @if (Model.BillingReturn is "success")
+    {
+        <div class="ts-alert ts-alert-success" role="status">
+            <span class="ts-alert-title">@Icons.CircleCheckBig(16) Billing setup complete</span>
+            <span class="ts-alert-body">Your payment method was saved and the selected plan is now active.</span>
+        </div>
+    }
+    else if (Model.BillingReturn is "canceled")
+    {
+        <div class="ts-alert ts-alert-info" role="status">
+            <span class="ts-alert-title">@Icons.Info(16) Billing setup canceled</span>
+            <span class="ts-alert-body">No plan change was confirmed. Your current billing state is unchanged.</span>
+        </div>
+    }
+
+    <section class="ts-panel">
+        <div class="ts-row-between">
+            <p class="ts-muted">Usage period @DashboardStore.FormatUtcDateTime(Model.PeriodStart) to @DashboardStore.FormatUtcDateTime(Model.PeriodEnd)</p>
+            <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/usage">@Icons.RefreshCw(14) Refresh</a>
+        </div>
+        <div class="ts-grid ts-grid-cards ts-usage-stats">
+            @foreach (var stat in Model.Stats)
+            {
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">@(Icon(stat.Icon)) @stat.Label</span>
+                    <strong class="ts-metric-value ts-metric-value-sm">@stat.Value</strong>
+                    <small class="ts-metric-detail">@stat.Detail</small>
+                </div>
+            }
+        </div>
+    </section>
+
     <section class="ts-panel">
         <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Usage</h2>
-            <p class="ts-panel-subtitle">Port pending — this surface renders once its 1:1 port lands.</p>
+            <h2 class="ts-panel-title">Storage quota</h2>
+            <p class="ts-panel-subtitle">Project storage consumption from the active usage summary</p>
+        </div>
+        <div class="ts-stack-md">
+            <div class="ts-row-between">
+                <span class="ts-eyebrow">Quota</span>
+                <span class="ts-badge ts-badge-@(Model.StorageTone)">@(DashboardStore.FormatPercent(Model.StoragePercentUsed)) used</span>
+            </div>
+            <div class="ts-progress" role="progressbar" aria-label="@(DashboardStore.FormatPercent(Model.StoragePercentUsed)) used" aria-valuenow="@((int)Model.StoragePercentUsed)" aria-valuemin="0" aria-valuemax="100">
+                <div class="ts-progress-bar ts-progress-bar-@(Model.StorageTone)" style="width:@(Math.Min(100, Model.StoragePercentUsed).ToString("0", System.Globalization.CultureInfo.InvariantCulture))%"></div>
+            </div>
+            <div class="ts-grid ts-grid-cards ts-grid-cards-3">
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">Used</span>
+                    <strong class="ts-metric-value ts-metric-value-sm">@DashboardStore.FormatBytes(Model.StorageUsedBytes)</strong>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">Quota</span>
+                    <strong class="ts-metric-value ts-metric-value-sm">@DashboardStore.FormatBytes(Model.StorageLimitBytes)</strong>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">Remaining</span>
+                    <strong class="ts-metric-value ts-metric-value-sm">@Model.StorageRemainingLabel</strong>
+                </div>
+            </div>
+            <p class="ts-meta">Projected overage this cycle: <span class="ts-mono">$@(shell.Store.Usage.OverrunEstimateUsd.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))</span> · Invoice status <span class="ts-badge ts-badge-warning">@shell.Store.Usage.InvoiceStatus</span></p>
+        </div>
+    </section>
+
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h2 class="ts-panel-title">Resource usage history</h2>
+            <p class="ts-panel-subtitle">Logical storage and writes, with egress retained as an unbilled usage fact</p>
+        </div>
+        <div class="ts-chart-shell">
+            @Charts.LineChart(Model.History, "Resource usage history, 30d window")
+        </div>
+    </section>
+
+    <section class="ts-grid ts-usage-charts">
+        <div class="ts-panel ts-chart-shell">
+            <div class="ts-panel-header"><h3 class="ts-panel-title">Measured usage</h3><p class="ts-panel-subtitle">Counters returned for the active project period</p></div>
+            <div class="ts-bar-list">
+                @foreach (var slice in Model.MeasuredUsage)
+                {
+                    <div class="ts-bar-row">
+                        <span class="ts-bar-label">@slice.Label</span>
+                        <span class="ts-bar-track"><span class="ts-bar-fill" style="width:@(BarPercent(Model.MeasuredUsage, slice))%"></span></span>
+                        <span class="ts-bar-value ts-mono">@(slice.DisplayValue ?? slice.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture))</span>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="ts-panel ts-chart-shell">
+            <div class="ts-panel-header"><h3 class="ts-panel-title">Region placement</h3><p class="ts-panel-subtitle">Counted from database placement records</p></div>
+            <div class="ts-bar-list">
+                @foreach (var slice in Model.RegionPlacement)
+                {
+                    <div class="ts-bar-row">
+                        <span class="ts-bar-label">@slice.Label</span>
+                        <span class="ts-bar-track"><span class="ts-bar-fill ts-bar-fill-2" style="width:@(BarPercent(Model.RegionPlacement, slice))%"></span></span>
+                        <span class="ts-bar-value ts-mono">@slice.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="ts-panel ts-chart-shell">
+            <div class="ts-panel-header"><h3 class="ts-panel-title">Database coverage</h3><p class="ts-panel-subtitle">Region count per database</p></div>
+            <div class="ts-bar-list">
+                @foreach (var slice in Model.DatabaseCoverage)
+                {
+                    <div class="ts-bar-row">
+                        <span class="ts-bar-label">@slice.Label</span>
+                        <span class="ts-bar-track"><span class="ts-bar-fill" style="width:@(BarPercent(Model.DatabaseCoverage, slice))%"></span></span>
+                        <span class="ts-bar-value ts-mono">@slice.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </section>
+
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h2 class="ts-panel-title">Saved database usage</h2>
+            <p class="ts-panel-subtitle">Resource counts from the TerraScale Dashboard API</p>
+        </div>
+        @if (Model.Databases.Count is 0)
+        {
+            <div class="ts-empty">
+                <span class="ts-empty-icon">@Icons.Database(28)</span>
+                <span class="ts-empty-title">No databases saved</span>
+                <span class="ts-meta">Create a database to populate project usage.</span>
+            </div>
+        }
+        else
+        {
+            <div class="ts-table-wrap">
+                <table class="ts-table">
+                    <thead>
+                        <tr>
+                            <th>Database</th>
+                            <th>Regions</th>
+                            <th>Documents</th>
+                            <th>Storage</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Model.Databases)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="ts-stack-xs">
+                                        <span class="ts-table-strong">@row.Name</span>
+                                        <span class="ts-meta ts-mono">@row.Id</span>
+                                    </div>
+                                </td>
+                                <td class="ts-muted">@(row.PrimaryRegion + (row.BackupRegion is null ? "" : ", " + row.BackupRegion)).ToUpperInvariant()</td>
+                                <td class="ts-table-num">@DashboardStore.FormatNumber(row.DocumentCount)</td>
+                                <td class="ts-table-num">@DashboardStore.FormatBytes(row.SizeMb * 1024L * 1024)</td>
+                                <td class="ts-muted">@DashboardStore.FormatUtcDateTime(row.CreatedAt)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h2 class="ts-panel-title">Billing data</h2>
+            <p class="ts-panel-subtitle">Billing account and invoice projections</p>
+        </div>
+        <div class="ts-stack-lg">
+            <div class="ts-grid ts-grid-cards ts-billing-grid">
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">Status</span>
+                    <span class="ts-badge ts-badge-@(Model.BillingStatusTone)">@Model.BillingStatus</span>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">Plan</span>
+                    <span class="ts-badge ts-badge-info">@Model.PlanName</span>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">Price</span>
+                    <span class="ts-badge ts-badge-neutral">@Model.Price</span>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">Frequency</span>
+                    <span class="ts-badge ts-badge-neutral">@Model.Frequency</span>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">Renewal</span>
+                    <span class="ts-badge ts-badge-neutral">@Model.Renewal</span>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">Invoices</span>
+                    <span class="ts-badge ts-badge-neutral">@Model.InvoiceCount</span>
+                </div>
+            </div>
+
+            <div class="ts-stack-md">
+                <div class="ts-alert ts-alert-info" role="status">
+                    <span class="ts-alert-title">@Icons.Info(16) Review plan-change impact before confirming</span>
+                    <span class="ts-alert-body">Upgrades take effect immediately and may be prorated. Downgrades begin with the next billing cycle. Plans marked over current usage would start with billable excess unless usage is reduced before the change takes effect.</span>
+                </div>
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>Target plan</th>
+                                <th>Current usage</th>
+                                <th>Impact</th>
+                                <th>Effective</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in Model.PlanImpact)
+                            {
+                                <tr>
+                                    <td class="ts-table-strong">@row.PlanName</td>
+                                    <td><span class="ts-badge @ToneClass(row.Compatibility)">@CompatibilityLabel(row.Compatibility)</span></td>
+                                    <td class="ts-muted">@row.Impact</td>
+                                    <td class="ts-muted">@row.Timing</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            @if (Model.Invoices.Count is 0)
+            {
+                <div class="ts-empty">
+                    <span class="ts-empty-icon">@Icons.ReceiptText(28)</span>
+                    <span class="ts-empty-title">No invoices returned</span>
+                    <span class="ts-meta">Invoice projections will appear after webhook processing.</span>
+                </div>
+            }
+            else
+            {
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>Invoice</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Subscription period</th>
+                                <th>Issued</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in Model.Invoices)
+                            {
+                                <tr>
+                                    <td><span class="ts-row ts-row-tight">@Icons.ReceiptText(14) <span class="ts-mono">@row.InvoiceId[..14]…</span></span></td>
+                                    <td class="ts-table-num">@DashboardStore.FormatMoney(row.AmountCents, row.Currency)</td>
+                                    <td><span class="ts-badge @InvoiceTone(row.Status)">@row.Status</span></td>
+                                    <td class="ts-muted">@DashboardStore.FormatUtcDateTime(row.PeriodStart) to @DashboardStore.FormatUtcDateTime(row.PeriodEnd)</td>
+                                    <td class="ts-muted">@DashboardStore.FormatUtcDateTime(row.IssuedAt)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            <div class="ts-row">
+                <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/subscriptions">@Icons.ExternalLink(14) Manage subscription</a>
+                <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/usage/export">@Icons.Download(14) Export usage</a>
+            </div>
         </div>
     </section>
 </div>
 @ShellHtml.Bottom(shell)
+
+@functions {
+    private static string BarPercent(IReadOnlyList<BarSlice> slices, BarSlice slice)
+    {
+        var max = slices.Count is 0 ? 1 : slices.Max(s => s.Value);
+        return (max is 0 ? 0 : Math.Round(slice.Value / max * 100)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+}
