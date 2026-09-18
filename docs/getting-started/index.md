@@ -88,6 +88,9 @@ branch name, source, and selected region; it does not print credentials or a
 database id. Use the dashboard/API response to obtain the branch database id,
 then set the public project ID, branch database ID, API URL, auth URL, and
 exact registered callback URL in `.env.local` (`.env.example` lists the names).
+The API URL stays the global origin; the SDK discovers regional endpoints
+from it automatically, once per database, and falls back to the global proxy
+only when discovery fails.
 Export `TERRASCALE_API_KEY` separately for CLI commands; no API key belongs
 in the browser’s public settings. The branch runs in the cloud
 service, not in a local database process or customer-run emulator.

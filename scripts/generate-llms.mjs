@@ -84,11 +84,16 @@ ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 
 Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
 
-- REST first contact: https://api.terrascale.tech — routes to the nearest
-  healthy eligible Region hosting the database. Placement responses guide
-  regional pinning; 421 Misdirected Request can signal stale placement.
-- Pinned regional REST: https://gru.api.terrascale.tech,
+- Discovery: GET https://api.terrascale.tech/api/v1/discovery?database=…
+  (optional branch, rev, stale) — credential-free KV-backed metadata that
+  returns ranked regional endpoints with capabilities, residency, a routing
+  revision, and a refresh policy. The TS SDK calls it once per
+  database/branch/scope, then connects directly (HTTPS + WebSocket).
+- Direct regional REST + WebSocket: https://gru.api.terrascale.tech,
   https://sfo.api.terrascale.tech, https://fra.api.terrascale.tech
+- Optional proxy: https://api.terrascale.tech — transparent fallback when
+  discovery fails and the path for unpinned callers and legacy SDKs
+  (Go/Rust/.NET); 421 Misdirected Request can signal stale placement.
 - Regions list: GET https://api.terrascale.tech/api/v1/regions
 - Reactive HTTP (live queries; CDN-backed long-polling, capability header):
   https://sync.api.terrascale.tech

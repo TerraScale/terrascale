@@ -5,12 +5,12 @@
 
 # Snippets
 
-Runnable snippets run against a real cloud sandbox branch pre-filled with the
-reader's key. `npm test` runs the deterministic local stub check. The explicit remote launch gate is `make qualify-remote`. It
-requires all three environment variables below and exits non-zero when the
-sandbox is unavailable; an absent sandbox is a failed gate, not a passing
-fixture run. Remote qualification requires the sandbox variables above; `npm test` is local-only and
-never qualifies the remote contract or launch.
+Runnable snippets can be qualified against a real cloud sandbox branch
+pre-filled with the reader's key. `npm test` is the deterministic local stub
+check used by CI. The explicit remote, fail-closed launch gate is
+`make qualify-remote`; it requires all three sandbox environment variables and
+exits non-zero when the sandbox is unavailable. An absent sandbox is a failed
+gate, not a passing fixture run.
 
 ```bash
 TERRASCALE_SANDBOX_URL=https://<branch>.<region>.api.terrascale.tech \
