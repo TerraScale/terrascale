@@ -127,6 +127,10 @@ type Client struct {
 	pinned RegionCode
 	// sessionToken is the canonical frontier shared by REST and subscriptions.
 	sessionToken string
+	// regional caches the regionalized origin per region. It is computed once
+	// at construction and never mutated, so base selection needs no lock and
+	// no per-request URL parse.
+	regional map[RegionCode]string
 
 	AuthPersistence  *AuthPersistenceClient
 	ProjectAPIKeys   *ProjectAPIKeysClient
@@ -250,6 +254,11 @@ func NewClient(cfg Config) (*Client, error) {
 		RetryDelay:       retryDelay,
 		RequestTimeout:   requestTimeout,
 	}, http: httpClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
+	regional := make(map[RegionCode]string, 3)
+	for _, region := range []RegionCode{RegionGRU, RegionSFO, RegionFRA} {
+		regional[region] = regionalizeHost(base, region)
+	}
+	c.regional = regional
 	c.AuthPersistence = &AuthPersistenceClient{c: c}
 	c.ProjectAPIKeys = &ProjectAPIKeysClient{c: c}
 	c.Operations = &OperationsClient{c: c}
@@ -391,23 +400,25 @@ func numericToken(token string) (uint64, bool) {
 	return sequence, err == nil
 }
 
-func (c *Client) currentBase() string {
+// requestBase returns the current origin and whether that origin was selected
+// without a learned or explicit pin, using one lock acquisition.
+func (c *Client) requestBase() (string, bool) {
 	c.mu.RLock()
-	pinned := c.pinned
-	cfg := c.cfg
+	pinned, cfg := c.pinned, c.cfg
 	c.mu.RUnlock()
+	globalFirstContact := cfg.Affinity == AffinityFailover && pinned == ""
 	switch cfg.Affinity {
 	case AffinityStrict:
 		region := pinned
 		if region == "" {
 			region = cfg.PreferredRegion
 		}
-		return regionalizeHost(cfg.APIBaseURL, region)
+		return c.regional[region], false
 	default:
 		if pinned != "" {
-			return regionalizeHost(cfg.APIBaseURL, pinned)
+			return c.regional[pinned], false
 		}
-		return cfg.APIBaseURL
+		return cfg.APIBaseURL, globalFirstContact
 	}
 }
 
@@ -444,6 +455,8 @@ type requestConfig struct {
 	ifMatch            string
 	documentIfMatch    string
 	hasDocumentIfMatch bool
+	readAt             int64
+	hasReadAt          bool
 	responseMediaType  string
 	requestMediaType   string
 	responseHeaders    *http.Header
@@ -479,6 +492,14 @@ func WithSessionToken(token string) RequestOption {
 // WithConsistency overrides read consistency for one request.
 func WithConsistency(cs Consistency) RequestOption {
 	return func(r *requestConfig) { r.consistency = cs }
+}
+
+// WithReadAt reads one document as of a point in time. at is epoch
+// milliseconds and travels as the at query parameter of the point read.
+// Negative values, and use outside document point reads, are rejected before
+// any request is sent.
+func WithReadAt(millis int64) RequestOption {
+	return func(r *requestConfig) { r.readAt = millis; r.hasReadAt = true }
 }
 
 // WithCreateOnly requires a document PUT to create a new identity atomically.
@@ -581,6 +602,18 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if rc.createOnly && (method != http.MethodPut || route != "documents.put" || rc.ifMatch != "") {
 		return &ValidationError{Field: "create-only", Message: "supported only for document PUT without If-Match"}
 	}
+	if rc.hasReadAt {
+		if rc.readAt < 0 {
+			return &ValidationError{Field: "at", Message: "must be non-negative epoch milliseconds"}
+		}
+		if route != "documents.get" {
+			return &ValidationError{Field: "at", Message: "supported only for document point reads"}
+		}
+		if query == nil {
+			query = url.Values{}
+		}
+		query.Set("at", strconv.FormatInt(rc.readAt, 10))
+	}
 	if rc.regionHint != "" {
 		region, err := ParseRegionCode(string(rc.regionHint))
 		if err != nil {
@@ -614,6 +647,18 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			if rc.requestMediaType == "" {
 				rc.requestMediaType = "application/octet-stream"
 			}
+		case json.RawMessage:
+			// Pre-encoded JSON from the SDK's own validators. Passing it
+			// through avoids a second marshal of every write; an empty
+			// message still falls back so invalid JSON is rejected here.
+			if len(raw) > 0 {
+				payload = raw
+			} else {
+				payload, err = json.Marshal(raw)
+				if err != nil {
+					return fmt.Errorf("sdk: marshal %s request body: %w", route, err)
+				}
+			}
 		default:
 			payload, err = json.Marshal(body)
 			if err != nil {
@@ -635,8 +680,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	followed421 := false
 	recoveredPin := false
 	for {
-		base := c.currentBase()
-		globalFirstContact := c.isGlobalFirstContact(base)
+		base, globalFirstContact := c.requestBase()
 		status, headers, respBody, transportErr := c.roundTrip(requestCtx, method, base, path, query, payload, rc, idem)
 		if rc.responseHeaders != nil {
 			*rc.responseHeaders = headers.Clone()
@@ -723,24 +767,11 @@ func canRepairPlacement(method, idempotencyKey string) bool {
 func (c *Client) clearFailedPin(base string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.cfg.Affinity != AffinityFailover || c.pinned == "" || base == c.cfg.APIBaseURL || base != regionalizeHost(c.cfg.APIBaseURL, c.pinned) {
+	if c.cfg.Affinity != AffinityFailover || c.pinned == "" || base == c.cfg.APIBaseURL || base != c.regional[c.pinned] {
 		return false
 	}
 	c.pinned = ""
 	return true
-}
-
-// isGlobalFirstContact reports whether base was selected without a learned or
-// explicit pin. The check is repeated when the response arrives in
-// observeServingRegion, so concurrent first contacts cannot overwrite the
-// first trusted observation.
-func (c *Client) isGlobalFirstContact(base string) bool {
-	c.mu.RLock()
-	affinity := c.cfg.Affinity
-	pinned := c.pinned
-	configuredBase := c.cfg.APIBaseURL
-	c.mu.RUnlock()
-	return affinity == AffinityFailover && pinned == "" && base == configuredBase
 }
 
 // observeServingRegion learns the serving region only from a successful
@@ -784,13 +815,19 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 		h.Set("Content-Type", contentType)
 	}
 	c.decorateScopeHeaders(h)
+	c.mu.RLock()
+	pinned, session := c.pinned, rc.sessionToken
+	if session == "" {
+		session = c.sessionToken
+	}
+	c.mu.RUnlock()
 	hint := rc.regionHint
 	if hint == "" && (c.cfg.Affinity == AffinityFailover || c.cfg.Affinity == AffinityStrict) {
 		// A learned 421 pin wins over the configured preferred region. Strict
 		// affinity also needs this header when APIBaseURL is a custom proxy,
 		// because regionalizeHost cannot rewrite a non-canonical hostname.
-		if p := c.PinnedRegion(); p != "" {
-			hint = p
+		if pinned != "" {
+			hint = pinned
 		} else if c.cfg.PreferredRegion != "" {
 			hint = c.cfg.PreferredRegion
 		}
@@ -802,10 +839,6 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 		if err := setBearerAuthorization(h, token); err != nil {
 			return 0, nil, nil, err
 		}
-	}
-	session := rc.sessionToken
-	if session == "" {
-		session = c.SessionToken()
 	}
 	if session != "" {
 		h.Set("X-TerraScale-Session", session)
@@ -1061,6 +1094,13 @@ func servingRegion(h http.Header) (RegionCode, bool) {
 func headerValuesFold(h http.Header, name string) []string {
 	if h == nil {
 		return nil
+	}
+	// Wire and Header.Set keys are canonical, so the common case is a direct
+	// map hit. The fold scan remains only for directly constructed maps that
+	// bypass canonicalization; a canonical key is authoritative when both
+	// spellings are present.
+	if values, ok := h[http.CanonicalHeaderKey(name)]; ok {
+		return values
 	}
 	var values []string
 	for key, entries := range h {

@@ -212,6 +212,41 @@ func TestDocumentHistoryPageUsesPublishedPagination(t *testing.T) {
 	}
 }
 
+func TestDocumentPointReadAtQueryAndValidation(t *testing.T) {
+	var query url.Values
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		query = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"rev-1"`)
+		_, _ = w.Write([]byte(`{"name":"Ada"}`))
+	}))
+	defer server.Close()
+	client, err := sdk.NewClient(sdk.Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.Documents.Get(t.Context(), "db", "users", "ada", sdk.WithReadAt(1710000000123))
+	if err != nil || string(got.Body) != `{"name":"Ada"}` {
+		t.Fatalf("Get = %+v, err = %v", got, err)
+	}
+	if query.Encode() != "at=1710000000123" {
+		t.Fatalf("point read query = %q", query.Encode())
+	}
+	_, err = client.Documents.Get(t.Context(), "db", "users", "ada", sdk.WithReadAt(-1))
+	var validationErr *sdk.ValidationError
+	if !errors.As(err, &validationErr) || validationErr.Field != "at" {
+		t.Fatalf("negative at error = %T %+v", err, err)
+	}
+	if _, err := client.Documents.List(t.Context(), "db", "users", 0, "", sdk.WithReadAt(1)); err == nil {
+		t.Error("list accepted a point in time")
+	}
+	if requests != 1 {
+		t.Fatalf("validation sent %d requests (only the point read should reach HTTP)", requests)
+	}
+}
+
 func TestConditionalDocumentReadModifyWriteRetriesOriginalCondition(t *testing.T) {
 	patches := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

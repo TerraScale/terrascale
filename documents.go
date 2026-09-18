@@ -170,6 +170,8 @@ func (d *DocumentsClient) Upsert(ctx context.Context, databaseID, collection, do
 
 // Get fetches one document. The successful response body is raw canonical
 // JSON, so it is decoded into Body directly rather than into a wrapper.
+// WithReadAt returns the document as of epoch milliseconds instead of the
+// latest revision; the list endpoint does not accept a point in time.
 func (d *DocumentsClient) Get(ctx context.Context, databaseID, collection, docID string, opts ...RequestOption) (*Document, error) {
 	path, err := documentPath(databaseID, collection, docID)
 	if err != nil {
@@ -230,6 +232,15 @@ func (d *DocumentsClient) Patch(ctx context.Context, databaseID, collection, doc
 	return &out, nil
 }
 
+// batchOperationValue keeps each operation's value in its validated encoded
+// form so the request body is assembled once instead of re-marshaling every
+// value a second time.
+type batchOperationValue struct {
+	Op    string          `json:"op"`
+	ID    string          `json:"id"`
+	Value json.RawMessage `json:"value,omitempty"`
+}
+
 // Batch sends one atomic batch of put, patch, and delete operations.
 func (d *DocumentsClient) Batch(ctx context.Context, databaseID, collection string, operations []BatchOperation, opts ...RequestOption) (*BatchResponse, error) {
 	base, err := documentBase(databaseID, collection)
@@ -239,6 +250,7 @@ func (d *DocumentsClient) Batch(ctx context.Context, databaseID, collection stri
 	if len(operations) == 0 || len(operations) > MaxBatchOperations {
 		return nil, fmt.Errorf("sdk: document batch must contain between 1 and %d operations", MaxBatchOperations)
 	}
+	wire := make([]batchOperationValue, len(operations))
 	for index, operation := range operations {
 		if strings.TrimSpace(operation.ID) == "" {
 			return nil, fmt.Errorf("sdk: document batch operation %d id cannot be empty", index)
@@ -248,19 +260,25 @@ func (d *DocumentsClient) Batch(ctx context.Context, databaseID, collection stri
 			if operation.Value == nil {
 				return nil, fmt.Errorf("sdk: document batch operation %d %s value cannot be nil", index, operation.Op)
 			}
-			if _, err := rawJSON(operation.Value, fmt.Sprintf("document batch operation %d value", index)); err != nil {
+			value, err := rawJSON(operation.Value, fmt.Sprintf("document batch operation %d value", index))
+			if err != nil {
 				return nil, err
 			}
+			wire[index] = batchOperationValue{Op: operation.Op, ID: operation.ID, Value: value}
 		case "delete":
+			wire[index] = batchOperationValue{Op: operation.Op, ID: operation.ID}
 		default:
 			return nil, fmt.Errorf("sdk: document batch operation %d op must be put, patch, or delete", index)
 		}
 	}
-	request := struct {
-		Operations []BatchOperation `json:"operations"`
-	}{Operations: operations}
+	payload, err := json.Marshal(struct {
+		Operations []batchOperationValue `json:"operations"`
+	}{Operations: wire})
+	if err != nil {
+		return nil, err
+	}
 	var out BatchResponse
-	if err := d.c.do(ctx, "POST", base+"/batch", nil, request, &out, "documents.batch", opts...); err != nil {
+	if err := d.c.do(ctx, "POST", base+"/batch", nil, json.RawMessage(payload), &out, "documents.batch", opts...); err != nil {
 		return nil, err
 	}
 	out.Session = d.c.SessionToken()
