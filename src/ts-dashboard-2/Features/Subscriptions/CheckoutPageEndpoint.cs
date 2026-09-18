@@ -3,11 +3,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Subscriptions;
 
-public sealed record CheckoutPageModel(string SessionId) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
-
 public sealed class CheckoutPageEndpoint : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

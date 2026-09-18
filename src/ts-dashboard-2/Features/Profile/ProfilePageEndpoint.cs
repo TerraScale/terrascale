@@ -1,0 +1,20 @@
+using TerraScale.Dashboard2;
+using TerraScale.Endpoints;
+
+namespace TerraScale.Dashboard2.Features.Profile;
+
+public sealed class ProfilePageEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
+{
+    public override void Configure()
+    {
+        Get("/profile");
+        Summary("Renders the Profile page");
+        Tags("Pages");
+    }
+
+    public override Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var tab = HttpContext.Request.Query["tab"].FirstOrDefault() is { Length: > 0 } t ? t : "profile";
+        return Task.FromResult<IResult>(ProfileSlice.Create(ProfilePageModel.From(store, "/profile", tab)));
+    }
+}
