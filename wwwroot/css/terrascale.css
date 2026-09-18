@@ -2559,6 +2559,218 @@ details.ts-menu[open] > summary.ts-account-trigger {
 .ts-audit-form {
     display: grid;
     gap: var(--ts-md);
+/* ===== Feature: Access ===== */
+
+.ts-panel-20 {
+    padding: 20px;
+}
+
+.ts-padded {
+    padding: var(--ts-lg);
+}
+
+.ts-stack-20 {
+    gap: 20px;
+    display: grid;
+}
+
+.ts-access-margin-top-20 {
+    margin-top: 20px;
+}
+
+.ts-access-description {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+    line-height: 24px;
+    max-width: 48rem;
+}
+
+/* SummaryTerm stat tile. */
+.ts-summary-term {
+    padding: var(--ts-md);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+}
+
+.ts-summary-term dt {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+    text-transform: uppercase;
+}
+
+.ts-summary-term dd {
+    margin: var(--ts-xs) 0 0;
+    overflow: hidden;
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-semibold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Members filter bar + table flush inside the panel. */
+.ts-access-filter-bar {
+    gap: var(--ts-md);
+    padding: var(--ts-lg);
+    align-items: flex-end;
+    display: flex;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-access-search {
+    flex-basis: 18rem;
+    flex-grow: 1;
+    position: relative;
+    max-width: 28rem;
+    min-width: 0;
+}
+
+.ts-access-search-icon {
+    color: var(--ts-ink-muted);
+    pointer-events: none;
+    position: absolute;
+    transform: translateY(-50%);
+    left: var(--ts-md);
+    top: 50%;
+}
+
+.ts-access-search-input {
+    padding-left: 36px;
+    width: 100%;
+}
+
+.ts-access-role-field {
+    gap: var(--ts-xs);
+    display: grid;
+}
+
+.ts-access-role-label {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+}
+
+.ts-access-role-select {
+    min-width: 12rem;
+}
+
+.ts-table-wrap.ts-table-flush {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background-color: transparent;
+}
+
+/* Member cell (avatar + identity). */
+.ts-access-member-cell {
+    gap: var(--ts-lg);
+    align-items: flex-start;
+    display: flex;
+    min-width: 0;
+}
+
+.ts-access-avatar {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    height: 36px;
+    width: 36px;
+    border: 1px solid color-mix(in oklab, var(--ts-accent) 30%, transparent);
+    border-radius: var(--ts-radius-pill);
+    background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+    color: var(--ts-accent-strong);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-semibold);
+}
+
+.ts-access-identity {
+    min-width: 0;
+}
+
+.ts-access-member-name {
+    overflow: hidden;
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-medium);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ts-access-member-email {
+    overflow: hidden;
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ts-access-mono-meta {
+    color: var(--ts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-size: var(--ts-fs-meta);
+}
+
+.ts-access-meta-text {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+}
+
+.ts-access-min-width {
+    min-width: 0;
+}
+
+.ts-access-text-strong {
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-medium);
+    margin: 0;
+}
+
+.ts-access-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+/* Session dialog claim lists. */
+.ts-access-claim-title {
+    gap: var(--ts-sm);
+    align-items: center;
+    color: var(--ts-ink);
+    display: inline-flex;
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-semibold);
+}
+
+.ts-access-claim-values {
+    gap: var(--ts-sm);
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.ts-access-status-success {
+    border: 1px solid color-mix(in oklab, var(--ts-success) 30%, transparent);
+    border-radius: var(--ts-radius-control);
+    gap: var(--ts-sm);
+    padding-block: 10px;
+    padding-inline: var(--ts-md);
+    align-items: flex-start;
+    background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+    color: var(--ts-success);
+    display: flex;
+    flex-wrap: wrap;
+}
+
+/* Invite form card. */
+.ts-access-invite-form {
+    padding: var(--ts-lg);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    gap: var(--ts-md);
+    background-color: var(--ts-surface-muted);
+    display: grid;
     grid-template-columns: 1fr;
     align-items: end;
 }
@@ -2686,4 +2898,29 @@ details.ts-menu[open] > summary.ts-account-trigger {
     gap: var(--ts-xs);
     font-size: var(--ts-fs-meta);
     color: var(--ts-ink-muted);
+    .ts-access-invite-form {
+        grid-template-columns: minmax(220px, 1fr) auto;
+    }
+}
+
+.ts-access-invite-submit {
+    align-self: end;
+}
+
+.ts-access-section-heading {
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-semibold);
+}
+
+/* Compact table row actions (Cancel / Revoke). */
+.ts-access-compact-action {
+    min-height: var(--ts-xxl);
+    padding-left: var(--ts-sm);
+    padding-right: var(--ts-sm);
+    display: inline-flex;
+}
+
+.ts-access-role-apply {
+    margin-left: var(--ts-xs);
 }

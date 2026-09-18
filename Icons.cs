@@ -213,4 +213,8 @@ public static class Icons
     public const string UploadSvg = """<path d="M12 3v12"></path><path d="m17 8-5-5-5 5"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>""";
     public static HtmlString CheckCheck(int size = 18) => new(SvgText(CheckCheckSvg, size));
     public const string CheckCheckSvg = """<path d="M18 6 7 17l-5-5"></path><path d="m22 10-7.5 7.5L13 16"></path>""";
+    public static HtmlString MailPlus(int size = 18) => new(SvgText(MailPlusSvg, size));
+    public const string MailPlusSvg = """<path d="M22 13V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8"></path><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path><path d="M19 16v6"></path><path d="M16 19h6"></path>""";
+    public static HtmlString SearchX(int size = 18) => new(SvgText(SearchXSvg, size));
+    public const string SearchXSvg = """<path d="m13.5 8.5-5 5"></path><path d="m8.5 8.5 5 5"></path><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>""";
 }
