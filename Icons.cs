@@ -211,4 +211,6 @@ public static class Icons
     public const string ArchiveSvg = """<rect width="20" height="5" x="2" y="3" rx="1"></rect><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"></path><path d="M10 12h4"></path>""";
     public static HtmlString Upload(int size = 18) => new(SvgText(UploadSvg, size));
     public const string UploadSvg = """<path d="M12 3v12"></path><path d="m17 8-5-5-5 5"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>""";
+    public static HtmlString CheckCheck(int size = 18) => new(SvgText(CheckCheckSvg, size));
+    public const string CheckCheckSvg = """<path d="M18 6 7 17l-5-5"></path><path d="m22 10-7.5 7.5L13 16"></path>""";
 }
