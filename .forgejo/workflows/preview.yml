@@ -22,6 +22,9 @@ jobs:
           # One ephemeral single-machine app per PR.
           if ! fly status -a "$PR_APP" >/dev/null 2>&1; then
             fly apps create "$PR_APP" -o personal
+            # fly does not attach public IPs on plain apps create.
+            fly ips allocate-v6 -a "$PR_APP" >/dev/null
+            fly ips allocate-v4 -a "$PR_APP" --shared >/dev/null
           fi
           sed -i "s/^app = .*/app = \"$PR_APP\"/" fly.toml
           fly deploy -a "$PR_APP" --strategy immediate
