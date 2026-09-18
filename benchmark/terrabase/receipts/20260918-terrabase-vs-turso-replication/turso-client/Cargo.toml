@@ -1,0 +1,9 @@
+[package]
+name = "turso-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libsql = "0.9.30"
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }
