@@ -43,22 +43,33 @@ warmups, 60 samples each, nearest-rank percentiles.
 
 ## Results — send→ack (write acknowledged)
 
+Quiet window (host load ~2), 60 samples per side, measured minutes apart:
+
 | Batch | TerraBase p50 | TerraBase p95 | Turso p50 | Turso p95 | Faster |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 1 | **0.47 ms** | 0.94 ms | 4.35 ms | 8.48 ms | TerraBase 9.3× |
-| 16 | **1.47 ms** | 2.07 ms | 4.42 ms | 11.40 ms | TerraBase 3.0× |
-| 128 | 9.27 ms | 12.51 ms | 7.46 ms | 14.81 ms | Turso 1.24× |
+| 1 | **0.43 ms** | 1.01 ms | 2.92 ms | 3.57 ms | TerraBase 6.8× |
+| 16 | **1.45 ms** | 1.98 ms | 3.10 ms | 5.00 ms | TerraBase 2.1× |
+| 128 | 7.66 ms | 17.55 ms | 4.46 ms | 6.41 ms | Turso 1.7× |
+
+Loaded window (host load 2–7 from concurrent builds), for reference:
+
+| Batch | TerraBase p50 | Turso p50 | Faster |
+| --- | ---: | ---: | --- |
+| 1 | **0.47 ms** | 4.35 ms | TerraBase 9.3× |
+| 16 | **1.47 ms** | 4.42 ms | TerraBase 3.0× |
+| 128 | 9.27 ms | 7.46 ms | Turso 1.24× |
 
 ## Results — send→visible on the replica (end-to-end)
 
 | Batch | TerraBase p50 | TerraBase p95 | Turso p50 | Turso p95 | Faster |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 1 | **3.56 ms** | 4.88 ms | 8.34 ms | 12.90 ms | TerraBase 2.3× |
-| 16 | **6.97 ms** | 11.04 ms | 9.24 ms | 18.87 ms | TerraBase 1.3× |
-| 128 | 35.41 ms | 46.35 ms | 15.12 ms | 28.20 ms | Turso 2.3× |
+| 1 | **3.30 ms** | 5.44 ms | 4.67 ms | 5.92 ms | TerraBase 1.4× |
+| 16 | **6.28 ms** | 10.11 ms | 6.00 ms | 8.36 ms | ~parity |
+| 128 | ~32–37 ms | 55.51 ms | 8.03 ms | 10.34 ms | Turso ~4× |
 
-Batch-128 ack ranged 6.9–9.3 ms across same-day windows (load-sensitive);
-at the quiet end it is at parity or better than Turso's 7.46 ms.
+The 128-row TerraBase figure spans the load spike during its window; the
+quiet floor observed for the same build was ~32 ms. Batch-128 ack ranged
+6.9–9.3 ms across same-day windows.
 
 ## Bytes on the wire
 
