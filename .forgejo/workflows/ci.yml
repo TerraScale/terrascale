@@ -32,21 +32,21 @@ jobs:
           python3 scripts/contracts.py --version "$(tr -d '[:space:]' < CONTRACT_VERSION)"
 
       - name: Build the Release solution
-        run: nice -n 10 dotnet build TerraScale.DotNet.slnx --configuration Release --nologo
+        run: dotnet build TerraScale.DotNet.slnx --configuration Release --nologo
 
       - name: Check .NET formatting
-        run: nice -n 10 dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
+        run: dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
 
       - name: Run TerraScale.DotNet TUnit tests
         run: >-
-          nice -n 10 dotnet run
+          dotnet run
           --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj
           --configuration Release --no-build --no-restore --
           --minimum-expected-tests 1
 
       - name: Run Entity Framework Core TUnit tests
         run: >-
-          nice -n 10 dotnet run
+          dotnet run
           --project tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj
           --configuration Release --no-build --no-restore --
           --minimum-expected-tests 1
