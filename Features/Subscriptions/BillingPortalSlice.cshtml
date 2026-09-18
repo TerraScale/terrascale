@@ -1,0 +1,30 @@
+@inherits RazorSlice<BillingPortalPageModel>
+@FlowHtml.Document("TerraScale local billing portal | TerraScale")
+<main class="ts-flow-root">
+    <section class="ts-flow-panel">
+        <div class="ts-flow-section">
+            <div class="ts-flow-header">
+                <span class="ts-flow-icon" aria-hidden="true">@Icons.CreditCard(22)</span>
+                <div>
+                    <h1 class="ts-flow-title">TerraScale local billing portal</h1>
+                    <p class="ts-flow-subtitle">Review the local development billing session for the active organization.</p>
+                </div>
+            </div>
+
+            <div class="ts-alert ts-alert-info" role="status">
+                <span class="ts-alert-title">@Icons.Info(16) Local simulator only</span>
+                <span class="ts-alert-body">This page is available only in local development. It does not collect card details or contact Stripe, and no real payment method is used.</span>
+            </div>
+
+            <dl class="ts-kv">
+                <dt>Portal session</dt>
+                <dd class="ts-mono">@Model.SessionId</dd>
+            </dl>
+
+            <div>
+                <a class="ts-btn ts-btn-secondary" href="/usage">@Icons.ArrowLeft(20) Return to billing</a>
+            </div>
+        </div>
+    </section>
+</main>
+@FlowHtml.End()
