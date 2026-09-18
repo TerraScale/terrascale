@@ -26,8 +26,8 @@ jobs:
           node-version-file: .node-version
           check-latest: false
       - name: Install locked dependencies
-        run: nice -n 10 npm ci
+        run: npm ci
       - name: Build the VitePress site
-        run: nice -n 10 npm run build
+        run: npm run build
       - name: Run docs and starter verification
-        run: nice -n 10 npm test
+        run: npm test
