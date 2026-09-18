@@ -1,0 +1,216 @@
+@inherits RazorSlice<OnboardingPageModel>
+@{
+    var nextFrom = new Dictionary<string, string>
+    {
+        ["account-information"] = "organization",
+        ["organization"] = "payment-method",
+        ["payment-method"] = "payment-validation",
+        ["payment-validation"] = "project",
+        ["project"] = "",
+    };
+    var activeState = Model.Steps.First(s => s.Key == Model.ActiveStep).State;
+    var stepDone = activeState == "completed";
+    var stateLabels = new Dictionary<string, string>
+    {
+        ["pending"] = "pending",
+        ["current"] = "current",
+        ["completed"] = "completed",
+        ["blocked"] = "blocked",
+        ["not-started"] = "not started",
+        ["in-progress"] = "in progress",
+        ["awaiting-validation"] = "awaiting validation",
+        ["unavailable"] = "unavailable",
+        ["expired"] = "expired",
+        ["ready-for-project"] = "ready for project",
+    };
+}
+@FlowHtml.Document("Activate your TerraScale account | TerraScale")
+<main class="ts-onboarding-root">
+    <div class="ts-onboarding-container @(Model.ActiveStep is "payment-validation" or "project" ? "ts-onboarding-container-wide" : "")">
+        <header class="ts-onboarding-header">
+            <span class="ts-onboarding-lock" aria-hidden="true">@Icons.LockKeyhole(22)</span>
+            <div>
+                <p class="ts-onboarding-setup">TerraScale setup</p>
+                <h1 class="ts-onboarding-title">Activate your TerraScale account</h1>
+                <p class="ts-onboarding-description">Complete all five steps to activate billing, create the owning organization, and release your first project Dashboard. Your confirmed progress is saved after every step.</p>
+            </div>
+        </header>
+        <div class="ts-onboarding-progress">
+            <div class="ts-onboarding-progress-meta">
+                <span>Activation step @Model.CurrentStep of @Model.TotalSteps</span>
+                <span>@Model.ProgressPercent%</span>
+            </div>
+            <div class="ts-progress" role="progressbar" aria-label="Account setup progress" aria-valuenow="@Model.ProgressPercent" aria-valuemin="0" aria-valuemax="100">
+                <div class="ts-progress-bar" style="width:@(Model.ProgressPercent)%"></div>
+            </div>
+        </div>
+        <ol class="ts-onboarding-steps" aria-label="Onboarding progress">
+            @foreach (var step in Model.Steps)
+            {
+                var current = step.Key == Model.ActiveStep;
+                var complete = step.State == "completed";
+                var blocked = step.State == "blocked";
+                var classes = "ts-onboarding-step"
+                    + (current ? " ts-onboarding-step-current" : "")
+                    + (blocked ? " ts-onboarding-step-blocked" : "")
+                    + (complete ? " ts-onboarding-step-complete" : "");
+                <li class="@classes" aria-current="@(current ? "step" : null)">
+                    @if (complete)
+                    {
+                        @Icons.Check(18)
+                    }
+                    else
+                    {
+                        @(typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [18]) as Microsoft.AspNetCore.Html.HtmlString ?? Icons.Circle(18))
+                    }
+                    <span>@step.Label</span>
+                    <span class="ts-onboarding-step-state">@(stateLabels.TryGetValue(step.State, out var label) ? label : step.State)</span>
+                </li>
+            }
+        </ol>
+        @if (Model.PaymentCanceled)
+        {
+            <div class="ts-alert ts-alert-warning" role="alert">
+                <span class="ts-alert-title">@Icons.TriangleAlert(16) Payment setup canceled</span>
+                <span class="ts-alert-body">Your earlier account progress is still saved. No payment method was changed; you can safely try again.</span>
+            </div>
+        }
+        <div class="ts-onboarding-card">
+            @switch (Model.ActiveStep)
+            {
+                case "account-information":
+                    <h2 class="ts-flow-section-heading">Review your account information</h2>
+                    <form class="ts-form" method="post" action="/onboarding/step">
+                        <input type="hidden" name="step" value="account-information" />
+                        <div class="ts-field">
+                            <label class="ts-label" for="displayName">Full name</label>
+                            <input class="ts-input" id="displayName" name="displayName" value="@Model.DisplayName" required autocomplete="name" />
+                        </div>
+                        <div class="ts-field">
+                            <label class="ts-label" for="email">Email</label>
+                            <input class="ts-input" id="email" type="email" value="@Model.Email" disabled />
+                            <span class="ts-hint">Your sign-in email cannot be changed during account setup.</span>
+                        </div>
+                        <div class="ts-form-actions">
+                            <button class="ts-btn ts-btn-primary" type="submit">Save and continue</button>
+                        </div>
+                    </form>
+                    break;
+                case "organization":
+                    <h2 class="ts-flow-section-heading">Create your first organization</h2>
+                    <p class="ts-muted ts-ui">Billing and future projects use this authenticated tenant boundary.</p>
+                    @if (stepDone)
+                    {
+                        <div class="ts-alert ts-alert-success" role="status">
+                            <span class="ts-alert-title">@Icons.CircleCheckBig(16) Organization created</span>
+                            <span class="ts-alert-body">Your organization is ready for billing and projects.</span>
+                        </div>
+                        <a class="ts-btn ts-btn-primary" href="/onboarding?step=payment-method">Continue</a>
+                    }
+                    else
+                    {
+                        <form class="ts-form" method="post" action="/onboarding/step">
+                            <input type="hidden" name="step" value="organization" />
+                            <div class="ts-field">
+                                <label class="ts-label" for="organizationName">Organization name</label>
+                                <input class="ts-input" id="organizationName" name="name" placeholder="Acme Labs" required />
+                            </div>
+                            <div class="ts-form-actions">
+                                <button class="ts-btn ts-btn-primary" type="submit">Create organization</button>
+                            </div>
+                        </form>
+                    }
+                    break;
+                case "payment-method":
+                    <h2 class="ts-flow-section-heading">Register a payment method</h2>
+                    <p class="ts-muted ts-ui">Checkout is bound to your authenticated organization and configured payment provider.</p>
+                    @if (stepDone)
+                    {
+                        <div class="ts-alert ts-alert-success" role="status">
+                            <span class="ts-alert-title">@Icons.CircleCheckBig(16) Payment method registered</span>
+                            <span class="ts-alert-body">Continue to validation.</span>
+                        </div>
+                        <a class="ts-btn ts-btn-primary" href="/onboarding?step=payment-validation">Continue</a>
+                    }
+                    else
+                    {
+                        <form class="ts-form" method="post" action="/onboarding/step">
+                            <input type="hidden" name="step" value="payment-method" />
+                            <fieldset class="ts-field">
+                                <legend class="ts-label">Billing plan</legend>
+                                <div class="ts-grid ts-grid-cards">
+                                    @foreach (var plan in Model.Plans)
+                                    {
+                                        <label class="ts-onboarding-plan-option">
+                                            <span class="ts-row-between">
+                                                <span class="ts-getting-started-title">@(plan.IsFree ? "Free" : plan.Name)</span>
+                                                <input type="radio" name="plan" value="@plan.PlanId" checked="@(plan.IsFree ? "checked" : null)" />
+                                            </span>
+                                            <span class="ts-meta">$@plan.MonthlyUsd.ToString("0") / month</span>
+                                            <span class="ts-hint">@(plan.IsFree ? $"{plan.RequestLimit:N0} operations per month" : "2 months free annually")</span>
+                                        </label>
+                                    }
+                                </div>
+                            </fieldset>
+                            <p class="ts-hint">No card today? Continue on the Free plan with @string.Format("{0:N0}", Model.Plans.First().RequestLimit) operations per month.</p>
+                            <div class="ts-form-actions">
+                                <button class="ts-btn ts-btn-secondary" type="submit" name="bypass" value="1">Continue without payment</button>
+                                <button class="ts-btn ts-btn-primary" type="submit">Continue to secure payment setup</button>
+                            </div>
+                        </form>
+                    }
+                    break;
+                case "payment-validation":
+                    <h2 class="ts-flow-section-heading">Validate your payment method</h2>
+                    <p class="ts-muted ts-ui">TerraScale waits for a signed provider event before activating billing.</p>
+                    @if (Model.PaymentValidated)
+                    {
+                        <div class="ts-alert ts-alert-success" role="status">
+                            <span class="ts-alert-title">@Icons.CircleCheckBig(16) Payment method validated</span>
+                            <span class="ts-alert-body">Billing validation is complete for this organization.</span>
+                        </div>
+                        <a class="ts-btn ts-btn-primary" href="/onboarding?step=project">Continue</a>
+                    }
+                    else
+                    {
+                        <div class="ts-alert ts-alert-info" role="status">
+                            <span class="ts-alert-title">@Icons.Clock3(16) Validation pending</span>
+                            <span class="ts-alert-body">TerraScale is waiting for a conclusive provider result. You can check again or safely restart secure payment setup for this organization.</span>
+                        </div>
+                        <div class="ts-form-actions">
+                            <a class="ts-btn ts-btn-secondary" href="/checkout/cs_local_01JCHECKOUT7F3K9Q">Register another method</a>
+                            <a class="ts-btn ts-btn-primary" href="/onboarding?step=payment-validation">Check validation status</a>
+                        </div>
+                    }
+                    break;
+                default:
+                    <h2 class="ts-flow-section-heading">Create your first project</h2>
+                    <p class="ts-muted ts-ui">Products inherit these primary regions.</p>
+                    <form class="ts-form" method="post" action="/onboarding/step">
+                        <input type="hidden" name="step" value="project" />
+                        <div class="ts-field">
+                            <label class="ts-label" for="projectName">Project name</label>
+                            <input class="ts-input" id="projectName" name="name" placeholder="Production" required />
+                        </div>
+                        <div class="ts-field">
+                            <span class="ts-label" id="regionLabel">Primary regions</span>
+                            <div class="ts-stack-sm" role="group" aria-labelledby="regionLabel">
+                                @foreach (var region in Model.Regions)
+                                {
+                                    <label class="ts-checkbox-row">
+                                        <input class="ts-checkbox" type="radio" name="region" value="@region" checked="@(region == "us-east-1" ? "checked" : null)" />
+                                        <span class="ts-mono">@region</span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                        <div class="ts-form-actions">
+                            <button class="ts-btn ts-btn-primary" type="submit">Create project and open Dashboard</button>
+                        </div>
+                    </form>
+                    break;
+            }
+        </div>
+    </div>
+</main>
+@FlowHtml.End()

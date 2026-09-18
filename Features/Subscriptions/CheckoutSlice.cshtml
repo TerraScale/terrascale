@@ -1,0 +1,30 @@
+@inherits RazorSlice<CheckoutPageModel>
+@FlowHtml.Document("Checkout | TerraScale")
+<main class="ts-flow-root">
+    <section class="ts-flow-panel ts-flow-panel-narrow">
+        <div class="ts-panel-header">
+            <div>
+                <h2 class="ts-panel-title">Checkout</h2>
+                <p class="ts-panel-subtitle">TerraScale local development payment provider</p>
+            </div>
+            <span class="ts-flow-icon" style="margin-left:auto">@Icons.CreditCard(20)</span>
+        </div>
+        <div class="ts-flow-section">
+            <h1 class="ts-flow-title" style="font-size:24px">TerraScale local payment setup</h1>
+            <p class="ts-muted ts-ui">No card data or real payment is used.</p>
+            <dl class="ts-kv">
+                <dt>Checkout session</dt>
+                <dd class="ts-mono">@Model.SessionId</dd>
+            </dl>
+            <div class="ts-flow-actions">
+                <form method="post" action="/checkout/@Model.SessionId/complete">
+                    <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.CreditCard(20) Use local test payment method</button>
+                </form>
+                <form method="post" action="/checkout/@Model.SessionId/cancel">
+                    <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">Cancel</button>
+                </form>
+            </div>
+        </div>
+    </section>
+</main>
+@FlowHtml.End()

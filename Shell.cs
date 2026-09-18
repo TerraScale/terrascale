@@ -9,7 +9,8 @@ public sealed class DashboardAuthMiddleware(RequestDelegate next)
 
     private static readonly HashSet<string> PublicPrefixes =
     [
-        "/login", "/reset-password", "/api/", "/health/", "/css/", "/js/", "/fonts/", "/brand/", "/favicon", "/openapi", "/scalar",
+        "/login", "/reset-password", "/invitations/", "/cli/", "/agent/", "/oauth/",
+        "/api/", "/health/", "/css/", "/js/", "/fonts/", "/brand/", "/favicon", "/openapi", "/scalar",
     ];
 
     public async Task InvokeAsync(HttpContext context)

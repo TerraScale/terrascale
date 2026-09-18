@@ -1,0 +1,101 @@
+@inherits RazorSlice<AgentApprovePageModel>
+@FlowHtml.Document("Approve agent access | TerraScale")
+<main class="ts-flow-root">
+    <section class="ts-flow-panel">
+        <div class="ts-flow-header">
+            <span class="ts-flow-icon" aria-hidden="true">@Icons.Bot(22)</span>
+            <div>
+                <h1 class="ts-flow-title">Approve agent access</h1>
+                <p class="ts-flow-subtitle">Review what this agent is requesting before allowing it to act for your account.</p>
+            </div>
+        </div>
+        @if (!Model.Authenticated)
+        {
+            <div class="ts-alert ts-alert-info" role="status">
+                <span class="ts-alert-title">@Icons.Info(16) Sign-in required</span>
+                <span class="ts-alert-body">Sign in to review this agent request. <a class="ts-link" href="/login?next=/agent/approve">Go to sign in</a></span>
+            </div>
+        }
+        else if (Model.Outcome is { } outcome)
+        {
+            if (outcome == "approved")
+            {
+                <div class="ts-alert ts-alert-success" role="status">
+                    <span class="ts-alert-title">@Icons.CircleCheckBig(16) Access approved</span>
+                    <span class="ts-alert-body">The agent can now use the approved capability.</span>
+                </div>
+            }
+            else
+            {
+                <div class="ts-alert ts-alert-info" role="status">
+                    <span class="ts-alert-title">@Icons.CircleAlert(16) Access denied</span>
+                    <span class="ts-alert-body">The agent will not receive access for this request.</span>
+                </div>
+            }
+        }
+        else if (Model.Request is { } request)
+        {
+            <div class="ts-flow-section">
+                <section class="ts-flow-section" aria-labelledby="agent-approval-request">
+                    <h2 id="agent-approval-request" class="ts-flow-section-heading">Request details</h2>
+                    <dl class="ts-kv">
+                        <dt>Agent</dt>
+                        <dd class="ts-mono">@request.AgentName</dd>
+                        <dt>Expires</dt>
+                        <dd>@Icons.Clock3(14) @request.ExpiresAt</dd>
+                        @if (request.BindingMessage is { } message)
+                        {
+                            <dt>Message</dt>
+                            <dd>@message</dd>
+                        }
+                    </dl>
+                </section>
+
+                <section class="ts-flow-section" aria-labelledby="agent-approval-capabilities">
+                    <div class="ts-flow-section-heading-row">
+                        @Icons.ShieldCheck(17)
+                        <h2 id="agent-approval-capabilities" class="ts-flow-section-heading">Requested capabilities</h2>
+                    </div>
+                    <ul class="ts-capability-list" aria-label="Requested capabilities">
+                        @foreach (var capability in request.Capabilities)
+                        {
+                            <li class="ts-capability">
+                                <span>@capability</span>
+                                @if (request.Reasons.TryGetValue(capability, out var reason))
+                                {
+                                    <span class="ts-capability-reason">@reason</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </section>
+
+                @if (request.ConstraintsJson is { } constraints)
+                {
+                    <section class="ts-flow-section" aria-labelledby="agent-approval-constraints">
+                        <h2 id="agent-approval-constraints" class="ts-flow-section-heading">Constraints</h2>
+                        <pre class="ts-flow-pre">@constraints</pre>
+                    </section>
+                }
+
+                <div class="ts-flow-section">
+                    <form method="post" action="/agent/approve/submit">
+                        <input type="hidden" name="action" value="approve" />
+                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Approve access</button>
+                    </form>
+                    <form class="ts-form" method="post" action="/agent/approve/submit">
+                        <input type="hidden" name="action" value="deny" />
+                        <div class="ts-field">
+                            <label class="ts-label" for="denyReason">Reason for denying (optional)</label>
+                            <input class="ts-input" type="text" id="denyReason" name="reason" placeholder="Why are you denying this request?" />
+                        </div>
+                        <div class="ts-form-actions">
+                            <button class="ts-btn ts-btn-destructive ts-btn-lg" type="submit">Deny access</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        }
+    </section>
+</main>
+@FlowHtml.End()

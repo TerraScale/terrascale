@@ -1,0 +1,92 @@
+@inherits RazorSlice<OAuthConsentPageModel>
+@FlowHtml.Document("Authorize application | TerraScale")
+<main class="ts-flow-root">
+    <section class="ts-flow-panel">
+        <div class="ts-wordmark-wrap">
+            <img src="/brand/logo-terrascale-blue.svg" alt="" aria-hidden="true" decoding="async" />
+        </div>
+        @if (!Model.Authenticated)
+        {
+            <div class="ts-alert ts-alert-info" role="status">
+                <span class="ts-alert-title">@Icons.Info(16) Sign-in required</span>
+                <span class="ts-alert-body">Sign in to review this authorization request. <a class="ts-link" href="/login?next=/oauth/consent">Go to sign in</a></span>
+            </div>
+        }
+        else if (!Model.ValidRequest)
+        {
+            <div class="ts-alert ts-alert-danger" role="alert">
+                <span class="ts-alert-title">@Icons.CircleAlert(16) Invalid authorization request</span>
+                <span class="ts-alert-body">The request is missing required parameters. Return to the application and try again.</span>
+            </div>
+        }
+        else if (Model.Outcome is { } outcome)
+        {
+            if (outcome == "approved")
+            {
+                <div class="ts-alert ts-alert-success" role="status">
+                    <span class="ts-alert-title">@Icons.CircleCheckBig(16) Access approved</span>
+                    <span class="ts-alert-body">You can close this page and return to the application.</span>
+                </div>
+            }
+            else
+            {
+                <div class="ts-alert ts-alert-info" role="status">
+                    <span class="ts-alert-title">@Icons.CircleAlert(16) Access denied</span>
+                    <span class="ts-alert-body">No access was granted. You can close this page and return to the application.</span>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="ts-flow-header">
+                <span class="ts-flow-icon" aria-hidden="true">@Icons.ShieldCheck(21)</span>
+                <div>
+                    <h1 class="ts-flow-title">Authorize application</h1>
+                    <p class="ts-flow-subtitle">Review the access requested for your TerraScale account.</p>
+                </div>
+            </div>
+
+            <dl class="ts-kv">
+                <dt>Application</dt>
+                <dd>@Model.ClientName</dd>
+                <dd class="ts-meta ts-mono">@Model.ClientId</dd>
+                <dt>Requested access</dt>
+                <dd>
+                    @if (Model.Scopes.Length == 0)
+                    {
+                        <span class="ts-muted">No scopes requested</span>
+                    }
+                    else
+                    {
+                        <ul class="ts-capability-list" aria-label="Requested scopes">
+                            @foreach (var scope in Model.Scopes)
+                            {
+                                <li class="ts-capability"><span>@scope</span></li>
+                            }
+                        </ul>
+                    }
+                </dd>
+                @if (Model.Claims is { } claims)
+                {
+                    <dt>Optional claims</dt>
+                    <dd><pre class="ts-flow-pre">@claims</pre></dd>
+                }
+            </dl>
+
+            <p class="ts-muted ts-ui">Approving grants only the scopes shown above. You can deny this request and return to the application at any time.</p>
+            <div class="ts-flow-actions-row">
+                <form method="post" action="/oauth/consent/submit">
+                    <input type="hidden" name="client_id" value="@Model.ClientId" />
+                    <input type="hidden" name="action" value="deny" />
+                    <button class="ts-btn ts-btn-ghost ts-btn-lg" type="submit">@Icons.X(20) Deny</button>
+                </form>
+                <form method="post" action="/oauth/consent/submit">
+                    <input type="hidden" name="client_id" value="@Model.ClientId" />
+                    <input type="hidden" name="action" value="approve" />
+                    <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.Check(20) Approve access</button>
+                </form>
+            </div>
+        }
+    </section>
+</main>
+@FlowHtml.End()
