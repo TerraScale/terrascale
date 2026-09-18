@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using TerraScale.Dashboard2;
 using TerraScale.Endpoints;
 
@@ -7,20 +8,33 @@ public sealed record UsageStatCard(string Label, string Value, string Detail, st
 
 public sealed record BarSlice(string Label, double Value, string? DisplayValue = null);
 
+public sealed record UsageHistoryRangeOption(string Value, string Label, bool Selected);
+
 public sealed record UsagePageModel(
     string PeriodStart,
     string PeriodEnd,
     IReadOnlyList<UsageStatCard> Stats,
+    string OrganizationSubtitle,
+    string OrganizationUpdatedAt,
+    string OrganizationStorage,
+    string OrganizationWrites,
+    IReadOnlyList<DashboardStore.PlanResourceRow> PlanResources,
+    IReadOnlyList<DashboardStore.ProjectContributionRow> ProjectContributions,
     long StorageUsedBytes,
     long StorageLimitBytes,
     double StoragePercentUsed,
     string StorageTone,
     string StorageRemainingLabel,
+    string StoragePercentLabel,
+    IReadOnlyList<UsageHistoryRangeOption> HistoryRanges,
     IReadOnlyList<WorkloadPoint> History,
     IReadOnlyList<BarSlice> MeasuredUsage,
     IReadOnlyList<BarSlice> RegionPlacement,
     IReadOnlyList<BarSlice> DatabaseCoverage,
     IReadOnlyList<DashboardDatabase> Databases,
+    IReadOnlyList<DashboardStore.CheckoutPlanRow> CheckoutPlans,
+    bool PaidExcessEnabled,
+    string SpendCap,
     string BillingStatus,
     string BillingStatusTone,
     string PlanName,
@@ -29,32 +43,33 @@ public sealed record UsagePageModel(
     string Renewal,
     long InvoiceCount,
     IReadOnlyList<DashboardStore.InvoiceRow> Invoices,
-    IReadOnlyList<DashboardStore.PlanImpactRow> PlanImpact,
     string? BillingReturn) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 
-    public static UsagePageModel From(DashboardStore store, string href, string? billing)
+    public static UsagePageModel From(DashboardStore store, string href, string? range, string? billing)
     {
         var databases = store.ProjectDatabases(store.ActiveProjectId);
-        var usage = store.Usage;
 
+        // Old page falls back to database/region counters when the summary has no KPIs.
+        var regionCount = databases
+            .SelectMany(d => new[] { d.PrimaryRegion }.Concat(d.BackupRegion is null ? [] : [d.BackupRegion]))
+            .Distinct()
+            .Count();
         List<UsageStatCard> stats =
         [
-            new("Storage used", DashboardStore.FormatBytes(usage.StorageMb * 1024L * 1024), "Stored data size", "HardDrive"),
-            new("Writes", DashboardStore.FormatNumber(usage.WriteUnits), "Current billing period", "Activity"),
-            new("Reads (unbilled)", DashboardStore.FormatNumber(usage.ReadUnits), "Unbilled metered fact for guards and cost attribution", "Activity"),
-            new("Storage usage", DashboardStore.FormatPercent(store.StoragePercentUsed), "Storage quota consumed", "HardDrive"),
+            new("Databases", DashboardStore.FormatNumber(databases.Length), "Saved project databases", "Database"),
+            new("Regions", DashboardStore.FormatNumber(regionCount), "Distinct placement regions", "Globe2"),
         ];
 
         List<BarSlice> measured =
         [
-            new("Writes", usage.WriteUnits, DashboardStore.FormatNumber(usage.WriteUnits)),
-            new("Reads (unbilled)", usage.ReadUnits, DashboardStore.FormatNumber(usage.ReadUnits)),
-            new("Requests", usage.Requests, DashboardStore.FormatNumber(usage.Requests)),
+            new("Writes", store.Usage.WriteUnits, DashboardStore.FormatNumber(store.Usage.WriteUnits)),
+            new("Reads (unbilled)", store.Usage.ReadUnits, DashboardStore.FormatNumber(store.Usage.ReadUnits)),
+            new("Requests", store.Usage.Requests, DashboardStore.FormatNumber(store.Usage.Requests)),
         ];
 
-        var regionCounts = databases
+        var regionPlacement = databases
             .SelectMany(d => new[] { d.PrimaryRegion }.Concat(d.BackupRegion is null ? [] : [d.BackupRegion]))
             .GroupBy(r => r.ToUpperInvariant())
             .Select(g => new BarSlice(g.Key, g.Count()))
@@ -66,6 +81,22 @@ public sealed record UsagePageModel(
             .OrderByDescending(s => s.Value).ThenBy(s => s.Label, StringComparer.Ordinal)
             .ToList();
 
+        var selectedRange = store.Workloads.Any(w => w.Range == range) ? range! : "7d";
+        var historyRanges = store.Workloads
+            .Select(w => new UsageHistoryRangeOption(
+                w.Range,
+                w.Range switch
+                {
+                    "24h" => "Last 24 hours",
+                    "7d" => "Last 7 days",
+                    "30d" => "Last 30 days",
+                    "90d" => "Last 90 days",
+                    _ => "Last year",
+                },
+                w.Range == selectedRange))
+            .ToList();
+        var history = store.Workloads.First(w => w.Range == selectedRange).Points;
+
         var activePlan = store.Plans.First(p => p.Id == store.BillingPlanId);
         var storageTone = store.StoragePercentUsed >= 100 ? "danger"
             : store.StoragePercentUsed >= 80 ? "warning" : "success";
@@ -74,16 +105,28 @@ public sealed record UsagePageModel(
             PeriodStart: store.UsagePeriodStart,
             PeriodEnd: store.UsagePeriodEnd,
             Stats: stats,
+            OrganizationSubtitle:
+                $"Consolidated across {DashboardStore.FormatNumber(store.Projects.Length)} projects in {store.ActiveOrganizationName} · {store.BillingPlanName} plan",
+            OrganizationUpdatedAt: store.OrganizationUpdatedAt,
+            OrganizationStorage: DashboardStore.FormatBytes(store.StorageBytesTotal),
+            OrganizationWrites: DashboardStore.FormatNumber(store.Usage.WriteUnits),
+            PlanResources: [.. store.OrganizationPlanResources()],
+            ProjectContributions: [.. store.ProjectContributionRows()],
             StorageUsedBytes: store.StorageBytesTotal,
             StorageLimitBytes: store.StorageLimitBytes,
             StoragePercentUsed: store.StoragePercentUsed,
             StorageTone: storageTone,
             StorageRemainingLabel: DashboardStore.FormatBytes(Math.Max(0, store.StorageLimitBytes - store.StorageBytesTotal)),
-            History: [.. store.Workloads.First(w => w.Range == "30d").Points],
+            StoragePercentLabel: $"{DashboardStore.FormatPercent(store.StoragePercentUsed)} used",
+            HistoryRanges: historyRanges,
+            History: [.. history],
             MeasuredUsage: measured,
-            RegionPlacement: regionCounts,
+            RegionPlacement: regionPlacement,
             DatabaseCoverage: coverage,
             Databases: databases,
+            CheckoutPlans: [.. store.CheckoutPlans],
+            PaidExcessEnabled: store.PaidExcessEnabled,
+            SpendCap: store.SpendCapUsd ?? "",
             BillingStatus: store.BillingAccountStatus,
             BillingStatusTone: store.BillingAccountStatus.ToLowerInvariant() switch
             {
@@ -95,10 +138,9 @@ public sealed record UsagePageModel(
             PlanName: store.BillingPlanName,
             Price: DashboardStore.FormatMoney((long)(activePlan.MonthlyUsd * 100), "USD"),
             Frequency: "Monthly",
-            Renewal: store.BillingRenewal,
+            Renewal: DashboardStore.FormatDate(store.BillingRenewal),
             InvoiceCount: store.TotalInvoices,
             Invoices: [.. store.Invoices],
-            PlanImpact: [.. store.PlanImpactRows()],
             BillingReturn: billing)
         {
             Shell = ShellFactory.Create(store, href),
@@ -109,5 +151,9 @@ public sealed record UsagePageModel(
 public sealed class UsagePageEndpoint(DashboardStore store) : SlicePageEndpoint<UsageSlice, UsagePageModel>(store, "/usage")
 {
     protected override UsagePageModel Load() =>
-        UsagePageModel.From(Store, PageRoute, HttpContext.Request.Query["billing"].FirstOrDefault());
+        UsagePageModel.From(
+            Store,
+            PageRoute,
+            HttpContext.Request.Query["range"].FirstOrDefault(),
+            HttpContext.Request.Query["billing"].FirstOrDefault());
 }

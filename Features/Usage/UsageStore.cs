@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 
 namespace TerraScale.Dashboard2;
 
@@ -6,8 +7,6 @@ namespace TerraScale.Dashboard2;
 // usage-data views ts-dashboard consumes). Extends the seeded store.
 public sealed partial class DashboardStore
 {
-    public sealed record BillingMetricView(string Label, string Value, string Tone);
-
     public sealed record InvoiceRow(
         string InvoiceId,
         long AmountCents,
@@ -17,19 +16,29 @@ public sealed partial class DashboardStore
         string PeriodEnd,
         string IssuedAt);
 
-    public sealed record PlanImpactRow(
-        string PlanId,
-        string PlanName,
-        string Compatibility,   // current | compatible | exceeds
-        string Impact,
-        string Timing);
+    public sealed record PlanResourceRow(
+        string Resource,
+        string Used,
+        string Included,
+        string Balance,
+        string Status,          // Normal | Approaching | Exceeded
+        string Tone);
+
+    public sealed record ProjectContributionRow(
+        string ProjectId,
+        string ProjectName,
+        string Storage,
+        string Writes,
+        string Reads,
+        string Egress);
+
+    public sealed record CheckoutPlanRow(string PlanId, string Label);
 
     public string BillingAccountStatus => "active";
     public string BillingPlanName => "Scale";
     public string BillingPlanId => "plan_scale";
     public string BillingInterval => "monthly";
     public string BillingRenewal => "2026-10-01";
-    public bool HasManagedSubscription => true;
 
     public ImmutableArray<InvoiceRow> Invoices { get; private set; } =
     [
@@ -41,46 +50,96 @@ public sealed partial class DashboardStore
 
     public string UsagePeriodStart => "2026-09-01T00:00:00Z";
     public string UsagePeriodEnd => "2026-10-01T00:00:00Z";
+    public string OrganizationUpdatedAt => FormatUtcDateTime(UsagePeriodStart);
 
-    public string OrganizationStorageLabel => FormatBytes(StorageBytesTotal);
     public long StorageBytesTotal => Usage.StorageMb * 1024 * 1024;
     public long StorageLimitBytes => Usage.StorageLimitMb * 1024 * 1024;
     public double StoragePercentUsed => StorageLimitBytes is 0 ? 0 : (double)StorageBytesTotal / StorageLimitBytes * 100;
 
-    /// <summary>Plan-change impact table (hasManagedSubscription path).</summary>
-    public ImmutableArray<PlanImpactRow> PlanImpactRows()
-    {
-        List<PlanImpactRow> rows = [];
-        foreach (var plan in Plans.Where(p => p.Status == "Active" || p.Status == "Deprecated"))
-        {
-            var isCurrent = plan.Id == BillingPlanId;
-            string compatibility;
-            string impact;
-            if (isCurrent)
-            {
-                compatibility = "current";
-                impact = "Current logical storage and writes fit this plan's included resources.";
-            }
-            else if (StorageBytesTotal > plan.StorageLimitMb * 1024 * 1024 || Usage.WriteUnits > plan.RequestLimit)
-            {
-                compatibility = "exceeds";
-                var storageExcess = Math.Max(0, StorageBytesTotal - plan.StorageLimitMb * 1024 * 1024);
-                impact = $"Current usage exceeds this plan by {FormatBytes(storageExcess)} storage.";
-            }
-            else
-            {
-                compatibility = "compatible";
-                impact = "Current logical storage and writes fit this plan's included resources.";
-            }
+    // Checkout catalog offered on the usage page (ts-dashboard billing plans).
+    public ImmutableArray<CheckoutPlanRow> CheckoutPlans { get; } =
+    [
+        new("plan_starter", $"Starter monthly - {FormatMoney(500, "USD")}"),
+        new("plan_pro", $"Pro monthly - {FormatMoney(5000, "USD")}"),
+        new("plan_scale_v2", $"Scale monthly - {FormatMoney(50000, "USD")}"),
+        new("plan_business", $"Business monthly - {FormatMoney(9900, "USD")}"),
+    ];
 
-            var timing = isCurrent ? "Current plan"
-                : plan.MonthlyUsd > Plans.First(p => p.Id == BillingPlanId).MonthlyUsd ? "Immediately; proration may apply"
-                : "Next billing cycle";
-            rows.Add(new(plan.Id, plan.Name, compatibility, impact, timing));
+    // Spending controls (paid-excess consent + organization cap), persisted in memory.
+    public bool PaidExcessEnabled { get; private set; }
+    public string? SpendCapUsd { get; private set; }
+
+    public void UpdateSpendingControls(bool enabled, string? capUsd)
+    {
+        if (capUsd is { Length: > 0 }
+            && (!decimal.TryParse(capUsd, NumberStyles.Number, CultureInfo.InvariantCulture, out var cap)
+                || cap < 0
+                || decimal.Round(cap, 2) != cap))
+        {
+            return; // invalid caps keep the previous value
         }
 
-        return [.. rows];
+        PaidExcessEnabled = enabled;
+        SpendCapUsd = capUsd is { Length: > 0 } ? capUsd : null;
     }
+
+    /// <summary>Organization allowances vs. current totals (plan resource table).</summary>
+    public ImmutableArray<PlanResourceRow> OrganizationPlanResources()
+    {
+        var plan = Plans.First(p => p.Id == BillingPlanId);
+        var storageLimitBytes = plan.StorageLimitMb * 1024L * 1024;
+        var storageRemaining = storageLimitBytes - StorageBytesTotal;
+        var (storageStatus, storageTone) = ResourceStatus(StoragePercentUsed);
+
+        var writeLimit = plan.RequestLimit;
+        var writeExcess = Usage.WriteUnits - writeLimit;
+        var writePercent = writeLimit is 0 ? 100 : (double)Usage.WriteUnits / writeLimit * 100;
+        var (writeStatus, writeTone) = ResourceStatus(writePercent);
+
+        return
+        [
+            new("Logical storage",
+                FormatBytes(StorageBytesTotal),
+                FormatBytes(storageLimitBytes),
+                storageRemaining >= 0
+                    ? $"{FormatBytes(storageRemaining)} remaining"
+                    : $"{FormatBytes(-storageRemaining)} excess",
+                storageStatus,
+                storageTone),
+            new("Writes",
+                FormatNumber(Usage.WriteUnits),
+                FormatNumber(writeLimit),
+                writeExcess > 0
+                    ? $"{FormatNumber(writeExcess)} excess"
+                    : $"{FormatNumber(-writeExcess)} remaining",
+                writeStatus,
+                writeTone),
+        ];
+    }
+
+    private static (string Status, string Tone) ResourceStatus(double percentUsed) => percentUsed switch
+    {
+        >= 100 => ("Exceeded", "danger"),
+        >= 80 => ("Approaching", "warning"),
+        _ => ("Normal", "success"),
+    };
+
+    /// <summary>Per-project contribution rows (reads/egress are unbilled facts).</summary>
+    public ImmutableArray<ProjectContributionRow> ProjectContributionRows() =>
+        [.. Projects.Select(project =>
+        {
+            var storageBytes = Databases.Where(d => d.ProjectId == project.Id).Sum(d => d.SizeMb) * 1024L * 1024;
+            var writes = project.Id == ActiveProjectId
+                ? Usage.WriteUnits
+                : Databases.Where(d => d.ProjectId == project.Id).Sum(d => d.DocumentCount);
+            return new ProjectContributionRow(
+                project.Id,
+                project.Name,
+                FormatBytes(storageBytes),
+                FormatNumber(writes),
+                "Not reported",
+                "Not reported");
+        })];
 
     public static string FormatBytes(double bytes)
     {
@@ -95,19 +154,30 @@ public sealed partial class DashboardStore
         return $"{bytes:0.#} {units[index]}";
     }
 
-    public static string FormatNumber(long value) => value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+    public static string FormatNumber(long value) => value.ToString("N0", CultureInfo.InvariantCulture);
 
     public static string FormatUtcDateTime(string iso)
     {
         return DateTimeOffset.TryParse(iso, out var time)
-            ? time.UtcDateTime.ToString("MMM d, yyyy, h:mm tt", System.Globalization.CultureInfo.InvariantCulture)
+            ? time.UtcDateTime.ToString("MMM d, yyyy, h:mm tt", CultureInfo.InvariantCulture)
+            : "Unknown";
+    }
+
+    public static string FormatDate(string iso)
+    {
+        return DateTimeOffset.TryParse(iso, out var time)
+            ? time.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
             : "Unknown";
     }
 
     public static string FormatMoney(long cents, string currency) =>
-        currency is "USD" || currency is "usd"
-            ? $"${cents / 100m:0.00}"
-            : $"{currency.ToUpperInvariant()} {(cents / 100m):F2}";
+        currency.ToUpperInvariant() switch
+        {
+            "USD" => $"${cents / 100m:F2}",
+            "EUR" => $"€{cents / 100m:F2}",
+            "GBP" => $"£{cents / 100m:F2}",
+            var other => $"{other} {cents / 100m:F2}",
+        };
 
     public static string FormatPercent(double value) =>
         double.IsFinite(value) ? $"{value:0.#}%" : "Unknown";
