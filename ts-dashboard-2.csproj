@@ -20,7 +20,7 @@
     <ProjectReference Include="../ts-libs/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
   </ItemGroup>
   <ItemGroup Condition="!Exists('../ts-libs/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj')">
-    <PackageReference Include="TerraScale.Endpoints" Version="1.0.0" />
+    <PackageReference Include="TerraScale.Endpoints" Version="1.1.0" />
   </ItemGroup>
 
 </Project>
