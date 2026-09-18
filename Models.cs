@@ -291,7 +291,7 @@ public sealed record WebhookEndpoint(
 // Store: seeded in-memory demo data powering every page.
 // ---------------------------------------------------------------------------
 
-public sealed class DashboardStore
+public sealed partial class DashboardStore
 {
     public DashboardUser CurrentUser { get; } = new(
         Id: "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB",
