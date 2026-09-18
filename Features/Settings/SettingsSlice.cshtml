@@ -1,14 +1,386 @@
 @inherits RazorSlice<SettingsPageModel>
 @{
     var shell = Model.Shell;
+    var t = (string s) => s;
+    var tabs = new (string Id, string Label)[]
+    {
+        ("identity", "Identity"),
+        ("credentials", "Credentials"),
+        ("webhooks", "Webhooks"),
+        ("backups", "Backups"),
+        ("danger", "Danger zone"),
+    };
+    var activeProviders = Model.Providers.Count(p => p.Status == "Enabled");
+    var activeCredentials = Model.Credentials.Count(c => c.Status == "Active");
+    var apiKeys = Model.Credentials.Where(c => c.Type == "API key").Count();
+    var m2mApps = Model.Credentials.Where(c => c.Type == "M2M application").Count();
+    var summary = new (string Label, string Value)[]
+    {
+        (t("Project"), Model.ProjectId),
+        (t("Auth providers"), $"{activeProviders}/{Model.Providers.Length}"),
+        (t("API keys"), apiKeys.ToString()),
+        (t("M2M applications"), m2mApps.ToString()),
+        (t("Databases"), Model.Databases.Length.ToString()),
+        (t("Active credentials"), activeCredentials.ToString()),
+        (t("Loaded"), "2026-09-18 10:24 UTC"),
+    };
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Settings</h2>
-            <p class="ts-panel-subtitle">Port pending — this surface renders once its 1:1 port lands.</p>
+        <div class="ts-row-header">
+            <div class="ts-min-width">
+                <h2 class="ts-page-title-24">@t("Settings")</h2>
+                <p class="ts-page-description">@t("Project identity providers, API keys, and machine clients loaded from public TerraScale REST endpoints.")</p>
+            </div>
         </div>
     </section>
+
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h3 class="ts-panel-title">@t("Security summary")</h3>
+            <p class="ts-panel-subtitle">@t("Persisted project auth and credential state")</p>
+        </div>
+        <dl class="ts-summary-grid">
+            @foreach (var (label, value) in summary)
+            {
+                <div class="ts-summary-cell">
+                    <dt class="ts-text-upper">@label</dt>
+                    <dd class="ts-summary-value ts-mono">@value</dd>
+                </div>
+            }
+        </dl>
+    </section>
+
+    <nav class="ts-tabs" aria-label="Settings sections">
+        @foreach (var (id, label) in tabs)
+        {
+            <a class="ts-tab @(id == "danger" && Model.Tab == "danger" ? "ts-tab-danger" : null)" href="/settings?tab=@id" aria-selected="@(Model.Tab == id ? "true" : "false")">@label</a>
+        }
+    </nav>
+
+    @if (Model.Tab == "identity")
+    {
+        <div class="ts-stack-20">
+            <section class="ts-panel">
+                <div class="ts-panel-header">
+                    <h3 class="ts-panel-title">TerraScale Authentication</h3>
+                    <p class="ts-panel-subtitle">Product-wide authentication for this project</p>
+                </div>
+                <div class="ts-stack-16 ts-padded">
+                    <form method="post" action="/api/v1/dashboard/settings/authentication" class="ts-setting-row">
+                        <span class="ts-setting-icon">@(Model.AuthenticationEnabled ? Icons.ShieldCheck(16) : Icons.ShieldAlert(16))</span>
+                        <span class="ts-min-width">
+                            <span class="ts-text-strong">@(Model.AuthenticationEnabled ? "Enabled" : "Disabled")</span>
+                            <span class="ts-meta">Updated @Model.SecuritySettingsUpdatedAt</span>
+                        </span>
+                        <input class="ts-switch" type="checkbox" name="enabled" value="true" @(Model.AuthenticationEnabled ? "checked" : null) onchange="this.form.submit()" />
+                    </form>
+                    @if (!Model.CanManageByok)
+                    {
+                        <div class="ts-alert ts-alert-info">
+                            <span class="ts-alert-title">@Icons.Info(16) @t("Customer managed keys (BYOK)")</span>
+                            <span class="ts-alert-body">@t("An active Enterprise plan and Organization Owner access are required.")</span>
+                        </div>
+                    }
+                </div>
+            </section>
+            <section class="ts-panel">
+                <div class="ts-panel-header">
+                    <h3 class="ts-panel-title">@t("Identity providers")</h3>
+                    <p class="ts-panel-subtitle">@t("Project authentication providers returned by the TerraScale Dashboard API")</p>
+                    <span class="ts-badge ts-badge-info">@Model.Providers.Length</span>
+                </div>
+                <div class="ts-padded">
+                    @if (Model.Providers.Length == 0)
+                    {
+                        <div class="ts-empty">
+                            <span class="ts-empty-title">@t("No identity providers")</span>
+                            @t("The TerraScale Dashboard API returned no persisted auth providers for this project.")
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="ts-table-wrap">
+                            <table class="ts-table">
+                                <thead>
+                                    <tr>
+                                        <th>@t("Provider")</th>
+                                        <th>@t("Protocol")</th>
+                                        <th>@t("Credentials")</th>
+                                        <th>@t("Endpoints")</th>
+                                        <th>@t("Status")</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var provider in Model.Providers)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <div class="ts-grid-tight">
+                                                    <span class="ts-text-strong">@provider.DisplayName</span>
+                                                    <span class="ts-mono ts-meta">@provider.Provider</span>
+                                                </div>
+                                            </td>
+                                            <td class="ts-meta">@provider.Protocol</td>
+                                            <td>
+                                                @if (provider.Protocol.Equals("SAML", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <div class="ts-grid-tight">
+                                                        <span class="ts-meta">@(provider.SamlServiceProviderEntityId.Length > 0 ? provider.SamlServiceProviderEntityId : "-")</span>
+                                                        <span class="ts-meta">@t(provider.SamlCertificateStatus)</span>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="ts-grid-tight">
+                                                        <span class="ts-mono ts-meta">@(provider.ClientId.Length > 0 ? provider.ClientId : "-")</span>
+                                                        <span class="ts-meta">@t("Secret configured")</span>
+                                                    </div>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (provider.Protocol.Equals("SAML", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <div class="ts-grid-tight">
+                                                        @foreach (var endpoint in new[] { provider.SamlSingleSignOnUrl, provider.SamlAssertionConsumerServiceUrl }.Where(e => e.Length > 0))
+                                                        {
+                                                            <span class="ts-mono ts-meta ts-break-all">@endpoint</span>
+                                                        }
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="ts-grid-tight">
+                                                        @foreach (var endpoint in new[] { provider.AuthorizationEndpoint, provider.TokenEndpoint, provider.UserInfoEndpoint, provider.RedirectUri }.Where(e => e.Length > 0))
+                                                        {
+                                                            <span class="ts-mono ts-meta ts-break-all">@endpoint</span>
+                                                        }
+                                                    </div>
+                                                }
+                                            </td>
+                                            <td>
+                                                <div class="ts-grid-tight">
+                                                    <span class="ts-badge @(provider.Status == "Enabled" ? "ts-badge-success" : "ts-badge-neutral")">@t(provider.Status)</span>
+                                                    <span class="ts-meta">@provider.UpdatedAt</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </section>
+        </div>
+    }
+    else if (Model.Tab == "credentials")
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Project credentials")</h3>
+                <p class="ts-panel-subtitle">@t("API keys and M2M applications returned by the TerraScale Dashboard API")</p>
+                <span class="ts-badge ts-badge-info">@Model.Credentials.Length</span>
+            </div>
+            <div class="ts-padded">
+                @if (Model.Credentials.Length == 0)
+                {
+                    <div class="ts-empty">
+                        <span class="ts-empty-title">@t("No project credentials")</span>
+                        @t("The TerraScale Dashboard API returned no persisted API keys or M2M applications.")
+                    </div>
+                }
+                else
+                {
+                    <div class="ts-table-wrap">
+                        <table class="ts-table">
+                            <thead>
+                                <tr>
+                                    <th>@t("Name")</th>
+                                    <th>@t("Type")</th>
+                                    <th>@t("Token")</th>
+                                    <th>@t("Scopes")</th>
+                                    <th>@t("Status")</th>
+                                    <th>@t("Activity")</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var credential in Model.Credentials)
+                                {
+                                    <tr>
+                                        <td>
+                                            <div class="ts-row ts-gap-12">
+                                                <span class="ts-credential-icon">@(credential.Type == "API key" ? Icons.KeyRound(16) : Icons.Users(16))</span>
+                                                <div class="ts-min-width">
+                                                    <div class="ts-text-strong">@credential.Name</div>
+                                                    <div class="ts-mono ts-meta">@credential.Id</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td><span class="ts-badge ts-badge-info">@t(credential.Type)</span></td>
+                                        <td class="ts-mono ts-meta">@credential.Prefix...@credential.LastFour</td>
+                                        <td class="ts-meta">@(credential.Scopes.Count == 0 ? "-" : string.Join(", ", credential.Scopes))</td>
+                                        <td><span class="ts-badge @(credential.Status == "Active" ? "ts-badge-success" : "ts-badge-warning")">@t(credential.Status)</span></td>
+                                        <td>
+                                            <div class="ts-grid-tight ts-meta">
+                                                <span>@t("Created") @credential.CreatedAt</span>
+                                                <span>@t("Last used") @(credential.LastUsedAt.Length == 0 ? "-" : credential.LastUsedAt)</span>
+                                                <span>@t("Expires") @(credential.ExpiresAt.Length == 0 ? "-" : credential.ExpiresAt)</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+    else if (Model.Tab == "webhooks")
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Webhooks")</h3>
+                <p class="ts-panel-subtitle">@t("Endpoint deliveries for project events")</p>
+                @Icons.Webhook(18)
+            </div>
+            <div class="ts-padded">
+                @if (Model.Webhooks.Length == 0)
+                {
+                    <div class="ts-empty">
+                        <span class="ts-empty-title">@t("No webhooks")</span>
+                        @t("The TerraScale Dashboard API returned no persisted webhooks for this project.")
+                    </div>
+                }
+                else
+                {
+                    <div class="ts-table-wrap">
+                        <table class="ts-table">
+                            <thead>
+                                <tr>
+                                    <th>URL</th>
+                                    <th>Secret</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var webhook in Model.Webhooks)
+                                {
+                                    <tr>
+                                        <td class="ts-mono ts-meta ts-break-all">@webhook.Url</td>
+                                        <td class="ts-mono ts-meta">@webhook.SecretPreview</td>
+                                        <td><span class="ts-badge ts-badge-success">@webhook.Status</span></td>
+                                        <td class="ts-meta">@webhook.CreatedAt</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                <form method="post" action="/api/v1/dashboard/webhooks" class="ts-form ts-inline-form">
+                    <div class="ts-field">
+                        <label class="ts-label" for="webhookUrl">Endpoint URL</label>
+                        <input class="ts-input" id="webhookUrl" name="url" type="url" placeholder="https://ops.example.net/hooks/terrascale" required />
+                    </div>
+                    <div class="ts-form-actions">
+                        <button class="ts-btn ts-btn-primary" type="submit">Create webhook</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+    }
+    else if (Model.Tab == "backups")
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">Backups</h3>
+                <p class="ts-panel-subtitle">Database backup policy and restore points</p>
+            </div>
+            <div class="ts-padded ts-stack-16">
+                @if (Model.Databases.Length == 0)
+                {
+                    <div class="ts-empty">
+                        <span class="ts-empty-title">No databases</span>
+                        Provision a database before configuring backups.
+                    </div>
+                }
+                else
+                {
+                    <form method="post" action="/api/v1/dashboard/settings/backup-policy" class="ts-form">
+                        <div class="ts-field">
+                            <label class="ts-label" for="backupDatabase">Database</label>
+                            <select class="ts-select" id="backupDatabase" name="databaseId">
+                                @foreach (var database in Model.Databases)
+                                {
+                                    <option value="@database.Id">@database.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="ts-field">
+                            <label class="ts-label" for="backupSchedule">Schedule</label>
+                            <select class="ts-select" id="backupSchedule" name="schedule">
+                                <option value="daily" selected>Daily at 03:00 UTC</option>
+                                <option value="hourly">Hourly</option>
+                            </select>
+                        </div>
+                        <div class="ts-field">
+                            <label class="ts-label" for="backupRetention">Retention</label>
+                            <select class="ts-select" id="backupRetention" name="retention">
+                                <option value="7">7 days</option>
+                                <option value="30" selected>30 days</option>
+                            </select>
+                        </div>
+                        <div class="ts-form-actions">
+                            <button class="ts-btn ts-btn-primary" type="submit">Save backup policy</button>
+                        </div>
+                    </form>
+                }
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Danger zone")</h3>
+                <p class="ts-panel-subtitle">@t("Destructive project settings")</p>
+            </div>
+            <div class="ts-stack-16 ts-padded">
+                @if (!Model.CanDeleteProject)
+                {
+                    <div class="ts-alert ts-alert-info">
+                        <span class="ts-alert-title">@t("Organization Owner required")</span>
+                        <span class="ts-alert-body">@t("Only an Organization Owner may permanently delete this project.")</span>
+                    </div>
+                }
+                else
+                {
+                    <form method="post" action="/api/v1/dashboard/settings/delete-project" class="ts-form">
+                        <input type="hidden" name="projectId" value="@Model.ProjectId" />
+                        <div class="ts-field">
+                            <label class="ts-label" for="confirmProjectName">Type the project name to confirm deletion</label>
+                            <input class="ts-input ts-input-mono" id="confirmProjectName" name="confirmName" placeholder="@Model.ProjectName" required />
+                            <span class="ts-hint">Deleting @Model.ProjectName permanently removes its databases, credentials, and backups.</span>
+                        </div>
+                        <div class="ts-form-actions">
+                            <button class="ts-btn ts-btn-danger-solid" type="submit">Delete project</button>
+                        </div>
+                    </form>
+                }
+                <div class="ts-grid ts-grid-cards-3">
+                    @foreach (var tile in new (string Label, string Icon)[] { (t("Identity"), "ShieldCheck"), (t("Credentials"), "KeyRound"), (t("Access"), "Shield") })
+                    {
+                        <div class="ts-danger-tile">
+                            @(typeof(Icons).GetMethod(tile.Icon)?.Invoke(null, [17]))
+                            <span>@tile.Label</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </section>
+    }
 </div>
 @ShellHtml.Bottom(shell)

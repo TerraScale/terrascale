@@ -21,13 +21,11 @@ public sealed record AdminDatabasesPageModel(
 public sealed class AdminDatabasesPageEndpoint(DashboardStore store)
     : SlicePageEndpoint<AdminDatabasesSlice, AdminDatabasesPageModel>(store, "/admin/databases")
 {
-<<<<<<< HEAD
 
     private static IReadOnlyList<string> RegionsOf(DashboardDatabase d)
     {
         var regions = new List<string> { d.PrimaryRegion };
         if (d.BackupRegion is { } backup)
-=======
     protected override AdminDatabasesPageModel Load()
     {
         var query = HttpContext.Request.Query["q"].FirstOrDefault() ?? "";
@@ -47,16 +45,12 @@ public sealed class AdminDatabasesPageEndpoint(DashboardStore store)
     {
         List<string> regions = [database.PrimaryRegion];
         if (database.BackupRegion is { } backup)
->>>>>>> port/admin
         {
             regions.Add(backup);
         }
 
         return regions;
     }
-<<<<<<< HEAD
 
     protected override AdminDatabasesPageModel Load() => new() { Shell = ShellFactory.Create(Store, PageRoute) };
-=======
->>>>>>> port/admin
 }
