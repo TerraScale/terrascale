@@ -2,20 +2,6 @@
 @{
     var shell = Model.Shell;
     Microsoft.AspNetCore.Html.HtmlString Icon(string name, int size = 15) => (typeof(Icons).GetMethod(name)?.Invoke(null, [size]) as Microsoft.AspNetCore.Html.HtmlString) ?? Icons.Circle(size);
-    string ToneClass(string compatibility) => compatibility switch
-    {
-        "current" => "ts-badge-info",
-        "compatible" => "ts-badge-success",
-        "exceeds" => "ts-badge-warning",
-        _ => "ts-badge-neutral",
-    };
-    string CompatibilityLabel(string compatibility) => compatibility switch
-    {
-        "current" => "Current plan",
-        "compatible" => "Within limits",
-        "exceeds" => "Over current usage",
-        _ => "Pending usage",
-    };
     string InvoiceTone(string status) => status == "paid" ? "ts-badge-success" : "ts-badge-warning";
 }
 @ShellHtml.Top(shell)
@@ -44,7 +30,7 @@
             @foreach (var stat in Model.Stats)
             {
                 <div class="ts-card ts-metric">
-                    <span class="ts-metric-label">@(Icon(stat.Icon)) @stat.Label</span>
+                    <span class="ts-metric-label">@(Icon(stat.Icon, 16)) @stat.Label</span>
                     <strong class="ts-metric-value ts-metric-value-sm">@stat.Value</strong>
                     <small class="ts-metric-detail">@stat.Detail</small>
                 </div>
@@ -53,16 +39,110 @@
     </section>
 
     <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Storage quota</h2>
-            <p class="ts-panel-subtitle">Project storage consumption from the active usage summary</p>
+        <div class="ts-panel-header ts-row-between">
+            <div>
+                <h2 class="ts-panel-title">Organization usage</h2>
+                <p class="ts-panel-subtitle">@Model.OrganizationSubtitle</p>
+            </div>
+            <span class="ts-badge ts-badge-success">Updated @Model.OrganizationUpdatedAt</span>
         </div>
         <div class="ts-stack-md">
-            <div class="ts-row-between">
-                <span class="ts-eyebrow">Quota</span>
-                <span class="ts-badge ts-badge-@(Model.StorageTone)">@(DashboardStore.FormatPercent(Model.StoragePercentUsed)) used</span>
+            <div class="ts-alert ts-alert-info" role="status">
+                <span class="ts-alert-title">@Icons.Info(16) Billing dimensions</span>
+                <span class="ts-alert-body">Only logical storage and writes are billed. Reads and egress are unbilled metered facts used for guards and cost attribution.</span>
             </div>
-            <div class="ts-progress" role="progressbar" aria-label="@(DashboardStore.FormatPercent(Model.StoragePercentUsed)) used" aria-valuenow="@((int)Model.StoragePercentUsed)" aria-valuemin="0" aria-valuemax="100">
+            <div class="ts-grid ts-grid-cards ts-grid-cards-4 ts-usage-stats">
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">@(Icon("HardDrive")) Logical storage</span>
+                    <strong class="ts-metric-value ts-metric-value-sm">@Model.OrganizationStorage</strong>
+                    <small class="ts-metric-detail">Organization total</small>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">@(Icon("Activity")) Writes</span>
+                    <strong class="ts-metric-value ts-metric-value-sm">@Model.OrganizationWrites</strong>
+                    <small class="ts-metric-detail">Current billing period</small>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">@(Icon("Activity")) Reads (unbilled)</span>
+                    <strong class="ts-metric-value ts-metric-value-sm">Not reported</strong>
+                    <small class="ts-metric-detail">Guard and attribution fact</small>
+                </div>
+                <div class="ts-card ts-metric">
+                    <span class="ts-metric-label">@(Icon("Globe2")) Egress (unbilled)</span>
+                    <strong class="ts-metric-value ts-metric-value-sm">Not reported</strong>
+                    <small class="ts-metric-detail">Guard and attribution fact</small>
+                </div>
+            </div>
+            <div class="ts-table-wrap">
+                <table class="ts-table">
+                    <thead>
+                        <tr>
+                            <th>Plan resource</th>
+                            <th>Used</th>
+                            <th>Included</th>
+                            <th>Remaining / excess</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Model.PlanResources)
+                        {
+                            <tr>
+                                <td class="ts-table-strong">@row.Resource</td>
+                                <td class="ts-table-num">@row.Used</td>
+                                <td class="ts-table-num">@row.Included</td>
+                                <td class="ts-table-num">@row.Balance</td>
+                                <td><span class="ts-badge ts-badge-@(row.Tone)">@row.Status</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="ts-table-wrap">
+                <table class="ts-table">
+                    <thead>
+                        <tr>
+                            <th>Project contribution</th>
+                            <th>Storage</th>
+                            <th>Writes</th>
+                            <th>Reads (unbilled)</th>
+                            <th>Egress (unbilled)</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Model.ProjectContributions)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="ts-stack-xs">
+                                        <span class="ts-table-strong">@row.ProjectName</span>
+                                        <span class="ts-meta ts-mono">@row.ProjectId</span>
+                                    </div>
+                                </td>
+                                <td class="ts-table-num">@row.Storage</td>
+                                <td class="ts-table-num">@row.Writes</td>
+                                <td class="ts-muted">@row.Reads</td>
+                                <td class="ts-muted">@row.Egress</td>
+                                <td><span class="ts-badge ts-badge-success">Current</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section class="ts-panel">
+        <div class="ts-panel-header ts-row-between">
+            <div>
+                <h2 class="ts-panel-title">Storage quota</h2>
+                <p class="ts-panel-subtitle">Project storage consumption from the active usage summary</p>
+            </div>
+            <span class="ts-badge ts-badge-@(Model.StorageTone)">@Model.StoragePercentLabel</span>
+        </div>
+        <div class="ts-stack-md">
+            <div class="ts-progress" role="progressbar" aria-label="@Model.StoragePercentLabel" aria-valuenow="@((int)Model.StoragePercentUsed)" aria-valuemin="0" aria-valuemax="100">
                 <div class="ts-progress-bar ts-progress-bar-@(Model.StorageTone)" style="width:@(Math.Min(100, Model.StoragePercentUsed).ToString("0", System.Globalization.CultureInfo.InvariantCulture))%"></div>
             </div>
             <div class="ts-grid ts-grid-cards ts-grid-cards-3">
@@ -79,17 +159,39 @@
                     <strong class="ts-metric-value ts-metric-value-sm">@Model.StorageRemainingLabel</strong>
                 </div>
             </div>
-            <p class="ts-meta">Projected overage this cycle: <span class="ts-mono">$@(shell.Store.Usage.OverrunEstimateUsd.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))</span> · Invoice status <span class="ts-badge ts-badge-warning">@shell.Store.Usage.InvoiceStatus</span></p>
         </div>
     </section>
 
     <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Resource usage history</h2>
-            <p class="ts-panel-subtitle">Logical storage and writes, with egress retained as an unbilled usage fact</p>
+        <div class="ts-panel-header ts-row-between">
+            <div>
+                <h2 class="ts-panel-title">Resource usage history</h2>
+                <p class="ts-panel-subtitle">Logical storage and writes, with egress retained as an unbilled usage fact</p>
+            </div>
+            <span class="ts-muted">Select a period below</span>
         </div>
-        <div class="ts-chart-shell">
-            @Charts.LineChart(Model.History, "Resource usage history, 30d window")
+        <div class="ts-stack-md">
+            <div class="ts-row">
+                <select class="ts-select" aria-label="Usage history period" data-on-change="window.location.assign('/usage?range=' + evt.target.value)">
+                    @foreach (var option in Model.HistoryRanges)
+                    {
+                        <option value="@option.Value" selected="@(option.Selected ? "selected" : null)">@option.Label</option>
+                    }
+                </select>
+            </div>
+            @if (Model.History.Count is 0)
+            {
+                <div class="ts-empty">
+                    <span class="ts-empty-title">No usage history for this period</span>
+                    <span class="ts-meta">Usage snapshots will appear as project resources are observed.</span>
+                </div>
+            }
+            else
+            {
+                <div class="ts-chart-shell">
+                    @Charts.LineChart(Model.History, $"Resource usage history, {Model.HistoryRanges.First(r => r.Selected).Label} window")
+                </div>
+            }
         </div>
     </section>
 
@@ -105,6 +207,20 @@
                         <span class="ts-bar-value ts-mono">@(slice.DisplayValue ?? slice.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture))</span>
                     </div>
                 }
+            </div>
+        </div>
+        <div class="ts-panel ts-chart-shell">
+            <div class="ts-panel-header"><h3 class="ts-panel-title">Resource distribution</h3><p class="ts-panel-subtitle">Resources returned for the active project period</p></div>
+            <div class="ts-empty">
+                <span class="ts-empty-title">No resource distribution returned</span>
+                <span class="ts-meta">No persisted records are available.</span>
+            </div>
+        </div>
+        <div class="ts-panel ts-chart-shell">
+            <div class="ts-panel-header"><h3 class="ts-panel-title">Activity breakdown</h3><p class="ts-panel-subtitle">Recent project activity; reads and egress are unbilled</p></div>
+            <div class="ts-empty">
+                <span class="ts-empty-title">No activity returned</span>
+                <span class="ts-meta">No persisted records are available.</span>
             </div>
         </div>
         <div class="ts-panel ts-chart-shell">
@@ -171,7 +287,7 @@
                                         <span class="ts-meta ts-mono">@row.Id</span>
                                     </div>
                                 </td>
-                                <td class="ts-muted">@(row.PrimaryRegion + (row.BackupRegion is null ? "" : ", " + row.BackupRegion)).ToUpperInvariant()</td>
+                                <td class="ts-muted">@((row.PrimaryRegion + (row.BackupRegion is null ? "" : ", " + row.BackupRegion)).ToUpperInvariant())</td>
                                 <td class="ts-table-num">@DashboardStore.FormatNumber(row.DocumentCount)</td>
                                 <td class="ts-table-num">@DashboardStore.FormatBytes(row.SizeMb * 1024L * 1024)</td>
                                 <td class="ts-muted">@DashboardStore.FormatUtcDateTime(row.CreatedAt)</td>
@@ -184,12 +300,40 @@
     </section>
 
     <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Billing data</h2>
-            <p class="ts-panel-subtitle">Billing account and invoice projections</p>
+        <div class="ts-panel-header ts-row-between">
+            <div>
+                <h2 class="ts-panel-title">Billing data</h2>
+                <p class="ts-panel-subtitle">Billing account and invoice projections</p>
+            </div>
+            <div class="ts-row ts-row-actions-end">
+                <select class="ts-select" id="billing-plan" aria-label="Billing plan">
+                    @foreach (var plan in Model.CheckoutPlans)
+                    {
+                        <option value="@plan.PlanId">@plan.Label</option>
+                    }
+                </select>
+                <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-on-click="window.location.assign('/checkout/usage_' + document.getElementById('billing-plan').value)">
+                    @Icons.CreditCard(16) Subscribe
+                </button>
+                <a class="ts-btn ts-btn-outline ts-btn-lg" href="/billing/portal/usage_portal">@Icons.ExternalLink(16) Payment methods</a>
+            </div>
         </div>
+        <form method="post" action="/api/v1/dashboard/usage/spending-controls" class="ts-stack-md">
+            <p class="ts-muted">Databases and branches share organization allowances and the billing anniversary. Selected Regions multiply writes and storage before allowances. Paid excess costs $1 per million write units and $0.20 per GB-month. A spending cap stops chargeable writes; subscription and retained storage costs continue and can exceed the cap. Reads and exports remain available. Document deletes require paid write access when writes are restricted. Revoking consent stops new paid writes and does not erase outstanding charges or existing storage obligations.</p>
+            <label class="ts-checkbox-row">
+                <input class="ts-checkbox" type="checkbox" name="paidExcess" value="true" checked="@(Model.PaidExcessEnabled ? "checked" : null)" />
+                I authorize paid excess at these rates and accept continuing storage costs.
+            </label>
+            <div class="ts-field">
+                <label class="ts-label" for="spendCap">Monthly organization spending cap in USD (blank means no cap)</label>
+                <input class="ts-input" id="spendCap" name="spendCap" inputmode="decimal" value="@Model.SpendCap" placeholder="" />
+            </div>
+            <div class="ts-form-actions">
+                <button class="ts-btn ts-btn-primary" type="submit">Save spending controls</button>
+            </div>
+        </form>
         <div class="ts-stack-lg">
-            <div class="ts-grid ts-grid-cards ts-billing-grid">
+            <div class="ts-grid ts-grid-cards ts-grid-cards-3 ts-billing-grid">
                 <div class="ts-card ts-metric">
                     <span class="ts-metric-label">Status</span>
                     <span class="ts-badge ts-badge-@(Model.BillingStatusTone)">@Model.BillingStatus</span>
@@ -213,36 +357,6 @@
                 <div class="ts-card ts-metric">
                     <span class="ts-metric-label">Invoices</span>
                     <span class="ts-badge ts-badge-neutral">@Model.InvoiceCount</span>
-                </div>
-            </div>
-
-            <div class="ts-stack-md">
-                <div class="ts-alert ts-alert-info" role="status">
-                    <span class="ts-alert-title">@Icons.Info(16) Review plan-change impact before confirming</span>
-                    <span class="ts-alert-body">Upgrades take effect immediately and may be prorated. Downgrades begin with the next billing cycle. Plans marked over current usage would start with billable excess unless usage is reduced before the change takes effect.</span>
-                </div>
-                <div class="ts-table-wrap">
-                    <table class="ts-table">
-                        <thead>
-                            <tr>
-                                <th>Target plan</th>
-                                <th>Current usage</th>
-                                <th>Impact</th>
-                                <th>Effective</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var row in Model.PlanImpact)
-                            {
-                                <tr>
-                                    <td class="ts-table-strong">@row.PlanName</td>
-                                    <td><span class="ts-badge @ToneClass(row.Compatibility)">@CompatibilityLabel(row.Compatibility)</span></td>
-                                    <td class="ts-muted">@row.Impact</td>
-                                    <td class="ts-muted">@row.Timing</td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
                 </div>
             </div>
 
@@ -282,10 +396,6 @@
                     </table>
                 </div>
             }
-            <div class="ts-row">
-                <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/subscriptions">@Icons.ExternalLink(14) Manage subscription</a>
-                <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/usage/export">@Icons.Download(14) Export usage</a>
-            </div>
         </div>
     </section>
 </div>
