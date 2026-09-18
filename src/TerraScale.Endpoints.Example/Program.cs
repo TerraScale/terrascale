@@ -9,6 +9,8 @@ builder.Services.AddTerraScaleEndpoints(typeof(Program).Assembly, options =>
     options.Version = "v1";
 });
 var app = builder.Build();
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.MapTerraScaleEndpoints();
 app.MapTerraScaleOpenApi();
 app.Run();

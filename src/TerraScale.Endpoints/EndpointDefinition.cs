@@ -133,6 +133,10 @@ public sealed class EndpointDefinition
     public EndpointDefinition Produces<TResponse>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") =>
         this.Produces(typeof(TResponse), statusCode, contentType);
 
+    /// <summary>Documents a <c>text/event-stream</c> response in OpenAPI.</summary>
+    public EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) =>
+        this.Produces<string>(statusCode, "text/event-stream");
+
     /// <summary>Documents a response type in OpenAPI.</summary>
     public EndpointDefinition Produces(Type responseType, int statusCode = StatusCodes.Status200OK, string contentType = "application/json")
     {

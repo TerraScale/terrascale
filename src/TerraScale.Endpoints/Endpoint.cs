@@ -49,10 +49,35 @@ internal static class EndpointActivation
     }
 }
 
+/// <summary>Shared request-scoped state: <see cref="HttpContext"/> and Datastar signal access while handling a request.</summary>
+public abstract class EndpointRequestContext
+{
+    private readonly AsyncLocal<HttpContext?> requestContext = new();
+
+    /// <summary>The request context while handling a request.</summary>
+    protected HttpContext HttpContext => this.requestContext.Value ?? throw new InvalidOperationException("HttpContext is only available while handling a request.");
+
+    /// <summary>Reads the Datastar signals the browser sent with this request.</summary>
+    protected Task<T> ReadSignalsAsync<T>(CancellationToken cancellationToken = default) =>
+        Datastar.ReadSignalsAsync<T>(this.HttpContext.Request, cancellationToken);
+
+    internal RequestContextScope BeginRequestContext(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        this.requestContext.Value = context;
+        return new RequestContextScope(this.requestContext);
+    }
+
+    internal readonly struct RequestContextScope(AsyncLocal<HttpContext?> slot) : IDisposable
+    {
+        void IDisposable.Dispose() => slot.Value = null;
+    }
+}
+
 /// <summary>FastEndpoints-style base for one request/response endpoint.</summary>
 /// <typeparam name="TRequest">The bound request model.</typeparam>
 /// <typeparam name="TResponse">The response model or <see cref="IResult"/>.</typeparam>
-public abstract class Endpoint<TRequest, TResponse> : IEndpoint, IRequestScopedEndpoint
+public abstract class Endpoint<TRequest, TResponse> : EndpointRequestContext, IEndpoint, IRequestScopedEndpoint
 {
     private EndpointDefinition? definition;
 
@@ -77,6 +102,7 @@ public abstract class Endpoint<TRequest, TResponse> : IEndpoint, IRequestScopedE
     protected EndpointDefinition Description(string description) => this.Definition.WithDescription(description);
     protected EndpointDefinition Tags(params string[] tags) => this.Definition.WithTags(tags);
     protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") => this.Definition.Produces<T>(statusCode, contentType);
+    protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => this.Definition.ProducesSse(statusCode);
     protected EndpointDefinition Accepts<T>(params string[] contentTypes) => this.Definition.Accepts<T>(contentTypes);
     protected EndpointDefinition AllowAnonymous() => this.Definition.AllowAnonymous();
     protected EndpointDefinition RequireAuthorization(params string[] policies) => this.Definition.RequireAuthorization(policies);
@@ -118,13 +144,14 @@ public abstract class Endpoint<TRequest, TResponse> : IEndpoint, IRequestScopedE
             EndpointActivation.RegisterForDispose(context.Response, endpoint);
         }
 
+        using var requestScope = endpoint.BeginRequestContext(context);
         return await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
     }
 }
 
 /// <summary>FastEndpoints-style base for an endpoint without a request body.</summary>
 /// <typeparam name="TResponse">The response model or <see cref="IResult"/>.</typeparam>
-public abstract class EndpointWithoutRequest<TResponse> : IEndpoint, IRequestScopedEndpoint
+public abstract class EndpointWithoutRequest<TResponse> : EndpointRequestContext, IEndpoint, IRequestScopedEndpoint
 {
     private EndpointDefinition? definition;
 
@@ -149,6 +176,7 @@ public abstract class EndpointWithoutRequest<TResponse> : IEndpoint, IRequestSco
     protected EndpointDefinition Description(string description) => this.Definition.WithDescription(description);
     protected EndpointDefinition Tags(params string[] tags) => this.Definition.WithTags(tags);
     protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") => this.Definition.Produces<T>(statusCode, contentType);
+    protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => this.Definition.ProducesSse(statusCode);
     protected EndpointDefinition Accepts<T>(params string[] contentTypes) => this.Definition.Accepts<T>(contentTypes);
     protected EndpointDefinition AllowAnonymous() => this.Definition.AllowAnonymous();
     protected EndpointDefinition RequireAuthorization(params string[] policies) => this.Definition.RequireAuthorization(policies);
@@ -189,6 +217,7 @@ public abstract class EndpointWithoutRequest<TResponse> : IEndpoint, IRequestSco
             EndpointActivation.RegisterForDispose(context.Response, endpoint);
         }
 
+        using var requestScope = endpoint.BeginRequestContext(context);
         return await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
     }
 }
@@ -212,6 +241,7 @@ public abstract class Endpoint<TRequest> : EndpointSenderEndpoint, IEndpoint, IR
     protected EndpointDefinition Description(string description) => Definition.WithDescription(description);
     protected EndpointDefinition Tags(params string[] tags) => Definition.WithTags(tags);
     protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") => Definition.Produces<T>(statusCode, contentType);
+    protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => Definition.ProducesSse(statusCode);
     protected EndpointDefinition Accepts<T>(params string[] contentTypes) => Definition.Accepts<T>(contentTypes);
     protected EndpointDefinition AllowAnonymous() => Definition.AllowAnonymous();
     protected EndpointDefinition RequireAuthorization(params string[] policies) => Definition.RequireAuthorization(policies);
@@ -242,6 +272,7 @@ public abstract class Endpoint<TRequest> : EndpointSenderEndpoint, IEndpoint, IR
             EndpointActivation.RegisterForDispose(context.Response, endpoint);
         }
 
+        using var requestScope = endpoint.BeginRequestContext(context);
         using var scope = endpoint.BeginSendScope();
         await endpoint.HandleAsync(request, cancellationToken).ConfigureAwait(false);
         return scope.Result ?? Results.NoContent();
@@ -267,6 +298,7 @@ public abstract class EndpointWithoutRequest : EndpointSenderEndpoint, IEndpoint
     protected EndpointDefinition Description(string description) => Definition.WithDescription(description);
     protected EndpointDefinition Tags(params string[] tags) => Definition.WithTags(tags);
     protected EndpointDefinition Produces<T>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") => Definition.Produces<T>(statusCode, contentType);
+    protected EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) => Definition.ProducesSse(statusCode);
     protected EndpointDefinition Accepts<T>(params string[] contentTypes) => Definition.Accepts<T>(contentTypes);
     protected EndpointDefinition AllowAnonymous() => Definition.AllowAnonymous();
     protected EndpointDefinition RequireAuthorization(params string[] policies) => Definition.RequireAuthorization(policies);
@@ -296,6 +328,7 @@ public abstract class EndpointWithoutRequest : EndpointSenderEndpoint, IEndpoint
             EndpointActivation.RegisterForDispose(context.Response, endpoint);
         }
 
+        using var requestScope = endpoint.BeginRequestContext(context);
         using var scope = endpoint.BeginSendScope();
         await endpoint.HandleAsync(cancellationToken).ConfigureAwait(false);
         return scope.Result ?? Results.NoContent();
@@ -315,7 +348,7 @@ public sealed class EndpointSender
     private Task<IResult> Set(IResult response) { Result = response; return Task.FromResult(response); }
 }
 
-public abstract class EndpointSenderEndpoint
+public abstract class EndpointSenderEndpoint : EndpointRequestContext
 {
     private readonly AsyncLocal<EndpointSender?> sender = new();
     private protected EndpointDefinition Configuration { get; } = new();
