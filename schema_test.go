@@ -160,3 +160,53 @@ func TestSchemaJSONCanonicalizesBTreeAndFTSIndexes(t *testing.T) {
 		t.Fatalf("index kinds were not canonicalized: %s", got)
 	}
 }
+
+func benchmarkSchema() Schema {
+	users, err := NewCollection("users").
+		Field("name", FieldString, Required(), Indexed()).
+		Field("email", FieldString, Unique()).
+		Field("bio", FieldText).
+		Field("visits", FieldCounter, MergeField(FieldCounter)).
+		Field("expires_at", FieldTimestamp).
+		Index("users_by_name", "name").
+		FTS("bio").
+		TTL("expires_at").
+		HistoryRetention(30).
+		Merge(MergeHLCTiebreak).
+		Build()
+	if err != nil {
+		panic(err)
+	}
+	events, err := NewCollection("events").
+		Field("kind", FieldString, Required(), Indexed()).
+		Field("payload", FieldJSON).
+		Field("at", FieldTimestamp, Indexed()).
+		Index("events_by_kind", "kind").
+		Build()
+	if err != nil {
+		panic(err)
+	}
+	return NewSchemaBuilder().AddCollection(users).AddCollection(events).Build()
+}
+
+func BenchmarkSchemaValidate(b *testing.B) {
+	schema := benchmarkSchema()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := schema.Validate(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSchemaToJSON(b *testing.B) {
+	schema := benchmarkSchema()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := schema.ToJSON(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

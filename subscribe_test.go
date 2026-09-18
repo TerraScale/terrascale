@@ -154,6 +154,40 @@ func reactiveTestEnvelope(tag uint64, body []byte) []byte {
 	return append(frame, body...)
 }
 
+// BenchmarkReactiveMessagePackDecode measures the offline hot path that every
+// long-poll and WebSocket frame takes: full fail-closed validation plus decode
+// of one pinned sync-v1 frame.
+func BenchmarkReactiveMessagePackDecode(b *testing.B) {
+	var corpus pinnedCorpus
+	readPinnedJSON(b, "conformance/msgpack/message-vectors.json", &corpus)
+	frames := map[string][]byte{}
+	for _, vector := range corpus.Vectors {
+		switch vector.Name {
+		case "delta", "snapshot", "reset", "authorization_changed":
+			wire, err := hex.DecodeString(vector.Hex)
+			if err != nil {
+				b.Fatalf("vector %q is not hex: %v", vector.Name, err)
+			}
+			frames[vector.Name] = wire
+		}
+	}
+	if len(frames) != 4 {
+		b.Fatalf("pinned corpus is missing server frames: %v", frames)
+	}
+	for _, name := range []string{"delta", "snapshot", "reset", "authorization_changed"} {
+		b.Run(name, func(b *testing.B) {
+			wire := frames[name]
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if _, _, _, _, err := decodeReactiveMessagePack(wire, "bench", 0); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func mustHex(value string) []byte {
 	body, err := hex.DecodeString(value)
 	if err != nil {

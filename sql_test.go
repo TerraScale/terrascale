@@ -12,6 +12,50 @@ import (
 	sdk "terrascale.tech/sdk"
 )
 
+func benchmarkQueryBuilderSchema() sdk.CollectionSchema {
+	fields := []sdk.FieldDef{
+		{Name: "tenant", Type: sdk.FieldString, Required: true, Indexed: true},
+		{Name: "title", Type: sdk.FieldString, Indexed: true},
+		{Name: "body", Type: sdk.FieldText},
+		{Name: "visits", Type: sdk.FieldCounter},
+		{Name: "score", Type: sdk.FieldFloat, Indexed: true},
+		{Name: "tags", Type: sdk.FieldJSON},
+		{Name: "expires_at", Type: sdk.FieldTimestamp, Indexed: true},
+	}
+	return sdk.CollectionSchema{
+		Name:                 "events",
+		Fields:               fields,
+		Indexes:              []sdk.IndexDef{{Name: "events_by_tenant", Fields: []string{"tenant"}, Kind: sdk.IndexBTree}},
+		HistoryRetentionDays: sdk.DefaultHistoryRetentionDays,
+		MergePolicy:          sdk.MergeRemoveWins,
+	}
+}
+
+func BenchmarkQueryBuilderBuild(b *testing.B) {
+	schema := benchmarkQueryBuilderSchema()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		query, err := sdk.SelectSchema(&schema)
+		if err != nil {
+			b.Fatal(err)
+		}
+		query.WhereEq(&schema.Fields[0], "tenant-1").
+			WhereGte(&schema.Fields[4], 1.5).
+			WhereJSONField(&schema.Fields[5], "$.channel", "=", "web").
+			OrderByField(&schema.Fields[6], sdk.Desc).
+			Limit(50).
+			Offset(100)
+		statement, params, err := query.Build()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if statement == "" || len(params) != 4 {
+			b.Fatalf("build = %q %+v", statement, params)
+		}
+	}
+}
+
 func TestSchemaSelectBuilderBindsFieldsMatchJSONAndPagination(t *testing.T) {
 	name := sdk.FieldDef{Name: "name", Type: sdk.FieldString}
 	age := sdk.FieldDef{Name: "age", Type: sdk.FieldInt}

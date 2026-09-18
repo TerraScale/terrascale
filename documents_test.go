@@ -156,6 +156,41 @@ func TestDocumentTypesRetainRawJSONValues(t *testing.T) {
 	}
 }
 
+func BenchmarkDocumentsRoundTrip(b *testing.B) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"18446744073709551615-7"`)
+		w.Header().Set("X-TerraScale-Session", "7")
+		switch r.Method {
+		case http.MethodPut, http.MethodPatch:
+			_, _ = w.Write([]byte(`{"revision":"18446744073709551615-8"}`))
+		default:
+			_, _ = w.Write([]byte(`{"name":"Ada Lovelace","email":"ada@example.com","bio":"first programmer","visits":42,"tags":["math","computing"],"active":true}`))
+		}
+	}))
+	defer server.Close()
+	client, err := sdk.NewClient(sdk.Config{APIBaseURL: server.URL})
+	if err != nil {
+		b.Fatal(err)
+	}
+	document := map[string]any{
+		"name": "Ada Lovelace", "email": "ada@example.com", "bio": "first programmer",
+		"visits": 42, "tags": []string{"math", "computing"}, "active": true,
+	}
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := client.Documents.Put(ctx, "db", "users", "ada", document, sdk.WithIdempotencyKey("bench-put")); err != nil {
+			b.Fatal(err)
+		}
+		got, err := client.Documents.Get(ctx, "db", "users", "ada")
+		if err != nil || len(got.Body) == 0 {
+			b.Fatalf("get = %+v, err = %v", got, err)
+		}
+	}
+}
+
 func TestDocumentHistoryPageUsesPublishedPagination(t *testing.T) {
 	var query url.Values
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

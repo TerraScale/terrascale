@@ -33,7 +33,7 @@ type hostileVector struct {
 	} `json:"repeat"`
 }
 
-func pinnedContractRoot(t *testing.T) string {
+func pinnedContractRoot(t testing.TB) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -42,7 +42,7 @@ func pinnedContractRoot(t *testing.T) string {
 	return filepath.Join(filepath.Dir(file), "contracts", pinnedContractVersion)
 }
 
-func readPinnedJSON(t *testing.T, relative string, dst any) []byte {
+func readPinnedJSON(t testing.TB, relative string, dst any) []byte {
 	t.Helper()
 	path := filepath.Join(pinnedContractRoot(t), relative)
 	raw, err := os.ReadFile(path)
