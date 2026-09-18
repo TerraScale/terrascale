@@ -28,6 +28,8 @@ jobs:
           fi
           sed -i "s/^app = .*/app = \"$PR_APP\"/" fly.toml
           fly deploy -a "$PR_APP" --strategy immediate
+          # Fresh apps get a second HA machine; previews are single-machine.
+          fly scale count 1 -a "$PR_APP" --yes
       - name: Comment preview URL
         if: success()
         env:
