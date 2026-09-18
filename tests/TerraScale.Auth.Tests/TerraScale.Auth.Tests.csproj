@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>TerraScale.Auth.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestingPlatformApplication>true</IsTestingPlatformApplication>
+    <!-- The embedded TerraBase engine reference (test-only) resolves the sibling terrabase checkout. -->
+    <TerraBaseEngineProject Condition="'$(TerraBaseEngineProject)' == ''">$(MSBuildThisFileDirectory)..\..\..\terrabase\src\TerraBase\TerraBase.csproj</TerraBaseEngineProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TerraScale.Auth\TerraScale.Auth.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" Version="1.56.18" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('$(TerraBaseEngineProject)')">
+    <ProjectReference Include="$(TerraBaseEngineProject)" />
+  </ItemGroup>
+
+</Project>

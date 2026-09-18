@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>TerraScale.Auth</RootNamespace>
+    <!-- ponytail: sibling-checkout source reference; swap to a published nupkg feed when TerraScale.DotNet ships one -->
+    <TerraScaleSdkProject Condition="'$(TerraScaleSdkProject)' == ''">$(MSBuildThisFileDirectory)..\..\..\ts-dotnet\src\TerraScale.DotNet\TerraScale.DotNet.csproj</TerraScaleSdkProject>
+    <EnableSdkContainerSupport>true</EnableSdkContainerSupport>
+    <ContainerRepository>terrascale/ts-auth</ContainerRepository>
+    <ContainerPort>8080</ContainerPort>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(TerraScaleSdkProject)')">
+    <ProjectReference Include="$(TerraScaleSdkProject)" />
+  </ItemGroup>
+
+  <Target Name="EnsureTerraScaleSdk" BeforeTargets="BeforeBuild" Condition="!Exists('$(TerraScaleSdkProject)')">
+    <Error Text="TerraScale.DotNet SDK project not found at '$(TerraScaleSdkProject)'. Clone ts-dotnet as a sibling of ts-auth, or pass -p:TerraScaleSdkProject=&lt;path&gt;." />
+  </Target>
+
+</Project>
