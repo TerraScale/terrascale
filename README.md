@@ -3,7 +3,7 @@
 Go SDK for the TerraScale public API. The package provides document CRUD,
 typed schema and SQL builders, parameterized SQL execution, reactive
 subscribe/execute with checkpoints and typed resets, region affinity,
-tenant-scoped authorization, database management, durable imports and exports, and auth
+tenant-scoped authorization and leases, database management, durable imports and exports, and auth
 persistence.
 
 ## Contract source
@@ -59,6 +59,10 @@ webhook endpoints and delivery replay, and resumable exports. Schema reads retur
 `WithSchemaGeneration` and a stable `WithIdempotencyKey` when applying changes.
 Index recommendations accept a limit up to 64 and retain the coordinator's
 generation and truncation flag.
+
+`GetAuthorizationLease` returns the producer lease previously authenticated for
+one tenant, with its original absolute `ValidUntil` expiry. The route never
+fetches identity state or renews a lease on a reader's behalf.
 
 `Usage.GetDatabaseUsage` returns authoritative decimal-string write units and
 storage byte-seconds, plus unbilled `Reads.TotalReads`. It does not estimate
