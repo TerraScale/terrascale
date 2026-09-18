@@ -16,14 +16,7 @@
                 <span class="ts-alert-title">@Icons.CircleAlert(16) @error</span>
             </div>
         }
-        @if (!Model.Authenticated)
-        {
-            <div class="ts-flow-actions">
-                <a class="ts-btn ts-btn-primary ts-btn-lg" href="/login?next=/invitations/@Model.InvitationId">Sign in to respond</a>
-                <a class="ts-btn ts-btn-outline ts-btn-lg" href="/login?mode=register&next=/invitations/@Model.InvitationId">Create account</a>
-            </div>
-        }
-        else if (Model.Outcome is { } outcome)
+        @if (Model.Outcome is { } outcome)
         {
             if (outcome == "accepted")
             {

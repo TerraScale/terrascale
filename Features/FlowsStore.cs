@@ -28,24 +28,16 @@ public sealed partial class DashboardStore
         Dictionary<string, string> Reasons,
         string? ConstraintsJson);
 
+    /// <summary>Baseline request matching the ts-dashboard agent approval page:
+    /// device-authorization flow with no pre-declared capabilities (the page
+    /// shows the validation note instead of capability chips).</summary>
     public AgentApprovalRequest DemoAgentApproval { get; } = new(
-        AgentName: "deploy-copilot",
-        ExpiresAt: "2026-09-18T15:45:00Z",
-        BindingMessage: "Run TerraScale CLI from CI job #4821",
-        Capabilities: ["databases:list", "documents:read", "documents:write"],
-        Reasons: new Dictionary<string, string>
-        {
-            ["databases:list"] = "Enumerate databases in the active project.",
-            ["documents:read"] = "Read deployment manifests stored as documents.",
-            ["documents:write"] = "Write back deployment status records.",
-        },
-        ConstraintsJson: """
-            {
-              "maxWriteBytesPerHour": 10485760,
-              "allowedCollections": ["deployments", "status"],
-              "regions": ["us-east-1", "eu-central-1"]
-            }
-            """);
+        AgentName: "Agent requesting access",
+        ExpiresAt: "2026-09-18T17:40:00Z",
+        BindingMessage: "This agent is requesting access to your TerraScale Dashboard.",
+        Capabilities: [],
+        Reasons: new Dictionary<string, string>(),
+        ConstraintsJson: null);
 
     public sealed record OAuthConsentClient(string ClientId, string ClientName);
 

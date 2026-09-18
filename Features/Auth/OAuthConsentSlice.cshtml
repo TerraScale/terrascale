@@ -5,14 +5,7 @@
         <div class="ts-wordmark-wrap">
             <img src="/brand/logo-terrascale-blue.svg" alt="" aria-hidden="true" decoding="async" />
         </div>
-        @if (!Model.Authenticated)
-        {
-            <div class="ts-alert ts-alert-info" role="status">
-                <span class="ts-alert-title">@Icons.Info(16) Sign-in required</span>
-                <span class="ts-alert-body">Sign in to review this authorization request. <a class="ts-link" href="/login?next=/oauth/consent">Go to sign in</a></span>
-            </div>
-        }
-        else if (!Model.ValidRequest)
+        @if (!Model.ValidRequest)
         {
             <div class="ts-alert ts-alert-danger" role="alert">
                 <span class="ts-alert-title">@Icons.CircleAlert(16) Invalid authorization request</span>
@@ -46,7 +39,7 @@
                 </div>
             </div>
 
-            <dl class="ts-kv">
+            <dl class="ts-kv ts-flow-details">
                 <dt>Application</dt>
                 <dd>@Model.ClientName</dd>
                 <dd class="ts-meta ts-mono">@Model.ClientId</dd>
@@ -58,10 +51,10 @@
                     }
                     else
                     {
-                        <ul class="ts-capability-list" aria-label="Requested scopes">
+                        <ul class="ts-flow-scopes" aria-label="Requested scopes">
                             @foreach (var scope in Model.Scopes)
                             {
-                                <li class="ts-capability"><span>@scope</span></li>
+                                <li>@scope</li>
                             }
                         </ul>
                     }

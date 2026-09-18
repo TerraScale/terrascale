@@ -19,7 +19,9 @@ public sealed record OnboardingPageModel(
     string DisplayName,
     string Email,
     string? OrganizationName,
-    bool PaymentValidated) : IPageModel
+    bool PaymentValidated,
+    bool Registration,
+    string? RegistrationError) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 }
@@ -40,13 +42,22 @@ public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWitho
     public override void Configure()
     {
         Get("/onboarding");
-        Summary("Renders the account activation wizard");
+        Summary("Renders the account activation wizard (registration when anonymous)");
         Tags("Pages");
+        AllowAnonymous();
     }
 
     public override Task<IResult> HandleAsync(CancellationToken ct)
     {
         var query = HttpContext.Request.Query;
+
+        // Anonymous visitors get the account registration form (activation
+        // step 1), mirroring ts-dashboard's anonymous onboarding branch.
+        if (!DashboardAuthMiddleware.IsAuthenticated(HttpContext))
+        {
+            return Task.FromResult<IResult>(OnboardingSlice.Create(RegistrationModel()
+                with { RegistrationError = query["error"].FirstOrDefault() }));
+        }
 
         // Returning from checkout: apply the payment outcome before rendering.
         if (query["payment"] == "success")
@@ -83,7 +94,25 @@ public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWitho
             DisplayName: store.CurrentUser.Name,
             Email: store.CurrentUser.Email,
             OrganizationName: store.ActiveOrganizationName,
-            PaymentValidated: views.First(v => v.Key == "payment-validation").State == "completed");
+            PaymentValidated: views.First(v => v.Key == "payment-validation").State == "completed",
+            Registration: false,
+            RegistrationError: null);
         return Task.FromResult<IResult>(OnboardingSlice.Create(model));
     }
+
+    private OnboardingPageModel RegistrationModel() => new(
+        Steps: [.. StepDefinitions.Select((d, i) => new OnboardingStepView(d.Key, d.Label, d.Icon, i == 0 ? "current" : "pending"))],
+        ActiveStep: "account-information",
+        CurrentStep: 1,
+        TotalSteps: StepDefinitions.Length,
+        ProgressPercent: 20,
+        PaymentCanceled: false,
+        Plans: [],
+        Regions: [],
+        DisplayName: "",
+        Email: "",
+        OrganizationName: null,
+        PaymentValidated: false,
+        Registration: true,
+        RegistrationError: null);
 }
