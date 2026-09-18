@@ -2291,3 +2291,174 @@ details.ts-menu[open] > summary.ts-account-trigger {
   color: var(--ts-accent-soft);
 }
 
+
+/* ===== Feature: Databases ================================================ */
+
+.ts-panel-20 {
+  padding: 20px;
+}
+
+.ts-panel-pad {
+  padding: var(--ts-lg);
+  display: grid;
+  gap: var(--ts-md);
+}
+
+.ts-row-header-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-sm);
+  flex-wrap: wrap;
+}
+
+@media (min-width: 64rem) {
+  .ts-row-header-actions {
+    flex-direction: row;
+    justify-content: space-between;
+    gap: 20px;
+  }
+}
+
+.ts-row-actions-end {
+  justify-content: flex-end;
+}
+
+.ts-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ts-xs);
+}
+
+.ts-min-width-flex {
+  min-width: 0;
+  flex: 1;
+}
+
+.ts-db-search {
+  position: relative;
+  max-width: 24rem;
+  width: 100%;
+  display: block;
+}
+
+.ts-db-search-icon {
+  position: absolute;
+  left: var(--ts-md);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ts-ink-muted);
+  pointer-events: none;
+  display: inline-flex;
+}
+
+.ts-db-search .ts-input {
+  padding-left: 36px;
+}
+
+.ts-db-name {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-md);
+  min-width: 0;
+}
+
+.ts-db-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ts-radius-control);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-accent);
+}
+
+.ts-db-name-text {
+  min-width: 0;
+}
+
+.ts-db-name-link {
+  display: block;
+  overflow: hidden;
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.ts-db-name-link:hover {
+  color: var(--ts-ink);
+  text-decoration: underline;
+}
+
+.ts-db-id,
+.ts-db-id-line {
+  overflow: hidden;
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-db-id-line {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sm);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+}
+
+.ts-db-placement-note {
+  margin: 0;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 20px;
+  padding: var(--ts-sm) var(--ts-md);
+}
+
+.ts-dialog-form {
+  display: grid;
+  gap: 16px;
+}
+
+.ts-dialog-actions-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-md);
+}
+
+.ts-summary-grid {
+  display: grid;
+  gap: var(--ts-md);
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.ts-summary-field {
+  display: grid;
+  gap: var(--ts-xs);
+}
+
+.ts-summary-label {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-summary-value {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-medium);
+}
+
+.ts-icon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-sm);
+}

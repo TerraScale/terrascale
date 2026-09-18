@@ -1,14 +1,165 @@
 @inherits RazorSlice<DatabasesPageModel>
 @{
     var shell = Model.Shell;
+    var deleteOpenFor = HttpContext?.Request?.Query["delete"].FirstOrDefault();
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Databases</h2>
-            <p class="ts-panel-subtitle">Port pending — this surface renders once its 1:1 port lands.</p>
+    <section class="ts-panel ts-panel-20">
+        <div class="ts-row-header-actions ts-row-actions-end">
+            <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-open-dialog="create-database">
+                @Icons.Plus(18)
+                <span>Create database</span>
+            </button>
+            <button type="button" class="ts-icon-btn" aria-label="Reload databases" data-reload>@Icons.RefreshCw(18)</button>
         </div>
     </section>
+    @if (Model.Error is { } loadError)
+    {
+        <div class="ts-alert ts-alert-danger" role="alert">
+            <div class="ts-stack-xs">
+                <span class="ts-alert-title">@loadError</span>
+                <code class="ts-meta ts-mono">database_data_load_failed</code>
+            </div>
+        </div>
+    }
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h2 class="ts-panel-title">Logical databases</h2>
+            <p class="ts-panel-subtitle">Rows are loaded from the TerraScale Dashboard API and backed by the TerraScale metadata database.</p>
+        </div>
+        @if (Model.Databases.Length == 0)
+        {
+            <div class="ts-panel-pad ts-stack-lg">
+                <div class="ts-empty">
+                    <span class="ts-empty-icon">@Icons.Database(28)</span>
+                    <span class="ts-empty-title">@(string.IsNullOrEmpty(Model.Query) ? "No databases saved" : "No databases match")</span>
+                    <p class="ts-muted">@(string.IsNullOrEmpty(Model.Query)
+                        ? "Create a logical database to persist it through the TerraScale Dashboard API."
+                        : "Adjust the filter to see another saved database.")</p>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="ts-panel-pad ts-stack-lg">
+                <form class="ts-db-search" method="get" action="/databases">
+                    <label class="ts-sr-only" for="db-filter">Filter databases</label>
+                    <span class="ts-db-search-icon">@Icons.Search(16)</span>
+                    <input class="ts-input" id="db-filter" type="search" name="q" value="@Model.Query" placeholder="Search databases..." />
+                </form>
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>Database</th>
+                                <th>Placement</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th aria-hidden="true"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in Model.Databases)
+                            {
+                                <tr>
+                                    <td>
+                                        <div class="ts-db-name">
+                                            <span class="ts-db-icon">@Icons.Database(16)</span>
+                                            <div class="ts-db-name-text">
+                                                <a class="ts-db-name-link" href="/databases/@row.Id" title="@row.Name">@row.Name</a>
+                                                <div class="ts-db-id" title="@row.Id">@row.Id</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="ts-stack-xs">
+                                            <span>@string.Join(", ", row.Regions.Split(',').Select(DatabasesPageModel.RegionDisplay))</span>
+                                            <span class="ts-meta">@row.Replication</span>
+                                            <span class="ts-meta">Backup: @(row.BackupRegion is { } backup ? DatabasesPageModel.RegionDisplay(backup) : "Not configured")</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="ts-stack-xs">
+                                            <span class="ts-badge @row.StatusTone">@row.Status</span>
+                                            <span class="ts-meta">@(row.Provisioning ? $"Operation: {row.OperationId}" : $"Version {row.Version}")</span>
+                                        </div>
+                                    </td>
+                                    <td>@DatabasesPageModel.FormatUtc(row.CreatedAt)</td>
+                                    <td>
+                                        <div class="ts-row-actions">
+                                            <button type="button" class="ts-icon-btn ts-icon-btn-danger" aria-label="Delete @row.Name" data-open-dialog="delete-@row.Id">@Icons.Trash2(16)</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    </section>
 </div>
+
+<dialog class="ts-dialog" id="create-database" data-autoopen="@(Model.CreateOpen ? "" : null)">
+    <div class="ts-dialog-content">
+        <div class="ts-dialog-header">
+            <h2 class="ts-dialog-title">Create a database</h2>
+            <p class="ts-dialog-description">Saved as a virtual database using the project's selected regions</p>
+        </div>
+        <form class="ts-dialog-form" method="post" action="/api/v1/dashboard/databases/create">
+            <div class="ts-field">
+                <label class="ts-label" for="database-name">Database name</label>
+                <input class="ts-input" id="database-name" name="name" placeholder="orders" maxlength="60" required />
+                <span class="ts-hint">The persisted logical database name, up to 60 characters.</span>
+            </div>
+            <div class="ts-stack-sm">
+                <p class="ts-db-placement-note">Placement is inherited from Project settings and changes asynchronously for every database and authentication resource in this project.</p>
+            </div>
+            <div class="ts-dialog-actions-between">
+                <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-close-dialog>Cancel</button>
+                <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">
+                    @Icons.Database(16)
+                    <span>Create database</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</dialog>
+
+@foreach (var row in Model.Databases)
+{
+    <dialog class="ts-dialog" id="delete-@row.Id" data-autoopen="@(deleteOpenFor == row.Id ? "" : null)">
+        <div class="ts-dialog-content">
+            <div class="ts-dialog-header">
+                <h2 class="ts-dialog-title">Delete database</h2>
+                <p class="ts-dialog-description">Delete "@row.Name" through the TerraScale Dashboard API.</p>
+            </div>
+            <form class="ts-dialog-form" method="post" action="/api/v1/dashboard/databases/delete">
+                <input type="hidden" name="databaseId" value="@row.Id" />
+                <div class="ts-alert ts-alert-danger" role="alert">
+                    <div class="ts-stack-xs">
+                        <span class="ts-alert-title">This deletes the saved logical database</span>
+                        <span class="ts-alert-body">The request is sent to the TerraScale Dashboard API. The row disappears after the API confirms deletion and the page reloads persisted state.</span>
+                    </div>
+                </div>
+                @if (deleteOpenFor == row.Id)
+                {
+                    <div class="ts-field-error" role="alert">Confirmation did not match the database name.</div>
+                }
+                <div class="ts-field">
+                    <label class="ts-label" for="delete-@row.Id-confirm">Type "@row.Name" to confirm</label>
+                    <input class="ts-input" id="delete-@row.Id-confirm" name="confirm" autocomplete="off" required />
+                </div>
+                <div class="ts-form-actions">
+                    <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-close-dialog>Cancel</button>
+                    <button type="submit" class="ts-btn ts-btn-destructive ts-btn-lg">
+                        @Icons.Trash2(16)
+                        <span>Delete database</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </dialog>
+}
 @ShellHtml.Bottom(shell)
