@@ -3,7 +3,10 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Admin;
 
-public sealed record AdminPricingPageModel : IPageModel
+public sealed record AdminPricingPageModel(
+    string Query,
+    IReadOnlyList<DashboardStore.AdminPlanRow> Plans,
+    string? Notice) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 }
@@ -11,5 +14,15 @@ public sealed record AdminPricingPageModel : IPageModel
 public sealed class AdminPricingPageEndpoint(DashboardStore store)
     : SlicePageEndpoint<AdminPricingSlice, AdminPricingPageModel>(store, "/admin/pricing")
 {
-    protected override AdminPricingPageModel Load() => new() { Shell = ShellFactory.Create(Store, PageRoute) };
+    protected override AdminPricingPageModel Load()
+    {
+        var query = HttpContext.Request.Query["q"].FirstOrDefault() ?? "";
+        var notice = HttpContext.Request.Query["notice"].FirstOrDefault();
+        var plans = AdminPresentation.FilterRows(
+            [.. Store.AdminPlans], query, plan => $"{plan.PlanId} {plan.Name}");
+        return new AdminPricingPageModel(query, plans, notice)
+        {
+            Shell = ShellFactory.Create(Store, PageRoute),
+        };
+    }
 }
