@@ -16,6 +16,14 @@ terrabase; named clients implement customer operations against that contract.
   development operations, and durable exports. Provisioning creation distinguishes
   immediate HTTP 201 records from HTTP 202 accepted operations; use
   `Operations.GetAsync` to observe authoritative progress.
+- `Documents.QueryAsync` runs bounded predicate queries
+  (`POST .../documents/query`) with typed predicates (`equal`, `notEqual`,
+  `exists`, ranges, `contains`, `startsWith`), optional projection paths,
+  paging through `NextAfter`, and the server-reported access plan and work
+  measurement on the result. `Documents.ExplainAsync` sends the same query
+  with `explain: true` and returns the planner's decision — the selected
+  candidate with its access method, freshness, and cost, plus every rejected
+  candidate and its rejection reason — without reading any documents.
 - `TerraScaleSyncV1ViewEngine`: the transport-independent result-view state
   machine (bounded snapshots, atomic deltas, opaque checkpoints, typed resets,
   reversible optimistic presentation). `TerraScaleReactiveHttpClient` is the
@@ -87,3 +95,7 @@ The installed `contracts/` directory is disposable input and is not tracked.
 Tests intentionally fail when their producer fixtures are missing. Local
 contract checks do not qualify immutable publication, real-service behavior,
 or complete four-SDK semantic conformance.
+
+## Tests
+- We MUST use TUnit for tests
+- Prefer using `dotnet run --project {project}` instead of `dotnet test` as using dotnet run for TUnit is faster

@@ -64,14 +64,67 @@ public sealed class TerraScaleDocumentsClient
     public Task<IReadOnlyList<TerraScaleDocumentHistoryEntry>> HistoryAsync(string database, string collection, string documentId, int limit = 100, string? after = null, CancellationToken cancellationToken = default)
         => Gap<IReadOnlyList<TerraScaleDocumentHistoryEntry>>("document_history", cancellationToken);
 
+    public Task<TerraScaleDocumentQueryResult> QueryAsync(string database, string collection, TerraScaleDocumentQuery query, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        var payload = JsonSerializer.SerializeToUtf8Bytes(query.ToWire(), TerraScaleDocumentJson.Options);
+        return client.SendPreparedJsonAsync<TerraScaleDocumentQueryWireResponse, TerraScaleDocumentQueryResult>(
+            HttpMethod.Post,
+            CollectionRoute(database, collection) + "/query",
+            payload,
+            configureRequest: null,
+            (value, _) => new TerraScaleDocumentQueryResult(
+                database.Trim(),
+                collection.Trim(),
+                [.. value.Documents.Select(row => new TerraScaleDocumentQueryRow(row.Id, row.Version, row.Value.Clone()))],
+                value.ReturnedCount,
+                value.HasMore,
+                value.NextAfter,
+                value.SourceCommitSequence,
+                value.Plan,
+                value.Work),
+            cancellationToken,
+            idempotencyKeyOverride: null,
+            allowUnkeyedPutRetry: true);
+    }
+
+    /// <summary>
+    /// Explains how the server would execute one bounded query right now: the
+    /// selected candidate with its access method, freshness, and cost, plus
+    /// every rejected candidate and its rejection reason. No documents are read.
+    /// </summary>
+    public Task<TerraScaleDocumentExplainResult> ExplainAsync(string database, string collection, TerraScaleDocumentQuery query, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        var payload = JsonSerializer.SerializeToUtf8Bytes(query.ToWire(explain: true), TerraScaleDocumentJson.Options);
+        return client.SendPreparedJsonAsync<TerraScaleDocumentExplainWireResponse, TerraScaleDocumentExplainResult>(
+            HttpMethod.Post,
+            CollectionRoute(database, collection) + "/query",
+            payload,
+            configureRequest: null,
+            (value, _) => new TerraScaleDocumentExplainResult(
+                database.Trim(),
+                collection.Trim(),
+                value.Explain),
+            cancellationToken,
+            idempotencyKeyOverride: null,
+            allowUnkeyedPutRetry: true);
+    }
+
     private Task<TerraScaleDocument> WriteAsync<TDocument>(HttpMethod method, string database, string collection, string documentId, TDocument document, TerraScaleDocumentMutationOptions? options, CancellationToken cancellationToken)
     {
         ValidateMutationOptions(options, method);
         var payload = JsonSerializer.SerializeToUtf8Bytes(document, TerraScaleDocumentJson.Options);
         if (payload.Length > MaxDocumentBytes) throw new ArgumentException("The document exceeds the 1 MiB limit.", nameof(document));
-        return client.SendAsync<TerraScaleDocumentWriteResponse, TerraScaleDocument>(method, DocumentRoute(database, collection, documentId).RequestUri, JsonSerializer.SerializeToElement(document, TerraScaleDocumentJson.Options), preferredRegion: null,
-            request => ConfigureMutation(request, options), (value, response) => client.ObserveDocumentWrite(ReadWriteResult(value, response, database, collection, documentId), response, database), cancellationToken,
-            idempotencyKeyOverride: options?.IdempotencyKey?.Trim(), allowUnkeyedPutRetry: false);
+        return client.SendPreparedJsonAsync<TerraScaleDocumentWriteResponse, TerraScaleDocument>(
+            method,
+            DocumentRoute(database, collection, documentId).RequestUri,
+            payload,
+            request => ConfigureMutation(request, options),
+            (value, response) => client.ObserveDocumentWrite(ReadWriteResult(value, response, database, collection, documentId), response, database),
+            cancellationToken,
+            idempotencyKeyOverride: options?.IdempotencyKey?.Trim(),
+            allowUnkeyedPutRetry: false);
     }
 
     private static TerraScaleBoundRoute DocumentRoute(string database, string collection, string documentId)
@@ -121,7 +174,7 @@ public sealed class TerraScaleDocumentsClient
     private static void ValidateReadOptions(TerraScaleDocumentReadOptions? options) { ValidateBounded(options?.Session, "Session", 4096); ValidateBounded(options?.IfNoneMatch, "IfNoneMatch", 4096); if (options?.At is < 0) throw new ArgumentOutOfRangeException(nameof(options), "At must be non-negative."); }
     private static void ValidatePage(int limit, string? after) { if (limit is <= 0 or > MaxPageSize) throw new ArgumentOutOfRangeException(nameof(limit), "Limit must be between 1 and 1000."); ValidateBounded(after, "after", 255); }
     private static void ValidateIdentifier(string value, string name) { ArgumentException.ThrowIfNullOrWhiteSpace(value, name); if (Encoding.UTF8.GetByteCount(value.Trim()) > 255 || value.Any(char.IsControl)) throw new ArgumentException($"{name} must be printable and at most 255 UTF-8 bytes.", name); }
-    private static void ValidateBounded(string? value, string name, int maxBytes) { if (value is not null && (string.IsNullOrWhiteSpace(value) || Encoding.UTF8.GetByteCount(value.Trim()) > maxBytes)) throw new ArgumentException($"{name} must be at most {maxBytes} UTF-8 bytes.", name); }
+    internal static void ValidateBounded(string? value, string name, int maxBytes) { if (value is not null && (string.IsNullOrWhiteSpace(value) || Encoding.UTF8.GetByteCount(value.Trim()) > maxBytes)) throw new ArgumentException($"{name} must be at most {maxBytes} UTF-8 bytes.", name); }
     private static string Escape(string value) => Uri.EscapeDataString(value.Trim());
     private static string Unquote(string value) => value.Length >= 2 && value[0] == '"' && value[^1] == '"' ? value[1..^1] : value;
     private static string StrongEtag(string value)
@@ -133,6 +186,48 @@ public sealed class TerraScaleDocumentsClient
 }
 
 internal sealed record TerraScaleDocumentWriteResponse([property: JsonRequired] string Revision);
+internal sealed record TerraScaleDocumentQueryWireRequest(
+    [property: JsonPropertyName("predicates"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<TerraScaleDocumentPredicateWire>? Predicates,
+    [property: JsonPropertyName("projection"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Projection,
+    [property: JsonPropertyName("limit")] int Limit,
+    [property: JsonPropertyName("after"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? After,
+    [property: JsonPropertyName("explain"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Explain = false);
+internal sealed record TerraScaleDocumentExplainWireResponse(
+    [property: JsonPropertyName("database")] string Database,
+    [property: JsonPropertyName("collection")] string Collection,
+    [property: JsonPropertyName("explain")] TerraScaleDocumentExplainPlan Explain);
+internal sealed record TerraScaleDocumentExplainCandidateWire(
+    [property: JsonPropertyName("indexName")] string? IndexName,
+    [property: JsonPropertyName("accepted")] bool Accepted,
+    [property: JsonPropertyName("access")] string? Access,
+    [property: JsonPropertyName("isCovered")] bool IsCovered,
+    [property: JsonPropertyName("isFresh")] bool IsFresh,
+    [property: JsonPropertyName("indexCommitSequence")] ulong IndexCommitSequence,
+    [property: JsonPropertyName("indexObservedAt")] DateTimeOffset IndexObservedAt,
+    [property: JsonPropertyName("estimatedMatches")] int EstimatedMatches,
+    [property: JsonPropertyName("indexCost")] double IndexCost,
+    [property: JsonPropertyName("sourceScanCost")] double SourceScanCost,
+    [property: JsonPropertyName("totalCost")] double TotalCost,
+    [property: JsonPropertyName("usesSnapshotFallback")] bool UsesSnapshotFallback,
+    [property: JsonPropertyName("reason")] string? Reason);
+internal sealed record TerraScaleDocumentPredicateWire(
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("operator")] string Operator,
+    [property: JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Value);
+internal sealed record TerraScaleDocumentQueryWireResponse(
+    [property: JsonPropertyName("database")] string Database,
+    [property: JsonPropertyName("collection")] string Collection,
+    [property: JsonPropertyName("documents")] IReadOnlyList<TerraScaleDocumentQueryRowWire> Documents,
+    [property: JsonPropertyName("returnedCount")] int ReturnedCount,
+    [property: JsonPropertyName("hasMore")] bool HasMore,
+    [property: JsonPropertyName("nextAfter")] string? NextAfter,
+    [property: JsonPropertyName("sourceCommitSequence")] ulong SourceCommitSequence,
+    [property: JsonPropertyName("plan")] TerraScaleDocumentQueryPlan Plan,
+    [property: JsonPropertyName("work")] TerraScaleDocumentQueryWork Work);
+internal sealed record TerraScaleDocumentQueryRowWire(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("version")] ulong Version,
+    [property: JsonPropertyName("value")] JsonElement Value);
 internal sealed record TerraScaleDocumentsResponse([property: JsonRequired] IReadOnlyList<TerraScaleDocumentWire> Documents);
 internal sealed record TerraScaleDocumentWire([property: JsonRequired] string Id, [property: JsonRequired] ulong Version, [property: JsonRequired] JsonElement Value);
 internal sealed record TerraScaleBatchMutation([property: JsonPropertyName("operations")] IReadOnlyList<TerraScaleDocumentBatchOperationWire> Operations);
@@ -163,6 +258,157 @@ public sealed record TerraScaleDocumentHistoryEntry([property: JsonRequired] str
 public sealed record TerraScaleDocumentReadOptions(bool AllowStale = false, string? IfNoneMatch = null, string? Session = null, long? At = null);
 public sealed record TerraScaleDocumentMutationOptions(string? ExpectedChangeToken = null, string? IdempotencyKey = null, TerraScaleDurability? Durability = null, bool CreateOnly = false);
 public enum TerraScaleDurability { Regional, Global }
+
+/// <summary>A bounded predicate query over one collection.</summary>
+/// <param name="Predicates">At most 32 typed predicates; omitted means every document in the collection.</param>
+/// <param name="Projection">At most 64 distinct field paths returned per matching document; omitted returns whole documents.</param>
+/// <param name="Limit">Maximum documents returned per page, between 1 and 1000.</param>
+/// <param name="After">Opaque continuation from <see cref="TerraScaleDocumentQueryResult.NextAfter"/>.</param>
+public sealed record TerraScaleDocumentQuery(
+    IReadOnlyList<TerraScaleDocumentPredicate>? Predicates = null,
+    IReadOnlyList<string>? Projection = null,
+    int Limit = 100,
+    string? After = null)
+{
+    internal TerraScaleDocumentQueryWireRequest ToWire(bool explain = false)
+    {
+        if (Limit is <= 0 or > 1000) throw new ArgumentOutOfRangeException(nameof(Limit), "Limit must be between 1 and 1000.");
+        TerraScaleDocumentsClient.ValidateBounded(After, "after", 255);
+        TerraScaleDocumentPredicateWire[]? predicates = null;
+        if (Predicates is { Count: > 0 })
+        {
+            if (Predicates.Count > 32) throw new ArgumentException("A query can contain at most 32 predicates.", nameof(Predicates));
+            predicates = new TerraScaleDocumentPredicateWire[Predicates.Count];
+            for (var index = 0; index < Predicates.Count; index++)
+            {
+                predicates[index] = Predicates[index].ToWire();
+            }
+        }
+
+        if (Projection is { Count: > 64 }) throw new ArgumentException("A query can contain at most 64 projection paths.", nameof(Projection));
+        foreach (var path in Projection ?? [])
+        {
+            TerraScaleDocumentsClient.ValidateBounded(path, "projection", 255);
+        }
+
+        return new TerraScaleDocumentQueryWireRequest(predicates, Projection, Limit, After?.Trim(), explain);
+    }
+}
+
+/// <summary>One typed predicate. <see cref="TerraScaleQueryOperator.Exists"/> must omit <paramref name="Value"/>; every other operator requires it.</summary>
+public sealed record TerraScaleDocumentPredicate(string Path, TerraScaleQueryOperator Operator, JsonElement? Value = null)
+{
+    internal TerraScaleDocumentPredicateWire ToWire()
+    {
+        TerraScaleDocumentsClient.ValidateBounded(Path, "path", 255);
+        if (Operator == TerraScaleQueryOperator.Exists && Value is not null)
+            throw new ArgumentException("exists predicates must omit value.", nameof(Value));
+        if (Operator != TerraScaleQueryOperator.Exists && Value is null)
+            throw new ArgumentException("This predicate operator requires value.", nameof(Value));
+        return new TerraScaleDocumentPredicateWire(Path.Trim(), Operator.ToWireName(), Value);
+    }
+}
+
+public enum TerraScaleQueryOperator
+{
+    Equal,
+    NotEqual,
+    Exists,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    Contains,
+    StartsWith,
+}
+
+internal static class TerraScaleQueryOperatorWire
+{
+    public static string ToWireName(this TerraScaleQueryOperator @operator) => @operator switch
+    {
+        TerraScaleQueryOperator.Equal => "equal",
+        TerraScaleQueryOperator.NotEqual => "notEqual",
+        TerraScaleQueryOperator.Exists => "exists",
+        TerraScaleQueryOperator.GreaterThan => "greaterThan",
+        TerraScaleQueryOperator.GreaterThanOrEqual => "greaterThanOrEqual",
+        TerraScaleQueryOperator.LessThan => "lessThan",
+        TerraScaleQueryOperator.LessThanOrEqual => "lessThanOrEqual",
+        TerraScaleQueryOperator.Contains => "contains",
+        TerraScaleQueryOperator.StartsWith => "startsWith",
+        _ => throw new ArgumentOutOfRangeException(nameof(@operator)),
+    };
+}
+
+/// <summary>One matching document row of a <see cref="TerraScaleDocumentQueryResult"/>.</summary>
+public sealed record TerraScaleDocumentQueryRow(string Id, ulong Version, JsonElement Value);
+
+/// <summary>The bounded query result, including the plan and work the server reported for the execution.</summary>
+public sealed record TerraScaleDocumentQueryResult(
+    string DatabaseId,
+    string Collection,
+    IReadOnlyList<TerraScaleDocumentQueryRow> Documents,
+    int ReturnedCount,
+    bool HasMore,
+    string? NextAfter,
+    ulong SourceCommitSequence,
+    TerraScaleDocumentQueryPlan Plan,
+    TerraScaleDocumentQueryWork Work);
+
+/// <summary>The access plan the server selected for the query.</summary>
+public sealed record TerraScaleDocumentQueryPlan(
+    [property: JsonPropertyName("indexName")] string? IndexName,
+    [property: JsonPropertyName("access")] string? Access,
+    [property: JsonPropertyName("isCovered")] bool IsCovered,
+    [property: JsonPropertyName("isFresh")] bool IsFresh,
+    [property: JsonPropertyName("indexCommitSequence")] ulong IndexCommitSequence,
+    [property: JsonPropertyName("indexObservedAt")] DateTimeOffset IndexObservedAt,
+    [property: JsonPropertyName("usedSnapshotFallback")] bool UsedSnapshotFallback,
+    [property: JsonPropertyName("estimatedMatches")] int EstimatedMatches,
+    [property: JsonPropertyName("actualMatches")] int ActualMatches,
+    [property: JsonPropertyName("reason")] string? Reason);
+
+/// <summary>The bounded work the server performed for the query.</summary>
+public sealed record TerraScaleDocumentQueryWork(
+    [property: JsonPropertyName("pagesRead")] ulong? PagesRead,
+    [property: JsonPropertyName("rowsExamined")] ulong RowsExamined,
+    [property: JsonPropertyName("bytesRead")] ulong BytesRead,
+    [property: JsonPropertyName("workUnits")] ulong WorkUnits);
+
+/// <summary>The plan-only result of <see cref="TerraScaleDocumentsClient.ExplainAsync"/>.</summary>
+public sealed record TerraScaleDocumentExplainResult(
+    string DatabaseId,
+    string Collection,
+    TerraScaleDocumentExplainPlan Explain);
+
+/// <summary>The candidate the planner would select, with every considered and rejected candidate.</summary>
+public sealed record TerraScaleDocumentExplainPlan(
+    [property: JsonPropertyName("indexName")] string? IndexName,
+    [property: JsonPropertyName("access")] string? Access,
+    [property: JsonPropertyName("isCovered")] bool IsCovered,
+    [property: JsonPropertyName("isFresh")] bool IsFresh,
+    [property: JsonPropertyName("indexCommitSequence")] ulong IndexCommitSequence,
+    [property: JsonPropertyName("indexObservedAt")] DateTimeOffset IndexObservedAt,
+    [property: JsonPropertyName("usedSnapshotFallback")] bool UsedSnapshotFallback,
+    [property: JsonPropertyName("estimatedMatches")] int EstimatedMatches,
+    [property: JsonPropertyName("reason")] string? Reason,
+    [property: JsonPropertyName("candidates")] IReadOnlyList<TerraScaleDocumentExplainCandidate>? Candidates = null,
+    [property: JsonPropertyName("rejectedCandidates")] IReadOnlyList<TerraScaleDocumentExplainCandidate>? RejectedCandidates = null);
+
+/// <summary>Explain information for one candidate the planner considered.</summary>
+public sealed record TerraScaleDocumentExplainCandidate(
+    [property: JsonPropertyName("indexName")] string? IndexName,
+    [property: JsonPropertyName("accepted")] bool Accepted,
+    [property: JsonPropertyName("access")] string? Access,
+    [property: JsonPropertyName("isCovered")] bool IsCovered,
+    [property: JsonPropertyName("isFresh")] bool IsFresh,
+    [property: JsonPropertyName("indexCommitSequence")] ulong IndexCommitSequence,
+    [property: JsonPropertyName("indexObservedAt")] DateTimeOffset IndexObservedAt,
+    [property: JsonPropertyName("estimatedMatches")] int EstimatedMatches,
+    [property: JsonPropertyName("indexCost")] double IndexCost,
+    [property: JsonPropertyName("sourceScanCost")] double SourceScanCost,
+    [property: JsonPropertyName("totalCost")] double TotalCost,
+    [property: JsonPropertyName("usesSnapshotFallback")] bool UsesSnapshotFallback,
+    [property: JsonPropertyName("reason")] string? Reason);
 
 public sealed record TerraScaleRoutingObservation(string? EdgeRegion, string? ServingRegion, bool IsDegraded, TerraScaleRouteMode? RouteMode = null, string? FailoverFromRegion = null)
 {

@@ -1,5 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- Multi-target so net10.0 consumers can reference this project directly
+         while the package keeps its primary net11.0 target. Toolchains older
+         than .NET 11 cannot build net11.0, so the target list drops it there
+         instead of failing the whole build. Clears the singular TargetFramework
+         inherited from Directory.Build.props so cross-target dispatch runs;
+         per-TFM inner builds set TargetFramework as a global property and are
+         unaffected. -->
+    <TargetFrameworks Condition="$([MSBuild]::VersionGreaterThanOrEquals('$(BundledNETCoreAppTargetFrameworkVersion)', '11.0'))">net10.0;net11.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
+    <TargetFramework />
     <PackageId>TerraScale.EntityFrameworkCore</PackageId>
     <Version>0.1.0</Version>
     <Description>Entity Framework Core integration for TerraScale public database APIs.</Description>

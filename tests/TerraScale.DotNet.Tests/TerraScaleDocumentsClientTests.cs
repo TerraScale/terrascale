@@ -55,6 +55,141 @@ public sealed class TerraScaleDocumentsClientTests
         }
     }
 
+
+    [Test]
+    public async Task QueryAsync_SendsPredicateProjectionAndMapsPlanAndWork()
+    {
+        var response = """
+            {
+              "database": "orders",
+              "collection": "items",
+              "documents": [{ "id": "item-1", "version": 4, "value": { "name": "Ada" } }],
+              "returnedCount": 1,
+              "hasMore": true,
+              "nextAfter": "item-1",
+              "sourceCommitSequence": 12,
+              "plan": {
+                "indexName": "idx_name",
+                "access": "EqualitySeek",
+                "isCovered": true,
+                "isFresh": true,
+                "indexCommitSequence": 12,
+                "indexObservedAt": "2026-09-15T00:00:00Z",
+                "usedSnapshotFallback": false,
+                "estimatedMatches": 1,
+                "actualMatches": 1,
+                "reason": "covering"
+              },
+              "work": { "pagesRead": 1, "rowsExamined": 3, "bytesRead": 512, "workUnits": 5 }
+            }
+            """;
+        using var handler = new RecordingHandler(HttpStatusCode.OK, response);
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var result = await client.Documents.QueryAsync(
+            "orders",
+            "items",
+            new TerraScaleDocumentQuery(
+                Predicates: [new TerraScaleDocumentPredicate("name", TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement("Ada"))],
+                Projection: ["name"],
+                Limit: 10));
+
+        await Assert.That(handler.Request?.RequestUri).IsEqualTo("https://api.example.invalid/api/v1/databases/orders/collections/items/documents/query");
+
+        await Assert.That(handler.Request?.Body).IsEqualTo("{\"predicates\":[{\"path\":\"name\",\"operator\":\"equal\",\"value\":\"Ada\"}],\"projection\":[\"name\"],\"limit\":10}");
+        await Assert.That(result.Documents.Count).IsEqualTo(1);
+        await Assert.That(result.Documents[0].Id).IsEqualTo("item-1");
+        await Assert.That(result.Documents[0].Version).IsEqualTo(4UL);
+        await Assert.That(result.ReturnedCount).IsEqualTo(1);
+        await Assert.That(result.HasMore).IsTrue();
+        await Assert.That(result.NextAfter).IsEqualTo("item-1");
+        await Assert.That(result.SourceCommitSequence).IsEqualTo(12UL);
+        await Assert.That(result.Plan.Access).IsEqualTo("EqualitySeek");
+        await Assert.That(result.Plan.IsCovered).IsTrue();
+        await Assert.That(result.Work.RowsExamined).IsEqualTo(3UL);
+    }
+
+    [Test]
+    public async Task ExplainAsync_SendsTheExplainFlagAndMapsCandidates()
+    {
+        var response = """
+            {
+              "database": "orders",
+              "collection": "items",
+              "explain": {
+                "indexName": "idx_status",
+                "access": "EqualitySeek",
+                "isCovered": false,
+                "isFresh": true,
+                "indexCommitSequence": 12,
+                "indexObservedAt": "2026-09-15T00:00:00Z",
+                "usedSnapshotFallback": false,
+                "estimatedMatches": 1,
+                "reason": "selected",
+                "candidates": [
+                  {
+                    "indexName": "idx_status",
+                    "accepted": true,
+                    "access": "EqualitySeek",
+                    "isCovered": false,
+                    "isFresh": true,
+                    "indexCommitSequence": 12,
+                    "indexObservedAt": "2026-09-15T00:00:00Z",
+                    "estimatedMatches": 1,
+                    "indexCost": 2,
+                    "sourceScanCost": 0,
+                    "totalCost": 2,
+                    "usesSnapshotFallback": false,
+                    "reason": "selected"
+                  }
+                ],
+                "rejectedCandidates": []
+              }
+            }
+            """;
+        using var handler = new RecordingHandler(HttpStatusCode.OK, response);
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var result = await client.Documents.ExplainAsync(
+            "orders",
+            "items",
+            new TerraScaleDocumentQuery(
+                Predicates: [new TerraScaleDocumentPredicate("status", TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement("active"))],
+                Limit: 10));
+
+        await Assert.That(handler.Request?.RequestUri).IsEqualTo("https://api.example.invalid/api/v1/databases/orders/collections/items/documents/query");
+        await Assert.That(handler.Request?.Body).IsEqualTo("{\"predicates\":[{\"path\":\"status\",\"operator\":\"equal\",\"value\":\"active\"}],\"limit\":10,\"explain\":true}");
+        await Assert.That(result.DatabaseId).IsEqualTo("orders");
+        await Assert.That(result.Collection).IsEqualTo("items");
+        await Assert.That(result.Explain.IndexName).IsEqualTo("idx_status");
+        await Assert.That(result.Explain.Access).IsEqualTo("EqualitySeek");
+        await Assert.That(result.Explain.IsFresh).IsTrue();
+        await Assert.That(result.Explain.Candidates).Count().IsEqualTo(1);
+        await Assert.That(result.Explain.Candidates![0].TotalCost).IsEqualTo(2D);
+        await Assert.That(result.Explain.Candidates[0].Accepted).IsTrue();
+        await Assert.That(result.Explain.RejectedCandidates).Count().IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task QueryAsync_RejectsExistsPredicateWithValueAndOverLimitPages()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "{}");
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Documents.QueryAsync(
+            "orders",
+            "items",
+            new TerraScaleDocumentQuery(Predicates: [new TerraScaleDocumentPredicate("name", TerraScaleQueryOperator.Exists, JsonSerializer.SerializeToElement(1))])));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.Documents.QueryAsync(
+            "orders",
+            "items",
+            new TerraScaleDocumentQuery(Limit: 1001)));
+        await Assert.That(handler.Request).IsNull();
+    }
+
     private sealed class DroppedResponseHandler : HttpMessageHandler
     {
         public List<string?> Keys { get; } = [];

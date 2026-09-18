@@ -656,6 +656,39 @@ public sealed class TerraScaleClient
             idempotencyKeyOverride: null,
             allowUnkeyedPutRetry: true);
 
+    /// <summary>
+    /// Sends one request whose JSON body the caller already serialized, so the
+    /// document is encoded exactly once instead of paying a second and third
+    /// serialization through a generic body object.
+    /// </summary>
+    internal async Task<TResult> SendPreparedJsonAsync<TResponse, TResult>(
+        HttpMethod method,
+        string requestUri,
+        byte[] payload,
+        Action<HttpRequestMessage>? configureRequest,
+        Func<TResponse, HttpResponseMessage, TResult> responseFactory,
+        CancellationToken cancellationToken,
+        string? idempotencyKeyOverride,
+        bool allowUnkeyedPutRetry)
+    {
+        ArgumentNullException.ThrowIfNull(responseFactory);
+        using var activity = StartActivity(method, requestUri);
+        using var response = await SendWithRetriesAsync(
+            method,
+            requestUri,
+            () => CreateJsonContent(payload),
+            RequestAuthenticationMode.Authenticated,
+            configureRequest,
+            activity,
+            cancellationToken,
+            idempotencyKeyOverride,
+            allowUnkeyedPutRetry).ConfigureAwait(false);
+
+        SetResponseTags(activity, response);
+        var value = await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
+        return responseFactory(value, response);
+    }
+
 
     internal async Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,

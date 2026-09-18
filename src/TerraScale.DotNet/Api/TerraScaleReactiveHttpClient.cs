@@ -97,6 +97,8 @@ public sealed class TerraScaleReactiveHttpClient
         if (subscription.NeedsResume) return await ReattachAsync(subscription, TerraScaleReactiveResetReason.RegionMoved, cancellationToken).ConfigureAwait(false);
         if (subscription.Attachment.Transport == TerraScaleReactiveTransport.WebSocket)
             return await PollWebSocketAsync(subscription, cancellationToken).ConfigureAwait(false);
+        if (subscription.Attachment.Transport == TerraScaleReactiveTransport.ServerSentEvents)
+            return await PollSseAsync(subscription, cancellationToken).ConfigureAwait(false);
         var request = new HttpRequestMessage(HttpMethod.Get, AppendOffset(subscription.Attachment.Log, subscription.Offset));
         using (request)
         {
@@ -265,10 +267,175 @@ public sealed class TerraScaleReactiveHttpClient
         return builder.Uri;
     }
 
+    private static Uri CreateSseUri(Uri log, string view, ulong generation, ulong offset)
+    {
+        var builder = new UriBuilder(log)
+        {
+            Path = $"/api/v1/reactive/views/{Uri.EscapeDataString(view)}/{generation.ToString(System.Globalization.CultureInfo.InvariantCulture)}/stream",
+            Query = "offset=" + offset.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        };
+        return builder.Uri;
+    }
+
+    /// <summary>
+    /// Reads the next frame from the subscription's server-sent-events
+    /// stream. The stream stays open across polls; a dropped connection
+    /// marks the subscription for reattach, mirroring the WebSocket path.
+    /// </summary>
+    private async Task<TerraScaleReactivePollResult?> PollSseAsync(TerraScaleReactiveSubscription subscription, CancellationToken cancellationToken)
+    {
+        var reader = await subscription.EnsureSseReaderAsync(
+            CreateSseUri(subscription.Attachment.Log, subscription.Attachment.View, subscription.Attachment.Generation, subscription.Offset),
+            subscription.Attachment.Capability,
+            cancellationToken).ConfigureAwait(false);
+        TerraScaleReactiveSseEvent? sseEvent;
+        try
+        {
+            sseEvent = await ReadSseEventAsync(reader, options.PollWindow, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TerraScaleReactiveProtocolException)
+        {
+            subscription.MarkNeedsResume();
+            throw;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            subscription.MarkNeedsResume();
+            return null;
+        }
+        catch (HttpRequestException)
+        {
+            subscription.MarkNeedsResume();
+            return null;
+        }
+
+        if (sseEvent is null)
+        {
+            subscription.MarkNeedsResume();
+            return null;
+        }
+
+        if (string.Equals(sseEvent.Event, "error", StringComparison.Ordinal))
+        {
+            subscription.MarkNeedsResume();
+            return null;
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(sseEvent.Data.ToString());
+        }
+        catch (FormatException)
+        {
+            throw new TerraScaleReactiveProtocolException("The reactive SSE event carried invalid base64 data.");
+        }
+
+        var frame = DecodeFrame(bytes, subscription.Attachment);
+        if (frame is null) return null;
+        return subscription.Accept(frame, etag: null);
+    }
+
+    private static async Task<TerraScaleReactiveSseEvent?> ReadSseEventAsync(System.IO.StreamReader reader, TimeSpan window, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(window);
+        string? eventName = null;
+        var data = new StringBuilder();
+        while (true)
+        {
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+
+            if (line is null)
+            {
+                return null;
+            }
+
+            if (line.Length == 0)
+            {
+                if (data.Length == 0)
+                {
+                    eventName = null;
+                    continue;
+                }
+
+                return new TerraScaleReactiveSseEvent(eventName, data.ToString());
+            }
+
+            if (line[0] == ':')
+            {
+                continue;
+            }
+
+            var separator = line.IndexOf(':');
+            var field = separator < 0 ? line : line[..separator];
+            var value = separator < 0 ? string.Empty : line[(separator + 1)..].TrimStart(' ');
+            if (string.Equals(field, "event", StringComparison.Ordinal))
+            {
+                eventName = value;
+            }
+            else if (string.Equals(field, "data", StringComparison.Ordinal))
+            {
+                data.Append(value);
+            }
+        }
+    }
+
+    private sealed record TerraScaleReactiveSseEvent(string? Event, string Data);
+
     private static byte[] DecodeCheckpoint(string token)
     {
         try { return Convert.FromBase64String(token); }
         catch (FormatException) { throw new TerraScaleReactiveProtocolException("The reactive checkpoint is not valid base64."); }
+    }
+
+    /// <summary>
+    /// Opens the server-sent-events stream for one attached view. The caller
+    /// owns the returned response and reader; the stream stays open until the
+    /// server ends it (reset or failure), so one reader serves many polls.
+    /// </summary>
+    internal async Task<(HttpResponseMessage Response, System.IO.StreamReader Reader)> OpenSseStreamAsync(Uri uri, string capability, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        ValidateText(capability, nameof(capability), MaxStringBytes);
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        try
+        {
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            request.Headers.TryAddWithoutValidation(CapabilityHeaderName, capability);
+            await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(options.RegionHint))
+                request.Headers.TryAddWithoutValidation("X-TerraScale-Region-Hint", options.RegionHint);
+            var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (!response.IsSuccessStatusCode)
+                    throw await TerraScaleReactiveHttpException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+                var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                return (response, new System.IO.StreamReader(stream, Encoding.UTF8));
+            }
+            catch
+            {
+                response.Dispose();
+                throw;
+            }
+        }
+        finally
+        {
+            request.Dispose();
+        }
     }
 
     private static byte[] EncodeSubscribe(string wireView, string statement, ReadOnlySpan<byte> parameters, ReadOnlySpan<byte> checkpoint)
@@ -536,7 +703,9 @@ public sealed class TerraScaleReactiveHttpClient
     private static TerraScaleReactiveTransport ParseTransport(string? value) =>
         string.Equals(value, "http", StringComparison.OrdinalIgnoreCase) ? TerraScaleReactiveTransport.Http :
         string.Equals(value, "websocket", StringComparison.OrdinalIgnoreCase) ? TerraScaleReactiveTransport.WebSocket :
-        throw new TerraScaleReactiveProtocolException("The reactive transport must be 'http' or 'websocket'.");
+        string.Equals(value, "sse", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(value, "server-sent-events", StringComparison.OrdinalIgnoreCase) ? TerraScaleReactiveTransport.ServerSentEvents :
+        throw new TerraScaleReactiveProtocolException("The reactive transport must be 'http', 'websocket', or 'sse'.");
     internal static string StrictDecode(ReadOnlySpan<byte> bytes) => StrictUtf8.GetString(bytes);
     internal static string? BoundText(string? value, int maxBytes)
     {
@@ -565,7 +734,7 @@ public sealed class TerraScaleReactiveHttpClient
 }
 
 /// <summary>Transport selected for reactive delivery.</summary>
-public enum TerraScaleReactiveTransport { Http, WebSocket }
+public enum TerraScaleReactiveTransport { Http, WebSocket, ServerSentEvents }
 /// <summary>Options for the CDN-backed reactive HTTP transport.</summary>
 public sealed record TerraScaleReactiveHttpClientOptions
 {
@@ -687,6 +856,8 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
     private Task? disposal;
     private ClientWebSocket? webSocket;
     private bool webSocketSubscribed;
+    private HttpResponseMessage? sseResponse;
+    private System.IO.StreamReader? sseReader;
     private volatile bool disposed;
     internal TerraScaleReactiveSubscription(TerraScaleReactiveHttpClient client, TerraScaleReactiveAttachment attachment, TerraScaleReactiveSnapshot snapshot) { this.client = client; Attachment = attachment; CurrentSnapshot = snapshot; if (snapshot.Revision != attachment.Offset) throw new TerraScaleReactiveProtocolException("The attach offset does not match the immutable snapshot revision."); Offset = attachment.Offset; SessionState = TerraScaleViewSessionState.Live; }
     public TerraScaleReactiveAttachment Attachment { get; private set; }
@@ -719,17 +890,52 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
 
     internal bool WebSocketSubscribed => webSocketSubscribed;
     internal void MarkWebSocketSubscribed() => webSocketSubscribed = true;
+
+    /// <summary>
+    /// Opens (or returns) the subscription's server-sent-events reader. The
+    /// response stays open across polls; its stream ends only on reset or
+    /// connection loss, which marks the subscription for reattach.
+    /// </summary>
+    internal async Task<System.IO.StreamReader> EnsureSseReaderAsync(Uri uri, string capability, CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (sseReader is { } current)
+            return current;
+
+        DropSse();
+        var opened = await client.OpenSseStreamAsync(uri, capability, cancellationToken).ConfigureAwait(false);
+        if (disposed)
+        {
+            opened.Reader.Dispose();
+            opened.Response.Dispose();
+            throw new ObjectDisposedException(nameof(TerraScaleReactiveSubscription));
+        }
+
+        sseResponse = opened.Response;
+        sseReader = opened.Reader;
+        return sseReader;
+    }
+
     internal void MarkNeedsResume()
     {
         NeedsResume = true;
         SessionState = TerraScaleViewSessionState.Resuming;
         DropWebSocket();
+        DropSse();
     }
     private void DropWebSocket()
     {
         var socket = Interlocked.Exchange(ref webSocket, null);
         webSocketSubscribed = false;
         socket?.Dispose();
+    }
+
+    private void DropSse()
+    {
+        var reader = Interlocked.Exchange(ref sseReader, null);
+        var response = Interlocked.Exchange(ref sseResponse, null);
+        reader?.Dispose();
+        response?.Dispose();
     }
     public async Task<TerraScaleReactivePollResult?> ReadNextAsync(CancellationToken cancellationToken = default)
     {
@@ -877,6 +1083,7 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
         {
             SessionState = TerraScaleViewSessionState.Closed;
             DropWebSocket();
+            DropSse();
             lifetime.Dispose();
         }
         finally
