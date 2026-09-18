@@ -33,17 +33,17 @@
                     <h2 id="agent-approval-request" class="ts-flow-section-heading">Request details</h2>
                     <dl class="ts-flow-details">
                         <div class="ts-flow-detail">
-                            <dt>Agent</dt>
+                            <dt>AGENT</dt>
                             <dd>@request.AgentName</dd>
                         </div>
                         <div class="ts-flow-detail">
-                            <dt>Expires</dt>
+                            <dt>EXPIRES</dt>
                             <dd>@Icons.Clock3(14) @request.ExpiresAt</dd>
                         </div>
                         @if (request.BindingMessage is { } message)
                         {
                             <div class="ts-flow-detail ts-flow-detail-wide">
-                                <dt>Message</dt>
+                                <dt>MESSAGE</dt>
                                 <dd>@message</dd>
                             </div>
                         }

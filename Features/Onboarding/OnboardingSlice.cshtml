@@ -2,26 +2,26 @@
 @{
     var nextFrom = new Dictionary<string, string>
     {
-        ["account-information"] = "organization",
-        ["organization"] = "payment-method",
-        ["payment-method"] = "payment-validation",
-        ["payment-validation"] = "project",
+        ["account-information"] = "ORGANIZATION",
+        ["organization"] = "PAYMENT-METHOD",
+        ["payment-method"] = "PAYMENT-VALIDATION",
+        ["payment-validation"] = "PROJECT",
         ["project"] = "",
     };
     var activeState = Model.Steps.First(s => s.Key == Model.ActiveStep).State;
     var stepDone = activeState == "completed";
     var stateLabels = new Dictionary<string, string>
     {
-        ["pending"] = "pending",
-        ["current"] = "current",
-        ["completed"] = "completed",
-        ["blocked"] = "blocked",
-        ["not-started"] = "not started",
-        ["in-progress"] = "in progress",
-        ["awaiting-validation"] = "awaiting validation",
-        ["unavailable"] = "unavailable",
-        ["expired"] = "expired",
-        ["ready-for-project"] = "ready for project",
+        ["pending"] = "PENDING",
+        ["current"] = "CURRENT",
+        ["completed"] = "COMPLETED",
+        ["blocked"] = "BLOCKED",
+        ["not-started"] = "NOT STARTED",
+        ["in-progress"] = "IN PROGRESS",
+        ["awaiting-validation"] = "AWAITING VALIDATION",
+        ["unavailable"] = "UNAVAILABLE",
+        ["expired"] = "EXPIRED",
+        ["ready-for-project"] = "READY FOR PROJECT",
     };
 }
 @FlowHtml.Document("Activate your TerraScale account | TerraScale")
@@ -30,14 +30,14 @@
         <header class="ts-onboarding-header">
             <span class="ts-onboarding-lock" aria-hidden="true">@Icons.LockKeyhole(22)</span>
             <div>
-                <p class="ts-onboarding-setup">TerraScale setup</p>
+                <p class="ts-onboarding-setup">TERRASCALE SETUP</p>
                 <h1 class="ts-onboarding-title">Activate your TerraScale account</h1>
                 <p class="ts-onboarding-description">Complete all five steps to activate billing, create the owning organization, and release your first project Dashboard. Your confirmed progress is saved after every step.</p>
             </div>
         </header>
         <div class="ts-onboarding-progress">
             <div class="ts-onboarding-progress-meta">
-                <span>Activation step @Model.CurrentStep of @Model.TotalSteps</span>
+                <span>ACTIVATION STEP @Model.CurrentStep OF @Model.TotalSteps</span>
                 <span>@Model.ProgressPercent%</span>
             </div>
             <div class="ts-progress" role="progressbar" aria-label="Account setup progress" aria-valuenow="@Model.ProgressPercent" aria-valuemin="0" aria-valuemax="100">
