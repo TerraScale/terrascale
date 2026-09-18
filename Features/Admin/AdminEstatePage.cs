@@ -28,11 +28,6 @@ public sealed record AdminEstatePageModel(
 public sealed class AdminEstatePageEndpoint(DashboardStore store)
     : SlicePageEndpoint<AdminEstateSlice, AdminEstatePageModel>(store, "/admin/estate")
 {
-
-    private static IReadOnlyList<string> RegionsOf(DashboardDatabase d)
-    {
-        var regions = new List<string> { d.PrimaryRegion };
-        if (d.BackupRegion is { } backup)
     protected override AdminEstatePageModel Load()
     {
         var query = HttpContext.Request.Query["q"].FirstOrDefault() ?? "";
@@ -71,7 +66,6 @@ public sealed class AdminEstatePageEndpoint(DashboardStore store)
         return regions;
     }
 
-    protected override AdminEstatePageModel Load() => new() { Shell = ShellFactory.Create(Store, PageRoute) };
     private static string CountryOf(string name) =>
         name.Contains(", ") ? name.Split(", ", 2)[1] : "";
 }

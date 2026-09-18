@@ -11,6 +11,4 @@ public sealed partial class DashboardStore
 
     public void RenameProject(string projectId, string name) =>
         Projects = [.. Projects.Select(p => p.Id == projectId ? p with { Name = name.Trim() } : p)];
-
-    public void UpdateMemberRole(string userId, string role) { }  // demo: roles render statically
 }

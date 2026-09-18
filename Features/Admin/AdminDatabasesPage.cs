@@ -21,11 +21,6 @@ public sealed record AdminDatabasesPageModel(
 public sealed class AdminDatabasesPageEndpoint(DashboardStore store)
     : SlicePageEndpoint<AdminDatabasesSlice, AdminDatabasesPageModel>(store, "/admin/databases")
 {
-
-    private static IReadOnlyList<string> RegionsOf(DashboardDatabase d)
-    {
-        var regions = new List<string> { d.PrimaryRegion };
-        if (d.BackupRegion is { } backup)
     protected override AdminDatabasesPageModel Load()
     {
         var query = HttpContext.Request.Query["q"].FirstOrDefault() ?? "";
@@ -51,6 +46,4 @@ public sealed class AdminDatabasesPageEndpoint(DashboardStore store)
 
         return regions;
     }
-
-    protected override AdminDatabasesPageModel Load() => new() { Shell = ShellFactory.Create(Store, PageRoute) };
 }
