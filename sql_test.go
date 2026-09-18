@@ -50,7 +50,8 @@ func BenchmarkQueryBuilderBuild(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if statement == "" || len(params) != 4 {
+		// Build binds limit and offset after the where parameters.
+		if statement == "" || len(params) != 5 {
 			b.Fatalf("build = %q %+v", statement, params)
 		}
 	}
