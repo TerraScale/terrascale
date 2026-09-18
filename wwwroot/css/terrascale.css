@@ -4128,10 +4128,51 @@ details.ts-menu[open] > summary.ts-account-trigger {
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-control);
   gap: var(--ts-lg);
-  align-items: center;
+  align-items: flex-start;
   background-color: var(--ts-surface-muted);
   display: flex;
   justify-content: space-between;
+}
+
+.ts-setting-copy {
+  gap: var(--ts-md);
+  align-items: flex-start;
+  display: flex;
+  min-width: 0;
+}
+
+.ts-setting-copy-text {
+  gap: var(--ts-xs);
+  display: grid;
+  min-width: 0;
+}
+
+.ts-setting-label {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+}
+
+.ts-setting-description {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 20px;
+  max-width: 42rem;
+}
+
+.ts-setting-updated {
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-email-heading {
+  gap: var(--ts-sm);
+  align-items: center;
+  color: var(--ts-ink);
+  display: flex;
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+  margin-bottom: var(--ts-md);
 }
 
 .ts-setting-icon {

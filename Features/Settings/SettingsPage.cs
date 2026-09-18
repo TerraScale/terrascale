@@ -15,6 +15,7 @@ public sealed record SettingsPageModel(
     ImmutableArray<SettingsCredentialView> Credentials,
     ImmutableArray<DashboardDatabase> Databases,
     ImmutableArray<WebhookEndpoint> Webhooks,
+    string LoadedAtText,
     string Tab) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
@@ -33,6 +34,7 @@ public sealed record SettingsPageModel(
             Credentials: store.SettingsCredentials,
             Databases: store.ProjectDatabases(project.Id),
             Webhooks: store.Webhooks,
+            LoadedAtText: DashboardStore.FormatUtcDateTime(DateTimeOffset.UtcNow.ToString("O")),
             Tab: tab)
         {
             Shell = ShellFactory.Create(store, href),

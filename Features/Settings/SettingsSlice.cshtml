@@ -16,13 +16,13 @@
     var m2mApps = Model.Credentials.Where(c => c.Type == "M2M application").Count();
     var summary = new (string Label, string Value)[]
     {
-        (t("PROJECT"), Model.ProjectId),
+(t("PROJECT"), Model.ProjectId),
         (t("AUTH PROVIDERS"), $"{activeProviders}/{Model.Providers.Length}"),
         (t("API KEYS"), apiKeys.ToString()),
         (t("M2M APPLICATIONS"), m2mApps.ToString()),
         (t("DATABASES"), Model.Databases.Length.ToString()),
         (t("ACTIVE CREDENTIALS"), activeCredentials.ToString()),
-        (t("LOADED"), "Sep 18, 2026, 5:35 PM"),
+        (t("LOADED"), Model.LoadedAtText),
     };
 }
 @ShellHtml.Top(shell)
@@ -33,6 +33,7 @@
                 <h2 class="ts-page-title-24">@t("Settings")</h2>
                 <p class="ts-page-description">@t("Project identity providers, API keys, and machine clients loaded from public TerraScale REST endpoints.")</p>
             </div>
+            <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/settings?tab=@Model.Tab">@Icons.RefreshCw(16) @t("Reload")</a>
         </div>
     </section>
 
@@ -64,17 +65,31 @@
         <div class="ts-stack-20">
             <section class="ts-panel">
                 <div class="ts-panel-header">
-                    <h3 class="ts-panel-title">TerraScale Authentication</h3>
-                    <p class="ts-panel-subtitle">Product-wide authentication for this project</p>
+                    <h3 class="ts-panel-title">@t("Authentication product")</h3>
+                    <p class="ts-panel-subtitle">@t("Control project-wide access to TerraScale Authentication")</p>
+                    <span class="ts-badge @(Model.AuthenticationEnabled ? "ts-badge-success" : "ts-badge-warning")">@(Model.AuthenticationEnabled ? t("On") : t("Off"))</span>
                 </div>
                 <div class="ts-stack-16 ts-padded">
+                    @if (!Model.AuthenticationEnabled)
+                    {
+                        <div class="ts-alert ts-alert-danger">
+                            <span class="ts-alert-title">@t("Authentication is disabled")</span>
+                            <span class="ts-alert-body">@t("Project sign-in and authentication integrations are unavailable until an owner turns the product back on.")</span>
+                        </div>
+                    }
                     <form method="post" action="/api/v1/dashboard/settings/authentication" class="ts-setting-row">
-                        <span class="ts-setting-icon">@(Model.AuthenticationEnabled ? Icons.ShieldCheck(16) : Icons.ShieldAlert(16))</span>
-                        <span class="ts-min-width">
-                            <span class="ts-text-strong">@(Model.AuthenticationEnabled ? "Enabled" : "Disabled")</span>
-                            <span class="ts-meta">Updated @DashboardStore.FormatUtcDateTime(Model.SecuritySettingsUpdatedAt)</span>
+<span class="ts-setting-copy">
+                            <span class="ts-setting-icon" aria-hidden="true">@(Model.AuthenticationEnabled ? Icons.ShieldCheck(17) : Icons.ShieldAlert(17))</span>
+                            <span class="ts-setting-copy-text">
+                                <span class="ts-setting-label">@t("Enable Authentication")</span>
+                                <span class="ts-setting-description">@t("When off, project authentication requests are rejected. Disabling requires an explicit warning confirmation because applications and active users may be interrupted.")</span>
+                                @if (Model.SecuritySettingsUpdatedAt.Length > 0)
+                                {
+                                    <span class="ts-setting-updated">@t("Last changed") @DashboardStore.FormatUtcDateTime(Model.SecuritySettingsUpdatedAt)</span>
+                                }
+                            </span>
                         </span>
-                        <input class="ts-switch" type="checkbox" name="enabled" value="true" @(Model.AuthenticationEnabled ? "checked" : null) onchange="this.form.submit()" />
+                        <input class="ts-switch" type="checkbox" name="enabled" value="true" aria-label='@t("Enable Authentication")' @(Model.AuthenticationEnabled ? "checked" : null) onchange="this.form.submit()" />
                     </form>
                     @if (!Model.CanManageByok)
                     {

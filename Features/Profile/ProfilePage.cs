@@ -19,6 +19,7 @@ public sealed record ProfilePageModel(
     ImmutableArray<Session> Sessions,
     ImmutableArray<string> MfaFactors,
     ImmutableArray<ProfilePasskeyView> Passkeys,
+    string LoadedAtText,
     string Tab) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
@@ -41,6 +42,7 @@ public sealed record ProfilePageModel(
             Sessions: store.Sessions,
             MfaFactors: store.MfaFactors,
             Passkeys: store.Passkeys,
+            LoadedAtText: DashboardStore.FormatUtcDateTime(DateTimeOffset.UtcNow.ToString("O")),
             Tab: tab)
         {
             Shell = ShellFactory.Create(store, href),
