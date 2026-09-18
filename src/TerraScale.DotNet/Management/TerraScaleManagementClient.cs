@@ -48,21 +48,3 @@ internal static class TerraScaleManagementPaths
     public static string Database(string database) => "/api/v1/databases/" + Escape(database);
     public static string Collection(string database, string collection) => Database(database) + "/collections/" + Escape(collection);
 }
-
-/// <summary>Raised when an operation has no published TerraBase contract.</summary>
-public sealed class TerraScaleContractGapException : NotSupportedException
-{
-    public TerraScaleContractGapException(string operation)
-        : base($"TerraScale operation '{operation}' is not present in the pinned public contract.")
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(operation);
-        Operation = operation.Trim();
-    }
-
-    /// <summary>Missing operation identity.</summary>
-    public string Operation { get; }
-    /// <summary>Stable machine-readable code.</summary>
-    public string Code => "contract_gap";
-    /// <summary>Contract artifact checked by this SDK.</summary>
-    public string Contract => "terrabase/openapi.json";
-}

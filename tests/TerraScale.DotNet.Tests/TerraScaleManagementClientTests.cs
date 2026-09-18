@@ -11,6 +11,7 @@ public sealed class TerraScaleManagementClientTests
     private static readonly string[] Operations =
     [
         "insert_unique", "compare_and_swap", "consume_one", "consume_matching", "count", "delete_many", "delete_one", "increment_one", "update_many", "update_one", "index", "find_page", "find_one", "begin_transaction", "commit_transaction", "rollback_transaction",
+        "authorization_lease", "batch_documents", "document_history", "regions",
         "database_usage", "get_schema", "put_schema", "rollback_schema", "list_indexes", "create_index", "delete_index", "index_recommendations",
         "list_webhooks", "create_webhook", "delete_webhook", "list_deliveries", "replay_webhook", "rotate_secret",
         "list_exports", "create_export", "get_export", "resume_export", "download_export", "cancel_export",
@@ -154,6 +155,10 @@ public sealed class TerraScaleManagementClientTests
             case "begin_transaction": return await client.AuthPersistence.BeginTransactionAsync("sample", "transaction-key", "auth-key");
             case "commit_transaction": return await client.AuthPersistence.CommitTransactionAsync("sample", "transaction-key", "auth-key");
             case "rollback_transaction": return await client.AuthPersistence.RollbackTransactionAsync("sample", "transaction-key", "auth-key");
+            case "authorization_lease": return await client.Authorization.GetLeaseAsync("sample");
+            case "batch_documents": return await client.Documents.BatchAsync("sample", "sample", [TerraScaleDocumentBatchOperation.Upsert("sample", new { ok = true })], new TerraScaleDocumentMutationOptions(IdempotencyKey: "sample", Durability: TerraScaleDurability.Regional));
+            case "document_history": return await client.Documents.HistoryAsync("sample", "sample", "sample", 1, "sample");
+            case "regions": return await client.Regions.GetAsync();
             case "database_usage": return await management.Usage.GetAsync("sample");
             case "get_schema": return await management.Schema.GetAsync("sample", "sample");
             case "put_schema": return await management.Schema.PutAsync("sample", "sample", Request(operation, TerraScaleContractJsonContext.Default.CollectionSchema), "schema-key", 1);

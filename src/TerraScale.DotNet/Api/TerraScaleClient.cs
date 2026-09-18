@@ -17,6 +17,7 @@ namespace TerraScale.DotNet;
 public sealed class TerraScaleClient
 {
     private const int MaxOperationBytes = 1_048_576;
+    private const int MaxSessionConsistencyScopes = 4096;
     private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(30);
 
@@ -30,6 +31,7 @@ public sealed class TerraScaleClient
     private readonly JsonSerializerOptions jsonOptions;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> sessionConsistencyTokens =
         new(StringComparer.OrdinalIgnoreCase);
+    private volatile AuthenticationHeaderValue? cachedApiKeyHeader;
     private Uri? pinnedRestBaseAddress;
 
     /// <summary>
@@ -58,6 +60,7 @@ public sealed class TerraScaleClient
         Databases = new TerraScaleDatabasesClient(this);
         Operations = new TerraScaleOperationsClient(this);
         AuthPersistence = new TerraScaleAuthPersistenceClient(this);
+        Authorization = new TerraScaleAuthorizationClient(this);
         Collections = new TerraScaleCollectionsClient(this);
         Documents = new TerraScaleDocumentsClient(this);
         Regions = new TerraScaleRegionsClient(this);
@@ -93,6 +96,9 @@ public sealed class TerraScaleClient
 
     /// <summary>Named public authentication persistence operations.</summary>
     public TerraScaleAuthPersistenceClient AuthPersistence { get; }
+
+    /// <summary>Anonymous authorization lease discovery.</summary>
+    public TerraScaleAuthorizationClient Authorization { get; }
 
     /// <summary>
     /// Database collection operations.
@@ -296,7 +302,9 @@ public sealed class TerraScaleClient
             route,
             () =>
             {
-                var content = new ByteArrayContent(payload.ToArray());
+                // ReadOnlyMemoryContent hands the caller's payload to the transport
+                // without the full multi-megabyte copy a ByteArrayContent would make.
+                var content = new ReadOnlyMemoryContent(payload);
                 content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
                 return content;
             },
@@ -1236,7 +1244,8 @@ public sealed class TerraScaleClient
     {
         if (!string.IsNullOrWhiteSpace(options.ApiKey))
         {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ApiKey.Trim());
+            // The static-key header is immutable per client; allocate it once.
+            request.Headers.Authorization ??= cachedApiKeyHeader ??= new AuthenticationHeaderValue("Bearer", options.ApiKey.Trim());
             return;
         }
 
@@ -1273,13 +1282,13 @@ public sealed class TerraScaleClient
         string? documentId,
         TerraScaleDocumentReadOptions? readOptions)
     {
-        if (readOptions?.AllowStale == true)
+        if (!string.IsNullOrWhiteSpace(readOptions?.Session))
         {
-            request.Headers.TryAddWithoutValidation("X-TerraScale-Allow-Stale", "true");
+            request.Headers.TryAddWithoutValidation("X-TerraScale-Session", readOptions.Session.Trim());
+            return;
         }
 
-        if (documentId is null || options.SessionConsistency != TerraScaleSessionConsistency.Automatic ||
-            !string.IsNullOrWhiteSpace(readOptions?.Session))
+        if (documentId is null || options.SessionConsistency != TerraScaleSessionConsistency.Automatic)
         {
             return;
         }
@@ -1290,8 +1299,6 @@ public sealed class TerraScaleClient
             request.Headers.TryAddWithoutValidation("X-TerraScale-Session", token);
         }
     }
-
-    internal bool AutomaticSessionConsistencyEnabled => options.SessionConsistency == TerraScaleSessionConsistency.Automatic;
 
     internal TerraScaleDocument ObserveDocumentWrite(
         TerraScaleDocument document,
@@ -1306,7 +1313,11 @@ public sealed class TerraScaleClient
             document.SessionConsistencyToken,
             requestDatabase,
             document.Id);
-        return document with { Routing = TerraScaleRoutingObservation.From(response) };
+        var routing = TerraScaleRoutingObservation.From(response);
+        // The with-expression clones the record even when nothing changed;
+        // skip it when the response carried no routing headers and the
+        // document already holds no observation.
+        return routing is null && document.Routing is null ? document : document with { Routing = routing };
     }
 
     internal TerraScaleDocument ObserveDocumentRead(
@@ -1325,41 +1336,6 @@ public sealed class TerraScaleClient
         HttpResponseMessage response) =>
         page with { Routing = TerraScaleRoutingObservation.From(response) };
 
-    internal TerraScaleDocumentBatch ObserveDocumentBatch(
-        TerraScaleDocumentBatch batch,
-        HttpResponseMessage response,
-        string requestDatabase)
-    {
-        foreach (var result in batch.Results)
-        {
-            if (result.Document is { } document)
-            {
-                RememberSessionConsistencyToken(
-                    document.SessionConsistencyToken,
-                    batch.DatabaseId,
-                    document.Id);
-                RememberSessionConsistencyToken(
-                    document.SessionConsistencyToken,
-                    requestDatabase,
-                    document.Id);
-            }
-
-            if (result.Deleted is { } deleted)
-            {
-                RememberSessionConsistencyToken(
-                    deleted.SessionConsistencyToken,
-                    batch.DatabaseId,
-                    deleted.Id);
-                RememberSessionConsistencyToken(
-                    deleted.SessionConsistencyToken,
-                    requestDatabase,
-                    deleted.Id);
-            }
-        }
-
-        return batch with { Routing = TerraScaleRoutingObservation.From(response) };
-    }
-
     private void RememberSessionConsistencyToken(
         string? token,
         string database,
@@ -1369,6 +1345,14 @@ public sealed class TerraScaleClient
             options.SessionConsistency == TerraScaleSessionConsistency.Automatic &&
             token is { Length: > 0 and <= 4096 })
         {
+            // ponytail: tokens are best-effort hints, so bound the cache by
+            // dropping the whole epoch instead of an LRU; per-scope eviction
+            // only if stale-token misses ever matter.
+            if (sessionConsistencyTokens.Count >= MaxSessionConsistencyScopes)
+            {
+                sessionConsistencyTokens.Clear();
+            }
+
             sessionConsistencyTokens[DocumentConsistencyScope(database, documentId)] = token;
         }
     }

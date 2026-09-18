@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraScale.DotNet.Generated;
 
 #pragma warning disable CS1591
 
@@ -21,15 +22,11 @@ public sealed class TerraScaleDocumentsClient
 
     public Task<TerraScaleDocument> GetAsync(string database, string collection, string documentId, TerraScaleDocumentReadOptions? options, CancellationToken cancellationToken = default)
     {
-        var route = DocumentRoute(database, collection, documentId).RequestUri;
         ValidateReadOptions(options);
-        if (options?.At is not null) return Gap<TerraScaleDocument>("document_read_point_in_time", cancellationToken);
-        if (options?.AllowStale == true || !string.IsNullOrWhiteSpace(options?.Session))
-            return Gap<TerraScaleDocument>("document_read_consistency", cancellationToken);
-        if (client.AutomaticSessionConsistencyEnabled)
-            return Gap<TerraScaleDocument>("document_read_consistency", cancellationToken);
+        var route = DocumentRoute(database, collection, documentId).RequestUri;
+        if (options?.At is { } at) route += "?at=" + at.ToString(CultureInfo.InvariantCulture);
         return client.SendAsync<JsonElement, TerraScaleDocument>(HttpMethod.Get, route, body: null, preferredRegion: null,
-            configureRequest: request => ConfigureRead(request, options),
+            configureRequest: request => ConfigureRead(request, options, database, documentId),
             (value, response) => client.ObserveDocumentRead(ReadDocument(value, response, database, collection, documentId), response), cancellationToken);
     }
 
@@ -41,8 +38,28 @@ public sealed class TerraScaleDocumentsClient
     public Task<TerraScaleDocument> PatchAsync<TPatch>(string database, string collection, string documentId, TPatch patch, TerraScaleDocumentMutationOptions? options, CancellationToken cancellationToken = default) => WriteAsync(HttpMethod.Patch, database, collection, documentId, patch, options, cancellationToken);
 
     public Task<TerraScaleDocumentBatch> BatchAsync(string database, string collection, IReadOnlyList<TerraScaleDocumentBatchOperation> operations, CancellationToken cancellationToken = default) => BatchAsync(database, collection, operations, options: null, cancellationToken);
+
+    /// <summary>
+    /// Commits one atomic batch of document mutations in a single engine
+    /// transaction: every operation commits together or the typed refusal
+    /// names the offending operation and nothing lands.
+    /// </summary>
     public Task<TerraScaleDocumentBatch> BatchAsync(string database, string collection, IReadOnlyList<TerraScaleDocumentBatchOperation> operations, TerraScaleDocumentMutationOptions? options, CancellationToken cancellationToken = default)
-        => Gap<TerraScaleDocumentBatch>("batch_documents", cancellationToken);
+    {
+        ArgumentNullException.ThrowIfNull(operations);
+        if (operations.Count is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(operations), "A batch must contain between 1 and 1000 operations.");
+        ValidateBatchOptions(options);
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new TerraScaleBatchMutation([.. operations.Select(operation => operation.ToWire())]), TerraScaleDocumentJson.Options);
+        return client.SendPreparedJsonAsync<TerraScaleBatchResponse, TerraScaleDocumentBatch>(
+            HttpMethod.Post,
+            CollectionRoute(database, collection) + "/batch",
+            payload,
+            request => ConfigureBatchMutation(request, options),
+            (value, response) => new TerraScaleDocumentBatch(database.Trim(), collection.Trim(), value.Committed, value.Count, TerraScaleRoutingObservation.From(response)),
+            cancellationToken,
+            idempotencyKeyOverride: options?.IdempotencyKey?.Trim(),
+            allowUnkeyedPutRetry: false);
+    }
 
     public Task<TerraScaleDocumentPage> ListAsync(string database, string collection, int limit = 100, string? after = null, CancellationToken cancellationToken = default)
     {
@@ -61,8 +78,18 @@ public sealed class TerraScaleDocumentsClient
         else await client.SendNoContentAsync(HttpMethod.Delete, DocumentRoute(database, collection, documentId), request => ConfigureMutation(request, options), options.IdempotencyKey?.Trim(), cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<IReadOnlyList<TerraScaleDocumentHistoryEntry>> HistoryAsync(string database, string collection, string documentId, int limit = 100, string? after = null, CancellationToken cancellationToken = default)
-        => Gap<IReadOnlyList<TerraScaleDocumentHistoryEntry>>("document_history", cancellationToken);
+    /// <summary>
+    /// Returns one document's retained revision history, newest first. History
+    /// is journal retention; conflict explanations ride the replication lane.
+    /// </summary>
+    public async Task<IReadOnlyList<TerraScaleDocumentHistoryEntry>> HistoryAsync(string database, string collection, string documentId, int limit = 100, string? after = null, CancellationToken cancellationToken = default)
+    {
+        ValidatePage(limit, after);
+        var route = DocumentRoute(database, collection, documentId).RequestUri + "/history?limit=" + limit.ToString(CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(after)) route += "&after=" + Uri.EscapeDataString(after.Trim());
+        var response = await client.SendJsonAsync(HttpMethod.Get, route, TerraScaleContractJsonContext.Default.HistoryResponse, cancellationToken).ConfigureAwait(false);
+        return [.. response.History.Select(entry => new TerraScaleDocumentHistoryEntry(entry.Revision, entry.Deleted, entry.CommitUlid, entry.Hlc, entry.Origin, entry.Policy, entry.Explanation))];
+    }
 
     public Task<TerraScaleDocumentQueryResult> QueryAsync(string database, string collection, TerraScaleDocumentQuery query, CancellationToken cancellationToken = default)
     {
@@ -144,33 +171,54 @@ public sealed class TerraScaleDocumentsClient
     {
         if (options?.CreateOnly == true) request.Headers.TryAddWithoutValidation("If-None-Match", "*");
         if (!string.IsNullOrWhiteSpace(options?.ExpectedChangeToken)) request.Headers.TryAddWithoutValidation("If-Match", StrongEtag(options.ExpectedChangeToken));
+        if (!string.IsNullOrWhiteSpace(options?.Session)) request.Headers.TryAddWithoutValidation("X-TerraScale-Session", options.Session.Trim());
         if (options?.Durability is { } durability) request.Headers.TryAddWithoutValidation("X-TerraScale-Durability", durability switch { TerraScaleDurability.Regional => "regional", TerraScaleDurability.Global => "global", _ => throw new ArgumentOutOfRangeException(nameof(options)) });
     }
 
-    private static void ConfigureRead(HttpRequestMessage request, TerraScaleDocumentReadOptions? options)
+    private static void ConfigureBatchMutation(HttpRequestMessage request, TerraScaleDocumentMutationOptions? options)
+    {
+        if (!string.IsNullOrWhiteSpace(options?.Session)) request.Headers.TryAddWithoutValidation("X-TerraScale-Session", options.Session.Trim());
+        if (options?.Durability is { } durability) request.Headers.TryAddWithoutValidation("X-TerraScale-Durability", durability switch { TerraScaleDurability.Regional => "regional", TerraScaleDurability.Global => "global", _ => throw new ArgumentOutOfRangeException(nameof(options)) });
+    }
+
+    private static void ValidateBatchOptions(TerraScaleDocumentMutationOptions? options)
+    {
+        if (options is null) return;
+        if (options.CreateOnly || options.ExpectedChangeToken is not null)
+            throw new ArgumentException("Batch operations support only IdempotencyKey, Session, and Durability.", nameof(options));
+        ValidateBounded(options.IdempotencyKey, "IdempotencyKey", 128);
+        ValidateBounded(options.Session, "Session", 4096);
+        if (options.Durability is not (null or TerraScaleDurability.Regional or TerraScaleDurability.Global)) throw new ArgumentOutOfRangeException(nameof(options));
+    }
+
+    private void ConfigureRead(HttpRequestMessage request, TerraScaleDocumentReadOptions? options, string database, string documentId)
     {
         if (!string.IsNullOrWhiteSpace(options?.IfNoneMatch))
         {
             request.Headers.TryAddWithoutValidation("If-None-Match", options.IfNoneMatch.Trim());
         }
+
+        client.ApplyDocumentReadHeaders(request, database, documentId, options);
     }
 
     private static TerraScaleDocument ReadDocument(JsonElement value, HttpResponseMessage response, string database, string collection, string documentId)
     {
         var etag = RequiredEtag(response);
-        return new TerraScaleDocument(database.Trim(), collection.Trim(), documentId.Trim(), value.Clone(), null, Unquote(etag));
+        return new TerraScaleDocument(database.Trim(), collection.Trim(), documentId.Trim(), value.Clone(), null, Unquote(etag), SessionToken(response));
     }
 
     private static TerraScaleDocument ReadWriteResult(TerraScaleDocumentWriteResponse value, HttpResponseMessage response, string database, string collection, string documentId)
     {
         var etag = RequiredEtag(response);
         if (!string.Equals(value.Revision, Unquote(etag), StringComparison.Ordinal)) throw new JsonException("TerraScale document revision must match the strong ETag.");
-        return new TerraScaleDocument(database.Trim(), collection.Trim(), documentId.Trim(), default, null, value.Revision);
+        return new TerraScaleDocument(database.Trim(), collection.Trim(), documentId.Trim(), default, null, value.Revision, SessionToken(response));
     }
+
+    private static string? SessionToken(HttpResponseMessage response) => response.Headers.TryGetValues("X-TerraScale-Session", out var values) ? values.FirstOrDefault()?.Trim() : null;
 
     private static TerraScaleDocumentPage ToPage(TerraScaleDocumentsResponse value, HttpResponseMessage response, string database, string collection) => new(database.Trim(), collection.Trim(), 0, value.Documents.Count, value.Documents.Count, value.Documents.Select(item => new TerraScaleDocument(database.Trim(), collection.Trim(), item.Id, item.Value.Clone(), null, item.Version.ToString(CultureInfo.InvariantCulture))).ToArray(), TerraScaleRoutingObservation.From(response));
     private static string RequiredEtag(HttpResponseMessage response) { var tag = response.Headers.ETag?.Tag; if (string.IsNullOrWhiteSpace(tag) || response.Headers.ETag!.IsWeak) throw new JsonException("TerraScale document responses require a strong ETag header."); return tag; }
-    private static void ValidateMutationOptions(TerraScaleDocumentMutationOptions? options, HttpMethod? method = null) { if (options is null) return; if (options.CreateOnly && (method != HttpMethod.Put || options.ExpectedChangeToken is not null)) throw new ArgumentException("CreateOnly is supported only for PUT and cannot be combined with ExpectedChangeToken.", nameof(options)); ValidateBounded(options.ExpectedChangeToken, "ExpectedChangeToken", 4096); ValidateBounded(options.IdempotencyKey, "IdempotencyKey", 128); if (options.Durability is not (null or TerraScaleDurability.Regional or TerraScaleDurability.Global)) throw new ArgumentOutOfRangeException(nameof(options)); }
+    private static void ValidateMutationOptions(TerraScaleDocumentMutationOptions? options, HttpMethod? method = null) { if (options is null) return; if (options.CreateOnly && (method != HttpMethod.Put || options.ExpectedChangeToken is not null)) throw new ArgumentException("CreateOnly is supported only for PUT and cannot be combined with ExpectedChangeToken.", nameof(options)); ValidateBounded(options.ExpectedChangeToken, "ExpectedChangeToken", 4096); ValidateBounded(options.IdempotencyKey, "IdempotencyKey", 128); ValidateBounded(options.Session, "Session", 4096); if (options.Durability is not (null or TerraScaleDurability.Regional or TerraScaleDurability.Global)) throw new ArgumentOutOfRangeException(nameof(options)); }
     private static void ValidateReadOptions(TerraScaleDocumentReadOptions? options) { ValidateBounded(options?.Session, "Session", 4096); ValidateBounded(options?.IfNoneMatch, "IfNoneMatch", 4096); if (options?.At is < 0) throw new ArgumentOutOfRangeException(nameof(options), "At must be non-negative."); }
     private static void ValidatePage(int limit, string? after) { if (limit is <= 0 or > MaxPageSize) throw new ArgumentOutOfRangeException(nameof(limit), "Limit must be between 1 and 1000."); ValidateBounded(after, "after", 255); }
     private static void ValidateIdentifier(string value, string name) { ArgumentException.ThrowIfNullOrWhiteSpace(value, name); if (Encoding.UTF8.GetByteCount(value.Trim()) > 255 || value.Any(char.IsControl)) throw new ArgumentException($"{name} must be printable and at most 255 UTF-8 bytes.", name); }
@@ -182,7 +230,6 @@ public sealed class TerraScaleDocumentsClient
         var token = value.Trim();
         return token == "*" || token.Length >= 2 && token[0] == '"' && token[^1] == '"' ? token : $"\"{token}\"";
     }
-    private static Task<T> Gap<T>(string operation, CancellationToken cancellationToken) => cancellationToken.IsCancellationRequested ? Task.FromCanceled<T>(cancellationToken) : Task.FromException<T>(new TerraScaleContractGapException(operation));
 }
 
 internal sealed record TerraScaleDocumentWriteResponse([property: JsonRequired] string Revision);
@@ -232,7 +279,6 @@ internal sealed record TerraScaleDocumentsResponse([property: JsonRequired] IRea
 internal sealed record TerraScaleDocumentWire([property: JsonRequired] string Id, [property: JsonRequired] ulong Version, [property: JsonRequired] JsonElement Value);
 internal sealed record TerraScaleBatchMutation([property: JsonPropertyName("operations")] IReadOnlyList<TerraScaleDocumentBatchOperationWire> Operations);
 internal sealed record TerraScaleBatchResponse([property: JsonRequired] long Committed, [property: JsonRequired] int Count);
-internal sealed record TerraScaleHistoryResponse([property: JsonRequired] IReadOnlyList<TerraScaleDocumentHistoryEntry> History);
 internal sealed record TerraScaleDocumentBatchOperationWire([property: JsonPropertyName("op")] string Operation, [property: JsonPropertyName("id")] string Id, [property: JsonPropertyName("value")] JsonElement? Value);
 internal sealed record TerraScaleDocumentEmptyResponse;
 
@@ -251,12 +297,18 @@ public sealed record TerraScaleDocument(string DatabaseId, string Collection, st
     public JsonElement Value => Data;
 }
 public sealed record TerraScaleDocumentPage(string DatabaseId, string Collection, int Skip, int Take, long Total, IReadOnlyList<TerraScaleDocument> Items, TerraScaleRoutingObservation? Routing = null);
-public sealed record TerraScaleDeletedDocument(string DatabaseId, string Collection, string Id, bool Deleted, string? SessionConsistencyToken = null, TerraScaleRoutingObservation? Routing = null);
-public sealed record TerraScaleDocumentBatch(string DatabaseId, string Collection, IReadOnlyList<TerraScaleDocumentBatchResult> Results, TerraScaleRoutingObservation? Routing = null, long Committed = 0, int Count = 0);
-public sealed record TerraScaleDocumentBatchResult(int Index, string Operation, string Id, TerraScaleDocument? Document, TerraScaleDeletedDocument? Deleted);
-public sealed record TerraScaleDocumentHistoryEntry([property: JsonRequired] string Revision, [property: JsonRequired] bool Deleted);
-public sealed record TerraScaleDocumentReadOptions(bool AllowStale = false, string? IfNoneMatch = null, string? Session = null, long? At = null);
-public sealed record TerraScaleDocumentMutationOptions(string? ExpectedChangeToken = null, string? IdempotencyKey = null, TerraScaleDurability? Durability = null, bool CreateOnly = false);
+/// <summary>The durable outcome of one committed atomic document batch.</summary>
+public sealed record TerraScaleDocumentBatch(string DatabaseId, string Collection, long Committed, int Count, TerraScaleRoutingObservation? Routing = null);
+public sealed record TerraScaleDocumentHistoryEntry(
+    [property: JsonPropertyName("revision"), JsonRequired] string Revision,
+    [property: JsonPropertyName("deleted"), JsonRequired] bool Deleted,
+    [property: JsonPropertyName("commitUlid"), JsonRequired] string CommitUlid,
+    [property: JsonPropertyName("hlc"), JsonRequired] long Hlc,
+    [property: JsonPropertyName("origin"), JsonRequired] string Origin,
+    [property: JsonPropertyName("policy"), JsonRequired] string Policy,
+    [property: JsonPropertyName("explanation"), JsonRequired] string Explanation);
+public sealed record TerraScaleDocumentReadOptions(string? IfNoneMatch = null, string? Session = null, long? At = null);
+public sealed record TerraScaleDocumentMutationOptions(string? ExpectedChangeToken = null, string? IdempotencyKey = null, TerraScaleDurability? Durability = null, bool CreateOnly = false, string? Session = null);
 public enum TerraScaleDurability { Regional, Global }
 
 /// <summary>A bounded predicate query over one collection.</summary>
