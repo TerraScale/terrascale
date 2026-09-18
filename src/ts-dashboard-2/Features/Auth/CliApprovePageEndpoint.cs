@@ -3,18 +3,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Auth;
 
-public sealed record CliApprovePageModel(
-    bool Authenticated,
-    string? Code,
-    string? Error,
-    string? Outcome,
-    string[] Scopes,
-    string[] Resources,
-    string AccountEmail) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
-
 public sealed class CliApprovePageEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

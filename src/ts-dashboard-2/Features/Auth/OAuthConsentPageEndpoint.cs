@@ -3,18 +3,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Auth;
 
-public sealed record OAuthConsentPageModel(
-    bool ValidRequest,
-    string ClientId,
-    string ClientName,
-    string[] Scopes,
-    string? Claims,
-    string? Error,
-    string? Outcome) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
-
 public sealed class OAuthConsentPageEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

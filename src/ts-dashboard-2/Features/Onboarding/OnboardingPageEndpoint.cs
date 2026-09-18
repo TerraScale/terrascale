@@ -3,29 +3,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Onboarding;
 
-public sealed record OnboardingStepView(string Key, string Label, string Icon, string State);
-
-public sealed record OnboardingPlanView(string PlanId, string Name, decimal MonthlyUsd, bool IsFree, long RequestLimit);
-
-public sealed record OnboardingPageModel(
-    IReadOnlyList<OnboardingStepView> Steps,
-    string ActiveStep,
-    int CurrentStep,
-    int TotalSteps,
-    int ProgressPercent,
-    bool PaymentCanceled,
-    IReadOnlyList<OnboardingPlanView> Plans,
-    IReadOnlyList<string> Regions,
-    string DisplayName,
-    string Email,
-    string? OrganizationName,
-    bool PaymentValidated,
-    bool Registration,
-    string? RegistrationError) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
-
 public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public const string DemoCheckoutSession = "cs_local_01JCHECKOUT7F3K9Q";

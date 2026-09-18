@@ -3,21 +3,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Admin;
 
-public sealed record AdminDatabaseRow(
-    string DatabaseId,
-    string Name,
-    IReadOnlyList<string> Regions,
-    string Version,
-    string CreatedAt);
-
-public sealed record AdminDatabasesPageModel(
-    string Query,
-    IReadOnlyList<AdminDatabaseRow> Rows,
-    int RegionCount) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
-
 public sealed class AdminDatabasesPageEndpoint(DashboardStore store)
     : SlicePageEndpoint<AdminDatabasesSlice, AdminDatabasesPageModel>(store, "/admin/databases")
 {

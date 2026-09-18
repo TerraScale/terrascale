@@ -1,29 +1,7 @@
-using System.Collections.Immutable;
 using TerraScale.Dashboard2;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Admin;
-
-public sealed record AdminRegionRow(string Name, string Code, string Country, bool Available, int DatabaseCount);
-
-public sealed record AdminHostRow(
-    string DatabaseId,
-    string Name,
-    IReadOnlyList<string> Regions,
-    string Version,
-    string CreatedAt);
-
-public sealed record AdminEstatePageModel(
-    string Query,
-    string? Notice,
-    IReadOnlyList<AdminRegionRow> Regions,
-    IReadOnlyList<AdminHostRow> Hosts,
-    ImmutableDictionary<string, ImmutableArray<DashboardStore.AdminEstateFact>> Facts,
-    int AvailableSections,
-    int TotalSections) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
 
 public sealed class AdminEstatePageEndpoint(DashboardStore store)
     : SlicePageEndpoint<AdminEstateSlice, AdminEstatePageModel>(store, "/admin/estate")
