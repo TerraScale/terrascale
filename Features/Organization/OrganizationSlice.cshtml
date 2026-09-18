@@ -1,14 +1,358 @@
 @inherits RazorSlice<OrganizationPageModel>
 @{
     var shell = Model.Shell;
+    var t = (string s) => s;
+    var currentProjectName = Model.Projects.FirstOrDefault(p => p.Id == Model.CurrentProjectId)?.Name ?? t("None");
+    string InvitationStatusTone(string status) => status.ToLowerInvariant() switch
+    {
+        "accepted" => "ts-badge-success",
+        "pending" => "ts-badge-warning",
+        "canceled" or "declined" or "revoked" or "expired" => "ts-badge-neutral",
+        _ => "ts-badge-danger",
+    };
+    string InvitationStatusText(string status) =>
+        status.Length == 0 ? t("Unknown") : $"{status[..1].ToUpperInvariant()}{status[1..].ToLowerInvariant()}";
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Organization</h2>
-            <p class="ts-panel-subtitle">Port pending — this surface renders once its 1:1 port lands.</p>
+        <div class="ts-row-header">
+            <div class="ts-row ts-gap-16">
+                <span class="ts-avatar ts-avatar-org" aria-hidden="true">@Icons.Building(24)</span>
+                <dl class="ts-summary-terms ts-summary-terms-3">
+                    <div class="ts-summary-term"><dt>@t("Projects")</dt><dd>@Model.Projects.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("Members")</dt><dd>@Model.Users.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("Current project")</dt><dd>@currentProjectName</dd></div>
+                </dl>
+            </div>
+            <form method="post" action="/api/v1/dashboard/organization/switch" class="ts-form ts-inline-form">
+                <div class="ts-field">
+                    <label class="ts-label" for="activeOrganization">@t("Active organization")</label>
+                    <select class="ts-select" id="activeOrganization" name="organizationId" disabled>
+                        <option value="@Model.OrganizationId" selected>@Model.OrganizationName @(t("(active)"))</option>
+                    </select>
+                </div>
+                <div class="ts-form-actions">
+                    <button class="ts-btn ts-btn-secondary" type="submit" disabled>@t("Switch organization")</button>
+                </div>
+            </form>
         </div>
     </section>
+
+    <section class="ts-grid-two-pane">
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Projects")</h3>
+                <p class="ts-panel-subtitle">@t("Projects returned by the TerraScale Dashboard API")</p>
+            </div>
+            @if (Model.CanManageOrganization)
+            {
+                <form method="post" action="/api/v1/dashboard/organization/projects" class="ts-form ts-padded">
+                    <div class="ts-field">
+                        <label class="ts-label" for="newProjectName">@t("New project")</label>
+                        <input class="ts-input" id="newProjectName" name="name" placeholder="project-name" required />
+                    </div>
+                    <fieldset class="ts-field">
+                        <legend class="ts-label">@Icons.Globe(16) @t("Project regions")</legend>
+                        <div class="ts-checkbox-row-group">
+                            @foreach (var region in Model.RegionCatalog.Where(r => r.Status != "Offline"))
+                            {
+                                <label class="ts-checkbox-row">
+                                    <input class="ts-checkbox" type="checkbox" name="regions" value="@region.Code" @(region.Code == Model.SuggestedRegion ? "checked" : null) />
+                                    @region.Code
+                                </label>
+                            }
+                        </div>
+                        <span class="ts-hint">@t("Databases and authentication inherit this placement.")</span>
+                    </fieldset>
+                    <div class="ts-field">
+                        <label class="ts-label" for="projectBackupRegion">@t("Backup region")</label>
+                        <select class="ts-select" id="projectBackupRegion" name="backupRegion">
+                            @foreach (var region in Model.RegionCatalog.Where(r => r.Status != "Offline"))
+                            {
+                                <option value="@region.Code" @(region.Code == Model.SuggestedRegion ? "selected" : null)>@region.Code — @region.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="ts-form-actions">
+                        <button class="ts-btn ts-btn-primary" type="submit">@t("Create project")</button>
+                    </div>
+                </form>
+            }
+            @if (Model.Projects.Length == 0)
+            {
+                <div class="ts-padded">
+                    <div class="ts-empty">
+                        <span class="ts-empty-title">@t("No projects returned")</span>
+                        @t("The API did not return projects for this organization.")
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>@t("Project")</th>
+                                <th>@t("Slug")</th>
+                                <th>@t("Status")</th>
+                                <th>@t("Backup region")</th>
+                                <th>@t("Created")</th>
+                                <th>@t("Actions")</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var project in Model.Projects)
+                            {
+                                <tr>
+                                    <td>
+                                        <div class="ts-min-width">
+                                            <p class="ts-text-strong">@project.Name</p>
+                                            <p class="ts-meta">@project.Id</p>
+                                        </div>
+                                    </td>
+                                    <td class="ts-muted ts-ui">@(project.Name.Length > 0 ? project.Name : t("None"))</td>
+                                    <td>@if (project.Id == Model.CurrentProjectId)
+                                        {
+                                            <span class="ts-badge ts-badge-success">@t("Current")</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="ts-badge ts-badge-neutral">@t("Available")</span>
+                                        }</td>
+                                    <td><span class="ts-badge ts-badge-info">@project.Region.ToUpperInvariant()</span></td>
+                                    <td class="ts-muted ts-ui">@project.CreatedAt</td>
+                                    <td>
+                                        <details class="ts-menu">
+                                            <summary class="ts-btn ts-btn-ghost ts-btn-sm">@t("Rename")</summary>
+                                            <div class="ts-menu-panel">
+                                                <form method="post" action="/api/v1/dashboard/organization/projects/rename" class="ts-menu-form">
+                                                    <input type="hidden" name="projectId" value="@project.Id" />
+                                                    <div class="ts-field">
+                                                        <label class="ts-label" for="rename-@project.Id">@t("Rename project")</label>
+                                                        <input class="ts-input" id="rename-@project.Id" name="name" value="@project.Name" required />
+                                                    </div>
+                                                    <div class="ts-form-actions">
+                                                        <button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">@t("Save project")</button>
+                                                    </div>
+                                                </form>
+                                            </div>
+                                        </details>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Organization details")</h3>
+                <p class="ts-panel-subtitle">@t("Current tenant context")</p>
+            </div>
+            <dl class="ts-stack-12 ts-padded">
+                @foreach (var term in new (string Label, string Value)[]
+                {
+                    (t("Name"), Model.OrganizationName),
+                    (t("Status"), Model.OrganizationStatus),
+                    (t("Organization ID"), Model.OrganizationId),
+                    (t("Created"), Model.OrganizationCreatedAt),
+                    (t("Signed-in user"), Model.SignedInEmail),
+                })
+                {
+                    <div class="ts-context-term">
+                        <dt class="ts-context-label">@term.Label</dt>
+                        <dd class="ts-context-value">@term.Value</dd>
+                    </div>
+                }
+                <div class="ts-status-success">
+                    @Icons.ShieldCheck(16)
+                    <span>@t("Organization access is enforced by the API session and project context.")</span>
+                </div>
+            </dl>
+            @if (Model.CanManageOrganization)
+            {
+                <div class="ts-stack-12 ts-padded">
+                    <form method="post" action="/api/v1/dashboard/organization/rename" class="ts-form ts-inline-form">
+                        <div class="ts-field">
+                            <label class="ts-label" for="organizationName">@t("Organization name")</label>
+                            <input class="ts-input" id="organizationName" name="name" value="@Model.OrganizationName" required />
+                        </div>
+                        <div class="ts-form-actions">
+                            <button class="ts-btn ts-btn-secondary" type="submit">@t("Save name")</button>
+                        </div>
+                    </form>
+                    <form method="post" action="/api/v1/dashboard/organization/leave">
+                        <button class="ts-btn ts-btn-outline" type="submit">@t("Leave organization")</button>
+                    </form>
+                </div>
+            }
+        </section>
+    </section>
+
+    <section class="ts-panel">
+        <div class="ts-panel-header">
+            <h3 class="ts-panel-title">@t("Create organization")</h3>
+            <p class="ts-panel-subtitle">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and database.")</p>
+        </div>
+        <div class="ts-padded ts-muted ts-ui">
+            @t("Creating another organization opens a guided flow for the tenant, its payment method, and the first database.")
+        </div>
+        <div class="ts-panel-footer">
+            <a class="ts-btn ts-btn-primary" href="/organizations/new">@t("Create organization")</a>
+        </div>
+    </section>
+
+    @if (Model.CanManageOrganization)
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Members")</h3>
+                <p class="ts-panel-subtitle">@t("Users returned by the organization users API")</p>
+            </div>
+            @if (Model.Users.Length == 0)
+            {
+                <div class="ts-padded">
+                    <div class="ts-empty">
+                        <span class="ts-empty-title">@t("No members returned")</span>
+                        @t("The API did not return organization users for this account.")
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>@t("User")</th>
+                                <th>@t("User ID")</th>
+                                <th>@t("Role")</th>
+                                <th>@t("Joined")</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var member in Model.Users)
+                            {
+                                <tr>
+                                    <td>
+                                        <div class="ts-min-width">
+                                            <p class="ts-text-strong">@(member.Name.Length > 0 ? member.Name : member.Email)</p>
+                                            <p class="ts-meta">@member.Email</p>
+                                        </div>
+                                    </td>
+                                    <td class="ts-mono ts-meta">@member.UserId</td>
+                                    <td>
+                                        <form method="post" action="/api/v1/dashboard/organization/members/role" class="ts-row ts-gap-8">
+                                            <input type="hidden" name="userId" value="@member.UserId" />
+                                            <select class="ts-select ts-select-sm" name="role" onchange="this.form.submit()">
+                                                <option value="owner" @(member.Role == "owner" ? "selected" : null)>@t("Organization Owner")</option>
+                                                <option value="admin" @(member.Role == "admin" ? "selected" : null)>@t("Administrator")</option>
+                                                <option value="member" @(member.Role == "member" ? "selected" : null)>@t("Member")</option>
+                                            </select>
+                                        </form>
+                                    </td>
+                                    <td class="ts-muted ts-ui">@member.LastActiveAt</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Invitations")</h3>
+                <p class="ts-panel-subtitle">@t("Persistent invitation records")</p>
+            </div>
+            <form method="post" action="/api/v1/dashboard/organization/invitations" class="ts-form ts-padded ts-inline-form">
+                <div class="ts-field">
+                    <label class="ts-label" for="invitationEmail">@t("Invitation email")</label>
+                    <input class="ts-input" id="invitationEmail" name="email" type="email" required />
+                </div>
+                <div class="ts-field">
+                    <label class="ts-label" for="invitationProject">@t("Project")</label>
+                    <select class="ts-select" id="invitationProject" name="projectId">
+                        @foreach (var project in Model.Projects)
+                        {
+                            <option value="@project.Id">@project.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="ts-form-actions">
+                    <button class="ts-btn ts-btn-primary" type="submit">@t("Send invitation")</button>
+                </div>
+            </form>
+            @if (Model.Invitations.Length == 0)
+            {
+                <div class="ts-padded">
+                    <div class="ts-empty">
+                        <span class="ts-empty-title">@t("No invitations returned")</span>
+                        @t("The API did not return pending or historical invitations for this organization.")
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>@t("Email")</th>
+                                <th>@t("Role")</th>
+                                <th>@t("Status")</th>
+                                <th>@t("Expires")</th>
+                                <th>@t("Invited by")</th>
+                                <th>@t("Actions")</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var invitation in Model.Invitations)
+                            {
+                                <tr>
+                                    <td>
+                                        <div class="ts-min-width">
+                                            <p class="ts-text-strong">@invitation.Email</p>
+                                            <p class="ts-meta">@invitation.Id</p>
+                                        </div>
+                                    </td>
+                                    <td class="ts-muted ts-ui">@invitation.Role</td>
+                                    <td><span class="ts-badge @InvitationStatusTone(invitation.Status)">@InvitationStatusText(invitation.Status)</span></td>
+                                    <td class="ts-muted ts-ui">@invitation.CreatedAt</td>
+                                    <td class="ts-muted ts-ui">@invitation.InvitedByEmail</td>
+                                    <td>
+                                        @if (invitation.Status == "Pending")
+                                        {
+                                            <form method="post" action="/api/v1/dashboard/organization/invitations/cancel">
+                                                <input type="hidden" name="invitationId" value="@invitation.Id" />
+                                                <button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">@t("Cancel")</button>
+                                            </form>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+    else
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h3 class="ts-panel-title">@t("Members and invitations")</h3>
+                <p class="ts-panel-subtitle">@t("Organization owner controls")</p>
+            </div>
+            <div class="ts-padded">
+                <div class="ts-alert ts-alert-info">
+                    <span class="ts-alert-title">@t("Organization owner access required")</span>
+                    <span class="ts-alert-body">@t("Only organization owners can view members, invitations, and organization roles.")</span>
+                </div>
+            </div>
+        </section>
+    }
 </div>
 @ShellHtml.Bottom(shell)

@@ -1,14 +1,126 @@
 @inherits RazorSlice<OrganizationsNewPageModel>
 @{
     var shell = Model.Shell;
+    var t = (string s) => s;
+    var steps = new[] { t("Organization"), t("Payment"), t("Database") };
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel">
         <div class="ts-panel-header">
-            <h2 class="ts-panel-title">OrganizationsNew</h2>
-            <p class="ts-panel-subtitle">Port pending — this surface renders once its 1:1 port lands.</p>
+            <h2 class="ts-panel-title">@t("Create organization")</h2>
+            <p class="ts-panel-subtitle">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and database.")</p>
         </div>
+        @if (Model.PaymentStatus == "canceled")
+        {
+            <div class="ts-alert ts-alert-warning">
+                <span class="ts-alert-title">@t("Payment setup canceled")</span>
+                <span class="ts-alert-body">@t("No payment method was changed; you can safely try again.")</span>
+            </div>
+        }
+        else if (Model.PaymentStatus == "success")
+        {
+            <div class="ts-alert ts-alert-success">
+                <span class="ts-alert-title">@t("Payment method saved")</span>
+                <span class="ts-alert-body">@t("The selected plan is billed to the organization you just created.")</span>
+            </div>
+        }
+    </section>
+
+    <section class="ts-panel">
+        <div class="ts-row-between">
+            <strong>@t("Step") @Model.Step @t("of") 3 · @Model.StepLabel</strong>
+            <span class="ts-meta">@Model.ProgressPercent%</span>
+        </div>
+        <div class="ts-progress">
+            <div class="ts-progress-bar" style="width:@Model.ProgressPercent%"></div>
+        </div>
+        <ol class="ts-wizard-steps" aria-label='@t("New organization steps")'>
+            @for (var i = 0; i < steps.Length; i++)
+            {
+                <li class="ts-wizard-step @(i + 1 < Model.Step ? "ts-wizard-step-done" : null) @(i + 1 == Model.Step ? "ts-wizard-step-active" : null)">
+                    @if (i + 1 < Model.Step)
+                    {
+                        @Icons.Check(14)
+                    }
+                    else
+                    {
+                        <span class="ts-wizard-step-number">@(i + 1)</span>
+                    }
+                    <span>@steps[i]</span>
+                </li>
+            }
+        </ol>
+
+        @if (Model.Step == 1)
+        {
+            <form method="post" action="/api/v1/dashboard/organizations/create" class="ts-form">
+                <div class="ts-field">
+                    <label class="ts-label" for="newOrganizationName">@t("Organization name")</label>
+                    <input class="ts-input" id="newOrganizationName" name="name" placeholder="Acme Inc." required />
+                </div>
+                <div class="ts-field">
+                    <label class="ts-label" for="newOrganizationPlan">@t("Plan")</label>
+                    <select class="ts-select" id="newOrganizationPlan" name="planId" required>
+                        @foreach (var plan in Model.Plans)
+                        {
+                            <option value="@plan.Id">@plan.Name — $@plan.MonthlyUsd.ToString("0")/@t("month")</option>
+                        }
+                    </select>
+                </div>
+                <div class="ts-form-actions">
+                    <button class="ts-btn ts-btn-primary" type="submit">@t("Create organization")</button>
+                </div>
+            </form>
+        }
+        else if (Model.Step == 2)
+        {
+            <dl class="ts-kv ts-padded">
+                <dt>@t("Plan")</dt>
+                <dd>Scale — $29/@t("month")</dd>
+                <dt>@t("Billing interval")</dt>
+                <dd>@t("Monthly")</dd>
+            </dl>
+            <div class="ts-form-actions">
+                <a class="ts-btn ts-btn-secondary" href="/organizations/new?step=1">@t("Restart this setup")</a>
+                <a class="ts-btn ts-btn-outline" href="/organizations/new?step=3&payment=success">@t("Continue without payment")</a>
+                <a class="ts-btn ts-btn-primary" href="/organizations/new?step=3&payment=success">@t("Continue to secure payment setup")</a>
+            </div>
+        }
+        else
+        {
+            <form method="post" action="/api/v1/dashboard/organizations/create-database" class="ts-form">
+                <div class="ts-field">
+                    <label class="ts-label" for="newOrganizationProjectName">@t("Project name")</label>
+                    <input class="ts-input" id="newOrganizationProjectName" name="projectName" placeholder="core-platform" required />
+                </div>
+                <fieldset class="ts-field">
+                    <legend class="ts-label">@Icons.Globe(16) @t("Project regions")</legend>
+                    <div class="ts-checkbox-row-group">
+                        @foreach (var region in Model.RegionCatalog)
+                        {
+                            <label class="ts-checkbox-row">
+                                <input class="ts-checkbox" type="checkbox" name="regions" value="@region.Code" @(region.Code == Model.SuggestedRegion ? "checked" : null) />
+                                @region.Code
+                            </label>
+                        }
+                    </div>
+                    <span class="ts-hint">@t("Databases and authentication inherit this placement.")</span>
+                </fieldset>
+                <div class="ts-field">
+                    <label class="ts-label" for="newOrganizationBackupRegion">@t("Backup region")</label>
+                    <select class="ts-select" id="newOrganizationBackupRegion" name="backupRegion">
+                        @foreach (var region in Model.RegionCatalog)
+                        {
+                            <option value="@region.Code" @(region.Code == Model.SuggestedRegion ? "selected" : null)>@region.Code — @region.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="ts-form-actions">
+                    <button class="ts-btn ts-btn-primary" type="submit">@t("Create database")</button>
+                </div>
+            </form>
+        }
     </section>
 </div>
 @ShellHtml.Bottom(shell)

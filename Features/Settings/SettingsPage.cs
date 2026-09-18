@@ -1,15 +1,57 @@
+using System.Collections.Immutable;
 using TerraScale.Dashboard2;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Settings;
 
-public sealed record SettingsPageModel : IPageModel
+public sealed record SettingsPageModel(
+    string ProjectId,
+    string ProjectName,
+    bool AuthenticationEnabled,
+    string SecuritySettingsUpdatedAt,
+    bool CanManageByok,
+    bool CanDeleteProject,
+    ImmutableArray<SettingsAuthProvider> Providers,
+    ImmutableArray<SettingsCredentialView> Credentials,
+    ImmutableArray<DashboardDatabase> Databases,
+    ImmutableArray<WebhookEndpoint> Webhooks,
+    string Tab) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
+
+    public static SettingsPageModel From(DashboardStore store, string href, string tab)
+    {
+        var project = store.ActiveProject;
+        return new(
+            ProjectId: project.Id,
+            ProjectName: project.Name,
+            AuthenticationEnabled: store.AuthenticationEnabled,
+            SecuritySettingsUpdatedAt: store.SecuritySettingsUpdatedAt,
+            CanManageByok: store.CanManageByok,
+            CanDeleteProject: store.CanDeleteProject,
+            Providers: store.AuthProviders,
+            Credentials: store.SettingsCredentials,
+            Databases: store.ProjectDatabases(project.Id),
+            Webhooks: store.Webhooks,
+            Tab: tab)
+        {
+            Shell = ShellFactory.Create(store, href),
+        };
+    }
 }
 
-public sealed class SettingsPageEndpoint(DashboardStore store)
-    : SlicePageEndpoint<SettingsSlice, SettingsPageModel>(store, "/settings")
+public sealed class SettingsPageEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
-    protected override SettingsPageModel Load() => new() { Shell = ShellFactory.Create(Store, PageRoute) };
+    public override void Configure()
+    {
+        Get("/settings");
+        Summary("Renders the Settings page");
+        Tags("Pages");
+    }
+
+    public override Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var tab = HttpContext.Request.Query["tab"].FirstOrDefault() is { Length: > 0 } t ? t : "identity";
+        return Task.FromResult<IResult>(SettingsSlice.Create(SettingsPageModel.From(store, "/settings", tab)));
+    }
 }

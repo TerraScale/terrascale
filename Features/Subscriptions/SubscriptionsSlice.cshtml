@@ -1,13 +1,109 @@
 @inherits RazorSlice<SubscriptionsPageModel>
 @{
     var shell = Model.Shell;
+    var t = (string s) => s;
+    string Fmt(long? value) => value?.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) ?? "—";
+    string Ratio(double? value) => value is null ? "—" : $"{(value <= 1 ? value * 100 : value)?.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}%";
+    var stats = new (string Label, string Value, string Detail)[]
+    {
+        (t("Active shared views"), Fmt(Model.Usage.ActiveViews), t("Usage fact")),
+        (t("CDN hit ratio"), Ratio(Model.Usage.CdnHitRatio), t("Delivery is cache-backed")),
+        (t("Origin fills"), Fmt(Model.Usage.OriginFills), t("Usage fact")),
+        (t("WebSocket connections"), Fmt(Model.Usage.WebsocketConnections), t("Optional transport")),
+    };
+    var attachedRegion = Model.Databases.FirstOrDefault(d => d.Id == Model.AttachedDatabaseId)?.PrimaryRegion ?? "—";
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel">
+        <div class="ts-stack-12">
+            <h2 class="ts-page-title-24">@t("Subscriptions")</h2>
+            <p class="ts-page-description">@t("Attach to an authorized shared result view and observe the revision, checkpoint, delivery, and policy state from the TerraScale SDK.")</p>
+            <div class="ts-grid ts-grid-cards-4">
+                @foreach (var stat in stats)
+                {
+                    <div class="ts-card ts-metric">
+                        <span class="ts-metric-label">@stat.Label</span>
+                        <strong class="ts-metric-value">@stat.Value</strong>
+                        <small class="ts-metric-detail">@stat.Detail</small>
+                    </div>
+                }
+            </div>
+        </div>
+    </section>
+
+    <section class="ts-panel">
         <div class="ts-panel-header">
-            <h2 class="ts-panel-title">Subscriptions</h2>
-            <p class="ts-panel-subtitle">Port pending — this surface renders once its 1:1 port lands.</p>
+            <h3 class="ts-panel-title">@t("Live shared view")</h3>
+            <p class="ts-panel-subtitle">@t("HTTP + CDN is the default transport; WebSocket is optional and remains opt-in.")</p>
+        </div>
+        <div class="ts-padded ts-subscriptions-grid">
+            <section aria-label="Attach a shared view">
+                <form method="post" action="/api/v1/dashboard/subscriptions/attach" class="ts-form">
+                    <div class="ts-field">
+                        <label class="ts-label" for="subscription-database">Database</label>
+                        <select class="ts-select" id="subscription-database" name="databaseId" @(Model.Databases.Length == 0 ? "disabled" : null)>
+                            @if (Model.Databases.Length == 0)
+                            {
+                                <option value="">No databases available</option>
+                            }
+                            @foreach (var database in Model.Databases)
+                            {
+                                <option value="@database.Id" @(database.Id == Model.AttachedDatabaseId ? "selected" : null)>@database.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="ts-field">
+                        <label class="ts-label" for="subscription-query">Live SQL statement</label>
+                        <textarea class="ts-textarea ts-input-mono" id="subscription-query" name="query" rows="5" spellcheck="false">SELECT * FROM documents LIMIT 100</textarea>
+                    </div>
+                    <div class="ts-field">
+                        <label class="ts-label" for="subscription-transport">Delivery transport</label>
+                        <select class="ts-select" id="subscription-transport" name="transport">
+                            <option value="http">HTTP + CDN (default)</option>
+                            <option value="websocket">WebSocket (optional)</option>
+                        </select>
+                    </div>
+                    <div class="ts-form-actions">
+                        <button class="ts-btn ts-btn-primary" type="submit">Attach shared view</button>
+                        @if (Model.AttachedViewId is not null)
+                        {
+                            <a class="ts-btn ts-btn-secondary" href="/subscriptions">Stop view</a>
+                        }
+                    </div>
+                </form>
+            </section>
+            <section class="ts-sub-view" aria-label="Shared view state">
+                <div class="ts-row-between">
+                    <div>
+                        <div class="ts-row ts-gap-8">
+                            <span class="ts-pip @(Model.Online ? "ts-pip-success" : null)" aria-hidden="true"></span>
+                            <strong>@(Model.AttachedViewId ?? "No active shared view")</strong>
+                        </div>
+                        <p class="ts-meta">One encoded revision is shared by authorization-equivalent subscribers.</p>
+                    </div>
+                    <span class="ts-badge @(Model.Online ? "ts-badge-success" : "ts-badge-neutral")">@(Model.Online ? "Live" : "Idle")</span>
+                </div>
+                <dl class="ts-sub-metadata">
+                    @foreach (var meta in new (string Label, string Value)[]
+                    {
+                        ("View generation", Model.AttachedViewId is null ? "—" : "1"),
+                        ("Revision / checkpoint", Model.AttachedViewId is null ? "0 · —" : "41 · set"),
+                        ("Subscribers", Model.Usage.Subscribers is null ? "1 dashboard observer" : Fmt(Model.Usage.Subscribers)),
+                        ("Cadence", "100 ms window"),
+                        ("Region", attachedRegion),
+                        ("Rule generation", Model.AttachedViewId is null ? "—" : "3"),
+                        ("Entitlement", "Project entitlement"),
+                        ("Items in view", Model.AttachedViewId is null ? "0" : "100"),
+                    })
+                    {
+                        <div class="ts-sub-metadata-item">
+                            <dt>@meta.Label</dt>
+                            <dd>@meta.Value</dd>
+                        </div>
+                    }
+                </dl>
+            </section>
         </div>
     </section>
 </div>
