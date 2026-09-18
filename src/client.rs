@@ -177,7 +177,10 @@ impl Shared {
         }
     }
 
-    fn decorate(&self, request: &mut Request) {
+    /// Apply shared authentication and observability headers. Public within
+    /// the crate so direct-delivery transports (the reactive stream) send
+    /// exactly the headers the pipelined routes send.
+    pub(crate) fn decorate(&self, request: &mut Request) {
         let skip_auth = request
             .headers
             .iter()
@@ -558,7 +561,9 @@ struct ErrorResponse {
     body: ErrorBody,
 }
 
-fn decode_error(route_name: &str, response: &Response) -> Error {
+/// Decode the standard JSON ErrorResponse shape. Public within the crate so
+/// direct-delivery transports report pre-stream failures identically.
+pub(crate) fn decode_error(route_name: &str, response: &Response) -> Error {
     const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
     let body = (response.body.len() <= MAX_ERROR_BODY_BYTES)
         .then(|| serde_json::from_slice::<ErrorResponse>(&response.body).ok())
@@ -602,12 +607,15 @@ fn is_retryable(error: &Error) -> bool {
 }
 
 fn encode_path_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(value.len());
-    for byte in value.as_bytes() {
-        if byte.is_ascii_alphanumeric() || b"-_.~".contains(byte) {
-            encoded.push(char::from(*byte));
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
         } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+            encoded.push('%');
+            encoded.push(char::from(HEX[(byte >> 4) as usize]));
+            encoded.push(char::from(HEX[(byte & 0x0f) as usize]));
         }
     }
     encoded

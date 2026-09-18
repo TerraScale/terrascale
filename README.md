@@ -25,6 +25,27 @@ When a successful response identifies its serving Region, subsequent REST
 requests pin there. Strict affinity routes directly to the configured Region
 and preserves it when another Region is advertised.
 
+## Reactive transports
+
+`subscribe_live` defaults to bounded HTTP long-polling of the immutable
+view log. `SubscribeOptions::with_transport` opts into direct member
+delivery instead: `Transport::WebSocket` (the `terrascale.sync.v1` socket
+with its subscribe opening exchange) or `Transport::ServerSentEvents`
+(`GET .../stream`, one `text/event-stream` connection delivering the same
+MessagePack envelopes as base64 `data` events with `id:` resume offsets).
+Both direct transports authenticate with the attach-issued capability
+header; a dropped stream or terminal `error` event surfaces as a typed
+`ResetReason::Reconnect` and the caller reattaches from its last
+checkpoint. The database-scoped `GET /api/v1/databases/{name}/reactive`
+WebSocket remains a declared contract gap: the pinned contract documents no
+opening exchange for it.
+
+`client.tenants().authorization_lease(tenant)` reads the published
+`GET /api/v1/authorization/leases/{tenant}` lease, and
+`client.management().schemas().rollback_migration(...)` rolls back an
+in-progress schema migration with its required `Idempotency-Key` and
+`If-Match` headers.
+
 ## Region discovery and member health
 
 The public `GET https://api.terrascale.tech/api/v1/regions` endpoint is the

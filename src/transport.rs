@@ -67,7 +67,9 @@ impl Request {
 pub struct Response {
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
+    /// Raw body kept as shared bytes: large artifacts are not copied on
+    /// transport boundaries.
+    pub body: bytes::Bytes,
 }
 
 impl Response {
@@ -77,7 +79,7 @@ impl Response {
         Self {
             status,
             headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-            body: serde_json::to_vec(body).unwrap_or_default(),
+            body: bytes::Bytes::from(serde_json::to_vec(body).unwrap_or_default()),
         }
     }
 
@@ -98,12 +100,7 @@ impl Response {
                 .next()
                 .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/msgpack"))
         }) {
-            let value = crate::reactive::decode_reactive_msgpack_json(&self.body)?;
-            return serde_json::from_value(value).map_err(|e| {
-                Error::invalid_response(format!(
-                    "MessagePack response does not match the contract: {e}"
-                ))
-            });
+            return crate::reactive::decode_reactive_msgpack(&self.body);
         }
 
         // A 204/304 long-poll response (and a successful empty timeout body)
@@ -187,8 +184,7 @@ impl HttpTransport for ReqwestTransport {
         let body = response
             .bytes()
             .await
-            .map_err(|e| Error::transport(format!("reading the response failed: {e}")))?
-            .to_vec();
+            .map_err(|e| Error::transport(format!("reading the response failed: {e}")))?;
         Ok(Response {
             status,
             headers,

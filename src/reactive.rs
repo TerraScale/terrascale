@@ -3,10 +3,10 @@
 //! `.subscribe()` uses bounded HTTP long-polling on `sync.api.` by default;
 //! snapshot and log bodies are strict indexed `terrascale.sync.v1.msgpack`
 //! envelopes with the manifest's allocation bounds.
-//! [`Transport::WebSocket`] opts into direct member delivery. `.execute()`
-//! is "subscribe once". A checkpoint is an opaque authorized-view position;
-//! any mismatch returns a typed [`ResetReason`] with a fresh authorized
-//! snapshot (GOAL D-46).
+//! [`Transport::WebSocket`] and [`Transport::ServerSentEvents`] opt into
+//! direct member delivery. `.execute()` is "subscribe once". A checkpoint is
+//! an opaque authorized-view position; any mismatch returns a typed
+//! [`ResetReason`] with a fresh authorized snapshot (GOAL D-46).
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
@@ -36,6 +36,10 @@ pub enum Transport {
     /// Direct opt-in transport; cannot be cached or collapsed.
     #[serde(rename = "websocket")]
     WebSocket,
+    /// Direct opt-in server-push transport over `text/event-stream`; cannot
+    /// be cached or collapsed.
+    #[serde(rename = "server-sent-events")]
+    ServerSentEvents,
 }
 
 /// Opaque authorized-view position. Never constructed by hand: it binds view
@@ -964,7 +968,6 @@ impl ReactiveClient {
         query: &Query,
         options: SubscribeOptions,
     ) -> Result<LiveSubscription> {
-        let websocket = options.transport == Transport::WebSocket;
         let view = self.subscribe(scope, query, options.clone()).await?;
         if view.log_url.trim().is_empty() {
             return Err(Error::new(
@@ -985,37 +988,48 @@ impl ReactiveClient {
             let snapshot = self.load_snapshot_chunks(&view).await?;
             state.apply_snapshot(snapshot);
         }
-        let socket = if websocket {
-            let parameters = serde_json::to_vec(query.parameters()).map_err(|error| {
-                Error::new(
-                    ErrorKind::Validation,
-                    "invalid_parameters",
-                    format!("Reactive parameters are not serializable: {error}"),
-                )
-            })?;
-            Some(
-                crate::websocket::open(crate::websocket::OpenRequest {
-                    base_url: &self.shared.pinned_base_url(options.region_hint)?,
-                    view: &view.view_id,
-                    generation: view.generation,
-                    capability: view
-                        .capability
-                        .as_deref()
-                        .expect("attach validates capability"),
-                    subscription: options
-                        .subscription
-                        .as_deref()
-                        .filter(|v| !v.trim().is_empty())
-                        .unwrap_or("rust-subscription"),
-                    query: query.sql(),
-                    parameters: &parameters,
-                    checkpoint: Some(&view.checkpoint),
-                    bearer: self.shared.api_key(),
-                })
-                .await?,
-            )
-        } else {
-            None
+        let delivery = match options.transport {
+            Transport::LongPolling => None,
+            Transport::WebSocket => {
+                let parameters = serde_json::to_vec(query.parameters()).map_err(|error| {
+                    Error::new(
+                        ErrorKind::Validation,
+                        "invalid_parameters",
+                        format!("Reactive parameters are not serializable: {error}"),
+                    )
+                })?;
+                Some(LiveDelivery::WebSocket(Box::new(
+                    crate::websocket::open(crate::websocket::OpenRequest {
+                        base_url: &self.shared.pinned_base_url(options.region_hint)?,
+                        view: &view.view_id,
+                        generation: view.generation,
+                        capability: view
+                            .capability
+                            .as_deref()
+                            .expect("attach validates capability"),
+                        subscription: options
+                            .subscription
+                            .as_deref()
+                            .filter(|v| !v.trim().is_empty())
+                            .unwrap_or("rust-subscription"),
+                        query: query.sql(),
+                        parameters: &parameters,
+                        checkpoint: Some(&view.checkpoint),
+                        bearer: self.shared.api_key(),
+                    })
+                    .await?,
+                )))
+            }
+            Transport::ServerSentEvents => {
+                let offset = state
+                    .revision()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| view.snapshot.revision.clone());
+                let request = self.stream_request(&view, &offset)?;
+                Some(LiveDelivery::ServerSentEvents(
+                    crate::sse::open(request).await?,
+                ))
+            }
         };
         Ok(LiveSubscription {
             client: self.clone(),
@@ -1023,8 +1037,62 @@ impl ReactiveClient {
             state,
             options: PollOptions::default(),
             cancellation: CancellationToken::new(),
-            socket,
+            delivery,
         })
+    }
+
+    /// Build the decorated server-sent-events request for one attached view.
+    /// The stream URL is derived from the validated log URL's origin and
+    /// carries the same capability-only authentication as the log route.
+    fn stream_request(&self, view: &AttachedView, offset: &str) -> Result<Request> {
+        if offset.trim().is_empty() {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_reactive_offset",
+                "A reactive stream requires a non-empty revision offset.",
+            ));
+        }
+        let advertised_log_url = if view.log_url.trim().is_empty() {
+            canonical_log_path(&view.view_id, view.generation)
+        } else {
+            view.log_url.as_str().to_owned()
+        };
+        let log_url = advertised_url(
+            &advertised_log_url,
+            &canonical_log_path(&view.view_id, view.generation),
+        )
+        .map_err(|message| {
+            Error::new(ErrorKind::Validation, "invalid_reactive_endpoint", message)
+        })?;
+        let log_url = resolve_delivery(self.shared.config().sync_base_url(), &log_url);
+        let origin = stream_origin(&log_url)?;
+        let mut request = Request {
+            route_name: "reactive.stream".to_owned(),
+            method: Method::Get,
+            url: format!(
+                "{origin}/api/v1/reactive/views/{}/{}/stream?offset={}",
+                percent_encode(&view.view_id),
+                view.generation,
+                percent_encode(offset)
+            ),
+            headers: vec![(SKIP_AUTH_MARKER.to_owned(), String::new())],
+            body: None,
+        };
+        request
+            .headers
+            .push(("accept".to_owned(), "text/event-stream".to_owned()));
+        request.headers.push((
+            CAPABILITY_HEADER.to_owned(),
+            view.capability.clone().ok_or_else(|| {
+                Error::new(
+                    ErrorKind::InvalidResponse,
+                    "missing_view_capability",
+                    "The reactive attach response did not include a view capability for the stream.",
+                )
+            })?,
+        ));
+        self.shared.decorate(&mut request);
+        Ok(request)
     }
 
     async fn load_snapshot_chunks(&self, view: &AttachedView) -> Result<ViewSnapshot> {
@@ -1461,6 +1529,25 @@ impl AttachedView {
     }
 }
 
+/// The direct-delivery session backing a live subscription. Both transports
+/// yield decoded [`PollResponse`] frames; only their failure shapes differ.
+#[derive(Debug)]
+enum LiveDelivery {
+    // Boxed: the socket stream dominates the session's size.
+    WebSocket(Box<crate::websocket::Session>),
+    ServerSentEvents(crate::sse::Session),
+}
+
+impl LiveDelivery {
+    async fn close(&mut self) {
+        match self {
+            Self::WebSocket(session) => session.close().await,
+            // Dropping the session ends the HTTP stream connection.
+            Self::ServerSentEvents(_session) => {}
+        }
+    }
+}
+
 /// A stateful HTTP subscription. Each call to [`Self::next`] performs one
 /// bounded long-poll sequence and applies deltas atomically to its view.
 #[derive(Debug)]
@@ -1470,7 +1557,7 @@ pub struct LiveSubscription {
     state: Subscription,
     options: PollOptions,
     cancellation: CancellationToken,
-    socket: Option<crate::websocket::Session>,
+    delivery: Option<LiveDelivery>,
 }
 
 impl LiveSubscription {
@@ -1506,8 +1593,8 @@ impl LiveSubscription {
     /// Poll and apply one immutable log response.
     pub async fn next(&mut self) -> Result<PollOutcome> {
         if self.cancellation.is_cancelled() {
-            if let Some(socket) = self.socket.as_mut() {
-                socket.close().await;
+            if let Some(delivery) = self.delivery.as_mut() {
+                delivery.close().await;
             }
             return Err(cancelled_error());
         }
@@ -1515,29 +1602,55 @@ impl LiveSubscription {
             .state
             .revision()
             .unwrap_or(self.view.snapshot.revision.as_str());
-        let response = if let Some(socket) = self.socket.as_mut() {
-            let bytes = match socket.next(&self.cancellation).await {
-                Ok(bytes) => bytes,
-                Err(error) if error.code == "slow_consumer" => {
-                    return Ok(PollOutcome::Reset(ResetFrame {
-                        reason: ResetReason::Backpressure,
-                        snapshot: None,
-                        checkpoint: self.state.checkpoint().cloned(),
-                        region: None,
-                        authorization_generation: None,
-                        removed: Vec::new(),
-                        digest: String::new(),
-                        detail: Some(error.message),
-                    }));
+        let response = if let Some(delivery) = self.delivery.as_mut() {
+            match delivery {
+                LiveDelivery::WebSocket(socket) => match socket.next(&self.cancellation).await {
+                    Ok(response) => response,
+                    Err(error) if error.code == "slow_consumer" => {
+                        return Ok(PollOutcome::Reset(ResetFrame {
+                            reason: ResetReason::Backpressure,
+                            snapshot: None,
+                            checkpoint: self.state.checkpoint().cloned(),
+                            region: None,
+                            authorization_generation: None,
+                            removed: Vec::new(),
+                            digest: String::new(),
+                            detail: Some(error.message),
+                        }));
+                    }
+                    Err(error) => return Err(error),
+                },
+                LiveDelivery::ServerSentEvents(stream) => {
+                    let window = self.options.deadline.min(MAX_POLL_WINDOW);
+                    let frame =
+                        match tokio::time::timeout(window, stream.next(&self.cancellation)).await {
+                            Ok(result) => result?,
+                            // A silent window means the stream is dead; the caller
+                            // reattaches from its last checkpoint.
+                            Err(_) => crate::sse::Frame::Ended { code: None },
+                        };
+                    match frame {
+                        crate::sse::Frame::Envelope(bytes) => decode_reactive_msgpack(&bytes)?,
+                        crate::sse::Frame::Ended { code } => {
+                            return Ok(PollOutcome::Reset(ResetFrame {
+                                reason: ResetReason::Reconnect,
+                                snapshot: None,
+                                checkpoint: self.state.checkpoint().cloned(),
+                                region: None,
+                                authorization_generation: None,
+                                removed: Vec::new(),
+                                digest: String::new(),
+                                detail: Some(match code {
+                                    Some(code) => format!(
+                                        "The reactive stream ended with error code {code}; reattach from the last checkpoint."
+                                    ),
+                                    None => "The reactive stream ended; reattach from the last checkpoint.".to_owned(),
+                                }),
+                            }));
+                        }
+                    }
                 }
-                Err(error) => return Err(error),
-            };
-            let value = decode_reactive_msgpack_json(&bytes)?;
-            serde_json::from_value(value).map_err(|error| {
-                Error::invalid_response(format!(
-                    "WebSocket frame does not match reactive response: {error}"
-                ))
-            })?
+            }
         } else {
             match self
                 .client
@@ -1672,10 +1785,10 @@ const MSGPACK_MAX_BINARY_BYTES: usize = 1_048_576;
 const MSGPACK_MAX_ARRAY_ITEMS: usize = 10_000;
 const MSGPACK_MAX_DEPTH: usize = 64;
 
-/// Decode one strict manifest envelope to the legacy-compatible poll shape.
-/// The MessagePack bytes are scanned and bounds-checked before any public
-/// values are allocated. This function is public only for the transport seam.
-pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::Value> {
+/// Decode one strict manifest envelope to `T`. The MessagePack bytes are
+/// scanned and bounds-checked before any public values are allocated. This
+/// function is public only for the transport seam.
+pub(crate) fn decode_reactive_msgpack<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     if bytes.len() > MSGPACK_MAX_MESSAGE_BYTES {
         return Err(Error::invalid_response(
             "reactive MessagePack frame exceeds 8 MiB",
@@ -1702,7 +1815,11 @@ pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::V
     if reader.cursor != bytes.len() {
         return Err(msgpack_error("trailing bytes after reactive envelope"));
     }
-    Ok(response)
+    serde_json::from_value(response).map_err(|error| {
+        Error::invalid_response(format!(
+            "reactive MessagePack frame does not match the contract: {error}"
+        ))
+    })
 }
 
 fn decode_reactive_envelope(reader: &mut MsgpackReader<'_>) -> Result<serde_json::Value> {
@@ -1715,14 +1832,18 @@ fn decode_reactive_envelope(reader: &mut MsgpackReader<'_>) -> Result<serde_json
         ));
     }
     if reader.u32()? != 0 {
-        return Err(Error::invalid_response(
-            "reactive MessagePack frame requires unsupported features",
+        // A nonzero feature word is the same protocol-mismatch failure as an
+        // unsupported version: the frame uses vocabulary this build refuses.
+        return Err(Error::new(
+            ErrorKind::InvalidResponse,
+            "unsupported_version",
+            "unsupported reactive MessagePack protocol features",
         ));
     }
     let tag = reader.u32()?;
     let _correlation = reader.u64()?;
     let _causation = reader.u64()?;
-    if matches!(tag, 1 | 2 | 7) {
+    if matches!(tag, 1 | 2) {
         return Err(msgpack_error(
             "received a client-to-server reactive message",
         ));
@@ -2293,6 +2414,29 @@ fn resolve_delivery(origin: &str, url: &str) -> String {
     }
 }
 
+/// Extracts `scheme://host[:port]` from an absolute delivery URL so a stream
+/// route can be derived from the log route's own origin.
+fn stream_origin(url: &str) -> Result<String> {
+    let parsed = reqwest::Url::parse(url).map_err(|error| {
+        Error::new(
+            ErrorKind::Validation,
+            "invalid_reactive_endpoint",
+            format!("reactive delivery URL is not absolute: {error}"),
+        )
+    })?;
+    let host = parsed.host_str().ok_or_else(|| {
+        Error::new(
+            ErrorKind::Validation,
+            "invalid_reactive_endpoint",
+            "reactive delivery URL has no host.",
+        )
+    })?;
+    match parsed.port() {
+        Some(port) => Ok(format!("{}://{host}:{port}", parsed.scheme())),
+        None => Ok(format!("{}://{host}", parsed.scheme())),
+    }
+}
+
 fn canonical_log_path(view: &str, generation: u64) -> String {
     format!(
         "/api/v1/reactive/views/{}/{generation}/log",
@@ -2393,7 +2537,7 @@ fn normalize_msgpack_error(mut error: Error) -> Error {
         return error;
     }
     let message = error.message.to_ascii_lowercase();
-    let (kind, code) = if message.contains("unsupported reactive messagepack protocol version")
+    let (kind, code) = if message.contains("unsupported reactive messagepack protocol")
         || message.contains("unsupported_version")
     {
         (ErrorKind::InvalidResponse, "unsupported_version")
@@ -2414,6 +2558,9 @@ fn normalize_msgpack_error(mut error: Error) -> Error {
     {
         (ErrorKind::InvalidResponse, "malformed_frame")
     } else {
+        // Not part of the typed vocabulary (for example the 8 MiB frame
+        // bound); keep the undecorated generic decode-failure code.
+        error.code = "invalid_response".to_owned();
         return error;
     };
     error.kind = kind;

@@ -1,18 +1,21 @@
 //! Database-per-tenant (GOAL D-51): thousands of small databases as a
 //! first-class pattern.
 //!
-//! Tenant routes are not part of the pinned TerraBase contract yet. The
+//! The published authorization-lease route is implemented; the remaining
+//! tenant routes are not part of the pinned TerraBase contract yet. The
 //! typed surface remains available so callers can validate requests and
-//! compile against the planned API, but valid operations fail closed with a
+//! compile against the planned API, but those operations fail closed with a
 //! `contract_gap` error instead of sending a request to an invented route.
 
 use serde::de::Error as DeError;
 use serde::ser::Error as SerError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::client::SharedClient;
+use crate::client::{SharedClient, SKIP_AUTH_MARKER};
 use crate::error::{Error, ErrorKind, Result};
+pub use crate::generated_contract::models::Lease;
 use crate::regions::RegionCode;
+use crate::transport::{Method, Request};
 
 const MAX_TENANT_KEY_BYTES: usize = 64;
 const MAX_PLACEMENT_REGIONS: usize = 20;
@@ -372,15 +375,36 @@ pub struct TenantBranch {
 /// Tenant client. Obtain from [`crate::TerraScaleClient::tenants`].
 #[derive(Debug, Clone)]
 pub struct TenantsClient {
-    // Kept for parity with the other clients and for the published route's
-    // eventual implementation. It is intentionally not used while routes
-    // are absent from the pinned contract.
-    _shared: SharedClient,
+    shared: SharedClient,
 }
 
 impl TenantsClient {
     pub(crate) fn new(shared: SharedClient) -> Self {
-        Self { _shared: shared }
+        Self { shared }
+    }
+
+    /// Fetch the tenant's current published authorization lease. The lease
+    /// is the signed, capability-equivalent token binding the tenant's
+    /// authorization epoch, feature epoch, and rotation window.
+    pub async fn authorization_lease(&self, tenant: &str) -> Result<Lease> {
+        validate_key(tenant)?;
+        let mut request = Request {
+            route_name: "authorization.lease".to_owned(),
+            method: Method::Get,
+            url: format!(
+                "{}/authorization/leases/{}",
+                self.shared.pinned_base_url(None)?,
+                encode_path_segment(tenant.trim())
+            ),
+            headers: Vec::new(),
+            body: None,
+        };
+        // The published operation declares no security scheme: the lease is
+        // fetched without the API bearer credential.
+        request
+            .headers
+            .push((SKIP_AUTH_MARKER.to_owned(), String::new()));
+        self.shared.send_typed(request).await
     }
 
     /// Provision a tenant database from a template.
@@ -578,4 +602,19 @@ fn validate_regions(regions: &[RegionCode]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn encode_path_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[(byte >> 4) as usize]));
+            encoded.push(char::from(HEX[(byte & 0x0f) as usize]));
+        }
+    }
+    encoded
 }

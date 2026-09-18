@@ -223,7 +223,7 @@ async fn public_documents_sql_and_exports_consume_producer_vectors() {
             .exports()
             .download("demo", "sample", "sample")
             .await
-            .map(|v| Value::String(String::from_utf8(v.bytes).unwrap()))
+            .map(|v| Value::String(String::from_utf8(v.bytes.to_vec()).unwrap()))
     })
     .await;
     exercise_public_route(&op("create_export"), |c| async move {
@@ -321,7 +321,7 @@ fn response(status: u16, vector: &Value) -> Response {
             }
             headers
         },
-        body: bytes,
+        body: bytes.into(),
     }
 }
 
@@ -379,7 +379,7 @@ async fn producer_421_diagnostics_and_placement_repair_are_preserved() {
                 ("x-request-id".into(), "producer-conformance".into()),
                 ("x-terrascale-placement".into(), "GRU".into()),
             ],
-            body: serde_json::to_vec(&error_body).unwrap(),
+            body: serde_json::to_vec(&error_body).unwrap().into(),
         },
         response(
             200,

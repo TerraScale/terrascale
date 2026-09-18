@@ -86,7 +86,7 @@ async fn document_crud_request_shapes() {
         Response {
             status: 204,
             headers: Vec::new(),
-            body: Vec::new(),
+            body: Vec::new().into(),
         },
     ]);
     let sdk = client(Arc::clone(&mock));
@@ -584,7 +584,7 @@ async fn region_pinning_and_421_repair() {
     let mock = Mock::new(vec![Response {
         status: 421,
         headers: vec![("x-terrascale-placement".to_owned(), "fra".to_owned())],
-        body: b"{}".to_vec(),
+        body: b"{}".to_vec().into(),
     }]);
     let sdk = client(Arc::clone(&mock));
     let error = sdk

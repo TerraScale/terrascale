@@ -110,7 +110,7 @@ async fn documents_propagate_authoritative_etag_and_require_json_success_media()
             ("content-type".into(), "application/json".into()),
             ("etag".into(), "\"served-get\"".into()),
         ],
-        body: br#"{"name":"Ada"}"#.to_vec(),
+        body: br#"{"name":"Ada"}"#.to_vec().into(),
     };
     let put = Response {
         status: 200,
@@ -121,12 +121,12 @@ async fn documents_propagate_authoritative_etag_and_require_json_success_media()
             ),
             ("etag".into(), "\"served-put\"".into()),
         ],
-        body: br#"{"revision":"revision-body"}"#.to_vec(),
+        body: br#"{"revision":"revision-body"}"#.to_vec().into(),
     };
     let wrong_media = Response {
         status: 200,
         headers: vec![("content-type".into(), "text/plain".into())],
-        body: br#"{"name":"Ada"}"#.to_vec(),
+        body: br#"{"name":"Ada"}"#.to_vec().into(),
     };
     let mock = Mock::new([get, put, wrong_media]);
     let sdk = TerraScaleClient::with_transport(
@@ -384,7 +384,7 @@ async fn not_modified_is_an_empty_reactive_poll_only() {
     let mock = Mock::new([Response {
         status: 304,
         headers: vec![("cache-control".to_owned(), "no-store".to_owned())],
-        body: Vec::new(),
+        body: Vec::new().into(),
     }]);
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder().build().expect("config"),
@@ -416,7 +416,7 @@ async fn not_modified_is_an_empty_reactive_poll_only() {
     let ordinary = Mock::new([Response {
         status: 304,
         headers: Vec::new(),
-        body: Vec::new(),
+        body: Vec::new().into(),
     }]);
     let ordinary_sdk = TerraScaleClient::with_transport(
         ClientConfig::builder().build().expect("config"),

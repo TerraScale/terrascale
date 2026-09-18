@@ -123,18 +123,18 @@ fn parse_canonical_u64(value: &str) -> Option<u64> {
 }
 fn encode_segment(value: &str, field: &str) -> Result<String> {
     validate_non_empty(value, field)?;
-    Ok(value
-        .trim()
-        .as_bytes()
-        .iter()
-        .flat_map(|byte| {
-            if byte.is_ascii_alphanumeric() || b"-_.~".contains(byte) {
-                vec![char::from(*byte).to_string()]
-            } else {
-                vec![format!("%{byte:02X}")]
-            }
-        })
-        .collect())
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.trim().bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[(byte >> 4) as usize]));
+            encoded.push(char::from(HEX[(byte & 0x0f) as usize]));
+        }
+    }
+    Ok(encoded)
 }
 fn request_options(mut request: Request, options: &OperationOptions) -> Result<Request> {
     options.validate()?;
@@ -1063,6 +1063,41 @@ impl Schemas {
         self.put(database_id, collection, schema, project_id, options)
             .await
     }
+    /// Roll back the collection's in-progress schema migration to its
+    /// previous durable schema. `idempotency_key` is the stable rollback
+    /// request identity; `expected_generation` is the strong ETag
+    /// (`SchemaDocument::generation`) from the immediately preceding
+    /// [`Schemas::get`]. A 202 response means the rollback was admitted; a
+    /// 200 is an idempotent replay of a completed rollback. Poll
+    /// [`Schemas::get`] until the migration is absent.
+    pub async fn rollback_migration(
+        &self,
+        database_id: &str,
+        collection: &str,
+        idempotency_key: &str,
+        expected_generation: u64,
+        _project_id: Option<&str>,
+    ) -> Result<SchemaDocument> {
+        validate_non_empty(collection, "collection")?;
+        validate_bounded(idempotency_key, "idempotency_key", 128)?;
+        let request = Request {
+            route_name: "schemas.rollback".to_owned(),
+            method: Method::Post,
+            url: format!(
+                "{}/schema/migration/rollback",
+                collection_url(&self.shared, database_id, collection)?
+            ),
+            headers: vec![
+                (
+                    "idempotency-key".to_owned(),
+                    idempotency_key.trim().to_owned(),
+                ),
+                ("if-match".to_owned(), format!("\"{expected_generation}\"")),
+            ],
+            body: None,
+        };
+        self.shared.send_typed(request).await
+    }
 }
 fn validate_schema(schema: &CollectionSchema, collection: &str) -> Result<()> {
     validate_non_empty(collection, "collection")?;
@@ -1181,7 +1216,8 @@ pub struct ExportArtifact {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportDownload {
-    pub bytes: Vec<u8>,
+    /// Artifact payload as shared bytes; large downloads are not copied.
+    pub bytes: bytes::Bytes,
     pub length: u64,
     pub checksum: String,
 }

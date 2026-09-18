@@ -95,7 +95,7 @@ fn msgpack_response(bytes: Vec<u8>) -> Response {
     Response {
         status: 200,
         headers: vec![("content-type".to_owned(), "application/msgpack".to_owned())],
-        body: bytes,
+        body: bytes.into(),
     }
 }
 
@@ -313,7 +313,7 @@ async fn poll_decodes_strict_indexed_msgpack_and_empty_statuses() {
         let mock = Mock::new([Ok(Response {
             status,
             headers: vec![("cache-control".to_owned(), "no-store".to_owned())],
-            body: Vec::new(),
+            body: Vec::new().into(),
         })]);
         let empty = client(Arc::clone(&mock))
             .reactive()
@@ -1102,5 +1102,179 @@ async fn websocket_live_subscription_uses_capability_and_decodes_event() {
     ));
     live.cancel();
     assert!(live.next().await.expect_err("cancelled").code == "cancelled");
+    server.await.expect("server");
+}
+
+#[tokio::test]
+async fn sse_live_subscription_decodes_events_and_maps_terminal_error_to_reconnect() {
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use base64::Engine as _;
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move {
+        let (http, _) = listener.accept().await.expect("attach connection");
+        let mut request = vec![0_u8; 8192];
+        http.readable().await.expect("http readable");
+        let _ = http.try_read(&mut request).expect("attach request");
+        let body = br#"{"view":"v-conformance-view","generation":1,"snapshot_chunks":[],"log":"/api/v1/reactive/views/v-conformance-view/1/log","checkpoint":"Y3Ax","capability":"capability-tag","capability_header":"X-TerraScale-Capability","offset":1}"#;
+        let response = format!("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+        http.writable().await.expect("http writable");
+        http.try_write(response.as_bytes()).expect("attach headers");
+        http.try_write(body).expect("attach body");
+
+        let (mut stream, _) = listener.accept().await.expect("stream connection");
+        let mut request = vec![0_u8; 8192];
+        stream.readable().await.expect("stream readable");
+        let read = stream.try_read(&mut request).expect("stream request");
+        let text = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
+        assert!(
+            text.starts_with(
+                "get /api/v1/reactive/views/v-conformance-view/1/stream?offset=1 http/1.1"
+            ),
+            "stream request line: {text}"
+        );
+        assert!(text.contains("accept: text/event-stream"), "{text}");
+        assert!(
+            text.contains("x-terrascale-capability: capability-tag"),
+            "{text}"
+        );
+        assert!(!text.contains("authorization:"), "{text}");
+
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .expect("stream headers");
+        stream.write_all(b": ping\n\n").await.expect("heartbeat");
+        stream
+            .write_all(
+                format!(
+                    "id: 2\ndata: {}\n\n",
+                    BASE64.encode(reactive_fixture("snapshot"))
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("snapshot event");
+        stream
+            .write_all(
+                format!(
+                    "id: 3\ndata: {}\n\n",
+                    BASE64.encode(reactive_fixture("log"))
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("log event");
+        stream
+            .write_all(b"id: 4\nevent: error\ndata: reactive_unavailable\n\n")
+            .await
+            .expect("error event");
+    });
+
+    let sdk = TerraScaleClient::new(
+        ClientConfig::builder()
+            .api_base_url(format!("http://{address}"))
+            .sync_base_url(format!("http://{address}"))
+            .api_key("test-key")
+            .build()
+            .expect("config"),
+    );
+    let mut live = sdk
+        .reactive()
+        .subscribe_live(
+            &DatabaseScope::new("db"),
+            &Query::raw("SELECT id FROM orders".to_owned(), vec![]),
+            SubscribeOptions::new()
+                .with_transport(Transport::ServerSentEvents)
+                .with_subscription("sub"),
+        )
+        .await
+        .expect("live sse");
+    let opening = live.next().await.expect("opening snapshot");
+    let PollOutcome::Reset(opening) = opening else {
+        panic!("the opening snapshot must be delivered before the log event");
+    };
+    assert!(opening.snapshot.is_some());
+    assert!(matches!(
+        live.next().await.expect("event"),
+        PollOutcome::Data { .. }
+    ));
+    let terminal = live.next().await.expect("terminal error event");
+    let PollOutcome::Reset(terminal) = terminal else {
+        panic!("a terminal error event must surface as a typed reset");
+    };
+    assert_eq!(terminal.reason, ResetReason::Reconnect);
+    assert!(
+        terminal
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("reactive_unavailable")),
+        "terminal detail carries the stream error code: {terminal:?}"
+    );
+    server.await.expect("server");
+}
+
+#[tokio::test]
+async fn sse_stream_end_surfaces_as_a_reconnect_reset() {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move {
+        let (http, _) = listener.accept().await.expect("attach connection");
+        let mut request = vec![0_u8; 8192];
+        http.readable().await.expect("http readable");
+        let _ = http.try_read(&mut request).expect("attach request");
+        let body = br#"{"view":"v-conformance-view","generation":1,"snapshot_chunks":[],"log":"/api/v1/reactive/views/v-conformance-view/1/log","checkpoint":"Y3Ax","capability":"capability-tag","capability_header":"X-TerraScale-Capability","offset":1}"#;
+        let response = format!("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+        http.writable().await.expect("http writable");
+        http.try_write(response.as_bytes()).expect("attach headers");
+        http.try_write(body).expect("attach body");
+
+        let (mut stream, _) = listener.accept().await.expect("stream connection");
+        let mut request = vec![0_u8; 8192];
+        stream.readable().await.expect("stream readable");
+        let _ = stream.try_read(&mut request).expect("stream request");
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nConnection: close\r\n\r\n: ping\n\n",
+            )
+            .await
+            .expect("stream headers with one heartbeat");
+        stream.shutdown().await.expect("stream end");
+    });
+
+    let sdk = TerraScaleClient::new(
+        ClientConfig::builder()
+            .api_base_url(format!("http://{address}"))
+            .sync_base_url(format!("http://{address}"))
+            .api_key("test-key")
+            .build()
+            .expect("config"),
+    );
+    let mut live = sdk
+        .reactive()
+        .subscribe_live(
+            &DatabaseScope::new("db"),
+            &Query::raw("SELECT id FROM orders".to_owned(), vec![]),
+            SubscribeOptions::new()
+                .with_transport(Transport::ServerSentEvents)
+                .with_subscription("sub"),
+        )
+        .await
+        .expect("live sse");
+    let outcome = live.next().await.expect("dropped stream outcome");
+    let PollOutcome::Reset(reset) = outcome else {
+        panic!("a dropped stream must surface as a typed reset");
+    };
+    assert_eq!(reset.reason, ResetReason::Reconnect);
     server.await.expect("server");
 }

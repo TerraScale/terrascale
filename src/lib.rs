@@ -19,6 +19,7 @@ pub mod regions;
 pub mod schema;
 pub mod serde_base64;
 pub mod sql;
+pub(crate) mod sse;
 pub mod tenants;
 pub mod transport;
 pub(crate) mod websocket;
@@ -79,7 +80,7 @@ pub use sql::{
     MAX_SQL_PAGE_LIMIT, MAX_SQL_TEXT_BYTES, MAX_SQL_TIMEOUT_MS, METADATA_FIELDS,
 };
 pub use tenants::{
-    CreateTenant, CreateTenantBranch, CreateTenantKey, Tenant, TenantApiKey, TenantBranch,
+    CreateTenant, CreateTenantBranch, CreateTenantKey, Lease, Tenant, TenantApiKey, TenantBranch,
     TenantListOptions, TenantOperationOptions, TenantPage, TenantPlacementLock, TenantTemplate,
     TenantsClient,
 };

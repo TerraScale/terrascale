@@ -4,7 +4,9 @@ use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::header, Message};
 
 use crate::error::{Error, ErrorKind, Result};
-use crate::reactive::{decode_reactive_msgpack_json, Checkpoint, MSGPACK_MAX_MESSAGE_BYTES};
+use crate::reactive::{
+    decode_reactive_msgpack, CancellationToken, Checkpoint, PollResponse, MSGPACK_MAX_MESSAGE_BYTES,
+};
 
 const SYNC_PROTOCOL: &str = "terrascale.sync.v1";
 
@@ -29,10 +31,11 @@ pub(crate) struct Session {
     socket: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
-    /// The opening frame is part of the live stream. Keep it after validating
-    /// the handshake so the first `LiveSubscription::next` can apply the
-    /// server-authoritative snapshot before consuming subsequent updates.
-    pending_frame: Option<Vec<u8>>,
+    /// The opening frame is part of the live stream. Keep its decoded
+    /// response after validating the handshake so the first
+    /// `LiveSubscription::next` can apply the server-authoritative snapshot
+    /// before consuming subsequent updates.
+    pending_response: Option<PollResponse>,
 }
 
 impl Session {
@@ -40,16 +43,13 @@ impl Session {
         let _ = self.socket.close(None).await;
     }
 
-    pub(crate) async fn next(
-        &mut self,
-        cancellation: &crate::reactive::CancellationToken,
-    ) -> Result<Vec<u8>> {
+    pub(crate) async fn next(&mut self, cancellation: &CancellationToken) -> Result<PollResponse> {
         if cancellation.is_cancelled() {
             let _ = self.socket.close(None).await;
             return Err(crate::reactive::cancelled_error());
         }
-        if let Some(frame) = self.pending_frame.take() {
-            return Ok(frame);
+        if let Some(response) = self.pending_response.take() {
+            return Ok(response);
         }
         loop {
             let frame = tokio::select! {
@@ -63,7 +63,7 @@ impl Session {
             .map_err(|error| Error::transport(format!("WebSocket receive failed: {error}")))?;
             match frame {
                 Message::Binary(bytes) if bytes.len() <= MSGPACK_MAX_MESSAGE_BYTES => {
-                    return Ok(bytes.to_vec());
+                    return decode_reactive_msgpack(&bytes);
                 }
                 Message::Binary(_) => {
                     return Err(Error::invalid_response(
@@ -198,9 +198,9 @@ pub(crate) async fn open(request: OpenRequest<'_>) -> Result<Session> {
         .map_err(|_| Error::transport("WebSocket opening frame timed out"))?
         .ok_or_else(|| Error::transport("WebSocket closed before its opening frame"))?
         .map_err(|error| Error::transport(format!("WebSocket receive failed: {error}")))?;
-    let opening_frame = match frame {
+    let opening_response = match frame {
         Message::Binary(bytes) if bytes.len() <= MSGPACK_MAX_MESSAGE_BYTES => {
-            decode_reactive_msgpack_json(&bytes).map(|_| bytes.to_vec())
+            decode_reactive_msgpack(&bytes)
         }
         Message::Binary(_) => Err(Error::invalid_response(
             "reactive WebSocket frame exceeds 8 MiB",
@@ -218,7 +218,7 @@ pub(crate) async fn open(request: OpenRequest<'_>) -> Result<Session> {
     };
     Ok(Session {
         socket,
-        pending_frame: Some(opening_frame?),
+        pending_response: Some(opening_response?),
     })
 }
 

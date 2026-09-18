@@ -224,3 +224,74 @@ async fn list_and_nested_mutations_validate_then_fail_closed() {
     assert_eq!(error.code, "contract_gap");
     assert_eq!(mock.count(), 0);
 }
+
+#[tokio::test]
+async fn authorization_lease_reads_the_published_route_without_bearer_auth() {
+    let mock = Mock::new();
+    mock.responses
+        .lock()
+        .expect("response mutex")
+        .push_back(Response::json(
+            200,
+            &json!({
+                "version": 1,
+                "tenantId": "acme",
+                "epoch": "9",
+                "featureEpoch": "2",
+                "audience": "sync.api.terrascale.tech",
+                "region": "GRU",
+                "issuedAt": 1_758_000_000_000_i64,
+                "validUntil": 1_758_003_600_000_i64,
+                "keyId": "key-7",
+                "signature": "c2ln"
+            }),
+        ));
+    let sdk = client(Arc::clone(&mock));
+
+    let lease = sdk
+        .tenants()
+        .authorization_lease("acme")
+        .await
+        .expect("authorization lease");
+    assert_eq!(lease.version, 1);
+    assert_eq!(lease.tenant_id, "acme");
+    assert_eq!(lease.epoch, "9");
+    assert_eq!(lease.feature_epoch, "2");
+    assert_eq!(lease.region, "GRU");
+    assert_eq!(lease.key_id, "key-7");
+    assert!(lease.valid_until > lease.issued_at);
+
+    let requests = mock.requests.lock().expect("request mutex");
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.method, terrascale::Method::Get);
+    assert_eq!(
+        request.url,
+        "https://api.terrascale.tech/api/v1/authorization/leases/acme"
+    );
+    assert!(request
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("x-terrascale-project-id"))
+        .is_some_and(|(_, value)| value == "proj_test"));
+    // The published operation declares no security scheme.
+    assert!(request
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+        .is_none());
+}
+
+#[tokio::test]
+async fn authorization_lease_validates_the_tenant_before_sending() {
+    let mock = Mock::new();
+    let sdk = client(Arc::clone(&mock));
+    let error = sdk
+        .tenants()
+        .authorization_lease("  ")
+        .await
+        .expect_err("blank tenant");
+    assert_eq!(error.kind, ErrorKind::Validation);
+    assert_eq!(error.code, "invalid_tenant_key");
+    assert_eq!(mock.count(), 0);
+}

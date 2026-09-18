@@ -238,7 +238,9 @@ async fn recommendation_source_unavailability_preserves_typed_error() {
     let mock = Mock::new(vec![Response {
         status: 503,
         headers: Vec::new(),
-        body: b"{\"code\":\"index_not_ready\",\"message\":\"not ready\"}".to_vec(),
+        body: b"{\"code\":\"index_not_ready\",\"message\":\"not ready\"}"
+            .to_vec()
+            .into(),
     }]);
     let sdk = client(Arc::clone(&mock));
     let error = sdk
@@ -644,7 +646,7 @@ async fn export_download_preserves_binary_body_and_authentication() {
             ),
             ("x-terrascale-artifact-checksum".into(), "A".repeat(64)),
         ],
-        body: bytes.clone(),
+        body: bytes.clone().into(),
     }]);
     let download = client(Arc::clone(&mock))
         .management()
@@ -701,7 +703,7 @@ async fn export_download_rejects_malformed_metadata_and_length_mismatch() {
                 all.extend(headers);
                 all
             },
-            body: vec![1, 2, 3],
+            body: vec![1, 2, 3].into(),
         }]);
         let result = client(Arc::clone(&mock))
             .management()
@@ -774,7 +776,8 @@ async fn database_delete_decodes_accepted_provisioning_lifecycle() {
             "cutoff": "2026-09-06T00:00:00Z",
             "targets": [{"stop":{"environment":"production","organization_id":"tenant","project_id":"project","database_id":"orders","operation_id":"op","region":"GRU","cutoff":"2026-09-06T00:00:00Z"}}]
         }))
-        .unwrap(),
+        .unwrap()
+        .into(),
     }]);
     let result = client(Arc::clone(&mock))
         .management()
@@ -1425,4 +1428,86 @@ async fn auth_persistence_exposes_predicate_operations() {
     let result = api.count("db", request, options).await.unwrap();
     assert_eq!(result.count, Some(2));
     assert!(mock.last().url.ends_with("/auth/count"));
+}
+
+#[tokio::test]
+async fn schema_rollback_carries_required_identity_and_admits_or_replays() {
+    let response = json!({
+        "generation": 8,
+        "identity": {"database_id": "db-1", "placement": ["GRU"]},
+        "migration": null,
+        "schema": {
+            "name": "orders",
+            "fields": [],
+            "fts": null,
+            "historyRetentionDays": 7,
+            "indexes": [],
+            "mergePolicy": "remove-wins",
+            "renames": [],
+            "ttl": null,
+            "version": 3
+        },
+        "schema_version": 3,
+        "target": {"database": "db-1", "branch": "main", "collection": "orders"}
+    });
+    let mock = Mock::new(vec![
+        Response::json(202, &response),
+        Response::json(200, &response),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+
+    let admitted = sdk
+        .management()
+        .schemas()
+        .rollback_migration("db 1", "orders", "rollback-1", 7, None)
+        .await
+        .expect("rollback admitted");
+    assert_eq!(admitted.generation, 8);
+    let replayed = sdk
+        .management()
+        .schemas()
+        .rollback_migration("db 1", "orders", "rollback-2", 8, None)
+        .await
+        .expect("idempotent replay");
+    assert_eq!(replayed.generation, 8);
+
+    let requests = mock.requests.lock().expect("request mutex");
+    assert_eq!(requests.len(), 2);
+    let request = &requests[1];
+    assert_eq!(request.method, Method::Post);
+    assert_eq!(
+        request.url,
+        "https://api.terrascale.tech/api/v1/databases/db%201/collections/orders/schema/migration/rollback"
+    );
+    assert!(request.body.is_none());
+    let header = |name: &str| {
+        request
+            .headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+            .expect(name)
+    };
+    assert_eq!(header("idempotency-key"), "rollback-2");
+    assert_eq!(header("if-match"), "\"8\"");
+    // The bearer credential still authenticates the mutation.
+    assert!(request
+        .headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("authorization"))
+        .is_some());
+}
+
+#[tokio::test]
+async fn schema_rollback_validates_identity_and_generation_inputs() {
+    let mock = Mock::new(vec![]);
+    let sdk = client(Arc::clone(&mock));
+    let error = sdk
+        .management()
+        .schemas()
+        .rollback_migration("db 1", "orders", "   ", 7, None)
+        .await
+        .expect_err("blank idempotency key");
+    assert_eq!(error.code, "invalid_idempotency_key");
+    assert!(mock.requests.lock().expect("request mutex").is_empty());
 }
