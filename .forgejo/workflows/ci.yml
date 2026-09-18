@@ -42,13 +42,13 @@ jobs:
         run: node scripts/provision-reviewed-npm.ts
 
       - name: Install locked dependencies
-        run: nice -n 10 npm ci
+        run: npm ci
 
       - name: Typecheck the SDK
-        run: nice -n 10 npm run typecheck
+        run: npm run typecheck
 
       - name: Build the SDK
-        run: nice -n 10 npm run build
+        run: npm run build
 
       - name: Check out the pinned producer contract bundles
         uses: https://data.forgejo.org/actions/checkout@v6.1.0
@@ -78,16 +78,16 @@ jobs:
           cp -r contracts/edge-root/contracts/v1 contracts/edge
 
       - name: Check the public contract fixture
-        run: nice -n 10 npm run check:public-contract-fixture
+        run: npm run check:public-contract-fixture
 
       - name: Check Dashboard OpenAPI contract identity
-        run: nice -n 10 npm run check:openapi-contract-descriptor
+        run: npm run check:openapi-contract-descriptor
 
       - name: Check the route manifest
-        run: nice -n 10 npm run check:route-manifest
+        run: npm run check:route-manifest
 
       - name: Check the forbidden SDK surface
-        run: nice -n 10 npm run check:forbidden-surface
+        run: npm run check:forbidden-surface
 
   node:
     name: verify/node-${{ matrix.node }}
@@ -125,7 +125,7 @@ jobs:
         run: node scripts/provision-reviewed-npm.ts
 
       - name: Install locked dependencies
-        run: nice -n 10 npm ci
+        run: npm ci
 
       - name: Check out the pinned producer contract bundles
         uses: https://data.forgejo.org/actions/checkout@v6.1.0
@@ -155,10 +155,10 @@ jobs:
           cp -r contracts/edge-root/contracts/v1 contracts/edge
 
       - name: Build the SDK
-        run: nice -n 10 npm run build
+        run: npm run build
 
       - name: Run the complete SDK test suite
-        run: nice -n 10 npm test
+        run: npm test
 
   browser:
     name: verify/browser-current-engines
@@ -192,10 +192,10 @@ jobs:
         run: node scripts/provision-reviewed-npm.ts
 
       - name: Install locked dependencies
-        run: nice -n 10 npm ci
+        run: npm ci
 
       - name: Build the SDK
-        run: nice -n 10 npm run build
+        run: npm run build
 
       - name: Run browser qualification against the current package
-        run: nice -n 10 npm run test:browser
+        run: npm run test:browser
