@@ -42,6 +42,14 @@ func TestNewProducerManagementRoutes(t *testing.T) {
 		{name: "schema-put", method: "PUT", path: "/api/v1/databases/demo/collections/orders/schema", body: `{"name":"orders","fields":[],"historyRetentionDays":7,"mergePolicy":"last-write-wins"}`, response: schema, call: func(c *Client) (any, error) {
 			return c.Databases.PutCollectionSchema(t.Context(), "demo", "orders", CollectionSchema{Name: "orders", Fields: []FieldDef{}, HistoryRetentionDays: 7, MergePolicy: MergeLastWriteWins}, WithIdempotencyKey("schema-apply"), WithSchemaGeneration(math.MaxUint64))
 		}},
+		{name: "schema-rollback", method: "POST", path: "/api/v1/databases/demo/collections/orders/schema/migration/rollback", status: 202, response: schema, call: func(c *Client) (any, error) {
+			return c.Databases.RollbackCollectionSchema(t.Context(), "demo", "orders", WithIdempotencyKey("rollback-1"), WithSchemaGeneration(math.MaxUint64))
+		}, check: func(t *testing.T, v any) {
+			s := v.(*SchemaDocument)
+			if s.Generation != math.MaxUint64 || s.Migration.State != "running" {
+				t.Fatalf("rollback lost schema facts: %+v", s)
+			}
+		}},
 		{name: "recommendations", method: "GET", path: "/api/v1/databases/demo/collections/orders/indexes/recommendations?limit=64", response: recommendation, call: func(c *Client) (any, error) {
 			return c.Databases.IndexRecommendations(t.Context(), "demo", "orders", 64)
 		}, check: func(t *testing.T, v any) {
@@ -95,6 +103,9 @@ func TestNewProducerManagementRoutes(t *testing.T) {
 				}
 				if test.name == "schema-put" && (r.Header.Get("If-Match") != `"18446744073709551615"` || r.Header.Get("Idempotency-Key") != "schema-apply") {
 					t.Error("schema concurrency headers missing")
+				}
+				if test.name == "schema-rollback" && (r.Header.Get("If-Match") != `"18446744073709551615"` || r.Header.Get("Idempotency-Key") != "rollback-1") {
+					t.Error("rollback concurrency headers missing")
 				}
 				if test.name == "export-create" && r.Header.Get("Idempotency-Key") != "export-1" {
 					t.Error("export identity mismatch")
@@ -177,6 +188,12 @@ func TestNewManagementRoutesValidateBeforeHTTP(t *testing.T) {
 	}
 	if _, err := client.Databases.PutCollectionSchema(t.Context(), "demo", "orders", CollectionSchema{Name: "orders"}); err == nil {
 		t.Fatal("schema without idempotency accepted")
+	}
+	if _, err := client.Databases.RollbackCollectionSchema(t.Context(), "demo", "orders"); err == nil {
+		t.Fatal("rollback without idempotency accepted")
+	}
+	if _, err := client.Databases.RollbackCollectionSchema(t.Context(), "demo", "orders", WithIdempotencyKey("rollback-1")); err == nil {
+		t.Fatal("rollback without schema generation accepted")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -536,5 +553,49 @@ func TestRestoreBackupRequiresMatchingAcceptedOperation(t *testing.T) {
 				t.Fatalf("restore acknowledgement = %+v, %v", result, err)
 			}
 		})
+	}
+}
+
+func TestRollbackCollectionSchemaAcceptsIdempotentReplay(t *testing.T) {
+	const schema = `{"target":{"database":"demo","branch":"main","collection":"orders"},"identity":{"database_id":"db-1","placement":["GRU"]},"schema":{"name":"orders","fields":[],"historyRetentionDays":7,"mergePolicy":"last-write-wins"},"generation":42,"schema_version":7}`
+	var statuses []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/databases/demo/collections/orders/schema/migration/rollback" || r.Method != http.MethodPost {
+			t.Errorf("rollback request = %s %s", r.Method, r.URL.Path)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil || len(body) != 0 {
+			t.Errorf("rollback body = %q err=%v", body, err)
+		}
+		if r.Header.Get("Idempotency-Key") != "rollback-1" || r.Header.Get("If-Match") != `"41"` {
+			t.Errorf("rollback headers = %q %q", r.Header.Get("Idempotency-Key"), r.Header.Get("If-Match"))
+		}
+		// The first call is admitted (202); replaying the same rollback
+		// identity returns the completed result (200).
+		status := http.StatusAccepted
+		if len(statuses) > 0 {
+			status = http.StatusOK
+		}
+		statuses = append(statuses, status)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(schema))
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		document, err := client.Databases.RollbackCollectionSchema(t.Context(), "demo", "orders", WithIdempotencyKey("rollback-1"), WithSchemaGeneration(41))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if document.Generation != 42 || document.SchemaVersion != 7 || document.Migration != nil {
+			t.Fatalf("rollback document %d = %+v", i, document)
+		}
+	}
+	if len(statuses) != 2 || statuses[0] != http.StatusAccepted || statuses[1] != http.StatusOK {
+		t.Fatalf("rollback statuses = %v", statuses)
 	}
 }

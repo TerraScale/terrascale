@@ -815,6 +815,37 @@ func (d *DatabasesClient) PutCollectionSchema(ctx context.Context, database, col
 	return &out, nil
 }
 
+// RollbackCollectionSchema rolls back an in-progress schema migration. The
+// request requires the stable rollback identity of WithIdempotencyKey and the
+// strong schema generation observed by the immediately preceding
+// GetCollectionSchema (passed as WithSchemaGeneration), mirroring the schema
+// PUT concurrency contract. HTTP 202 admits the rollback and HTTP 200 is the
+// idempotent replay of a completed one; both return the current
+// SchemaDocument. Poll GetCollectionSchema until migration is absent.
+func (d *DatabasesClient) RollbackCollectionSchema(ctx context.Context, database, collection string, opts ...RequestOption) (*SchemaDocument, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
+	path, err := collectionPath(database, collection)
+	if err != nil {
+		return nil, err
+	}
+	if err := managementMutation(opts); err != nil {
+		return nil, err
+	}
+	if err := requiredManagementMutation(opts); err != nil {
+		return nil, err
+	}
+	if resolveRequestOptions(opts).ifMatch == "" {
+		return nil, &ValidationError{Field: "if-match", Message: "rollback requires the strong generation from GetCollectionSchema (WithSchemaGeneration)"}
+	}
+	var out SchemaDocument
+	if err := d.c.do(ctx, "POST", path+"/schema/migration/rollback", nil, nil, &out, "rollback_schema", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // DatabaseBranchesClient mirrors databaseBranches.* routes.
 type DatabaseBranchesClient struct{ c *Client }
 
