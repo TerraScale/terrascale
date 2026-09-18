@@ -167,24 +167,40 @@ public sealed class TerraScaleReactiveHttpClient
 
     private static async Task<byte[]?> ReceiveWebSocketMessageAsync(ClientWebSocket socket, CancellationToken cancellationToken)
     {
-        var result = new MemoryStream();
-        var buffer = new byte[16 * 1024];
-        while (true)
+        // The scratch buffer is pooled and grows by doubling; only the final
+        // exact-size message copy is allocated per frame.
+        var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        try
         {
-            var received = await socket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (received.MessageType == WebSocketMessageType.Close)
+            var length = 0;
+            while (true)
             {
-                if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-                    await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "closed", CancellationToken.None).ConfigureAwait(false);
-                return null;
-            }
+                var received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer, length, buffer.Length - length), cancellationToken).ConfigureAwait(false);
+                if (received.MessageType == WebSocketMessageType.Close)
+                {
+                    if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                        await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "closed", CancellationToken.None).ConfigureAwait(false);
+                    return null;
+                }
 
-            if (received.MessageType != WebSocketMessageType.Binary)
-                throw new TerraScaleReactiveProtocolException("The reactive WebSocket delivered a non-binary frame.");
-            if (result.Length + received.Count > MaxMessageBytes)
-                throw new TerraScaleReactiveProtocolException("The reactive WebSocket message exceeds the maximum size.");
-            result.Write(buffer, 0, received.Count);
-            if (received.EndOfMessage) return result.ToArray();
+                if (received.MessageType != WebSocketMessageType.Binary)
+                    throw new TerraScaleReactiveProtocolException("The reactive WebSocket delivered a non-binary frame.");
+                length += received.Count;
+                if (length > MaxMessageBytes)
+                    throw new TerraScaleReactiveProtocolException("The reactive WebSocket message exceeds the maximum size.");
+                if (received.EndOfMessage) return buffer.AsSpan(0, length).ToArray();
+                if (length == buffer.Length)
+                {
+                    var grown = ArrayPool<byte>.Shared.Rent(buffer.Length * 2);
+                    buffer.AsSpan(0, length).CopyTo(grown);
+                    ArrayPool<byte>.Shared.Return(buffer);
+                    buffer = grown;
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
@@ -332,6 +348,7 @@ public sealed class TerraScaleReactiveHttpClient
         }
         catch (FormatException)
         {
+            subscription.MarkNeedsResume();
             throw new TerraScaleReactiveProtocolException("The reactive SSE event carried invalid base64 data.");
         }
 
@@ -584,12 +601,42 @@ public sealed class TerraScaleReactiveHttpClient
 
     private static async Task<byte[]> ReadBoundedBytesAsync(HttpContent content, int limit, CancellationToken cancellationToken)
     {
-        if (content.Headers.ContentLength is long length && length > limit) throw new TerraScaleReactiveProtocolException("The reactive response exceeds the configured byte bound.");
+        if (content.Headers.ContentLength is long declared && declared > limit) throw new TerraScaleReactiveProtocolException("The reactive response exceeds the configured byte bound.");
         await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        using var result = new MemoryStream(Math.Min(limit, 16 * 1024));
-        var buffer = new byte[16 * 1024];
-        while (true) { var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false); if (read == 0) break; if (result.Length + read > limit) throw new TerraScaleReactiveProtocolException("The reactive response exceeds the configured byte bound."); result.Write(buffer, 0, read); }
-        return result.ToArray();
+        if (content.Headers.ContentLength is long expected && expected >= 0)
+        {
+            // A declared length sizes the destination exactly: one allocation,
+            // no scratch buffer, and no intermediate growth.
+            var payload = new byte[expected];
+            var filled = 0;
+            while (filled < payload.Length)
+            {
+                var read = await stream.ReadAsync(payload.AsMemory(filled), cancellationToken).ConfigureAwait(false);
+                if (read == 0) break;
+                filled += read;
+            }
+
+            return filled == payload.Length ? payload : payload[..filled];
+        }
+
+        var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        try
+        {
+            using var result = new MemoryStream(buffer.Length);
+            while (true)
+            {
+                var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (read == 0) break;
+                if (result.Length + read > limit) throw new TerraScaleReactiveProtocolException("The reactive response exceeds the configured byte bound.");
+                result.Write(buffer, 0, read);
+            }
+
+            return result.ToArray();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     internal static async Task<byte[]> ReadBoundedErrorBytesAsync(HttpContent content, CancellationToken cancellationToken) => await ReadBoundedBytesAsync(content, MaxErrorBytes, cancellationToken).ConfigureAwait(false);
