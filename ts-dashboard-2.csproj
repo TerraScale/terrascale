@@ -7,8 +7,8 @@
     <LangVersion>14.0</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- NU1900: offline vulnerability audit when the forgejo feed is unreachable. -->
-    <!-- NU1900: forgejo feed unreachable offline; NU1507: ts-libs CPM vs multi-source. -->
-    <NoWarn>$(NoWarn);NU1900;NU1507</NoWarn>
+    <!-- NU1900: vulnerability audit needs the network; CI builds offline. -->
+    <NoWarn>$(NoWarn);NU1900</NoWarn>
     <RootNamespace>TerraScale.Dashboard2</RootNamespace>
   </PropertyGroup>
 
