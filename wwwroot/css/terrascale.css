@@ -2291,3 +2291,203 @@ details.ts-menu[open] > summary.ts-account-trigger {
   color: var(--ts-accent-soft);
 }
 
+
+/* ===== Feature: ApiKeys ===== */
+
+/* Metric toolbar (page-top stat row, shared-page-styles parity). */
+.ts-metric-toolbar {
+    gap: var(--ts-md);
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.ts-metric-toolbar-actions {
+    gap: var(--ts-sm);
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+
+.ts-panel20 {
+    padding: 20px;
+}
+
+.ts-metric-tile {
+    padding: var(--ts-lg);
+    flex-basis: 12rem;
+    flex-grow: 0;
+    flex-shrink: 1;
+    min-width: 9rem;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: var(--ts-surface-muted);
+}
+
+.ts-text-upper {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+    text-transform: uppercase;
+}
+
+.ts-metric-row {
+    gap: var(--ts-md);
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    margin-top: var(--ts-lg);
+}
+
+.ts-stat-value {
+    color: var(--ts-ink);
+    font-size: 24px;
+    font-weight: var(--ts-fw-semibold);
+}
+
+/* Credentials filter bar. */
+.ts-filter-bar {
+    gap: var(--ts-md);
+    padding-block: var(--ts-lg);
+    padding-inline: var(--ts-lg);
+    align-items: flex-end;
+    display: flex;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-search-field {
+    flex-basis: 18rem;
+    flex-grow: 1;
+    position: relative;
+    max-width: 28rem;
+    min-width: 0;
+    display: block;
+}
+
+.ts-search-field svg {
+    position: absolute;
+    left: var(--ts-md);
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--ts-ink-muted);
+    pointer-events: none;
+}
+
+.ts-search-input {
+    padding-left: 36px;
+    width: 100%;
+}
+
+.ts-filter-field {
+    gap: var(--ts-xs);
+    display: grid;
+}
+
+.ts-filter-label {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+}
+
+.ts-filter-select {
+    min-width: 10rem;
+}
+
+/* Credentials table cells. */
+.ts-credential-name {
+    gap: var(--ts-sm);
+    align-items: center;
+    display: flex;
+    min-width: 0;
+}
+
+.ts-credential-name svg {
+    color: var(--ts-accent);
+    flex-shrink: 0;
+}
+
+.ts-credential-name-text {
+    overflow: hidden;
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-medium);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ts-credential-mono {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+    white-space: nowrap;
+}
+
+.ts-credential-meta {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+    white-space: nowrap;
+}
+
+.ts-credential-actions {
+    gap: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.ts-credential-empty {
+    padding: var(--ts-lg);
+}
+
+/* Credential secret dialog rows. */
+.ts-secret-list {
+    margin: 0;
+    padding: var(--ts-lg);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    display: grid;
+    gap: var(--ts-sm);
+    font-size: var(--ts-fs-ui);
+}
+
+.ts-secret-row {
+    gap: var(--ts-md);
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    min-width: 0;
+}
+
+.ts-secret-row dd {
+    margin: 0;
+    overflow: hidden;
+    color: var(--ts-ink);
+    font-family: var(--ts-font-mono);
+    font-size: var(--ts-fs-meta);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.ts-secret-section {
+    gap: var(--ts-xs);
+    display: grid;
+    border-top: 1px solid var(--ts-line);
+    padding-top: var(--ts-xs);
+}
+
+.ts-secret-secret-row {
+    gap: var(--ts-sm);
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    min-width: 0;
+}
+
+.ts-secret-code {
+    color: var(--ts-ink);
+    font-family: var(--ts-font-mono);
+    font-size: var(--ts-fs-meta);
+    overflow-wrap: anywhere;
+}
