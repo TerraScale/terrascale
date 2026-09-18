@@ -3,14 +3,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Admin;
 
-public sealed record AdminOrganizationsPageModel(
-    string Query,
-    IReadOnlyList<DashboardStore.AdminOrganizationRow> Rows,
-    int WithOwners) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
-
 public sealed class AdminOrganizationsPageEndpoint(DashboardStore store)
     : SlicePageEndpoint<AdminOrganizationsSlice, AdminOrganizationsPageModel>(store, "/admin/organizations")
 {

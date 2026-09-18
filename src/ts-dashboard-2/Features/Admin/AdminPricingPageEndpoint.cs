@@ -3,14 +3,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Admin;
 
-public sealed record AdminPricingPageModel(
-    string Query,
-    IReadOnlyList<DashboardStore.AdminPlanRow> Plans,
-    string? Notice) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
-
 public sealed class AdminPricingPageEndpoint(DashboardStore store)
     : SlicePageEndpoint<AdminPricingSlice, AdminPricingPageModel>(store, "/admin/pricing")
 {
