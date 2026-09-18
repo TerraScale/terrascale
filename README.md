@@ -31,9 +31,13 @@ replacement. These checks do not qualify a published module or a live member.
 
 Reactive subscriptions use bounded HTTP long-polling by default. To opt into
 the direct WebSocket transport, pass `SubscriptionOptions{Transport:
-TransportWebSocket}` to `Subscribe`. The SDK performs the authenticated view
-attach, negotiates `terrascale.sync.v1` with the view capability, and validates
-each binary MessagePack frame against the pinned sync-v1 limits. A canceled or
+TransportWebSocket}` to `Subscribe`; to opt into the push stream, pass
+`Transport: TransportServerSentEvents` (wire value `server-sent-events`). The
+SDK performs the authenticated view
+attach, negotiates `terrascale.sync.v1` with the view capability on WebSocket,
+and validates each binary MessagePack frame against the pinned sync-v1 limits;
+the server-sent-events transport delivers the same envelopes as base64
+`data` events and tracks the event id as the resume offset. A canceled or
 closed connection ends the subscription; an unexpected transport or protocol
 failure delivers a typed `ResetReconnect` update, after which the caller can
 create a new subscription using its last checkpoint.

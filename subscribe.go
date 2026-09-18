@@ -5,10 +5,11 @@
 // A checkpoint is an opaque authorized-view position. Any identity,
 // generation, schema, entitlement, region, or retention mismatch surfaces as
 // a typed ResetError with a fresh snapshot; the consumer resubscribes.
-// WebSocket is an explicit opt-in transport.
+// WebSocket and server-sent events are explicit opt-in transports.
 package sdk
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -146,6 +147,10 @@ const (
 	TransportHTTP Transport = "http"
 	// TransportWebSocket opts into the direct transport.
 	TransportWebSocket Transport = "websocket"
+	// TransportServerSentEvents opts into the push stream. The wire value is
+	// the name the other SDKs parse, so persisted transport selections remain
+	// portable.
+	TransportServerSentEvents Transport = "server-sent-events"
 )
 
 // SubscriptionOptions tunes Subscribe.
@@ -550,9 +555,12 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 	// origin cannot deliver a delta ahead of the snapshot. Cancellation and
 	// terminal resets both release the subscription resources.
 	s.wg.Add(1)
-	if sub.Transport == TransportWebSocket {
+	switch sub.Transport {
+	case TransportWebSocket:
 		go s.websocketLoop(pollCtx)
-	} else {
+	case TransportServerSentEvents:
+		go s.sseLoop(pollCtx)
+	default:
 		go s.pollLoop(pollCtx)
 	}
 	go func() {
@@ -689,6 +697,204 @@ func (s *Subscription) websocketLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// maxSseLineBytes bounds one server-sent-events line. The largest legal line
+// is the base64 spelling of one maximally sized envelope, so anything longer
+// is already over the frame limit.
+const maxSseLineBytes = (maxReactiveBody/3+1)*4 + 1024
+
+// sseLoop streams the view's log over server-sent events. The stream stays
+// open reading events as they arrive; a dropped connection, a terminal
+// "error" event, or any pre-stream failure ends the session with a typed
+// reset, after which the caller reattaches from its last checkpoint.
+func (s *Subscription) sseLoop(ctx context.Context) {
+	defer s.wg.Done()
+	defer close(s.events)
+	defer s.cancel()
+	// The stream is long-lived, so the REST client's request timeout must not
+	// cap it; cancellation still ends the stream through the request context.
+	streamHTTP := *s.c.http
+	streamHTTP.Timeout = 0
+	resp, events, reset := s.openSseStream(ctx, &streamHTTP)
+	if reset != nil {
+		if ctx.Err() == nil {
+			s.deliver(Update{Kind: UpdateReset, Checkpoint: s.Checkpoint(), Reset: reset})
+		}
+		return
+	}
+	defer resp.Body.Close()
+	s.readSseEvents(ctx, events)
+}
+
+func (s *Subscription) sseReset(message string) *ResetError {
+	return &ResetError{Reason: ResetReconnect, Message: message, ViewID: s.viewID, Generation: s.generation}
+}
+
+// openSseStream performs the authenticated streaming GET. Pre-stream
+// failures are mapped to the same typed resets the long-poll log uses.
+func (s *Subscription) openSseStream(ctx context.Context, streamHTTP *http.Client) (*http.Response, *bufio.Scanner, *ResetError) {
+	_, offset, _ := s.progress()
+	if offset == "" {
+		offset = "0"
+	}
+	origin, err := reactiveOrigin(s.c)
+	if err != nil {
+		return nil, nil, s.sseReset(err.Error())
+	}
+	u, err := url.Parse(origin + canonicalReactivePath(s.viewID, s.generation, "stream") + "?offset=" + url.QueryEscape(offset))
+	if err != nil {
+		return nil, nil, s.sseReset("sdk: invalid reactive stream URL")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, nil, s.sseReset(err.Error())
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	s.c.decorateScopeHeaders(req.Header)
+	if s.capability != "" {
+		header := s.capabilityHeader
+		if header == "" {
+			header = defaultCapabilityHeader
+		}
+		req.Header.Set(header, s.capability)
+	}
+	if token := s.c.token(); token != "" {
+		if err := setBearerAuthorization(req.Header, token); err != nil {
+			return nil, nil, s.sseReset(err.Error())
+		}
+	}
+	if causal := strings.TrimSpace(s.sessionToken); causal != "" {
+		req.Header.Set("X-TerraScale-Session", causal)
+	}
+	resp, err := streamHTTP.Do(req)
+	if err != nil {
+		return nil, nil, s.sseReset("reactive SSE stream unavailable: " + err.Error())
+	}
+	s.c.observeSession(resp.Header)
+	s.sessionToken = s.c.SessionToken()
+	if resp.StatusCode >= 400 {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxReactiveBody+1))
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, nil, s.sseReset("reactive SSE stream unavailable: " + readErr.Error())
+		}
+		if reset := resetForStatus(resp.StatusCode); reset != nil {
+			reset.ViewID, reset.Generation = s.viewID, s.generation
+			if resp.StatusCode == http.StatusMisdirectedRequest {
+				if region := normalizeRegion(resp.Header.Get("X-TerraScale-Placement")); region != "" {
+					s.region = region
+					reset.Message = "reactive view moved to region " + region
+				}
+			}
+			return nil, nil, reset
+		}
+		apiErr := errorFromResponse("reactive.stream", http.MethodGet, u.Path, resp.StatusCode, resp.Header, body)
+		return nil, nil, s.sseReset(apiErr.Error())
+	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	if contentType != "text/event-stream" {
+		resp.Body.Close()
+		return nil, nil, s.sseReset(fmt.Sprintf("reactive stream returned unsupported content type %q", contentType))
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64<<10), maxSseLineBytes)
+	return resp, scanner, nil
+}
+
+// readSseEvents parses the text/event-stream framing: comment lines are
+// heartbeats, "id" carries the resume offset, "data" carries the base64
+// spelling of one terrascale.sync.v1 envelope, and a terminal "error" event
+// ends the stream.
+func (s *Subscription) readSseEvents(ctx context.Context, events *bufio.Scanner) {
+	var name string
+	var data []string
+	var id string
+	for events.Scan() {
+		line := events.Text()
+		switch {
+		case line == "":
+			if len(data) == 0 {
+				name = ""
+				continue
+			}
+			payload := strings.Join(data, "")
+			data = data[:0]
+			eventName := name
+			name = ""
+			if reset, done := s.handleSseEvent(id, eventName, payload); done {
+				if ctx.Err() == nil && reset != nil {
+					s.deliver(Update{Kind: UpdateReset, Checkpoint: s.Checkpoint(), Reset: reset})
+				}
+				return
+			}
+		case line[0] == ':':
+			// Heartbeat comment; ignore.
+		default:
+			field, value, _ := strings.Cut(line, ":")
+			value = strings.TrimPrefix(value, " ")
+			switch field {
+			case "event":
+				name = value
+			case "data":
+				data = append(data, value)
+			case "id":
+				id = value
+			}
+		}
+	}
+	if ctx.Err() == nil {
+		message := "reactive SSE stream ended"
+		if err := events.Err(); err != nil {
+			message = "reactive SSE stream framing failed: " + err.Error()
+		}
+		s.deliver(Update{Kind: UpdateReset, Checkpoint: s.Checkpoint(), Reset: s.sseReset(message)})
+	}
+}
+
+// handleSseEvent decodes one dispatched event and delivers its updates.
+// done reports that the session ends; reset is then the terminal reset to
+// deliver, nil when the event itself already delivered its own typed reset.
+func (s *Subscription) handleSseEvent(id, name, payload string) (reset *ResetError, done bool) {
+	if name == "error" {
+		return s.sseReset("reactive SSE stream error: " + payload), true
+	}
+	frame, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return s.sseReset("reactive SSE event carried invalid base64 data"), true
+	}
+	if len(frame) > maxReactiveBody {
+		return s.sseReset(fmt.Sprintf("reactive SSE event exceeds %d bytes", maxReactiveBody)), true
+	}
+	updates, cp, _, decoded, err := decodeReactiveMessagePack(frame, s.viewID, s.generation)
+	if err != nil {
+		return s.sseReset("invalid reactive SSE frame: " + err.Error()), true
+	}
+	if cp != "" || id != "" {
+		s.setProgress(cp, sseResumeOffset(id), "")
+	}
+	if decoded != nil {
+		s.deliver(Update{Kind: UpdateReset, Checkpoint: s.Checkpoint(), Snapshot: cloneDocuments(decoded.Snapshot), Reset: decoded})
+		return nil, true
+	}
+	for _, update := range updates {
+		if update.Checkpoint == "" {
+			update.Checkpoint = cp
+		}
+		if !s.deliver(update) {
+			return nil, true
+		}
+	}
+	return nil, false
+}
+
+// sseResumeOffset accepts only the contract's digits-only resume ids so a
+// hostile id line cannot corrupt the numeric offset.
+func sseResumeOffset(id string) string {
+	if id == "" || !isDecimal(id) {
+		return ""
+	}
+	return id
 }
 
 func mpArray(n int) []byte { return []byte{0x90 | byte(n)} }
@@ -900,69 +1106,113 @@ func canonicalSnapshotURL(c *Client, advertised, view string, generation uint64,
 	return origin + canonicalReactivePath(view, generation, "snapshot/"+strconv.Itoa(index)), nil
 }
 
+// snapshotChunkWorkers bounds concurrent snapshot chunk fetches. Chunks are
+// independent immutable cuts, so bounded parallelism preserves order by
+// assembling results back in index order.
+const snapshotChunkWorkers = 4
+
 func (c *Client) fetchSnapshotChunks(ctx context.Context, attach *attachResponse) ([]Document, Checkpoint, error) {
 	if len(attach.SnapshotChunks) > maxSnapshotChunks {
 		return nil, "", fmt.Errorf("sdk: reactive snapshot has too many chunks")
 	}
+	type chunkResult struct {
+		docs []Document
+		cp   Checkpoint
+	}
+	fetchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	chunks := make([]chunkResult, len(attach.SnapshotChunks))
+	errs := make([]error, len(attach.SnapshotChunks))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, snapshotChunkWorkers)
+	for i, advertised := range attach.SnapshotChunks {
+		if fetchCtx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if fetchCtx.Err() != nil {
+				return
+			}
+			docs, cp, err := c.fetchSnapshotChunk(fetchCtx, attach, advertised, i)
+			if err != nil {
+				errs[i] = err
+				cancel()
+				return
+			}
+			chunks[i] = chunkResult{docs: docs, cp: cp}
+		}()
+	}
+	wg.Wait()
 	var docs []Document
 	checkpoint := attach.Checkpoint
 	totalBytes := 0
-	for i, advertised := range attach.SnapshotChunks {
-		chunkURL, err := canonicalSnapshotURL(c, advertised, attach.ViewID, attach.Generation, i)
-		if err != nil {
-			return nil, "", err
+	for i, chunk := range chunks {
+		if errs[i] != nil {
+			return nil, "", errs[i]
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, chunkURL, nil)
-		if err != nil {
-			return nil, "", err
-		}
-		req.Header.Set("Accept", "application/msgpack")
-		c.decorateScopeHeaders(req.Header)
-		capHeader, _ := normalizeCapabilityHeader(attach.CapabilityHeader)
-		req.Header.Set(capHeader, attach.Capability)
-		if token := c.token(); token != "" {
-			if err := setBearerAuthorization(req.Header, token); err != nil {
-				return nil, "", err
-			}
-		}
-		if causal := strings.TrimSpace(c.SessionToken()); causal != "" {
-			req.Header.Set("X-TerraScale-Session", causal)
-		}
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return nil, "", err
-		}
-		c.observeSession(resp.Header)
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxReactiveBody+1))
-		resp.Body.Close()
-		if readErr != nil {
-			return nil, "", readErr
-		}
-		if len(body) > maxReactiveBody {
-			return nil, "", fmt.Errorf("sdk: reactive snapshot chunk exceeds %d bytes", maxReactiveBody)
-		}
-		if resp.StatusCode >= 400 {
-			return nil, "", resetForStatusError(resp.StatusCode, chunkURL, body)
-		}
-		chunkDocs, cp, _, decodeErr := decodeReactiveSnapshotMessagePack(body, attach.ViewID, attach.Generation)
-		if decodeErr != nil {
-			return nil, "", decodeErr
-		}
-		docs = append(docs, chunkDocs...)
+		docs = append(docs, chunk.docs...)
 		if len(docs) > maxSnapshotItems {
 			return nil, "", fmt.Errorf("sdk: reactive snapshot exceeds %d documents", maxSnapshotItems)
 		}
-		for _, doc := range chunkDocs {
+		for _, doc := range chunk.docs {
 			totalBytes += len(doc.Body)
 			if totalBytes > maxSnapshotBytes {
 				return nil, "", fmt.Errorf("sdk: reactive snapshot exceeds %d bytes", maxSnapshotBytes)
 			}
 		}
-		if cp != "" {
-			checkpoint = cp
+		if chunk.cp != "" {
+			checkpoint = chunk.cp
 		}
 	}
 	return docs, checkpoint, nil
+}
+
+func (c *Client) fetchSnapshotChunk(ctx context.Context, attach *attachResponse, advertised string, index int) ([]Document, Checkpoint, error) {
+	chunkURL, err := canonicalSnapshotURL(c, advertised, attach.ViewID, attach.Generation, index)
+	if err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, chunkURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "application/msgpack")
+	c.decorateScopeHeaders(req.Header)
+	capHeader, _ := normalizeCapabilityHeader(attach.CapabilityHeader)
+	req.Header.Set(capHeader, attach.Capability)
+	if token := c.token(); token != "" {
+		if err := setBearerAuthorization(req.Header, token); err != nil {
+			return nil, "", err
+		}
+	}
+	if causal := strings.TrimSpace(c.SessionToken()); causal != "" {
+		req.Header.Set("X-TerraScale-Session", causal)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	c.observeSession(resp.Header)
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxReactiveBody+1))
+	resp.Body.Close()
+	if readErr != nil {
+		return nil, "", readErr
+	}
+	if len(body) > maxReactiveBody {
+		return nil, "", fmt.Errorf("sdk: reactive snapshot chunk exceeds %d bytes", maxReactiveBody)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, "", resetForStatusError(resp.StatusCode, chunkURL, body)
+	}
+	chunkDocs, cp, _, decodeErr := decodeReactiveSnapshotMessagePack(body, attach.ViewID, attach.Generation)
+	if decodeErr != nil {
+		return nil, "", decodeErr
+	}
+	return chunkDocs, cp, nil
 }
 
 func (c *Client) advanceSessionToken(token string) {
@@ -1038,7 +1288,6 @@ func (s *Subscription) pollLoop(ctx context.Context) {
 			if u.Checkpoint == "" {
 				u.Checkpoint = prog
 			}
-			u.Body = cloneRaw(u.Body)
 			// Publish progress before the event so consumers observing the
 			// event can immediately resume from its checkpoint. Delivering
 			// first creates a race where Checkpoint still reports the prior
@@ -1803,7 +2052,10 @@ func decodeMPSnapshot(r *reactiveMPReader, view string, generation uint64, metad
 			if _, exists := fieldValues[path]; exists {
 				return nil, nil, "", fmt.Errorf("sdk: reactive snapshot contains duplicate projected field %q", path)
 			}
-			fieldValues[path] = cloneRaw(value)
+			// mpBinary already copied the value off the frame buffer; the
+			// body keeps a second copy so mutating Body cannot leak into
+			// Fields.
+			fieldValues[path] = value
 			if path == "body" {
 				body = cloneRaw(value)
 			}
@@ -1924,7 +2176,7 @@ func decodeMPOperation(r *reactiveMPReader) (Update, error) {
 			if path == "body" {
 				body = cloneRaw(value)
 			}
-			fieldsMap[path] = cloneRaw(value)
+			fieldsMap[path] = value
 		}
 		return Update{Kind: UpdatePatch, ID: id, Body: body, Fields: fieldsMap}, nil
 	case 4:
@@ -1982,7 +2234,7 @@ func decodeMPFields(r *reactiveMPReader) (json.RawMessage, map[string]json.RawMe
 		if total > 1<<20 {
 			return nil, nil, fmt.Errorf("sdk: reactive operation exceeds 1 MiB")
 		}
-		fields[path] = cloneRaw(value)
+		fields[path] = value
 		if path == "body" {
 			body = cloneRaw(value)
 		}
