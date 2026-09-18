@@ -14,9 +14,12 @@ public sealed class SessionEndpoint(DashboardStore store) : EndpointWithoutReque
     }
 
     public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(Results.Ok(new
-        {
-            authenticated = DashboardAuthMiddleware.IsAuthenticated(HttpContext),
-            user = new { store.CurrentUser.Id, store.CurrentUser.Email, store.CurrentUser.Name, store.CurrentUser.Role },
-        }));
+        Task.FromResult<IResult>(
+            DashboardAuthMiddleware.IsAuthenticated(HttpContext)
+                ? Results.Ok(new
+                {
+                    authenticated = true,
+                    user = new { store.CurrentUser.Id, store.CurrentUser.Email, store.CurrentUser.Name, store.CurrentUser.Role },
+                })
+                : Results.Ok(new { authenticated = false }));
 }

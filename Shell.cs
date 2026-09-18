@@ -11,7 +11,7 @@ public sealed class DashboardAuthMiddleware(RequestDelegate next)
     [
         "/login", "/reset-password", "/invitations/", "/cli/", "/agent/", "/oauth/",
         "/onboarding", "/checkout/",
-        "/api/", "/health/", "/css/", "/js/", "/fonts/", "/brand/", "/favicon", "/openapi", "/scalar",
+        "/api/v1/auth/", "/health/", "/css/", "/js/", "/fonts/", "/brand/", "/favicon", "/openapi", "/scalar",
     ];
 
     public async Task InvokeAsync(HttpContext context)

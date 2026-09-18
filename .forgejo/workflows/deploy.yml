@@ -8,7 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install flyctl
-        run: curl -sL https://fly.io/install.sh | sh
+        run: curl -sL https://fly.io/install.sh | sh -s -- 0.4.52
       - name: Deploy production (single machine)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
