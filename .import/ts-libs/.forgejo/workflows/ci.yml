@@ -41,30 +41,43 @@ jobs:
             --verify-no-changes \
             --no-restore
 
-      - name: Run the TerraScale.Endpoints tests
+      - name: Run every test project under tests/
         shell: bash
         run: |
           set -euo pipefail
-          nice -n 10 dotnet run \
-            --project tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj \
-            --configuration Release \
-            --framework net10.0 \
-            --no-build \
-            --no-restore \
-            -- \
-            --minimum-expected-tests 1
+          shopt -s globstar nullglob
+          test_projects=(tests/**/*.csproj)
+          if [ ${#test_projects[@]} -eq 0 ]; then
+            echo "No test projects found under tests/" >&2
+            exit 1
+          fi
+          for proj in "${test_projects[@]}"; do
+            echo "== Running $proj =="
+            nice -n 10 dotnet run \
+              --project "$proj" \
+              --configuration Release \
+              --no-build \
+              --no-restore \
+              -- \
+              --minimum-expected-tests 1
+          done
 
-      - name: Pack TerraScale.Endpoints
+      - name: Pack every packable project in the solution
         shell: bash
         run: |
           set -euo pipefail
           rm -rf -- artifacts/packages
-          nice -n 10 dotnet pack src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
+          nice -n 10 dotnet pack TerraScale.Libs.slnx \
             --configuration Release \
             --no-build \
             --nologo \
             --output artifacts/packages
+          echo "Packed packages:"
           ls -1 artifacts/packages
+          if ! compgen -G "artifacts/packages/*.nupkg" > /dev/null; then
+            echo "No packages were produced; every project must be non-packable or a library is missing IsPackable" >&2
+            exit 1
+          fi
 
       - name: Publish packages to the Forgejo NuGet registry
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
