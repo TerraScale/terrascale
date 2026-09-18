@@ -4,7 +4,6 @@ using TerraScale.Endpoints;
 namespace TerraScale.Dashboard2.Features.Auth;
 
 public sealed record OAuthConsentPageModel(
-    bool Authenticated,
     bool ValidRequest,
     string ClientId,
     string ClientName,
@@ -29,16 +28,19 @@ public sealed class OAuthConsentPageEndpoint(DashboardStore store) : EndpointWit
     public override Task<IResult> HandleAsync(CancellationToken ct)
     {
         var query = HttpContext.Request.Query;
-        var authenticated = DashboardAuthMiddleware.IsAuthenticated(HttpContext);
         var clientId = query["client_id"].ToString();
         var valid = clientId.Length > 0;
-        var client = store.DemoOAuthClient;
+
+        // Unknown clients fall back to the generic label, and scopes come
+        // from the query string, exactly like the parsed authorize request.
+        var known = store.DemoOAuthClient;
         var model = new OAuthConsentPageModel(
-            Authenticated: authenticated,
             ValidRequest: valid,
-            ClientId: valid ? clientId : client.ClientId,
-            ClientName: client.ClientName,
-            Scopes: valid ? [.. store.DemoOAuthScopes] : [],
+            ClientId: valid ? clientId : known.ClientId,
+            ClientName: clientId == known.ClientId ? known.ClientName : "External application",
+            Scopes: query["scope"].ToString() is { Length: > 0 } scope
+                ? [.. scope.Split(' ', StringSplitOptions.RemoveEmptyEntries)]
+                : [.. store.DemoOAuthScopes],
             Claims: query["claims"].ToString() is { Length: > 0 } claims ? claims : null,
             Error: query["error"].FirstOrDefault(),
             Outcome: query["outcome"].FirstOrDefault());

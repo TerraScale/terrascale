@@ -4,9 +4,7 @@ using TerraScale.Endpoints;
 namespace TerraScale.Dashboard2.Features.Access;
 
 public sealed record InvitationPageModel(
-    bool Authenticated,
     string InvitationId,
-    string OrganizationName,
     string? Error,
     string? Outcome) : IPageModel
 {
@@ -30,9 +28,7 @@ public sealed class InvitationPageEndpoint(DashboardStore store) : EndpointWitho
         var invitation = store.Invitations.FirstOrDefault(i =>
             i.Id == id || (i.Token is { Length: > 0 } && i.Token == id));
         var model = new InvitationPageModel(
-            Authenticated: DashboardAuthMiddleware.IsAuthenticated(HttpContext),
             InvitationId: invitation?.Id ?? id,
-            OrganizationName: store.ActiveOrganizationName,
             Error: query["error"].FirstOrDefault(),
             Outcome: query["outcome"].FirstOrDefault());
         return Task.FromResult<IResult>(InvitationSlice.Create(model));

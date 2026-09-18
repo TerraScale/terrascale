@@ -4286,3 +4286,590 @@ details.ts-menu[open] > summary.ts-account-trigger {
   font-size: var(--ts-fs-ui);
   font-weight: var(--ts-fw-medium);
 }
+
+/* ===== Feature: Auth Flows =============================================== */
+/* Standalone flow pages (no dashboard shell): onboarding wizard, local
+   checkout, OAuth consent, agent/CLI approval, invitations. Ported from
+   ts-dashboard shared-page-styles.ts, onboarding-styles.ts, and the
+   per-feature *-page-styles.ts files. */
+
+.ts-flow-root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 40px var(--ts-lg);
+  background-color: var(--ts-canvas);
+  color: var(--ts-ink);
+}
+
+.ts-flow-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-lg);
+  width: 100%;
+  max-width: 36rem;
+  padding: var(--ts-xl);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface);
+  box-shadow: var(--ts-shadow-panel);
+}
+
+@media (min-width: 40rem) {
+  .ts-flow-panel { padding: var(--ts-xxl); }
+}
+
+.ts-flow-panel-narrow { max-width: 32rem; }
+.ts-flow-panel-wide { max-width: 42rem; }
+
+.ts-flow-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-md);
+  padding-bottom: var(--ts-md);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-flow-panel-title {
+  margin: 0;
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+}
+
+.ts-flow-panel-subtitle {
+  margin: var(--ts-xs) 0 0;
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+}
+
+.ts-flow-panel-icon {
+  margin-inline-start: auto;
+  color: var(--ts-accent);
+}
+
+.ts-flow-header {
+  display: flex;
+  align-items: flex-start;
+  column-gap: var(--ts-md);
+  margin-bottom: var(--ts-xl);
+}
+
+.ts-flow-header-center {
+  display: grid;
+  justify-items: center;
+  gap: var(--ts-sm);
+  text-align: center;
+}
+
+.ts-flow-header-content { min-width: 0; }
+
+.ts-flow-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  height: 40px;
+  width: 40px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-accent-soft);
+}
+
+.ts-flow-icon-lg {
+  display: grid;
+  place-items: center;
+  height: 48px;
+  width: 48px;
+  margin-inline: auto;
+  margin-bottom: 20px;
+  border: 1px solid color-mix(in oklab, var(--ts-accent) 30%, transparent);
+  border-radius: var(--ts-radius-control);
+  background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+  color: var(--ts-accent);
+}
+
+.ts-flow-title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+}
+
+.ts-flow-subtitle {
+  margin: var(--ts-xs) 0 0;
+  font-size: var(--ts-fs-ui);
+  line-height: 24px;
+  color: var(--ts-ink-muted);
+}
+
+.ts-flow-section {
+  display: grid;
+  gap: var(--ts-lg);
+}
+
+.ts-flow-section-heading {
+  margin: 0;
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+}
+
+.ts-flow-section-heading-row {
+  display: flex;
+  align-items: center;
+  column-gap: var(--ts-sm);
+  color: var(--ts-ink-muted);
+}
+
+.ts-flow-details-stack {
+  display: grid;
+  gap: var(--ts-xl);
+}
+
+/* Boxed key/value block (agent request details, OAuth consent summary). */
+.ts-flow-details {
+  margin: 0;
+  padding: var(--ts-lg);
+  display: grid;
+  gap: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface-muted);
+  font-size: var(--ts-fs-ui);
+}
+
+@media (min-width: 40rem) {
+  .ts-flow-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ts-flow-detail {
+  display: grid;
+  gap: var(--ts-xs);
+  align-content: start;
+}
+
+.ts-flow-detail-wide { grid-column: auto; }
+
+@media (min-width: 40rem) {
+  .ts-flow-detail-wide { grid-column: span 2; }
+}
+
+.ts-flow-detail dt {
+  margin: 0;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.ts-flow-detail dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ts-ink);
+  overflow-wrap: anywhere;
+}
+
+/* OAuth consent scope list (plain mono, no chips). */
+.ts-flow-scopes {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--ts-xs);
+  list-style: none;
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+}
+
+/* Capability chips (agent + CLI approvals). */
+.ts-capability-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--ts-sm);
+  list-style: none;
+}
+
+.ts-capability {
+  padding: var(--ts-sm) var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-ui);
+  overflow-wrap: anywhere;
+}
+
+.ts-capability-reason {
+  display: block;
+  margin-top: var(--ts-xs);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-meta);
+}
+
+.ts-flow-actions {
+  display: grid;
+  gap: var(--ts-md);
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: var(--ts-xl);
+}
+
+@media (min-width: 40rem) {
+  .ts-flow-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.ts-flow-actions .ts-btn,
+.ts-flow-action { width: 100%; }
+
+@media (min-width: 40rem) {
+  .ts-flow-actions .ts-btn,
+  .ts-flow-action { width: auto; }
+}
+
+.ts-flow-actions-row {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--ts-md);
+  margin-top: var(--ts-xl);
+}
+
+@media (min-width: 40rem) {
+  .ts-flow-actions-row {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}
+
+.ts-flow-form {
+  display: grid;
+  gap: var(--ts-lg);
+}
+
+.ts-flow-form-denial {
+  gap: var(--ts-md);
+  margin-top: var(--ts-lg);
+  padding-top: var(--ts-lg);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-flow-field-narrow { max-width: 320px; }
+
+.ts-flow-pre {
+  margin: 0;
+  padding: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+}
+
+.ts-flow-continue-link {
+  display: block;
+  margin-top: var(--ts-md);
+  color: var(--ts-accent);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+  text-align: center;
+  text-decoration: none;
+}
+
+.ts-wordmark-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 28px;
+}
+
+.ts-wordmark-wrap img {
+  width: 12rem;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Onboarding activation wizard (anonymous registration + signed-in steps). */
+.ts-onboarding-root {
+  min-height: 100vh;
+  padding: var(--ts-md) var(--ts-lg);
+  background-color: var(--ts-surface-muted);
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-root { padding-inline: var(--ts-xxl); }
+}
+
+.ts-onboarding-container {
+  display: grid;
+  gap: var(--ts-sm);
+  margin-inline: auto;
+  width: 100%;
+  max-width: 72rem;
+}
+
+.ts-onboarding-container-wide { gap: var(--ts-xs); }
+
+.ts-onboarding-header {
+  display: grid;
+  gap: var(--ts-gap-tight);
+  justify-items: center;
+  text-align: center;
+}
+
+.ts-onboarding-lock {
+  display: grid;
+  place-items: center;
+  height: 44px;
+  width: 44px;
+  margin-inline: auto;
+  border-radius: 12px;
+  background-color: var(--ts-accent);
+  color: var(--ts-on-accent);
+}
+
+.ts-onboarding-setup {
+  margin: var(--ts-gap-cozy) 0 0;
+  color: var(--ts-accent);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+  letter-spacing: 0.18em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.ts-onboarding-title {
+  margin: 0 0 var(--ts-md);
+  color: var(--ts-ink);
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: var(--ts-fw-semibold);
+  text-align: center;
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-title { font-size: 36px; line-height: 40px; }
+}
+
+.ts-onboarding-description {
+  margin: var(--ts-xs) auto 0;
+  max-width: 42rem;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 1.625;
+  text-align: center;
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-description { font-size: var(--ts-fs-body); }
+}
+
+.ts-onboarding-progress {
+  display: grid;
+  gap: var(--ts-sm);
+}
+
+.ts-onboarding-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-sm);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+}
+
+@media (min-width: 40rem) {
+  .ts-onboarding-progress-meta { font-size: var(--ts-fs-ui); }
+}
+
+.ts-onboarding-progress-meta span:first-child {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ts-onboarding-progress-meta span:last-child {
+  color: var(--ts-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The wizard progress track sits inside a bordered frame. */
+.ts-onboarding-progress > .ts-progress {
+  height: auto;
+  padding: var(--ts-sm);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface);
+}
+
+.ts-onboarding-progress .ts-progress-bar {
+  height: 8px;
+  background-color: var(--ts-accent);
+}
+
+.ts-onboarding-steps {
+  margin: 0;
+  padding-inline-start: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-sm);
+  list-style: none;
+}
+
+.ts-onboarding-step {
+  display: grid;
+  flex-basis: 0;
+  flex-grow: 1;
+  flex-shrink: 1;
+  align-items: center;
+  justify-items: center;
+  gap: var(--ts-xs);
+  padding: var(--ts-md) var(--ts-sm);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  text-align: center;
+}
+
+@media (min-width: 40rem) {
+  .ts-onboarding-step { font-size: var(--ts-fs-ui); }
+}
+
+@media (min-width: 64rem) {
+  .ts-onboarding-step {
+    grid-template-columns: auto 1fr;
+    justify-items: start;
+    gap: var(--ts-sm);
+    padding-block: var(--ts-sm);
+    text-align: left;
+  }
+}
+
+.ts-onboarding-step-current {
+  border-color: var(--ts-accent);
+  background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+  color: var(--ts-accent-strong);
+}
+
+.ts-onboarding-step-blocked {
+  border-color: color-mix(in oklab, var(--ts-danger) 40%, transparent);
+  background-color: color-mix(in oklab, var(--ts-danger) 10%, transparent);
+  color: var(--ts-danger);
+}
+
+.ts-onboarding-step-complete {
+  border-color: color-mix(in oklab, var(--ts-success) 30%, transparent);
+  background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+  color: var(--ts-success);
+}
+
+.ts-onboarding-step-state {
+  font-size: 10px;
+  letter-spacing: 0.025em;
+  opacity: 0.75;
+  text-transform: uppercase;
+}
+
+.ts-onboarding-card {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface);
+  box-shadow: var(--ts-shadow-panel);
+}
+
+@media (min-width: 64rem) {
+  .ts-onboarding-card { gap: var(--ts-md); padding-block: var(--ts-sm); }
+}
+
+/* Registration form (activation step 1, anonymous). */
+.ts-onboarding-brand {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-onboarding-brand img {
+  width: 100%;
+  max-width: 224px;
+  height: auto;
+}
+
+@media (min-width: 40rem) {
+  .ts-onboarding-brand img { max-width: 288px; }
+}
+
+.ts-onboarding-form {
+  display: grid;
+  gap: var(--ts-lg);
+  align-items: stretch;
+}
+
+@media (min-width: 48rem) {
+  .ts-onboarding-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+.ts-onboarding-form-full { grid-column: 1 / -1; }
+
+.ts-onboarding-terms {
+  display: grid;
+  gap: var(--ts-sm);
+  justify-items: end;
+  grid-column: 1 / -1;
+}
+
+.ts-onboarding-terms-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-gap-cozy);
+  min-height: var(--ts-control-h-lg);
+  color: var(--ts-ink);
+  line-height: 1.375;
+}
+
+.ts-onboarding-form-footer {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--ts-md);
+  justify-items: center;
+}
+
+.ts-onboarding-secondary {
+  margin: var(--ts-md) 0 0;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 1.625;
+  text-align: center;
+}
+
+/* Billing plan option cards (payment step). */
+.ts-onboarding-plan-option {
+  display: grid;
+  gap: var(--ts-xs);
+  align-content: start;
+  padding: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface);
+  cursor: pointer;
+}

@@ -76,9 +76,50 @@
             </div>
         }
         <div class="ts-onboarding-card">
-            @switch (Model.ActiveStep)
+            @if (Model.Registration)
             {
-                case "account-information":
+                <div class="ts-onboarding-brand">
+                    <img src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async" />
+                </div>
+                <form class="ts-onboarding-form" method="post" action="/onboarding/register" novalidate>
+                    @if (Model.RegistrationError is { } registrationError)
+                    {
+                        <div class="ts-onboarding-form-full" role="alert">
+                            <div class="ts-alert ts-alert-danger">
+                                <span class="ts-alert-title">@Icons.CircleAlert(16) @registrationError</span>
+                            </div>
+                        </div>
+                    }
+                    <div class="ts-field">
+                        <label class="ts-label" for="displayName">Full name</label>
+                        <input class="ts-input" id="displayName" name="displayName" autocomplete="name" maxlength="128" required />
+                    </div>
+                    <div class="ts-field">
+                        <label class="ts-label" for="email">Email</label>
+                        <input class="ts-input" type="email" id="email" name="email" placeholder="name@company.com" autocomplete="email" required />
+                    </div>
+                    <div class="ts-field">
+                        <label class="ts-label" for="password">Password</label>
+                        <input class="ts-input" type="password" id="password" name="password" placeholder="Enter your password" autocomplete="new-password" required />
+                    </div>
+                    <div class="ts-field">
+                        <label class="ts-label" for="confirmPassword">Confirm password</label>
+                        <input class="ts-input" type="password" id="confirmPassword" name="confirmPassword" autocomplete="new-password" required />
+                    </div>
+                    <div class="ts-onboarding-terms">
+                        <label class="ts-onboarding-terms-label">
+                            <input class="ts-checkbox" type="checkbox" name="terms" value="true" required />
+                            <span>I accept the Terms of Service</span>
+                        </label>
+                    </div>
+                    <div class="ts-onboarding-form-footer">
+                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.ArrowRight(20) Save</button>
+                        <p class="ts-onboarding-secondary">Already have an account? <a class="ts-link" href="/login">Sign in</a></p>
+                    </div>
+                </form>
+            }
+            else if (Model.ActiveStep == "account-information")
+            {
                     <h2 class="ts-flow-section-heading">Review your account information</h2>
                     <form class="ts-form" method="post" action="/onboarding/step">
                         <input type="hidden" name="step" value="account-information" />
@@ -95,8 +136,9 @@
                             <button class="ts-btn ts-btn-primary" type="submit">Save and continue</button>
                         </div>
                     </form>
-                    break;
-                case "organization":
+            }
+            else if (Model.ActiveStep == "organization")
+            {
                     <h2 class="ts-flow-section-heading">Create your first organization</h2>
                     <p class="ts-muted ts-ui">Billing and future projects use this authenticated tenant boundary.</p>
                     @if (stepDone)
@@ -120,8 +162,9 @@
                             </div>
                         </form>
                     }
-                    break;
-                case "payment-method":
+            }
+            else if (Model.ActiveStep == "payment-method")
+            {
                     <h2 class="ts-flow-section-heading">Register a payment method</h2>
                     <p class="ts-muted ts-ui">Checkout is bound to your authenticated organization and configured payment provider.</p>
                     @if (stepDone)
@@ -159,8 +202,9 @@
                             </div>
                         </form>
                     }
-                    break;
-                case "payment-validation":
+            }
+            else if (Model.ActiveStep == "payment-validation")
+            {
                     <h2 class="ts-flow-section-heading">Validate your payment method</h2>
                     <p class="ts-muted ts-ui">TerraScale waits for a signed provider event before activating billing.</p>
                     @if (Model.PaymentValidated)
@@ -182,8 +226,9 @@
                             <a class="ts-btn ts-btn-primary" href="/onboarding?step=payment-validation">Check validation status</a>
                         </div>
                     }
-                    break;
-                default:
+            }
+            else
+            {
                     <h2 class="ts-flow-section-heading">Create your first project</h2>
                     <p class="ts-muted ts-ui">Products inherit these primary regions.</p>
                     <form class="ts-form" method="post" action="/onboarding/step">
@@ -208,7 +253,6 @@
                             <button class="ts-btn ts-btn-primary" type="submit">Create project and open Dashboard</button>
                         </div>
                     </form>
-                    break;
             }
         </div>
     </div>

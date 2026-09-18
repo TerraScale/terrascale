@@ -10,6 +10,7 @@ public sealed class DashboardAuthMiddleware(RequestDelegate next)
     private static readonly HashSet<string> PublicPrefixes =
     [
         "/login", "/reset-password", "/invitations/", "/cli/", "/agent/", "/oauth/",
+        "/onboarding", "/checkout/",
         "/api/", "/health/", "/css/", "/js/", "/fonts/", "/brand/", "/favicon", "/openapi", "/scalar",
     ];
 
