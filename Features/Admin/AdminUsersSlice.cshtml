@@ -32,7 +32,6 @@
                         <th>Status</th>
                         <th>Owner</th>
                         <th>Created</th>
-                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -42,47 +41,11 @@
                             <td>
                                 <div class="ts-admin-cell-name">@row.DisplayName</div>
                                 <div class="ts-admin-cell-id">@row.UserId</div>
-                                @if (row.SupportNote is { } note)
-                                {
-                                    <div class="ts-meta">@note</div>
-                                }
                             </td>
                             <td>@row.Email</td>
                             <td><span class="ts-badge @(row.Enabled ? "ts-badge-success" : "ts-badge-danger")">@(row.Enabled ? "Enabled" : "Disabled")</span></td>
                             <td><span class="ts-badge @(row.Owner ? "ts-badge-warning" : "ts-badge-neutral")">@(row.Owner ? "Owner" : "User")</span></td>
                             <td>@AdminPresentation.Timestamp(row.CreatedAt)</td>
-                            <td>
-                                <details class="ts-menu ts-menu-end">
-                                    <summary class="ts-btn ts-btn-outline ts-btn-sm" aria-label="Actions for @row.Email">@(Icons.Ellipsis(14))</summary>
-                                    <div class="ts-menu-panel">
-                                        <form method="post" action="/api/v1/admin/users/status">
-                                            <input type="hidden" name="userId" value="@row.UserId" />
-                                            <input type="hidden" name="enabled" value="@(row.Enabled ? "false" : "true")" />
-                                            <button type="submit" class="ts-menu-item">
-                                                <span class="ts-menu-item-icon">@(row.Enabled ? Icons.Ban(16) : Icons.CircleCheck(16))</span>
-                                                <span class="ts-menu-label">@(row.Enabled ? "Disable" : "Enable")</span>
-                                            </button>
-                                        </form>
-                                        <form method="post" action="/api/v1/admin/users/role">
-                                            <input type="hidden" name="userId" value="@row.UserId" />
-                                            <input type="hidden" name="role" value="@(row.Owner ? "member" : "owner")" />
-                                            <button type="submit" class="ts-menu-item">
-                                                <span class="ts-menu-item-icon">@(Icons.UserPlus(16))</span>
-                                                <span class="ts-menu-label">Set @(row.Owner ? "user" : "owner")</span>
-                                            </button>
-                                        </form>
-                                        <hr class="ts-menu-separator" />
-                                        <form method="post" action="/api/v1/admin/users/support-note">
-                                            <input type="hidden" name="userId" value="@row.UserId" />
-                                            <input class="ts-input" name="note" placeholder="Add support note" required minlength="3" maxlength="200" style="margin:0 var(--ts-sm)" />
-                                            <button type="submit" class="ts-menu-item">
-                                                <span class="ts-menu-item-icon">@(Icons.Pencil(16))</span>
-                                                <span class="ts-menu-label">Add support note</span>
-                                            </button>
-                                        </form>
-                                    </div>
-                                </details>
-                            </td>
                         </tr>
                     }
                 </tbody>

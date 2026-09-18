@@ -55,11 +55,11 @@
                     <fieldset class="ts-field">
                         <legend class="ts-label">@Icons.Globe(16) @t("Project regions")</legend>
                         <div class="ts-checkbox-row-group">
-                            @foreach (var region in Model.RegionCatalog.Where(r => r.Status != "Offline"))
+                            @foreach (var region in Model.RegionCatalog)
                             {
                                 <label class="ts-checkbox-row">
                                     <input class="ts-checkbox" type="checkbox" name="regions" value="@region.Code" @(region.Code == Model.SuggestedRegion ? "checked" : null) />
-                                    @region.Code
+                                    @region.Name (@region.Code) — @(region.Code == Model.SuggestedRegion ? t("Selected") : t("Available"))
                                 </label>
                             }
                         </div>
@@ -68,9 +68,9 @@
                     <div class="ts-field">
                         <label class="ts-label" for="projectBackupRegion">@t("Backup region")</label>
                         <select class="ts-select" id="projectBackupRegion" name="backupRegion">
-                            @foreach (var region in Model.RegionCatalog.Where(r => r.Status != "Offline"))
+                            @foreach (var region in Model.RegionCatalog)
                             {
-                                <option value="@region.Code" @(region.Code == Model.SuggestedRegion ? "selected" : null)>@region.Code — @region.Name</option>
+                                <option value="@region.Code" @(region.Code == Model.SuggestedRegion ? "selected" : null)>@region.Code</option>
                             }
                         </select>
                     </div>
@@ -122,7 +122,7 @@
                                             <span class="ts-badge ts-badge-neutral">@t("Available")</span>
                                         }</td>
                                     <td><span class="ts-badge ts-badge-info">@project.Region.ToUpperInvariant()</span></td>
-                                    <td class="ts-muted ts-ui">@project.CreatedAt</td>
+                                    <td class="ts-muted ts-ui">@AdminPresentation.Timestamp(project.CreatedAt)</td>
                                     <td>
                                         <details class="ts-menu">
                                             <summary class="ts-btn ts-btn-ghost ts-btn-sm">@t("Rename")</summary>
@@ -158,7 +158,7 @@
                     (t("Name"), Model.OrganizationName),
                     (t("Status"), Model.OrganizationStatus),
                     (t("Organization ID"), Model.OrganizationId),
-                    (t("Created"), Model.OrganizationCreatedAt),
+                    (t("Created"), AdminPresentation.Timestamp(Model.OrganizationCreatedAt)),
                     (t("Signed-in user"), Model.SignedInEmail),
                 })
                 {
@@ -187,6 +187,21 @@
                     <form method="post" action="/api/v1/dashboard/organization/leave">
                         <button class="ts-btn ts-btn-outline" type="submit">@t("Leave organization")</button>
                     </form>
+                    <div class="ts-org-deletion">
+                        <div class="ts-panel-header">
+                            <h3 class="ts-panel-title">@t("Organization deletion")</h3>
+                            <p class="ts-panel-subtitle">@t("Deletion preserves linked projects and data until the operation completes")</p>
+                        </div>
+                        <form method="post" action="/api/v1/dashboard/organization/deletion/request" class="ts-org-deletion-form">
+                            <div class="ts-field">
+                                <label class="ts-label" for="deletionConfirmationName">@($"Enter “{Model.OrganizationName}” to confirm")</label>
+                                <input class="ts-input" id="deletionConfirmationName" name="confirmation" autocomplete="off" required />
+                            </div>
+                            <div class="ts-form-actions">
+                                <button class="ts-btn ts-btn-destructive" type="submit">@Icons.Trash2(20) @t("Request deletion")</button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             }
         </section>
@@ -249,12 +264,11 @@
                                             <input type="hidden" name="userId" value="@member.UserId" />
                                             <select class="ts-select ts-select-sm" name="role" onchange="this.form.submit()">
                                                 <option value="owner" @(member.Role == "owner" ? "selected" : null)>@t("Organization Owner")</option>
-                                                <option value="admin" @(member.Role == "admin" ? "selected" : null)>@t("Administrator")</option>
-                                                <option value="member" @(member.Role == "member" ? "selected" : null)>@t("Member")</option>
+                                                <option value="member" @(member.Role == "owner" ? null : "selected")>@t("Member")</option>
                                             </select>
                                         </form>
                                     </td>
-                                    <td class="ts-muted ts-ui">@member.LastActiveAt</td>
+                                    <td class="ts-muted ts-ui">@AdminPresentation.Timestamp(member.LastActiveAt)</td>
                                 </tr>
                             }
                         </tbody>
@@ -320,7 +334,7 @@
                                     </td>
                                     <td class="ts-muted ts-ui">@invitation.Role</td>
                                     <td><span class="ts-badge @InvitationStatusTone(invitation.Status)">@InvitationStatusText(invitation.Status)</span></td>
-                                    <td class="ts-muted ts-ui">@invitation.CreatedAt</td>
+                                    <td class="ts-muted ts-ui">@AdminPresentation.Timestamp(invitation.CreatedAt)</td>
                                     <td class="ts-muted ts-ui">@invitation.InvitedByEmail</td>
                                     <td>
                                         @if (invitation.Status == "Pending")
