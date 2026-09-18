@@ -60,6 +60,7 @@ export type TerraScaleLocalResetOptions = {
 };
 
 export { type LocalAuthenticationMode, type LocalServerAddress };
+export { SyncV1NodeFileViewStore } from "./view-store.js";
 
 /**
  * Opt-in Node development emulator for the public TerraScale SDK contracts.

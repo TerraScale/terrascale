@@ -7,6 +7,7 @@ export * from "./schema.js";
 export * from "./sql.js";
 export * from "./sync/v1/client.js";
 export * from "./sync/v1/result-view.js";
+export * from "./sync/v1/store/index.js";
 export { sdkRouteManifest } from "./client.js";
 export type {
   AccessClient,

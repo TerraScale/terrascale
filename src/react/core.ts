@@ -4,6 +4,12 @@ import type {
   SyncV1SubscribeOptions,
   TerraScaleSyncV1Client,
 } from "../sync/v1/client.js";
+import {
+  syncV1StoredViewStateMatches,
+  syncV1StoredViewToSnapshot,
+  syncV1ViewStoreKey,
+  type SyncV1ViewStore,
+} from "../sync/v1/store/index.js";
 
 /** A subscription cleanup returned by a typed reactive transport. */
 export type ReactiveDisposer = (() => void) | { readonly dispose: () => void } | { readonly unsubscribe: () => void };
@@ -296,6 +302,12 @@ export function createSyncV1Query(
   return Object.freeze({
     key: ["sync-v1", options.databaseId ?? options.database, options.subscription, options.query, options.parameters],
     subscribe: async (observer: ReactiveQueryCallbacks<readonly SyncV1ResultItem[]>, context: ReactiveSubscriptionContext) => {
+      // Free local read: publish the durable cached rows before the network
+      // attach starts, so consumers render instantly and offline.
+      if (options.store !== undefined) {
+        const cached = await cachedViewItems(options.store, options);
+        if (cached !== undefined) observer.next(cached);
+      }
       const live = await client.subscribe({ ...options, signal: context.signal, autoStart: true });
       const publish = () => observer.next(live.view.getVisibleItems());
       const unsubscribe = live.view.subscribe(publish);
@@ -317,6 +329,22 @@ export function createSyncV1Query(
       };
     },
   });
+}
+
+/** Loads the durable cached rows for one view; undefined when absent or stale. */
+async function cachedViewItems(
+  store: SyncV1ViewStore,
+  options: Pick<SyncV1SubscribeOptions, "subscription" | "query" | "parameters">,
+): Promise<readonly SyncV1ResultItem[] | undefined> {
+  try {
+    const state = await store.load(syncV1ViewStoreKey(options));
+    if (state === undefined || !syncV1StoredViewStateMatches(state, options.query, options.parameters)) {
+      return undefined;
+    }
+    return syncV1StoredViewToSnapshot(state)?.items;
+  } catch {
+    return undefined;
+  }
 }
 
 export type ReactiveMutationContext = {

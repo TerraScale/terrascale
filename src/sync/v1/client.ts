@@ -23,6 +23,15 @@ import {
   type SyncV1ResultSnapshot,
   type SyncV1ResultResetReason,
 } from "./result-view.js";
+import {
+  syncV1CaptureViewState,
+  syncV1StoredViewStateMatches,
+  syncV1StoredViewStateSignature,
+  syncV1StoredViewToSnapshot,
+  syncV1ViewStoreKey,
+  type SyncV1StoredViewState,
+  type SyncV1ViewStore,
+} from "./store/index.js";
 
 const MAX_U64 = 0xffff_ffff_ffff_ffffn;
 
@@ -86,6 +95,12 @@ export type SyncV1SubscribeOptions = SyncV1OpenSubscriptionOptions & {
   readonly signal?: AbortSignal;
   /** Do not start the background HTTP poll loop until `poll` is called. */
   readonly autoStart?: boolean;
+  /**
+   * Optional durable local materialization (free local reads). When present,
+   * the cached view hydrates before attach, attach resumes from the persisted
+   * checkpoint, and every applied frame is persisted back. Off by default.
+   */
+  readonly store?: SyncV1ViewStore | undefined;
 };
 
 export type SyncV1Reset = {
@@ -258,17 +273,56 @@ export class TerraScaleSyncV1Client {
     if (databaseId === undefined || databaseId.trim().length === 0) {
       throw new TerraScaleSyncV1ClientError("invalid_state", "databaseId is required for a reactive view attach");
     }
+    // Free local reads: hydrate the durable view before any network work so
+    // cached rows are readable immediately and attach can resume the persisted
+    // checkpoint instead of re-attaching from a full snapshot.
+    const store = options.store;
+    let cached: SyncV1StoredViewState | undefined;
+    let cachedSnapshot: SyncV1ResultSnapshot | undefined;
+    if (store !== undefined) {
+      const key = syncV1ViewStoreKey(options);
+      try {
+        const loaded = await store.load(key);
+        if (loaded !== undefined && syncV1StoredViewStateMatches(loaded, options.query, options.parameters)) {
+          cached = loaded;
+          cachedSnapshot = syncV1StoredViewToSnapshot(loaded);
+        } else if (loaded !== undefined) {
+          // The stored state belongs to a different query under this key.
+          await store.clear(key).catch(() => undefined);
+        }
+      } catch {
+        // A failed cache read never blocks the network path.
+      }
+    }
     const opened = this.openSubscription(options);
+    const resumeCheckpoint = options.checkpoint !== undefined
+      ? checkpointBytes(options.checkpoint)
+      : cachedSnapshot === undefined ? null : cachedSnapshot.checkpoint.toBytes();
+    const persistor = store === undefined ? undefined : new ViewPersistor(
+      store,
+      syncV1ViewStoreKey(options),
+      () => syncV1CaptureViewState(opened.subscription.view, options.query, options.parameters),
+    );
+    if (cached !== undefined && cachedSnapshot !== undefined) {
+      try {
+        opened.subscription.view.bootstrap(cachedSnapshot);
+        persistor?.seed(syncV1StoredViewStateSignature(cached));
+      } catch {
+        // Corrupt local state: attach fresh and overwrite the store below.
+      }
+    }
+    if (persistor !== undefined) opened.subscription.view.subscribe(() => persistor.schedule());
     const previousOnline = this.#online;
     let attached: AttachedView;
     let initialReset: SyncV1Reset | undefined;
     try {
-      attached = await this.#attach(databaseId, opened.message, options.signal);
+      attached = await this.#attach(databaseId, { ...opened.message, checkpoint: resumeCheckpoint }, options.signal);
     } catch (error) {
-      if (error instanceof TerraScaleSyncV1ClientError && error.code === "reset_required" && options.checkpoint !== undefined) {
-        // The supplied checkpoint is stale. Retry attach exactly once without
-        // it; the new authorized snapshot becomes the reset cut.
+      if (error instanceof TerraScaleSyncV1ClientError && error.code === "reset_required" && resumeCheckpoint !== null) {
+        // The supplied or persisted checkpoint is stale. Retry attach exactly
+        // once without it; the new authorized snapshot becomes the reset cut.
         initialReset = error.reset;
+        await persistor?.clear();
         try {
           attached = await this.#attach(databaseId, { ...opened.message, checkpoint: null }, options.signal);
         } catch (retryError) {
@@ -972,6 +1026,53 @@ function checkpointBytes(
   return checkpoint instanceof SyncV1ViewCheckpoint
     ? checkpoint.toBytes()
     : new Uint8Array(checkpoint);
+}
+
+/**
+ * Coalesces view notifications into durable writes: one save per applied frame
+ * batch (microtask), skipped entirely when the materialized state is unchanged.
+ * Persist failures are swallowed; durability never blocks live delivery.
+ */
+class ViewPersistor {
+  #signature: string | undefined;
+  #flushing = false;
+  readonly #store: SyncV1ViewStore;
+  readonly #key: string;
+  readonly #capture: () => SyncV1StoredViewState | undefined;
+
+  public constructor(
+    store: SyncV1ViewStore,
+    key: string,
+    capture: () => SyncV1StoredViewState | undefined,
+  ) {
+    this.#store = store;
+    this.#key = key;
+    this.#capture = capture;
+  }
+
+  /** Marks the state already present in the store so it is not rewritten. */
+  public seed(signature: string): void {
+    this.#signature = signature;
+  }
+
+  public schedule(): void {
+    if (this.#flushing) return;
+    this.#flushing = true;
+    void Promise.resolve().then(() => {
+      this.#flushing = false;
+      const state = this.#capture();
+      if (state === undefined) return;
+      const signature = syncV1StoredViewStateSignature(state);
+      if (signature === this.#signature) return;
+      this.#signature = signature;
+      void this.#store.save(this.#key, state).catch(() => undefined);
+    });
+  }
+
+  public async clear(): Promise<void> {
+    this.#signature = undefined;
+    await this.#store.clear(this.#key).catch(() => undefined);
+  }
 }
 
 function resultSnapshot(snapshot: TerrascaleSyncV1MsgpackSnapshot): SyncV1ResultSnapshot {
