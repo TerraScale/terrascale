@@ -21,9 +21,10 @@ jobs:
           export PATH="$HOME/.fly/bin:$PATH"
           # One ephemeral single-machine app per PR; provision idempotently so a
           # partially-created app (cancelled run, transient API error) self-heals.
+          # NB: match table rows, not fly's "shared and dedicated" footer line.
           fly apps create "$PR_APP" -o personal 2>/dev/null || true
           fly ips list -a "$PR_APP" | grep -q " v6 " || fly ips allocate-v6 -a "$PR_APP"
-          fly ips list -a "$PR_APP" | grep -q "shared" || fly ips allocate-v4 -a "$PR_APP" --shared
+          fly ips list -a "$PR_APP" | grep -q "(shared)" || fly ips allocate-v4 -a "$PR_APP" --shared
           sed -i "s/^app = .*/app = \"$PR_APP\"/" fly.toml
           fly deploy -a "$PR_APP" --strategy immediate
           # Fresh apps get a second HA machine; previews are single-machine.
