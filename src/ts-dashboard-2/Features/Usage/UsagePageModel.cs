@@ -1,14 +1,6 @@
-using System.Collections.Immutable;
 using TerraScale.Dashboard2;
-using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Usage;
-
-public sealed record UsageStatCard(string Label, string Value, string Detail, string Icon);
-
-public sealed record BarSlice(string Label, double Value, string? DisplayValue = null);
-
-public sealed record UsageHistoryRangeOption(string Value, string Label, bool Selected);
 
 public sealed record UsagePageModel(
     string PeriodStart,
@@ -146,14 +138,4 @@ public sealed record UsagePageModel(
             Shell = ShellFactory.Create(store, href),
         };
     }
-}
-
-public sealed class UsagePageEndpoint(DashboardStore store) : SlicePageEndpoint<UsageSlice, UsagePageModel>(store, "/usage")
-{
-    protected override UsagePageModel Load() =>
-        UsagePageModel.From(
-            Store,
-            PageRoute,
-            HttpContext.Request.Query["range"].FirstOrDefault(),
-            HttpContext.Request.Query["billing"].FirstOrDefault());
 }

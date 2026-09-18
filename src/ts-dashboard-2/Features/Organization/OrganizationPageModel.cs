@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using TerraScale.Dashboard2;
-using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Organization;
 
@@ -42,17 +41,4 @@ public sealed record OrganizationPageModel(
             Shell = ShellFactory.Create(store, href),
         };
     }
-}
-
-public sealed class OrganizationPageEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
-{
-    public override void Configure()
-    {
-        Get("/organization");
-        Summary("Renders the Organization page");
-        Tags("Pages");
-    }
-
-    public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(OrganizationSlice.Create(OrganizationPageModel.From(store, "/organization")));
 }

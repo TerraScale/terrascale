@@ -1,8 +1,6 @@
 using System.Collections.Immutable;
 namespace TerraScale.Dashboard2;
 
-public sealed record ProfilePasskeyView(string Id, string? Name, string CreatedAt);
-
 public sealed partial class DashboardStore
 {
     public string ProfileDisplayName { get; private set; } = "";   // empty → CurrentUser.Name

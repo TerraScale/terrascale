@@ -3,11 +3,6 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Subscriptions;
 
-public sealed record BillingPortalPageModel(string SessionId) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}
-
 public sealed class BillingPortalPageEndpoint : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

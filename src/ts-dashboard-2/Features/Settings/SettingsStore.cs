@@ -1,37 +1,6 @@
 using System.Collections.Immutable;
 namespace TerraScale.Dashboard2;
 
-public sealed record SettingsAuthProvider(
-    string Provider,
-    string DisplayName,
-    string Protocol,
-    string Status,          // Enabled | Disabled
-    bool BuiltIn,
-    string ClientId,
-    string SecretStatus,
-    string AuthorizationEndpoint,
-    string TokenEndpoint,
-    string UserInfoEndpoint,
-    string RedirectUri,
-    string SamlServiceProviderEntityId,
-    string SamlSingleSignOnUrl,
-    string SamlCertificateStatus,
-    string SamlAssertionConsumerServiceUrl,
-    string UpdatedAt);
-
-public sealed record SettingsCredentialView(
-    string Id,
-    string Type,            // API key | M2M application
-    string Name,
-    string Prefix,
-    string LastFour,
-    IReadOnlyList<string> Scopes,
-    string Status,          // Active | Revoked
-    string CreatedByEmail,
-    string CreatedAt,
-    string ExpiresAt,
-    string LastUsedAt);
-
 public sealed partial class DashboardStore
 {
     public bool AuthenticationEnabled { get; private set; } = true;

@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using TerraScale.Dashboard2;
-using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Home;
 
@@ -26,10 +25,4 @@ public sealed record HomePageModel(
             Shell = ShellFactory.Create(store, href),
         };
     }
-}
-
-public sealed class HomePageEndpoint(DashboardStore store)
-    : SlicePageEndpoint<HomeSlice, HomePageModel>(store, "/")
-{
-    protected override HomePageModel Load() => HomePageModel.From(Store, PageRoute);
 }
