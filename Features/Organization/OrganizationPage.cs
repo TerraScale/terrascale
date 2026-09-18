@@ -16,7 +16,7 @@ public sealed record OrganizationPageModel(
     ImmutableArray<DashboardProject> Projects,
     ImmutableArray<TeamMember> Users,
     ImmutableArray<Invitation> Invitations,
-    ImmutableArray<RegionInfo> RegionCatalog,
+    ImmutableArray<DashboardStore.OrganizationRegion> RegionCatalog,
     string SuggestedRegion) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
@@ -36,8 +36,8 @@ public sealed record OrganizationPageModel(
             Projects: store.Projects,
             Users: store.TeamMembers,
             Invitations: store.Invitations,
-            RegionCatalog: store.Regions,
-            SuggestedRegion: store.ActiveProject.Region)
+            RegionCatalog: store.OrganizationRegions,
+            SuggestedRegion: store.SuggestedRegion)
         {
             Shell = ShellFactory.Create(store, href),
         };

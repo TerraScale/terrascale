@@ -2794,6 +2794,25 @@ details.ts-menu[open] > summary.ts-account-trigger {
   display: inline-flex;
   align-items: center;
   gap: var(--ts-sm);
+}
+
+/* Organization deletion block (organization-management.tsx panelFlush). */
+.ts-org-deletion {
+  border-top: 1px solid color-mix(in oklab, var(--ts-danger) 20%, transparent);
+}
+
+.ts-org-deletion-form {
+  padding: var(--ts-lg);
+  gap: var(--ts-md);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 64rem) {
+  .ts-org-deletion-form { grid-template-columns: minmax(0, 1fr) auto; }
+  .ts-org-deletion-form .ts-form-actions { align-self: end; }
+}
+
 /* ===== Feature: Usage/Audit/Notifications ===== */
 
 /* Stat card grids: 2-up on tablet, 4-up on desktop (usage summary + billing). */
@@ -4221,16 +4240,6 @@ details.ts-menu[open] > summary.ts-account-trigger {
 
 .ts-wizard-step-done {
   color: var(--ts-success);
-}
-
-.ts-wizard-step-number {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: var(--ts-radius-pill);
-  border: 1px solid currentColor;
-  font-size: 10px;
 }
 
 /* Subscriptions. */

@@ -66,11 +66,6 @@ public static class AdminPresentation
         return term.Length is 0 ? rows : [.. rows.Where(row => text(row).ToLowerInvariant().Contains(term))];
     }
 
-    public static string Money(long cents, string currency) =>
-        currency is "USD"
-            ? $"${cents / 100m:0.00}"
-            : (cents / 100m).ToString("C", CultureInfo.GetCultureInfo("pt-BR"));
-
     private static string Escape(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace("\"", "&quot;");
 }

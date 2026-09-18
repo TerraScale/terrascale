@@ -13,8 +13,7 @@ public sealed partial class DashboardStore
         string Email,
         bool Enabled,
         bool Owner,
-        string CreatedAt,
-        string? SupportNote = null);
+        string CreatedAt);
 
     public sealed record AdminOrganizationRow(
         string OrganizationId,
@@ -55,10 +54,10 @@ public sealed partial class DashboardStore
 
     public ImmutableArray<AdminUserRow> AdminUsers { get; private set; } =
     [
-        new("usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB", "Mario Kraus", "mario@terrascale.tech", true, true, "2026-01-12T09:24:00Z", "Org owner. Direct line."),
+        new("usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB", "Mario Kraus", "mario@terrascale.tech", true, true, "2026-01-12T09:24:00Z"),
         new("usr_01JC9R8U5P0W3Y5A7C9E2G5IK", "Ana Souza", "ana@terrascale.tech", true, false, "2026-02-04T11:02:00Z"),
         new("usr_01JC9S9V6Q1X4Z6B8D0F3H6JN", "Ravi Patel", "ravi@terrascale.tech", true, false, "2026-02-27T15:41:00Z"),
-        new("usr_01JC9TA1Z3C5E7G9I1K4M7P0S", "Dana White", "dana@northwind.io", false, true, "2025-11-18T08:10:00Z", "Billing dispute open."),
+        new("usr_01JC9TA1Z3C5E7G9I1K4M7P0S", "Dana White", "dana@northwind.io", false, true, "2025-11-18T08:10:00Z"),
         new("usr_01JC9TB2D4F6H8J0L2N5P8S1V", "Igor Ivanov", "igor@northwind.io", true, false, "2026-03-08T17:26:00Z"),
     ];
 
@@ -69,12 +68,16 @@ public sealed partial class DashboardStore
         new("org_01JCA3L5N7Q9S1U4X6Z9B2D5F", "Helios Research", "Suspended", "2025-09-02T12:00:00Z", 1, 0, "Suspended"),
     ];
 
+    /// <summary>Seeded billing plan catalog — mirrors src/backend/billing/catalog.ts
+    /// (createSeedPlans), ordered by name as the admin API returns it.</summary>
     public ImmutableArray<AdminPlanRow> AdminPlans { get; private set; } =
     [
-        new("plan_free", "free", "Free", 0, "USD", true, 2, null, (10, 5_000_000_000, 2, 5, 1)),
-        new("plan_scale", "scale", "Scale", 2900, "USD", true, 16, 12, (200, 200_000_000_000, 16, 50, 10)),
-        new("plan_dedicated", "dedicated", "Dedicated", 19900, "USD", true, 128, 40, (2000, 2_000_000_000_000, 128, 500, 100)),
-        new("plan_legacy_v1", "legacy_v1", "Legacy v1", 1900, "USD", false, 8, null, (100, 50_000_000_000, 8, 20, 4)),
+        new("01J0000000H8N2R4T6V9WXBQZD", "business", "Business", 9_900, "USD", true, 100, 20, (10_000, 20_000_000_000_000, 1_000_000, 100_000, 200)),
+        new("01J0000000ENTERPRISE000000", "enterprise", "Enterprise", 0, "USD", false, -1, 20, (-1, -1, -1, -1, -1)),
+        new("01J0000000QHGCSDT0B5HTTNK2", "free", "Free", 0, "USD", true, 1, 20, (100, 50_000_000_000, 1_000, 100, 3)),
+        new("01J0000000CVGZW8WBHBVYKDZ6", "pro", "Pro", 5_000, "USD", true, 25, 20, (5_000, 2_000_000_000_000, 100_000, 10_000, 50)),
+        new("01J0000000SXC54B5QZTXDXQYT", "scale", "Scale", 50_000, "USD", true, -1, 20, (-1, -1, -1, -1, -1)),
+        new("01J00000004WM5Z7P5MDBPN77M", "starter", "Starter", 500, "USD", true, 5, 20, (1_000, 500_000_000_000, 10_000, 1_000, 10)),
     ];
 
     public AdminPlatformUsage AdminUsage { get; } = new(
@@ -83,13 +86,9 @@ public sealed partial class DashboardStore
         Databases: 4,
         Usage:
         [
-            new("Documents stored", 3_880_870, "documents"),
-            new("Storage consumed", 6_656, "MB"),
-            new("API requests (30d)", 4_812_640, "requests"),
-            new("Read units (30d)", 31_204_500, "units"),
-            new("Write units (30d)", 8_140_200, "units"),
-            new("Active webhooks", 3, "endpoints"),
-            new("MRR", 61_600, "cents"),
+            new("organizations", 3, "count"),
+            new("projects", 6, "count"),
+            new("databases", 4, "count"),
         ]);
 
     public ImmutableArray<AdminEstateActionRecord> AdminEstateActionsLog { get; private set; } = [];
@@ -181,15 +180,6 @@ public sealed partial class DashboardStore
     public static string EstateActionNotice => "Action completed and recorded in the audit trail.";
 
     // --- Mutations ---------------------------------------------------------
-
-    public void AdminSetUserEnabled(string userId, bool enabled) =>
-        AdminUsers = [.. AdminUsers.Select(u => u.UserId == userId ? u with { Enabled = enabled } : u)];
-
-    public void AdminSetUserRole(string userId, string role) =>
-        AdminUsers = [.. AdminUsers.Select(u => u.UserId == userId ? u with { Owner = role is "owner" } : u)];
-
-    public void AdminAddSupportNote(string userId, string note) =>
-        AdminUsers = [.. AdminUsers.Select(u => u.UserId == userId ? u with { SupportNote = note } : u)];
 
     public void AdminSetPlanVisibility(string planId, bool visible) =>
         AdminPlans = [.. AdminPlans.Select(p => p.PlanId == planId ? p with { Visible = visible } : p)];

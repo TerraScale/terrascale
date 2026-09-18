@@ -67,7 +67,7 @@
                                 <tr>
                                     <td>@row.Name</td>
                                     <td class="ts-table-mono">@row.Key</td>
-                                    <td class="ts-table-num">@AdminPresentation.Money(row.MonthlyBaseCents, "USD")</td>
+                                    <td class="ts-table-num">@((row.MonthlyBaseCents / 100m).ToString("C", CultureInfo.GetCultureInfo("en-US")))</td>
                                     <td><span class="ts-badge @(row.Visible ? "ts-badge-success" : "ts-badge-neutral")">@(row.Visible ? "Visible" : "Hidden")</span></td>
                                     <td>
                                         <div class="ts-row">
