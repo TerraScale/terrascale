@@ -25,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          nice -n 10 dotnet build TerraScale.Libs.slnx \
+          dotnet build TerraScale.Libs.slnx \
             --configuration Release \
             --nologo \
             -p:EnableNETAnalyzers=true \
@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          nice -n 10 dotnet format style TerraScale.Libs.slnx \
+          dotnet format style TerraScale.Libs.slnx \
             --verify-no-changes \
             --no-restore
 
@@ -53,7 +53,7 @@ jobs:
           fi
           for proj in "${test_projects[@]}"; do
             echo "== Running $proj =="
-            nice -n 10 dotnet run \
+            dotnet run \
               --project "$proj" \
               --configuration Release \
               --no-build \
@@ -67,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf -- artifacts/packages
-          nice -n 10 dotnet pack TerraScale.Libs.slnx \
+          dotnet pack TerraScale.Libs.slnx \
             --configuration Release \
             --no-build \
             --nologo \
@@ -88,7 +88,7 @@ jobs:
           set -euo pipefail
           # The job token cannot write packages; the organization bot token
           # carries the package write grant for the registry.
-          nice -n 10 dotnet nuget push artifacts/packages/*.nupkg \
+          dotnet nuget push artifacts/packages/*.nupkg \
             --source "https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json" \
             --api-key "${TERRASCALE_BOT_TOKEN:?organization bot token is required}" \
             --skip-duplicate
