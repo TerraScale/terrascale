@@ -217,4 +217,8 @@ public static class Icons
     public const string MailPlusSvg = """<path d="M22 13V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8"></path><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path><path d="M19 16v6"></path><path d="M16 19h6"></path>""";
     public static HtmlString SearchX(int size = 18) => new(SvgText(SearchXSvg, size));
     public const string SearchXSvg = """<path d="m13.5 8.5-5 5"></path><path d="m8.5 8.5 5 5"></path><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>""";
+    public static HtmlString RotateCw(int size = 18) => new(SvgText(RotateCwSvg, size));
+    public const string RotateCwSvg = """<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path>""";
+    public static HtmlString ShieldOff(int size = 18) => new(SvgText(ShieldOffSvg, size));
+    public const string ShieldOffSvg = """<path d="m2 2 20 20"></path><path d="M5 5a1 1 0 0 0-1 1v7c0 5 3.5 7.5 7.67 8.94a1 1 0 0 0 .67.01c2.35-.82 4.48-1.97 5.9-3.71"></path><path d="M9.309 3.652A12.252 12.252 0 0 0 11.24 2.28a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1v7a9.784 9.784 0 0 1-.08 1.264"></path>""";
 }
