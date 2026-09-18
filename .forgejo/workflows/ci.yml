@@ -43,7 +43,7 @@ jobs:
       - name: Verify the pinned contract bundle
         run: |
           set -eu
-          nice -n 10 python3 scripts/contracts.py --version v1 --source contracts/v1
+          python3 scripts/contracts.py --version v1 --source contracts/v1
           git diff --exit-code -- contracts/v1 src/generated_contract.rs
 
       - name: Verify the pinned Rust toolchain
@@ -60,10 +60,10 @@ jobs:
           esac
 
       - name: Check Rust formatting
-        run: nice -n 10 cargo fmt --all --check
+        run: cargo fmt --all --check
 
       - name: Build and lint all workspace targets and features
-        run: nice -n 10 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Run the locked workspace test suite
-        run: nice -n 10 cargo test --locked --workspace --all-features
+        run: cargo test --locked --workspace --all-features
