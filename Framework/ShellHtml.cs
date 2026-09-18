@@ -208,7 +208,7 @@ public static class ShellHtml
         }
 
         var builder = new StringBuilder("""        <aside class="ts-datasubnav" aria-label="Data views">""");
-        builder.AppendLine("""            <div class="ts-datasubnav-header">Data Explorer</div>""");
+        builder.AppendLine("""            <div class="ts-datasubnav-header">TABLES</div>""");
         builder.AppendLine("""            <div class="ts-datasubnav-menu">""");
         builder.AppendLine("""                <a class="ts-nav-link" href="/data" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("BookOpen", 16) + """</span><span>Saved queries</span></a>""");
         builder.AppendLine("""                <a class="ts-nav-link" href="/data?view=table" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("Table", 16) + """</span><span>Collection documents</span></a>""");

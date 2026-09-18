@@ -10,9 +10,9 @@
         <p class="ts-admin-subtitle">Owner-only region and placement state.</p>
     </div>
     <section class="ts-admin-summary-three" aria-label="Estate summary">
-        @(AdminPresentation.Stat("Regions", Model.Regions.Count.ToString()))
-        @(AdminPresentation.Stat("Available regions", Model.Regions.Count(r => r.Available).ToString()))
-        @(AdminPresentation.Stat("Placed databases", Model.Hosts.Count.ToString()))
+        @(AdminPresentation.Stat("REGIONS", Model.Regions.Count.ToString()))
+        @(AdminPresentation.Stat("AVAILABLE REGIONS", Model.Regions.Count(r => r.Available).ToString()))
+        @(AdminPresentation.Stat("PLACED DATABASES", Model.Hosts.Count.ToString()))
     </section>
     @(AdminPresentation.TableStart("Regions"))
     <div class="ts-table-wrap">
@@ -67,7 +67,7 @@
                                 <div class="ts-admin-cell-id">@row.DatabaseId</div>
                             </td>
                             <td>@(string.Join(", ", row.Regions).Length > 0 ? string.Join(", ", row.Regions) : "-")</td>
-                            <td><span class="ts-badge ts-badge-info">v@row.Version</span></td>
+                            <td><span class="ts-badge ts-badge-info">v@(row.Version)</span></td>
                             <td>@AdminPresentation.Timestamp(row.CreatedAt)</td>
                         </tr>
                     }

@@ -31,10 +31,10 @@
                     </div>
                 </form>
                 <dl class="ts-summary-terms">
-                    <div class="ts-summary-term"><dt>@t("Roles")</dt><dd>@Model.Roles.Length</dd></div>
-                    <div class="ts-summary-term"><dt>@t("Permissions")</dt><dd>@Model.Permissions.Length</dd></div>
-                    <div class="ts-summary-term"><dt>@t("Sessions")</dt><dd>@Model.Sessions.Length</dd></div>
-                    <div class="ts-summary-term"><dt>@t("Loaded")</dt><dd>2026-09-18 10:24 UTC</dd></div>
+                    <div class="ts-summary-term"><dt>@t("ROLES")</dt><dd>@Model.Roles.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("PERMISSIONS")</dt><dd>@Model.Permissions.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("SESSIONS")</dt><dd>@Model.Sessions.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("LOADED")</dt><dd>Sep 18, 2026, 5:34 PM</dd></div>
                 </dl>
             </div>
         </div>
@@ -116,14 +116,14 @@
                 </div>
                 <div class="ts-claims-grid">
                     <div class="ts-claim-list">
-                        <span class="ts-claim-title">@t("Roles")</span>
+                        <span class="ts-claim-title">@t("ROLES")</span>
                         @foreach (var role in Model.Roles)
                         {
                             <code class="ts-claim-value">@role</code>
                         }
                     </div>
                     <div class="ts-claim-list">
-                        <span class="ts-claim-title">@t("Permissions")</span>
+                        <span class="ts-claim-title">@t("PERMISSIONS")</span>
                         @foreach (var permission in Model.Permissions)
                         {
                             <code class="ts-claim-value">@permission</code>
@@ -194,7 +194,7 @@
                         @foreach (var passkey in Model.Passkeys)
                         {
                             <div class="ts-posture-row">
-                                <span class="ts-muted ts-ui ts-posture-label">@Icons.Fingerprint(16) @(passkey.Name ?? t("Unnamed passkey")) · @t("Added") @passkey.CreatedAt</span>
+                                <span class="ts-muted ts-ui ts-posture-label">@Icons.Fingerprint(16) @(passkey.Name ?? t("Unnamed passkey")) · @t("Added") @DashboardStore.FormatUtcDateTime(passkey.CreatedAt)</span>
                                 <form method="post" action="/api/v1/dashboard/profile/passkeys/remove">
                                     <input type="hidden" name="passkeyId" value="@passkey.Id" />
                                     <button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">@t("Remove")</button>

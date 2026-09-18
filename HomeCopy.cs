@@ -25,7 +25,7 @@ public static class HomeCopy
         public string StepCredentialCta => "Open API keys";
         public string ConnectTitle => "Connect your AI or platform";
         public string ConnectSubtitle => "Reach this project from your assistant, application, or pipeline. Connection flows are previewed while provisioning finishes.";
-        public string ConnectSoon => "Preview";
+        public string ConnectSoon => "PREVIEW";
         public string ConnectMcpTitle => "AI assistants";
         public string ConnectMcpBody => "Connect Claude, Cursor, and other MCP-compatible assistants to your project.";
         public string ConnectSdkTitle => "TypeScript SDK";
@@ -34,7 +34,7 @@ public static class HomeCopy
         public string ConnectApiBody => "Call the project API from any language with a scoped credential.";
         public string ConnectCliTitle => "CLI and CI";
         public string ConnectCliBody => "Manage databases and run queries from your terminal or pipeline.";
-        public string ConnectSnippetLabel => "MCP client configuration";
+        public string ConnectSnippetLabel => "MCP CLIENT CONFIGURATION";
         public string ConnectSnippet => """
             {
               "mcpServers": {

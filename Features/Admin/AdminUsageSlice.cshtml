@@ -7,9 +7,9 @@
         <p class="ts-admin-subtitle">Owner-only platform usage summary.</p>
     </div>
     <section class="ts-admin-summary-three" aria-label="Platform summary">
-        @(AdminPresentation.Stat("Organizations", Model.Overview.Organizations.ToString()))
-        @(AdminPresentation.Stat("Projects", Model.Overview.Projects.ToString()))
-        @(AdminPresentation.Stat("Databases", Model.Overview.Databases.ToString()))
+        @(AdminPresentation.Stat("ORGANIZATIONS", Model.Overview.Organizations.ToString()))
+        @(AdminPresentation.Stat("PROJECTS", Model.Overview.Projects.ToString()))
+        @(AdminPresentation.Stat("DATABASES", Model.Overview.Databases.ToString()))
     </section>
     @(AdminPresentation.TableStart("Usage"))
     @if (Model.Overview.Usage.Length == 0)

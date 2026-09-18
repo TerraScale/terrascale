@@ -29,7 +29,7 @@
                 <div class="ts-metric"><span class="ts-muted">Events</span><span class="ts-metric-inline">@Model.Rows.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
                 <div class="ts-metric"><span class="ts-muted">High risk</span><span class="ts-metric-inline ts-text-danger">@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
                 <div class="ts-metric"><span class="ts-muted">Warnings</span><span class="ts-metric-inline ts-text-warning">@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
-                <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/audit/export?format=csv">@Icons.Download(14) Export CSV</a>
+                <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/audit/export?format=csv">@Icons.Download(14) Export audit</a>
             </div>
         </div>
     </section>
@@ -146,7 +146,7 @@
                     <h2 class="ts-panel-title">Retention</h2>
                     <p class="ts-panel-subtitle">Persisted audit evidence window</p>
                 </div>
-                <span class="ts-badge ts-badge-info">@Model.RetentionDays d</span>
+                <span class="ts-badge ts-badge-info">@($"{Model.RetentionDays}d")</span>
             </div>
             <div class="ts-stack-lg">
                 <div class="ts-stack-md">

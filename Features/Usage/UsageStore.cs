@@ -105,7 +105,9 @@ public sealed partial class DashboardStore
     }
 
     public static string FormatMoney(long cents, string currency) =>
-        $"{currency.ToUpperInvariant()} {(cents / 100m):F2}";
+        currency is "USD" || currency is "usd"
+            ? $"${cents / 100m:0.00}"
+            : $"{currency.ToUpperInvariant()} {(cents / 100m):F2}";
 
     public static string FormatPercent(double value) =>
         double.IsFinite(value) ? $"{value:0.#}%" : "Unknown";

@@ -16,13 +16,13 @@
     var m2mApps = Model.Credentials.Where(c => c.Type == "M2M application").Count();
     var summary = new (string Label, string Value)[]
     {
-        (t("Project"), Model.ProjectId),
-        (t("Auth providers"), $"{activeProviders}/{Model.Providers.Length}"),
-        (t("API keys"), apiKeys.ToString()),
-        (t("M2M applications"), m2mApps.ToString()),
-        (t("Databases"), Model.Databases.Length.ToString()),
-        (t("Active credentials"), activeCredentials.ToString()),
-        (t("Loaded"), "2026-09-18 10:24 UTC"),
+        (t("PROJECT"), Model.ProjectId),
+        (t("AUTH PROVIDERS"), $"{activeProviders}/{Model.Providers.Length}"),
+        (t("API KEYS"), apiKeys.ToString()),
+        (t("M2M APPLICATIONS"), m2mApps.ToString()),
+        (t("DATABASES"), Model.Databases.Length.ToString()),
+        (t("ACTIVE CREDENTIALS"), activeCredentials.ToString()),
+        (t("LOADED"), "Sep 18, 2026, 5:35 PM"),
     };
 }
 @ShellHtml.Top(shell)
@@ -72,7 +72,7 @@
                         <span class="ts-setting-icon">@(Model.AuthenticationEnabled ? Icons.ShieldCheck(16) : Icons.ShieldAlert(16))</span>
                         <span class="ts-min-width">
                             <span class="ts-text-strong">@(Model.AuthenticationEnabled ? "Enabled" : "Disabled")</span>
-                            <span class="ts-meta">Updated @Model.SecuritySettingsUpdatedAt</span>
+                            <span class="ts-meta">Updated @DashboardStore.FormatUtcDateTime(Model.SecuritySettingsUpdatedAt)</span>
                         </span>
                         <input class="ts-switch" type="checkbox" name="enabled" value="true" @(Model.AuthenticationEnabled ? "checked" : null) onchange="this.form.submit()" />
                     </form>
@@ -162,7 +162,7 @@
                                             <td>
                                                 <div class="ts-grid-tight">
                                                     <span class="ts-badge @(provider.Status == "Enabled" ? "ts-badge-success" : "ts-badge-neutral")">@t(provider.Status)</span>
-                                                    <span class="ts-meta">@provider.UpdatedAt</span>
+                                                    <span class="ts-meta">@DashboardStore.FormatUtcDateTime(provider.UpdatedAt)</span>
                                                 </div>
                                             </td>
                                         </tr>
@@ -224,9 +224,9 @@
                                         <td><span class="ts-badge @(credential.Status == "Active" ? "ts-badge-success" : "ts-badge-warning")">@t(credential.Status)</span></td>
                                         <td>
                                             <div class="ts-grid-tight ts-meta">
-                                                <span>@t("Created") @credential.CreatedAt</span>
-                                                <span>@t("Last used") @(credential.LastUsedAt.Length == 0 ? "-" : credential.LastUsedAt)</span>
-                                                <span>@t("Expires") @(credential.ExpiresAt.Length == 0 ? "-" : credential.ExpiresAt)</span>
+                                                <span>@t("Created") @DashboardStore.FormatUtcDateTime(credential.CreatedAt)</span>
+                                                <span>@t("Last used") @(credential.LastUsedAt.Length == 0 ? "-" : DashboardStore.FormatUtcDateTime(credential.LastUsedAt))</span>
+                                                <span>@t("Expires") @(credential.ExpiresAt.Length == 0 ? "-" : DashboardStore.FormatUtcDateTime(credential.ExpiresAt))</span>
                                             </div>
                                         </td>
                                     </tr>
@@ -273,7 +273,7 @@
                                         <td class="ts-mono ts-meta ts-break-all">@webhook.Url</td>
                                         <td class="ts-mono ts-meta">@webhook.SecretPreview</td>
                                         <td><span class="ts-badge ts-badge-success">@webhook.Status</span></td>
-                                        <td class="ts-meta">@webhook.CreatedAt</td>
+                                        <td class="ts-meta">@DashboardStore.FormatUtcDateTime(webhook.CreatedAt)</td>
                                     </tr>
                                 }
                             </tbody>

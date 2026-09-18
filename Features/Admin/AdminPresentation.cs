@@ -67,7 +67,9 @@ public static class AdminPresentation
     }
 
     public static string Money(long cents, string currency) =>
-        (cents / 100m).ToString("C", currency is "USD" ? CultureInfo.InvariantCulture : CultureInfo.GetCultureInfo("pt-BR"));
+        currency is "USD"
+            ? $"${cents / 100m:0.00}"
+            : (cents / 100m).ToString("C", CultureInfo.GetCultureInfo("pt-BR"));
 
     private static string Escape(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace("\"", "&quot;");

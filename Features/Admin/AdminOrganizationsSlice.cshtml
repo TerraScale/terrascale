@@ -7,8 +7,8 @@
         <p class="ts-admin-subtitle">Owner-only organization inventory.</p>
     </div>
     <section class="ts-admin-summary" aria-label="Organization summary">
-        @(AdminPresentation.Stat("Organizations", Model.Rows.Count.ToString()))
-        @(AdminPresentation.Stat("With owners", Model.WithOwners.ToString()))
+        @(AdminPresentation.Stat("ORGANIZATIONS", Model.Rows.Count.ToString()))
+        @(AdminPresentation.Stat("WITH OWNERS", Model.WithOwners.ToString()))
     </section>
     @(AdminPresentation.Filter("/admin/organizations", "Organizations", Model.Query))
     @(AdminPresentation.TableStart("Organizations"))

@@ -68,7 +68,7 @@
                                     </div>
                                     <p class="ts-muted ts-ui">@step.Body</p>
                                     <a class="ts-getting-started-cta" href="@step.Href">
-                                        @typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [15]) as string
+                                        @(typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [15]))
                                         @step.Cta
                                         @Icons.ArrowRight(14)
                                     </a>
@@ -92,7 +92,7 @@
                             })
                             {
                                 <div class="ts-card ts-connect-card">
-                                    <span class="ts-connect-icon">@typeof(Icons).GetMethod(option.Icon)?.Invoke(null, [18]) as string</span>
+                                    <span class="ts-connect-icon">@(typeof(Icons).GetMethod(option.Icon)?.Invoke(null, [18]))</span>
                                     <span class="ts-getting-started-title">@option.Title</span>
                                     <p class="ts-muted ts-meta">@option.Body</p>
                                     <span class="ts-badge ts-badge-outline">@copy.ConnectSoon</span>

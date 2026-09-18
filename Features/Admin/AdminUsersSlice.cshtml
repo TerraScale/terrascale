@@ -11,9 +11,9 @@
         <p class="ts-admin-subtitle">Owner-only user administration.</p>
     </div>
     <section class="ts-admin-summary" aria-label="User summary">
-        @(AdminPresentation.Stat("Users", Model.Rows.Count.ToString()))
-        @(AdminPresentation.Stat("Enabled", Model.Rows.Count(r => r.Enabled).ToString()))
-        @(AdminPresentation.Stat("Owners", Model.Rows.Count(r => r.Owner).ToString()))
+        @(AdminPresentation.Stat("USERS", Model.Rows.Count.ToString()))
+        @(AdminPresentation.Stat("ENABLED", Model.Rows.Count(r => r.Enabled).ToString()))
+        @(AdminPresentation.Stat("OWNERS", Model.Rows.Count(r => r.Owner).ToString()))
     </section>
     @(AdminPresentation.Filter("/admin/users", "Users", Model.Query))
     @(AdminPresentation.TableStart("Users"))

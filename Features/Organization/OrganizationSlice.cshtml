@@ -20,9 +20,9 @@
             <div class="ts-row ts-gap-16">
                 <span class="ts-avatar ts-avatar-org" aria-hidden="true">@Icons.Building(24)</span>
                 <dl class="ts-summary-terms ts-summary-terms-3">
-                    <div class="ts-summary-term"><dt>@t("Projects")</dt><dd>@Model.Projects.Length</dd></div>
-                    <div class="ts-summary-term"><dt>@t("Members")</dt><dd>@Model.Users.Length</dd></div>
-                    <div class="ts-summary-term"><dt>@t("Current project")</dt><dd>@currentProjectName</dd></div>
+                    <div class="ts-summary-term"><dt>@t("PROJECTS")</dt><dd>@Model.Projects.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("MEMBERS")</dt><dd>@Model.Users.Length</dd></div>
+                    <div class="ts-summary-term"><dt>@t("CURRENT PROJECT")</dt><dd>@currentProjectName</dd></div>
                 </dl>
             </div>
             <form method="post" action="/api/v1/dashboard/organization/switch" class="ts-form ts-inline-form">
@@ -42,7 +42,7 @@
     <section class="ts-grid-two-pane">
         <section class="ts-panel">
             <div class="ts-panel-header">
-                <h3 class="ts-panel-title">@t("Projects")</h3>
+                <h3 class="ts-panel-title">@t("PROJECTS")</h3>
                 <p class="ts-panel-subtitle">@t("Projects returned by the TerraScale Dashboard API")</p>
             </div>
             @if (Model.CanManageOrganization)
@@ -122,7 +122,7 @@
                                             <span class="ts-badge ts-badge-neutral">@t("Available")</span>
                                         }</td>
                                     <td><span class="ts-badge ts-badge-info">@project.Region.ToUpperInvariant()</span></td>
-                                    <td class="ts-muted ts-ui">@project.CreatedAt</td>
+                                    <td class="ts-muted ts-ui">@DashboardStore.FormatUtcDateTime(project.CreatedAt)</td>
                                     <td>
                                         <details class="ts-menu">
                                             <summary class="ts-btn ts-btn-ghost ts-btn-sm">@t("Rename")</summary>
@@ -158,7 +158,7 @@
                     (t("Name"), Model.OrganizationName),
                     (t("Status"), Model.OrganizationStatus),
                     (t("Organization ID"), Model.OrganizationId),
-                    (t("Created"), Model.OrganizationCreatedAt),
+                    (t("Created"), DashboardStore.FormatUtcDateTime(Model.OrganizationCreatedAt)),
                     (t("Signed-in user"), Model.SignedInEmail),
                 })
                 {
@@ -209,7 +209,7 @@
     {
         <section class="ts-panel">
             <div class="ts-panel-header">
-                <h3 class="ts-panel-title">@t("Members")</h3>
+                <h3 class="ts-panel-title">@t("MEMBERS")</h3>
                 <p class="ts-panel-subtitle">@t("Users returned by the organization users API")</p>
             </div>
             @if (Model.Users.Length == 0)
@@ -254,7 +254,7 @@
                                             </select>
                                         </form>
                                     </td>
-                                    <td class="ts-muted ts-ui">@member.LastActiveAt</td>
+                                    <td class="ts-muted ts-ui">@DashboardStore.FormatUtcDateTime(member.LastActiveAt)</td>
                                 </tr>
                             }
                         </tbody>
@@ -320,7 +320,7 @@
                                     </td>
                                     <td class="ts-muted ts-ui">@invitation.Role</td>
                                     <td><span class="ts-badge @InvitationStatusTone(invitation.Status)">@InvitationStatusText(invitation.Status)</span></td>
-                                    <td class="ts-muted ts-ui">@invitation.CreatedAt</td>
+                                    <td class="ts-muted ts-ui">@DashboardStore.FormatUtcDateTime(invitation.CreatedAt)</td>
                                     <td class="ts-muted ts-ui">@invitation.InvitedByEmail</td>
                                     <td>
                                         @if (invitation.Status == "Pending")
