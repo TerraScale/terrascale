@@ -9,11 +9,7 @@ public sealed partial class DashboardStore
     /// DatabaseResource carries (provisioning-state status + replication label).</summary>
     public DatabaseRow ToRow(DashboardDatabase database)
     {
-        var regions = new List<string> { database.PrimaryRegion };
-        if (database.BackupRegion is { } backup)
-        {
-            regions.Add(backup);
-        }
+        var regions = RegionsOf(database);
 
         var status = database.Status switch
         {
@@ -42,45 +38,61 @@ public sealed partial class DashboardStore
         _ => "Single region",
     };
 
-    /// <summary>Inter-region round-trip estimates for the detail page latency table.</summary>
+    /// <summary>Maps a stored cloud region id onto the v1 hub universe
+    /// (the API only accepts gru|sfo|fra; unknown codes pass through).</summary>
+    public static string HubCode(string region) => region.ToLowerInvariant() switch
+    {
+        "us-east-1" or "us-west-2" or "sfo" => "sfo",
+        "eu-central-1" or "eu-west-1" or "fra" => "fra",
+        "sa-east-1" or "gru" => "gru",
+        var other => other,
+    };
+
+    /// <summary>The database's placement regions as deduped hub codes
+    /// (v1 dedupeRegionCodes over the mapped regions).</summary>
+    public static List<string> RegionsOf(DashboardDatabase database)
+    {
+        var regions = new List<string> { HubCode(database.PrimaryRegion) };
+        if (database.BackupRegion is { } backup)
+        {
+            regions.Add(HubCode(backup));
+        }
+        return [.. regions.Distinct()];
+    }
+
+    /// <summary>Inter-region round-trip estimates for the detail page latency
+    /// table: the project's first region is the nearest (0 ms); every other
+    /// region has no measured estimate yet.</summary>
     public ImmutableArray<LatencyRow> LatencyFor(DashboardDatabase database)
     {
-        // Fresh projects sit in authority regions (SFO/GRU/FRA) that are not in
-        // the placement catalog; the table still renders a primary row.
-        var primary = Regions.FirstOrDefault(r => r.Code == database.PrimaryRegion);
-        var rows = primary is null
-            ? [new LatencyRow(database.PrimaryRegion, "—")]
-            : new List<LatencyRow> { new(primary.Code, $"{primary.LatencyMs} ms") };
-        if (primary is { } p && database.BackupRegion is { } backup
-            && Regions.FirstOrDefault(r => r.Code == backup) is { } backupRegion)
-        {
-            rows.Add(new(backupRegion.Code, $"{Math.Max(p.LatencyMs, backupRegion.LatencyMs) + 18} ms"));
-        }
-
-        return [.. rows];
+        return [.. RegionsOf(database).Select((region, index) => new LatencyRow(region, index == 0 ? "0 ms" : "-"))];
     }
 
     public DashboardDatabase? FindDatabase(string databaseId) =>
         Databases.FirstOrDefault(d => d.Id == databaseId);
 
+    private readonly HashSet<string> backupsDisabled = [];
+
+    private readonly Dictionary<string, (string Schedule, string Retention)> backupPolicies = [];
+
     public (string Schedule, string Retention)? BackupPolicy(string databaseId) =>
-        World.BackupPolicies.TryGetValue(databaseId, out var policy) ? policy : null;
+        backupPolicies.TryGetValue(databaseId, out var policy) ? policy : null;
 
     public void SaveBackupPolicy(string databaseId, string schedule, string retention) =>
-        World.BackupPolicies[databaseId] = (schedule, retention);
+        backupPolicies[databaseId] = (schedule, retention);
 
     public bool BackupsEnabled(string databaseId) =>
-        FindDatabase(databaseId)?.BackupRegion is not null && !World.BackupsDisabled.Contains(databaseId);
+        FindDatabase(databaseId)?.BackupRegion is not null && !backupsDisabled.Contains(databaseId);
 
     public void SetBackupsEnabled(string databaseId, bool enabled)
     {
         if (!enabled)
         {
-            World.BackupsDisabled.Add(databaseId);
+            backupsDisabled.Add(databaseId);
         }
         else
         {
-            World.BackupsDisabled.Remove(databaseId);
+            backupsDisabled.Remove(databaseId);
         }
     }
 }
