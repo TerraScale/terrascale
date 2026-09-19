@@ -19,7 +19,8 @@ public sealed class ResetPasswordPageEndpoint : EndpointWithoutRequest<IResult>
         var model = new ResetPasswordPageModel(
             Error: query["error"].FirstOrDefault(),
             Sent: query["sent"] == "1",
-            Reset: query["token"].ToString() is { Length: > 0 });
+            Reset: query["token"].ToString() is { Length: > 0 },
+            Updated: query["updated"] == "1");
         return Task.FromResult<IResult>(ResetPasswordSlice.Create(model));
     }
 }

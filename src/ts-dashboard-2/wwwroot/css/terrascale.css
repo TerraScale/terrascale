@@ -2211,8 +2211,17 @@ single-selector rules may stay on one line.
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: var(--ts-xl);
-    padding: var(--ts-xl);
+    padding: 40px var(--ts-lg);
+  }
+
+  /* v1 authPanel: grows to full height so the locale footer pins to the
+     bottom while the card centers in the space above it. */
+  .ts-auth-panel {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    width: 100%;
+    max-width: 448px;
   }
 
   .ts-auth-card {
@@ -2253,20 +2262,85 @@ single-selector rules may stay on one line.
 
   .ts-auth-title {
     text-align: center;
-    font-size: var(--ts-fs-panel-title);
+    margin-block: 0;
+    font-size: 24px;
+    line-height: 32px;
     font-weight: var(--ts-fw-semibold);
   }
 
   .ts-auth-subtitle {
     text-align: center;
+    margin: 4px 0 0;
     font-size: var(--ts-fs-ui);
+    line-height: 20px;
+    font-weight: var(--ts-fw-medium);
     color: var(--ts-ink-muted);
   }
 
   .ts-auth-footer {
-    font-size: var(--ts-fs-meta);
+    font-size: var(--ts-fs-ui);
     color: var(--ts-ink-muted);
     text-align: center;
+    margin-top: 20px;
+  }
+
+  /* v1 back-link on the deployed reset page: muted gray, underlined. */
+  .ts-auth-back-link {
+    color: var(--ts-ink-muted);
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+
+  /* v1 feedback box (AuthCredentialForm styles.feedback): single icon+message
+     row, 8px/12px padding, tone-colored text. Used for login errors and the
+     reset-password sent/updated confirmations. */
+  .ts-auth-feedback {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    border: 1px solid transparent;
+    border-radius: var(--ts-radius-control);
+    font-size: var(--ts-fs-ui);
+    line-height: 20px;
+    overflow-wrap: anywhere;
+  }
+
+  .ts-auth-feedback svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .ts-auth-feedback-error {
+    border-color: color-mix(in oklab, var(--ts-danger) 30%, transparent);
+    background-color: color-mix(in oklab, var(--ts-danger) 10%, transparent);
+    color: var(--ts-danger);
+  }
+
+  .ts-auth-feedback-success {
+    border-color: color-mix(in oklab, var(--ts-success) 30%, transparent);
+    background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+    color: var(--ts-success);
+  }
+
+  /* Auth inputs are 44px (v1 FormField controlHeightLarge); dashboard forms
+     keep the 40px default. */
+  .ts-auth .ts-input,
+  .ts-login-column .ts-input {
+    min-height: var(--ts-control-h-lg);
+  }
+
+  /* v1 reset-password surface: 20px block / 24px inline, 32px inline >= 40rem
+     (login keeps the shared 24px/32px surface padding). */
+  .ts-auth .ts-auth-card {
+    padding: 20px 24px;
+  }
+
+  @media (min-width: 40rem) {
+    .ts-auth .ts-auth-card {
+      padding-inline: 32px;
+    }
   }
 
   .ts-auth-sep {
@@ -2473,8 +2547,14 @@ single-selector rules may stay on one line.
     align-items: center;
     justify-content: center;
     padding: 40px var(--ts-lg);
-    border-left: 1px solid color-mix(in oklab, var(--ts-accent) 40%, transparent);
     min-width: 0;
+  }
+
+  /* v1 draws the accent seam only next to the map (>= 64rem). */
+  @media (min-width: 64rem) {
+    .ts-login-column {
+      border-left: 1px solid color-mix(in oklab, var(--ts-accent) 40%, transparent);
+    }
   }
 
   @media (min-width: 80rem) {
@@ -2573,6 +2653,7 @@ single-selector rules may stay on one line.
     display: flex;
     align-items: center;
     gap: 12px;
+    margin-top: var(--ts-lg);
   }
 
   .ts-auth-divider > span:first-child,
@@ -2593,6 +2674,7 @@ single-selector rules may stay on one line.
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--ts-md);
+    margin-top: var(--ts-lg);
   }
 
   .ts-auth-provider {
@@ -2601,6 +2683,17 @@ single-selector rules may stay on one line.
     min-width: 0;
     padding-inline: 12px;
     box-shadow: var(--ts-shadow-sm);
+    border-color: color-mix(in oklab, var(--ts-ink-muted) 70%, transparent);
+    transition-property: background-color, border-color, box-shadow, color, opacity, transform;
+  }
+
+  .ts-auth-provider:hover {
+    border-color: var(--ts-ink-muted);
+    transform: translateY(-1px);
+  }
+
+  .ts-auth-provider:active {
+    transform: translateY(0);
   }
 
   .ts-auth-provider img {
@@ -2608,45 +2701,67 @@ single-selector rules may stay on one line.
     height: 20px;
   }
 
+  /* v1 AuthLocaleFooter: pinned to the bottom of the column behind a 1px
+     separator (the card above it centers with margin-block: auto). */
   .ts-auth-locale-footer {
     display: flex;
     align-items: center;
     justify-content: center;
     flex-wrap: wrap;
-    gap: 12px;
-    margin-top: 20px;
+    column-gap: 16px;
+    row-gap: 4px;
+    margin-top: auto;
+    padding-top: 16px;
+    border-top: 1px solid color-mix(in oklab, var(--ts-ink-muted) 70%, transparent);
     color: var(--ts-ink-muted);
     font-size: var(--ts-fs-ui);
   }
 
   .ts-auth-locale {
-    border: 1px solid var(--ts-line);
+    height: 40px;
+    padding-inline: 12px;
+    border: 1px solid color-mix(in oklab, var(--ts-ink-muted) 70%, transparent);
     border-radius: var(--ts-radius-control);
-    background-color: var(--ts-input-fill);
+    background-color: var(--ts-surface);
     color: var(--ts-ink);
-    font-size: var(--ts-fs-meta);
-    padding: 6px 10px;
-  }
-
-  .ts-auth-footer-links {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-  }
-
-  .ts-auth-footer-links a {
-    color: var(--ts-accent-soft);
+    font-size: var(--ts-fs-ui);
     font-weight: var(--ts-fw-medium);
-    text-decoration: underline;
-    text-decoration-color: color-mix(in oklab, var(--ts-accent-soft) 60%, transparent);
-    text-underline-offset: 4px;
-    padding-inline: 4px;
   }
 
-  .ts-auth-footer-links a:hover {
-    text-decoration-color: var(--ts-accent-soft);
+  /* v1 login mode is "embedded": the surface is plain padding on the canvas —
+     no card chrome (reset-password keeps the bordered panel). */
+  .ts-login .ts-auth-card {
+    border: 0;
+    border-radius: 0;
+    background: none;
+  }
+
+  .ts-login-column .ts-auth-locale-footer {
+    width: min(28rem, 100%);
+  }
+
+  /* v1 compact spacing for short viewports; kept last so the height
+     overrides win the cascade over the width media rules above. */
+  @media (max-height: 799px) {
+    .ts-login-column { padding-block: 8px; }
+    .ts-auth { padding-block: 8px; }
+    .ts-login .ts-auth-card,
+    .ts-auth .ts-auth-card { padding: 12px 16px; }
+    .ts-auth-form,
+    .ts-auth .ts-form { gap: var(--ts-md); }
+    .ts-auth-brand { margin-bottom: 8px; }
+    .ts-auth-heading { margin-bottom: 8px; }
+    .ts-auth-divider,
+    .ts-auth-providers { margin-top: var(--ts-md); }
+    .ts-auth-footer { margin-top: 8px; }
+    .ts-auth-locale-footer { padding-top: 8px; }
+  }
+
+  @media (min-height: 799.02px) and (max-height: 820px) {
+    .ts-login .ts-auth-card { padding: 24px; }
+    .ts-auth { padding-block: 16px; }
+    .ts-auth-heading { margin-bottom: 16px; }
+    .ts-login-column .ts-auth-locale-footer { padding-top: 12px; }
   }
 
   .ts-oauth-icon {
@@ -4763,6 +4878,11 @@ single-selector rules may stay on one line.
     gap: var(--ts-lg);
   }
 
+  /* v1 sectionTight: heading sits 8px above the note/pre. */
+  .ts-flow-section-tight {
+    gap: var(--ts-sm);
+  }
+
   .ts-flow-section-heading {
     margin: 0;
     font-size: var(--ts-fs-panel-title);
@@ -4907,12 +5027,9 @@ single-selector rules may stay on one line.
 
   .ts-flow-form-denial {
     gap: var(--ts-md);
-    margin-top: var(--ts-lg);
     padding-top: var(--ts-lg);
     border-top: 1px solid var(--ts-line);
   }
-
-  .ts-flow-field-narrow { max-width: 320px; }
 
   .ts-flow-pre {
     margin: 0;
@@ -5226,6 +5343,86 @@ single-selector rules may stay on one line.
     border-radius: var(--ts-radius-panel);
     background-color: var(--ts-surface);
     cursor: pointer;
+  }
+
+  /* Agent approval header icon: v1 iconBox (44px, panel radius, accent tint),
+     flush left in the flex row (ts-flow-icon-lg is the invitation page icon). */
+  .ts-flow-icon-badge {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    height: var(--ts-control-h-lg);
+    width: var(--ts-control-h-lg);
+    border: 1px solid color-mix(in oklab, var(--ts-accent) 30%, transparent);
+    border-radius: var(--ts-radius-panel);
+    background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+    color: var(--ts-accent);
+  }
+
+  /* v1 FormField/Input on the agent approval forms: 8px label gap, 44px
+     controls, 16px body text. */
+  .ts-flow-form .ts-field {
+    gap: var(--ts-sm);
+  }
+
+  .ts-flow-form .ts-input {
+    min-height: var(--ts-control-h-lg);
+    font-size: var(--ts-fs-body);
+  }
+
+  /* v1 destructive variant is borderless: danger 10% fill, 20% on hover. */
+  .ts-flow-form .ts-btn-destructive {
+    border-color: transparent;
+    background-color: color-mix(in oklab, var(--ts-danger) 10%, transparent);
+  }
+
+  .ts-flow-form .ts-btn-destructive:hover {
+    background-color: color-mix(in oklab, var(--ts-danger) 20%, transparent);
+  }
+
+  /* v1 agent-approval panel padding: 20px mobile, 32px >= 40rem. */
+  .ts-flow-panel-compact {
+    padding: 20px;
+  }
+
+  @media (min-width: 40rem) {
+    .ts-flow-panel-compact { padding: var(--ts-xxl); }
+  }
+
+  /* OAuth consent summary: v1 details (single column, radius 8, gap 16,
+     semibold non-uppercase labels, 500-weight values). */
+  .ts-flow-details-consent {
+    gap: var(--ts-lg);
+    border-radius: var(--ts-radius-control);
+  }
+
+  @media (min-width: 40rem) {
+    .ts-flow-details-consent { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  .ts-flow-details-consent .ts-flow-detail dt {
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-semibold);
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  .ts-flow-details-consent .ts-flow-detail dd {
+    font-weight: var(--ts-fw-medium);
+  }
+
+  /* v1 consent explanation paragraph. */
+  .ts-flow-note {
+    margin-top: 20px;
+    line-height: 24px;
+  }
+
+  /* v1 consent claims pre: canvas fill, ink text, capped height. */
+  .ts-flow-pre-claims {
+    background-color: var(--ts-canvas);
+    color: var(--ts-ink);
+    max-height: 10rem;
+    overflow: auto;
   }
 
   /* ===== Feature: Engine ===== */
