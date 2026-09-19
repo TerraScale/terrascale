@@ -95,6 +95,42 @@ public sealed class AuthServiceFixture : IAsyncDisposable
         return new AuthServiceFixture(engine, application, http, engineClient, database, root);
     }
 
+
+    /// <summary>Shared lazy singleton across all E2E test classes in this assembly.</summary>
+    private static readonly Task<AuthServiceFixture> Shared = StartSharedAsync();
+
+    private static async Task<AuthServiceFixture> StartSharedAsync()
+    {
+        var fixture = await StartAsync();
+        return fixture;
+    }
+
+    /// <summary>Returns the shared running service.</summary>
+    public static Task<AuthServiceFixture> GetAsync() => Shared;
+
+    /// <summary>Creates a fresh instance + default sk_ API key via the operator endpoint.</summary>
+    public async Task<(string InstanceId, string InstanceSlug, string ApiKey)> CreateInstanceAsync(string slug)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/instances")
+        {
+            Content = System.Net.Http.Json.JsonContent.Create(new { slug, name = slug }),
+        };
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "operator-test-key");
+        var response = await Http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        return (
+            body.GetProperty("instance").GetProperty("id").GetString()!,
+            body.GetProperty("instance").GetProperty("slug").GetString()!,
+            body.GetProperty("api_key").GetString()!);
+    }
+
+    /// <summary>Direct store access for arranging/inspecting state in tests.</summary>
+    public TerraScale.Auth.Store.AuthStore Store => new(Sdk, Database);
+
+    /// <summary>The master key the fixture configured (base64 of 32 zero bytes).</summary>
+    public static byte[] MasterKey => new byte[32];
+
     public async ValueTask DisposeAsync()
     {
         await application.StopAsync();

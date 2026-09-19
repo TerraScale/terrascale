@@ -284,6 +284,9 @@ public sealed class AuthStore(TerraScaleClient client, string database)
         return matches.FirstOrDefault();
     }
 
+    public Task<IReadOnlyList<VerificationToken>> ListVerificationTokensAsync(string instanceId, string purpose, int limit, CancellationToken ct = default) =>
+        QueryAsync<VerificationToken>("verification_tokens", "purpose", purpose, limit, ct);
+
     // ---- Webhooks -------------------------------------------------------------------------
 
     public Task<WebhookEndpoint> CreateWebhookEndpointAsync(WebhookEndpoint endpoint, CancellationToken ct = default) =>
@@ -308,6 +311,13 @@ public sealed class AuthStore(TerraScaleClient client, string database)
 
     public Task<IReadOnlyList<AuditEvent>> ListAuditEventsAsync(string instanceId, int limit, CancellationToken ct = default) =>
         QueryAsync<AuditEvent>("audit_events", "instanceId", instanceId, limit, ct);
+
+    /// <summary>Audit events for the instance at or after a unix-seconds boundary (HLC-order caveat: ties on CreatedAt).</summary>
+    public async Task<IReadOnlyList<AuditEvent>> ListAuditEventsSinceAsync(string instanceId, long sinceUnixSeconds, int limit, CancellationToken ct = default)
+    {
+        var recent = await QueryAsync<AuditEvent>("audit_events", "instanceId", instanceId, limit, ct);
+        return recent.Where(e => e.CreatedAt >= sinceUnixSeconds).OrderBy(e => e.CreatedAt).ToList();
+    }
 
     // ---- Signing keys -----------------------------------------------------------------------
 

@@ -33,6 +33,9 @@ public sealed record AuthOptions
     /// <summary>Operator key that can create instances. Env <c>TS_AUTH_OPERATOR_KEY</c>.</summary>
     public required string OperatorKey { get; init; }
 
+    /// <summary>Management API requests allowed per API key per 5-minute window. Env <c>TS_AUTH_RATE_LIMIT</c>, default 1000.</summary>
+    public int RateLimitPerWindow { get; init; } = 1000;
+
     /// <summary>Load options from environment variables, then <c>--key=value</c> args.</summary>
     public static AuthOptions Load(string[] args)
     {
@@ -81,6 +84,7 @@ public sealed record AuthOptions
             Database = Required("database"),
             MasterKey = masterKeyBytes,
             OperatorKey = Required("operator-key"),
+            RateLimitPerWindow = int.TryParse(values.GetValueOrDefault("rate-limit"), out var rateLimit) && rateLimit > 0 ? rateLimit : 1000,
         };
     }
 
