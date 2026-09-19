@@ -15,7 +15,7 @@
         @(AdminPresentation.Stat("PLACED DATABASES", Model.Hosts.Count.ToString()))
     </section>
     @(AdminPresentation.TableStart("Regions"))
-    <div class="ts-table-wrap">
+    <div class="ts-table-wrap ts-table-flush">
         <table class="ts-table">
             <thead>
                 <tr>
@@ -48,7 +48,7 @@
     }
     else
     {
-        <div class="ts-table-wrap">
+        <div class="ts-table-wrap ts-table-flush">
             <table class="ts-table">
                 <thead>
                     <tr>
@@ -129,9 +129,10 @@
                     <div class="ts-admin-fact-list">
                         @if (!Model.Facts.TryGetValue(key, out var facts) || facts.Length == 0)
                         {
-                            <div class="ts-empty">
-                                <span class="ts-empty-title">No data</span>
-                                <span class="ts-meta">This estate capability is unavailable.</span>
+                            <div class="ts-empty-card">
+                                <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                                <span class="ts-empty-card-title">No data</span>
+                                <span class="ts-empty-card-desc">This estate capability is unavailable.</span>
                             </div>
                         }
                         else

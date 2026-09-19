@@ -1,4 +1,5 @@
 @inherits RazorSlice<AdminUsagePageModel>
+@using System.Globalization
 @{ var shell = Model.Shell; }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-admin-root">
@@ -18,7 +19,7 @@
     }
     else
     {
-        <div class="ts-table-wrap">
+        <div class="ts-table-wrap ts-table-flush">
             <table class="ts-table">
                 <thead>
                     <tr>
@@ -32,7 +33,7 @@
                     {
                         <tr>
                             <td>@row.Name</td>
-                            <td class="ts-table-num">@row.Quantity.ToString("N0")</td>
+                            <td>@row.Quantity.ToString(CultureInfo.InvariantCulture)</td>
                             <td>@(row.Unit ?? "-")</td>
                         </tr>
                     }
