@@ -37,6 +37,7 @@ public sealed class PasskeyE2eTests
         var registration = await RegisterAsync(service, slug, cookie, authenticator);
         await Assert.That(registration.Algorithm).IsEqualTo("ES256");
         await Assert.That(registration.Nickname).IsEqualTo("Test key");
+        await Assert.That(registration.Transports).IsEqualTo("internal");
         await Assert.That(registration.UserId).IsEqualTo(user.Id);
         await Assert.That(registration.PublicKeyCborBase64).IsNotNull();
 

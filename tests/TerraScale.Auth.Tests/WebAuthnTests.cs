@@ -187,6 +187,41 @@ public sealed class WebAuthnTests
     }
 
     [Test]
+    public async Task RsaCredentialsRegisterAssertAndRoundTrip()
+    {
+        // RSA COSE keys (RFC 8230) carry the modulus at label -1 as a byte string,
+        // where EC2 keys carry the curve as an int; both paths must work.
+        foreach (var algorithm in new[] { "RS256", "PS256" })
+        {
+            using var authenticator = new FakeAuthenticator(algorithm);
+            var challenge = NewChallenge();
+            var (credentialId, publicKey, _) = WebAuthnVerifier.VerifyRegistration(
+                authenticator.ClientDataJson("webauthn.create", challenge),
+                authenticator.AttestationObject(),
+                challenge, RpId, Origin);
+            await Assert.That(publicKey.Algorithm).IsEqualTo(algorithm);
+
+            var restored = CoseKey.FromStored(publicKey.RawCbor);
+            await Assert.That(restored.Algorithm).IsEqualTo(algorithm);
+            await Assert.That(restored.RawCbor.AsSpan().SequenceEqual(publicKey.RawCbor)).IsTrue();
+
+            var challenge2 = NewChallenge();
+            var (authData, signature) = authenticator.Assertion(challenge2);
+            var result = WebAuthnVerifier.VerifyAssertion(
+                authenticator.ClientDataJson("webauthn.get", challenge2), authData, signature,
+                challenge2, RpId, Origin, credentialId, restored, storedSignCount: 5);
+            await Assert.That(result.SignCount).IsEqualTo(6u);
+
+            var challenge3 = NewChallenge();
+            var (tamperedData, tamperedSignature) = authenticator.Assertion(challenge3);
+            tamperedSignature[10] ^= 0xFF;
+            await Assert.ThrowsAsync<InvalidOperationException>(() => Task.Run(() => WebAuthnVerifier.VerifyAssertion(
+                authenticator.ClientDataJson("webauthn.get", challenge3), tamperedData, tamperedSignature,
+                challenge3, RpId, Origin, credentialId, restored, storedSignCount: 6)));
+        }
+    }
+
+    [Test]
     public async Task RegistrationRequiresUserPresentFlag()
     {
         using var authenticator = new FakeAuthenticator();
@@ -221,10 +256,11 @@ public sealed class WebAuthnTests
 
     private static string NewChallenge() => Encodings.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
 
-    /// <summary>Builds authenticator-side bytes with a real P-256 keypair, signing where the protocol signs.</summary>
-    private sealed class FakeAuthenticator : IDisposable
+    /// <summary>Builds authenticator-side bytes with a real P-256 or RSA keypair, signing where the protocol signs.</summary>
+    private sealed class FakeAuthenticator(string keyType = "ES256") : IDisposable
     {
         private readonly ECDsa ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        private readonly RSA? rsa = keyType == "ES256" ? null : RSA.Create(2048);
         private uint signCount = 5;
 
         public byte[] CredentialId { get; } = RandomNumberGenerator.GetBytes(32);
@@ -246,11 +282,30 @@ public sealed class WebAuthnTests
                 stream.Write(new byte[16]);
                 stream.Write([(byte)(credentialId.Length >> 8), (byte)credentialId.Length]);
                 stream.Write(credentialId);
-                var parameters = ecdsa.ExportParameters(false);
-                stream.Write(CoseKey.EncodeEc2(parameters.Q.X!, parameters.Q.Y!));
+                if (rsa is null)
+                {
+                    var parameters = ecdsa.ExportParameters(false);
+                    stream.Write(CoseKey.EncodeEc2(parameters.Q.X!, parameters.Q.Y!));
+                }
+                else
+                {
+                    var parameters = rsa.ExportParameters(false);
+                    var writer = new CborWriter();
+                    writer.WriteStartMap(4);
+                    writer.WriteInt32(1); writer.WriteInt32(3); // kty: RSA
+                    writer.WriteInt32(3); writer.WriteInt32(keyType == "RS256" ? -257 : -37);
+                    writer.WriteInt32(-1); writer.WriteByteString(parameters.Modulus!); // n (bstr per RFC 8230)
+                    writer.WriteInt32(-2); writer.WriteByteString(parameters.Exponent!); // e
+                    writer.WriteEndMap();
+                    stream.Write(writer.Encode());
+                }
             }
             return stream.ToArray();
         }
+
+        private byte[] Sign(byte[] data) => rsa is null
+            ? ecdsa.SignData(data, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation)
+            : rsa.SignData(data, HashAlgorithmName.SHA256, keyType == "RS256" ? RSASignaturePadding.Pkcs1 : RSASignaturePadding.Pss);
 
         public byte[] AttestationObject(string clientDataJson = "", string format = "none", bool tamperSignature = false, byte? flagsOverride = null, uint? signCountOverride = null)
         {
@@ -263,7 +318,7 @@ public sealed class WebAuthnTests
             if (format == "packed")
             {
                 var signed = authData.Concat(SHA256.HashData(Encoding.UTF8.GetBytes(clientDataJson))).ToArray();
-                var signature = ecdsa.SignData(signed, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+                var signature = Sign(signed);
                 if (tamperSignature)
                     signature[10] ^= 0xFF;
                 writer.WriteTextString("sig"); writer.WriteByteString(signature);
@@ -279,7 +334,7 @@ public sealed class WebAuthnTests
             signCount++; // advance the counter like a real token
             var authData = AuthenticatorData(attested: credentialIdOverride is not null, signCountOverride: signCountOverride, credentialIdOverride: credentialIdOverride);
             var signed = authData.Concat(SHA256.HashData(Encoding.UTF8.GetBytes(ClientDataJson("webauthn.get", challenge)))).ToArray();
-            var signature = ecdsa.SignData(signed, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+            var signature = Sign(signed);
             return (authData, signature);
         }
 

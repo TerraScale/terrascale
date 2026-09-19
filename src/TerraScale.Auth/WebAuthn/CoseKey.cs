@@ -44,7 +44,13 @@ public sealed class CoseKey
                 {
                     case 1: kty = reader.ReadInt32(); break;
                     case 3: alg = reader.ReadInt32(); break;
-                    case -1: crv = reader.ReadInt32(); break;
+                    case -1:
+                        // Label -1 is polymorphic: the EC2 curve (int) or the RSA modulus (bstr, RFC 8230).
+                        if (reader.PeekState() == CborReaderState.ByteString)
+                            entries[label] = reader.ReadByteString();
+                        else
+                            crv = reader.ReadInt32();
+                        break;
                     case -2:
                     case -3:
                     case -4:
