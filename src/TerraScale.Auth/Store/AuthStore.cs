@@ -1,5 +1,6 @@
 namespace TerraScale.Auth.Store;
 
+using System.Globalization;
 using TerraScale.Auth.Crypto;
 using TerraScale.DotNet;
 
@@ -427,6 +428,42 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     {
         var matches = await QueryAsync<VerificationToken>("verification_tokens", "tokenKey", tokenKey, 2, ct);
         return matches.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Atomic single-use consume: the Consumed write carries an exact-version
+    /// If-Match, so of two concurrent consumes of one token only the first
+    /// wins (the loser's precondition fails with 412 and reads as invalid).
+    /// </summary>
+    public async Task<VerificationToken?> ConsumeVerificationTokenAsync(string tokenKey, Func<VerificationToken, bool> eligible, CancellationToken ct = default)
+    {
+        var result = await client.Documents.QueryAsync(
+            Database,
+            "verification_tokens",
+            new TerraScaleDocumentQuery(
+                Predicates: [new TerraScaleDocumentPredicate("tokenKey", TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement(tokenKey))],
+                Projection: null,
+                Limit: 2,
+                After: null),
+            ct);
+        var row = result.Documents.FirstOrDefault();
+        if (row is null || row.Value.Deserialize<VerificationToken>(Json) is not { } record || !eligible(record))
+            return null;
+        try
+        {
+            await client.Documents.PutAsync(
+                Database,
+                "verification_tokens",
+                record.Id,
+                record with { Consumed = true },
+                new TerraScaleDocumentMutationOptions(ExpectedChangeToken: row.Version.ToString(CultureInfo.InvariantCulture)),
+                ct);
+            return record;
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+        {
+            return null;
+        }
     }
 
     public Task<IReadOnlyList<VerificationToken>> ListVerificationTokensAsync(string instanceId, string purpose, int limit, CancellationToken ct = default) =>

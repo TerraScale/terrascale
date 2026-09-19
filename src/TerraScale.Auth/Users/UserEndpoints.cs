@@ -581,21 +581,13 @@ public static class UserEndpoints
         return token;
     }
 
-    /// <summary>Single-use consume: validates instance, purpose, expiry, and consumed flag, then marks consumed.</summary>
-    private static async Task<VerificationToken?> ConsumeTokenAsync(AuthStore store, string instanceId, string token, string purpose, CancellationToken ct)
-    {
-        var record = await store.FindVerificationTokenAsync(SecureTokens.Sha256Hex(token), ct);
-        if (record is null || !IsValid(record))
-            return null;
-        await store.UpsertVerificationTokenAsync(record with { Consumed = true }, ct);
-        return record;
-
-        bool IsValid(VerificationToken record) =>
+    /// <summary>Single-use consume: validates instance, purpose, expiry, and consumed flag, then marks consumed atomically (compare-and-set), so a double request can never consume twice.</summary>
+    private static Task<VerificationToken?> ConsumeTokenAsync(AuthStore store, string instanceId, string token, string purpose, CancellationToken ct) =>
+        store.ConsumeVerificationTokenAsync(SecureTokens.Sha256Hex(token), record =>
             record.InstanceId == instanceId
             && record.Purpose == purpose
             && !record.Consumed
-            && record.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-    }
+            && record.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds(), ct);
 
     private static async Task<bool> TokenValidAsync(AuthStore store, string instanceId, string token, string purpose, CancellationToken ct) =>
         await store.FindVerificationTokenAsync(SecureTokens.Sha256Hex(token), ct) is { } record

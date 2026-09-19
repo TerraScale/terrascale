@@ -641,6 +641,25 @@ public sealed class UsersE2eTests
     }
 
     [Test]
+    public async Task MagicLinkConsumeIsAtomicUnderConcurrentDoubleRequest()
+    {
+        var service = await ServiceAsync();
+        var (instanceId, slug) = await InstanceAsync();
+        var email = Email();
+        await SignUpAsync(service, slug, email);
+        var user = await service.Store.FindUserByEmailAsync(instanceId, email);
+        var token = await KnownTokenAsync(service.Store, instanceId, user!.Id, "magic_link", TimeSpan.FromMinutes(10));
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ =>
+            service.Http.SendAsync(Get($"/ui/{slug}/magic-link/consume?token={token}"))));
+        foreach (var response in responses)
+            response.Dispose();
+
+        await Assert.That(responses.Count(r => r.StatusCode == HttpStatusCode.Found)).IsEqualTo(1);
+        await Assert.That(responses.Count(r => r.StatusCode == HttpStatusCode.BadRequest)).IsEqualTo(5);
+    }
+
+    [Test]
     public async Task BadTokensAreRejected()
     {
         var service = await ServiceAsync();
