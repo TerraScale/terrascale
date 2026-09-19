@@ -89,4 +89,38 @@ public static class SessionCookies
         Path = "/",
         IsEssential = true,
     };
+
+    // CSRF POSTURE (there are no anti-forgery tokens; this is the complete protection model)
+    // ------------------------------------------------------------------------------------------------
+    // The session cookie is SameSite=Lax: a cross-site form POST (the classic CSRF vector) is sent
+    // WITHOUT the cookie, so every session-gated state-changing route below is protected by the
+    // browser, not by handler code. HostedUiSecurityTests pins the cookie flags and the rejection.
+    //
+    // Session-gated POSTs (SameSite=Lax protected; also 405 on GET, pinned per module):
+    //   Users     /ui/{slug}/sign-out, /account/password (also re-checks the current password),
+    //             /account/sessions/revoke-all, /account/sessions/{id}/revoke
+    //   MFA       /ui/{slug}/mfa/enroll/start, /mfa/enroll/confirm, /mfa/recovery/consume
+    //   Passkeys  /ui/{slug}/passkeys/register, /passkeys/register/options, /manage/{id}/delete
+    //   Admin     /ui/{slug}/admin/connections, /admin/connections/{id}/enable|disable
+    //             (org-admin role additionally required)
+    //
+    // Pre-auth POSTs (CSRF-immune: no ambient authority — they cannot read or act on an existing
+    // session, only mint a new one from submitted credentials/secret, or send an email):
+    //   /sign-up, /sign-in, /magic-link, /forgot-password, /passcode/request, /passcode/verify,
+    //   /passcode/mfa + /mfa/verify (pending-MFA token secret required), /reset-password
+    //   (single-use secret token required), /connections/{id}/saml/acs (signed response + state).
+    //   Known residual, accepted: sign-in POST can overwrite an existing session cookie with one
+    //   for the submitted credentials ("login CSRF" — the attacker gains nothing but noise).
+    //
+    // GETs that mutate — all gated by a SINGLE-USE SECRET in the URL (email-link flows; the secret
+    // is the authority, not the cookie, so a forged cross-site link cannot trigger them):
+    //   /magic-link/consume, /verify-email, /invitations/{id}/accept (session + email match too).
+    //
+    // GETs that mutate on the session cookie — deliberate, spec-inherent exceptions:
+    //   /{slug}/oauth/authorize mints a code from the session on top-level navigation (OAuth is a
+    //   front-channel GET protocol; cross-client code injection is the RP's `state` to stop, and
+    //   v1 has no consent screen by design). /{slug}/oauth/logout revokes the session on GET
+    //   (OIDC RP-initiated logout reaches the browser as a redirect; worst case is forced logout).
+    // All other GET routes render only and mutate nothing.
+    // ------------------------------------------------------------------------------------------------
 }
