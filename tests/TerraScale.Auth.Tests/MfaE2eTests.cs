@@ -72,6 +72,48 @@ public sealed class MfaE2eTests
     }
 
     [Test]
+    public async Task UnconfirmedFactorDoesNotGateSignInOrVerifyCodes()
+    {
+        var c = await ArrangeAsync("unconfirmed");
+        using (var start = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/enroll/start")))
+            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var totp = (await c.Store.ListMfaFactorsAsync(c.User.Id)).Single(f => f.Type == "totp");
+        var secret = SecretBox.Decrypt(AuthServiceFixture.MasterKey, totp.SecretBox!);
+
+        // Password sign-in issues a session directly: an unconfirmed factor never routes to the MFA gate.
+        using var signIn = await c.Http.PostAsync(
+            $"/ui/{c.Slug}/sign-in",
+            Form(("email", c.User.Email!), ("password", "correct horse battery staple")));
+        await Assert.That(signIn.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(signIn.Headers.Location?.ToString().Contains("mfa/verify")).IsFalse();
+        await Assert.That(SessionCookie(signIn)).IsNotNull();
+
+        // The not-yet-confirmed secret never verifies at the MFA gate either.
+        var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
+        using var verify = await c.Http.PostAsync(
+            $"/ui/{c.Slug}/mfa/verify",
+            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
+        await Assert.That(verify.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await verify.Content.ReadAsStringAsync()).Contains("Invalid code")).IsTrue();
+    }
+
+    [Test]
+    public async Task ConfirmingAnAlreadyConfirmedFactorIsRejected()
+    {
+        var c = await ArrangeAsync("reconfirm");
+        var (secret, codes, factors) = await EnrollAsync(c);
+        var totp = factors.Single(f => f.Type == "totp");
+
+        using var replay = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post,
+            $"/mfa/enroll/confirm?factor={totp.Id}", Form(("code", Totp.Compute(secret, DateTimeOffset.UtcNow)))));
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+
+        // The already-saved recovery set was not silently re-minted.
+        var recovery = (await c.Store.ListMfaFactorsAsync(c.User.Id)).Single(f => f.Type == "recovery");
+        await Assert.That(recovery.RecoveryCodes!.Contains(SecureTokens.Sha256Hex(codes[0]))).IsTrue();
+    }
+
+    [Test]
     public async Task SecondConfirmedTotpEnrollmentIsRejected()
     {
         var c = await ArrangeAsync("dupe");
