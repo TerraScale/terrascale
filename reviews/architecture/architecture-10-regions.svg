@@ -19,10 +19,10 @@
 <text x="73" y="345" class="body" >Sign in / API credential</text>
 <text x="73" y="368" class="body" >Session + idempotency</text>
 <rect x="326" y="264" width="260" height="116" rx="12" fill="#eaf2ff" stroke="#3778bd"/>
-<text x="343" y="293" class="h" >REST load balancer</text>
-<text x="343" y="322" class="body" >api.terrascale.tech</text>
-<text x="343" y="345" class="body" >ts-proxy Worker</text>
-<text x="343" y="368" class="body" >Placement + health + load</text>
+<text x="343" y="293" class="h" >REST discovery</text>
+<text x="343" y="322" class="body" >atlas.terrascale.tech</text>
+<text x="343" y="345" class="body" >ts-atlas Worker</text>
+<text x="343" y="368" class="body" >Placement + health KV</text>
 <rect x="646" y="264" width="290" height="116" rx="12" fill="#fff3df" stroke="#b47d2b"/>
 <text x="663" y="293" class="h" >TerraBase public API</text>
 <text x="663" y="322" class="body" >Direct regional TLS endpoint</text>

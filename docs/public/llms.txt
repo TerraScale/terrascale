@@ -68,17 +68,21 @@ Base URL: https://docs.terrascale.tech
 
 Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
 
-- Discovery: GET https://api.terrascale.tech/api/v1/discovery?database=…
-  (optional branch, rev, stale) — credential-free KV-backed metadata that
-  returns ranked regional endpoints with capabilities, residency, a routing
-  revision, and a refresh policy. The TS SDK calls it once per
-  database/branch/scope, then connects directly (HTTPS + WebSocket).
+- Discovery: GET https://atlas.terrascale.tech/api/v1/discovery?database=…
+  (optional branch, rev, stale) — served by ts-atlas, a metadata-only Worker:
+  credential-free KV-backed metadata that returns ranked regional endpoints
+  with capabilities, residency, a routing revision, and a refresh policy. The
+  TS SDK calls it once per database/branch/scope, then connects directly
+  (HTTPS + WebSocket).
+- Region catalog: GET https://atlas.terrascale.tech/api/v1/regions — also
+  ts-atlas; the catalog-selection fallback when discovery fails and the
+  selector for database-less member routes.
+- Product API origin: https://api.terrascale.tech — dashboard-owned product
+  routes only: /api/v1/organizations, /api/v1/projects,
+  /api/v1/regions/{code}.
 - Direct regional REST + WebSocket: https://gru.api.terrascale.tech,
-  https://sfo.api.terrascale.tech, https://fra.api.terrascale.tech
-- Optional proxy: https://api.terrascale.tech — transparent fallback when
-  discovery fails and the path for unpinned callers and legacy SDKs
-  (Go/Rust/.NET); 421 Misdirected Request can signal stale placement.
-- Regions list: GET https://api.terrascale.tech/api/v1/regions
+  https://sfo.api.terrascale.tech, https://fra.api.terrascale.tech — direct
+  routing with catalog fallback; there is no proxy.
 - Reactive HTTP (live queries; CDN-backed long-polling, capability header):
   https://sync.api.terrascale.tech
 - SQL (read-only; JSON or MessagePack):

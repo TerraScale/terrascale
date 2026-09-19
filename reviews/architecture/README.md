@@ -11,10 +11,11 @@ member servers per Region, then add capacity from observed demand.
 
 ## Reading the pictures
 
-REST enters the ts-proxy Worker, which must select a healthy member with spare
-capacity within database placement. SDKs can pin later REST to a regional
-origin; failed or overloaded pins must re-enter selection. The target excludes
-draining members, bounds safe retries, and preserves sessions and idempotency.
+REST first contact discovers ranked, eligible regional endpoints through the
+ts-atlas metadata Worker on atlas.terrascale.tech, then goes directly to the
+regional origin; failed or overloaded pins must re-enter discovery. The target
+excludes draining members, bounds safe retries, and preserves sessions and
+idempotency.
 A regional SQLite database still has one writer. Losing one of two hosts cannot
 preserve RF=2 until a replacement catches up; balancing does not waive durability.
 
@@ -60,9 +61,9 @@ authorization, placement, session and requested durability requirements.
 - [Backup implementation boundary](../../../terrabase/src/TerraBase/Backup/BackupManager.cs):
   native backup target, approved destinations and independent restore/residency
   qualification. Replacement and qualification gates remain authoritative.
-- [Proxy entrypoint](../../../ts-proxy/src/index.ts) and
-  [reactive Snippet](../../../ts-proxy/snippet/snippet.ts): REST first contact is
-  separate from capability-gated Worker-free reactive delivery.
+- [Discovery entrypoint](../../../ts-atlas/src/index.ts) and
+  [reactive Snippet](../../../ts-atlas/snippet/snippet.ts): metadata discovery
+  is separate from capability-gated Worker-free reactive delivery.
 - [Pricing source](../../data/pricing.json): draft rates, organization allowances,
   Region multiplication, consent and continuing storage charges.
 

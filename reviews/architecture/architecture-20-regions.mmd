@@ -4,13 +4,13 @@ flowchart TB
   title ~~~ client
   subgraph edge["CLOUDFLARE · DNS / TLS / WAF"]
     direction LR
-    proxy["1 · REST load balancer<br/>api.terrascale.tech<br/>ts-proxy Worker + placement / member capacity KV"]:::rest
+    proxy["1 · REST discovery<br/>atlas.terrascale.tech<br/>ts-atlas Worker + placement / health KV"]:::rest
     dash["Product UI / auth / billing / MCP<br/>app.terrascale.tech<br/>Vinext Worker · Better Auth · Stripe"]:::rest
     snippet["3 · Reactive HTTP<br/>sync.api.terrascale.tech<br/>Snippet validates view capability"]:::sync
     cache["4 · Cache Rules + Tiered Cache<br/>HIT: return immutable bytes<br/>MISS: collapse origin requests"]:::sync
     snippet --> cache
   end
-  client -->|REST bootstrap| proxy
+  client -->|discovery + region catalog| proxy
   client -->|UI and product routes| dash
   client -->|snapshot cut / log offset| snippet
   subgraph selected["OCI · ONE SELECTED DATABASE REGION · repeated in every admitted region"]
@@ -33,9 +33,8 @@ flowchart TB
     bucket[("OCI Object Storage / Tigris<br/>Native TerraBase backup / restore<br/>Encrypted · policy-qualified geography")]:::storage
     sqlite -->|backup stream| bucket
   end
-  proxy -->|healthy capacity within database placement| api
-  client -->|subsequent REST: direct regional TLS; failures / overload re-enter selection| api
-  dash -->|ordinary SDK and public credential| proxy
+  client -->|REST after discovery: direct regional TLS; failures / overload re-enter discovery| api
+  dash -->|member discovery like any SDK| proxy
   cache -->|MISS: canonical immutable GET| views
   views -->|snapshot / delta bytes| cache
   api -->|attach result: authorized view + capability| client

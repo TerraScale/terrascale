@@ -40,7 +40,7 @@ for (const count of [3, 10, 20]) {
   text(52,212,'01  REQUESTS AND THE DATABASE','section');
   text(888,212,'OCI detail = one selected database Region, repeated as placed','small');
   card(56,264,220,116,'App / SDK',['TS · Go · Rust · .NET','Sign in / API credential','Session + idempotency']);
-  card(326,264,260,116,'REST load balancer',['api.terrascale.tech','ts-proxy Worker','Placement + health + load'],'rest');
+  card(326,264,260,116,'REST discovery',['atlas.terrascale.tech','ts-atlas Worker','Placement + health KV'],'rest');
   card(646,264,290,116,'TerraBase public API',['Direct regional TLS endpoint','Auth · scope · session frontier','CRUD · read-only SQL · attach'],'engine');
   card(996,264,260,116,'SQLite + WAL',['Per database, one writer','Bytes · indexes · history','Atomic publication journal'],'engine');
   card(1316,264,228,116,'Physical follower',['Second regional host','RF=2 · durable WAL ack','Same placement'],'engine');
