@@ -393,6 +393,65 @@ public sealed class OAuthE2eTests
     }
 
     [Test]
+    public async Task CodeReplayRevokesIssuedTokensAndErrorsFollowRfc6749()
+    {
+        var arranged = await ArrangeAsync();
+
+        // Missing grant_type is a missing required parameter: invalid_request (RFC 6749 5.2).
+        var missingGrant = await arranged.Service.Http.SendAsync(TokenRequest(arranged, new Dictionary<string, string>()));
+        await Assert.That(missingGrant.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await missingGrant.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_request");
+
+        // A 401 for a failed Basic authentication carries WWW-Authenticate naming the scheme (RFC 6749 5.2).
+        using var wrongBasic = new HttpRequestMessage(HttpMethod.Post, $"/{arranged.Slug}/oauth/token")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["grant_type"] = "client_credentials" }),
+        };
+        wrongBasic.Headers.Authorization = new("Basic",
+            Convert.ToBase64String(Encoding.UTF8.GetBytes($"{arranged.ClientId}:wrong-secret")));
+        var basicFailure = await arranged.Service.Http.SendAsync(wrongBasic);
+        await Assert.That(basicFailure.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(basicFailure.Headers.Contains("WWW-Authenticate")).IsTrue();
+        await Assert.That(string.Join(",", basicFailure.Headers.GetValues("WWW-Authenticate"))).IsEqualTo("Basic");
+
+        // A form-authenticated failure has no WWW-Authenticate (Basic was never attempted).
+        var badSecret = new HttpRequestMessage(HttpMethod.Post, $"/{arranged.Slug}/oauth/token")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["client_id"] = arranged.ClientId,
+                ["client_secret"] = "wrong-secret",
+            }),
+        };
+        var formFailure = await arranged.Service.Http.SendAsync(badSecret);
+        await Assert.That(formFailure.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(formFailure.Headers.Contains("WWW-Authenticate")).IsFalse();
+
+        // Replaying a consumed code denies the request (RFC 6749 4.1.2) and revokes
+        // the tokens the original exchange issued.
+        var (tokens, verifier, code) = await FullFlowAsync(arranged);
+        var refresh = tokens.GetProperty("refresh_token").GetString()!;
+        var replay = await arranged.Service.Http.SendAsync(TokenRequest(arranged, new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = arranged.RedirectUri,
+            ["code_verifier"] = verifier,
+        }));
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await replay.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
+
+        var refreshed = await arranged.Service.Http.SendAsync(TokenRequest(arranged, new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = refresh,
+        }));
+        await Assert.That(refreshed.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await refreshed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
+    }
+
+    [Test]
     public async Task ExpiredAuthorizationCodeIsRejected()
     {
         var arranged = await ArrangeAsync();

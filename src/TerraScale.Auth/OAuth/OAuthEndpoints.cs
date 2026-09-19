@@ -154,7 +154,10 @@ public static class OAuthEndpoints
                 return TokenError("invalid_client", authentication.Description ?? "client authentication failed", authentication.Status);
 
             var issuer = Issuer(options, instance.Slug);
-            return form["grant_type"].ToString() switch
+            var requestedGrant = form["grant_type"].ToString();
+            if (requestedGrant.Length == 0)
+                return TokenError("invalid_request", "grant_type is required");
+            return requestedGrant switch
             {
                 "authorization_code" => await AuthorizationCodeGrantAsync(store, keys, issuer, instance, authentication.Client, form, ct),
                 "refresh_token" => await RefreshTokenGrantAsync(store, keys, issuer, instance, authentication.Client, form, ct),
@@ -383,7 +386,12 @@ public static class OAuthEndpoints
         if (record is null || record.InstanceId != instance.Id || record.ClientId != client.ClientId)
             return TokenError("invalid_grant", "invalid authorization code");
         if (record.Consumed)
+        {
+            // RFC 6749 4.1.2: replayed code means theft — revoke the tokens it
+            // produced (the refresh family for this user+client).
+            await RevokeRefreshFamilyAsync(store, instance.Id, client.ClientId, record.UserId, ct);
             return TokenError("invalid_grant", "authorization code already used");
+        }
         if (record.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
             return TokenError("invalid_grant", "authorization code expired");
         if (form["redirect_uri"].ToString() != record.RedirectUri)
@@ -463,9 +471,7 @@ public static class OAuthEndpoints
         if (token.Status != "active" || token.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
         {
             // Reuse of a rotated/revoked token: assume theft and kill the family.
-            foreach (var sibling in await store.ListRefreshTokensByUserAsync(token.UserId, ct))
-                if (sibling.InstanceId == token.InstanceId && sibling.ClientId == token.ClientId && sibling.Status == "active")
-                    await store.UpsertRefreshTokenAsync(sibling with { Status = "revoked" }, ct);
+            await RevokeRefreshFamilyAsync(store, instance.Id, client.ClientId, token.UserId, ct);
             return TokenError("invalid_grant", "refresh token is no longer active");
         }
 
@@ -513,20 +519,31 @@ public static class OAuthEndpoints
         string clientId;
         string? secret = null;
         var header = request.Headers.Authorization.ToString();
-        if (header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+        var usedBasic = header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase);
+
+        // RFC 6749 5.2: a 401 for a client that tried the Authorization header
+        // must carry WWW-Authenticate naming that scheme.
+        ClientAuthentication Fail(string description)
+        {
+            if (usedBasic)
+                request.HttpContext.Response.Headers.WWWAuthenticate = "Basic";
+            return new(null, description);
+        }
+
+        if (usedBasic)
         {
             try
             {
                 var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(header["Basic ".Length..].Trim()));
                 var separator = decoded.IndexOf(':');
                 if (separator < 0)
-                    return new(null, "malformed Basic authorization header");
+                    return Fail("malformed Basic authorization header");
                 clientId = Uri.UnescapeDataString(decoded[..separator]);
                 secret = Uri.UnescapeDataString(decoded[(separator + 1)..]);
             }
             catch (FormatException)
             {
-                return new(null, "malformed Basic authorization header");
+                return Fail("malformed Basic authorization header");
             }
         }
         else
@@ -537,16 +554,24 @@ public static class OAuthEndpoints
         }
 
         if (clientId.Length == 0)
-            return new(null, "client_id is required");
+            return Fail("client_id is required");
         if (await store.FindOAuthClientAsync(instanceId, clientId, ct) is not { } client)
-            return new(null, "unknown client");
+            return Fail("unknown client");
         if (client.ClientSecretHash is null)
             return new(client, null); // public client: nothing to verify
         if (secret is null)
-            return new(null, "client secret required");
+            return Fail("client secret required");
         return SecureTokens.FixedTimeEquals(SecureTokens.Sha256Hex(secret), client.ClientSecretHash)
             ? new(client, null)
-            : new(null, "invalid client secret");
+            : Fail("invalid client secret");
+    }
+
+    /// <summary>Revokes every active refresh token for a user+client pair (the token "family").</summary>
+    private static async Task RevokeRefreshFamilyAsync(AuthStore store, string instanceId, string clientId, string userId, CancellationToken ct)
+    {
+        foreach (var sibling in await store.ListRefreshTokensByUserAsync(userId, ct))
+            if (sibling.InstanceId == instanceId && sibling.ClientId == clientId && sibling.Status == "active")
+                await store.UpsertRefreshTokenAsync(sibling with { Status = "revoked" }, ct);
     }
 
     private static async Task<string> SignAccessTokenAsync(KeyRing keys, string instanceId, string issuer,
