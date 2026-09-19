@@ -105,12 +105,31 @@ Versus the same build's SYNCED tier, same morning windows
 1.38→0.62, 6.49→5.07 ms; send→visible 2.61→1.71, 4.78→3.32,
 27.76→23.51 ms. Faster than before at every batch size on both metrics.
 
-At batch 128 the ack is now ~parity with Turso; what remains is
-per-record lattice work (content digests, read-model merge, response
-outcomes) — there is no fdatasync left to remove. The batch-128
-end-to-end gap is one mTLS push round trip plus the peer's durable-index
-apply versus Turso's streamed, unauthenticated WAL frame with no
-per-batch RPC.
+A follow-up commit removes the redundant per-record deep copy every
+wire-constructed record paid on journal admission (context, both bodies,
+candidates): `ReplicationRecord` now records whether it already owns its
+mutable members, and the journal admit, the in-memory lattice apply, and
+the fan-out drain adopt such records directly. The journal admit loop at
+batch 128 drops from 2.7 ms to 0.9 ms (phase instrumentation, same
+morning). Batch-128 ack in the quiet Anna-tier window above was 5.07 ms
+before this change; a loaded back-to-back pair at host load ~11
+(`turso-lag-annatier3.jsonl` / `terrabase-lag-annatier3.jsonl`) keeps
+batches 1 and 16 winning both metrics (0.20 vs 3.30 / 0.63 vs 4.09 ms
+ack; 2.12 vs 5.23 / 4.14 vs 6.22 ms visible) with 128 at 6.58 vs 5.66 ms
+— a saturated-host reading for both sides; no quiet window was available
+to validate the post-change 128 number, and the next one should land
+near 3.5–4 ms from the measured admit-loop reduction.
+
+At batch 128 what remains in the ack is per-record lattice work (content
+digests, read-model merge, response outcomes) — there is no fdatasync
+left to remove. The batch-128 end-to-end gap is one mTLS push round trip
+plus the peer's durable-index apply versus Turso's streamed,
+unauthenticated WAL frame with no per-batch RPC. The mechanism paper
+target for that lane is sqld's own design — physical WAL-frame shipping
+(the replica pulls already-encoded frames and applies pages), which maps
+onto TerraBase's TBREC5 journal frames: slice raw frame bytes at the
+acknowledged cut, ship the blob, and let the peer append and apply
+without re-encoding records.
 
 ## Bytes on the wire
 
