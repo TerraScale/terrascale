@@ -6,7 +6,9 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using TerraScale.Auth.Store;
+using TerraScale.Auth.Webhooks;
 
 /// <summary>Outbound webhooks and the audit-event query API, end to end:
 /// real app over the embedded engine delivering to a real local HTTP listener.</summary>
@@ -166,6 +168,110 @@ public sealed class WebhooksE2eTests
         await Assert.That(after.GetArrayLength()).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task RestartedDispatcherRediscoveredInstancesAndDelivers()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, _) = await service.CreateInstanceAsync("hooks-restart-" + Guid.NewGuid().ToString("N")[..8]);
+        await using var sink = WebhookSink.Start("redis");
+
+        // Written straight to the store (not via the API): the running app's dispatcher
+        // must never learn about this instance — only the restarted one below may deliver.
+        var secret = "whsec_" + TerraScale.Auth.Crypto.SecureTokens.RandomToken(24);
+        await service.Store.CreateWebhookEndpointAsync(new WebhookEndpoint
+        {
+            Id = "wh_" + TerraScale.Auth.Crypto.SecureTokens.RandomToken(20),
+            InstanceId = instanceId,
+            Url = sink.BaseUrl + "/redis",
+            Events = ["user.*"],
+            SigningSecret = secret,
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        // A fresh dispatcher simulates a process restart: in-memory cursors start empty,
+        // so it must re-discover instances that already hold webhook endpoints.
+        var restarted = new WebhookDispatcher(service.Store, NullLogger<WebhookDispatcher>.Instance);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var run = restarted.RunAsync(cts.Token);
+        await Task.Delay(TimeSpan.FromSeconds(4)); // let the discovery tick land before raising the event
+
+        await service.Store.CreateAuditEventAsync(new AuditEvent
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N")[..12],
+            InstanceId = instanceId,
+            Type = "user.restarted",
+            Data = new Dictionary<string, object> { ["via"] = "restart" },
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        var delivery = await WaitForDeliveryAsync(sink, d => d.Headers.GetValueOrDefault("X-TsAuth-Event") == "user.restarted");
+        var timestamp = delivery.Headers.GetValueOrDefault("X-TsAuth-Timestamp", "");
+        await Assert.That(delivery.Headers.GetValueOrDefault("X-TsAuth-Signature"))
+            .IsEqualTo("sha256=" + HexHmac(secret, timestamp, delivery.Body));
+
+        cts.Cancel();
+        await run;
+    }
+
+    [Test]
+    public async Task TimedOutDeliveryIsRetriedNotDropped()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        // First request stalls past the dispatcher's 10s HttpClient timeout; the second must succeed.
+        await using var sink = WebhookSink.Start(TimeSpan.FromSeconds(11), "slow");
+
+        using var created = PostJson($"/v1/{slug}/webhooks", apiKey, new { url = sink.BaseUrl + "/slow", events = new[] { "user.slow" } });
+        await Assert.That((await service.Http.SendAsync(created)).StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        await service.Store.CreateAuditEventAsync(new AuditEvent
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N")[..12],
+            InstanceId = instanceId,
+            Type = "user.slow",
+            Data = new Dictionary<string, object>(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        // A timeout must not abort the dispatch tick: the retried attempt hits the sink again.
+        var deadline = DateTime.UtcNow.AddSeconds(25);
+        var hits = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (sink.Deliveries)
+                hits = sink.Deliveries.Count(d => d.Path.StartsWith("/slow", StringComparison.Ordinal));
+            if (hits >= 2)
+                break;
+            await Task.Delay(250);
+        }
+        await Assert.That(hits).IsGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
+    public async Task EventMatchingSupportsExactWildcardAndPrefixForms()
+    {
+        static bool Matches(string[] events, string type) => WebhookDispatcher.Matches(events, type);
+        await Assert.That(Matches(["user.created"], "user.created")).IsTrue();         // exact
+        await Assert.That(Matches(["user.created"], "user.deleted")).IsFalse();        // exact miss
+        await Assert.That(Matches(["*"], "anything.at.all")).IsTrue();                 // wildcard
+        await Assert.That(Matches(["user.*"], "user.profile_changed")).IsTrue();       // prefix
+        await Assert.That(Matches(["user.*"], "user")).IsFalse();                      // prefix needs the dot
+        await Assert.That(Matches(["user.*"], "organization.user.created")).IsFalse(); // no mid-string prefix hits
+        await Assert.That(Matches(["user.*", "org.*"], "org.member_added")).IsTrue();  // list of forms
+        await Assert.That(Matches(["USER.*"], "user.created")).IsFalse();              // case-sensitive
+        await Assert.That(Matches(["user.created"], "USER.CREATED")).IsFalse();        // case-sensitive exact
+    }
+
+    [Test]
+    public async Task SignatureSchemeIsSha256HexHmacOfTimestampDotBody()
+    {
+        var signature = WebhookDispatcher.Sign("secret", "1700000000", "{\"a\":1}");
+        var expected = "sha256=" + Convert.ToHexString(HMACSHA256.HashData(
+            Encoding.UTF8.GetBytes("secret"), Encoding.UTF8.GetBytes("1700000000.{\"a\":1}"))).ToLowerInvariant();
+        await Assert.That(signature).IsEqualTo(expected);
+        await Assert.That(signature.Length).IsEqualTo("sha256=".Length + 64);
+    }
+
     // ---- helpers --------------------------------------------------------------------------
 
     /// <summary>Creates an instance and an sk_ key that the InstanceResolver can actually
@@ -225,8 +331,10 @@ public sealed class WebhooksE2eTests
     }
 
     /// <summary>Local HTTP sink recording every delivery (path, headers, body).
-    /// HttpListener cannot bind :0, so it takes the first free port in 18081-18089.</summary>
-    private sealed class WebhookSink(HttpListener listener, string baseUrl) : IAsyncDisposable
+    /// HttpListener cannot bind :0, so it takes the first free port in 18081-18089.
+    /// <paramref name="firstHitDelay"/> stalls the very first delivery before
+    /// responding (for exercising client-side timeouts).</summary>
+    private sealed class WebhookSink(HttpListener listener, string baseUrl, TimeSpan firstHitDelay) : IAsyncDisposable
     {
         public sealed record Delivery(string Path, Dictionary<string, string> Headers, string Body);
 
@@ -235,7 +343,9 @@ public sealed class WebhooksE2eTests
 
         private Task acceptLoop = Task.CompletedTask;
 
-        public static WebhookSink Start(params string[] paths)
+        public static WebhookSink Start(params string[] paths) => Start(TimeSpan.Zero, paths);
+
+        public static WebhookSink Start(TimeSpan firstHitDelay, params string[] paths)
         {
             for (var port = 18081; port <= 18089; port++)
             {
@@ -245,7 +355,7 @@ public sealed class WebhooksE2eTests
                 try
                 {
                     candidate.Start();
-                    var sink = new WebhookSink(candidate, $"http://127.0.0.1:{port}");
+                    var sink = new WebhookSink(candidate, $"http://127.0.0.1:{port}", firstHitDelay);
                     sink.acceptLoop = Task.Run(sink.AcceptLoopAsync);
                     return sink;
                 }
@@ -281,6 +391,17 @@ public sealed class WebhooksE2eTests
                             context.Request.Url?.AbsolutePath ?? "/",
                             context.Request.Headers.AllKeys.Where(k => k is not null).ToDictionary(k => k!, k => context.Request.Headers[k!] ?? ""),
                             body));
+                        if (firstHitDelay > TimeSpan.Zero && Deliveries.Count == 1)
+                        {
+                            // Hold the first request open past the client timeout, then 200 it.
+                            _ = Task.Run(async () =>
+                            {
+                                await Task.Delay(firstHitDelay);
+                                try { context.Response.StatusCode = 200; context.Response.Close(); }
+                                catch { context.Response.Abort(); }
+                            });
+                            continue;
+                        }
                     }
                     context.Response.StatusCode = 200;
                     context.Response.Close();
