@@ -1,0 +1,160 @@
+@inherits RazorSlice<EnginePageModel>
+@{
+    var shell = Model.Shell;
+    string ReadyTone(bool healthy) => healthy ? "ts-badge-success" : "ts-badge-danger";
+    string AvailableTone(bool available) => available ? "ts-badge-success" : "ts-badge-neutral";
+}
+@ShellHtml.Top(shell)
+<div class="ts-page">
+    @if (!Model.Configured)
+    {
+        <section class="ts-panel">
+            <div class="ts-panel-header ts-row-between">
+                <div>
+                    <h2 class="ts-panel-title">Engine observability is not configured</h2>
+                    <p class="ts-panel-subtitle">This page reads live TerraBase member health, the region catalog, and the Prometheus metric surface.</p>
+                </div>
+                <span class="ts-badge ts-badge-warning">Not configured</span>
+            </div>
+            <div class="ts-alert ts-alert-info" role="status">
+                <span class="ts-alert-title">@Icons.Terminal(16) Point the dashboard at a TerraBase host</span>
+                <span class="ts-alert-body">
+                    Set <code>TERRABASE_URL</code> to the TerraBase origin and restart the dashboard, for example:<br />
+                    <code>TERRABASE_URL=http://127.0.0.1:8080 dotnet run --project src/ts-dashboard-2</code>
+                </span>
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="ts-panel">
+            <div class="ts-row-between">
+                <p class="ts-muted">Live from <code>@Model.Url</code></p>
+                <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/engine">@Icons.RefreshCw(14) Refresh</a>
+            </div>
+            @if (Model.Health is not null)
+            {
+                <div class="ts-grid ts-grid-cards ts-grid-cards-4">
+                    <div class="ts-card ts-metric">
+                        <span class="ts-metric-label">@Icons.Globe2(16) Region</span>
+                        <strong class="ts-metric-value ts-metric-value-sm">@Model.Health.Region</strong>
+                        <small class="ts-metric-detail">Serving member region</small>
+                    </div>
+                    <div class="ts-card ts-metric">
+                        <span class="ts-metric-label">@Icons.Server(16) Build</span>
+                        <strong class="ts-metric-value ts-metric-value-sm">@Model.Health.Version</strong>
+                        <small class="ts-metric-detail">Member build version</small>
+                    </div>
+                    <div class="ts-card ts-metric">
+                        <span class="ts-metric-label">@Icons.Activity(16) Ready</span>
+                        <strong class="ts-metric-value ts-metric-value-sm"><span class="ts-badge @ReadyTone(Model.Health.Healthy)">@(Model.Health.Healthy ? "Healthy" : "Unhealthy")</span></strong>
+                        <small class="ts-metric-detail">Member readiness</small>
+                    </div>
+                    <div class="ts-card ts-metric">
+                        <span class="ts-metric-label">@Icons.Gauge(16) Metric samples</span>
+                        <strong class="ts-metric-value ts-metric-value-sm">@DashboardStore.FormatNumber(Model.SampleCount)</strong>
+                        <small class="ts-metric-detail">Scraped from /internal/metrics</small>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="ts-alert ts-alert-danger" role="alert">
+                    <span class="ts-alert-title">@Icons.TriangleAlert(16) Member health unavailable</span>
+                    <span class="ts-alert-body"><code>GET /api/v1/health</code> failed: @Model.HealthError</span>
+                </div>
+            }
+        </section>
+
+        <section class="ts-panel">
+            <div class="ts-panel-header ts-row-between">
+                <div>
+                    <h2 class="ts-panel-title">Region catalog</h2>
+                    <p class="ts-panel-subtitle">Regions and validated member hosts advertised by the TerraBase host.</p>
+                </div>
+                @if (Model.Regions is not null)
+                {
+                    <span class="ts-badge ts-badge-neutral">@DashboardStore.FormatNumber(Model.Regions.Count) regions · @DashboardStore.FormatNumber(Model.HostCount) hosts</span>
+                }
+            </div>
+            @if (Model.Regions is not null)
+            {
+                <div class="ts-table-wrap">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>Code</th>
+                                <th>Name</th>
+                                <th>Country</th>
+                                <th>Coordinates</th>
+                                <th>Available</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var region in Model.Regions)
+                            {
+                                <tr>
+                                    <td><span class="ts-badge ts-badge-neutral">@region.Code</span></td>
+                                    <td>@region.Name</td>
+                                    <td class="ts-muted">@region.Country</td>
+                                    <td class="ts-muted">@region.Latitude.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture), @region.Longitude.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)</td>
+                                    <td><span class="ts-badge @AvailableTone(region.Available)">@(region.Available ? "Available" : "Unavailable")</span></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <div class="ts-alert ts-alert-danger" role="alert">
+                    <span class="ts-alert-title">@Icons.TriangleAlert(16) Region catalog unavailable</span>
+                    <span class="ts-alert-body"><code>GET /api/v1/regions</code> failed: @Model.CatalogError</span>
+                </div>
+            }
+        </section>
+
+        <section class="ts-panel">
+            <div class="ts-panel-header ts-row-between">
+                <div>
+                    <h2 class="ts-panel-title">Metric surface</h2>
+                    <p class="ts-panel-subtitle">Prometheus metric families exposed at <code>/internal/metrics</code>.</p>
+                </div>
+                @if (Model.Metrics is not null)
+                {
+                    <span class="ts-badge ts-badge-neutral">@DashboardStore.FormatNumber(Model.Metrics.Count) families</span>
+                }
+            </div>
+            @if (Model.Metrics is not null)
+            {
+                <div class="ts-table-wrap ts-engine-metric-list">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Help</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var metric in Model.Metrics)
+                            {
+                                <tr>
+                                    <td><code>@metric.Name</code></td>
+                                    <td class="ts-muted">@metric.Help</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <div class="ts-alert ts-alert-danger" role="alert">
+                    <span class="ts-alert-title">@Icons.TriangleAlert(16) Metric surface unavailable</span>
+                    <span class="ts-alert-body"><code>GET /internal/metrics</code> failed: @Model.MetricsError</span>
+                </div>
+            }
+        </section>
+    }
+</div>
+@ShellHtml.Bottom(shell)

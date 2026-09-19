@@ -4,6 +4,7 @@ using TerraScale.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<DashboardStore>();
+builder.Services.AddSingleton<TerraBaseBackend>();
 builder.Services.AddTerraScaleEndpoints(typeof(Program).Assembly, options =>
 {
     options.Title = "TerraScale Dashboard";
