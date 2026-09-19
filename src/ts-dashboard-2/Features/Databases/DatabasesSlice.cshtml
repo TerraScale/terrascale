@@ -5,14 +5,14 @@
     var deleteOpenFor = HttpContext?.Request?.Query["delete"].FirstOrDefault();
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
+<div class="ts-page ts-db-page">
     <section class="ts-panel ts-panel-20">
         <div class="ts-row-header-actions ts-row-actions-end">
             <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-open-dialog="create-database">
                 @Icons.Plus(20)
                 <span>Create database</span>
             </button>
-            <button type="button" class="ts-icon-btn" aria-label="Reload databases" data-reload>@Icons.RefreshCw(18)</button>
+            <button type="button" class="ts-icon-btn ts-db-reload" aria-label="Reload databases" data-reload>@Icons.RefreshCw(18)</button>
         </div>
     </section>
     <section class="ts-panel">
@@ -32,22 +32,27 @@
             @if (Model.Databases.Length == 0 || Model.Error is not null)
             {
                 <div class="ts-empty">
-                    <span class="ts-empty-icon">@Icons.Database(28)</span>
-                    <span class="ts-empty-title">@(Model.Error is { } loadError ? loadError : string.IsNullOrEmpty(Model.Query) ? "No databases saved" : "No databases match")</span>
-                    @if (Model.Error is null)
+                    <div class="ts-empty-content">
+                        <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                        <span class="ts-empty-title">@(Model.Error is { } loadError ? loadError : string.IsNullOrEmpty(Model.Query) ? "No databases saved" : "No databases match")</span>
+                        @if (Model.Error is null)
+                        {
+                            <span class="ts-ui">@(string.IsNullOrEmpty(Model.Query)
+                                ? "Create a logical database to persist it through the TerraScale Dashboard API."
+                                : "Adjust the filter to see another saved database.")</span>
+                        }
+                    </div>
+                    @if (Model.Error is not null)
                     {
-                        <p class="ts-muted">@(string.IsNullOrEmpty(Model.Query)
-                            ? "Create a logical database to persist it through the TerraScale Dashboard API."
-                            : "Adjust the filter to see another saved database.")</p>
+                        <div class="ts-empty-action">
+                            <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/databases">Retry</a>
+                        </div>
                     }
-                    else
+                    else if (Model.Query.Length > 0)
                     {
-                        <code class="ts-meta ts-mono">database_data_load_failed</code>
-                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/databases">Retry</a>
-                    }
-                    @if (Model.Error is null && Model.Query.Length > 0)
-                    {
-                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/databases">Clear filter</a>
+                        <div class="ts-empty-action">
+                            <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/databases">Clear filter</a>
+                        </div>
                     }
                 </div>
             }
