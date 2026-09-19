@@ -69,6 +69,18 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     private Task UpsertAsync<T>(string collection, string id, T entity, CancellationToken ct) where T : class =>
         client.Documents.PutAsync(Database, collection, id, entity!, options: new TerraScaleDocumentMutationOptions(), cancellationToken: ct);
 
+    /// <summary>Deletes a document; a concurrent delete of the same id is a no-op, not a 500.</summary>
+    private async Task DeleteIgnoringMissingAsync(string collection, string id, CancellationToken ct)
+    {
+        try
+        {
+            await client.Documents.DeleteAsync(Database, collection, id, ct);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+        }
+    }
+
     private async Task<IReadOnlyList<T>> QueryAsync<T>(string collection, string field, string equalValue, int limit, CancellationToken ct) where T : class
     {
         var result = await client.Documents.QueryAsync(
@@ -352,7 +364,7 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public async Task DeleteOrganizationAsync(string id, CancellationToken ct = default)
     {
         var organization = await GetOrganizationAsync(id, ct);
-        await client.Documents.DeleteAsync(Database, "organizations", id, ct);
+        await DeleteIgnoringMissingAsync("organizations", id, ct);
         if (organization is not null)
             await ReleaseUniqueAsync("org-slug", organization.SlugKey, ct);
     }
@@ -385,10 +397,14 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<OrgMembership?> GetMembershipAsync(string id, CancellationToken ct = default) =>
         GetOrNullAsync<OrgMembership>("memberships", id, ct);
 
+    /// <summary>Updates a membership in one atomic write. The memberKey never changes, so the claim stays held — unlike delete + re-create, there is no window where the membership or its claim is released.</summary>
+    public Task UpsertMembershipAsync(OrgMembership membership, CancellationToken ct = default) =>
+        UpsertAsync("memberships", membership.Id, membership, ct);
+
     public async Task DeleteMembershipAsync(string id, CancellationToken ct = default)
     {
         var membership = await GetMembershipAsync(id, ct);
-        await client.Documents.DeleteAsync(Database, "memberships", id, ct);
+        await DeleteIgnoringMissingAsync("memberships", id, ct);
         if (membership is not null)
             await ReleaseUniqueAsync("membership", membership.MemberKey, ct);
     }

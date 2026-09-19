@@ -312,6 +312,164 @@ public sealed class OrganizationsE2eTests
     }
 
     [Test]
+    public async Task ConcurrentOrganizationCreatesWithTheSameSlugProduceExactlyOneWinner()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+
+        // Both derive "acme-corp": the pre-check may miss under concurrency, the claim layer may not.
+        var responses = await Task.WhenAll(
+            http.SendAsync(Request(HttpMethod.Post, apiKey, $"/v1/{slug}/organizations", new { name = "Acme Corp" })),
+            http.SendAsync(Request(HttpMethod.Post, apiKey, $"/v1/{slug}/organizations", new { name = "ACME CORP!" })));
+        var statuses = responses.Select(r => r.StatusCode).OrderBy(s => (int)s).ToList();
+        await Assert.That(statuses).IsEquivalentTo([HttpStatusCode.OK, HttpStatusCode.Conflict]);
+
+        using var loser = responses.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        var error = (await loser.Content.ReadFromJsonAsync<JsonElement>())!.GetProperty("error");
+        await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("organization_exists");
+
+        var withSlug = (await service.Store.ListOrganizationsAsync(instanceId)).Where(o => o.SlugKey == $"{instanceId}:acme-corp").ToList();
+        await Assert.That(withSlug.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ConcurrentMemberAddsProduceExactlyOneMembershipAndAConflict()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+        var sessions = new SessionService(store);
+
+        var orgId = (await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp")).GetProperty("id").GetString()!;
+        var user = await sessions.CreateUserAsync(instanceId, $"race-{Guid.NewGuid().ToString("N")[..6]}@example.com", null, null, null);
+        var add = new { user_id = user.Id, role = "member" };
+
+        var responses = await Task.WhenAll(
+            http.SendAsync(Request(HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/memberships", add)),
+            http.SendAsync(Request(HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/memberships", add)));
+        var statuses = responses.Select(r => r.StatusCode).OrderBy(s => (int)s).ToList();
+        await Assert.That(statuses).IsEquivalentTo([HttpStatusCode.OK, HttpStatusCode.Conflict]);
+
+        using var loser = responses.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        var error = (await loser.Content.ReadFromJsonAsync<JsonElement>())!.GetProperty("error");
+        await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("already_a_member");
+
+        await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task SlugDerivationRejectsUnderivableNamesAndTruncatesLongOnes()
+    {
+        var (service, _, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+
+        // No ASCII alphanumerics to build a slug from.
+        var rejected = await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations", new { name = "日本語の組織です" }, HttpStatusCode.BadRequest);
+        await Assert.That(rejected.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_slug");
+
+        // Two alphanumerics cannot reach the 3-character minimum.
+        await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations", new { name = "ab" }, HttpStatusCode.BadRequest);
+
+        // Whitespace-only and empty names never reach derivation.
+        await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations", new { name = "   " }, HttpStatusCode.BadRequest);
+        await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations", new { name = (string?)null }, HttpStatusCode.BadRequest);
+
+        // A 60-character name derives a slug truncated to the 48-character maximum.
+        var longName = new string('a', 60);
+        var created = await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations", new { name = longName }, HttpStatusCode.OK);
+        await Assert.That(created.GetProperty("slug").GetString()).IsEqualTo(new string('a', 48));
+
+        // Explicit slugs are normalized to lowercase.
+        var normalized = await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations", new { name = "Other", slug = "MiXeD-Case" }, HttpStatusCode.OK);
+        await Assert.That(normalized.GetProperty("slug").GetString()).IsEqualTo("mixed-case");
+    }
+
+    [Test]
+    public async Task RolePatchKeepsMembershipIdentityAndNeverReleasesTheClaim()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+        var sessions = new SessionService(store);
+
+        var orgId = (await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp")).GetProperty("id").GetString()!;
+        var user = await sessions.CreateUserAsync(instanceId, $"patch-{Guid.NewGuid().ToString("N")[..6]}@example.com", null, null, null);
+        var membership = await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/memberships", new { user_id = user.Id, role = "member" }, HttpStatusCode.OK);
+        var membershipId = membership.GetProperty("id").GetString()!;
+        var createdAt = membership.GetProperty("created_at").GetInt64();
+
+        var patched = await SendAsync(http, HttpMethod.Patch, apiKey, $"/v1/{slug}/organizations/{orgId}/memberships/{membershipId}", new { role = "admin" }, HttpStatusCode.OK);
+        await Assert.That(patched.GetProperty("id").GetString()).IsEqualTo(membershipId);
+        await Assert.That(patched.GetProperty("created_at").GetInt64()).IsEqualTo(createdAt);
+        await Assert.That(patched.GetProperty("role").GetString()).IsEqualTo("admin");
+
+        var stored = await store.GetMembershipAsync(membershipId);
+        await Assert.That(stored!.Role).IsEqualTo("admin");
+        await Assert.That(stored.CreatedAt).IsEqualTo(createdAt);
+        await Assert.That(stored.MemberKey).IsEqualTo($"{orgId}:{user.Id}");
+
+        // The memberKey claim was held throughout: a concurrent-style re-add must conflict,
+        // and the org still lists exactly the one original membership.
+        var readd = await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/memberships", new { user_id = user.Id, role = "member" }, HttpStatusCode.Conflict);
+        await Assert.That(readd.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("already_a_member");
+        var rows = await store.ListMembershipsByOrgAsync(orgId);
+        await Assert.That(rows.Count).IsEqualTo(1);
+        await Assert.That(rows[0].Id).IsEqualTo(membershipId);
+    }
+
+    [Test]
+    public async Task ConcurrentRolePatchesNeverLoseTheMembership()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+        var sessions = new SessionService(store);
+
+        var orgId = (await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp")).GetProperty("id").GetString()!;
+        var user = await sessions.CreateUserAsync(instanceId, $"cp-{Guid.NewGuid().ToString("N")[..6]}@example.com", null, null, null);
+        var membership = await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/memberships", new { user_id = user.Id, role = "member" }, HttpStatusCode.OK);
+        var membershipId = membership.GetProperty("id").GetString()!;
+        var createdAt = membership.GetProperty("created_at").GetInt64();
+
+        var url = $"/v1/{slug}/organizations/{orgId}/memberships/{membershipId}";
+        var responses = await Task.WhenAll(
+            http.SendAsync(Request(HttpMethod.Patch, apiKey, url, new { role = "admin" })),
+            http.SendAsync(Request(HttpMethod.Patch, apiKey, url, new { role = "custom-role" })));
+        await Assert.That(responses.All(r => r.StatusCode == HttpStatusCode.OK)).IsTrue();
+
+        var rows = await store.ListMembershipsByOrgAsync(orgId);
+        await Assert.That(rows.Count).IsEqualTo(1);
+        await Assert.That(rows[0].Id).IsEqualTo(membershipId);
+        await Assert.That(rows[0].CreatedAt).IsEqualTo(createdAt);
+        await Assert.That(rows[0].Role is "admin" or "custom-role").IsTrue();
+    }
+
+    [Test]
+    public async Task ConcurrentMembershipDeletesAreIdempotentAndFreeTheClaim()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+        var sessions = new SessionService(store);
+
+        var orgId = (await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp")).GetProperty("id").GetString()!;
+        var user = await sessions.CreateUserAsync(instanceId, $"del-{Guid.NewGuid().ToString("N")[..6]}@example.com", null, null, null);
+        var membershipId = (await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/memberships", new { user_id = user.Id, role = "member" }, HttpStatusCode.OK))
+            .GetProperty("id").GetString()!;
+
+        var url = $"/v1/{slug}/organizations/{orgId}/memberships/{membershipId}";
+        var responses = await Task.WhenAll(
+            http.SendAsync(Request(HttpMethod.Delete, apiKey, url)),
+            http.SendAsync(Request(HttpMethod.Delete, apiKey, url)));
+        // Both deletes settle: one wins with 204, the loser reports it gone — never a 500.
+        await Assert.That(responses.All(r => r.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotFound)).IsTrue();
+        await Assert.That(await store.GetMembershipAsync(membershipId)).IsNull();
+
+        // The claim was released, so the user can be re-added immediately.
+        await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/memberships", new { user_id = user.Id, role = "member" }, HttpStatusCode.OK);
+    }
+
+    [Test]
     public async Task ManagementEndpointsRequireApiKeyForTheRouteInstance()
     {
         var (service, _, slug, apiKey) = await StartAsync();

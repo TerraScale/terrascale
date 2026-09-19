@@ -198,18 +198,10 @@ public static class OrganizationEndpoints
             if (body is null || !IsValidRole(body.Role))
                 return ApiResults.BadRequest("invalid_role", "role must be 1-64 characters");
 
-            // No membership upsert on the store: delete + re-create under the same id keeps
-            // id/created_at/memberKey and swaps the role. ponytail: non-atomic window, fine at IdP admin rates.
+            // One atomic write: the memberKey claim stays held the whole time (no
+            // delete+re-create window where the membership or its claim is released).
             membership = membership with { Role = body.Role!.Trim() };
-            await store.DeleteMembershipAsync(membership.Id, ct);
-            try
-            {
-                await store.CreateMembershipAsync(membership, ct);
-            }
-            catch (TerraScaleApiException exception) when (exception.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed)
-            {
-                return ApiResults.Conflict("already_a_member", "the user is already a member of this organization");
-            }
+            await store.UpsertMembershipAsync(membership, ct);
             return Results.Ok(Render(membership));
         });
 
