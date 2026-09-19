@@ -162,6 +162,14 @@ public sealed class MfaE2eTests
             Form(("token", token), ("next", "https://evil.example/steal"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
         await Assert.That(post.StatusCode).IsEqualTo(HttpStatusCode.Found);
         await Assert.That(post.Headers.Location?.ToString()).IsEqualTo($"/ui/{c.Slug}/account");
+
+        // Protocol-relative targets are not site-local either.
+        var (second, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
+        using var relative = await c.Http.PostAsync(
+            $"/ui/{c.Slug}/mfa/verify",
+            Form(("token", second), ("next", "//evil.example/steal"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
+        await Assert.That(relative.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(relative.Headers.Location?.ToString()).IsEqualTo($"/ui/{c.Slug}/account");
     }
 
     [Test]
@@ -198,6 +206,85 @@ public sealed class MfaE2eTests
         var html = await post.Content.ReadAsStringAsync();
         await Assert.That(html.Contains("expired")).IsTrue();
         await Assert.That(html.Contains("/sign-in")).IsTrue();
+    }
+
+    [Test]
+    public async Task ExpiredPendingTokenIsRejected()
+    {
+        var c = await ArrangeAsync("ttl");
+        var (secret, _, _) = await EnrollAsync(c);
+
+        // A pending token past its 10-minute TTL — wrong-code retries are allowed,
+        // but only until the token expires.
+        var token = SecureTokens.RandomToken(40);
+        await c.Store.CreateVerificationTokenAsync(new VerificationToken
+        {
+            Id = "vrf_" + SecureTokens.RandomToken(20),
+            InstanceId = c.InstanceId,
+            UserId = c.User.Id,
+            Purpose = "mfa.pending",
+            TokenKey = SecureTokens.Sha256Hex(token),
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds(),
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-11).ToUnixTimeSeconds(),
+        });
+
+        using var post = await c.Http.PostAsync(
+            $"/ui/{c.Slug}/mfa/verify",
+            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
+        await Assert.That(post.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await post.Content.ReadAsStringAsync()).Contains("expired")).IsTrue();
+        await Assert.That(post.Headers.TryGetValues("Set-Cookie", out _)).IsFalse();
+        await Assert.That(await SignedInCountAsync(c)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task PendingTokenIsSingleUseAfterSuccess()
+    {
+        var c = await ArrangeAsync("reuse");
+        var (secret, _, _) = await EnrollAsync(c);
+
+        var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
+        using (var post = await c.Http.PostAsync(
+            $"/ui/{c.Slug}/mfa/verify",
+            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow)))))
+        {
+            await Assert.That(post.StatusCode).IsEqualTo(HttpStatusCode.Found);
+            // Exactly one session cookie on the response that completes the sign-in.
+            await Assert.That(post.Headers.GetValues("Set-Cookie").Count(v => v.StartsWith("tsauth_session=", StringComparison.Ordinal))).IsEqualTo(1);
+        }
+
+        using var replay = await c.Http.PostAsync(
+            $"/ui/{c.Slug}/mfa/verify",
+            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await replay.Content.ReadAsStringAsync()).Contains("expired")).IsTrue();
+        await Assert.That(replay.Headers.TryGetValues("Set-Cookie", out _)).IsFalse();
+        await Assert.That(await SignedInCountAsync(c)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ConcurrentVerifyWithOnePendingTokenMintsExactlyOneSession()
+    {
+        var c = await ArrangeAsync("race");
+        var (secret, _, _) = await EnrollAsync(c);
+
+        var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
+        var code = Totp.Compute(secret, DateTimeOffset.UtcNow);
+        var responses = await Task.WhenAll(
+            c.Http.PostAsync($"/ui/{c.Slug}/mfa/verify",
+                Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", code))),
+            c.Http.PostAsync($"/ui/{c.Slug}/mfa/verify",
+                Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", code))));
+
+        using (responses[0])
+        using (responses[1])
+        {
+            // The token is consumed atomically: whichever request loses the race sees
+            // the expired page and never gets a session cookie.
+            await Assert.That(responses.Count(r => r.StatusCode == HttpStatusCode.Found)).IsEqualTo(1);
+            await Assert.That(responses.Count(r => SessionCookie(r) is not null)).IsEqualTo(1);
+        }
+        await Assert.That(await SignedInCountAsync(c)).IsEqualTo(1);
     }
 
     [Test]
@@ -358,4 +445,8 @@ public sealed class MfaE2eTests
             : null;
         return header?["tsauth_session=".Length..].Split(';')[0];
     }
+
+    /// <summary>Completed password+mfa sign-ins for the arranged user's instance, as audit events.</summary>
+    private static async Task<int> SignedInCountAsync(Context c) =>
+        (await c.Store.ListAuditEventsAsync(c.InstanceId, 100)).Count(e => e.Type == "user.signed_in");
 }

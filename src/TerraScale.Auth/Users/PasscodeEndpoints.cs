@@ -126,7 +126,9 @@ public static class PasscodeEndpoints
             if (!await MfaGate.VerifyCodeAsync(store, options.MasterKey, userId, code.Trim(), ct))
                 return await DelayedInvalidCodeAsync();
 
-            await MfaGate.ConsumePendingAsync(store, instance.Id, token, ct);
+            // The consume is atomic; a concurrent replay loses here and gets no session.
+            if (await MfaGate.ConsumePendingAsync(store, instance.Id, token, ct) is null)
+                return Results.Json(new { ok = false, error = "invalid_mfa_token" }, statusCode: 401);
             await SignInAsync(store, sessions, http, instance.Id, userId, "passcode+mfa", ct);
             return http.Request.HasFormContentType
                 ? Results.Redirect($"/ui/{slug}/account")

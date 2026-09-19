@@ -34,15 +34,16 @@ public static class MfaGate
         return (token, SecureTokens.Sha256Hex(token));
     }
 
-    /// <summary>Consumes a pending-MFA token, returning the user id, or null when invalid/expired/consumed.</summary>
+    /// <summary>Consumes a pending-MFA token, returning the user id, or null when invalid/expired/consumed.
+    /// Atomic (If-Match), so of two concurrent consumes of one token only the first wins.</summary>
     public static async Task<string?> ConsumePendingAsync(AuthStore store, string instanceId, string token, CancellationToken ct = default)
     {
-        var record = await store.FindVerificationTokenAsync(SecureTokens.Sha256Hex(token), ct);
-        if (record is null || record.InstanceId != instanceId || record.Purpose != "mfa.pending"
-            || record.Consumed || record.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
-            return null;
-        await store.UpsertVerificationTokenAsync(record with { Consumed = true }, ct);
-        return record.UserId;
+        var record = await store.ConsumeVerificationTokenAsync(
+            SecureTokens.Sha256Hex(token),
+            record => record.InstanceId == instanceId && record.Purpose == "mfa.pending"
+                && !record.Consumed && record.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ct);
+        return record?.UserId;
     }
 
     /// <summary>Verifies a TOTP or recovery code for the user, consuming recovery codes on use.</summary>

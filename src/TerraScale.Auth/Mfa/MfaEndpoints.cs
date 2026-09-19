@@ -148,7 +148,10 @@ public static class MfaEndpoints
             if (string.IsNullOrWhiteSpace(code) || !await MfaGate.VerifyCodeAsync(store, options.MasterKey, userId, code.Trim(), ct))
                 return CodeFormPage(slug, token, next, "Invalid code. Try again.");
 
-            await MfaGate.ConsumePendingAsync(store, instance.Id, token, ct);
+            // Consume-before-session: the consume is atomic, so a concurrent replay
+            // of this token loses here and never mints a second session.
+            if (await MfaGate.ConsumePendingAsync(store, instance.Id, token, ct) is null)
+                return ExpiredPage(slug);
 
             var (_, cookieToken) = await sessions.CreateSessionAsync(
                 instance.Id, userId, http.Request.Headers.UserAgent.ToString(), http.Connection.RemoteIpAddress?.ToString(), ct);
