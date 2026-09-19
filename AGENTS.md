@@ -44,6 +44,13 @@ Conventions (enforced):
   `Get/Post(route)`, `Summary()`, `Tags()`, `AllowAnonymous()`). Build prefers
   the sibling checkout `../../../ts-libs`; otherwise the vendored
   `src/ts-dashboard-2/nuget/TerraScale.Endpoints.1.1.0.nupkg`.
+- **TerraScale.DotNet (ts-dotnet SDK)** — optional sibling checkout
+  (`../../../ts-dotnet`, conditional ProjectReference, `TERRABASE_SDK` define).
+  When present AND `TERRABASE_URL` is set, `Framework/TerraBaseBackend` builds
+  a `TerraScaleClient` and the `/engine` page renders LIVE TerraBase
+  observability (health, region catalog, metric families). Without either, the
+  dashboard runs fully self-contained on the seeded store and `/engine` shows
+  its setup panel.
 - Datastar (vendored `wwwroot/js/datastar.js`) powers all interaction:
   `data-signals`, `data-on-click`, `data-class`, `data-show`; small helpers
   live in `wwwroot/js/terrascale.js`. No other JS framework.
