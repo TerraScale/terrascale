@@ -9,6 +9,7 @@ public enum RouteId
     ApiKeys,
     Access,
     Usage,
+    Engine,
     Audit,
     Notifications,
     Settings,
