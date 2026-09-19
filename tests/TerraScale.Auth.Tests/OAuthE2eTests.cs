@@ -296,10 +296,13 @@ public sealed class OAuthE2eTests
         await Assert.That(signInLocation.StartsWith($"/ui/{arranged.Slug}/sign-in?next=")).IsTrue();
         await Assert.That(signInLocation).Contains(Uri.EscapeDataString($"/{arranged.Slug}/oauth/authorize"));
 
-        using var promptNone = AuthorizeRequest(arranged, prompt: "none", withSessionCookie: false);
+        using var promptNone = AuthorizeRequest(arranged, state: "st-none", prompt: "none", withSessionCookie: false);
         var loginRequired = await arranged.Service.Http.SendAsync(promptNone);
         await Assert.That(loginRequired.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
-        await Assert.That(loginRequired.Headers.Location!.ToString()).Contains("error=login_required");
+        var loginRequiredLocation = loginRequired.Headers.Location!.ToString();
+        await Assert.That(loginRequiredLocation.StartsWith(RedirectUri + '?')).IsTrue();
+        await Assert.That(loginRequiredLocation).Contains("error=login_required");
+        await Assert.That(loginRequiredLocation).Contains("state=st-none");
 
         using var badResponseType = AuthorizeRequest(arranged);
         badResponseType.RequestUri = new Uri(badResponseType.RequestUri!.ToString().Replace("response_type=code", "response_type=token"), UriKind.Relative);
@@ -387,6 +390,37 @@ public sealed class OAuthE2eTests
             }),
         };
         await Assert.That((await arranged.Service.Http.SendAsync(badSecret)).StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task ExpiredAuthorizationCodeIsRejected()
+    {
+        var arranged = await ArrangeAsync();
+        var code = SecureTokens.RandomToken(48);
+        await arranged.Service.Store.CreateAuthorizationCodeAsync(new AuthorizationCode
+        {
+            Id = "oac:" + arranged.Session.Id + ":" + SecureTokens.RandomToken(12),
+            InstanceId = arranged.InstanceId,
+            ClientId = arranged.ClientId,
+            UserId = arranged.User.Id,
+            CodeKey = SecureTokens.Sha256Hex(code),
+            RedirectUri = arranged.RedirectUri,
+            Scopes = ["openid"],
+            CodeChallenge = null,
+            CodeChallengeMethod = null,
+            Nonce = null,
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeSeconds(),
+            Consumed = false,
+        });
+
+        var expired = await arranged.Service.Http.SendAsync(TokenRequest(arranged, new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = arranged.RedirectUri,
+        }));
+        await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await expired.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
     }
 
     private sealed record PkceCode(string Code, string Verifier);
