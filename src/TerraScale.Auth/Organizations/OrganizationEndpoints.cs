@@ -111,8 +111,7 @@ public static class OrganizationEndpoints
             if (organization is null)
                 return ApiResults.NotFound("organization_not_found", "no such organization");
 
-            // The shared AuthStore exposes no org delete; this mirrors its DeleteMembershipAsync one-to-one.
-            await client.Documents.DeleteAsync(store.Database, "organizations", organization.Id, ct);
+            await store.DeleteOrganizationAsync(organization.Id, ct);
             await AuditAsync(store, context.Instance.Id, "organization.deleted", context.ApiKeyId, new Dictionary<string, object>
             {
                 ["organization_id"] = organization.Id,

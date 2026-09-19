@@ -39,7 +39,7 @@ public static class App
         return (builder, options);
     }
 
-    /// <summary>Maps endpoints and the schema-bootstrap hook. Call once on the built application.</summary>
+    /// <summary>Maps all endpoints. Call once on the built application.</summary>
     public static void Configure(WebApplication app, AuthOptions options)
     {
         app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
@@ -87,25 +87,6 @@ public static class App
 
             return Results.Ok(new { instance = new { instance.Id, instance.Slug, instance.Name }, api_key = combined });
         });
-
-        app.Lifetime.ApplicationStarted.Register(() => _ = BootstrapSchemaAsync(app, options));
-
-        static async Task BootstrapSchemaAsync(WebApplication app, AuthOptions options)
-        {
-            try
-            {
-                var store = app.Services.GetRequiredService<AuthStore>();
-                var client = app.Services.GetRequiredService<TerraScaleClient>();
-                await SchemaBootstrap.EnsureSchemaAsync(client, options.Database);
-                app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("startup")
-                    .LogInformation("ts-auth schema ready on database {Database}; listening on {Listen}", options.Database, options.Listen);
-            }
-            catch (Exception exception)
-            {
-                app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("startup")
-                    .LogError(exception, "schema bootstrap failed for database {Database}", options.Database);
-            }
-        }
     }
 }
 

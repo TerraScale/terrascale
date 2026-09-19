@@ -358,7 +358,7 @@ public static class OAuthEndpoints
 
             if (await store.GetOAuthClientAsync(id, ct) is not { } client || client.InstanceId != context.Instance.Id)
                 return ApiResults.NotFound("not_found", "no such oauth client");
-            await sdk.Documents.DeleteAsync(store.Database, "oauth_clients", id, ct);
+            await store.DeleteOAuthClientAsync(id, ct);
             return Results.NoContent();
         });
     }

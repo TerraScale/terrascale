@@ -133,11 +133,23 @@ public static class ManagementEndpoints
                 var normalized = SessionService.NormalizeEmail(body.Email);
                 if (!string.Equals(normalized, user.Email, StringComparison.Ordinal))
                 {
+                    var newEmailKey = $"{context.Instance.Id}:{normalized}";
                     var existing = await store.FindUserByEmailAsync(context.Instance.Id, normalized, ct);
                     if (existing is not null && existing.Id != user.Id)
                         return ApiResults.Conflict("email_taken", "an account with this email already exists");
-                    // Email change invalidates verification and re-keys the uniqueness index.
-                    updated = updated with { Email = normalized, EmailVerified = false, EmailKey = $"{context.Instance.Id}:{normalized}" };
+                    // Claim-first keeps the re-key atomic against concurrent creates.
+                    try
+                    {
+                        await store.ClaimUniqueAsync("user-email", newEmailKey, user.Id, ct);
+                    }
+                    catch (TerraScale.DotNet.TerraScaleApiException)
+                    {
+                        return ApiResults.Conflict("email_taken", "an account with this email already exists");
+                    }
+                    // Email change invalidates verification and re-keys the uniqueness claim.
+                    updated = updated with { Email = normalized, EmailVerified = false, EmailKey = newEmailKey };
+                    if (user.EmailKey is not null)
+                        await store.ReleaseUniqueAsync("user-email", user.EmailKey, ct);
                 }
             }
 
@@ -158,7 +170,11 @@ public static class ManagementEndpoints
             if (user is null)
                 return ApiResults.NotFound("user_not_found", "no user with this id in this instance");
 
-            // Soft delete: the identifiers (email/username keys) free up for reuse.
+            // Soft delete: the identifier claims are released so the keys free up for reuse.
+            if (user.EmailKey is not null)
+                await store.ReleaseUniqueAsync("user-email", user.EmailKey, ct);
+            if (user.UsernameKey is not null)
+                await store.ReleaseUniqueAsync("user-username", user.UsernameKey, ct);
             await store.UpsertUserAsync(user with
             {
                 Deleted = true,

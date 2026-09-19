@@ -1,17 +1,48 @@
 namespace TerraScale.Auth.Store;
 
+using TerraScale.Auth.Crypto;
 using TerraScale.DotNet;
 
 /// <summary>
 /// All ts-auth persistence, over the public TerraScale document API (the same
-/// surface an end user builds on). Documents are JSON records in one database;
-/// uniqueness rides on TerraBase unique indexes over synthetic key fields.
+/// surface an end user builds on). Documents are JSON records in one database.
+/// The engine has no unique secondary indexes yet, so uniqueness rides on
+/// atomic claim documents: a claim is a CreateOnly document write, which the
+/// engine rejects on collision — race-safe without transactions.
 /// </summary>
 public sealed class AuthStore(TerraScaleClient client, string database)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public string Database { get; } = database;
+
+    // ---- Atomic uniqueness claims ---------------------------------------------------
+
+    /// <summary>Atomically claims a unique key; throws <see cref="TerraScaleApiException"/> (conflict) when taken.</summary>
+    public Task ClaimUniqueAsync(string kind, string key, string ownerId, CancellationToken ct = default) =>
+        client.Documents.PutAsync(
+            Database,
+            "uniques",
+            UniqueClaimId(kind, key),
+            new UniqueClaim(OwnerType: kind, OwnerId: ownerId),
+            new TerraScaleDocumentMutationOptions(CreateOnly: true),
+            ct);
+
+    /// <summary>Releases a unique key claim; missing claims are ignored.</summary>
+    public async Task ReleaseUniqueAsync(string kind, string key, CancellationToken ct = default)
+    {
+        try
+        {
+            await client.Documents.DeleteAsync(Database, "uniques", UniqueClaimId(kind, key), ct);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+        }
+    }
+
+    private static string UniqueClaimId(string kind, string key) => $"{kind}:{SecureTokens.Sha256Hex(key)}";
+
+    private sealed record UniqueClaim(string OwnerType, string OwnerId);
 
     // ---- Documents API plumbing -------------------------------------------------
 
@@ -53,8 +84,19 @@ public sealed class AuthStore(TerraScaleClient client, string database)
 
     // ---- Instances ----------------------------------------------------------------
 
-    public Task<Instance> CreateInstanceAsync(Instance instance, CancellationToken ct = default) =>
-        CreateAsync("instances", instance.Id, instance, ct);
+    public async Task<Instance> CreateInstanceAsync(Instance instance, CancellationToken ct = default)
+    {
+        await ClaimUniqueAsync("instance-slug", instance.Slug, instance.Id, ct);
+        try
+        {
+            return await CreateAsync("instances", instance.Id, instance, ct);
+        }
+        catch
+        {
+            await ReleaseUniqueAsync("instance-slug", instance.Slug, ct);
+            throw;
+        }
+    }
 
     public Task<Instance?> GetInstanceAsync(string id, CancellationToken ct = default) =>
         GetOrNullAsync<Instance>("instances", id, ct);
@@ -67,8 +109,27 @@ public sealed class AuthStore(TerraScaleClient client, string database)
 
     // ---- Users --------------------------------------------------------------------
 
-    public Task<User> CreateUserAsync(User user, CancellationToken ct = default) =>
-        CreateAsync("users", user.Id, user, ct);
+    public async Task<User> CreateUserAsync(User user, CancellationToken ct = default)
+    {
+        // Random high-entropy keys (sessions, codes, api keys) tolerate check-then-act;
+        // user-chosen identifiers (email, username) need the atomic claim.
+        if (user.EmailKey is not null)
+            await ClaimUniqueAsync("user-email", user.EmailKey, user.Id, ct);
+        if (user.UsernameKey is not null)
+            await ClaimUniqueAsync("user-username", user.UsernameKey, user.Id, ct);
+        try
+        {
+            return await CreateAsync("users", user.Id, user, ct);
+        }
+        catch
+        {
+            if (user.EmailKey is not null)
+                await ReleaseUniqueAsync("user-email", user.EmailKey, ct);
+            if (user.UsernameKey is not null)
+                await ReleaseUniqueAsync("user-username", user.UsernameKey, ct);
+            throw;
+        }
+    }
 
     public Task<User?> GetUserAsync(string id, CancellationToken ct = default) =>
         GetOrNullAsync<User>("users", id, ct);
@@ -90,8 +151,19 @@ public sealed class AuthStore(TerraScaleClient client, string database)
 
     // ---- Passkeys -----------------------------------------------------------------
 
-    public Task<Passkey> CreatePasskeyAsync(Passkey passkey, CancellationToken ct = default) =>
-        CreateAsync("passkeys", passkey.Id, passkey, ct);
+    public async Task<Passkey> CreatePasskeyAsync(Passkey passkey, CancellationToken ct = default)
+    {
+        await ClaimUniqueAsync("passkey", passkey.CredentialKey, passkey.UserId, ct);
+        try
+        {
+            return await CreateAsync("passkeys", passkey.Id, passkey, ct);
+        }
+        catch
+        {
+            await ReleaseUniqueAsync("passkey", passkey.CredentialKey, ct);
+            throw;
+        }
+    }
 
     public Task<Passkey?> GetPasskeyAsync(string id, CancellationToken ct = default) =>
         GetOrNullAsync<Passkey>("passkeys", id, ct);
@@ -108,8 +180,13 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<IReadOnlyList<Passkey>> ListPasskeysAsync(string userId, CancellationToken ct = default) =>
         QueryAsync<Passkey>("passkeys", "userId", userId, 100, ct);
 
-    public Task DeletePasskeyAsync(string id, CancellationToken ct = default) =>
-        client.Documents.DeleteAsync(Database, "passkeys", id, ct);
+    public async Task DeletePasskeyAsync(string id, CancellationToken ct = default)
+    {
+        var passkey = await GetPasskeyAsync(id, ct);
+        await client.Documents.DeleteAsync(Database, "passkeys", id, ct);
+        if (passkey is not null)
+            await ReleaseUniqueAsync("passkey", passkey.CredentialKey, ct);
+    }
 
     // ---- Sessions -----------------------------------------------------------------
 
@@ -133,8 +210,27 @@ public sealed class AuthStore(TerraScaleClient client, string database)
 
     // ---- OAuth clients --------------------------------------------------------------
 
-    public Task<OAuthClient> CreateOAuthClientAsync(OAuthClient oauthClient, CancellationToken ct = default) =>
-        CreateAsync("oauth_clients", oauthClient.Id, oauthClient, ct);
+    public async Task<OAuthClient> CreateOAuthClientAsync(OAuthClient oauthClient, CancellationToken ct = default)
+    {
+        await ClaimUniqueAsync("oauth-client", oauthClient.ClientKey, oauthClient.Id, ct);
+        try
+        {
+            return await CreateAsync("oauth_clients", oauthClient.Id, oauthClient, ct);
+        }
+        catch
+        {
+            await ReleaseUniqueAsync("oauth-client", oauthClient.ClientKey, ct);
+            throw;
+        }
+    }
+
+    public async Task DeleteOAuthClientAsync(string id, CancellationToken ct = default)
+    {
+        var oauthClient = await GetOAuthClientAsync(id, ct);
+        await client.Documents.DeleteAsync(Database, "oauth_clients", id, ct);
+        if (oauthClient is not null)
+            await ReleaseUniqueAsync("oauth-client", oauthClient.ClientKey, ct);
+    }
 
     public Task<OAuthClient?> GetOAuthClientAsync(string id, CancellationToken ct = default) =>
         GetOrNullAsync<OAuthClient>("oauth_clients", id, ct);
@@ -224,8 +320,27 @@ public sealed class AuthStore(TerraScaleClient client, string database)
 
     // ---- Organizations ------------------------------------------------------------------
 
-    public Task<Organization> CreateOrganizationAsync(Organization organization, CancellationToken ct = default) =>
-        CreateAsync("organizations", organization.Id, organization, ct);
+    public async Task<Organization> CreateOrganizationAsync(Organization organization, CancellationToken ct = default)
+    {
+        await ClaimUniqueAsync("org-slug", organization.SlugKey, organization.Id, ct);
+        try
+        {
+            return await CreateAsync("organizations", organization.Id, organization, ct);
+        }
+        catch
+        {
+            await ReleaseUniqueAsync("org-slug", organization.SlugKey, ct);
+            throw;
+        }
+    }
+
+    public async Task DeleteOrganizationAsync(string id, CancellationToken ct = default)
+    {
+        var organization = await GetOrganizationAsync(id, ct);
+        await client.Documents.DeleteAsync(Database, "organizations", id, ct);
+        if (organization is not null)
+            await ReleaseUniqueAsync("org-slug", organization.SlugKey, ct);
+    }
 
     public Task<Organization?> GetOrganizationAsync(string id, CancellationToken ct = default) =>
         GetOrNullAsync<Organization>("organizations", id, ct);
@@ -238,14 +353,30 @@ public sealed class AuthStore(TerraScaleClient client, string database)
 
     // ---- Memberships -----------------------------------------------------------------
 
-    public Task<OrgMembership> CreateMembershipAsync(OrgMembership membership, CancellationToken ct = default) =>
-        CreateAsync("memberships", membership.Id, membership, ct);
+    public async Task<OrgMembership> CreateMembershipAsync(OrgMembership membership, CancellationToken ct = default)
+    {
+        await ClaimUniqueAsync("membership", membership.MemberKey, membership.Id, ct);
+        try
+        {
+            return await CreateAsync("memberships", membership.Id, membership, ct);
+        }
+        catch
+        {
+            await ReleaseUniqueAsync("membership", membership.MemberKey, ct);
+            throw;
+        }
+    }
 
     public Task<OrgMembership?> GetMembershipAsync(string id, CancellationToken ct = default) =>
         GetOrNullAsync<OrgMembership>("memberships", id, ct);
 
-    public Task DeleteMembershipAsync(string id, CancellationToken ct = default) =>
-        client.Documents.DeleteAsync(Database, "memberships", id, ct);
+    public async Task DeleteMembershipAsync(string id, CancellationToken ct = default)
+    {
+        var membership = await GetMembershipAsync(id, ct);
+        await client.Documents.DeleteAsync(Database, "memberships", id, ct);
+        if (membership is not null)
+            await ReleaseUniqueAsync("membership", membership.MemberKey, ct);
+    }
 
     public Task<IReadOnlyList<OrgMembership>> ListMembershipsByUserAsync(string userId, CancellationToken ct = default) =>
         QueryAsync<OrgMembership>("memberships", "userId", userId, 100, ct);
