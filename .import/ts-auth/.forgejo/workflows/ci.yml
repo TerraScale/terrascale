@@ -25,13 +25,16 @@ jobs:
           persist-credentials: false
 
       - name: Clone sibling sources (TerraScale SDK + TerraBase engine)
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: |
           set -euo pipefail
           # ts-auth builds against the sibling checkouts of ts-dotnet and terrabase
-          # (the same layout developers use locally).
+          # (the same layout developers use locally). The job token cannot read
+          # sibling org repos, so the clones use the org read token.
           parent="$(pwd)/.."
-          git clone --depth 1 "https://oauth2:${FORGEJO_TOKEN}@git.terrascale.tech/TerraScale/ts-dotnet.git" "${parent}/ts-dotnet"
-          git clone --depth 1 "https://oauth2:${FORGEJO_TOKEN}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase"
+          git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN:?org read token is required}@git.terrascale.tech/TerraScale/ts-dotnet.git" "${parent}/ts-dotnet"
+          git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase"
 
       - name: Restore ts-auth tests
         run: |

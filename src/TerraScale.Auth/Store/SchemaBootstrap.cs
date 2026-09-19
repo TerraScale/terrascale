@@ -19,9 +19,33 @@ public static class SchemaBootstrap
                 database,
                 collection,
                 new CollectionSchema(Fields: fields, Fts: null, HistoryRetentionDays: null, Indexes: null, MergePolicy: null, Name: collection, Renames: null, Ttl: null, Version: null),
-                idempotencyKey: $"ts-auth-schema-{collection}-v1",
+                idempotencyKey: StableIdempotencyUlid($"ts-auth-schema:{database}:{collection}:v1"),
                 cancellationToken: ct);
         }
+    }
+
+    /// <summary>
+    /// Derives a stable canonical ULID (26 uppercase Crockford base32 chars)
+    /// from a name; the engine requires ULID idempotency keys and replays by
+    /// (key, request digest), so the same name maps to the same key.
+    /// </summary>
+    private static string StableIdempotencyUlid(string name)
+    {
+        const string alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+        var digest = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(name))[..16];
+        var chars = new char[26];
+        for (var i = 0; i < 26; i++)
+        {
+            var value = 0;
+            for (var b = 0; b < 5; b++)
+            {
+                var digestBit = i * 5 + b - 2; // two pad bits lead the 130-bit stream
+                var bit = digestBit < 0 ? 0 : (digest[digestBit / 8] >> (7 - digestBit % 8)) & 1;
+                value = (value << 1) | bit;
+            }
+            chars[i] = alphabet[value];
+        }
+        return new string(chars);
     }
 
     private static List<(string Collection, List<FieldDescriptor> Fields)> Schemas()
