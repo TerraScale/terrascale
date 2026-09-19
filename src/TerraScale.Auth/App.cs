@@ -41,6 +41,7 @@ public static class App
     public static void Configure(WebApplication app, AuthOptions options)
     {
         app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
+        EndpointModules.MapAll(app);
 
         // Operator onboarding: create an instance and its first API key.
         app.MapPost("/v1/instances", async (HttpRequest request, AuthStore store, CancellationToken ct) =>
