@@ -42,8 +42,14 @@ public static class App
     /// <summary>Maps all endpoints. Call once on the built application.</summary>
     public static void Configure(WebApplication app, AuthOptions options)
     {
-        // First in the pipeline: every sk_-authenticated management request is rate
-        // limited here, uniformly across all endpoint modules.
+        // First in the pipeline: a storage-engine outage or an unexpected handler fault
+        // must answer with the standard error envelope (503/500) — not escape as an
+        // unhandled exception, which is a bare body-less 500 through Kestrel. Covers
+        // every module and the rate-limit middleware's own instance resolution.
+        app.Use(ExceptionEnvelope);
+
+        // Every sk_-authenticated management request is rate limited here, uniformly
+        // across all endpoint modules.
         Management.ManagementRateLimit.Use(app);
 
         app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
@@ -91,6 +97,33 @@ public static class App
 
             return Results.Ok(new { instance = new { instance.Id, instance.Slug, instance.Name }, api_key = combined });
         });
+    }
+
+    /// <summary>Terminal exception filter: engine failures answer 503, anything else 500 — both as the uniform error envelope.</summary>
+    private static async Task ExceptionEnvelope(HttpContext context, Func<Task> next)
+    {
+        try
+        {
+            await next();
+        }
+        catch (Exception exception) when (exception is OperationCanceledException || context.Response.HasStarted)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            var unavailable = exception is HttpRequestException
+                || (exception is TerraScaleApiException api && api.StatusCode >= System.Net.HttpStatusCode.InternalServerError);
+            context.Response.StatusCode = unavailable ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status500InternalServerError;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = new
+                {
+                    code = unavailable ? "temporarily_unavailable" : "internal_error",
+                    message = unavailable ? "The storage engine is unavailable; retry shortly." : "An unexpected error occurred.",
+                },
+            });
+        }
     }
 }
 

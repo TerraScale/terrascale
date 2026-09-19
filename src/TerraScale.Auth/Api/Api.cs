@@ -34,7 +34,7 @@ public sealed class InstanceResolver(Store.AuthStore store)
         if (!authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             return null;
         var secret = authorization["Bearer ".Length..].Trim();
-        if (!secret.StartsWith("sk_"))
+        if (!secret.StartsWith("sk_", StringComparison.Ordinal))
             return null;
 
         var apiKey = await store.FindApiKeyAsync(Crypto.SecureTokens.Sha256Hex(secret), ct);

@@ -25,18 +25,20 @@ public sealed class AuthServiceFixture : IAsyncDisposable
     private const string OperatorKey = "operator-test-key";
     private readonly EmbeddedTerraBaseHost engine;
     private readonly WebApplication application;
+    private readonly BreakableHandler engineHandler;
     private readonly string root;
 
     public HttpClient Http { get; }
     public TerraScaleClient Sdk { get; }
     public string Database { get; }
 
-    private AuthServiceFixture(EmbeddedTerraBaseHost engine, WebApplication application, HttpClient http, TerraScaleClient sdk, string database, string root)
+    private AuthServiceFixture(EmbeddedTerraBaseHost engine, WebApplication application, HttpClient http, TerraScaleClient sdk, BreakableHandler engineHandler, string database, string root)
     {
         this.engine = engine;
         this.application = application;
         Http = http;
         Sdk = sdk;
+        this.engineHandler = engineHandler;
         Database = database;
         this.root = root;
     }
@@ -63,8 +65,9 @@ public sealed class AuthServiceFixture : IAsyncDisposable
         });
         await engine.Application.StartAsync();
 
+        var engineHandler = new BreakableHandler(engine.CreateHandler());
         var engineClient = new TerraScaleClient(
-            new HttpClient(engine.CreateHandler()) { BaseAddress = new Uri("http://127.0.0.1/") },
+            new HttpClient(engineHandler) { BaseAddress = new Uri("http://127.0.0.1/") },
             new TerraScaleClientOptions { BaseAddress = new Uri("http://127.0.0.1/"), ApiKey = "e2e-key" });
 
         Environment.SetEnvironmentVariable("TS_AUTH_PUBLIC_ORIGIN", "https://auth.test");
@@ -92,7 +95,7 @@ public sealed class AuthServiceFixture : IAsyncDisposable
             await Task.Delay(100);
         }
 
-        return new AuthServiceFixture(engine, application, http, engineClient, database, root);
+        return new AuthServiceFixture(engine, application, http, engineClient, engineHandler, database, root);
     }
 
 
@@ -124,6 +127,13 @@ public sealed class AuthServiceFixture : IAsyncDisposable
             body.GetProperty("instance").GetProperty("slug").GetString()!,
             body.GetProperty("api_key").GetString()!);
     }
+
+    /// <summary>
+    /// Severs the app's connection to the engine (the engine itself keeps running):
+    /// every store read/write fails from here on — failure-path probes. The real
+    /// engine stays real; only the wire is cut, like a network outage.
+    /// </summary>
+    public void BreakEngineConnection() => engineHandler.Break();
 
     /// <summary>Direct store access for arranging/inspecting state in tests.</summary>
     public TerraScale.Auth.Store.AuthStore Store => new(Sdk, Database);
@@ -162,4 +172,20 @@ public sealed class AuthServiceFixture : IAsyncDisposable
             CancellationToken cancellationToken = default) =>
             ValueTask.FromResult(TenantAuthorizationDecision.AllowUntil(DateTimeOffset.UtcNow.AddSeconds(10)));
     }
+}
+
+/// <summary>
+/// Wraps the real embedded-engine handler; <see cref="Break"/> makes every call fail
+/// like a network outage while the engine behind it stays untouched.
+/// </summary>
+internal sealed class BreakableHandler(HttpMessageHandler inner) : DelegatingHandler(inner)
+{
+    private volatile bool broken;
+
+    public void Break() => broken = true;
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+        broken
+            ? throw new HttpRequestException("engine unreachable (test-induced outage)")
+            : base.SendAsync(request, cancellationToken);
 }

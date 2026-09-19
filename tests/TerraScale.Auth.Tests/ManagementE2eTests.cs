@@ -384,6 +384,103 @@ public sealed class ManagementE2eTests
     }
 
     [Test]
+    public async Task MalformedBearersAreUnauthorizedNeverServerError()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+
+        // Every malformed Authorization shape must resolve to nothing — 401, never a 500.
+        var probes = new[]
+        {
+            "Bearer",                            // scheme only, no space or secret
+            "Bearer ",                           // empty secret
+            "Bearer sk_",                        // prefix with no secret material
+            "Bearer " + key.ToUpperInvariant(),  // sk_ keys are case-sensitive
+            "Bearer " + key + " extra",          // trailing junk is part of the token, not ignored
+            "Bearer " + key.Insert(10, " "),     // whitespace inside the secret
+            "Bearer " + key.Insert(10, "\u00A0"),  // non-breaking space inside the secret
+            "Bearer \u00AD" + key,             // soft-hyphen smearing the sk_ prefix (culture-sensitive StartsWith trap)
+            "Basic " + key,                      // wrong scheme
+            "Session " + key,                    // unknown scheme
+            "Bearer " + new string('x', 10_000), // extreme length must hash and 401, nothing else
+            "Bearer sk_" + new string('x', 10_000),
+        };
+        foreach (var header in probes)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/{slug}/users");
+            request.Headers.TryAddWithoutValidation("Authorization", header);
+            using var response = await service.Http.SendAsync(request);
+            var preview = header.Length <= 24 ? header : header[..24] + "…";
+            await Assert.That(response.StatusCode)
+                .IsEqualTo(HttpStatusCode.Unauthorized)
+                .Because($"Authorization '{preview}' must be rejected with 401");
+        }
+
+        // Lenient-by-design: whitespace padding around the secret trims away and still
+        // resolves (curl/client quirks); the trimmed hash must match a real key either way.
+        foreach (var header in new[] { "Bearer  " + key, "Bearer " + key + "  " })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/{slug}/users");
+            request.Headers.TryAddWithoutValidation("Authorization", header);
+            using var response = await service.Http.SendAsync(request);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        // The scheme itself is case-insensitive per RFC 7235.
+        using var lowercase = new HttpRequestMessage(HttpMethod.Get, $"/v1/{slug}/users");
+        lowercase.Headers.TryAddWithoutValidation("Authorization", "bearer " + key);
+        using var lowercaseResponse = await service.Http.SendAsync(lowercase);
+        await Assert.That(lowercaseResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task OperatorKeyAndInstanceKeysInhabitSeparateRealms()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+
+        // The operator bearer must never satisfy an instance route.
+        using var operatorOnInstance = new HttpRequestMessage(HttpMethod.Get, $"/v1/{slug}/users");
+        operatorOnInstance.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "operator-test-key");
+        using var operatorResponse = await service.Http.SendAsync(operatorOnInstance);
+        await Assert.That(operatorResponse.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        // And an instance sk_ key must never satisfy the operator route.
+        using var keyOnOperator = new HttpRequestMessage(HttpMethod.Post, "/v1/instances")
+        {
+            Content = JsonContent.Create(new { slug = "nope-" + Guid.NewGuid().ToString("N")[..8], name = "nope" }),
+        };
+        keyOnOperator.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        using var keyResponse = await service.Http.SendAsync(keyOnOperator);
+        await Assert.That(keyResponse.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task EngineOutageMidResolutionAnswersCleanEnvelopeNotAnUnhandledException()
+    {
+        // Private fixture: its wire to the engine gets severed while the auth app
+        // keeps serving, so every store read — key lookup, instance fetch — fails
+        // mid-resolution exactly like a network outage to the engine.
+        var service = await AuthServiceFixture.StartAsync();
+        try
+        {
+            var (_, slug, key) = await service.CreateInstanceAsync("engfail-" + Guid.NewGuid().ToString("N")[..8]);
+            service.BreakEngineConnection();
+
+            using var response = await service.Http.SendAsync(Request(HttpMethod.Get, $"/v1/{slug}/users", key));
+            await Assert.That((int)response.StatusCode).IsEqualTo(503);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
+
+            // No-header requests stay a clean 401 — no store read is attempted at all.
+            using var anonymous = await service.Http.GetAsync($"/v1/{slug}/users");
+            await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        }
+        finally
+        {
+            await service.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task UserListSurvivesAFullEnginePageOfForeignUsers()
     {
         var (service, instanceId, slug, key) = await InstanceAsync();
