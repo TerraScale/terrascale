@@ -3,6 +3,7 @@ using TerraScale.Dashboard2;
 using TerraScale.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddResponseCompression(); // Brotli + Gzip, default MIME types
 builder.Services.AddSingleton<DashboardStore>();
 builder.Services.AddSingleton<TerraBaseBackend>();
 builder.Services.AddTerraScaleEndpoints(typeof(Program).Assembly, options =>
@@ -13,6 +14,7 @@ builder.Services.AddTerraScaleEndpoints(typeof(Program).Assembly, options =>
 
 var app = builder.Build();
 
+app.UseResponseCompression();
 app.UseStaticFiles();
 app.UseMiddleware<DashboardAuthMiddleware>();
 
