@@ -1,0 +1,14 @@
+{
+  "name": "ts-dashboard-2-e2e",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "playwright": "1.63.0",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "e2e": "dotnet build ts-dashboard-2.slnx && playwright test",
+    "e2e:headed": "playwright test --headed"
+  }
+}
