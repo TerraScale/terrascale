@@ -21,7 +21,7 @@ public sealed class CreateM2mEndpoint(DashboardStore store) : EndpointWithoutReq
 
         if (name.Length == 0 || scopes.Length == 0)
         {
-            return Results.Redirect("/api-keys?create=m2m&error=" + Uri.EscapeDataString("Enter a name and at least one scope."), false, false);
+            return Results.Redirect("/api-keys?create=m2m&error=" + Uri.EscapeDataString("Enter at least one scope."), false, false);
         }
 
         var secret = store.CreateM2mCredential(name, [.. scopes], databaseId, null);

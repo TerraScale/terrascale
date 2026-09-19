@@ -9,8 +9,7 @@
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel ts-panel-20">
-        <p class="ts-access-description">@Model.OrganizationLine</p>
-        <dl class="ts-grid ts-grid-3 ts-access-margin-top-20">
+        <dl class="ts-grid ts-grid-3">
             <div class="ts-summary-term">
                 <dt>MEMBERS</dt>
                 <dd>@Model.MemberCount</dd>
@@ -39,17 +38,23 @@
                 <h2 class="ts-panel-title">Organization members</h2>
                 <p class="ts-panel-subtitle">Users returned by the TerraScale Dashboard API</p>
             </div>
-            @if (Model.Members.Count == 0)
+            @if (!Model.HasMembers)
             {
                 <div class="ts-padded">
-                    <div class="ts-empty">
-                        <span class="ts-empty-icon">@Icons.SearchX(28)</span>
-                        <span class="ts-empty-title">No members match</span>
-                        <span>Adjust the search or role filter to see another organization member.</span>
-                        @if (Model.FiltersActive)
-                        {
-                            <a class="ts-btn ts-btn-secondary" href="/access">Clear filters</a>
-                        }
+                    <div class="ts-empty-state">
+                        <div class="ts-empty-state-content">
+                            <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                            @if (Model.CanManageOrganization)
+                            {
+                                <span class="ts-empty-state-title">No members returned</span>
+                                <p class="ts-empty-state-desc">The API did not return organization members for this account.</p>
+                            }
+                            else
+                            {
+                                <span class="ts-empty-state-title">Organization owner access required</span>
+                                <p class="ts-empty-state-desc">Only organization owners can view the complete organization member list.</p>
+                            }
+                        </div>
                     </div>
                 </div>
             }
@@ -71,37 +76,58 @@
                             </select>
                         </div>
                     </form>
-                    <div class="ts-table-wrap ts-table-flush">
-                        <table class="ts-table">
-                            <thead>
-                                <tr>
-                                    <th>Member</th>
-                                    <th>User ID</th>
-                                    <th>Organization role</th>
-                                    <th>Joined</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var member in Model.Members)
+                    @if (Model.Members.Count == 0)
+                    {
+                        <div class="ts-padded">
+                            <div class="ts-empty-state">
+                                <div class="ts-empty-state-content">
+                                    <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                                    <span class="ts-empty-state-title">No members match</span>
+                                    <p class="ts-empty-state-desc">Adjust the search or role filter to see another organization member.</p>
+                                </div>
+                                @if (Model.FiltersActive)
                                 {
-                                    <tr>
-                                        <td>
-                                            <div class="ts-access-member-cell">
-                                                <span class="ts-access-avatar" aria-hidden="true">@member.Initials</span>
-                                                <div class="ts-access-identity">
-                                                    <div class="ts-access-member-name">@(member.DisplayName.Length > 0 ? member.DisplayName : member.Email)</div>
-                                                    <div class="ts-access-member-email">@member.Email</div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td><code class="ts-access-mono-meta">@member.Id</code></td>
-                                        <td><span class="ts-badge @(member.IsOrganizationOwner ? "ts-badge-success" : "ts-badge-neutral")">@member.RoleLabel</span></td>
-                                        <td><span class="ts-access-meta-text">@member.JoinedAtText</span></td>
-                                    </tr>
+                                    <div class="ts-empty-state-action">
+                                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/access">Clear filters</a>
+                                    </div>
                                 }
-                            </tbody>
-                        </table>
-                    </div>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="ts-table-wrap ts-table-flush">
+                            <table class="ts-table">
+                                <thead>
+                                    <tr>
+                                        <th>Member</th>
+                                        <th>User ID</th>
+                                        <th>Organization role</th>
+                                        <th>Joined</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var member in Model.Members)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <div class="ts-access-member-cell">
+                                                    <span class="ts-access-avatar" aria-hidden="true">@member.Initials</span>
+                                                    <div class="ts-access-identity">
+                                                        <div class="ts-access-member-name">@(member.DisplayName.Length > 0 ? member.DisplayName : member.Email)</div>
+                                                        <div class="ts-access-member-email">@member.Email</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td><code class="ts-access-mono-meta">@member.Id</code></td>
+                                            <td><span class="ts-badge @(member.IsOrganizationOwner ? "ts-badge-success" : "ts-badge-neutral")">@member.RoleLabel</span></td>
+                                            <td><span class="ts-access-meta-text">@member.JoinedAtText</span></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
                 </div>
             }
         </section>
@@ -125,21 +151,47 @@
                         <div class="ts-stack-lg">
                             <div class="ts-stack-sm">
                                 <h4 class="ts-access-claim-title">@Icons.ShieldCheck(15) Roles</h4>
-                                <div class="ts-access-claim-values">
-                                    @foreach (var role in Model.Roles)
-                                    {
-                                        <span class="ts-badge ts-badge-neutral">@role</span>
-                                    }
-                                </div>
+                                @if (Model.Roles.Count == 0)
+                                {
+                                    <div class="ts-empty-state">
+                                        <div class="ts-empty-state-content">
+                                            <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                                            <span class="ts-empty-state-title">No roles returned</span>
+                                            <p class="ts-empty-state-desc">No claim values were returned.</p>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="ts-access-claim-values">
+                                        @foreach (var role in Model.Roles)
+                                        {
+                                            <span class="ts-badge ts-badge-neutral">@role</span>
+                                        }
+                                    </div>
+                                }
                             </div>
                             <div class="ts-stack-sm">
                                 <h4 class="ts-access-claim-title">@Icons.ShieldCheck(15) Permissions</h4>
-                                <div class="ts-access-claim-values">
-                                    @foreach (var permission in Model.Permissions)
-                                    {
-                                        <span class="ts-badge ts-badge-neutral">@permission</span>
-                                    }
-                                </div>
+                                @if (Model.Permissions.Count == 0)
+                                {
+                                    <div class="ts-empty-state">
+                                        <div class="ts-empty-state-content">
+                                            <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                                            <span class="ts-empty-state-title">No permissions returned</span>
+                                            <p class="ts-empty-state-desc">No claim values were returned.</p>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="ts-access-claim-values">
+                                        @foreach (var permission in Model.Permissions)
+                                        {
+                                            <span class="ts-badge ts-badge-neutral">@permission</span>
+                                        }
+                                    </div>
+                                }
                             </div>
                             <div class="ts-access-status-success">
                                 @Icons.ShieldCheck(16)
@@ -163,10 +215,12 @@
         @if (Model.Projects.Count == 0)
         {
             <div class="ts-padded">
-                <div class="ts-empty">
-                    <span class="ts-empty-icon">@Icons.SearchX(28)</span>
-                    <span class="ts-empty-title">No projects returned</span>
-                    <span>The API did not return accessible projects for this organization.</span>
+                <div class="ts-empty-state">
+                    <div class="ts-empty-state-content">
+                        <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                        <span class="ts-empty-state-title">No projects returned</span>
+                        <p class="ts-empty-state-desc">The API did not return accessible projects for this organization.</p>
+                    </div>
                 </div>
             </div>
         }
@@ -216,141 +270,157 @@
             <p class="ts-panel-subtitle">Persistent access mutations</p>
         </div>
         <div class="ts-stack-20 ts-padded">
-            <div>
-                <div class="ts-stack-md">
-                    <form class="ts-access-invite-form" method="post" action="/api/v1/access/invitations">
-                        <div class="ts-field">
-                            <label class="ts-label" for="invite-email">Invite email</label>
-                            <input class="ts-input" id="invite-email" name="email" type="email" placeholder="teammate@example.com" required autofocus="@(createIntent ? "" : null)" />
-                        </div>
-                        <button class="ts-btn ts-btn-primary ts-btn-lg ts-access-invite-submit" type="submit">
-                            @Icons.MailPlus(16)
-                            Send invite
-                        </button>
-                    </form>
+            @if (Model.CanManageOrganization)
+            {
+                <div>
+                    <div class="ts-stack-md">
+                        <form class="ts-access-invite-form" method="post" action="/api/v1/access/invitations">
+                            <div class="ts-field">
+                                <label class="ts-label" for="invite-email">Invite email</label>
+                                <input class="ts-input" id="invite-email" name="email" type="email" placeholder="teammate@example.com" required autofocus="@(createIntent ? "" : null)" />
+                            </div>
+                            <button class="ts-btn ts-btn-primary ts-btn-lg ts-access-invite-submit" type="submit">
+                                @Icons.MailPlus(16)
+                                Send invite
+                            </button>
+                        </form>
+                    </div>
                 </div>
-            </div>
-
-            <section class="ts-grid ts-grid-two">
-                <div class="ts-stack-md">
-                    <h2 class="ts-access-section-heading">Pending invitations</h2>
-                    @if (Model.Invitations.Count == 0)
-                    {
-                        <div class="ts-empty">
-                            <span class="ts-empty-icon">@Icons.SearchX(28)</span>
-                            <span class="ts-empty-title">No invitations</span>
-                            <span>No organization invitations are pending or recently changed.</span>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="ts-table-wrap ts-table-flush">
-                            <table class="ts-table">
-                                <thead>
-                                    <tr>
-                                        <th>Invitee</th>
-                                        <th>Role</th>
-                                        <th>Status</th>
-                                        <th aria-label="Actions"></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach (var invitation in Model.Invitations)
-                                    {
-                                        <tr>
-                                            <td>
-                                                <div class="ts-access-min-width">
-                                                    <p class="ts-access-truncate ts-access-text-strong">@invitation.Email</p>
-                                                    <p class="ts-meta">Expires @invitation.ExpiresAtText</p>
-                                                </div>
-                                            </td>
-                                            <td><span class="ts-badge ts-badge-neutral">@invitation.Role</span></td>
-                                            <td><span class="ts-badge @(invitation.Status == "pending" ? "ts-badge-info" : "ts-badge-neutral")">@invitation.StatusLabel</span></td>
-                                            <td>
-                                                @if (invitation.Status == "pending")
-                                                {
-                                                    <form method="post" action="/api/v1/access/invitations/@invitation.InvitationId/resend">
-                                                        <button class="ts-btn ts-btn-ghost ts-access-compact-action" type="submit" title="Resend invitation for @invitation.Email">
-                                                            @Icons.Mail(15)
-                                                            Resend
-                                                        </button>
-                                                    </form>
-                                                    <form method="post" action="/api/v1/access/invitations/@invitation.InvitationId/revoke">
-                                                        <button class="ts-btn ts-btn-ghost ts-access-compact-action" type="submit" title="Cancel invitation for @invitation.Email">
-                                                            @Icons.Trash2(15)
-                                                            Cancel
-                                                        </button>
-                                                    </form>
-                                                }
-                                            </td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        </div>
-                    }
+            }
+            else if (!Model.CanManageProject)
+            {
+                <div class="ts-alert ts-alert-info" role="status">
+                    <span class="ts-alert-title">@Icons.Info(16) Owner access required</span>
+                    <span class="ts-alert-body">Organization and project owners manage invitations, roles, and project access.</span>
                 </div>
+            }
 
-                <div class="ts-stack-md">
-                    <h2 class="ts-access-section-heading">Project team</h2>
-                    @if (Model.TeamMembers.Count == 0)
+            @if (Model.CanManageOrganization || Model.CanManageProject)
+            {
+                <section class="ts-grid ts-grid-two">
+                    @if (Model.CanManageOrganization)
                     {
-                        <div class="ts-empty">
-                            <span class="ts-empty-icon">@Icons.SearchX(28)</span>
-                            <span class="ts-empty-title">No project team members</span>
-                            <span>No users currently have project access through Access roles.</span>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="ts-table-wrap ts-table-flush">
-                            <table class="ts-table">
-                                <thead>
-                                    <tr>
-                                        <th>Member</th>
-                                        <th>Role</th>
-                                        <th>Joined</th>
-                                        <th aria-label="Actions"></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach (var member in Model.TeamMembers)
-                                    {
-                                        <tr>
-                                            <td>
-                                                <div class="ts-access-min-width">
-                                                    <p class="ts-access-truncate ts-access-text-strong">@(member.DisplayName.Length > 0 ? member.DisplayName : member.Email)</p>
-                                                    <p class="ts-access-truncate ts-meta">@member.Email</p>
-                                                </div>
-                                            </td>
-                                            <td>
-                                                <form method="post" action="/api/v1/access/members/@member.UserId/role">
-                                                    <select class="ts-select" aria-label="Role for @member.Email" name="role">
-                                                        @foreach (var option in new[] { "owner", "member", "viewer" })
+                        <div class="ts-stack-md">
+                            <h2 class="ts-access-section-heading">Pending invitations</h2>
+                            @if (Model.Invitations.Count == 0)
+                            {
+                                <div class="ts-empty-state">
+                                    <div class="ts-empty-state-content">
+                                        <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                                        <span class="ts-empty-state-title">No invitations</span>
+                                        <p class="ts-empty-state-desc">No organization invitations are pending or recently changed.</p>
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="ts-table-wrap ts-table-flush">
+                                    <table class="ts-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Invitee</th>
+                                                <th>Role</th>
+                                                <th>Status</th>
+                                                <th aria-label="Actions"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var invitation in Model.Invitations)
+                                            {
+                                                <tr>
+                                                    <td>
+                                                        <div class="ts-access-min-width">
+                                                            <p class="ts-access-truncate ts-access-text-strong">@invitation.Email</p>
+                                                            <p class="ts-meta">Expires @invitation.ExpiresAtText</p>
+                                                        </div>
+                                                    </td>
+                                                    <td><span class="ts-badge ts-badge-neutral">@invitation.Role</span></td>
+                                                    <td><span class="ts-badge @(invitation.Status == "pending" ? "ts-badge-info" : "ts-badge-neutral")">@invitation.StatusLabel</span></td>
+                                                    <td>
+                                                        @if (invitation.Status == "pending")
                                                         {
-                                                            <option value="@option" selected="@(member.Role == option ? "selected" : null)">@(option == "owner" ? "Owner" : option == "member" ? "Member" : "Viewer")</option>
+                                                            <form method="post" action="/api/v1/access/invitations/@invitation.InvitationId/revoke">
+                                                                <button class="ts-btn ts-btn-ghost ts-access-compact-action" type="submit" title="Cancel invitation for @invitation.Email">
+                                                                    @Icons.Trash2(15)
+                                                                    Cancel
+                                                                </button>
+                                                            </form>
                                                         }
-                                                    </select>
-                                                    <button class="ts-btn ts-btn-secondary ts-btn-sm ts-access-role-apply" type="submit">Apply</button>
-                                                </form>
-                                            </td>
-                                            <td><span class="ts-muted ts-ui">@member.JoinedAtText</span></td>
-                                            <td>
-                                                <form method="post" action="/api/v1/access/members/@member.UserId/revoke">
-                                                    <button class="ts-btn ts-btn-ghost ts-access-compact-action" type="submit" title="Revoke project access for @member.Email">
-                                                        @Icons.Trash2(15)
-                                                        Revoke
-                                                    </button>
-                                                </form>
-                                            </td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
                         </div>
                     }
-                </div>
-            </section>
+
+                    @if (Model.CanManageProject)
+                    {
+                        <div class="ts-stack-md">
+                            <h2 class="ts-access-section-heading">Project team</h2>
+                            @if (Model.TeamMembers.Count == 0)
+                            {
+                                <div class="ts-empty-state">
+                                    <div class="ts-empty-state-content">
+                                        <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                                        <span class="ts-empty-state-title">No project team members</span>
+                                        <p class="ts-empty-state-desc">No users currently have project access through Access roles.</p>
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="ts-table-wrap ts-table-flush">
+                                    <table class="ts-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Member</th>
+                                                <th>Role</th>
+                                                <th>Joined</th>
+                                                <th aria-label="Actions"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var member in Model.TeamMembers)
+                                            {
+                                                <tr>
+                                                    <td>
+                                                        <div class="ts-access-min-width">
+                                                            <p class="ts-access-truncate ts-access-text-strong">@(member.DisplayName.Length > 0 ? member.DisplayName : member.Email)</p>
+                                                            <p class="ts-access-truncate ts-meta">@member.Email</p>
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <form method="post" action="/api/v1/access/members/@member.UserId/role">
+                                                            <select class="ts-select" aria-label="Role for @member.Email" name="role" data-on-change="evt.target.closest('form').requestSubmit()">
+                                                                @foreach (var option in new[] { "owner", "member", "viewer" })
+                                                                {
+                                                                    <option value="@option" selected="@(member.Role == option ? "selected" : null)">@(option == "owner" ? "Owner" : option == "member" ? "Member" : "Viewer")</option>
+                                                                }
+                                                            </select>
+                                                        </form>
+                                                    </td>
+                                                    <td><span class="ts-muted ts-ui">@member.JoinedAtText</span></td>
+                                                    <td>
+                                                        <form method="post" action="/api/v1/access/members/@member.UserId/revoke">
+                                                            <button class="ts-btn ts-btn-ghost ts-access-compact-action" type="submit" title="Revoke project access for @member.Email">
+                                                                @Icons.Trash2(15)
+                                                                Revoke
+                                                            </button>
+                                                        </form>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+                    }
+                </section>
+            }
         </div>
     </section>
 </div>

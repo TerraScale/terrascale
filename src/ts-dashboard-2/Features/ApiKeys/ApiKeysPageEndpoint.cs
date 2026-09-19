@@ -47,6 +47,7 @@ public sealed class ApiKeysPageEndpoint(DashboardStore store)
             DatabaseId: filters.DatabaseId,
             CreateKind: query["create"].ToString() is ("key" or "m2m") ? query["create"].ToString() : null,
             Error: query["error"].ToString() is { Length: > 0 } e ? e : null,
+            LoadError: Store.DatabaseListError,
             Toast: query["toast"].ToString() is { Length: > 0 } t ? t : null,
             SecretId: secretView?.CredentialId,
             SecretName: secretView?.Name,
