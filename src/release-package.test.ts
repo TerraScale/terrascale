@@ -155,12 +155,12 @@ test("release E2E configuration guard fails closed before skip-capable tests", a
     TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID: "01J00000000000000000000002",
   };
 
-  await assert.rejects(run("node", [guard], { env: { PATH: environment.PATH } }), /Release E2E configuration is missing/u);
+  await assert.rejects(run(process.execPath, [guard], { env: { PATH: environment.PATH } }), /Release E2E configuration is missing/u);
   await assert.rejects(
-    run("node", [guard], { env: { ...environment, TERRASCALE_API_BASE_URL: "not-a-url", TERRASCALE_E2E_PROJECT_ID: "not-a-ulid" } }),
+    run(process.execPath, [guard], { env: { ...environment, TERRASCALE_API_BASE_URL: "not-a-url", TERRASCALE_E2E_PROJECT_ID: "not-a-ulid" } }),
     /Release E2E configuration is invalid: TERRASCALE_API_BASE_URL, TERRASCALE_E2E_PROJECT_ID/u,
   );
-  await run("node", [guard], { env: environment });
+  await run(process.execPath, [guard], { env: environment });
 });
 
 test("a clean SDK-only checkout runs fixture tests and installs a usable npm pack", async () => {
@@ -196,7 +196,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     await run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: checkout });
     await run("npm", ["run", "build"], { cwd: checkout });
     await run("npx", ["vitest", "run", "src/public-schema-parity.test.ts"], { cwd: checkout, env: checkoutEnvironment });
-    await run("node", ["scripts/generate-client-route-manifest.ts", "--check"], { cwd: checkout, env: checkoutEnvironment });
+    await run(process.execPath, ["scripts/generate-client-route-manifest.ts", "--check"], { cwd: checkout, env: checkoutEnvironment });
     const packed = await run("npm", ["pack", "--pack-destination", packages], { cwd: checkout });
     const tarball = path.join(packages, packed.stdout.trim().split("\n").at(-1)!);
     const listing = await run("tar", ["-tf", tarball]);
@@ -251,14 +251,14 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "@better-auth/core@1.7.2", "react@18.3.1"], { cwd: consumer });
     const journey = path.join(consumer, "packed-journey.ts");
     await writeFile(journey, packedConsumerJourney);
-    await run("node", [journey], { cwd: consumer });
+    await run(process.execPath, [journey], { cwd: consumer });
     const adapterJourney = path.join(consumer, "packed-adapters.ts");
     await writeFile(adapterJourney, packedAdapterJourney);
-    await run("node", [adapterJourney], { cwd: consumer });
-    await run("node", ["--conditions=workerd", "--conditions=browser", "--input-type=module", "--eval",
+    await run(process.execPath, [adapterJourney], { cwd: consumer });
+    await run(process.execPath, ["--conditions=workerd", "--conditions=browser", "--input-type=module", "--eval",
       "import { createTerraScaleBetterAuthAdapter } from '@terrascale/sdk/better-auth'; if (typeof createTerraScaleBetterAuthAdapter !== 'function') throw new Error('Workerd server adapter is missing');",
     ], { cwd: consumer });
-    await run("node", ["--conditions=browser", "--input-type=module", "--eval",
+    await run(process.execPath, ["--conditions=browser", "--input-type=module", "--eval",
       "import assert from 'node:assert/strict'; await assert.rejects(import('@terrascale/sdk/better-auth'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });",
     ], { cwd: consumer });
     await run(

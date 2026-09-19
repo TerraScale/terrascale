@@ -20,17 +20,17 @@ const nodeVersions = { 22: "v22.23.2", 24: "v24.20.0" } as const;
 test("release qualification mode requires its exact clean two-runtime contract", async () => {
   const qualifier = path.join(repositoryRoot, "scripts", "qualify-npm-artifact.ts");
   await assert.rejects(
-    run("node", [qualifier, "--release", "--allow-dirty"]),
+    run(process.execPath, [qualifier, "--release", "--allow-dirty"]),
     /--allow-dirty cannot be combined with --release/u,
   );
   await assert.rejects(
-    run("node", [qualifier, "--release"], {
+    run(process.execPath, [qualifier, "--release"], {
       env: { PATH: process.env.PATH ?? "" },
     }),
     /TERRASCALE_NODE_22 must name an absolute Node executable/u,
   );
   await assert.rejects(
-    run("node", [qualifier, "--release", "--node", process.execPath], {
+    run(process.execPath, [qualifier, "--release", "--node", process.execPath], {
       env: {
         PATH: process.env.PATH ?? "",
         TERRASCALE_NODE_22: process.execPath,
@@ -482,7 +482,7 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
   }
 
   async function verify(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
-    await run("node", [
+    await run(process.execPath, [
       path.join(checkout, "scripts", "promote-npm-candidate.ts"),
       "--build-receipt", buildReceiptPath,
       "--artifacts", candidateDirectory,
@@ -515,7 +515,7 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
 
 async function verifyIsolatedPublish(fixture: CandidateFixture, workspace: string): Promise<void> {
   const { availabilityRecord, publishRecord } = fixture.reviewedNpm;
-  await run("node", [
+  await run(process.execPath, [
     path.join(fixture.checkout, "scripts", "promote-npm-candidate.ts"),
     "--build-receipt", fixture.buildReceiptPath,
     "--artifacts", fixture.candidateDirectory,
