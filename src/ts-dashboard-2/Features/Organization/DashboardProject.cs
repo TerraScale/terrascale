@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace TerraScale.Dashboard2;
 
 public sealed record DashboardProject(
@@ -7,4 +9,7 @@ public sealed record DashboardProject(
     string Region,
     string CreatedAt,
     bool IsDefault = false,
-    string Status = "Active");
+    string Status = "Active",
+    string? Slug = null,
+    string BackupRegion = "",
+    ImmutableArray<string> Regions = default);
