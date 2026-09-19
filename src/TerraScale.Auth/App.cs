@@ -34,6 +34,8 @@ public static class App
         builder.Services.AddSingleton<AuthStore>(provider => new AuthStore(provider.GetRequiredService<TerraScaleClient>(), options.Database));
         builder.Services.AddSingleton<KeyRing>();
         builder.Services.AddSingleton<InstanceResolver>();
+        builder.Services.AddSingleton<Users.SessionService>();
+        builder.Services.AddSingleton<Email.IEmailSender, Email.LoggingEmailSender>();
         return (builder, options);
     }
 

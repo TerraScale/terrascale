@@ -3,7 +3,9 @@
   <PropertyGroup>
     <RootNamespace>TerraScale.Auth</RootNamespace>
     <!-- ponytail: sibling-checkout source reference; swap to a published nupkg feed when TerraScale.DotNet ships one -->
-    <TerraScaleSdkProject Condition="'$(TerraScaleSdkProject)' == ''">$(MSBuildThisFileDirectory)..\..\..\ts-dotnet\src\TerraScale.DotNet\TerraScale.DotNet.csproj</TerraScaleSdkProject>
+    <TerraScaleSdkProject Condition="'$(TerraScaleSdkProject)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\ts-dotnet\src\TerraScale.DotNet\TerraScale.DotNet.csproj')">$(MSBuildThisFileDirectory)..\..\..\ts-dotnet\src\TerraScale.DotNet\TerraScale.DotNet.csproj</TerraScaleSdkProject>
+    <!-- Worktree layout: .claude/worktrees/&lt;wt&gt;/src/... needs six levels up. -->
+    <TerraScaleSdkProject Condition="'$(TerraScaleSdkProject)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\ts-dotnet\src\TerraScale.DotNet\TerraScale.DotNet.csproj')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\ts-dotnet\src\TerraScale.DotNet\TerraScale.DotNet.csproj</TerraScaleSdkProject>
     <EnableSdkContainerSupport>true</EnableSdkContainerSupport>
     <ContainerRepository>terrascale/ts-auth</ContainerRepository>
     <ContainerPort>8080</ContainerPort>

@@ -5,7 +5,8 @@
     <IsPackable>false</IsPackable>
     <IsTestingPlatformApplication>true</IsTestingPlatformApplication>
     <!-- The embedded TerraBase engine reference (test-only) resolves the sibling terrabase checkout. -->
-    <TerraBaseEngineProject Condition="'$(TerraBaseEngineProject)' == ''">$(MSBuildThisFileDirectory)..\..\..\terrabase\src\TerraBase\TerraBase.csproj</TerraBaseEngineProject>
+    <TerraBaseEngineProject Condition="'$(TerraBaseEngineProject)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\terrabase\src\TerraBase\TerraBase.csproj')">$(MSBuildThisFileDirectory)..\..\..\terrabase\src\TerraBase\TerraBase.csproj</TerraBaseEngineProject>
+    <TerraBaseEngineProject Condition="'$(TerraBaseEngineProject)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\terrabase\src\TerraBase\TerraBase.csproj')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\terrabase\src\TerraBase\TerraBase.csproj</TerraBaseEngineProject>
   </PropertyGroup>
 
   <ItemGroup>
