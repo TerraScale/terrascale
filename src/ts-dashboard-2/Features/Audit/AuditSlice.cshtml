@@ -11,25 +11,36 @@
         query.Add("range=" + range);
         return "/audit?" + string.Join("&", query);
     }
+    string ExportHref(string format)
+    {
+        var query = new System.Collections.Generic.List<string> { "format=" + format };
+        if (Model.Action != "all") { query.Add("action=" + Uri.EscapeDataString(Model.Action)); }
+        if (Model.Search.Length > 0) { query.Add("search=" + Uri.EscapeDataString(Model.Search)); }
+        if (Model.Severity != "all") { query.Add("severity=" + Uri.EscapeDataString(Model.Severity)); }
+        query.Add("range=" + Model.Range);
+        return "/audit/export?" + string.Join("&", query);
+    }
     string Percent(int value, int total) => total is 0 ? "0" : Math.Round(value * 100.0 / total).ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
-    <section class="ts-panel">
+    <section class="ts-panel ts-panel-20">
         <div class="ts-row-between ts-audit-intro">
             <div class="ts-stack-sm">
                 <h2 class="ts-audit-title">Audit</h2>
-                <p class="ts-muted">Project control-plane events loaded from persisted TerraScale metadata. Loaded @DashboardStore.FormatUtcDateTime("2026-09-18T10:00:00Z").</p>
+                <p class="ts-muted">Project control-plane events loaded from persisted TerraScale metadata. Loaded @Model.LoadedAtText.</p>
                 <div class="ts-row ts-meta">
                     @Icons.ShieldCheck(14)
                     <span>Retention @Model.RetentionDays days@(Model.OldestTime is { } oldest ? $" · earliest event {DashboardStore.FormatUtcDateTime(oldest)}" : "")</span>
                 </div>
             </div>
             <div class="ts-audit-metrics">
-                <div class="ts-metric"><span class="ts-muted">Events</span><span class="ts-metric-inline">@Model.Rows.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
-                <div class="ts-metric"><span class="ts-muted">High risk</span><span class="ts-metric-inline ts-text-danger">@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
-                <div class="ts-metric"><span class="ts-muted">Warnings</span><span class="ts-metric-inline ts-text-warning">@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
-                <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/audit/export?format=csv">@Icons.Download(14) Export audit</a>
+                <div class="ts-metric"><span class="ts-muted">Events</span><span class="ts-audit-metric-inline">@Model.Rows.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
+                <div class="ts-metric"><span class="ts-muted">High risk</span><span class="ts-audit-metric-inline ts-text-danger">@Model.Critical.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
+                <div class="ts-metric"><span class="ts-muted">Warnings</span><span class="ts-audit-metric-inline ts-text-warning">@Model.Warn.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span></div>
+                <div class="ts-audit-export-wrap">
+                    <button class="ts-btn ts-btn-primary ts-btn-lg" type="button" @(Model.Rows.Count == 0 ? "disabled" : null) data-on-click="document.querySelector('#audit-export-dialog').showModal()">@Icons.Download(16) Export audit</button>
+                </div>
             </div>
         </div>
     </section>
@@ -38,7 +49,7 @@
         <div class="ts-panel-header ts-row-between">
             <div>
                 <h2 class="ts-panel-title">Recent activity</h2>
-                <p class="ts-panel-subtitle">Project @(Model.ProjectId.Length > 12 ? Model.ProjectId[..12] + "…" : Model.ProjectId) · audit events</p>
+                <p class="ts-panel-subtitle">Project @(Model.ProjectId.Length == 0 ? "Current project" : Model.ProjectId.Length <= 12 ? Model.ProjectId : Model.ProjectId[..6] + "..." + Model.ProjectId[^4..]) · audit events</p>
             </div>
             <a class="ts-btn ts-btn-ghost ts-btn-sm" href="/audit">@Icons.Filter(16) Reset filters</a>
         </div>
@@ -72,7 +83,7 @@
             </div>
         </form>
 
-        <div class="ts-row-between">
+        <div class="ts-row-between ts-audit-range-row">
             <div class="ts-row ts-muted">
                 @Icons.Calendar(15)
                 <span>Range</span>
@@ -88,16 +99,18 @@
 
         @if (Model.Rows.Count is 0)
         {
-            <div class="ts-empty">
-                <span class="ts-empty-icon">@Icons.ScrollText(28)</span>
-                <span class="ts-empty-title">No audit events</span>
-                <span class="ts-meta">The TerraScale Dashboard API returned no persisted audit events matching this view.</span>
+            <div class="ts-padded">
+                <div class="ts-empty">
+                    <span class="ts-empty-icon">@Icons.SearchX(16)</span>
+                    <span class="ts-empty-title">No audit events</span>
+                    <span class="ts-empty-meta">The TerraScale Dashboard API returned no persisted audit events matching this view.</span>
+                </div>
             </div>
         }
         else
         {
-            <div class="ts-table-wrap">
-                <table class="ts-table">
+            <div class="ts-table-wrap ts-audit-table-wrap">
+                <table class="ts-table ts-audit-table">
                     <thead>
                         <tr>
                             <th>Timestamp</th>
@@ -112,16 +125,16 @@
                         @foreach (var row in Model.Rows)
                         {
                             <tr>
-                                <td class="ts-table-mono ts-nowrap"><time datetime="@row.Time">@row.TimeLabel</time></td>
+                                <td class="ts-table-mono ts-nowrap-meta"><time datetime="@row.Time">@row.TimeLabel</time></td>
                                 <td>
-                                    <div class="ts-stack-xs">
+                                    <div class="ts-stack-sm">
                                         <span class="ts-table-strong">@row.Actor</span>
                                         <span class="ts-meta">@(row.ActorType == "service" ? "Service" : "User")</span>
                                     </div>
                                 </td>
                                 <td><span class="ts-row ts-row-tight ts-muted">@(Icon(row.ActionIcon)) <code class="ts-mono">@row.Action</code></span></td>
                                 <td>@(row.Target.Length > 0 ? row.Target : "-")</td>
-                                <td class="ts-table-mono">@row.Source</td>
+                                <td class="ts-table-mono ts-nowrap-meta">@row.Source</td>
                                 <td>
                                     <div class="ts-row ts-row-tight">
                                         <span class="ts-badge ts-badge-@row.SeverityTone">@row.SeverityLabel</span>
@@ -149,14 +162,14 @@
                 <span class="ts-badge ts-badge-info">@($"{Model.RetentionDays}d")</span>
             </div>
             <div class="ts-stack-lg">
-                <div class="ts-stack-md">
-                    <div class="ts-metric"><span class="ts-muted">Window covered</span><span class="ts-metric-inline">@Model.RetentionDays rolling days</span></div>
-                    <div class="ts-metric"><span class="ts-muted">Oldest retained event</span><span class="ts-metric-inline">@(Model.OldestTime is { } oldestRetained ? DashboardStore.FormatUtcDateTime(oldestRetained) : "None")</span></div>
-                    <div class="ts-metric"><span class="ts-muted">Export formats</span><span class="ts-metric-inline">CSV, JSON</span></div>
+                <div class="ts-audit-retention-well">
+                    <div class="ts-metric"><span class="ts-muted">Window covered</span><span class="ts-audit-metric-inline">@Model.RetentionDays rolling days</span></div>
+                    <div class="ts-metric"><span class="ts-muted">Oldest retained event</span><span class="ts-audit-metric-inline">@(Model.OldestTime is { } oldestRetained ? DashboardStore.FormatUtcDateTime(oldestRetained) : "None")</span></div>
+                    <div class="ts-metric"><span class="ts-muted">Export formats</span><span class="ts-audit-metric-inline">CSV, JSON</span></div>
                 </div>
                 <div class="ts-row">
-                    <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/audit/export?format=csv">Export CSV</a>
-                    <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/audit/export?format=json">Export JSON</a>
+                    <a class="ts-btn ts-btn-secondary ts-btn-lg" @(Model.Rows.Count == 0 ? "disabled" : null) href="@ExportHref("csv")">@Icons.Download(16) Export CSV</a>
+                    <a class="ts-btn ts-btn-secondary ts-btn-lg" @(Model.Rows.Count == 0 ? "disabled" : null) href="@ExportHref("json")">@Icons.Download(16) Export JSON</a>
                 </div>
             </div>
         </div>
@@ -192,4 +205,28 @@
         </div>
     </section>
 </div>
+
+<dialog class="ts-dialog" id="audit-export-dialog">
+    <div class="ts-dialog-content" data-signals="{ auditExportFormat: 'csv' }">
+        <div class="ts-dialog-header">
+            <h3 class="ts-dialog-title">Export audit log</h3>
+            <p class="ts-dialog-description">@Model.Rows.Count event@(Model.Rows.Count == 1 ? "" : "s") ready to export.</p>
+        </div>
+        <div class="ts-audit-export-grid">
+            <button type="button" class="ts-btn ts-btn-secondary ts-audit-export-option" data-class:ts-audit-export-option-active="$auditExportFormat === 'csv'" data-on-click="$auditExportFormat = 'csv'">
+                <span class="ts-audit-export-option-label">@Icons.ScrollText(16) CSV</span>
+                <span class="ts-audit-export-option-description">Spreadsheet-ready rows with all event fields.</span>
+            </button>
+            <button type="button" class="ts-btn ts-btn-secondary ts-audit-export-option" data-class:ts-audit-export-option-active="$auditExportFormat === 'json'" data-on-click="$auditExportFormat = 'json'">
+                <span class="ts-audit-export-option-label">@Icons.ScrollText(16) JSON</span>
+                <span class="ts-audit-export-option-description">Structured records for pipeline ingestion.</span>
+            </button>
+        </div>
+        <div class="ts-dialog-footer">
+            <button type="button" class="ts-btn ts-btn-ghost ts-btn-lg" data-on-click="document.querySelector('#audit-export-dialog').close()">Cancel</button>
+            <a class="ts-btn ts-btn-primary ts-btn-lg" data-show="$auditExportFormat === 'csv'" href="@ExportHref("csv")">@Icons.Download(16) Export CSV</a>
+            <a class="ts-btn ts-btn-primary ts-btn-lg" data-show="$auditExportFormat === 'json'" href="@ExportHref("json")">@Icons.Download(16) Export JSON</a>
+        </div>
+    </div>
+</dialog>
 @ShellHtml.Bottom(shell)

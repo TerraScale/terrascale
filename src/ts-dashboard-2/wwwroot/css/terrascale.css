@@ -436,6 +436,8 @@ single-selector rules may stay on one line.
     display: flex;
     flex-direction: column;
     gap: var(--ts-xs);
+    border-bottom: 1px solid var(--ts-line);
+    padding-bottom: var(--ts-lg);
   }
 
   .ts-panel-title {
@@ -445,7 +447,8 @@ single-selector rules may stay on one line.
   }
 
   .ts-panel-subtitle {
-    font-size: var(--ts-fs-meta);
+    font-size: var(--ts-fs-body);
+    line-height: 1.6;
     color: var(--ts-ink-muted);
   }
 
@@ -1027,26 +1030,45 @@ single-selector rules may stay on one line.
     font-variant-numeric: tabular-nums;
   }
 
+  /* v1 EmptyState: dashed tinted box, 32px icon box, 14px title/meta. */
   .ts-empty {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: var(--ts-sm);
-    padding: var(--ts-xxxl) var(--ts-lg);
+    padding: var(--ts-xl);
     text-align: center;
     color: var(--ts-ink-muted);
+    border: 1px dashed var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: color-mix(in oklab, var(--ts-surface-muted) 30%, transparent);
   }
 
   .ts-empty-title {
-    font-size: var(--ts-fs-panel-title);
-    font-weight: var(--ts-fw-semibold);
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-medium);
+    letter-spacing: -0.01em;
     color: var(--ts-ink);
   }
 
   .ts-empty-icon {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    color: var(--ts-ink);
+    margin-bottom: var(--ts-sm);
+  }
+
+  .ts-empty-meta {
+    font-size: var(--ts-fs-ui);
     color: var(--ts-ink-muted);
-    opacity: 0.7;
+    line-height: 1.5;
+    max-width: 24rem;
   }
 
   /* 10. Tabs, dialogs, menus, tooltips, toasts =============================== */
@@ -3010,8 +3032,9 @@ single-selector rules may stay on one line.
 
   /* Audit intro: title + metric well on the right. */
   .ts-audit-title {
-    font-size: var(--ts-fs-page-title);
-    font-weight: var(--ts-fw-bold);
+    font-size: 24px;
+    font-weight: var(--ts-fw-semibold);
+    line-height: 32px;
   }
 
   .ts-audit-intro > div {
@@ -3020,8 +3043,8 @@ single-selector rules may stay on one line.
 
   .ts-audit-metrics {
     display: grid;
-    gap: var(--ts-sm);
-    padding: var(--ts-md);
+    gap: var(--ts-md);
+    padding: var(--ts-lg);
     border: 1px solid var(--ts-line);
     border-radius: var(--ts-radius-panel);
     background-color: var(--ts-surface-muted);
@@ -3033,6 +3056,8 @@ single-selector rules may stay on one line.
     gap: var(--ts-md);
     grid-template-columns: minmax(0, 1fr);
     align-items: end;
+    padding: var(--ts-lg);
+    border-bottom: 1px solid var(--ts-line);
   }
 
   /* ===== Feature: Access ===== */
@@ -3403,7 +3428,7 @@ single-selector rules may stay on one line.
   }
 
   @media (min-width: 64rem) {
-    .ts-audit-form { grid-template-columns: 2fr 1fr 1fr auto; }
+    .ts-audit-form { grid-template-columns: minmax(0, 1fr) auto auto auto; }
   }
 
   .ts-audit-form-actions {
@@ -3413,46 +3438,56 @@ single-selector rules may stay on one line.
 
   .ts-audit-two-pane { gap: var(--ts-lg); }
 
-  @media (min-width: 64rem) {
+  @media (min-width: 80rem) {
     .ts-audit-two-pane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
   .ts-severity-box {
     display: grid;
     gap: var(--ts-sm);
+    padding: var(--ts-md);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
   }
 
-  /* Range filter chip group. */
+  .ts-severity-box .ts-row-between {
+    font-size: var(--ts-fs-ui);
+  }
+
+  /* Range filter chip group (v1 filterGroup/filterLink). */
   .ts-filter-group {
     display: inline-flex;
-    gap: 2px;
-    padding: 2px;
+    gap: var(--ts-xs);
+    padding: var(--ts-xs);
     border-radius: var(--ts-radius-control);
     border: 1px solid var(--ts-line);
-    background-color: var(--ts-surface);
+    background-color: var(--ts-surface-muted);
   }
 
   .ts-filter-link {
     display: inline-flex;
     align-items: center;
-    height: 26px;
-    padding: 0 var(--ts-sm);
-    border-radius: var(--ts-radius-badge);
+    height: 28px;
+    padding: 0 10px;
+    border-radius: var(--ts-radius-control);
     color: var(--ts-ink-muted);
     font-size: var(--ts-fs-meta);
     font-weight: var(--ts-fw-medium);
-    font-family: var(--ts-font-mono);
+    font-family: var(--ts-font-sans);
     text-decoration: none;
-    transition: background-color var(--ts-t-control) var(--ts-ease), color var(--ts-t-control) var(--ts-ease);
+    transition: background-color var(--ts-t-control) var(--ts-ease), color var(--ts-t-control) var(--ts-ease), box-shadow var(--ts-t-control) var(--ts-ease);
   }
 
   .ts-filter-link:hover {
     color: var(--ts-ink);
+    background-color: var(--ts-surface);
     text-decoration: none;
   }
 
   .ts-filter-active {
-    background-color: var(--ts-surface-muted);
+    background-color: var(--ts-surface);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
     color: var(--ts-ink);
   }
 
@@ -3467,20 +3502,23 @@ single-selector rules may stay on one line.
     font-weight: var(--ts-fw-semibold);
   }
 
-  /* Notification inbox rows. */
+  /* Notification inbox rows (v1 Card column stack + notification styles). */
   .ts-notification {
     display: flex;
+    flex-direction: column;
     align-items: flex-start;
     gap: var(--ts-md);
     padding: var(--ts-md);
-    border-radius: var(--ts-radius-panel);
+    min-height: var(--ts-control-h);
+    border-radius: var(--ts-radius-control);
     border: 1px solid var(--ts-line);
-    background-color: var(--ts-surface);
+    background-color: var(--ts-surface-muted);
     box-shadow: var(--ts-card-edge);
   }
 
   .ts-notification-unread {
-    border-color: color-mix(in oklab, var(--ts-accent) 30%, transparent);
+    border-color: color-mix(in oklab, var(--ts-accent) 25%, transparent);
+    background-color: color-mix(in oklab, var(--ts-accent) 5%, transparent);
   }
 
   .ts-notification-icon {
@@ -3488,17 +3526,13 @@ single-selector rules may stay on one line.
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
+    margin-top: var(--ts-xs);
     border-radius: var(--ts-radius-control);
     border: 1px solid var(--ts-line);
-    background-color: var(--ts-surface-muted);
+    background-color: var(--ts-surface);
     color: var(--ts-ink-muted);
-  }
-
-  .ts-notification-unread .ts-notification-icon {
-    color: var(--ts-accent-soft);
-    border-color: color-mix(in oklab, var(--ts-accent) 24%, transparent);
   }
 
   .ts-notification-body {
@@ -3511,11 +3545,13 @@ single-selector rules may stay on one line.
 
   .ts-notification-title {
     font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-semibold);
     color: var(--ts-ink);
   }
 
   .ts-notification-text {
     font-size: var(--ts-fs-ui);
+    line-height: 24px;
     color: var(--ts-ink-muted);
   }
 
@@ -3523,6 +3559,7 @@ single-selector rules may stay on one line.
     display: inline-flex;
     align-items: center;
     gap: var(--ts-xs);
+    margin-top: 6px;
     font-size: var(--ts-fs-meta);
     color: var(--ts-ink-muted);
     .ts-access-invite-form {
@@ -5223,6 +5260,207 @@ single-selector rules may stay on one line.
     gap: var(--ts-md);
     align-items: center;
     flex-wrap: wrap;
+  }
+
+  /* ===== Feature: Usage/Audit/Notifications (notes-audit parity) ===== */
+
+  /* Notifications page header (v1 rowHeader + rowHeaderActions). */
+  .ts-notifications-header {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .ts-notifications-header .ts-muted {
+    font-size: var(--ts-fs-ui);
+    max-width: 48rem;
+    line-height: 24px;
+  }
+
+  .ts-notifications-header .ts-row {
+    gap: var(--ts-sm);
+  }
+
+  @media (min-width: 64rem) {
+    .ts-notifications-header {
+      flex-direction: row;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+
+    .ts-notifications-header .ts-row {
+      margin-left: auto;
+    }
+  }
+
+  /* SummaryCard trio (v1 grid3 + panelSurface + metric/statValue). */
+  .ts-notifications-stats {
+    display: grid;
+    gap: var(--ts-md);
+    margin-top: var(--ts-xl);
+  }
+
+  @media (min-width: 48rem) {
+    .ts-notifications-stats {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  .ts-stat-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-md);
+    margin-top: var(--ts-sm);
+  }
+
+  /* Compact ghost "Mark read" (v1 actionCompact + actionCompactOffset). */
+  .ts-notification-mark {
+    height: var(--ts-control-h-lg);
+    min-height: var(--ts-control-h-lg);
+    padding: 0 var(--ts-sm);
+    font-size: var(--ts-fs-meta);
+    margin-top: var(--ts-xs);
+    background-color: transparent;
+    color: var(--ts-ink);
+  }
+
+  .ts-notification-mark:hover {
+    background-color: var(--ts-surface-muted);
+  }
+
+  /* Audit intro metrics (v1 Metric: row, space-between, sans 14px value). */
+  .ts-audit-metrics .ts-metric {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-md);
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-audit-metric-inline {
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-medium);
+    font-family: var(--ts-font-sans);
+    font-variant-numeric: tabular-nums;
+    color: var(--ts-ink);
+  }
+
+  .ts-audit-export-wrap {
+    margin-top: var(--ts-sm);
+  }
+
+  .ts-audit-export-wrap .ts-btn {
+    width: 100%;
+  }
+
+  .ts-audit-intro .ts-muted {
+    font-size: var(--ts-fs-ui);
+    line-height: 24px;
+    max-width: 48rem;
+  }
+
+  /* Audit strips (v1 wrapBetween range row). */
+  .ts-audit-range-row {
+    padding-block: var(--ts-sm);
+    padding-inline: var(--ts-lg);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  /* Retention metrics well (v1 stack8 + panelSurface). */
+  .ts-audit-retention-well {
+    display: grid;
+    gap: var(--ts-sm);
+    padding: var(--ts-lg);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: var(--ts-surface-muted);
+  }
+
+  /* Audit table (v1 DataTable: no outer chrome, 16px body, 16/20 cells). */
+  .ts-audit-table-wrap {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background-color: transparent;
+  }
+
+  .ts-audit-table {
+    font-size: var(--ts-fs-body);
+    min-width: 720px;
+  }
+
+  .ts-audit-table thead th {
+    padding: var(--ts-lg) 20px;
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-audit-table tbody td {
+    padding: var(--ts-lg) 20px;
+    vertical-align: top;
+  }
+
+  .ts-audit-table tbody tr:hover {
+    background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
+  }
+
+  .ts-audit-table td.ts-table-mono {
+    font-size: var(--ts-fs-meta);
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-nowrap-meta {
+    white-space: nowrap;
+  }
+
+  .ts-audit-table code.ts-mono {
+    font-size: var(--ts-fs-meta);
+    color: var(--ts-ink);
+  }
+
+  /* Export dialog format options (v1 AuditExportButton). */
+  .ts-audit-export-grid {
+    display: grid;
+    gap: var(--ts-md);
+  }
+
+  @media (min-width: 40rem) {
+    .ts-audit-export-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  .ts-audit-export-option {
+    height: auto;
+    min-height: 36px;
+    width: 100%;
+    padding: var(--ts-lg);
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: var(--ts-xs);
+    text-align: left;
+    white-space: normal;
+  }
+
+  .ts-audit-export-option-active {
+    border-color: var(--ts-accent);
+    background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+  }
+
+  .ts-audit-export-option-label {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-sm);
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-audit-export-option-description {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+    line-height: 24px;
   }
 }
 

@@ -21,11 +21,19 @@ public sealed partial class DashboardStore
         _ => "info",
     };
 
-    public static bool AuditIsFailure(AuditEvent auditEvent) =>
-        auditEvent.Action.Contains("delete", StringComparison.OrdinalIgnoreCase);
+    public static bool AuditIsFailure(AuditEvent auditEvent)
+    {
+        var haystack = (auditEvent.Action + " " + auditEvent.Target + " " + auditEvent.Risk).ToLowerInvariant();
+        return haystack.Contains("fail") || haystack.Contains("denied");
+    }
 
-    public static string AuditActorType(AuditEvent auditEvent) =>
-        auditEvent.Actor.Contains('(') || auditEvent.Actor is "system" ? "service" : "user";
+    public static string AuditActorType(AuditEvent auditEvent)
+    {
+        var actor = auditEvent.Actor.ToLowerInvariant();
+        return actor.Length is 0 || actor is "system" || actor.Contains("service") || actor.Contains("bot") || actor.Contains("m2m")
+            ? "service"
+            : "user";
+    }
 
     public static string ParseAuditRange(string? value) =>
         AuditRangeOptions.Contains(value) ? value! : "7d";
@@ -71,10 +79,18 @@ public sealed partial class DashboardStore
             }
 
             return term.Length is 0
-                || $"{auditEvent.Actor} {auditEvent.Action} {auditEvent.Target} {auditEvent.Source} {AuditSeverity(auditEvent)} {auditEvent.OccurredAt}"
+                || $"{auditEvent.Actor} {auditEvent.Action} {auditEvent.Target} {auditEvent.Source} {AuditSeverity(auditEvent)} {auditEvent.OccurredAt} {AuditUtcLabel(auditEvent.OccurredAt)}"
                     .Contains(term, StringComparison.OrdinalIgnoreCase);
         })];
     }
+
+    /// <summary>"19 Sep 2026, 14:05 UTC" label used by the v1 search haystack.</summary>
+    public static string AuditUtcLabel(string occurredAt) =>
+        DateTimeOffset.TryParse(occurredAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var instant)
+            ? $"{instant.UtcDateTime:dd} {Months[instant.Month - 1]} {instant.UtcDateTime:yyyy}, {instant.UtcDateTime:HH:mm} UTC"
+            : occurredAt;
+
+    private static readonly string[] Months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
     /// <summary>Port of serializeAuditEventsAsCsv.</summary>
     public static string SerializeAuditEventsAsCsv(IReadOnlyList<AuditEvent> events)
