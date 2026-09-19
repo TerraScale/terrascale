@@ -1,0 +1,27 @@
+name: e2e
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  e2e:
+    runs-on: terrascale-builder
+    timeout-minutes: 15
+    concurrency:
+      group: e2e-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: dotnet build ts-dashboard-2.slnx
+      - name: Install JS deps
+        run: npm ci
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-1.63.0
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+      - name: Run E2E suite
+        run: npx playwright test
