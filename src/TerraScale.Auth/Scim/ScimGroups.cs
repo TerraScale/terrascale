@@ -48,7 +48,15 @@ internal sealed class ScimGroups(TerraScaleClient client, string database)
     public Task DeleteAsync(string id, CancellationToken ct = default) =>
         client.Documents.DeleteAsync(database, Collection, id, ct);
 
-    public async Task<IReadOnlyList<ScimGroup>> ListByDirectoryAsync(string directoryId, CancellationToken ct = default)
+    public Task<IReadOnlyList<ScimGroup>> ListByDirectoryAsync(string directoryId, CancellationToken ct = default) =>
+        ListWhereAsync("directoryId", directoryId, ct);
+
+    /// <summary>Every group of one instance, across directories — deprovisioning must
+    /// not leave the user listed in a sibling directory's group.</summary>
+    public Task<IReadOnlyList<ScimGroup>> ListByInstanceAsync(string instanceId, CancellationToken ct = default) =>
+        ListWhereAsync("instanceId", instanceId, ct);
+
+    private async Task<IReadOnlyList<ScimGroup>> ListWhereAsync(string field, string value, CancellationToken ct)
     {
         var groups = new List<ScimGroup>();
         string? after = null;
@@ -58,7 +66,7 @@ internal sealed class ScimGroups(TerraScaleClient client, string database)
                 database,
                 Collection,
                 new TerraScaleDocumentQuery(
-                    Predicates: [new TerraScaleDocumentPredicate("directoryId", TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement(directoryId))],
+                    Predicates: [new TerraScaleDocumentPredicate(field, TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement(value))],
                     Projection: null,
                     Limit: 100,
                     After: after),

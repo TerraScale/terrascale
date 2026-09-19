@@ -268,7 +268,7 @@ public static class ScimEndpoints
         });
 
         app.MapPut("/scim/{directoryId}/Users/{userId}", async (
-            string directoryId, string userId, HttpRequest request, AuthStore store, CancellationToken ct) =>
+            string directoryId, string userId, HttpRequest request, AuthStore store, TerraScaleClient client, CancellationToken ct) =>
         {
             var gate = await RequireDirectoryAsync(request, store, directoryId, ct);
             if (gate.Failure is { } failure)
@@ -301,18 +301,19 @@ public static class ScimEndpoints
             if (body.Active is { } active)
                 updated = updated with { Banned = !active, BanReason = active ? null : "directory deprovisioned" };
 
-            var (rekeyed, rekeyFailure) = await WithEmailAsync(store, directory.InstanceId, updated, body.UserName, ct);
+            var (rekeyed, superseded, rekeyFailure) = await WithEmailAsync(store, directory.InstanceId, updated, body.UserName, ct);
             if (rekeyFailure is not null)
                 return rekeyFailure;
-            updated = rekeyed;
 
-            await store.UpsertUserAsync(updated, ct);
-            await AuditAsync(store, directory, AuditUpdateType(user, updated), new() { ["user_id"] = updated.Id }, ct);
-            return ScimJson(UserView(directory.Id, updated));
+            var (written, writeFailure) = await WriteScimUserAsync(store, client, directory, rekeyed, superseded is null ? [] : [superseded], ct);
+            if (writeFailure is not null)
+                return writeFailure;
+            await AuditAsync(store, directory, AuditUpdateType(user, written), new() { ["user_id"] = written.Id }, ct);
+            return ScimJson(UserView(directory.Id, written));
         });
 
         app.MapPatch("/scim/{directoryId}/Users/{userId}", async (
-            string directoryId, string userId, HttpRequest request, AuthStore store, CancellationToken ct) =>
+            string directoryId, string userId, HttpRequest request, AuthStore store, TerraScaleClient client, CancellationToken ct) =>
         {
             var gate = await RequireDirectoryAsync(request, store, directoryId, ct);
             if (gate.Failure is { } failure)
@@ -330,6 +331,7 @@ public static class ScimEndpoints
                 return ScimError(404, $"no user with id '{userId}'");
 
             var updated = user;
+            var supersededEmailKeys = new List<string>();
             async Task<IResult?> ReplaceUserAttributeAsync(string attribute, JsonElement value)
             {
                 if (attribute.Equals("active", StringComparison.OrdinalIgnoreCase))
@@ -344,9 +346,11 @@ public static class ScimEndpoints
                 {
                     if (value.ValueKind != JsonValueKind.String)
                         return ScimError(400, "replacing 'userName' requires a string value", "invalidValue");
-                    var (rekeyed, rekeyFailure) = await WithEmailAsync(store, directory.InstanceId, updated, value.GetString()!, ct);
+                    var (rekeyed, superseded, rekeyFailure) = await WithEmailAsync(store, directory.InstanceId, updated, value.GetString()!, ct);
                     if (rekeyFailure is not null)
                         return rekeyFailure;
+                    if (superseded is not null)
+                        supersededEmailKeys.Add(superseded);
                     updated = rekeyed;
                     return null;
                 }
@@ -374,14 +378,15 @@ public static class ScimEndpoints
                 }
             }
 
-            updated = updated with { UpdatedAt = Now() };
-            await store.UpsertUserAsync(updated, ct);
-            await AuditAsync(store, directory, AuditUpdateType(user, updated), new() { ["user_id"] = updated.Id }, ct);
-            return ScimJson(UserView(directory.Id, updated));
+            var (written, writeFailure) = await WriteScimUserAsync(store, client, directory, updated with { UpdatedAt = Now() }, supersededEmailKeys, ct);
+            if (writeFailure is not null)
+                return writeFailure;
+            await AuditAsync(store, directory, AuditUpdateType(user, written), new() { ["user_id"] = written.Id }, ct);
+            return ScimJson(UserView(directory.Id, written));
         });
 
         app.MapDelete("/scim/{directoryId}/Users/{userId}", async (
-            string directoryId, string userId, HttpRequest request, AuthStore store, CancellationToken ct) =>
+            string directoryId, string userId, HttpRequest request, AuthStore store, TerraScaleClient client, CancellationToken ct) =>
         {
             var gate = await RequireDirectoryAsync(request, store, directoryId, ct);
             if (gate.Failure is { } failure)
@@ -392,24 +397,11 @@ public static class ScimEndpoints
             if (user is null)
                 return ScimError(404, $"no user with id '{userId}'");
 
-            // Soft delete: release the identifier claims so the email frees up for reuse.
-            if (user.EmailKey is not null)
-                await store.ReleaseUniqueAsync("user-email", user.EmailKey, ct);
-            if (user.UsernameKey is not null)
-                await store.ReleaseUniqueAsync("user-username", user.UsernameKey, ct);
-            await store.UpsertUserAsync(user with
-            {
-                Deleted = true,
-                EmailKey = null,
-                UsernameKey = null,
-                UpdatedAt = Now(),
-            }, ct);
-
-            if (directory.OrgId is { } orgId)
-                foreach (var membership in await store.ListMembershipsByUserAsync(user.Id, ct))
-                    if (membership.OrgId == orgId)
-                        await store.DeleteMembershipAsync(membership.Id, ct);
-
+            // Soft delete through the shared write path: same cleanup as deprovision,
+            // plus the Deleted flag that hides the user from SCIM for good.
+            var (_, writeFailure) = await WriteScimUserAsync(store, client, directory, user with { Deleted = true, UpdatedAt = Now() }, [], ct);
+            if (writeFailure is not null)
+                return writeFailure;
             await AuditAsync(store, directory, "directory.user_deprovisioned", new() { ["user_id"] = user.Id }, ct);
             return Results.NoContent();
         });
@@ -847,33 +839,139 @@ public static class ScimEndpoints
         return match.Success ? (match.Groups[1].Value.ToLowerInvariant(), match.Groups[2].Value) : null;
     }
 
-    private sealed record RekeyResult(User User, IResult? Failure);
+    private sealed record RekeyResult(User User, string? SupersededEmailKey, IResult? Failure);
 
-    /// <summary>Claim-first email re-key — the same pattern as the Management user update.</summary>
+    /// <summary>
+    /// Claim-first email re-key — the same pattern as the Management user update: the new
+    /// claim is taken here, the superseded key is released only after the user write
+    /// succeeds (<see cref="WriteScimUserAsync"/>), so a lost race or a failed write can
+    /// never strand or steal a claim. Keyed on EmailKey, not the display string, so a PUT
+    /// repeating the same userName on a deprovisioned user re-claims the released address.
+    /// </summary>
     private static async Task<RekeyResult> WithEmailAsync(AuthStore store, string instanceId, User current, string email, CancellationToken ct)
     {
         if (!SessionService.IsValidEmail(email))
-            return new(current, ScimError(400, "userName must be a valid email address"));
+            return new(current, null, ScimError(400, "userName must be a valid email address"));
         var normalized = SessionService.NormalizeEmail(email);
-        if (string.Equals(normalized, current.Email, StringComparison.Ordinal))
-            return new(current, null);
         var newKey = $"{instanceId}:{normalized}";
+        if (string.Equals(newKey, current.EmailKey, StringComparison.Ordinal))
+            return new(current, null, null);
         var existing = await store.FindUserByEmailAsync(instanceId, normalized, ct);
         if (existing is not null && existing.Id != current.Id)
-            return new(current, ScimError(409, "another user with this userName already exists", "uniqueness"));
+            return new(current, null, ScimError(409, "another user with this userName already exists", "uniqueness"));
         try
         {
             await store.ClaimUniqueAsync("user-email", newKey, current.Id, ct);
         }
         catch (TerraScaleApiException)
         {
-            return new(current, ScimError(409, "another user with this userName already exists", "uniqueness"));
+            return new(current, null, ScimError(409, "another user with this userName already exists", "uniqueness"));
         }
-        if (current.EmailKey is not null)
-            await store.ReleaseUniqueAsync("user-email", current.EmailKey, ct);
-        // Pending verification links prove the OLD address; they must not verify the new one.
-        await store.InvalidateVerificationTokensAsync(current.Id, "verify_email", ct);
-        return new(current with { Email = normalized, EmailVerified = false, EmailKey = newKey }, null);
+        return new(current with { Email = normalized, EmailVerified = false, EmailKey = newKey }, current.EmailKey, null);
+    }
+
+    private sealed record UserWriteResult(User User, IResult? Failure);
+
+    /// <summary>
+    /// Persists a SCIM user write together with its consistency side effects, so
+    /// deprovision (PATCH active=false) and delete behave the same except for the
+    /// Deleted flag: the user leaves every membership and SCIM group in the instance and
+    /// releases their email/username claims, keeping the display strings so the address
+    /// is reusable while the user stays restorable. Reactivation re-claims a missing
+    /// identifier — or conflicts when another user took it in the meantime. Claims taken
+    /// here are rolled back if the user write fails.
+    /// </summary>
+    private static async Task<UserWriteResult> WriteScimUserAsync(
+        AuthStore store, TerraScaleClient client, ScimDirectory directory, User updated, IReadOnlyList<string> supersededEmailKeys, CancellationToken ct)
+    {
+        var groups = new ScimGroups(client, store.Database);
+        var claimed = new List<(string Kind, string Key)>();
+        try
+        {
+            if (updated.Banned || updated.Deleted)
+            {
+                foreach (var membership in await store.ListMembershipsByUserAsync(updated.Id, ct))
+                    await store.DeleteMembershipAsync(membership.Id, ct);
+                foreach (var group in await groups.ListByInstanceAsync(directory.InstanceId, ct))
+                    if (group.MemberUserIds.Contains(updated.Id))
+                        await groups.UpsertAsync(group with
+                        {
+                            MemberUserIds = [.. group.MemberUserIds.Where(id => id != updated.Id)],
+                            UpdatedAt = Now(),
+                        }, ct);
+                if (updated.EmailKey is not null)
+                    await store.ReleaseUniqueAsync("user-email", updated.EmailKey, ct);
+                if (updated.UsernameKey is not null)
+                    await store.ReleaseUniqueAsync("user-username", updated.UsernameKey, ct);
+                updated = updated with { EmailKey = null, UsernameKey = null };
+            }
+            else
+            {
+                var (restored, identifierFailure) = await ClaimMissingIdentifiersAsync(store, directory.InstanceId, updated, claimed, ct);
+                if (identifierFailure is not null)
+                {
+                    // A later claim lost its race: undo the earlier ones, nothing was written.
+                    foreach (var (kind, key) in claimed)
+                        await store.ReleaseUniqueAsync(kind, key, ct);
+                    return new(updated, identifierFailure);
+                }
+                updated = restored;
+            }
+            await store.UpsertUserAsync(updated, ct);
+        }
+        catch
+        {
+            foreach (var (kind, key) in claimed)
+                await store.ReleaseUniqueAsync(kind, key, ct);
+            throw;
+        }
+
+        foreach (var key in supersededEmailKeys.OfType<string>())
+        {
+            await store.ReleaseUniqueAsync("user-email", key, ct);
+            // Pending verification links prove the OLD address; they must not verify the new one.
+            await store.InvalidateVerificationTokensAsync(updated.Id, "verify_email", ct);
+        }
+        return new(updated, null);
+    }
+
+    private sealed record ClaimResult(User User, IResult? Failure);
+
+    /// <summary>Re-claims identifiers a deprovision released (the display strings survive
+    /// on the user doc). Returns the failure result instead of throwing so a lost claim
+    /// race maps to 409.</summary>
+    private static async Task<ClaimResult> ClaimMissingIdentifiersAsync(
+        AuthStore store, string instanceId, User user, List<(string Kind, string Key)> claimed, CancellationToken ct)
+    {
+        if (user.Email is not null && user.EmailKey is null)
+        {
+            var key = $"{instanceId}:{user.Email}";
+            try
+            {
+                await store.ClaimUniqueAsync("user-email", key, user.Id, ct);
+            }
+            catch (TerraScaleApiException)
+            {
+                return new(user, ScimError(409, "another user with this userName already exists", "uniqueness"));
+            }
+            claimed.Add(("user-email", key));
+            user = user with { EmailKey = key };
+        }
+        if (user.Username is not null && user.UsernameKey is null)
+        {
+            var key = $"{instanceId}:{user.Username.ToLowerInvariant()}";
+            try
+            {
+                await store.ClaimUniqueAsync("user-username", key, user.Id, ct);
+            }
+            catch (TerraScaleApiException)
+            {
+                return new(user, ScimError(409, "another user with this username already exists", "uniqueness"));
+            }
+            claimed.Add(("user-username", key));
+            user = user with { UsernameKey = key };
+        }
+        return new(user, null);
     }
 
     /// <summary>Deprovisioning (deactivate) gets its own audit type; every other change is an update.</summary>

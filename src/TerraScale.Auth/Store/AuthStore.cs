@@ -420,8 +420,29 @@ public sealed class AuthStore(TerraScaleClient client, string database)
             await ReleaseUniqueAsync("membership", membership.MemberKey, ct);
     }
 
-    public Task<IReadOnlyList<OrgMembership>> ListMembershipsByUserAsync(string userId, CancellationToken ct = default) =>
-        QueryAsync<OrgMembership>("memberships", "userId", userId, 100, ct);
+    /// <summary>All of a user's memberships, walking the engine pages to the end —
+    /// deprovisioning must not silently spare the 101st membership.</summary>
+    public async Task<IReadOnlyList<OrgMembership>> ListMembershipsByUserAsync(string userId, CancellationToken ct = default)
+    {
+        var memberships = new List<OrgMembership>();
+        string? after = null;
+        while (true)
+        {
+            var page = await client.Documents.QueryAsync(
+                Database,
+                "memberships",
+                new TerraScaleDocumentQuery(
+                    Predicates: [new TerraScaleDocumentPredicate("userId", TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement(userId))],
+                    Projection: null,
+                    Limit: 100,
+                    After: after),
+                cancellationToken: ct);
+            memberships.AddRange(page.Documents.Select(row => row.Value.Deserialize<OrgMembership>(Json)).OfType<OrgMembership>());
+            if (!page.HasMore || page.NextAfter is null)
+                return memberships;
+            after = page.NextAfter;
+        }
+    }
 
     public Task<IReadOnlyList<OrgMembership>> ListMembershipsByOrgAsync(string orgId, CancellationToken ct = default) =>
         QueryAsync<OrgMembership>("memberships", "orgId", orgId, 100, ct);

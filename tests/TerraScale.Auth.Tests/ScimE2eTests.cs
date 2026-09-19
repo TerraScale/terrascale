@@ -599,10 +599,209 @@ public sealed class ScimE2eTests
         await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("400");
     }
 
+    /// <summary>A group created through one directory, returning its id.</summary>
+    private static async Task<string> CreateGroupAsync(HttpClient http, string token, string directoryId, string displayName, params string[] memberIds)
+    {
+        var created = await SendAsync(http, HttpMethod.Post, token, $"/scim/{directoryId}/Groups", new
+        {
+            displayName,
+            members = memberIds.Select(id => new { value = id }).ToArray(),
+        }, HttpStatusCode.Created, "application/scim+json");
+        return created.GetProperty("id").GetString()!;
+    }
+
+    private static async Task<List<string>> GroupMembersAsync(HttpClient http, string token, string directoryId, string groupId)
+    {
+        var group = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Groups/{groupId}", null, HttpStatusCode.OK, "application/scim+json");
+        return group.GetProperty("members").EnumerateArray().Select(m => m.GetProperty("value").GetString()!).ToList();
+    }
+
+    private static async Task<HttpResponseMessage> GetAccountPageAsync(HttpClient http, string slug, string sessionToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/account");
+        request.Headers.TryAddWithoutValidation("Cookie", $"tsauth_session={sessionToken}");
+        return await http.SendAsync(request);
+    }
+
     [Test]
-    public async Task DiscoveryDocumentsExposeServiceProviderConfigResourceTypesAndSchemas()
+    public async Task DeprovisionBansKillsSessionsDropsMembershipsGroupsAndClaims()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+
+        var orgId = await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp");
+        var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug, orgId);
+        var (userId, email) = await ProvisionAsync(http, token, directoryId);
+        var (otherId, _) = await ProvisionAsync(http, token, directoryId);
+
+        // A live session and a username claim: both must die with the deprovision.
+        var sessionToken = "e2e" + SecureTokens.RandomToken(32);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await store.CreateSessionAsync(new Session
+        {
+            Id = "ses_" + SecureTokens.RandomToken(20),
+            InstanceId = instanceId,
+            UserId = userId,
+            TokenKey = SecureTokens.Sha256Hex(sessionToken),
+            Status = "active",
+            CreatedAt = now,
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            LastActiveAt = now,
+        });
+        await store.ClaimUniqueAsync("user-username", $"{instanceId}:legacy", userId);
+        await store.UpsertUserAsync((await store.GetUserAsync(userId))! with { Username = "Legacy", UsernameKey = $"{instanceId}:legacy" });
+        using (var authed = await GetAccountPageAsync(http, slug, sessionToken))
+            await Assert.That(authed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        // Groups in this directory and in a sibling directory of the same instance.
+        var groupA = await CreateGroupAsync(http, token, directoryId, "Engineers", userId, otherId);
+        var groupB = await CreateGroupAsync(http, token, directoryId, "Admins", userId);
+        var (siblingDirectoryId, siblingToken) = await CreateDirectoryAsync(http, apiKey, slug);
+        var groupC = await CreateGroupAsync(http, siblingToken, siblingDirectoryId, "Sibling", userId);
+
+        await SendAsync(http, HttpMethod.Patch, token, $"/scim/{directoryId}/Users/{userId}", new
+        {
+            Operations = new object[] { new { op = "replace", path = "active", value = false } },
+        }, HttpStatusCode.OK, "application/scim+json");
+
+        // Banned, with the strings kept but both identifier claims stripped.
+        var deprovisioned = (await store.GetUserAsync(userId))!;
+        await Assert.That(deprovisioned.Banned).IsTrue();
+        await Assert.That(deprovisioned.BanReason).IsEqualTo("directory deprovisioned");
+        await Assert.That(deprovisioned.Email).IsEqualTo(email);
+        await Assert.That(deprovisioned.EmailKey).IsNull();
+        await Assert.That(deprovisioned.UsernameKey).IsNull();
+        await Assert.That(await store.FindUserByEmailAsync(instanceId, email.ToLowerInvariant())).IsNull();
+
+        // Every membership and group listing in the instance is dropped — including the sibling directory's.
+        await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Any(m => m.UserId == userId)).IsFalse();
+        await Assert.That(await GroupMembersAsync(http, token, directoryId, groupA)).IsEquivalentTo([otherId]);
+        await Assert.That(await GroupMembersAsync(http, token, directoryId, groupB)).IsEmpty();
+        await Assert.That(await GroupMembersAsync(http, siblingToken, siblingDirectoryId, groupC)).IsEmpty();
+
+        // The live session no longer resolves.
+        using (var dead = await GetAccountPageAsync(http, slug, sessionToken))
+        {
+            await Assert.That(dead.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            await Assert.That(dead.Headers.Location!.ToString()).Contains("sign-in");
+        }
+
+        // Both released identifiers are immediately reusable.
+        var (reusedId, _) = await ProvisionAsync(http, token, directoryId, email);
+        await Assert.That(reusedId).IsNotEqualTo(userId);
+        await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/users", new
+        {
+            email = $"legacy-{Guid.NewGuid().ToString("N")[..8]}@example.com",
+            username = "Legacy",
+        }, HttpStatusCode.Created);
+
+        // Reactivating the stripped user conflicts on the taken address instead of silently overlapping.
+        var conflict = await SendAsync(http, HttpMethod.Patch, token, $"/scim/{directoryId}/Users/{userId}", new
+        {
+            Operations = new object[] { new { op = "replace", path = "active", value = true } },
+        }, HttpStatusCode.Conflict, "application/scim+json");
+        await Assert.That(conflict.GetProperty("scimType").GetString()).IsEqualTo("uniqueness");
+    }
+
+    [Test]
+    public async Task ReactivationReClaimsTheReleasedIdentifiers()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+
+        var orgId = await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp");
+        var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug, orgId);
+
+        // Deactivate via PUT (the other deprovision verb), reactivate via PATCH active=true.
+        var (userId, email) = await ProvisionAsync(http, token, directoryId);
+        await SendAsync(http, HttpMethod.Put, token, $"/scim/{directoryId}/Users/{userId}", new { userName = email, active = false }, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That((await store.GetUserAsync(userId))!.EmailKey).IsNull();
+        await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Any(m => m.UserId == userId)).IsFalse();
+
+        await SendAsync(http, HttpMethod.Patch, token, $"/scim/{directoryId}/Users/{userId}", new
+        {
+            Operations = new object[] { new { op = "replace", path = "active", value = true } },
+        }, HttpStatusCode.OK, "application/scim+json");
+
+        var reactivated = (await store.GetUserAsync(userId))!;
+        await Assert.That(reactivated.Banned).IsFalse();
+        await Assert.That(reactivated.EmailKey).IsEqualTo($"{instanceId}:{email.ToLowerInvariant()}");
+        await Assert.That((await store.FindUserByEmailAsync(instanceId, email.ToLowerInvariant()))!.Id).IsEqualTo(userId);
+        // The membership does not silently return; the directory re-pushes group state.
+        await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Any(m => m.UserId == userId)).IsFalse();
+
+        // A PUT repeating the same userName on a still-deprovisioned user restores the claim too.
+        var (otherId, otherEmail) = await ProvisionAsync(http, token, directoryId);
+        await SendAsync(http, HttpMethod.Patch, token, $"/scim/{directoryId}/Users/{otherId}", new
+        {
+            Operations = new object[] { new { op = "replace", path = "active", value = false } },
+        }, HttpStatusCode.OK, "application/scim+json");
+        await SendAsync(http, HttpMethod.Put, token, $"/scim/{directoryId}/Users/{otherId}", new { userName = otherEmail, active = true }, HttpStatusCode.OK, "application/scim+json");
+        var restored = (await store.GetUserAsync(otherId))!;
+        await Assert.That(restored.Banned).IsFalse();
+        await Assert.That(restored.EmailKey).IsEqualTo($"{instanceId}:{otherEmail.ToLowerInvariant()}");
+    }
+
+    [Test]
+    public async Task DeleteWalksEveryMembershipPastTheFirstHundredAndCleansGroupListings()
     {
         var (service, _, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+
+        var orgId = await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp");
+        var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug, orgId);
+        var (userId, _) = await ProvisionAsync(http, token, directoryId);
+        var (otherId, _) = await ProvisionAsync(http, token, directoryId);
+        var groupId = await CreateGroupAsync(http, token, directoryId, "Engineers", userId, otherId);
+
+        // Seed 101 memberships with ids that sort after the SCIM-provisioned one, so a
+        // bounded first-page walk drops exactly the tail. The directory's own org is NOT
+        // any of these: every seeded row is foreign to it.
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var tailOrgId = "";
+        for (var i = 0; i <= 100; i++)
+        {
+            var seededOrgId = "org_" + SecureTokens.RandomToken(20);
+            await store.CreateOrganizationAsync(new Organization
+            {
+                Id = seededOrgId,
+                InstanceId = (await store.GetScimDirectoryAsync(directoryId))!.InstanceId,
+                Name = $"Walk {i:000}",
+                SlugKey = $"walk-{i:000}-{Guid.NewGuid().ToString("N")[..6]}",
+                CreatedAt = now,
+            });
+            await store.CreateMembershipAsync(new OrgMembership
+            {
+                Id = $"mem_walk{i:000}_{Guid.NewGuid().ToString("N")[..6]}",
+                InstanceId = (await store.GetScimDirectoryAsync(directoryId))!.InstanceId,
+                OrgId = seededOrgId,
+                UserId = userId,
+                MemberKey = $"{seededOrgId}:{userId}",
+                Role = "member",
+                CreatedAt = now,
+            }, default);
+            if (i == 100)
+                tailOrgId = seededOrgId;
+        }
+        await Assert.That((await store.ListMembershipsByUserAsync(userId)).Count).IsEqualTo(102);
+
+        using var deleted = await http.SendAsync(Request(HttpMethod.Delete, token, $"/scim/{directoryId}/Users/{userId}"));
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+        // Every membership is gone — including the 102nd that a bounded walk would spare.
+        await Assert.That((await store.ListMembershipsByUserAsync(userId)).Count).IsEqualTo(0);
+        await Assert.That((await store.ListMembershipsByOrgAsync(tailOrgId)).Count).IsEqualTo(0);
+        await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Any(m => m.UserId == userId)).IsFalse();
+        // The group listing no longer carries the deleted user.
+        await Assert.That(await GroupMembersAsync(http, token, directoryId, groupId)).IsEquivalentTo([otherId]);
+    }
+
+    [Test]
+    public async Task DiscoveryDocumentsExposeServiceProviderConfigResourceTypesAndSchemas()
+    {        var (service, _, slug, apiKey) = await StartAsync();
         var http = service.Http;
         var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug);
 
