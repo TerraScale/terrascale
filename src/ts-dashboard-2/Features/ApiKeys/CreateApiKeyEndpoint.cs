@@ -21,7 +21,7 @@ public sealed class CreateApiKeyEndpoint(DashboardStore store) : EndpointWithout
 
         if (name.Length == 0 || scopes.Length == 0)
         {
-            return Results.Redirect("/api-keys?create=key&error=" + Uri.EscapeDataString("Enter a name and at least one scope."), false, false);
+            return Results.Redirect("/api-keys?create=key&error=" + Uri.EscapeDataString("Enter at least one scope."), false, false);
         }
 
         var secret = store.CreateApiKey(name, [.. scopes], databaseId.Length is 0 ? null : databaseId);

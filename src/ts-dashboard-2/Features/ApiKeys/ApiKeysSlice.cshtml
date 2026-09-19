@@ -41,6 +41,13 @@
         </div>
     </section>
 
+    @if (Model.LoadError is { } loadError)
+    {
+        <div class="ts-alert ts-alert-warning">
+            <span class="ts-alert-title">@Icons.TriangleAlert(16) @loadError</span>
+        </div>
+    }
+
     <section class="ts-panel">
         <div class="ts-panel-header">
             <h2 class="ts-panel-title">Credentials</h2>
@@ -85,21 +92,30 @@
         @if (!Model.HasAnyCredentials)
         {
             <div class="ts-credential-empty">
-                <div class="ts-empty">
-                    @Icons.KeyRound(28)
-                    <span class="ts-empty-title">No credentials</span>
-                    <p class="ts-muted ts-ui">Create an API key or a machine client when a service needs to authenticate with this project.</p>
-                    <a class="ts-btn ts-btn-primary" href="/api-keys?create=key">@Icons.Plus(16) Create key</a>
+                <div class="ts-empty-state">
+                    <div class="ts-empty-state-content">
+                        <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                        <span class="ts-empty-state-title">No credentials</span>
+                        <p class="ts-empty-state-desc">Create an API key or a machine client when a service needs to authenticate with this project.</p>
+                    </div>
+                    <div class="ts-empty-state-action">
+                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/api-keys?create=key">Create key</a>
+                    </div>
                 </div>
             </div>
         }
         else if (Model.Credentials.Count == 0)
         {
             <div class="ts-credential-empty">
-                <div class="ts-empty">
-                    <span class="ts-empty-title">No credentials match</span>
-                    <p class="ts-muted ts-ui">Adjust the search or filters to see another credential.</p>
-                    <a class="ts-btn ts-btn-secondary" href="/api-keys">Clear filters</a>
+                <div class="ts-empty-state">
+                    <div class="ts-empty-state-content">
+                        <div class="ts-empty-state-iconbox">@Icons.SearchX(16)</div>
+                        <span class="ts-empty-state-title">No credentials match</span>
+                        <p class="ts-empty-state-desc">Adjust the search or filters to see another credential.</p>
+                    </div>
+                    <div class="ts-empty-state-action">
+                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/api-keys">Clear filters</a>
+                    </div>
                 </div>
             </div>
         }
@@ -146,9 +162,9 @@
                                             <input type="hidden" name="kind" value="@credential.Kind" />
                                             <input type="hidden" name="id" value="@credential.Id" />
                                             <input type="hidden" name="name" value="@credential.Name" />
-                                            <button type="submit" class="ts-btn ts-btn-ghost ts-btn-sm" @(revoked ? "disabled" : null)>@Icons.RotateCw(14) Rotate</button>
+                                            <button type="submit" class="ts-btn ts-btn-ghost ts-btn-lg" @(revoked ? "disabled" : null)>@Icons.RotateCw(14) Rotate</button>
                                         </form>
-                                        <button type="button" class="ts-btn ts-btn-destructive ts-btn-sm" @(revoked ? "disabled" : null) data-on-click="document.querySelector('#revoke-@credential.Kind-@credential.Id').showModal()">Revoke</button>
+                                        <button type="button" class="ts-btn ts-btn-destructive ts-btn-lg" @(revoked ? "disabled" : null) data-on-click="document.querySelector('#revoke-@credential.Kind-@credential.Id').showModal()">Revoke</button>
                                     </div>
                                 </td>
                             </tr>
@@ -159,7 +175,7 @@
                                         <p class="ts-dialog-description">This action cannot be undone.</p>
                                     </div>
                                     <div class="ts-alert ts-alert-danger">
-                                        <span class="ts-alert-title">@Icons.ShieldOff(16) Revoke @credential.Name?</span>
+                                        <span class="ts-alert-title">@Icons.CircleAlert(16) Revoke @credential.Name?</span>
                                         <span class="ts-alert-body">Revoking stops the credential from authenticating immediately. Consumers still using it will begin failing, and the credential cannot be restored.</span>
                                     </div>
                                     <div class="ts-dialog-footer">
@@ -189,7 +205,7 @@
         </div>
         @if (Model.Error is { } error && Model.CreateKind == "key")
         {
-            <div class="ts-alert ts-alert-danger"><span class="ts-alert-title">@error</span></div>
+            <div class="ts-alert ts-alert-danger"><span class="ts-alert-title">@Icons.CircleAlert(16) @error</span></div>
         }
         <form class="ts-form" method="post" action="/api/v1/dashboard/credentials/key">
             <div class="ts-field">
@@ -232,7 +248,7 @@
         </div>
         @if (Model.Error is { } m2mError && Model.CreateKind == "m2m")
         {
-            <div class="ts-alert ts-alert-danger"><span class="ts-alert-title">@m2mError</span></div>
+            <div class="ts-alert ts-alert-danger"><span class="ts-alert-title">@Icons.CircleAlert(16) @m2mError</span></div>
         }
         <form class="ts-form" method="post" action="/api/v1/dashboard/credentials/m2m">
             <div class="ts-field">
@@ -292,7 +308,7 @@
                 </div>
             </dl>
             <div class="ts-form-actions">
-                <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-copy="@secret"><span data-copy-label>Copy secret</span></button>
+                <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-copy="@secret">@Icons.Copy(16)<span data-copy-label>Copy secret</span></button>
                 <a class="ts-btn ts-btn-ghost ts-btn-lg" href="/api-keys">Done</a>
             </div>
         </div>

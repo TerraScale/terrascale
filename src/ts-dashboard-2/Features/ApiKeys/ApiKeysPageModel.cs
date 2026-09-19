@@ -15,6 +15,7 @@ public sealed record ApiKeysPageModel(
     string DatabaseId,
     string? CreateKind,
     string? Error,
+    string? LoadError,
     string? Toast,
     string? SecretId,
     string? SecretName,

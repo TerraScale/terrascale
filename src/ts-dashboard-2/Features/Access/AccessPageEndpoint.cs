@@ -53,11 +53,17 @@ public sealed class AccessPageEndpoint(DashboardStore store) : SlicePageEndpoint
             m.Role == "owner" ? "owner" : m.Role == "admin" ? "member" : "viewer",
             FormatUtc(m.LastActiveAt))).ToList();
 
+        var canManageOrganization = Store.CurrentUser.Role == "owner";
+        var canManageProject = canManageOrganization
+            || Store.TeamMembers.Any(m => m.UserId == Store.CurrentUser.Id && m.Role is "owner" or "admin");
+
         return new AccessPageModel(
-            OrganizationLine: $"{Store.ActiveOrganizationName} · {Store.TeamMembers.Length} members · {Store.Projects.Length} projects · loaded {FormatUtc(DateTimeOffset.UtcNow.ToString("O"))}",
             MemberCount: members.Count,
             GroupCount: team.Count,
             ProjectCount: projects.Count,
+            HasMembers: Store.TeamMembers.Length > 0,
+            CanManageOrganization: canManageOrganization,
+            CanManageProject: canManageProject,
             Members: members,
             Roles: ["organization:owner", "project:admin"],
             Permissions: ["members:read", "invitations:write", "projects:read", "usage:read"],
