@@ -13,6 +13,7 @@ public sealed record AuditPageModel(
     string Range,
     int Critical,
     int Warn,
+    string LoadedAtText,
     string? OldestTime,
     int RetentionDays) : IPageModel
 {
@@ -36,6 +37,7 @@ public sealed record AuditPageModel(
             Range: DashboardStore.ParseAuditRange(range),
             Critical: CountSeverity(filtered, "critical"),
             Warn: CountSeverity(filtered, "warn"),
+            LoadedAtText: DashboardStore.FormatUtcDateTime(DateTimeOffset.UtcNow.ToString("O")),
             OldestTime: all.Length is 0 ? null : all[^1].OccurredAt,
             RetentionDays: DashboardStore.AuditRetentionDays)
         {
