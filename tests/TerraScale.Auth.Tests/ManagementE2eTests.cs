@@ -55,6 +55,34 @@ public sealed class ManagementE2eTests
         SendAsync(http, Request(HttpMethod.Post, $"/v1/{slug}/users", apiKey, new { email, username, password = "passw0rd!", name = "Test User" }), HttpStatusCode.Created);
 
     [Test]
+    public async Task EmailChangeInvalidatesPendingVerificationLinks()
+    {
+        var (service, instanceId, slug, key) = await InstanceAsync();
+        var http = service.Http;
+
+        var created = await CreateUserAsync(http, slug, key, "stale-link@example.com");
+        var userId = created.GetProperty("id").GetString()!;
+        var token = "e2e" + SecureTokens.RandomToken(32);
+        await service.Store.CreateVerificationTokenAsync(new VerificationToken
+        {
+            Id = "vrf_" + SecureTokens.RandomToken(20),
+            InstanceId = instanceId,
+            UserId = userId,
+            Purpose = "verify_email",
+            TokenKey = SecureTokens.Sha256Hex(token),
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        await SendAsync(http, Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { email = "moved@example.com" }), HttpStatusCode.OK);
+
+        // The link proved the OLD address; it must not verify the new one.
+        using var verify = await http.GetAsync($"/ui/{slug}/verify-email?token={token}");
+        await Assert.That(verify.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await service.Store.GetUserAsync(userId))!.EmailVerified).IsFalse();
+    }
+
+    [Test]
     public async Task MissingKeyIsUnauthorized()
     {
         var (service, _, slug, _) = await InstanceAsync();

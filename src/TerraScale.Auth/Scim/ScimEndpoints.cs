@@ -797,6 +797,8 @@ public static class ScimEndpoints
         }
         if (current.EmailKey is not null)
             await store.ReleaseUniqueAsync("user-email", current.EmailKey, ct);
+        // Pending verification links prove the OLD address; they must not verify the new one.
+        await store.InvalidateVerificationTokensAsync(current.Id, "verify_email", ct);
         return new(current with { Email = normalized, EmailVerified = false, EmailKey = newKey }, null);
     }
 

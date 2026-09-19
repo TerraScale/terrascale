@@ -246,6 +246,19 @@ public sealed class ScimE2eTests
         var (userId, email) = await ProvisionAsync(http, token, directoryId);
         var newEmail = $"renamed-{Guid.NewGuid().ToString("N")[..8]}@example.com";
 
+        // A verification link pending for the old address must die with the rename.
+        var verifyToken = "e2e" + SecureTokens.RandomToken(32);
+        await store.CreateVerificationTokenAsync(new VerificationToken
+        {
+            Id = "vrf_" + SecureTokens.RandomToken(20),
+            InstanceId = (await store.GetScimDirectoryAsync(directoryId))!.InstanceId,
+            UserId = userId,
+            Purpose = "verify_email",
+            TokenKey = SecureTokens.Sha256Hex(verifyToken),
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
         var updated = await SendAsync(http, HttpMethod.Put, token, $"/scim/{directoryId}/Users/{userId}", new
         {
             userName = newEmail,
@@ -256,6 +269,10 @@ public sealed class ScimE2eTests
         await Assert.That(updated.GetProperty("userName").GetString()).IsEqualTo(newEmail);
         await Assert.That(updated.GetProperty("name").GetProperty("givenName").GetString()).IsEqualTo("Grace");
         await Assert.That(updated.GetProperty("externalId").GetString()).IsEqualTo("ext-grace-1");
+
+        using var staleVerify = await http.GetAsync($"/ui/{slug}/verify-email?token={verifyToken}");
+        await Assert.That(staleVerify.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await store.GetUserAsync(userId))!.EmailVerified).IsFalse();
 
         // The claim moved: old email free, new email resolves, and both are usable again.
         await Assert.That(await store.FindUserByEmailAsync((await store.GetScimDirectoryAsync(directoryId))!.InstanceId, email.ToLowerInvariant())).IsNull();

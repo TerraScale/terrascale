@@ -150,6 +150,8 @@ public static class ManagementEndpoints
                     }
                     // Email change invalidates verification and re-keys the uniqueness claim.
                     updated = updated with { Email = normalized, EmailVerified = false, EmailKey = newEmailKey };
+                    // Pending verification links prove the OLD address; they must not verify the new one.
+                    await store.InvalidateVerificationTokensAsync(user.Id, "verify_email", ct);
                     if (user.EmailKey is not null)
                         await store.ReleaseUniqueAsync("user-email", user.EmailKey, ct);
                 }

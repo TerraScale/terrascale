@@ -469,6 +469,18 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<IReadOnlyList<VerificationToken>> ListVerificationTokensAsync(string instanceId, string purpose, int limit, CancellationToken ct = default) =>
         QueryAsync<VerificationToken>("verification_tokens", "purpose", purpose, limit, ct);
 
+    /// <summary>
+    /// Marks a user's outstanding tokens for a purpose as consumed. Used when the email
+    /// changes: a verification link proves control of the OLD address and must not be
+    /// able to mark the new one verified.
+    /// </summary>
+    public async Task InvalidateVerificationTokensAsync(string userId, string purpose, CancellationToken ct = default)
+    {
+        foreach (var token in await QueryAsync<VerificationToken>("verification_tokens", "userId", userId, 100, ct))
+            if (token.Purpose == purpose && !token.Consumed)
+                await UpsertVerificationTokenAsync(token with { Consumed = true }, ct);
+    }
+
     // ---- Webhooks -------------------------------------------------------------------------
 
     public Task<WebhookEndpoint> CreateWebhookEndpointAsync(WebhookEndpoint endpoint, CancellationToken ct = default) =>
