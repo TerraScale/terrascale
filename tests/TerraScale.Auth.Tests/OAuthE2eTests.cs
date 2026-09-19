@@ -774,18 +774,34 @@ public sealed class OAuthE2eTests
         await Assert.That(redirected.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         await Assert.That(redirected.Headers.Location!.ToString()).IsEqualTo("https://app.test/bye?state=so-long");
 
+        // The session cookie is cleared client-side too: the response expires it.
+        var setCookie = redirected.Headers.GetValues("Set-Cookie").Single();
+        await Assert.That(setCookie).Contains("tsauth_session=");
+        await Assert.That(setCookie).Contains("1970");
+
         // The session is revoked server-side: the same cookie can no longer authorize.
         using var after = AuthorizeRequest(arranged, prompt: "none");
         var loginRequired = await arranged.Service.Http.SendAsync(after);
         await Assert.That(loginRequired.Headers.Location!.ToString()).Contains("error=login_required");
 
         // Unregistered post-logout origins are refused; the signed-out page shows instead.
-        using var evil = new HttpRequestMessage(HttpMethod.Get,
-            $"/{arranged.Slug}/oauth/logout?client_id={arranged.ClientId}&post_logout_redirect_uri={Uri.EscapeDataString("https://evil.test/bye")}");
-        var page = await arranged.Service.Http.SendAsync(evil);
-        await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var html = await page.Content.ReadAsStringAsync();
-        await Assert.That(html).Contains("Signed out");
+        // Origin matching is strict: same-origin subdomains or a matching host on a
+        // different scheme or port must all be rejected.
+        foreach (var refused in new[]
+                 {
+                     "https://evil.test/bye",
+                     "https://app.test.evil.test/bye",
+                     "http://app.test/bye",
+                     "https://app.test:8443/bye",
+                 })
+        {
+            using var attempt = new HttpRequestMessage(HttpMethod.Get,
+                $"/{arranged.Slug}/oauth/logout?client_id={arranged.ClientId}&post_logout_redirect_uri={Uri.EscapeDataString(refused)}");
+            var page = await arranged.Service.Http.SendAsync(attempt);
+            await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var html = await page.Content.ReadAsStringAsync();
+            await Assert.That(html).Contains("Signed out");
+        }
     }
 
     // ---- client management ---------------------------------------------------------------------
