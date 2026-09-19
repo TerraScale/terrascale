@@ -6,11 +6,12 @@
 //! `421` placement repair shared by every sub-client.
 
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 
 use crate::config::ClientConfig;
+use crate::discovery::{self, RouteKind, Router};
 use crate::documents::{DatabaseScope, DocumentsClient};
 use crate::error::{Error, ErrorKind, Result};
 use crate::management::ManagementClient;
@@ -18,7 +19,7 @@ use crate::reactive::ReactiveClient;
 use crate::regions::{normalize_base_url, pin_base_url, RegionAffinity, RegionCode};
 use crate::sql::SqlClient;
 use crate::tenants::TenantsClient;
-use crate::transport::{HttpTransport, Request, ReqwestTransport, Response};
+use crate::transport::{HttpTransport, Method, Request, ReqwestTransport, Response};
 
 /// REST root for the public API (GOAL D-34).
 pub const API_ROOT: &str = "/api/v1";
@@ -39,12 +40,19 @@ pub(crate) const SKIP_SESSION_MARKER: &str = "x-terrascale-sdk-skip-session";
 /// Internal marker removed before transport. Capability-authenticated
 /// reactive delivery must not receive the API bearer credential.
 pub(crate) const SKIP_AUTH_MARKER: &str = "x-terrascale-sdk-skip-auth";
+/// Internal marker tagging a request with its routing database when the wire
+/// path carries none (reactive attach). Discovery routes the request to the
+/// database's regional endpoint; the header never reaches the transport.
+pub(crate) const ROUTING_DATABASE_MARKER: &str = "x-terrascale-sdk-routing-database";
 
 /// Shareable pipeline state behind every sub-client.
 #[derive(Debug)]
 pub(crate) struct Shared {
     transport: Arc<dyn HttpTransport>,
     config: ClientConfig,
+    /// Atlas discovery router; `None` keeps direct-origin routing (strict
+    /// affinity, custom origins, local emulator).
+    router: Option<Arc<Router>>,
     placement: RwLock<Option<RegionCode>>,
     session_token: RwLock<Option<String>>,
     /// Optional key used by all mutation requests made through this client.
@@ -61,9 +69,19 @@ pub(crate) type SharedClient = Arc<Shared>;
 
 impl Shared {
     fn new(config: ClientConfig, transport: Arc<dyn HttpTransport>) -> Self {
+        let router = config.atlas_base_url().map(|atlas_origin| {
+            Arc::new(Router::new(
+                atlas_origin.to_owned(),
+                config.api_base_url(),
+                config.project_id().map(str::to_owned),
+                config.tenant_id().map(str::to_owned),
+                config.preferred_region(),
+            ))
+        });
         Self {
             transport,
             config,
+            router,
             placement: RwLock::new(None),
             session_token: RwLock::new(None),
             idempotency_key: RwLock::new(None),
@@ -75,7 +93,7 @@ impl Shared {
         &self.config
     }
 
-    /// Global (unpinned) base URL for first contact and global routes.
+    /// Base URL for product routes and direct-origin traffic.
     pub fn global_base_url(&self) -> String {
         format!("{}{API_ROOT}", self.config.api_base_url())
     }
@@ -84,13 +102,18 @@ impl Shared {
         self.config.api_key()
     }
 
-    /// Base URL for pinned REST traffic, honoring a per-request hint, the
-    /// repaired 421 placement, the preferred region, and affinity.
+    /// Base URL for REST traffic, honoring a per-request hint, the repaired
+    /// 421 placement, the preferred region, and affinity.
     ///
     /// An explicit hint or a learned 421 placement pins directly. Otherwise a
-    /// preferred region pins under strict affinity and uses first contact
-    /// under failover (the proxy routes, then a 421 teaches the pin).
+    /// preferred region pins under strict affinity and uses the configured
+    /// origin under failover. When discovery is active, member routing is
+    /// resolved per request in [`Shared::dispatch`]; region hints stay
+    /// advisory headers and never steer the base URL.
     pub fn pinned_base_url(&self, region_hint: Option<RegionCode>) -> Result<String> {
+        if self.router.is_some() {
+            return Ok(format!("{}{API_ROOT}", self.config.api_base_url()));
+        }
         let repaired = self.placement.read().ok().and_then(|guard| *guard);
         if let Some(region) = region_hint.or(repaired) {
             let global = normalize_base_url(self.config.api_base_url())?;
@@ -104,6 +127,36 @@ impl Shared {
             self.config.region_affinity(),
         )?;
         Ok(format!("{base}{API_ROOT}"))
+    }
+
+    /// Explicit regional member origin (health probes and other
+    /// region-targeted calls); discovery never reroutes it.
+    pub fn regional_base_url(&self, region: RegionCode) -> Result<String> {
+        let global = normalize_base_url(self.config.api_base_url())?;
+        let pinned = pin_base_url(&global, Some(region), Some(region), RegionAffinity::Strict)?;
+        Ok(format!("{pinned}{API_ROOT}"))
+    }
+
+    /// The member origin for a database-scoped direct connection (the
+    /// reactive WebSocket): the discovered regional endpoint, or the
+    /// catalog-selected origin when discovery cannot answer.
+    pub(crate) async fn member_base_url(
+        &self,
+        database: &str,
+        region_hint: Option<RegionCode>,
+        needs_write: bool,
+    ) -> Result<String> {
+        let Some(router) = &self.router else {
+            return self.pinned_base_url(region_hint);
+        };
+        if let Some((base, _region)) = router.resolve(&self.transport, database, needs_write).await
+        {
+            return Ok(base);
+        }
+        router
+            .catalog_base(&self.transport)
+            .await
+            .map_err(routing_unavailable)
     }
 
     /// Database-scoped root for document, SQL, and reactive routes.
@@ -192,6 +245,7 @@ impl Shared {
         request.headers.retain(|(name, _)| {
             !name.eq_ignore_ascii_case(SKIP_SESSION_MARKER)
                 && !name.eq_ignore_ascii_case(SKIP_AUTH_MARKER)
+                && !name.eq_ignore_ascii_case(ROUTING_DATABASE_MARKER)
         });
         if !skip_auth {
             if let Some(api_key) = self.config.api_key() {
@@ -292,25 +346,6 @@ impl Shared {
                 self.set_session_token(Some(token));
             }
         }
-        // First-contact responses identify the member that served the
-        // request. A failover preference still uses global first contact, so
-        // it must learn the serving region too. Preserve strict affinity and
-        // an existing learned/repaired pin.
-        if (200..300).contains(&response.status)
-            && self.config.region_affinity() != RegionAffinity::Strict
-        {
-            let region = response
-                .header("x-terrascale-serving-region")
-                .or_else(|| response.header("x-terrascale-region"))
-                .and_then(|value| value.trim().parse().ok());
-            if let Some(region) = region {
-                if let Ok(mut guard) = self.placement.write() {
-                    if guard.is_none() {
-                        *guard = Some(region);
-                    }
-                }
-            }
-        }
     }
 
     fn should_advertise_region_hint(&self, request: &Request) -> bool {
@@ -318,7 +353,7 @@ impl Shared {
             return true;
         }
         // A strict request to a first-party regional host is already routed
-        // directly. Custom proxies still need the typed hint header.
+        // directly. Custom origins still need the typed hint header.
         let Some(host) = reqwest::Url::parse(&request.url)
             .ok()
             .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
@@ -334,15 +369,32 @@ impl Shared {
         )
     }
 
-    fn check(&self, route_name: &str, response: &Response) -> Result<()> {
+    fn check(&self, route_name: &str, response: &Response, database: Option<&str>) -> Result<()> {
         if (200..300).contains(&response.status)
             || (response.status == 304 && route_name == "reactive.poll")
         {
             return Ok(());
         }
+        // An unhealthy member answers liveness with HTTP 503 but keeps the
+        // canonical typed HealthResponse body. Accept the status so callers
+        // can inspect `healthy` instead of losing the producer's response.
+        if response.status == 503 && matches!(route_name, "regions.health" | "regions.status") {
+            return Ok(());
+        }
         if response.status == 421 {
             let placement = response.header(PLACEMENT_HEADER).map(str::to_owned);
-            if self.config.region_affinity() != RegionAffinity::Strict {
+            if let Some(router) = &self.router {
+                // The member is authoritative (ADR 0043 §2): adopt its
+                // placement into the scope's routing cache and schedule a
+                // corrective `stale=1` rediscovery (ADR 0050 §5.4).
+                if let Some(database) = database {
+                    router.note_placement(
+                        database,
+                        &parse_placement_regions(placement.as_deref()),
+                        0,
+                    );
+                }
+            } else if self.config.region_affinity() != RegionAffinity::Strict {
                 if let Some(region) = placement.as_deref().and_then(parse_region_header) {
                     if let Ok(mut guard) = self.placement.write() {
                         *guard = Some(region);
@@ -356,108 +408,143 @@ impl Shared {
         Err(decode_error(route_name, response))
     }
 
-    /// Send a request and decode a JSON body. Read requests may retry bounded
-    /// transient failures; mutations retry only when a stable idempotency key
-    /// is present on the request.
-    pub async fn send_typed<T: DeserializeOwned>(&self, mut request: Request) -> Result<T> {
+    /// Resolve the origin for one attempt when discovery is active (ADR
+    /// 0050 §1/§8). `routing_database` carries the marker-tagged database for
+    /// routes whose wire path has none. Returns the scope that served the
+    /// attempt so failures can demote the regional endpoint.
+    async fn route(&self, request: &mut Request, routing_database: Option<&str>) -> Result<Routed> {
+        let Some(router) = &self.router else {
+            return Ok(Routed::default());
+        };
+        // Only requests the SDK built against the configured product origin
+        // are re-routable; advertised reactive delivery URLs keep their own
+        // origin (ADR 0050 §5.7).
+        let base = self.config.api_base_url();
+        let class = match request
+            .url
+            .strip_prefix(base)
+            .filter(|rest| rest.starts_with('/'))
+        {
+            None => return Ok(Routed::default()),
+            Some(path) => {
+                match routing_database.filter(|database| discovery::is_database_name(database)) {
+                    Some(database) => RouteKind::Database(database.to_owned()),
+                    // Advertised reactive delivery URLs keep their own origin.
+                    None if path.starts_with("/api/v1/reactive/") => return Ok(Routed::default()),
+                    None => discovery::classify_path(path),
+                }
+            }
+        };
+        match class {
+            RouteKind::Database(database) => {
+                let origin = match router
+                    .resolve(&self.transport, &database, needs_write(request))
+                    .await
+                {
+                    Some((origin, region)) => {
+                        rebase(request, &origin)?;
+                        return Ok(Routed {
+                            database: Some(database),
+                            region: Some(region),
+                        });
+                    }
+                    None => router
+                        .catalog_base(&self.transport)
+                        .await
+                        .map_err(routing_unavailable)?,
+                };
+                rebase(request, &origin)?;
+                Ok(Routed {
+                    database: Some(database),
+                    region: None,
+                })
+            }
+            RouteKind::Catalog => {
+                // `/api/v1/regions` exactly is the catalog itself, served by
+                // the discovery origin, never the product origin.
+                rebase(request, router.atlas_origin())?;
+                Ok(Routed::default())
+            }
+            // Product routes target the configured product origin.
+            RouteKind::Unrouted => Ok(Routed::default()),
+            RouteKind::MemberGlobal => {
+                let origin = router
+                    .catalog_base(&self.transport)
+                    .await
+                    .map_err(routing_unavailable)?;
+                rebase(request, &origin)?;
+                Ok(Routed::default())
+            }
+        }
+    }
+
+    /// Send one request through the shared pipeline: decoration, Atlas
+    /// routing, bounded retries, and 421 placement repair. Read requests may
+    /// retry bounded transient failures; mutations retry only when a stable
+    /// idempotency key is present on the request.
+    async fn dispatch(&self, mut request: Request) -> Result<Response> {
+        let routing_database = request
+            .headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(ROUTING_DATABASE_MARKER))
+            .map(|(_, value)| value.clone());
         self.decorate(&mut request);
         let route = request.route_name.clone();
         let mut retries = 0;
         loop {
-            match self.transport.send(request.clone()).await {
+            let mut attempt = request.clone();
+            let routed = self
+                .route(&mut attempt, routing_database.as_deref())
+                .await?;
+            let started = Instant::now();
+            match self.transport.send(attempt).await {
                 Ok(response) => {
+                    routed.observe_rtt(&self.router, response.status, started.elapsed());
                     self.observe(&response);
-                    match self.check(&route, &response) {
-                        Ok(()) => {
-                            return response.json_body().map_err(|mut e: Error| {
-                                e.code = format!("{}.invalid_response", route_to_code(&route));
-                                e
-                            });
+                    match self.check(&route, &response, routed.database.as_deref()) {
+                        Ok(()) => return Ok(response),
+                        Err(error) => {
+                            routed.demote_on(&self.router, &error);
+                            if self.can_retry(&request, &error, retries) {
+                                retries += 1;
+                                self.wait_before_retry(retries).await;
+                            } else {
+                                return Err(error);
+                            }
                         }
-                        // An unhealthy member answers liveness with HTTP 503
-                        // but keeps the canonical typed HealthResponse body.
-                        // Decode it so callers can inspect `healthy` instead
-                        // of losing the producer's response to a status error.
-                        Err(_error)
-                            if response.status == 503
-                                && matches!(
-                                    route.as_str(),
-                                    "regions.health" | "regions.status"
-                                ) =>
-                        {
-                            return response.json_body().map_err(|mut e: Error| {
-                                e.code = format!("{}.invalid_response", route_to_code(&route));
-                                e
-                            })
-                        }
-                        Err(error) if self.can_retry(&request, &error, retries) => {
-                            retries += 1;
-                            self.wait_before_retry(retries).await;
-                        }
-                        Err(error) => return Err(error),
                     }
                 }
-                Err(error) if self.can_retry(&request, &error, retries) => {
-                    retries += 1;
-                    self.wait_before_retry(retries).await;
+                Err(error) => {
+                    routed.demote_on(&self.router, &error);
+                    if self.can_retry(&request, &error, retries) {
+                        retries += 1;
+                        self.wait_before_retry(retries).await;
+                    } else {
+                        return Err(error);
+                    }
                 }
-                Err(error) => return Err(error),
             }
         }
+    }
+
+    /// Send a request and decode a JSON body.
+    pub async fn send_typed<T: DeserializeOwned>(&self, request: Request) -> Result<T> {
+        let route = request.route_name.clone();
+        let response = self.dispatch(request).await?;
+        response.json_body().map_err(|mut e: Error| {
+            e.code = format!("{}.invalid_response", route_to_code(&route));
+            e
+        })
     }
 
     /// Send a request and expect an empty success body, with the same bounded
     /// retry policy as [`Shared::send_typed`].
-    pub async fn send_empty(&self, mut request: Request) -> Result<()> {
-        self.decorate(&mut request);
-        let route = request.route_name.clone();
-        let mut retries = 0;
-        loop {
-            match self.transport.send(request.clone()).await {
-                Ok(response) => {
-                    self.observe(&response);
-                    match self.check(&route, &response) {
-                        Ok(()) => return Ok(()),
-                        Err(error) if self.can_retry(&request, &error, retries) => {
-                            retries += 1;
-                            self.wait_before_retry(retries).await;
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-                Err(error) if self.can_retry(&request, &error, retries) => {
-                    retries += 1;
-                    self.wait_before_retry(retries).await;
-                }
-                Err(error) => return Err(error),
-            }
-        }
+    pub async fn send_empty(&self, request: Request) -> Result<()> {
+        self.dispatch(request).await.map(|_| ())
     }
 
-    pub async fn send_response(&self, mut request: Request) -> Result<Response> {
-        self.decorate(&mut request);
-        let route = request.route_name.clone();
-        let mut retries = 0;
-        loop {
-            match self.transport.send(request.clone()).await {
-                Ok(response) => {
-                    self.observe(&response);
-                    match self.check(&route, &response) {
-                        Ok(()) => return Ok(response),
-                        Err(error) if self.can_retry(&request, &error, retries) => {
-                            retries += 1;
-                            self.wait_before_retry(retries).await;
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-                Err(error) if self.can_retry(&request, &error, retries) => {
-                    retries += 1;
-                    self.wait_before_retry(retries).await;
-                }
-                Err(error) => return Err(error),
-            }
-        }
+    pub async fn send_response(&self, request: Request) -> Result<Response> {
+        self.dispatch(request).await
     }
 
     fn can_retry(&self, request: &Request, error: &Error, retries: u8) -> bool {
@@ -485,6 +572,69 @@ impl Shared {
 
 fn route_to_code(route: &str) -> String {
     route.replace('.', "_")
+}
+
+/// The scope that served one dispatched attempt.
+#[derive(Debug, Default, Clone)]
+struct Routed {
+    database: Option<String>,
+    region: Option<String>,
+}
+
+impl Routed {
+    /// A retryable failure against a discovered regional endpoint moves that
+    /// region behind the eligible alternatives (ADR 0050 §5.3).
+    fn demote_on(&self, router: &Option<Arc<Router>>, error: &Error) {
+        if is_retryable(error) {
+            if let (Some(router), Some(database), Some(region)) =
+                (router, self.database.as_deref(), self.region.as_deref())
+            {
+                router.demote(database, region);
+            }
+        }
+    }
+
+    /// A successful round trip against a discovered regional endpoint feeds
+    /// the per-region RTT tracker (ADR 0050 §2); the measurement goes to
+    /// discovery ranking only, never onto a member request.
+    fn observe_rtt(&self, router: &Option<Arc<Router>>, status: u16, elapsed: Duration) {
+        if status < 500 {
+            if let (Some(router), Some(region)) = (router, self.region.as_deref()) {
+                router.observe_rtt(region, elapsed.as_secs_f64() * 1_000.0);
+            }
+        }
+    }
+}
+
+/// Whether the operation needs a write-capable endpoint (ADR 0050 §5.3):
+/// capability selection is method-based, unlike the idempotency gating in
+/// [`is_mutation`].
+fn needs_write(request: &Request) -> bool {
+    matches!(
+        request.method,
+        Method::Post | Method::Put | Method::Patch | Method::Delete
+    )
+}
+
+/// Replace a request's origin, keeping its path and query.
+fn rebase(request: &mut Request, origin: &str) -> Result<()> {
+    let suffix = request
+        .url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.find('/').map(|index| &rest[index..]))
+        .unwrap_or("/");
+    request.url = format!("{origin}{suffix}");
+    Ok(())
+}
+
+/// Discovery and the region catalog both failed: member routes have no
+/// regional endpoint left to try (ADR 0050 §5.8 — there is no proxy fallback).
+fn routing_unavailable(cause: Error) -> Error {
+    Error::new(
+        ErrorKind::Unavailable,
+        "routing_unavailable",
+        format!("No TerraScale regional endpoint is available for the member route: {cause}"),
+    )
 }
 
 fn is_mutation(request: &Request) -> bool {
@@ -541,6 +691,22 @@ fn parse_region_header(value: &str) -> Option<RegionCode> {
     value
         .split(',')
         .find_map(|candidate| candidate.trim().parse().ok())
+}
+
+/// All regions in a placement header, order preserved (home first, ADR 0043 §1).
+fn parse_placement_regions(value: Option<&str>) -> Vec<RegionCode> {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    let mut regions = Vec::new();
+    for candidate in value.split(',') {
+        if let Ok(region) = candidate.trim().parse() {
+            if !regions.contains(&region) {
+                regions.push(region);
+            }
+        }
+    }
+    regions
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -603,7 +769,11 @@ pub(crate) fn decode_error(route_name: &str, response: &Response) -> Error {
 }
 
 fn is_retryable(error: &Error) -> bool {
-    error.kind == ErrorKind::Transport || matches!(error.status, Some(408 | 429 | 500..=504))
+    // 520-524 are Cloudflare's origin-connectivity class (returned before the
+    // request reaches the member); they demote and fail over like a
+    // transport error (ADR 0050 §5.3).
+    error.kind == ErrorKind::Transport
+        || matches!(error.status, Some(408 | 429 | 500..=504 | 520..=524))
 }
 
 fn encode_path_segment(value: &str) -> String {

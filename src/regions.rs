@@ -1,9 +1,10 @@
 //! Region codes, affinity, and URL pinning.
 //!
-//! The SDK pins REST (and optional WebSocket) traffic to a healthy hosting
-//! region (`<region>.api.terrascale.tech`) and keeps reactive HTTP on the
-//! global `sync.api.` entry point. A `421` with `X-TerraScale-Placement`
-//! repairs a stale pin.
+//! Failover-affinity clients on the public origin discover eligible regional
+//! endpoints through Atlas (`crate::discovery`, ADR 0050) and connect
+//! directly; strict-affinity clients pin REST (and optional WebSocket)
+//! traffic to their configured region (`<region>.api.terrascale.tech`). A
+//! `421` with `X-TerraScale-Placement` repairs a stale route.
 
 use std::fmt;
 use std::net::IpAddr;
@@ -85,8 +86,13 @@ pub enum RegionAffinity {
     Strict,
 }
 
-/// Global REST entry point (GOAL D-24).
+/// Global REST entry point (GOAL D-24). Since ADR 0050 §8 this origin serves
+/// only dashboard-owned product routes; member traffic goes regional.
 pub const GLOBAL_API_BASE_URL: &str = "https://api.terrascale.tech";
+
+/// Host of [`GLOBAL_API_BASE_URL`]; regional members live under
+/// `{region}.api.terrascale.tech`.
+pub const GLOBAL_API_HOST: &str = "api.terrascale.tech";
 
 /// Default reactive delivery origin.
 pub const GLOBAL_SYNC_BASE_URL: &str = "https://sync.api.terrascale.tech";

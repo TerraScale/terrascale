@@ -1,13 +1,18 @@
 //! Client configuration: credentials, project scope, region pinning, retry.
 
+use crate::discovery::ATLAS_BASE_URL;
 use crate::error::{Error, ErrorKind, Result};
-use crate::regions::{normalize_base_url, RegionAffinity, RegionCode, GLOBAL_API_BASE_URL};
+use crate::regions::{
+    normalize_base_url, RegionAffinity, RegionCode, GLOBAL_API_BASE_URL, GLOBAL_API_HOST,
+};
 
 /// Runtime configuration for [`crate::TerraScaleClient`].
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
     api_base_url: String,
     sync_base_url: String,
+    /// Effective discovery/catalog origin; `Some` means discovery is active.
+    atlas_base_url: Option<String>,
     api_key: Option<String>,
     project_id: Option<String>,
     tenant_id: Option<String>,
@@ -24,7 +29,7 @@ impl ClientConfig {
         ClientConfigBuilder::default()
     }
 
-    /// Global (first-contact) base URL.
+    /// Product API base URL (default `https://api.terrascale.tech`).
     #[must_use]
     pub fn api_base_url(&self) -> &str {
         &self.api_base_url
@@ -34,6 +39,13 @@ impl ClientConfig {
     #[must_use]
     pub fn sync_base_url(&self) -> &str {
         &self.sync_base_url
+    }
+
+    /// Effective discovery/catalog origin. `Some` means Atlas discovery is
+    /// active for this client (ADR 0050 §5).
+    #[must_use]
+    pub fn atlas_base_url(&self) -> Option<&str> {
+        self.atlas_base_url.as_deref()
     }
 
     /// Configured project scope, if any.
@@ -82,6 +94,7 @@ impl ClientConfig {
 pub struct ClientConfigBuilder {
     api_base_url: Option<String>,
     sync_base_url: Option<String>,
+    atlas_base_url: Option<String>,
     api_key: Option<String>,
     project_id: Option<String>,
     tenant_id: Option<String>,
@@ -96,6 +109,17 @@ impl ClientConfigBuilder {
     #[must_use]
     pub fn api_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.api_base_url = Some(base_url.into());
+        self
+    }
+
+    /// Override the Atlas discovery/catalog origin (default
+    /// `https://atlas.terrascale.tech` for the public API origin) and force
+    /// discovery on for a custom API origin. Tests and local development use
+    /// this; strict regional affinity never discovers (ADR 0050 §5.1) and
+    /// ignores the override.
+    #[must_use]
+    pub fn atlas_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.atlas_base_url = Some(base_url.into());
         self
     }
 
@@ -205,9 +229,29 @@ impl ClientConfigBuilder {
                 .as_deref()
                 .unwrap_or(crate::regions::GLOBAL_SYNC_BASE_URL),
         )?;
+        // Discovery is the default only for failover-affinity clients on the
+        // public global origin; an explicit Atlas override forces it on for
+        // any origin (ADR 0050 §5.1).
+        let atlas_override = self
+            .atlas_base_url
+            .as_deref()
+            .map(normalize_base_url)
+            .transpose()?;
+        let atlas_base_url = if self.region_affinity == RegionAffinity::Strict {
+            None
+        } else {
+            atlas_override.or_else(|| {
+                let public_origin = reqwest::Url::parse(&api_base_url)
+                    .ok()
+                    .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+                    .is_some_and(|host| host == GLOBAL_API_HOST);
+                public_origin.then(|| ATLAS_BASE_URL.to_owned())
+            })
+        };
         Ok(ClientConfig {
             api_base_url,
             sync_base_url,
+            atlas_base_url,
             api_key,
             project_id: self.project_id,
             tenant_id: self.tenant_id,

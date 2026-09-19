@@ -1662,7 +1662,9 @@ impl Regions {
     pub(crate) fn new(shared: SharedClient) -> Self {
         Self { shared }
     }
-    /// Returns the anonymous edge-published region catalog.
+    /// Returns the anonymous Atlas-published region catalog. When discovery
+    /// is active the request targets the discovery origin; otherwise it stays
+    /// on the configured origin.
     pub async fn catalog(&self) -> Result<RegionCatalogResponse> {
         let request = Request {
             route_name: "regions.list".to_owned(),
@@ -1698,7 +1700,7 @@ impl Regions {
         let request = Request {
             route_name: "regions.status".to_owned(),
             method: Method::Get,
-            url: format!("{}/health", self.shared.pinned_base_url(Some(region))?),
+            url: format!("{}/health", self.shared.regional_base_url(region)?),
             headers: Vec::new(),
             body: None,
         };
@@ -1710,7 +1712,7 @@ impl Regions {
         let request = Request {
             route_name: "regions.health".to_owned(),
             method: Method::Get,
-            url: format!("{}/health", self.shared.pinned_base_url(Some(region))?),
+            url: format!("{}/health", self.shared.regional_base_url(region)?),
             headers: Vec::new(),
             body: None,
         };

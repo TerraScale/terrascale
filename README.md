@@ -2,8 +2,8 @@
 
 Document CRUD, the typed schema builder (`#[derive(Schema)]` in
 `terrascale-derive`), the typed SQL builder and raw parameterized SQL,
-`subscribe`/`execute`, checkpoints and typed resets, region pinning, tenants,
-and management.
+`subscribe`/`execute`, checkpoints and typed resets, Atlas discovery routing,
+tenants, and management.
 
 ```rust,no_run
 use terrascale::{ClientConfig, RegionCode, TerraScaleClient};
@@ -20,10 +20,62 @@ let docs = client.documents();
 # }
 ```
 
-With failover affinity, a preferred Region is sent on global first contact.
-When a successful response identifies its serving Region, subsequent REST
-requests pin there. Strict affinity routes directly to the configured Region
-and preserves it when another Region is advertised.
+## Routing (Atlas discovery, ADR 0050)
+
+A failover-affinity client (the default) targeting the public origin
+`https://api.terrascale.tech` resolves member traffic through **Atlas
+discovery**; the retired per-request proxy no longer exists.
+
+- **First use of a database** (`/api/v1/databases/{name}/…`) sends one
+  unauthenticated metadata GET to
+  `https://atlas.terrascale.tech/api/v1/discovery?database=…&branch=main`.
+  The response is strictly validated (region codes, endpoint URLs on the
+  `https://{region}.api.terrascale.tech` family — loopback dev origins are
+  admitted for loopback clients — capability subsets, priority bounds) and
+  cached per routing scope (origin, database, branch, project, tenant) for
+  the document's `refreshSeconds` clamped to 60–3600 s. Concurrent discovery
+  for one scope is deduplicated to a single request. Requests pick the first
+  endpoint whose capabilities cover the operation (`write` for mutations) and
+  stay pinned to it across refreshes while the region remains eligible.
+  Round trips of successful regional requests feed a per-region EWMA (60 s
+  halflife) sent as `X-TerraScale-Region-Rtt` on later discovery fetches, so
+  Atlas ranks endpoints by measured latency — the header never goes to a
+  regional member. Refresh fetches also carry `rev=<revision>` of the cached
+  routing document whenever the scope holds one.
+- **Discovery failure degrades to the region catalog**
+  (`GET https://atlas.terrascale.tech/api/v1/regions`, cached five minutes);
+  the request then goes directly to the first available regional host. Never
+  a proxy. If discovery and the catalog both fail, member routes fail with a
+  typed `routing_unavailable` error.
+- **Product routes** (`/api/v1/organizations*`, `/api/v1/projects*`,
+  `/api/v1/regions/{code}`) target the configured API base, which the
+  dashboard now serves directly. `/api/v1/regions` exactly is the catalog
+  itself on Atlas. Database-less member routes (database create/list,
+  tenants, operations) use catalog-selected regional endpoints, as do
+  reactive attach and the reactive WebSocket when discovery cannot answer.
+- **Failover and repair**: on a transport error or 52x/503 against a
+  discovered regional endpoint, safe or idempotency-keyed requests move to
+  the next endpoint in the document (the failed region is demoted per scope).
+  A `421` adopts the member's `X-TerraScale-Placement` into the routing
+  cache and marks the scope for one corrective `stale=1` rediscovery; `404`
+  never triggers rediscovery. Idempotency-key retry gating and the strict
+  URL allowlist are unchanged.
+- **Affinity options**: `RegionAffinity::Failover` (default) uses
+  discovery + catalog as above; `RegionAffinity::Strict` keeps the direct
+  pinned regional base (`{region}.api.terrascale.tech`) with no discovery.
+  Per-request region hints stay advisory `X-TerraScale-Preferred-Region`
+  headers under discovery and never steer the base URL.
+- **Configuration knobs**: `ClientConfig::builder().api_base_url(...)`
+  selects the product origin (default `https://api.terrascale.tech`);
+  `.atlas_base_url(...)` overrides the discovery origin (default
+  `https://atlas.terrascale.tech`) and forces discovery on for custom API
+  origins — used by tests and local development. Discovery requests are
+  bounded at 3 s.
+
+**Migration note (from the ADR 0043 proxy flow):** the global origin no
+longer proxies or pins member traffic, and serving-region first-contact
+learning is gone. Custom origins and strict affinity behave exactly as
+before — no discovery, direct requests.
 
 ## Reactive transports
 
@@ -46,26 +98,28 @@ opening exchange for it.
 in-progress schema migration with its required `Idempotency-Key` and
 `If-Match` headers.
 
-## Region discovery and member health
+## Region catalog and member health
 
-The public `GET https://api.terrascale.tech/api/v1/regions` endpoint is the
-edge-owned region catalog (`RegionCatalogResponse`) used by
-`client.management().regions().catalog()`. It is the only endpoint used for
-initial discovery and includes the ordered region list and regional hosts.
+The public `GET https://atlas.terrascale.tech/api/v1/regions` endpoint is the
+Atlas-published region catalog (`RegionCatalogResponse`) used by
+`client.management().regions().catalog()` and, internally, as the
+catalog-selection fallback for member routes. It includes the ordered region
+list and regional hosts.
 
 The same path on a regional TerraBase member is intentionally a different,
 private-origin probe: it returns `HealthResponse` for that member. Use
 `client.management().regions().health(region)` or `.status(region)`, which
 target the member's `/api/v1/health` endpoint. A member response must never
-be decoded as the edge catalog, and an edge catalog must never be used as a
-member liveness result. This split is defined by TerraBase ADR 0043 and is
-also reflected in the generated member contract and the edge route manifest.
+be decoded as the Atlas catalog, and an Atlas catalog must never be used as a
+member liveness result. This split is defined by TerraBase ADR 0043/0050 and
+is also reflected in the generated member contract and the edge route
+manifest.
 
 ## Layout
 
-- `src/` — `terrascale` crate. Key modules are `config`, `regions`,
-  `transport`, `client`, `documents`, `schema`, `sql`, `reactive`, `tenants`,
-  and `management`.
+- `src/` — `terrascale` crate. Key modules are `config`, `discovery`,
+  `regions`, `transport`, `client`, `documents`, `schema`, `sql`, `reactive`,
+  `tenants`, and `management`.
 - `terrascale-derive/` — `#[derive(Schema)]` collection and field metadata.
 - `tests/conformance.rs` — SDK behavior checks against a mock transport.
 - `tests/producer_http_conformance.rs` — public SDK calls exercised against

@@ -10,6 +10,7 @@
 
 pub mod client;
 pub mod config;
+pub mod discovery;
 pub mod documents;
 pub mod error;
 pub mod generated_contract;
@@ -28,6 +29,10 @@ pub use client::{
     TerraScaleClient, API_ROOT, MAX_IDEMPOTENCY_KEY_LENGTH, PLACEMENT_HEADER, SESSION_HEADER,
 };
 pub use config::{ClientConfig, ClientConfigBuilder};
+pub use discovery::{
+    Placement, Residency, RoutingCapability, RoutingDocument, RoutingEndpoint, ATLAS_BASE_URL,
+    DEFAULT_ROUTING_BRANCH, MAX_REFRESH_SECONDS, MIN_REFRESH_SECONDS,
+};
 pub use documents::{
     BatchOperation, BatchResponse, Consistency, DatabaseScope, Document, DocumentOperationOptions,
     DocumentPage, DocumentReadOptions, DocumentRow, DocumentVersion, DocumentWriteResponse,
@@ -68,7 +73,7 @@ pub use reactive::{
 };
 pub use regions::{
     normalize_base_url, pin_base_url, regional_host, RegionAffinity, RegionCode,
-    GLOBAL_API_BASE_URL,
+    GLOBAL_API_BASE_URL, GLOBAL_API_HOST,
 };
 pub use schema::{
     CollectionSchema, Document as DocumentSchema, FieldDef, FieldType, FtsDef, IndexDef, IndexKind,

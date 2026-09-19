@@ -43,6 +43,7 @@ fn client(mock: Arc<Mock>) -> TerraScaleClient {
     let transport: Arc<dyn HttpTransport> = mock;
     TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .api_key("ts_test_key")
             .project_id("proj_test")
             .build()
@@ -267,7 +268,7 @@ async fn authorization_lease_reads_the_published_route_without_bearer_auth() {
     assert_eq!(request.method, terrascale::Method::Get);
     assert_eq!(
         request.url,
-        "https://api.terrascale.tech/api/v1/authorization/leases/acme"
+        "https://api.test/api/v1/authorization/leases/acme"
     );
     assert!(request
         .headers

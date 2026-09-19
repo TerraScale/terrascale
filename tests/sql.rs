@@ -235,6 +235,7 @@ async fn execute_posts_exact_canonical_sql_wire_shape() {
     let transport = Arc::new(RecordingTransport::default());
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .project_id("project")
             .build()
             .expect("config"),

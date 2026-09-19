@@ -803,9 +803,11 @@ impl ReactiveClient {
         if let Some(checkpoint) = options.checkpoint.as_ref() {
             Checkpoint::try_new(checkpoint.to_bytes())?;
         }
-        // Attach is authenticated member traffic. A hint may select a member
-        // host, but the route itself is always the canonical API path (there
-        // is no project/database reactive route).
+        // Attach is authenticated member traffic routed to the database's
+        // discovered regional endpoint (ADR 0050 §5.7). The route itself is
+        // always the canonical API path (there is no project/database
+        // reactive route), so the routing database travels as an internal
+        // marker the dispatch pipeline resolves and strips.
         let url = format!(
             "{}/reactive/views",
             self.shared.pinned_base_url(options.region_hint)?
@@ -839,6 +841,10 @@ impl ReactiveClient {
             "checkpoint": options.checkpoint.as_ref().map(Checkpoint::to_base64),
         });
         let mut request = Request::json("reactive.subscribe", Method::Post, url, &body)?;
+        request.headers.push((
+            crate::client::ROUTING_DATABASE_MARKER.to_owned(),
+            scope.database_id.clone(),
+        ));
         if let Some(hint) = options.region_hint {
             request.headers.push((
                 "x-terrascale-preferred-region".to_owned(),
@@ -998,9 +1004,15 @@ impl ReactiveClient {
                         format!("Reactive parameters are not serializable: {error}"),
                     )
                 })?;
+                // The direct socket connects to the database's discovered
+                // regional endpoint (ADR 0050 §5.7), like the attach itself.
+                let base_url = self
+                    .shared
+                    .member_base_url(&scope.database_id, options.region_hint, true)
+                    .await?;
                 Some(LiveDelivery::WebSocket(Box::new(
                     crate::websocket::open(crate::websocket::OpenRequest {
-                        base_url: &self.shared.pinned_base_url(options.region_hint)?,
+                        base_url: &base_url,
                         view: &view.view_id,
                         generation: view.generation,
                         capability: view

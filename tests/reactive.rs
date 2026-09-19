@@ -44,6 +44,7 @@ impl HttpTransport for Mock {
 fn client(mock: Arc<Mock>) -> TerraScaleClient {
     TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .api_key("test-key")
             .project_id("project")
             .build()
@@ -253,10 +254,7 @@ async fn attach_uses_canonical_route_and_base64_wire_fields() {
         .await
         .expect("attach");
     let request = &mock.requests.lock().expect("request mutex")[0];
-    assert_eq!(
-        request.url,
-        "https://fra.api.terrascale.tech/api/v1/reactive/views"
-    );
+    assert_eq!(request.url, "https://api.test/api/v1/reactive/views");
     let body: serde_json::Value =
         serde_json::from_slice(request.body.as_ref().expect("body")).expect("JSON attach body");
     assert_eq!(body["databaseId"], "database");

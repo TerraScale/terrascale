@@ -61,6 +61,7 @@ fn client(mock: Arc<Mock>) -> TerraScaleClient {
     let transport: Arc<dyn HttpTransport> = mock;
     TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .api_key("ts_test_key")
             .project_id("proj_test")
             .build()
@@ -200,7 +201,7 @@ async fn document_list_batch_and_unicode_shapes() {
     assert_eq!(page.documents[0].value, json!({"ok": true}));
     assert_eq!(
         mock.last_request().url,
-        "https://api.terrascale.tech/api/v1/databases/db%20%E2%9C%93/collections/users%2F%E5%90%8D/documents?limit=50&after=%E2%9C%93%2Flast"
+        "https://api.test/api/v1/databases/db%20%E2%9C%93/collections/users%2F%E5%90%8D/documents?limit=50&after=%E2%9C%93%2Flast"
     );
 
     let receipt = sdk
@@ -501,7 +502,7 @@ async fn subscribe_attaches_with_checkpoint_and_hint() {
     assert_eq!(attached.capability.as_deref(), Some("capability"));
     let request = mock.last_request();
     assert_eq!(request.route_name, "reactive.subscribe");
-    assert!(request.url.starts_with("https://sfo.api.terrascale.tech"));
+    assert!(request.url.starts_with("https://api.test"));
     assert!(request.url.contains("/reactive/views"));
     assert_eq!(
         request
@@ -538,17 +539,14 @@ async fn reactive_methods_reject_invalid_queries_before_transport() {
 
 #[tokio::test]
 async fn region_pinning_and_421_repair() {
-    // Failover without a pin uses global first contact.
+    // A custom origin serves the catalog route directly.
     let mock = Mock::new(vec![Response::json(
         200,
         &json!({"regions":[{"code":"GRU","name":"São Paulo","country":"BR","latitude":-23.5,"longitude":-46.6,"available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech"}}),
     )]);
     let sdk = client(Arc::clone(&mock));
     sdk.management().regions().catalog().await.expect("regions");
-    assert!(mock
-        .last_request()
-        .url
-        .starts_with("https://api.terrascale.tech"));
+    assert!(mock.last_request().url.starts_with("https://api.test"));
     assert_eq!(mock.last_request().route_name, "regions.list");
 
     // Strict affinity pins REST to the regional hostname.
@@ -697,7 +695,7 @@ async fn document_request_options_match_published_headers_and_queries() {
         .await
         .expect("put");
     let put = mock.last_request();
-    assert!(put.url.starts_with("https://sfo.api.terrascale.tech"));
+    assert!(put.url.starts_with("https://api.test"));
     assert!(put
         .headers
         .iter()
@@ -740,7 +738,7 @@ async fn document_request_options_match_published_headers_and_queries() {
         .await
         .expect("get");
     let get = mock.last_request();
-    assert!(get.url.starts_with("https://fra.api.terrascale.tech"));
+    assert!(get.url.starts_with("https://api.test"));
     assert!(get.url.ends_with("?at=42"));
     assert!(get
         .headers

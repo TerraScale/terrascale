@@ -52,6 +52,7 @@ async fn api_key_is_normalized_once_before_authorization_header_is_added() {
         let mock = Mock::new([document_response()]);
         let sdk = TerraScaleClient::with_transport(
             ClientConfig::builder()
+                .api_base_url("https://api.test")
                 .api_key(configured)
                 .build()
                 .expect("config"),
@@ -130,7 +131,10 @@ async fn documents_propagate_authoritative_etag_and_require_json_success_media()
     };
     let mock = Mock::new([get, put, wrong_media]);
     let sdk = TerraScaleClient::with_transport(
-        ClientConfig::builder().build().expect("config"),
+        ClientConfig::builder()
+            .api_base_url("https://api.test")
+            .build()
+            .expect("config"),
         Arc::clone(&mock) as Arc<dyn HttpTransport>,
     );
     let scope = DatabaseScope::new("database");
@@ -160,6 +164,7 @@ async fn caller_idempotency_key_is_reused_by_every_shared_client_handle() {
     let mock = Mock::new([document_response(), document_response()]);
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .project_id("project")
             .build()
             .expect("config"),
@@ -206,6 +211,7 @@ async fn database_routes_are_direct_and_session_header_is_canonical() {
     let mock = Mock::new([first, document_response()]);
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .project_id("ignored-project")
             .build()
             .expect("config"),
@@ -236,31 +242,6 @@ async fn database_routes_are_direct_and_session_header_is_canonical() {
 }
 
 #[tokio::test]
-async fn first_contact_serving_region_is_learned_for_followup_requests() {
-    let mut first = document_response();
-    first
-        .headers
-        .push(("X-TerraScale-Region".to_owned(), "FRA".to_owned()));
-    let mock = Mock::new([first, document_response()]);
-    let sdk = TerraScaleClient::with_transport(
-        ClientConfig::builder().build().expect("config"),
-        Arc::clone(&mock) as Arc<dyn HttpTransport>,
-    );
-    let scope = terrascale::DatabaseScope::new("database");
-    sdk.documents()
-        .get(&scope, "users", "doc_1")
-        .await
-        .expect("first get");
-    sdk.documents()
-        .get(&scope, "users", "doc_1")
-        .await
-        .expect("second get");
-    assert!(mock.requests.lock().expect("request mutex")[1]
-        .url
-        .starts_with("https://fra.api.terrascale.tech"));
-}
-
-#[tokio::test]
 async fn retries_are_bounded_and_mutations_need_a_stable_key() {
     let read_mock = Mock::new([
         Response::json(503, &json!({"code": "busy"})),
@@ -268,6 +249,7 @@ async fn retries_are_bounded_and_mutations_need_a_stable_key() {
     ]);
     let read_sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .max_retry_attempts(1)
             .retry_delay_ms(0)
             .build()
@@ -291,6 +273,7 @@ async fn retries_are_bounded_and_mutations_need_a_stable_key() {
     ]);
     let mutation_sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .max_retry_attempts(1)
             .retry_delay_ms(0)
             .build()
@@ -314,12 +297,13 @@ async fn retries_are_bounded_and_mutations_need_a_stable_key() {
 }
 
 #[tokio::test]
-async fn strict_custom_proxy_keeps_region_hint_on_one_wire_header() {
+async fn strict_custom_origin_keeps_region_hint_on_one_wire_header() {
     let mock = Mock::new([document_response()]);
     let transport: Arc<dyn HttpTransport> = mock.clone();
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://proxy.example.test")
+            .api_base_url("https://api.test")
+            .api_base_url("https://origin.example.test")
             .preferred_region(terrascale::RegionCode::Sfo)
             .region_affinity(terrascale::RegionAffinity::Strict)
             .build()
@@ -335,7 +319,7 @@ async fn strict_custom_proxy_keeps_region_hint_on_one_wire_header() {
         .await
         .expect("get");
     let request = mock.requests.lock().expect("request mutex")[0].clone();
-    assert!(request.url.starts_with("https://proxy.example.test"));
+    assert!(request.url.starts_with("https://origin.example.test"));
     assert_eq!(
         request
             .headers
@@ -359,7 +343,10 @@ async fn nested_error_envelope_preserves_code_message_and_fix() {
         }),
     )]);
     let sdk = TerraScaleClient::with_transport(
-        ClientConfig::builder().build().expect("config"),
+        ClientConfig::builder()
+            .api_base_url("https://api.test")
+            .build()
+            .expect("config"),
         Arc::clone(&mock) as Arc<dyn HttpTransport>,
     );
     let error = sdk
@@ -387,7 +374,10 @@ async fn not_modified_is_an_empty_reactive_poll_only() {
         body: Vec::new().into(),
     }]);
     let sdk = TerraScaleClient::with_transport(
-        ClientConfig::builder().build().expect("config"),
+        ClientConfig::builder()
+            .api_base_url("https://api.test")
+            .build()
+            .expect("config"),
         Arc::clone(&mock) as Arc<dyn HttpTransport>,
     );
     let view = terrascale::AttachedView {
@@ -419,7 +409,10 @@ async fn not_modified_is_an_empty_reactive_poll_only() {
         body: Vec::new().into(),
     }]);
     let ordinary_sdk = TerraScaleClient::with_transport(
-        ClientConfig::builder().build().expect("config"),
+        ClientConfig::builder()
+            .api_base_url("https://api.test")
+            .build()
+            .expect("config"),
         Arc::clone(&ordinary) as Arc<dyn HttpTransport>,
     );
     let error = ordinary_sdk
@@ -577,44 +570,5 @@ async fn strict_affinity_preserves_region_after_placement_responses() {
         assert!(requests
             .iter()
             .all(|request| request.url.starts_with("https://gru.api.terrascale.tech")));
-    }
-}
-
-#[tokio::test]
-async fn failover_preference_learns_first_contact_and_keeps_the_learned_pin() {
-    for serving_region in ["GRU", "FRA"] {
-        let mut first = document_response();
-        first
-            .headers
-            .push(("x-terrascale-region".into(), serving_region.into()));
-        let mut second = document_response();
-        second
-            .headers
-            .push(("x-terrascale-region".into(), "SFO".into()));
-        let mock = Mock::new([first, second, document_response()]);
-        let sdk = TerraScaleClient::with_transport(
-            ClientConfig::builder()
-                .preferred_region(terrascale::RegionCode::Gru)
-                .build()
-                .expect("config"),
-            Arc::clone(&mock) as Arc<dyn HttpTransport>,
-        );
-        let scope = DatabaseScope::new("database");
-        for _ in 0..3 {
-            sdk.documents()
-                .get(&scope, "users", "doc")
-                .await
-                .expect("document");
-        }
-        let requests = mock.requests.lock().expect("request mutex");
-        assert!(requests[0].url.starts_with("https://api.terrascale.tech/"));
-        let regional_base = format!(
-            "https://{}.api.terrascale.tech/",
-            serving_region.to_ascii_lowercase()
-        );
-        assert!(requests[1..]
-            .iter()
-            .all(|request| request.url.starts_with(&regional_base)));
-        assert_eq!(sdk.pinned_region(), serving_region.parse().ok());
     }
 }

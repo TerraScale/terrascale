@@ -31,6 +31,7 @@ where
         let mock = Mock::new(response(status, &vector));
         let client = TerraScaleClient::with_transport(
             ClientConfig::builder()
+                .api_base_url("https://api.test")
                 .api_key("conformance-key")
                 .project_id("proj")
                 .build()
@@ -388,6 +389,7 @@ async fn producer_421_diagnostics_and_placement_repair_are_preserved() {
     ]);
     let client = TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .api_key("conformance-key")
             .project_id("proj")
             .build()
@@ -421,8 +423,17 @@ async fn producer_421_diagnostics_and_placement_repair_are_preserved() {
         .unwrap();
     let requests = mock.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
-    let next = reqwest::Url::parse(&requests[1].url).unwrap();
-    assert_eq!(next.host_str(), Some("gru.api.terrascale.tech"));
+    // A custom origin is never rewritten by the repaired pin; the placement
+    // travels as the typed preferred-region header instead.
+    assert!(requests[1].url.starts_with("https://api.test"));
+    assert_eq!(
+        requests[1]
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("x-terrascale-preferred-region"))
+            .map(|(_, v)| v.as_str()),
+        Some("GRU")
+    );
 }
 
 #[test]
@@ -504,6 +515,7 @@ async fn public_database_create_consumes_every_producer_response_and_error_once(
         let mock = Mock::new(response(status, vector));
         let client = TerraScaleClient::with_transport(
             ClientConfig::builder()
+                .api_base_url("https://api.test")
                 .api_key("conformance-key")
                 .project_id("proj")
                 .build()
@@ -527,10 +539,7 @@ async fn public_database_create_consumes_every_producer_response_and_error_once(
         let requests = mock.requests.lock().unwrap();
         assert_eq!(requests.len(), 1, "status {status} was retried");
         assert_eq!(requests[0].method, Method::Post);
-        assert_eq!(
-            requests[0].url,
-            "https://api.terrascale.tech/api/v1/databases"
-        );
+        assert_eq!(requests[0].url, "https://api.test/api/v1/databases");
         assert_eq!(
             requests[0]
                 .headers

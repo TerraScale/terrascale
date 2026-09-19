@@ -50,6 +50,7 @@ impl HttpTransport for Mock {
 fn client(mock: Arc<Mock>) -> TerraScaleClient {
     TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .api_key("test")
             .project_id("ignored")
             .build()
@@ -73,10 +74,7 @@ async fn databases_use_direct_contract_routes_and_metadata() {
     ]);
     let sdk = client(Arc::clone(&mock));
     sdk.management().databases().list(None).await.expect("list");
-    assert_eq!(
-        mock.last().url,
-        "https://api.terrascale.tech/api/v1/databases"
-    );
+    assert_eq!(mock.last().url, "https://api.test/api/v1/databases");
 
     let request = CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
         .expect("placement")
@@ -98,7 +96,7 @@ async fn databases_use_direct_contract_routes_and_metadata() {
         .expect("create");
     let request = mock.last();
     assert_eq!(request.method, Method::Post);
-    assert_eq!(request.url, "https://api.terrascale.tech/api/v1/databases");
+    assert_eq!(request.url, "https://api.test/api/v1/databases");
     assert!(request
         .headers
         .iter()
@@ -114,10 +112,7 @@ async fn databases_use_direct_contract_routes_and_metadata() {
         .get("orders", None)
         .await
         .expect("get");
-    assert_eq!(
-        mock.last().url,
-        "https://api.terrascale.tech/api/v1/databases/orders"
-    );
+    assert_eq!(mock.last().url, "https://api.test/api/v1/databases/orders");
 }
 
 #[test]
@@ -219,7 +214,7 @@ async fn schema_management_uses_durable_schema_document_contract() {
     assert_eq!(request.method, Method::Put);
     assert_eq!(
         request.url,
-        "https://api.terrascale.tech/api/v1/databases/db%201/collections/orders/schema"
+        "https://api.test/api/v1/databases/db%201/collections/orders/schema"
     );
     assert!(
         serde_json::from_slice::<serde_json::Value>(&request.body.expect("body"))
@@ -250,7 +245,10 @@ async fn recommendation_source_unavailability_preserves_typed_error() {
         .await
         .expect_err("source unavailable");
     assert_eq!(error.status, Some(503));
-    assert_eq!(mock.last().url, "https://api.terrascale.tech/api/v1/databases/db/collections/orders/indexes/recommendations");
+    assert_eq!(
+        mock.last().url,
+        "https://api.test/api/v1/databases/db/collections/orders/indexes/recommendations"
+    );
 }
 
 #[tokio::test]
@@ -299,7 +297,7 @@ async fn branch_and_backup_restore_use_restore_request() {
         .expect("branch");
     assert_eq!(
         mock.last().url,
-        "https://api.terrascale.tech/api/v1/databases/db/branches"
+        "https://api.test/api/v1/databases/db/branches"
     );
     sdk.management()
         .backups()
@@ -308,7 +306,7 @@ async fn branch_and_backup_restore_use_restore_request() {
         .expect("restore");
     assert_eq!(
         mock.last().url,
-        "https://api.terrascale.tech/api/v1/databases/db/backups/restore"
+        "https://api.test/api/v1/databases/db/backups/restore"
     );
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&mock.last().body.expect("body"))
@@ -583,7 +581,7 @@ async fn imports_use_direct_routes_and_resumable_upload_flow() {
     assert_eq!(request.method, Method::Post);
     assert_eq!(
         request.url,
-        "https://api.terrascale.tech/api/v1/databases/db%201/imports"
+        "https://api.test/api/v1/databases/db%201/imports"
     );
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&request.body.expect("body")).expect("json"),
@@ -593,13 +591,13 @@ async fn imports_use_direct_routes_and_resumable_upload_flow() {
     assert_eq!(api.list("db 1").await.expect("list").len(), 1);
     assert_eq!(
         mock.last().url,
-        "https://api.terrascale.tech/api/v1/databases/db%201/imports"
+        "https://api.test/api/v1/databases/db%201/imports"
     );
 
     api.get("db 1", "job/1").await.expect("get");
     assert_eq!(
         mock.last().url,
-        "https://api.terrascale.tech/api/v1/databases/db%201/imports/job%2F1"
+        "https://api.test/api/v1/databases/db%201/imports/job%2F1"
     );
 
     api.upload(
@@ -614,7 +612,7 @@ async fn imports_use_direct_routes_and_resumable_upload_flow() {
     assert_eq!(request.method, Method::Put);
     assert_eq!(
         request.url,
-        "https://api.terrascale.tech/api/v1/databases/db%201/imports/job%2F1/input"
+        "https://api.test/api/v1/databases/db%201/imports/job%2F1/input"
     );
     assert_eq!(request.body.expect("body"), b"{\"id\":1}\n");
     assert!(request
@@ -628,7 +626,7 @@ async fn imports_use_direct_routes_and_resumable_upload_flow() {
     assert_eq!(mock.last().method, Method::Post);
     assert_eq!(
         mock.last().url,
-        "https://api.terrascale.tech/api/v1/databases/db%201/imports/job%2F1/resume"
+        "https://api.test/api/v1/databases/db%201/imports/job%2F1/resume"
     );
     assert!(mock.last().body.is_none());
 }
@@ -817,7 +815,7 @@ async fn database_deletion_status_reads_typed_authoritative_progress() {
     assert_eq!(mock.last().method, Method::Get);
     assert_eq!(
         mock.last().url,
-        "https://api.terrascale.tech/api/v1/databases/orders/deletions/op"
+        "https://api.test/api/v1/databases/orders/deletions/op"
     );
 }
 
@@ -1007,7 +1005,7 @@ async fn operations_list_is_project_scoped_paged_and_preserves_u64_revision() {
     assert_eq!(mock.last().method, Method::Get);
     assert_eq!(
         mock.last().url,
-        "https://api.terrascale.tech/api/v1/operations?after=cursor%20previous&limit=50"
+        "https://api.test/api/v1/operations?after=cursor%20previous&limit=50"
     );
     assert!(mock
         .last()
@@ -1080,6 +1078,7 @@ async fn scope_selectors_and_put_create_only_use_canonical_headers() {
     let mock = Mock::new(vec![Response::json(200, &json!({"revision":"1"}))]);
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .api_key("test")
             .tenant_id("tenant")
             .project_id("project")
@@ -1161,6 +1160,7 @@ async fn webhook_secret_rotation_never_retries_while_create_requires_stable_iden
     ]);
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
+            .api_base_url("https://api.test")
             .max_retry_attempts(1)
             .retry_delay_ms(0)
             .build()
@@ -1477,7 +1477,7 @@ async fn schema_rollback_carries_required_identity_and_admits_or_replays() {
     assert_eq!(request.method, Method::Post);
     assert_eq!(
         request.url,
-        "https://api.terrascale.tech/api/v1/databases/db%201/collections/orders/schema/migration/rollback"
+        "https://api.test/api/v1/databases/db%201/collections/orders/schema/migration/rollback"
     );
     assert!(request.body.is_none());
     let header = |name: &str| {
