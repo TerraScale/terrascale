@@ -1,30 +1,30 @@
 /* ==========================================================================
-   terrascale.css — the TerraScale Dashboard CSS framework (single file)
+terrascale.css — the TerraScale Dashboard CSS framework (single file)
 
-   1:1 port of the ts-dashboard design system v1 (dark-only):
-   tokens from src/design/tokens.stylex.ts, anatomy from
-   docs/design-system.md. Framework = tokens + base + components + shell.
-   Everything a TerraScale dashboard page needs lives here; pages compose
-   these classes and never ship their own stylesheets.
+1:1 port of the ts-dashboard design system v1 (dark-only):
+tokens from src/design/tokens.stylex.ts, anatomy from
+docs/design-system.md. Framework = tokens + base + components + shell.
+Everything a TerraScale dashboard page needs lives here; pages compose
+these classes and never ship their own stylesheets.
 
-   Table of contents
-     1. Tokens            (custom properties)
-     2. Fonts             (@font-face, self-hosted latin woff2)
-     3. Base              (reset, html/body, scrollbar, focus, selection)
-     4. Layout primitives (stack, grid, page, section)
-     5. Surfaces          (glass, panel, card)
-     6. Buttons           (variants, sizes, icon button, FABs)
-     7. Badges & status   (badge, alert, pip)
-     8. Forms             (label, input, select, textarea, checkbox, switch,
-                           field, form actions)
-     9. Tables            (glass table, compact rows, empty state)
-    10. Tabs, dialogs, menus, tooltips, toasts
-    11. Charts & data viz (sparkline, chart shell, metric cards)
-    12. Text & code       (muted, mono, snippet, breadcrumb, progress)
-    13. Shell             (sidebar, nav, data sub-nav, inset, account menu,
-                           project switcher, blurred inset backdrop, auth pages)
-    14. Motion & utilities
-   ========================================================================== */
+Table of contents
+1. Tokens            (custom properties)
+2. Fonts             (@font-face, self-hosted latin woff2)
+3. Base              (reset, html/body, scrollbar, focus, selection)
+4. Layout primitives (stack, grid, page, section)
+5. Surfaces          (glass, panel, card)
+6. Buttons           (variants, sizes, icon button, FABs)
+7. Badges & status   (badge, alert, pip)
+8. Forms             (label, input, select, textarea, checkbox, switch,
+field, form actions)
+9. Tables            (glass table, compact rows, empty state)
+10. Tabs, dialogs, menus, tooltips, toasts
+11. Charts & data viz (sparkline, chart shell, metric cards)
+12. Text & code       (muted, mono, snippet, breadcrumb, progress)
+13. Shell             (sidebar, nav, data sub-nav, inset, account menu,
+project switcher, blurred inset backdrop, auth pages)
+14. Motion & utilities
+========================================================================== */
 
 /* 1. Tokens =============================================================== */
 
@@ -68,9 +68,9 @@
   --ts-glass-strong: rgba(13, 15, 20, 0.8);
   --ts-blur: 20px;
   --ts-ambient-glow:
-    radial-gradient(820px 440px at 22% -8%, rgba(37, 99, 235, 0.15), transparent 62%),
-    radial-gradient(660px 420px at 88% 12%, rgba(37, 99, 235, 0.08), transparent 58%),
-    radial-gradient(900px 600px at 50% 110%, rgba(37, 99, 235, 0.05), transparent 60%);
+  radial-gradient(820px 440px at 22% -8%, rgba(37, 99, 235, 0.15), transparent 62%),
+  radial-gradient(660px 420px at 88% 12%, rgba(37, 99, 235, 0.08), transparent 58%),
+  radial-gradient(900px 600px at 50% 110%, rgba(37, 99, 235, 0.05), transparent 60%);
 
   /* Semantic surfaces. */
   --ts-canvas: #090A0E;
@@ -93,12 +93,12 @@
   --ts-focus-ring: 0 0 0 3px color-mix(in oklab, #3B82F6 50%, transparent);
   --ts-focus-ring-invalid: 0 0 0 3px color-mix(in oklab, #F87171 20%, transparent);
   --ts-card-edge:
-    0 0 0 1px color-mix(in oklab, #F2F3F5 10%, transparent),
-    0 1px 3px 0 rgba(0, 0, 0, 0.1),
-    0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  0 0 0 1px color-mix(in oklab, #F2F3F5 10%, transparent),
+  0 1px 3px 0 rgba(0, 0, 0, 0.1),
+  0 1px 2px -1px rgba(0, 0, 0, 0.1);
   --ts-overlay-edge:
-    0 0 0 1px color-mix(in oklab, #F2F3F5 10%, transparent),
-    0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  0 0 0 1px color-mix(in oklab, #F2F3F5 10%, transparent),
+  0 25px 50px -12px rgba(0, 0, 0, 0.25);
 
   /* Radius. */
   --ts-radius-badge: 6px;
@@ -318,8 +318,8 @@ kbd {
 .ts-stack-xl { display: flex; flex-direction: column; gap: var(--ts-xl); }
 
 /* Flex items default to min-width:auto, so wide children (code snippets,
-   tables, charts) blow out narrow viewports. Let stack children shrink;
-   children with overflow (pre, table shells) scroll instead. */
+tables, charts) blow out narrow viewports. Let stack children shrink;
+children with overflow (pre, table shells) scroll instead. */
 .ts-stack-xs > *,
 .ts-stack-sm > *,
 .ts-stack-md > *,
@@ -453,10 +453,10 @@ kbd {
   white-space: nowrap;
   text-decoration: none;
   transition:
-    background-color var(--ts-t-control) var(--ts-ease),
-    border-color var(--ts-t-control) var(--ts-ease),
-    color var(--ts-t-control) var(--ts-ease),
-    opacity var(--ts-t-control) var(--ts-ease);
+  background-color var(--ts-t-control) var(--ts-ease),
+  border-color var(--ts-t-control) var(--ts-ease),
+  color var(--ts-t-control) var(--ts-ease),
+  opacity var(--ts-t-control) var(--ts-ease);
 }
 
 .ts-btn:disabled,
@@ -557,8 +557,8 @@ kbd {
   color: var(--ts-ink-muted);
   cursor: pointer;
   transition:
-    background-color var(--ts-t-control) var(--ts-ease),
-    color var(--ts-t-control) var(--ts-ease);
+  background-color var(--ts-t-control) var(--ts-ease),
+  color var(--ts-t-control) var(--ts-ease);
 }
 
 .ts-icon-btn:hover {
@@ -584,9 +584,9 @@ kbd {
   font-family: var(--ts-font-sans);
   font-weight: var(--ts-fw-semibold);
   transition:
-    background-color var(--ts-t-control) var(--ts-ease),
-    border-color var(--ts-t-control) var(--ts-ease),
-    color var(--ts-t-control) var(--ts-ease);
+  background-color var(--ts-t-control) var(--ts-ease),
+  border-color var(--ts-t-control) var(--ts-ease),
+  color var(--ts-t-control) var(--ts-ease);
 }
 
 .ts-fab-nav {
@@ -800,8 +800,8 @@ kbd {
   font-family: var(--ts-font-sans);
   font-size: var(--ts-fs-ui);
   transition:
-    background-color var(--ts-t-control) var(--ts-ease),
-    border-color var(--ts-t-control) var(--ts-ease);
+  background-color var(--ts-t-control) var(--ts-ease),
+  border-color var(--ts-t-control) var(--ts-ease);
 }
 
 .ts-textarea {
@@ -1460,10 +1460,10 @@ details.ts-menu[open] > .ts-menu-panel {
 .ts-skeleton {
   border-radius: var(--ts-radius-control);
   background: linear-gradient(
-    90deg,
-    var(--ts-surface-muted) 25%,
-    var(--ts-line) 50%,
-    var(--ts-surface-muted) 75%
+  90deg,
+  var(--ts-surface-muted) 25%,
+  var(--ts-line) 50%,
+  var(--ts-surface-muted) 75%
   );
   background-size: 200% 100%;
   animation: ts-shimmer 1.4s infinite linear;
@@ -1599,8 +1599,8 @@ details.ts-menu[open] > .ts-menu-panel {
   font-size: var(--ts-fs-body);
   text-decoration: none;
   transition:
-    background-color var(--ts-t-nav) var(--ts-ease),
-    color var(--ts-t-nav) var(--ts-ease);
+  background-color var(--ts-t-nav) var(--ts-ease),
+  color var(--ts-t-nav) var(--ts-ease);
 }
 
 .ts-nav-link:hover {
@@ -1625,8 +1625,8 @@ details.ts-menu[open] > .ts-menu-panel {
   opacity: 0;
   transform: scaleY(0.4);
   transition:
-    opacity var(--ts-t-nav) var(--ts-ease),
-    transform var(--ts-t-nav) var(--ts-ease);
+  opacity var(--ts-t-nav) var(--ts-ease),
+  transform var(--ts-t-nav) var(--ts-ease);
 }
 
 .ts-nav-link[aria-current="page"] .ts-nav-indicator {
@@ -1646,9 +1646,9 @@ details.ts-menu[open] > .ts-menu-panel {
   background-color: transparent;
   color: color-mix(in oklab, var(--ts-nav-accent) 82%, var(--ts-ink));
   transition:
-    border-color var(--ts-t-nav) var(--ts-ease),
-    color var(--ts-t-nav) var(--ts-ease),
-    transform var(--ts-t-nav) var(--ts-ease);
+  border-color var(--ts-t-nav) var(--ts-ease),
+  color var(--ts-t-nav) var(--ts-ease),
+  transform var(--ts-t-nav) var(--ts-ease);
 }
 
 .ts-nav-icon svg {
@@ -1766,8 +1766,8 @@ details.ts-menu[open] > .ts-menu-panel {
   z-index: 0;
   /* Dark, blurred glass backdrop behind page content. */
   background:
-    radial-gradient(1200px 800px at 70% -10%, rgba(37, 99, 235, 0.06), transparent 60%),
-    linear-gradient(180deg, rgba(8, 9, 12, 0.82), rgba(8, 9, 12, 0.68));
+  radial-gradient(1200px 800px at 70% -10%, rgba(37, 99, 235, 0.06), transparent 60%),
+  linear-gradient(180deg, rgba(8, 9, 12, 0.82), rgba(8, 9, 12, 0.68));
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
 }
@@ -1968,8 +1968,8 @@ details.ts-menu[open] > .ts-menu-panel {
   text-align: left;
   cursor: pointer;
   transition:
-    background-color var(--ts-t-base) var(--ts-ease),
-    border-color var(--ts-t-base) var(--ts-ease);
+  background-color var(--ts-t-base) var(--ts-ease),
+  border-color var(--ts-t-base) var(--ts-ease);
 }
 
 .ts-account-trigger:hover,
@@ -2265,9 +2265,9 @@ details.ts-menu[open] > summary.ts-account-trigger {
   border-radius: var(--ts-radius-pill);
   background-color: var(--ts-accent-soft);
   box-shadow:
-    0 0 0 2px var(--ts-canvas),
-    0 0 14px rgba(37, 99, 235, 0.9),
-    0 0 28px rgba(37, 99, 235, 0.58);
+  0 0 0 2px var(--ts-canvas),
+  0 0 14px rgba(37, 99, 235, 0.9),
+  0 0 28px rgba(37, 99, 235, 0.58);
 }
 
 .ts-region-pin-ring {
@@ -2703,7 +2703,7 @@ details.ts-menu[open] > summary.ts-account-trigger {
 .ts-padded { padding: var(--ts-lg); }
 
 /* minmax(0,1fr) keeps the implicit track clamped — auto tracks size to
-   max-content and let wide tables/code blow out narrow viewports. */
+max-content and let wide tables/code blow out narrow viewports. */
 .ts-stack-12 { display: grid; gap: var(--ts-md); grid-template-columns: minmax(0, 1fr); }
 .ts-stack-16 { display: grid; gap: var(--ts-lg); grid-template-columns: minmax(0, 1fr); }
 .ts-stack-20 { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
@@ -2901,519 +2901,519 @@ details.ts-menu[open] > summary.ts-account-trigger {
 .ts-billing-grid { gap: var(--ts-md); }
 
 .ts-metric-value-sm {
-    font-size: var(--ts-fs-page-title);
+  font-size: var(--ts-fs-page-title);
 }
 
 .ts-metric-inline {
-    font-size: var(--ts-fs-panel-title);
-    font-weight: var(--ts-fw-semibold);
-    font-family: var(--ts-font-mono);
-    font-variant-numeric: tabular-nums;
-    color: var(--ts-ink);
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+  font-family: var(--ts-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ts-ink);
 }
 
 .ts-text-danger { color: var(--ts-danger); }
 .ts-text-warning { color: var(--ts-warning); }
 
 .ts-usage-charts {
-    gap: var(--ts-lg);
+  gap: var(--ts-lg);
 }
 
 @media (min-width: 64rem) {
-    .ts-usage-charts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ts-usage-charts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 /* Horizontal bar list (measured usage / region placement / coverage). */
 .ts-bar-list {
-    display: grid;
-    gap: var(--ts-md);
+  display: grid;
+  gap: var(--ts-md);
 }
 
 .ts-bar-row {
-    display: grid;
-    grid-template-columns: minmax(90px, auto) 1fr auto;
-    align-items: center;
-    gap: var(--ts-md);
+  display: grid;
+  grid-template-columns: minmax(90px, auto) 1fr auto;
+  align-items: center;
+  gap: var(--ts-md);
 }
 
 .ts-bar-label {
-    font-size: var(--ts-fs-ui);
-    color: var(--ts-ink);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  font-size: var(--ts-fs-ui);
+  color: var(--ts-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ts-bar-track {
-    height: 8px;
-    border-radius: var(--ts-radius-pill);
-    background-color: var(--ts-surface-muted);
-    overflow: hidden;
+  height: 8px;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-surface-muted);
+  overflow: hidden;
 }
 
 .ts-bar-fill {
-    display: block;
-    height: 100%;
-    border-radius: var(--ts-radius-pill);
-    background-color: var(--ts-chart-1);
-    min-width: 2px;
+  display: block;
+  height: 100%;
+  border-radius: var(--ts-radius-pill);
+  background-color: var(--ts-chart-1);
+  min-width: 2px;
 }
 
 .ts-bar-fill-2 { background-color: var(--ts-chart-2); }
 
 .ts-bar-value {
-    font-size: var(--ts-fs-meta);
-    color: var(--ts-ink-muted);
-    min-width: 3.5em;
-    text-align: right;
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+  min-width: 3.5em;
+  text-align: right;
 }
 
 /* Audit intro: title + metric well on the right. */
 .ts-audit-title {
-    font-size: var(--ts-fs-page-title);
-    font-weight: var(--ts-fw-bold);
+  font-size: var(--ts-fs-page-title);
+  font-weight: var(--ts-fw-bold);
 }
 
 .ts-audit-intro > div {
-    min-width: 0;
+  min-width: 0;
 }
 
 .ts-audit-metrics {
-    display: grid;
-    gap: var(--ts-sm);
-    padding: var(--ts-md);
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
-    justify-items: start;
+  display: grid;
+  gap: var(--ts-sm);
+  padding: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface-muted);
+  justify-items: start;
 }
 
 .ts-audit-form {
-    display: grid;
-    gap: var(--ts-md);
-    grid-template-columns: minmax(0, 1fr);
-    align-items: end;
+  display: grid;
+  gap: var(--ts-md);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
 }
 
 /* ===== Feature: Access ===== */
 
 .ts-panel-20 {
-    padding: 20px;
+  padding: 20px;
 }
 
 .ts-padded {
-    padding: var(--ts-lg);
+  padding: var(--ts-lg);
 }
 
 .ts-stack-20 {
-    gap: 20px;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .ts-access-margin-top-20 {
-    margin-top: 20px;
+  margin-top: 20px;
 }
 
 .ts-access-description {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
-    line-height: 24px;
-    max-width: 48rem;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 24px;
+  max-width: 48rem;
 }
 
 /* SummaryTerm stat tile. */
 .ts-summary-term {
-    padding: var(--ts-md);
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-control);
-    background-color: var(--ts-surface-muted);
+  padding: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
 }
 
 .ts-summary-term dt {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-medium);
-    text-transform: uppercase;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  text-transform: uppercase;
 }
 
 /* ===== Feature: ApiKeys ===== */
 
 /* Metric toolbar (page-top stat row, shared-page-styles parity). */
 .ts-metric-toolbar {
-    gap: var(--ts-md);
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
+  gap: var(--ts-md);
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
 }
 
 .ts-metric-toolbar-actions {
-    gap: var(--ts-sm);
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    margin-left: auto;
+  gap: var(--ts-sm);
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .ts-panel20 {
-    padding: 20px;
+  padding: 20px;
 }
 
 .ts-metric-tile {
-    padding: var(--ts-lg);
-    flex-basis: 12rem;
-    flex-grow: 0;
-    flex-shrink: 1;
-    min-width: 9rem;
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
+  padding: var(--ts-lg);
+  flex-basis: 12rem;
+  flex-grow: 0;
+  flex-shrink: 1;
+  min-width: 9rem;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface-muted);
 }
 
 /* ===== Feature: Admin ===== */
 
 /* Shared admin page shell (1:1 with admin-page-styles.ts + admin-styles.ts). */
 .ts-admin-root {
-    display: grid;
-    gap: 20px; /* old grid gap-5 */
+  display: grid;
+  gap: 20px; /* old grid gap-5 */
 }
 
 .ts-admin-title {
-    color: var(--ts-ink);
-    font-size: 24px;
-    font-weight: var(--ts-fw-semibold);
-    line-height: 32px;
+  color: var(--ts-ink);
+  font-size: 24px;
+  font-weight: var(--ts-fw-semibold);
+  line-height: 32px;
 }
 
 .ts-admin-subtitle {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
-    margin-top: var(--ts-xs);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  margin-top: var(--ts-xs);
 }
 
 .ts-admin-title-with-icon {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-md);
-    color: var(--ts-accent);
+  display: flex;
+  align-items: center;
+  gap: var(--ts-md);
+  color: var(--ts-accent);
 }
 
 .ts-admin-title-with-icon h2 {
-    color: var(--ts-ink);
+  color: var(--ts-ink);
 }
 
 .ts-admin-summary,
 .ts-admin-summary-three {
-    display: grid;
-    gap: var(--ts-md);
-    grid-template-columns: minmax(0, 1fr);
+  display: grid;
+  gap: var(--ts-md);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 40rem) {
-    .ts-admin-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .ts-admin-summary-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ts-admin-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ts-admin-summary-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 .ts-admin-stat {
-    padding: var(--ts-lg);
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface-muted);
 }
 
 /* ===== Feature: Admin ===== */
 
 .ts-admin-stat-label {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-medium);
-    text-transform: uppercase;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  text-transform: uppercase;
 }
 
 .ts-summary-term dd {
-    margin: var(--ts-xs) 0 0;
-    overflow: hidden;
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-semibold);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  margin: var(--ts-xs) 0 0;
+  overflow: hidden;
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Members filter bar + table flush inside the panel. */
 .ts-access-filter-bar {
-    gap: var(--ts-md);
-    padding: var(--ts-lg);
-    align-items: flex-end;
-    display: flex;
-    flex-wrap: wrap;
-    border-bottom: 1px solid var(--ts-line);
+  gap: var(--ts-md);
+  padding: var(--ts-lg);
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--ts-line);
 }
 .ts-metric-row {
-    gap: var(--ts-md);
-    align-items: center;
-    display: flex;
-    justify-content: space-between;
-    margin-top: var(--ts-lg);
+  gap: var(--ts-md);
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--ts-lg);
 }
 
 .ts-stat-value {
-    color: var(--ts-ink);
-    font-size: 24px;
-    font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+  font-size: 24px;
+  font-weight: var(--ts-fw-semibold);
 }
 
 /* Credentials filter bar. */
 .ts-filter-bar {
-    gap: var(--ts-md);
-    padding-block: var(--ts-lg);
-    padding-inline: var(--ts-lg);
-    align-items: flex-end;
-    display: flex;
-    flex-wrap: wrap;
-    border-bottom: 1px solid var(--ts-line);
+  gap: var(--ts-md);
+  padding-block: var(--ts-lg);
+  padding-inline: var(--ts-lg);
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--ts-line);
 }
 
 .ts-access-search {
-    flex-basis: 18rem;
-    flex-grow: 1;
-    position: relative;
-    max-width: 28rem;
-    min-width: 0;
+  flex-basis: 18rem;
+  flex-grow: 1;
+  position: relative;
+  max-width: 28rem;
+  min-width: 0;
 }
 
 .ts-search-field {
-    flex-basis: 18rem;
-    flex-grow: 1;
-    position: relative;
-    max-width: 28rem;
-    min-width: 0;
+  flex-basis: 18rem;
+  flex-grow: 1;
+  position: relative;
+  max-width: 28rem;
+  min-width: 0;
 }
 
 .ts-access-search-icon {
-    color: var(--ts-ink-muted);
-    pointer-events: none;
-    position: absolute;
-    transform: translateY(-50%);
-    left: var(--ts-md);
-    top: 50%;
+  color: var(--ts-ink-muted);
+  pointer-events: none;
+  position: absolute;
+  transform: translateY(-50%);
+  left: var(--ts-md);
+  top: 50%;
 }
 
 .ts-access-search-input {
-    padding-left: 36px;
-    width: 100%;
+  padding-left: 36px;
+  width: 100%;
 }
 
 .ts-search-field svg {
-    position: absolute;
-    left: var(--ts-md);
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--ts-ink-muted);
-    pointer-events: none;
+  position: absolute;
+  left: var(--ts-md);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ts-ink-muted);
+  pointer-events: none;
 }
 
 .ts-search-input {
-    padding-left: 36px;
-    width: 100%;
+  padding-left: 36px;
+  width: 100%;
 }
 
 .ts-access-role-field {
-    gap: var(--ts-xs);
-    display: grid;
+  gap: var(--ts-xs);
+  display: grid;
 }
 
 .ts-filter-field {
-    gap: var(--ts-xs);
-    display: grid;
+  gap: var(--ts-xs);
+  display: grid;
 }
 
 .ts-access-role-label {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-medium);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
 }
 
 .ts-filter-label {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-medium);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
 }
 
 .ts-access-role-select {
-    min-width: 12rem;
+  min-width: 12rem;
 }
 
 .ts-table-wrap.ts-table-flush {
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
-    background-color: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: transparent;
 }
 
 /* Member cell (avatar + identity). */
 .ts-access-member-cell {
-    gap: var(--ts-lg);
-    align-items: flex-start;
-    display: flex;
-    min-width: 0;
+  gap: var(--ts-lg);
+  align-items: flex-start;
+  display: flex;
+  min-width: 0;
 }
 
 .ts-access-avatar {
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    height: 36px;
-    width: 36px;
-    border: 1px solid color-mix(in oklab, var(--ts-accent) 30%, transparent);
-    border-radius: var(--ts-radius-pill);
-    background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
-    color: var(--ts-accent-strong);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-semibold);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  height: 36px;
+  width: 36px;
+  border: 1px solid color-mix(in oklab, var(--ts-accent) 30%, transparent);
+  border-radius: var(--ts-radius-pill);
+  background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+  color: var(--ts-accent-strong);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-semibold);
 }
 
 .ts-access-identity {
-    min-width: 0;
+  min-width: 0;
 }
 
 .ts-access-member-name {
-    overflow: hidden;
-    color: var(--ts-ink);
-    font-weight: var(--ts-fw-medium);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  overflow: hidden;
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ts-access-member-email {
-    overflow: hidden;
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  overflow: hidden;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ts-access-mono-meta {
-    color: var(--ts-ink-muted);
-    font-family: var(--ts-font-mono);
-    font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
 }
 
 .ts-access-meta-text {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
 }
 
 .ts-access-min-width {
-    min-width: 0;
+  min-width: 0;
 }
 
 .ts-access-text-strong {
-    color: var(--ts-ink);
-    font-weight: var(--ts-fw-medium);
-    margin: 0;
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-medium);
+  margin: 0;
 }
 
 .ts-access-truncate {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* Session dialog claim lists. */
 .ts-access-claim-title {
-    gap: var(--ts-sm);
-    align-items: center;
-    color: var(--ts-ink);
-    display: inline-flex;
-    font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-semibold);
+  gap: var(--ts-sm);
+  align-items: center;
+  color: var(--ts-ink);
+  display: inline-flex;
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
 }
 
 .ts-access-claim-values {
-    gap: var(--ts-sm);
-    display: flex;
-    flex-wrap: wrap;
+  gap: var(--ts-sm);
+  display: flex;
+  flex-wrap: wrap;
 }
 
 .ts-access-status-success {
-    border: 1px solid color-mix(in oklab, var(--ts-success) 30%, transparent);
-    border-radius: var(--ts-radius-control);
-    gap: var(--ts-sm);
-    padding-block: 10px;
-    padding-inline: var(--ts-md);
-    align-items: flex-start;
-    background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
-    color: var(--ts-success);
-    display: flex;
-    flex-wrap: wrap;
+  border: 1px solid color-mix(in oklab, var(--ts-success) 30%, transparent);
+  border-radius: var(--ts-radius-control);
+  gap: var(--ts-sm);
+  padding-block: 10px;
+  padding-inline: var(--ts-md);
+  align-items: flex-start;
+  background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+  color: var(--ts-success);
+  display: flex;
+  flex-wrap: wrap;
 }
 
 /* Invite form card. */
 .ts-access-invite-form {
-    padding: var(--ts-lg);
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-control);
-    gap: var(--ts-md);
-    background-color: var(--ts-surface-muted);
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: end;
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  gap: var(--ts-md);
+  background-color: var(--ts-surface-muted);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
 }
 
 @media (min-width: 64rem) {
-    .ts-audit-form { grid-template-columns: 2fr 1fr 1fr auto; }
+  .ts-audit-form { grid-template-columns: 2fr 1fr 1fr auto; }
 }
 
 .ts-audit-form-actions {
-    justify-content: flex-end;
-    display: flex;
+  justify-content: flex-end;
+  display: flex;
 }
 
 .ts-audit-two-pane { gap: var(--ts-lg); }
 
 @media (min-width: 64rem) {
-    .ts-audit-two-pane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ts-audit-two-pane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .ts-severity-box {
-    display: grid;
-    gap: var(--ts-sm);
+  display: grid;
+  gap: var(--ts-sm);
 }
 
 /* Range filter chip group. */
 .ts-filter-group {
-    display: inline-flex;
-    gap: 2px;
-    padding: 2px;
-    border-radius: var(--ts-radius-control);
-    border: 1px solid var(--ts-line);
-    background-color: var(--ts-surface);
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--ts-radius-control);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-surface);
 }
 
 .ts-filter-link {
-    display: inline-flex;
-    align-items: center;
-    height: 26px;
-    padding: 0 var(--ts-sm);
-    border-radius: var(--ts-radius-badge);
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-medium);
-    font-family: var(--ts-font-mono);
-    text-decoration: none;
-    transition: background-color var(--ts-t-control) var(--ts-ease), color var(--ts-t-control) var(--ts-ease);
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 var(--ts-sm);
+  border-radius: var(--ts-radius-badge);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  font-weight: var(--ts-fw-medium);
+  font-family: var(--ts-font-mono);
+  text-decoration: none;
+  transition: background-color var(--ts-t-control) var(--ts-ease), color var(--ts-t-control) var(--ts-ease);
 }
 
 .ts-filter-link:hover {
-    color: var(--ts-ink);
-    text-decoration: none;
+  color: var(--ts-ink);
+  text-decoration: none;
 }
 
 .ts-filter-active {
-    background-color: var(--ts-surface-muted);
-    color: var(--ts-ink);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink);
 }
 
 .ts-nowrap { white-space: nowrap; }
@@ -3423,194 +3423,194 @@ details.ts-menu[open] > summary.ts-account-trigger {
 .ts-flex-wrap { flex-wrap: wrap; }
 
 .ts-table-strong {
-    color: var(--ts-ink);
-    font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-semibold);
 }
 
 /* Notification inbox rows. */
 .ts-notification {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--ts-md);
-    padding: var(--ts-md);
-    border-radius: var(--ts-radius-panel);
-    border: 1px solid var(--ts-line);
-    background-color: var(--ts-surface);
-    box-shadow: var(--ts-card-edge);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-md);
+  padding: var(--ts-md);
+  border-radius: var(--ts-radius-panel);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-surface);
+  box-shadow: var(--ts-card-edge);
 }
 
 .ts-notification-unread {
-    border-color: color-mix(in oklab, var(--ts-accent) 30%, transparent);
+  border-color: color-mix(in oklab, var(--ts-accent) 30%, transparent);
 }
 
 .ts-notification-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 32px;
-    height: 32px;
-    border-radius: var(--ts-radius-control);
-    border: 1px solid var(--ts-line);
-    background-color: var(--ts-surface-muted);
-    color: var(--ts-ink-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ts-radius-control);
+  border: 1px solid var(--ts-line);
+  background-color: var(--ts-surface-muted);
+  color: var(--ts-ink-muted);
 }
 
 .ts-notification-unread .ts-notification-icon {
-    color: var(--ts-accent-soft);
-    border-color: color-mix(in oklab, var(--ts-accent) 24%, transparent);
+  color: var(--ts-accent-soft);
+  border-color: color-mix(in oklab, var(--ts-accent) 24%, transparent);
 }
 
 .ts-notification-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--ts-xs);
-    flex: 1;
-    min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-xs);
+  flex: 1;
+  min-width: 0;
 }
 
 .ts-notification-title {
-    font-size: var(--ts-fs-ui);
-    color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  color: var(--ts-ink);
 }
 
 .ts-notification-text {
-    font-size: var(--ts-fs-ui);
-    color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  color: var(--ts-ink-muted);
 }
 
 .ts-notification-meta {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--ts-xs);
-    font-size: var(--ts-fs-meta);
-    color: var(--ts-ink-muted);
-    .ts-access-invite-form {
-        grid-template-columns: minmax(220px, 1fr) auto;
-    }
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-xs);
+  font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+  .ts-access-invite-form {
+    grid-template-columns: minmax(220px, 1fr) auto;
+  }
 }
 
 .ts-access-invite-submit {
-    align-self: end;
+  align-self: end;
 }
 
 .ts-access-section-heading {
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  font-weight: var(--ts-fw-semibold);
 }
 
 /* Compact table row actions (Cancel / Revoke). */
 .ts-access-compact-action {
-    min-height: var(--ts-xxl);
-    padding-left: var(--ts-sm);
-    padding-right: var(--ts-sm);
-    display: inline-flex;
+  min-height: var(--ts-xxl);
+  padding-left: var(--ts-sm);
+  padding-right: var(--ts-sm);
+  display: inline-flex;
 }
 
 .ts-access-role-apply {
-    margin-left: var(--ts-xs);
+  margin-left: var(--ts-xs);
 }
 
 .ts-filter-select {
-    min-width: 10rem;
+  min-width: 10rem;
 }
 
 /* Credentials table cells. */
 .ts-credential-name {
-    gap: var(--ts-sm);
-    align-items: center;
-    display: flex;
-    min-width: 0;
+  gap: var(--ts-sm);
+  align-items: center;
+  display: flex;
+  min-width: 0;
 }
 
 .ts-credential-name svg {
-    color: var(--ts-accent);
-    flex-shrink: 0;
+  color: var(--ts-accent);
+  flex-shrink: 0;
 }
 
 .ts-credential-name-text {
-    overflow: hidden;
-    color: var(--ts-ink);
-    font-weight: var(--ts-fw-medium);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  overflow: hidden;
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ts-credential-mono {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    white-space: nowrap;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  white-space: nowrap;
 }
 
 .ts-credential-meta {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
-    white-space: nowrap;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  white-space: nowrap;
 }
 
 .ts-credential-actions {
-    gap: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
+  gap: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .ts-credential-empty {
-    padding: var(--ts-lg);
+  padding: var(--ts-lg);
 }
 
 /* Credential secret dialog rows. */
 .ts-secret-list {
-    margin: 0;
-    padding: var(--ts-lg);
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-control);
-    background-color: var(--ts-surface-muted);
-    display: grid;
-    gap: var(--ts-sm);
-    font-size: var(--ts-fs-ui);
+  margin: 0;
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+  display: grid;
+  gap: var(--ts-sm);
+  font-size: var(--ts-fs-ui);
 }
 
 .ts-secret-row {
-    gap: var(--ts-md);
-    align-items: center;
-    display: flex;
-    justify-content: space-between;
-    min-width: 0;
+  gap: var(--ts-md);
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-width: 0;
 }
 
 .ts-secret-row dd {
-    margin: 0;
-    overflow: hidden;
-    color: var(--ts-ink);
-    font-family: var(--ts-font-mono);
-    font-size: var(--ts-fs-meta);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .ts-secret-section {
-    gap: var(--ts-xs);
-    display: grid;
-    border-top: 1px solid var(--ts-line);
-    padding-top: var(--ts-xs);
+  gap: var(--ts-xs);
+  display: grid;
+  border-top: 1px solid var(--ts-line);
+  padding-top: var(--ts-xs);
 }
 
 .ts-secret-secret-row {
-    gap: var(--ts-sm);
-    align-items: center;
-    display: flex;
-    justify-content: space-between;
-    min-width: 0;
+  gap: var(--ts-sm);
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-width: 0;
 }
 
 .ts-secret-code {
-    color: var(--ts-ink);
-    font-family: var(--ts-font-mono);
-    font-size: var(--ts-fs-meta);
-    overflow-wrap: anywhere;
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+  overflow-wrap: anywhere;
 }
 
 .ts-row-actions {
@@ -3842,209 +3842,209 @@ details.ts-menu[open] > summary.ts-account-trigger {
 }
 
 .ts-admin-stat-value {
-    font-size: 24px;
-    font-weight: var(--ts-fw-semibold);
-    line-height: 32px;
-    margin-top: var(--ts-sm);
+  font-size: 24px;
+  font-weight: var(--ts-fw-semibold);
+  line-height: 32px;
+  margin-top: var(--ts-sm);
 }
 
 /* Filter row (AdminFilter). */
 .ts-admin-filter-panel {
-    padding: var(--ts-md);
+  padding: var(--ts-md);
 }
 
 .ts-admin-filter-form {
-    position: relative;
-    max-width: 24rem;
+  position: relative;
+  max-width: 24rem;
 }
 
 .ts-admin-filter-form svg {
-    position: absolute;
-    left: var(--ts-md);
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--ts-ink-muted);
-    pointer-events: none;
+  position: absolute;
+  left: var(--ts-md);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ts-ink-muted);
+  pointer-events: none;
 }
 
 .ts-admin-filter-input {
-    padding-left: 36px; /* old pl-9 search icon gutter */
+  padding-left: 36px; /* old pl-9 search icon gutter */
 }
 
 .ts-admin-table-body {
-    padding: var(--ts-lg);
+  padding: var(--ts-lg);
 }
 
 .ts-admin-cell-name {
-    color: var(--ts-ink);
-    font-weight: var(--ts-fw-medium);
+  color: var(--ts-ink);
+  font-weight: var(--ts-fw-medium);
 }
 
 .ts-admin-cell-id {
-    color: var(--ts-ink-muted);
-    font-family: var(--ts-font-mono);
-    font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
 }
 
 .ts-admin-database-name {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-md);
-    color: var(--ts-accent);
+  display: flex;
+  align-items: center;
+  gap: var(--ts-md);
+  color: var(--ts-accent);
 }
 
 /* Estate operations dashboard (AdminEstateDashboard). */
 .ts-admin-dashboard-root {
-    display: grid;
-    gap: var(--ts-xl);
+  display: grid;
+  gap: var(--ts-xl);
 }
 
 .ts-admin-dashboard-intro {
-    display: grid;
-    gap: var(--ts-xs);
+  display: grid;
+  gap: var(--ts-xs);
 }
 
 .ts-admin-dashboard-sections {
-    display: grid;
-    gap: var(--ts-lg);
-    grid-template-columns: minmax(0, 1fr);
+  display: grid;
+  gap: var(--ts-lg);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 64rem) {
-    .ts-admin-dashboard-sections {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+  .ts-admin-dashboard-sections {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .ts-admin-dashboard-panel {
-    min-width: 0;
+  min-width: 0;
 }
 
 .ts-admin-fact-list {
-    display: grid;
-    gap: var(--ts-sm);
-    padding: var(--ts-lg);
+  display: grid;
+  gap: var(--ts-sm);
+  padding: var(--ts-lg);
 }
 
 .ts-admin-fact-row {
-    display: grid;
-    grid-template-columns: minmax(6rem, 0.6fr) minmax(0, 1fr);
-    gap: var(--ts-md);
-    padding-bottom: var(--ts-sm);
-    border-bottom: 1px solid var(--ts-line);
+  display: grid;
+  grid-template-columns: minmax(6rem, 0.6fr) minmax(0, 1fr);
+  gap: var(--ts-md);
+  padding-bottom: var(--ts-sm);
+  border-bottom: 1px solid var(--ts-line);
 }
 
 .ts-admin-fact-key {
-    color: var(--ts-ink-muted);
-    font-family: var(--ts-font-mono);
-    font-size: var(--ts-fs-meta);
-    overflow-wrap: anywhere;
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
+  overflow-wrap: anywhere;
 }
 
 .ts-admin-fact-value {
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-ui);
-    overflow-wrap: anywhere;
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-ui);
+  overflow-wrap: anywhere;
 }
 
 .ts-admin-fact-detail {
-    display: block;
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    margin-top: var(--ts-xs);
+  display: block;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
+  margin-top: var(--ts-xs);
 }
 
 /* Estate product actions (AdminEstateActions). */
 .ts-admin-action-panel {
-    display: grid;
-    gap: var(--ts-md);
-    padding: var(--ts-lg);
+  display: grid;
+  gap: var(--ts-md);
+  padding: var(--ts-lg);
 }
 
 .ts-admin-action-form {
-    display: grid;
-    gap: var(--ts-sm);
-    grid-template-columns: minmax(0, 1fr);
+  display: grid;
+  gap: var(--ts-sm);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 48rem) {
-    .ts-admin-action-form {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-    }
+  .ts-admin-action-form {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
 }
 
 .ts-admin-action-hint {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-meta);
 }
 
 /* Pricing controls (AdminPricingControls). */
 .ts-admin-pricing-controls {
-    display: grid;
-    gap: var(--ts-lg);
-    padding: var(--ts-lg);
+  display: grid;
+  gap: var(--ts-lg);
+  padding: var(--ts-lg);
 }
 
 .ts-admin-plan-form {
-    display: grid;
-    gap: var(--ts-md);
-    padding: var(--ts-lg);
-    border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface-muted);
+  display: grid;
+  gap: var(--ts-md);
+  padding: var(--ts-lg);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-panel);
+  background-color: var(--ts-surface-muted);
 }
 
 .ts-admin-fieldset {
-    display: grid;
-    gap: var(--ts-md);
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-    border: none;
+  display: grid;
+  gap: var(--ts-md);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
 }
 
 .ts-admin-legend {
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-panel-title);
-    font-weight: var(--ts-fw-semibold);
-    margin-bottom: var(--ts-xs);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
+  margin-bottom: var(--ts-xs);
 }
 
 .ts-admin-plan-fields {
-    display: grid;
-    gap: var(--ts-md);
-    grid-template-columns: minmax(0, 1fr);
+  display: grid;
+  gap: var(--ts-md);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 64rem) {
-    .ts-admin-plan-fields {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+  .ts-admin-plan-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .ts-admin-help {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
-    line-height: 1.625;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 1.625;
 }
 
 .ts-admin-form-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: var(--ts-sm);
-    flex-wrap: wrap;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ts-sm);
+  flex-wrap: wrap;
 }
 
 .ts-admin-edit-heading {
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-panel-title);
-    font-weight: var(--ts-fw-semibold);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-panel-title);
+  font-weight: var(--ts-fw-semibold);
 }
 
 .ts-admin-edit-list {
-    display: grid;
-    gap: var(--ts-lg);
+  display: grid;
+  gap: var(--ts-lg);
   margin: 0;
 }
 
@@ -4463,9 +4463,9 @@ details.ts-menu[open] > summary.ts-account-trigger {
 
 /* ===== Feature: Auth Flows =============================================== */
 /* Standalone flow pages (no dashboard shell): onboarding wizard, local
-   checkout, OAuth consent, agent/CLI approval, invitations. Ported from
-   ts-dashboard shared-page-styles.ts, onboarding-styles.ts, and the
-   per-feature *-page-styles.ts files. */
+checkout, OAuth consent, agent/CLI approval, invitations. Ported from
+ts-dashboard shared-page-styles.ts, onboarding-styles.ts, and the
+per-feature *-page-styles.ts files. */
 
 .ts-flow-root {
   display: flex;
@@ -5111,76 +5111,76 @@ details.ts-menu[open] > summary.ts-account-trigger {
 /* ===== Feature: AccessRules ===== */
 
 .ts-accessrules-meta {
-    margin: var(--ts-lg) 0 0;
+  margin: var(--ts-lg) 0 0;
 }
 
 .ts-accessrules-rule-source {
-    display: inline-block;
-    max-width: 32rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    vertical-align: middle;
-    font-family: var(--ts-font-mono);
-    font-size: var(--ts-fs-meta);
+  display: inline-block;
+  max-width: 32rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-meta);
 }
 
 .ts-accessrules-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--ts-xs);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-xs);
 }
 
 .ts-accessrules-row-actions {
-    display: flex;
-    gap: var(--ts-xs);
-    align-items: center;
-    justify-content: flex-end;
+  display: flex;
+  gap: var(--ts-xs);
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .ts-accessrules-toolbar {
-    display: flex;
-    justify-content: flex-end;
-    border-top: 1px solid var(--ts-line);
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--ts-line);
 }
 
 .ts-accessrules-editor-form {
-    display: grid;
-    gap: var(--ts-md);
+  display: grid;
+  gap: var(--ts-md);
 }
 
 .ts-accessrules-actions {
-    display: flex;
-    gap: var(--ts-sm);
-    align-items: center;
-    flex-wrap: wrap;
+  display: flex;
+  gap: var(--ts-sm);
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .ts-accessrules-index-note {
-    display: flex;
-    gap: var(--ts-sm);
-    align-items: center;
-    flex-wrap: wrap;
+  display: flex;
+  gap: var(--ts-sm);
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .ts-accessrules-dryrun-form {
-    display: grid;
-    gap: var(--ts-md);
+  display: grid;
+  gap: var(--ts-md);
 }
 
 @media (min-width: 48rem) {
-    .ts-accessrules-dryrun-form {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+  .ts-accessrules-dryrun-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .ts-accessrules-dryrun-footer {
-    grid-column: 1 / -1;
+  grid-column: 1 / -1;
 }
 
 .ts-accessrules-outcome {
-    display: flex;
-    gap: var(--ts-md);
-    align-items: center;
-    flex-wrap: wrap;
+  display: flex;
+  gap: var(--ts-md);
+  align-items: center;
+  flex-wrap: wrap;
 }
