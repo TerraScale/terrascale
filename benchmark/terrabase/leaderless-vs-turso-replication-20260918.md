@@ -105,6 +105,16 @@ Versus the same build's SYNCED tier, same morning windows
 1.38→0.62, 6.49→5.07 ms; send→visible 2.61→1.71, 4.78→3.32,
 27.76→23.51 ms. Faster than before at every batch size on both metrics.
 
+A second quiet-ish window (load ~3.0–3.8, `turso-lag-annatier4.jsonl` /
+`terrabase-lag-annatier4.jsonl`) reproduces the split: 0.14 / 0.63 ms ack
+and 1.73 / 3.15 ms visible for batches 1 / 16 against Turso's 3.44 /
+3.36 ms ack and 5.37 / 5.23 ms visible, with batch 128 at 5.99 vs
+4.51 ms — parity within window noise across the six windows measured
+today (TerraBase 4.9–6.6 ms, Turso 4.4–5.7 ms, leaders following host
+load, neither side consistently ahead). A coalesced-fanout run (5 ms
+window) moved ack by less than window noise and cost visibility, so the
+drain mode stays Immediate.
+
 A follow-up commit removes the redundant per-record deep copy every
 wire-constructed record paid on journal admission (context, both bodies,
 candidates): `ReplicationRecord` now records whether it already owns its
