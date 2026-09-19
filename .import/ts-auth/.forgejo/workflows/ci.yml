@@ -35,6 +35,8 @@ jobs:
           parent="$(pwd)/.."
           git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN:?org read token is required}@git.terrascale.tech/TerraScale/ts-dotnet.git" "${parent}/ts-dotnet"
           git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase"
+          # TerraBase builds TerraScale.Endpoints from the ts-libs sibling when present.
+          git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/ts-libs.git" "${parent}/ts-libs"
 
       - name: Restore ts-auth tests
         run: |
