@@ -129,6 +129,39 @@ public sealed class WebAuthnTests
         await Assert.That(restored.Verify(signedInput, storedSignature)).IsTrue();
     }
 
+    [Test]
+    public async Task RegistrationRequiresUserPresentFlag()
+    {
+        using var authenticator = new FakeAuthenticator();
+        var challenge = NewChallenge();
+        var clientDataJson = authenticator.ClientDataJson("webauthn.create", challenge);
+        // AT set but UP clear: the authenticator claims nobody was present.
+        var attestation = authenticator.AttestationObject(flagsOverride: 0x44);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Task.Run(() =>
+            WebAuthnVerifier.VerifyRegistration(clientDataJson, attestation, challenge, RpId, Origin)));
+    }
+
+    [Test]
+    public async Task NoneAttestationMustHaveEmptyStatement()
+    {
+        using var authenticator = new FakeAuthenticator();
+        var challenge = NewChallenge();
+        var clientDataJson = authenticator.ClientDataJson("webauthn.create", challenge);
+
+        var writer = new CborWriter();
+        writer.WriteStartMap(3);
+        writer.WriteInt32(1); writer.WriteTextString("none");
+        writer.WriteInt32(2);
+        writer.WriteStartMap(1);
+        writer.WriteTextString("sig"); writer.WriteByteString(new byte[64]); // junk in a "none" attStmt
+        writer.WriteEndMap();
+        writer.WriteInt32(3); writer.WriteByteString(authenticator.AuthenticatorData(attested: true));
+        writer.WriteEndMap();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Task.Run(() =>
+            WebAuthnVerifier.VerifyRegistration(clientDataJson, writer.Encode(), challenge, RpId, Origin)));
+    }
+
     private static string NewChallenge() => Encodings.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
 
     /// <summary>Builds authenticator-side bytes with a real P-256 keypair, signing where the protocol signs.</summary>
@@ -161,9 +194,9 @@ public sealed class WebAuthnTests
             return stream.ToArray();
         }
 
-        public byte[] AttestationObject(string clientDataJson = "", string format = "none", bool tamperSignature = false)
+        public byte[] AttestationObject(string clientDataJson = "", string format = "none", bool tamperSignature = false, byte? flagsOverride = null)
         {
-            var authData = AuthenticatorData(attested: true);
+            var authData = AuthenticatorData(attested: true, flagsOverride);
             var writer = new CborWriter();
             writer.WriteStartMap(3);
             writer.WriteInt32(1); writer.WriteTextString(format);

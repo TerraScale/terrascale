@@ -23,14 +23,15 @@ public static class PasskeyGate
         return challenge;
     }
 
-    /// <summary>Consumes a challenge for the purpose; false when unknown, expired, or already used.</summary>
+    /// <summary>Consumes a challenge for the purpose; false when unknown, expired, or already used.
+    /// Atomic (If-Match), so of two concurrent consumes of one challenge only the first wins.</summary>
     public static async Task<bool> ConsumeChallengeAsync(AuthStore store, string instanceId, string purpose, string base64UrlChallenge, CancellationToken ct = default)
     {
-        var record = await store.FindVerificationTokenAsync(SecureTokens.Sha256Hex(base64UrlChallenge), ct);
-        if (record is null || record.InstanceId != instanceId || record.Purpose != purpose
-            || record.Consumed || record.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
-            return false;
-        await store.UpsertVerificationTokenAsync(record with { Consumed = true }, ct);
-        return true;
+        var record = await store.ConsumeVerificationTokenAsync(
+            SecureTokens.Sha256Hex(base64UrlChallenge),
+            record => record.InstanceId == instanceId && record.Purpose == purpose && !record.Consumed
+                && record.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ct);
+        return record is not null;
     }
 }

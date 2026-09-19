@@ -1,5 +1,6 @@
 namespace TerraScale.Auth.Passkeys;
 
+using System.Net;
 using System.Text;
 using TerraScale.Auth.Api;
 using TerraScale.Auth.Configuration;
@@ -8,6 +9,7 @@ using TerraScale.Auth.Store;
 using TerraScale.Auth.Ui;
 using TerraScale.Auth.Users;
 using TerraScale.Auth.WebAuthn;
+using TerraScale.DotNet;
 
 /// <summary>Passkey feature endpoints: WebAuthn registration, discoverable-credential
 /// sign-in, self-service management page, and the management API.</summary>
@@ -131,7 +133,15 @@ public static class PasskeyEndpoints
             Nickname = string.IsNullOrWhiteSpace(body.Nickname) ? "Passkey" : body.Nickname.Trim(),
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         };
-        await store.CreatePasskeyAsync(passkey, ct);
+        try
+        {
+            await store.CreatePasskeyAsync(passkey, ct);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed)
+        {
+            // The credential-id pre-check lost a race; the atomic claim is the authority.
+            return ApiResults.Conflict("credential_exists", "this credential is already registered");
+        }
         await AuditAsync(store, instance.Id, "passkey.created", user.Id,
             new Dictionary<string, object> { ["passkeyId"] = passkey.Id, ["nickname"] = passkey.Nickname }, ct);
         return Results.Ok(new { ok = true });

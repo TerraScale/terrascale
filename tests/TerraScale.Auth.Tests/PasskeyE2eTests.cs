@@ -100,6 +100,41 @@ public sealed class PasskeyE2eTests
     }
 
     [Test]
+    public async Task RegistrationChallengeIsSingleUse()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (_, slug, _, user, cookie) = await ArrangeAsync();
+        using var authenticator = new FakeAuthenticator();
+        using var replaying = new FakeAuthenticator();
+
+        var challenge = (await OptionsAsync(service, slug, cookie))
+            .GetProperty("publicKey").GetProperty("challenge").GetString()!;
+        var first = await service.Http.SendAsync(POST($"/ui/{slug}/passkeys/register", cookie, new
+        {
+            id = authenticator.CredentialKey,
+            response = new
+            {
+                clientDataJSON = Encodings.Base64UrlEncode(Encoding.UTF8.GetBytes(authenticator.ClientDataJson("webauthn.create", challenge))),
+                attestationObject = Encodings.Base64UrlEncode(authenticator.AttestationObject()),
+            },
+        }));
+        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        // A fresh credential replaying the consumed challenge must be rejected, not registered.
+        var replay = await service.Http.SendAsync(POST($"/ui/{slug}/passkeys/register", cookie, new
+        {
+            id = replaying.CredentialKey,
+            response = new
+            {
+                clientDataJSON = Encodings.Base64UrlEncode(Encoding.UTF8.GetBytes(replaying.ClientDataJson("webauthn.create", challenge))),
+                attestationObject = Encodings.Base64UrlEncode(replaying.AttestationObject()),
+            },
+        }));
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await service.Store.ListPasskeysAsync(user.Id)).Count).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task RegistrationRejectsForeignOrigin()
     {
         var service = await AuthServiceFixture.GetAsync();
