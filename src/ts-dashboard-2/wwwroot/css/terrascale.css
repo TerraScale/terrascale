@@ -2247,6 +2247,7 @@ single-selector rules may stay on one line.
     align-items: center;
     justify-content: center;
     padding: 40px var(--ts-lg);
+    background-color: var(--ts-canvas);
   }
 
   /* v1 authPanel: grows to full height so the locale footer pins to the
@@ -2267,6 +2268,9 @@ single-selector rules may stay on one line.
     border-radius: var(--ts-radius-panel);
     border: 1px solid color-mix(in oklab, var(--ts-ink-muted) 70%, transparent);
     background-color: var(--ts-glass-bg);
+    backdrop-filter: blur(var(--ts-blur));
+    -webkit-backdrop-filter: blur(var(--ts-blur));
+    box-shadow: var(--ts-card-edge);
     margin-block: auto;
   }
 
@@ -2319,8 +2323,12 @@ single-selector rules may stay on one line.
     margin-top: 20px;
   }
 
-  /* v1 back-link on the deployed reset page: muted gray, underlined. */
+  /* v1 back-link on the deployed reset page: muted gray, underlined, on the
+     40px inline-flex row (styles.inlineLink minHeight). */
   .ts-auth-back-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
     color: var(--ts-ink-muted);
     text-decoration: underline;
     text-underline-offset: 4px;
@@ -2359,16 +2367,20 @@ single-selector rules may stay on one line.
     color: var(--ts-success);
   }
 
-  /* Auth inputs are 44px (v1 FormField controlHeightLarge); dashboard forms
-     keep the 40px default. */
+  /* Auth inputs are 44px (v1 FormField controlHeightLarge) with 16px body
+     text (v1 Input fontSizeBody); dashboard forms keep the 40px default. */
   .ts-auth .ts-input,
   .ts-login-column .ts-input {
     min-height: var(--ts-control-h-lg);
+    font-size: var(--ts-fs-body);
   }
 
   /* v1 reset-password surface: 20px block / 24px inline, 32px inline >= 40rem
-     (login keeps the shared 24px/32px surface padding). */
+     (login keeps the shared 24px/32px surface padding). The reset surface is
+     a real Panel (20px flex gap); the login surface is a plain div (gaps come
+     from the element margins only). */
   .ts-auth .ts-auth-card {
+    gap: 20px;
     padding: 20px 24px;
   }
 
@@ -5514,17 +5526,20 @@ single-selector rules may stay on one line.
     color: var(--ts-ink);
   }
 
+  /* v1 Panel: borderless glass card (blur + cardEdge ring), 20px rhythm. */
   .ts-flow-panel {
     display: flex;
     flex-direction: column;
-    gap: var(--ts-lg);
+    gap: 20px;
     width: 100%;
     max-width: 36rem;
     padding: var(--ts-xl);
-    border: 1px solid var(--ts-line);
+    border: 0;
     border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface);
-    box-shadow: var(--ts-shadow-panel);
+    background-color: var(--ts-glass-bg);
+    backdrop-filter: blur(var(--ts-blur));
+    -webkit-backdrop-filter: blur(var(--ts-blur));
+    box-shadow: var(--ts-card-edge);
   }
 
   @media (min-width: 40rem) {
@@ -5645,14 +5660,15 @@ single-selector rules may stay on one line.
     gap: var(--ts-xl);
   }
 
-  /* Boxed key/value block (agent request details, OAuth consent summary). */
+  /* Boxed key/value block (agent request details, OAuth consent summary).
+     v1 uses tokens.radiusPanel (12px), not the consts panel radius (11.2px). */
   .ts-flow-details {
     margin: 0;
     padding: var(--ts-lg);
     display: grid;
     gap: var(--ts-md);
     border: 1px solid var(--ts-line);
-    border-radius: var(--ts-radius-panel);
+    border-radius: 12px;
     background-color: var(--ts-surface-muted);
     font-size: var(--ts-fs-ui);
   }
@@ -5691,13 +5707,14 @@ single-selector rules may stay on one line.
     overflow-wrap: anywhere;
   }
 
-  /* OAuth consent scope list (plain mono, no chips). */
+  /* OAuth consent scope list: v1 keeps the browser-default ul (disc markers,
+     40px indent). Chromium drops the UA ul block margins once display:grid
+     is set, so no margins here either. */
   .ts-flow-scopes {
     margin: 0;
-    padding: 0;
+    padding-inline-start: 40px;
     display: grid;
     gap: var(--ts-xs);
-    list-style: none;
     color: var(--ts-ink);
     font-family: var(--ts-font-mono);
     font-size: var(--ts-fs-meta);
@@ -6624,6 +6641,116 @@ single-selector rules may stay on one line.
     overflow: auto;
   }
 
+  /* ===== flow-auth wave2 ====================================================
+     v1 flow pages never reset browser default margins (no universal margin
+     reset in its CSS kernel): h1 keeps 0.67em block margins, p/dl/ul keep
+     1em. v2's base resets p/h1-h6 to 0, so the deployed rhythm is restored
+     here, scoped per route. */
+
+  /* Flow buttons: v1 buttonStyles font weight 600. */
+  .ts-flow-panel .ts-btn { font-weight: var(--ts-fw-semibold); }
+
+  /* Buttons inside .ts-flow-actions-row sit in <form> wrappers; v1 stretches
+     the buttons themselves (flex children) full-width on mobile. */
+  .ts-flow-actions-row form { display: flex; }
+
+  .ts-flow-actions-row .ts-btn { width: 100%; }
+
+  @media (min-width: 40rem) {
+    .ts-flow-actions-row .ts-btn { width: auto; }
+  }
+
+  /* --- oauth-consent --- */
+  .ts-consent-root { padding-inline: 20px; }
+
+  /* v1 deployed consent: wordmark sits 24px above the header and the panel
+     keeps the 24px padding at every width (the 32px >= 40rem bump never
+     shipped — verified against the deployed screenshots). */
+  .ts-consent-root .ts-flow-panel { padding: var(--ts-xl); }
+
+  .ts-consent-root .ts-wordmark-wrap { margin-bottom: 24px; }
+
+  .ts-consent-root .ts-flow-header { margin-bottom: 20px; }
+
+  .ts-consent-root .ts-flow-title { margin-block: 0.67em; }
+
+  .ts-consent-root .ts-flow-subtitle { margin-bottom: 1em; }
+
+  .ts-consent-root .ts-flow-details-consent { margin-block: 1em; }
+
+  .ts-consent-root .ts-flow-note { margin-bottom: 1em; }
+
+  /* v1 oauth-consent-page-styles actions: marginTop spacing.xl. */
+  .ts-consent-root .ts-flow-actions-row { margin-top: var(--ts-xl); }
+
+  /* --- agent-approve --- */
+  .ts-agent-root .ts-flow-title { line-height: 1.25; }
+
+  .ts-agent-root .ts-flow-icon-badge { border-radius: 12px; }
+
+  /* v1 section headings inherit the body 1.6 line-height; the heading row
+     keeps the ink color (only the icon provides the accent). Wide viewports
+     render the headings tighter (deployed measurements). */
+  .ts-agent-root .ts-flow-section-heading { line-height: 1.6; }
+
+  @media (min-width: 40rem) {
+    .ts-agent-root .ts-flow-section-heading { line-height: 1.25; }
+  }
+
+  .ts-agent-root .ts-flow-section-heading-row { color: var(--ts-ink); }
+
+  /* v1 FormField labels sit on a 20px flex row with line-height 1. */
+  .ts-agent-root .ts-label {
+    display: flex;
+    align-items: center;
+    min-height: 20px;
+    line-height: 1;
+  }
+
+  /* --- invitations --- */
+  .ts-inv-root .ts-wordmark-wrap { margin-bottom: var(--ts-xxl); }
+
+  .ts-inv-root .ts-wordmark-wrap img {
+    width: 100%;
+    max-width: 20rem;
+  }
+
+  /* v1 renders icon/title/description as panel flex children (gap 20) plus
+     their own margins; collapsed into one block with the same net spacing:
+     icon→title 20+20+16, title→subtitle 16+20+8. */
+  .ts-inv-root .ts-flow-header-center {
+    display: block;
+    margin-bottom: 0;
+  }
+
+  .ts-inv-root .ts-flow-icon-lg { margin-bottom: 56px; }
+
+  .ts-inv-root .ts-flow-title {
+    margin: 0 0 44px;
+    text-align: center;
+  }
+
+  .ts-inv-root .ts-flow-subtitle {
+    margin: 0 0 14px;
+    text-align: center;
+  }
+
+  .ts-inv-root .ts-flow-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-md);
+    margin-top: 20px;
+  }
+
+  @media (min-width: 40rem) {
+    .ts-inv-root .ts-flow-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  .ts-inv-root .ts-flow-actions form { display: flex; }
+
+  /* v1 Decline uses the default (secondary) variant: borderless fill. */
+  .ts-inv-root .ts-btn-secondary { border-color: transparent; }
+
   /* ===== Feature: Engine ===== */
 
   /* Long metric-family tables scroll inside the panel instead of stretching the page. */
@@ -6962,6 +7089,7 @@ single-selector rules may stay on one line.
 
   .ts-checkout-panel .ts-flow-panel-header {
     align-items: flex-start;
+    gap: var(--ts-xs);
     padding: 0 20px 20px;
   }
 
@@ -6969,12 +7097,19 @@ single-selector rules may stay on one line.
     .ts-checkout-panel .ts-flow-panel-header { padding: 0 16px 16px; }
   }
 
+  .ts-checkout-panel .ts-flow-panel-title { line-height: 1.375; }
+
   .ts-checkout-panel .ts-flow-panel-subtitle {
     font-size: var(--ts-fs-body);
     line-height: 1.6;
   }
 
   .ts-checkout-panel .ts-flow-section { padding: 20px; }
+
+  /* v1 keeps the browser-default h1/p margins inside the stack16 body. */
+  .ts-checkout-panel .ts-flow-title { margin-block: 0.67em; }
+
+  .ts-checkout-panel .ts-flow-subtitle { margin: 1em 0; }
 
   .ts-checkout-panel .ts-btn-secondary { border-color: transparent; }
 
