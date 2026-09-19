@@ -221,4 +221,6 @@ public static class Icons
     public const string RotateCwSvg = """<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path>""";
     public static HtmlString ShieldOff(int size = 18) => new(SvgText(ShieldOffSvg, size));
     public const string ShieldOffSvg = """<path d="m2 2 20 20"></path><path d="M5 5a1 1 0 0 0-1 1v7c0 5 3.5 7.5 7.67 8.94a1 1 0 0 0 .67.01c2.35-.82 4.48-1.97 5.9-3.71"></path><path d="M9.309 3.652A12.252 12.252 0 0 0 11.24 2.28a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1v7a9.784 9.784 0 0 1-.08 1.264"></path>""";
+    public static HtmlString ListChecks(int size = 18) => new(SvgText(ListChecksSvg, size));
+    public const string ListChecksSvg = """<path d="m3 17 2 2 4-4"></path><path d="m3 7 2 2 4-4"></path><path d="M13 6h8"></path><path d="M13 12h8"></path><path d="M13 18h8"></path>""";
 }

@@ -9,6 +9,7 @@ public enum RouteId
     Data,
     ApiKeys,
     Access,
+    AccessRules,
     Usage,
     Engine,
     Audit,
