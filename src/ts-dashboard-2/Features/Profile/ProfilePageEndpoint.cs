@@ -15,6 +15,8 @@ public sealed class ProfilePageEndpoint(DashboardStore store) : EndpointWithoutR
     public override Task<IResult> HandleAsync(CancellationToken ct)
     {
         var tab = HttpContext.Request.Query["tab"].FirstOrDefault() is { Length: > 0 } t ? t : "profile";
-        return Task.FromResult<IResult>(ProfileSlice.Create(ProfilePageModel.From(store, "/profile", tab)));
+        var enroll = HttpContext.Request.Query["enroll"].ToString();
+        var langSaved = HttpContext.Request.Query["lang"].ToString() == "saved";
+        return Task.FromResult<IResult>(ProfileSlice.Create(ProfilePageModel.From(store, "/profile", tab, enroll, langSaved)));
     }
 }

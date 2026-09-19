@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Security.Cryptography;
 namespace TerraScale.Dashboard2;
 
 public sealed partial class DashboardStore
@@ -25,6 +26,35 @@ public sealed partial class DashboardStore
     public ImmutableArray<string> PendingRecoveryCodes { get; private set; } = [];
 
     public void EnrollTotp() => MfaFactors = ["totp"];
+
+    /// <summary>TOTP enrollment shown until the verification code completes
+    /// the flow (enrollTotpAction + verifyTotp in SecurityPanel.tsx).</summary>
+    public TotpEnrollment? PendingTotpEnrollment { get; private set; }
+
+    public TotpEnrollment BeginTotpEnrollment()
+    {
+        // Base32-style groups, formatted the way an authenticator shows them.
+        var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(10));
+        PendingTotpEnrollment = new(
+            $"enr_{Guid.NewGuid():N}"[..20],
+            string.Join(" ", Enumerable.Range(0, secret.Length / 4).Select(i => secret.Substring(i * 4, 4))));
+        return PendingTotpEnrollment;
+    }
+
+    public TotpEnrollment? FindTotpEnrollment(string token) =>
+        PendingTotpEnrollment is { } pending && pending.Token == token ? pending : null;
+
+    public void CompleteTotpEnrollment(string token)
+    {
+        if (PendingTotpEnrollment is null || PendingTotpEnrollment.Token != token)
+        {
+            return;
+        }
+
+        EnrollTotp();
+        RegenerateRecoveryCodes();
+        PendingTotpEnrollment = null;
+    }
 
     public void RemoveMfaFactor(string factor)
     {

@@ -97,12 +97,12 @@ single-selector rules may stay on one line.
   radial-gradient(900px 600px at 50% 110%, rgba(var(--ts-accent-rgb), 0.05), transparent 60%);
 
   /* Semantic surfaces. */
-  --ts-canvas: #090A0E;
+  --ts-canvas: #0E0F14;
   --ts-surface: #101218;
-  --ts-surface-muted: #171A21;
+  --ts-surface-muted: #1F222B;
   --ts-ink: #F2F3F5;
   --ts-ink-muted: #8B93A4;
-  --ts-line: #262B36;
+  --ts-line: #333846;
 
   /* Control fills. */
   --ts-input-fill: rgba(38, 43, 54, 0.35);
@@ -127,7 +127,7 @@ single-selector rules may stay on one line.
   /* Radius. */
   --ts-radius-badge: 6px;
   --ts-radius-control: 8px;
-  --ts-radius-panel: 12px;
+  --ts-radius-panel: 11.2px;
   --ts-radius-pill: 9999px;
 
   /* Typography (Oxanium has no italic — never use italic). */
@@ -326,7 +326,7 @@ single-selector rules may stay on one line.
   .ts-page {
     display: flex;
     flex-direction: column;
-    gap: var(--ts-xl);
+    gap: 20px;
     min-width: 0;
   }
 
@@ -420,15 +420,21 @@ single-selector rules may stay on one line.
     -webkit-backdrop-filter: blur(var(--ts-blur));
   }
 
+  /* v1 Panel: borderless glass card, 20px rhythm, header divider
+     (components/ui/Panel.tsx). */
   .ts-panel {
     display: flex;
     flex-direction: column;
-    gap: var(--ts-md);
-    border: 1px solid var(--ts-line);
+    gap: 20px;
+    overflow: hidden;
+    border: 0;
     border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface);
-    box-shadow: var(--ts-shadow-panel);
-    padding: var(--ts-lg);
+    background-color: rgba(22, 24, 31, 0.52);
+    backdrop-filter: blur(var(--ts-blur));
+    -webkit-backdrop-filter: blur(var(--ts-blur));
+    box-shadow: var(--ts-card-edge);
+    padding: 0;
+    padding-block: 20px;
     min-width: 0;
   }
 
@@ -436,6 +442,33 @@ single-selector rules may stay on one line.
     display: flex;
     flex-direction: column;
     gap: var(--ts-xs);
+    padding-inline: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  @media (min-width: 64rem) {
+    .ts-panel-header {
+      padding-inline: 16px;
+      padding-bottom: 16px;
+    }
+  }
+
+  /* v1 PanelHeader actions: top-right cell spanning title + subtitle. */
+  .ts-panel-header:has(> .ts-panel-head-actions) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .ts-panel-head-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    justify-self: end;
+    align-self: start;
+    display: flex;
+    align-items: center;
+    gap: var(--ts-sm);
   }
 
   .ts-panel-title {
@@ -789,7 +822,7 @@ single-selector rules may stay on one line.
   .ts-field {
     display: flex;
     flex-direction: column;
-    gap: var(--ts-xs);
+    gap: var(--ts-sm);
     min-width: 0;
   }
 
@@ -825,7 +858,7 @@ single-selector rules may stay on one line.
   .ts-select,
   .ts-textarea {
     width: 100%;
-    min-height: var(--ts-control-h);
+    min-height: var(--ts-control-h-lg);
     padding: 0 var(--ts-pad-inline);
     border-radius: var(--ts-radius-control);
     border: 1px solid var(--ts-line);
@@ -1027,20 +1060,36 @@ single-selector rules may stay on one line.
     font-variant-numeric: tabular-nums;
   }
 
+  /* v1 EmptyState: dashed panel box with a muted icon tile. */
   .ts-empty {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: var(--ts-sm);
-    padding: var(--ts-xxxl) var(--ts-lg);
+    gap: var(--ts-lg);
+    padding: var(--ts-xl);
+    border: 1px dashed var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: color-mix(in oklab, var(--ts-surface-muted) 30%, transparent);
     text-align: center;
     color: var(--ts-ink-muted);
   }
 
   .ts-empty-title {
-    font-size: var(--ts-fs-panel-title);
-    font-weight: var(--ts-fw-semibold);
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-medium);
+    color: var(--ts-ink);
+  }
+
+  .ts-empty-icon-box {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 32px;
+    width: 32px;
+    margin-bottom: var(--ts-sm);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
     color: var(--ts-ink);
   }
 
@@ -2698,8 +2747,13 @@ single-selector rules may stay on one line.
 
   /* Bare table shell inside a panel: scroll wide tables on narrow viewports. */
   .ts-table-frame {
-    width: 100%;
+    width: auto;
     overflow-x: auto;
+    margin-inline: 20px;
+  }
+
+  @media (min-width: 64rem) {
+    .ts-table-frame { margin-inline: 16px; }
   }
 
   .ts-panel-pad20 { padding: 20px; }
@@ -2740,7 +2794,11 @@ single-selector rules may stay on one line.
 
   .ts-min-width { min-width: 0; }
 
-  .ts-padded { padding: var(--ts-lg); }
+  .ts-padded { padding: var(--ts-lg) 20px; }
+
+  @media (min-width: 64rem) {
+    .ts-padded { padding-inline: 16px; }
+  }
 
   /* minmax(0,1fr) keeps the implicit track clamped — auto tracks size to
   max-content and let wide tables/code blow out narrow viewports. */
@@ -2856,12 +2914,6 @@ single-selector rules may stay on one line.
     gap: var(--ts-md);
   }
 
-  .ts-summary-grid {
-    display: grid;
-    gap: var(--ts-md);
-    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-  }
-
   .ts-summary-field {
     display: grid;
     gap: var(--ts-xs);
@@ -2878,7 +2930,8 @@ single-selector rules may stay on one line.
 
   .ts-break-all { overflow-wrap: anywhere; }
 
-  /* Security summary strip (1px line grid). */
+  /* Security summary strip (1px line grid); inset from the borderless
+     panel edge like v1's content blocks. */
   .ts-summary-grid {
     display: grid;
     gap: 1px;
@@ -2886,6 +2939,7 @@ single-selector rules may stay on one line.
     background-color: var(--ts-line);
     border-radius: var(--ts-radius-control);
     border: 1px solid var(--ts-line);
+    margin-inline: 20px;
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -2894,7 +2948,10 @@ single-selector rules may stay on one line.
   }
 
   @media (min-width: 64rem) {
-    .ts-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .ts-summary-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-inline: 16px;
+    }
   }
 
   .ts-summary-cell {
@@ -2931,6 +2988,453 @@ single-selector rules may stay on one line.
   @media (min-width: 64rem) {
     .ts-org-deletion-form { grid-template-columns: minmax(0, 1fr) auto; }
     .ts-org-deletion-form .ts-form-actions { align-self: end; }
+  }
+
+  /* ===== Feature: Profile (v1 parity pass) ===== */
+
+  /* v1 ProfileTabs: boxed card with a muted pill list of equal-width tabs. */
+  .ts-tabs-boxed {
+    display: flex;
+    padding: var(--ts-lg);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: var(--ts-surface);
+    overflow-x: visible;
+    max-width: none;
+  }
+
+  .ts-tabs-list {
+    display: inline-flex;
+    flex: 1;
+    height: 44px;
+    padding: var(--ts-xs);
+    border-radius: var(--ts-radius-panel);
+    background-color: var(--ts-surface-muted);
+  }
+
+  .ts-tabs-boxed .ts-tab {
+    flex: 1 1 0;
+    height: calc(100% - 1px);
+    padding: 0 var(--ts-lg);
+    border-radius: var(--ts-radius-control);
+    font-weight: var(--ts-fw-semibold);
+    color: color-mix(in oklab, var(--ts-ink) 60%, transparent);
+    justify-content: center;
+  }
+
+  .ts-tabs-boxed .ts-tab:hover { color: var(--ts-ink); }
+
+  .ts-tabs-boxed .ts-tab[aria-selected="true"],
+  .ts-tabs-boxed .ts-tab.is-active {
+    background-color: var(--ts-input-fill);
+    color: var(--ts-ink);
+    box-shadow:
+      0 1px 3px 0 rgba(0, 0, 0, 0.1),
+      0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  }
+
+  /* v1 panelWide: the Email and contact panel spans the two-pane grid. */
+  .ts-grid-two-pane > .ts-panel-wide { grid-column: auto; }
+
+  @media (min-width: 80rem) {
+    .ts-grid-two-pane > .ts-panel-wide { grid-column: 1 / -1; }
+  }
+
+  /* v1 emailForm: the whole Email change group sits in a muted box. */
+  .ts-email-form {
+    padding: var(--ts-lg);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    display: grid;
+    gap: var(--ts-lg);
+  }
+
+  .ts-claim-values {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ts-sm);
+  }
+
+  .ts-field-narrow { max-width: 384px; }
+
+  .ts-status-muted {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+    margin: 0;
+  }
+
+  .ts-icon-brand { color: var(--ts-accent); }
+  .ts-icon-success { color: var(--ts-success); }
+
+  /* Security tab: Change password | MFA panels, recovery alert spanning. */
+  .ts-security-stack {
+    display: grid;
+    gap: 20px;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+  }
+
+  @media (min-width: 80rem) {
+    .ts-security-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  .ts-security-stack > .ts-recovery-wide { grid-column: 1 / -1; }
+
+  .ts-well {
+    padding: var(--ts-lg);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    display: grid;
+    gap: var(--ts-xs);
+  }
+
+  .ts-text-medium {
+    margin: 0;
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-medium);
+  }
+
+  .ts-notice-description {
+    margin: 0;
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-well-row {
+    padding: var(--ts-md);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    gap: var(--ts-md);
+    align-items: center;
+    background-color: var(--ts-surface-muted);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .ts-factor-text {
+    gap: var(--ts-sm);
+    align-items: center;
+    color: var(--ts-ink);
+    display: inline-flex;
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-warning-box {
+    padding: var(--ts-md);
+    border: 1px solid color-mix(in oklab, var(--ts-warning) 30%, transparent);
+    border-radius: var(--ts-radius-control);
+    background-color: color-mix(in oklab, var(--ts-warning) 10%, transparent);
+    display: grid;
+    gap: var(--ts-md);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @media (min-width: 40rem) {
+    .ts-warning-box { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  .ts-warning-box .ts-text-warning {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+
+  .ts-code-secret {
+    font-family: var(--ts-font-mono);
+    overflow-wrap: anywhere;
+  }
+
+  .ts-recovery-codes {
+    padding: var(--ts-md);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface);
+    color: var(--ts-ink);
+    font-family: var(--ts-font-mono);
+    font-size: var(--ts-fs-meta);
+    white-space: pre-wrap;
+    margin: var(--ts-md) 0 0;
+  }
+
+  .ts-row-content {
+    flex-basis: 0%;
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .ts-passkey-name {
+    overflow: hidden;
+    margin: 0;
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-medium);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ts-form-end {
+    gap: var(--ts-md);
+    align-items: end;
+    display: flex;
+    flex-direction: column;
+  }
+
+  @media (min-width: 40rem) {
+    .ts-form-end { flex-direction: row; }
+  }
+
+  .ts-time-cell {
+    gap: var(--ts-gap-tight);
+    align-items: center;
+    display: inline-flex;
+  }
+
+  .ts-dialog-actions {
+    gap: var(--ts-sm);
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  /* ===== Feature: Settings (v1 parity pass) ===== */
+
+  /* v1 SettingsTabs: wrapping muted strip of lg tab buttons. */
+  .ts-tabs-settings {
+    flex-wrap: wrap;
+    width: fit-content;
+    max-width: none;
+    overflow-x: visible;
+    gap: var(--ts-lg);
+    padding: var(--ts-xs);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+  }
+
+  .ts-tabs-settings .ts-tab {
+    height: 44px;
+    padding: 0 var(--ts-lg);
+    border-radius: var(--ts-radius-control);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-tabs-settings .ts-tab[aria-selected="true"],
+  .ts-tabs-settings .ts-tab.is-active {
+    background-color: var(--ts-surface);
+    color: var(--ts-ink);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+  }
+
+  .ts-tabs-settings .ts-tab-danger { color: var(--ts-danger); }
+
+  .ts-tabs-settings .ts-tab-danger[aria-selected="true"] {
+    background-color: var(--ts-danger);
+    color: var(--ts-on-accent);
+  }
+
+  .ts-stack-8 { display: grid; gap: var(--ts-sm); grid-template-columns: minmax(0, 1fr); }
+
+  /* v1 dangerGrid: three tiles across from 640px up. */
+  .ts-danger-grid {
+    gap: var(--ts-md);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @media (min-width: 40rem) {
+    .ts-danger-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+
+  /* v1 DeleteProjectControl box. */
+  .ts-danger-box {
+    padding: var(--ts-lg);
+    border: 1px solid color-mix(in oklab, var(--ts-danger) 40%, transparent);
+    border-radius: var(--ts-radius-control);
+    background-color: color-mix(in oklab, var(--ts-danger) 5%, transparent);
+    display: grid;
+    gap: var(--ts-lg);
+  }
+
+  .ts-danger-copy {
+    gap: var(--ts-xs);
+    display: grid;
+  }
+
+  .ts-danger-title {
+    margin: 0;
+    color: var(--ts-danger);
+    font-size: var(--ts-fs-body);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-danger-description {
+    margin: 0;
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+    line-height: 24px;
+  }
+
+  .ts-danger-label {
+    gap: var(--ts-sm);
+    color: var(--ts-ink);
+    display: grid;
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-medium);
+    max-width: 32rem;
+  }
+
+  /* Backups tab: v1 BackupSettingsPanel two-column sections. */
+  .ts-backups-section {
+    display: grid;
+    gap: 20px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @media (min-width: 80rem) {
+    .ts-backups-section { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); }
+  }
+
+  .ts-backups-section-reverse {
+    display: grid;
+    gap: 20px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @media (min-width: 80rem) {
+    .ts-backups-section-reverse { grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); }
+  }
+
+  .ts-backups-field-label {
+    gap: var(--ts-xs);
+    color: var(--ts-ink-muted);
+    display: grid;
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+    line-height: 16px;
+  }
+
+  .ts-backups-field-label .ts-select { min-width: 14rem; }
+
+  .ts-muted-note {
+    padding: var(--ts-md);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+    line-height: 20px;
+  }
+
+  .ts-backups-checkbox {
+    padding: var(--ts-md);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    gap: var(--ts-md);
+    align-items: center;
+    color: var(--ts-ink);
+    display: flex;
+    font-size: var(--ts-fs-ui);
+    line-height: 20px;
+  }
+
+  .ts-backups-metrics .ts-metric {
+    padding: var(--ts-md);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+  }
+
+  .ts-backups-metrics .ts-metric-inline {
+    margin-top: var(--ts-xs);
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-panel-title);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-success-meta {
+    color: var(--ts-success);
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-backups-database-item {
+    padding: var(--ts-md);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    gap: var(--ts-md);
+    align-items: center;
+    display: flex;
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-backups-database-selected {
+    border-color: var(--ts-accent);
+    background-color: color-mix(in oklab, var(--ts-accent) 10%, transparent);
+  }
+
+  .ts-backups-database-icon {
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    place-items: center;
+    background-color: var(--ts-surface);
+    color: var(--ts-accent);
+    display: grid;
+    flex-shrink: 0;
+    height: 32px;
+    width: 32px;
+  }
+
+  .ts-backups-database-name,
+  .ts-backups-database-id {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ts-backups-database-name {
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-medium);
+  }
+
+  .ts-backups-database-id {
+    color: var(--ts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-size: var(--ts-fs-meta);
+  }
+
+  /* Confirmation dialog detail box (backup + restore dialogs). */
+  .ts-detail-box {
+    padding: var(--ts-md);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    display: grid;
+    gap: var(--ts-md);
+    font-size: var(--ts-fs-ui);
+    line-height: 20px;
+  }
+
+  .ts-detail-row {
+    gap: var(--ts-md);
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .ts-detail-label { color: var(--ts-ink-muted); }
+
+  .ts-detail-icon-label {
+    gap: var(--ts-sm);
+    align-items: center;
+    color: var(--ts-ink-muted);
+    display: inline-flex;
+  }
+
+  .ts-detail-value {
+    color: var(--ts-ink);
+    font-weight: var(--ts-fw-medium);
+    text-align: right;
   }
 
   /* ===== Feature: Usage/Audit/Notifications ===== */
@@ -4111,7 +4615,7 @@ single-selector rules may stay on one line.
     border-radius: var(--ts-radius-control);
     background-color: var(--ts-surface-muted);
     display: grid;
-    gap: 2px;
+    gap: 0;
     min-width: 0;
   }
 
@@ -4123,11 +4627,13 @@ single-selector rules may stay on one line.
   }
 
   .ts-summary-term dd {
-    margin: 0;
+    margin: var(--ts-xs) 0 0;
     color: var(--ts-ink);
     font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-medium);
-    overflow-wrap: anywhere;
+    font-weight: var(--ts-fw-semibold);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Two-column feature panes. */
@@ -4232,21 +4738,24 @@ single-selector rules may stay on one line.
     .ts-profile-heading { font-size: 30px; }
   }
 
-  .ts-form-inline-row { grid-template-columns: minmax(0, 1fr); }
-
-  @media (min-width: 40rem) {
-    .ts-form-inline-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; }
-  }
-
   .ts-posture-row {
     padding: var(--ts-md);
     border: 1px solid var(--ts-line);
     border-radius: var(--ts-radius-control);
     gap: var(--ts-md);
-    align-items: center;
+    align-items: flex-start;
+    background-color: var(--ts-surface-muted);
     display: flex;
+    flex-direction: column;
     justify-content: space-between;
     min-width: 0;
+  }
+
+  @media (min-width: 40rem) {
+    .ts-posture-row {
+      flex-direction: row;
+      align-items: center;
+    }
   }
 
   .ts-posture-label {
@@ -4254,6 +4763,7 @@ single-selector rules may stay on one line.
     align-items: center;
     gap: var(--ts-sm);
     min-width: 0;
+    white-space: nowrap;
   }
 
   .ts-claims-grid {
@@ -4274,17 +4784,11 @@ single-selector rules may stay on one line.
   }
 
   .ts-claim-title {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-semibold);
-    text-transform: uppercase;
-  }
-
-  .ts-claim-value {
-    font-family: var(--ts-font-mono);
-    font-size: var(--ts-fs-meta);
+    margin: 0;
     color: var(--ts-ink);
-    overflow-wrap: anywhere;
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-semibold);
+    text-transform: none;
   }
 
   /* Settings specifics. */
@@ -4337,7 +4841,7 @@ single-selector rules may stay on one line.
     display: flex;
     font-size: var(--ts-fs-ui);
     font-weight: var(--ts-fw-semibold);
-    margin-bottom: var(--ts-md);
+    margin-bottom: 0;
   }
 
   .ts-setting-icon {
@@ -5124,28 +5628,6 @@ single-selector rules may stay on one line.
     border: 1px solid var(--ts-line);
     border-radius: var(--ts-radius-control);
     background-color: var(--ts-surface-muted);
-  }
-
-  /* ===== Feature: Settings webhooks ===== */
-  .ts-webhook-usage {
-    margin: 0;
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
-    line-height: 1.5;
-  }
-
-  .ts-webhook-deliveries {
-    display: grid;
-    gap: var(--ts-sm);
-    padding-top: var(--ts-md);
-    border-top: 1px solid var(--ts-line);
-  }
-
-  .ts-webhook-deliveries-title {
-    margin: 0;
-    font-size: var(--ts-fs-ui);
-    font-weight: 600;
-    color: var(--ts-ink);
   }
 
   /* ===== Feature: AccessRules ===== */

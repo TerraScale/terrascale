@@ -27,6 +27,19 @@ public sealed partial class DashboardStore
     public bool CanManageByok => false;     // demo: not on an Enterprise plan
     public bool CanDeleteProject => true;   // demo session is the org owner
 
+    private readonly Dictionary<string, SettingsBackupPolicy> _backupPolicies = [];
+
+    public SettingsBackupPolicy? BackupPolicyFor(string databaseId) =>
+        _backupPolicies.TryGetValue(databaseId, out var policy) ? policy : null;
+
+    public void SaveSettingsBackupPolicy(
+        string databaseId,
+        string fullBackupCron,
+        string incrementalBackupCron,
+        int retentionDays,
+        bool disabled) =>
+        _backupPolicies[databaseId] = new(databaseId, fullBackupCron, incrementalBackupCron, retentionDays, disabled);
+
     public ImmutableArray<SettingsCredentialView> SettingsCredentials =>
     [
         .. ApiKeys.Select(k => new SettingsCredentialView(
