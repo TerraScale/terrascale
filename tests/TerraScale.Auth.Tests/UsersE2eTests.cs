@@ -442,6 +442,102 @@ public sealed class UsersE2eTests
     }
 
     [Test]
+    public async Task SessionCookieUsesStrictFlags()
+    {
+        var service = await ServiceAsync();
+        var (_, slug) = await InstanceAsync();
+        var email = Email();
+
+        using var response = await service.Http.SendAsync(Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
+        {
+            ["email"] = email,
+            ["password"] = "password123",
+            ["name"] = "Test User",
+        }));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        var header = response.Headers.GetValues("Set-Cookie").First().ToLowerInvariant();
+        await Assert.That(header).Contains("httponly");
+        await Assert.That(header).Contains("secure");
+        await Assert.That(header).Contains("samesite=lax");
+        await Assert.That(header).Contains("path=/");
+        await Assert.That(header.Contains("domain=")).IsFalse();
+    }
+
+    [Test]
+    public async Task ExpiredSessionIsRejected()
+    {
+        var service = await ServiceAsync();
+        var (instanceId, slug) = await InstanceAsync();
+        var email = Email();
+        var (cookie, sessionId) = await SignUpAsync(service, slug, email);
+
+        var session = await service.Store.GetSessionAsync(sessionId);
+        await service.Store.UpsertSessionAsync(session! with { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds() });
+
+        using var response = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(response.Headers.Location?.ToString()).Contains("sign-in");
+    }
+
+    [Test]
+    public async Task BannedOrDeletedUserSessionsAreRejected()
+    {
+        var service = await ServiceAsync();
+        var (instanceId, slug) = await InstanceAsync();
+        var email = Email();
+        var (cookie, _) = await SignUpAsync(service, slug, email);
+        var user = await service.Store.FindUserByEmailAsync(instanceId, email);
+
+        await service.Store.UpsertUserAsync(user! with { Banned = true });
+        using var banned = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
+        await Assert.That(banned.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(banned.Headers.Location?.ToString()).Contains("sign-in");
+
+        await service.Store.UpsertUserAsync(user with { Banned = false, Deleted = true });
+        using var deleted = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(deleted.Headers.Location?.ToString()).Contains("sign-in");
+    }
+
+    [Test]
+    public async Task SessionCookieDoesNotWorkAcrossInstances()
+    {
+        var service = await ServiceAsync();
+        var (_, slugA) = await InstanceAsync();
+        var (_, slugB) = await InstanceAsync();
+        var (cookie, _) = await SignUpAsync(service, slugA, Email());
+
+        using var response = await service.Http.SendAsync(Get($"/ui/{slugB}/account", cookie));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(response.Headers.Location?.ToString())
+            .IsEqualTo($"/ui/{slugB}/sign-in?next={Uri.EscapeDataString($"/ui/{slugB}/account")}");
+    }
+
+    [Test]
+    public async Task ResolveThrottlesLastActiveAtWrites()
+    {
+        var service = await ServiceAsync();
+        var (instanceId, slug) = await InstanceAsync();
+        var email = Email();
+        var (cookie, sessionId) = await SignUpAsync(service, slug, email);
+        var sessions = new SessionService(service.Store);
+        var token = cookie["tsauth_session=".Length..];
+
+        await sessions.ResolveAsync(instanceId, token);
+        var first = (await service.Store.GetSessionAsync(sessionId))!.LastActiveAt;
+        await Task.Delay(1100);
+        await sessions.ResolveAsync(instanceId, token);
+        var second = (await service.Store.GetSessionAsync(sessionId))!.LastActiveAt;
+        await Assert.That(second).IsEqualTo(first);
+
+        var session = await service.Store.GetSessionAsync(sessionId);
+        await service.Store.UpsertSessionAsync(session! with { LastActiveAt = DateTimeOffset.UtcNow.AddSeconds(-301).ToUnixTimeSeconds() });
+        await sessions.ResolveAsync(instanceId, token);
+        var refreshed = (await service.Store.GetSessionAsync(sessionId))!.LastActiveAt;
+        await Assert.That(refreshed > first).IsTrue();
+    }
+
+    [Test]
     public async Task MagicLinkAlwaysShowsCheckEmailPage()
     {
         var service = await ServiceAsync();
