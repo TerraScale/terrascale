@@ -46,7 +46,7 @@ public sealed class SessionService(AuthStore store)
             Username = username,
             EmailKey = emailKey,
             UsernameKey = usernameKey,
-            PasswordHash = password is null ? null : PasswordHasher.Hash(password),
+            PasswordHash = password is { Length: > 0 } ? PasswordHasher.Hash(password) : null,
             Name = name,
             CreatedAt = now,
             UpdatedAt = now,

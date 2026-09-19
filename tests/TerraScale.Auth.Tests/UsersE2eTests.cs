@@ -217,6 +217,35 @@ public sealed class UsersE2eTests
     }
 
     [Test]
+    public async Task PasswordlessUsersCannotSignInWithAnyPassword()
+    {
+        var service = await ServiceAsync();
+        var (instanceId, slug) = await InstanceAsync();
+        var noPassword = Email();
+        var emptyPassword = Email();
+
+        // SSO/management style creation. An explicit empty string must mean
+        // password-less too — a hash of "" would let anyone sign in with no credential.
+        var sessions = new SessionService(service.Store);
+        await sessions.CreateUserAsync(instanceId, noPassword, username: null, password: null, name: null);
+        var createdEmpty = await sessions.CreateUserAsync(instanceId, emptyPassword, username: null, password: "", name: null);
+        await Assert.That(createdEmpty.PasswordHash).IsNull();
+        await Assert.That((await service.Store.FindUserByEmailAsync(instanceId, noPassword))!.PasswordHash).IsNull();
+
+        foreach (var (email, password) in new[] { (noPassword, "password123"), (emptyPassword, ""), (emptyPassword, "password123") })
+        {
+            using var response = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
+            {
+                ["email"] = email,
+                ["password"] = password,
+            }));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await BodyAsync(response)).Contains("Invalid email or password");
+            await Assert.That(response.Headers.Contains("Set-Cookie")).IsFalse();
+        }
+    }
+
+    [Test]
     public async Task BannedAccountShowsSuspended()
     {
         var service = await ServiceAsync();
