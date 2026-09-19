@@ -39,7 +39,7 @@
         </div>
         <div class="ts-padded ts-subscriptions-grid">
             <section aria-label="Attach a shared view">
-                <form method="post" action="/api/v1/dashboard/subscriptions/attach" class="ts-form ts-sub-form" data-signals="{ transport: 'http' }">
+                <form method="post" action="/api/v1/dashboard/subscriptions/attach" class="ts-form ts-sub-form">
                     <div class="ts-field">
                         <label class="ts-label" for="subscription-database">Database</label>
                         <select class="ts-select" id="subscription-database" name="databaseId" @(Model.Databases.Length == 0 ? "disabled" : null)>
@@ -72,7 +72,7 @@
                         }
                     </div>
                 </form>
-                <p class="ts-meta ts-sub-note" data-show="transport === 'websocket'">WebSocket is an explicit opt-in. The current SDK contract fails closed until a direct WebSocket transport is supplied.</p>
+                <p class="ts-meta ts-sub-note">WebSocket is an explicit opt-in. The current SDK contract fails closed until a direct WebSocket transport is supplied.</p>
             </section>
             <section class="ts-sub-view" aria-label="Shared view state">
                 <div class="ts-row-between">
