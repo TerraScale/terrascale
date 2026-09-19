@@ -3808,6 +3808,31 @@ single-selector rules may stay on one line.
   /* Stat card grids: 2-up on tablet, 4-up on desktop (usage summary + billing). */
   .ts-usage-stats { gap: var(--ts-md); }
 
+  /* v1 statLabel (shared-page-styles): icon and label share one row. */
+  .ts-usage-summary .ts-metric-label,
+  .ts-usage-stats .ts-metric-label {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-sm);
+  }
+
+  /* v1 PanelHeader headerWithAction (Panel.tsx): the action sits beside the
+     title (grid, never wraps below it). */
+  .ts-usage-head-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: var(--ts-xs);
+  }
+
+  /* v1 BillingControls actionRow: gap sm, plan select min-width 13rem. */
+  .ts-usage-head-actions .ts-row { gap: var(--ts-sm); }
+
+  .ts-usage-head-actions .ts-select { min-width: 13rem; }
+
+  /* v1 UsageHistoryPanel controlsEnd + NativeSelect wrapper: fit-content. */
+  .ts-usage-controls-end .ts-select { width: fit-content; }
+
   /* v1 usageStats: 1 col → 2 @40rem → 4 @80rem, margin-top 24px above the grid. */
   .ts-usage-summary {
     gap: var(--ts-md);
@@ -5414,6 +5439,12 @@ single-selector rules may stay on one line.
   .ts-sub-form .ts-select {
     font-size: var(--ts-fs-body);
     min-height: var(--ts-control-h-lg);
+    /* v1 NativeSelect wrapper: fit-content width, 50% fade when disabled. */
+    width: fit-content;
+  }
+
+  .ts-sub-form .ts-select:disabled {
+    opacity: 0.5;
   }
 
   .ts-sub-form .ts-textarea {
@@ -5428,7 +5459,16 @@ single-selector rules may stay on one line.
     gap: var(--ts-sm);
   }
 
-  .ts-sub-note { margin: 0; line-height: 1.5; }
+  /* v1 shows the WebSocket note only when the websocket transport is chosen. */
+  .ts-sub-note {
+    display: none;
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .ts-sub-form:has(#subscription-transport option:checked[value="websocket"]) + .ts-sub-note {
+    display: block;
+  }
 
   .ts-sub-view .ts-pip { width: 8px; height: 8px; }
 

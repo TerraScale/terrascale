@@ -9,7 +9,6 @@
       "ts-dashboard-2/1.0.0": {
         "dependencies": {
           "RazorSlices": "0.11.3",
-          "TerraScale.DotNet": "0.1.0",
           "TerraScale.Endpoints": "1.1.0"
         },
         "runtime": {
@@ -55,35 +54,16 @@
           }
         }
       },
-      "ZString/2.6.0": {
-        "runtime": {
-          "lib/net7.0/ZString.dll": {
-            "assemblyVersion": "2.6.0.0",
-            "fileVersion": "2.6.0.0",
-            "localPath": "ZString.dll"
-          }
-        }
-      },
-      "TerraScale.DotNet/0.1.0": {
-        "dependencies": {
-          "ZString": "2.6.0"
-        },
-        "runtime": {
-          "TerraScale.DotNet.dll": {
-            "assemblyVersion": "0.1.0.0",
-            "fileVersion": "0.1.0.0"
-          }
-        }
-      },
       "TerraScale.Endpoints/1.1.0": {
         "dependencies": {
           "Microsoft.AspNetCore.OpenApi": "10.0.12",
           "Scalar.AspNetCore": "2.17.3"
         },
         "runtime": {
-          "TerraScale.Endpoints.dll": {
+          "lib/net10.0/TerraScale.Endpoints.dll": {
             "assemblyVersion": "1.1.0.0",
-            "fileVersion": "1.1.0.0"
+            "fileVersion": "1.1.0.0",
+            "localPath": "TerraScale.Endpoints.dll"
           }
         }
       }
@@ -123,22 +103,12 @@
       "path": "scalar.aspnetcore/2.17.3",
       "hashPath": "scalar.aspnetcore.2.17.3.nupkg.sha512"
     },
-    "ZString/2.6.0": {
+    "TerraScale.Endpoints/1.1.0": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-XE8a+11nZg0LRaf+RGABEWaHIf8yGd5w8v/Ra1iWxMBmAVzwuKbW7G21mS0U7w7sh1lYcgckInWGgnz4qyET8A==",
-      "path": "zstring/2.6.0",
-      "hashPath": "zstring.2.6.0.nupkg.sha512"
-    },
-    "TerraScale.DotNet/0.1.0": {
-      "type": "project",
-      "serviceable": false,
-      "sha512": ""
-    },
-    "TerraScale.Endpoints/1.1.0": {
-      "type": "project",
-      "serviceable": false,
-      "sha512": ""
+      "sha512": "sha512-i0u+7+Khwc+rdPqZiZo2jRsx3wQs/thXIVXhIvIMp96O+IzeVB+7I1evMfdQcWnmodwzeTj+tsQXtOiIAKi6LQ==",
+      "path": "terrascale.endpoints/1.1.0",
+      "hashPath": "terrascale.endpoints.1.1.0.nupkg.sha512"
     }
   }
 }
