@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using TerraScale.Auth.Api;
+using TerraScale.Auth.Billing;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Users;
@@ -76,13 +77,14 @@ public static class ManagementEndpoints
                 if (await store.FindUserByEmailAsync(context.Instance.Id, SessionService.NormalizeEmail(body.Email), ct) is not null)
                     return ApiResults.Conflict("email_taken", "an account with this email already exists");
             }
-            if (!await Billing.Quota.AllowsSignUpAsync(store, context.Instance.Id, ct))
-                return ApiResults.Error(402, "quota_exceeded", "the instance has reached its plan's user quota; upgrade to add more users");
-
             User created;
             try
             {
                 created = await sessions.CreateUserAsync(context.Instance.Id, body.Email, body.Username, body.Password, body.Name, ct);
+            }
+            catch (QuotaExceededException)
+            {
+                return ApiResults.Error(402, "quota_exceeded", "the instance has reached its plan's user quota; upgrade to add more users");
             }
             catch (TerraScale.DotNet.TerraScaleApiException)
             {

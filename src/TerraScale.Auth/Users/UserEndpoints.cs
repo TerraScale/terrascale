@@ -1,6 +1,7 @@
 namespace TerraScale.Auth.Users;
 
 using System.Net;
+using TerraScale.Auth.Billing;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Email;
@@ -94,8 +95,6 @@ public static class UserEndpoints
             return SignUpPage(slug, "Please enter a valid email address.", email, name);
         if (password.Length < 8)
             return SignUpPage(slug, "Password must be at least 8 characters.", email, name);
-        if (!await Billing.Quota.AllowsSignUpAsync(store, instance.Id, ct))
-            return SignUpPage(slug, "This app has reached its user limit. The owner can raise it by upgrading the plan.", email, name);
 
         User user;
         try
@@ -104,6 +103,10 @@ public static class UserEndpoints
             if (await store.FindUserByEmailAsync(instance.Id, SessionService.NormalizeEmail(email), ct) is not null)
                 return SignUpPage(slug, "This email is already registered.", email, name);
             user = await sessions.CreateUserAsync(instance.Id, email, username: null, password, Optional(name), ct);
+        }
+        catch (QuotaExceededException)
+        {
+            return SignUpPage(slug, "This app has reached its user limit. The owner can raise it by upgrading the plan.", email, name);
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed)
         {

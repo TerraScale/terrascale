@@ -1,5 +1,6 @@
 namespace TerraScale.Auth.Users;
 
+using TerraScale.Auth.Billing;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
 
@@ -23,9 +24,15 @@ public sealed class SessionService(AuthStore store)
         && domain.Contains('.')
         && !email.Any(c => char.IsWhiteSpace(c));
 
-    /// <summary>Creates a user with a unique per-instance email/username key. Throws <see cref="TerraScale.DotNet.TerraScaleApiException"/> on conflict.</summary>
+    /// <summary>Creates a user with a unique per-instance email/username key, gated on the
+    /// plan's user quota — every creation path (hosted sign-up, management, SCIM, SSO
+    /// auto-create) funnels through here. Throws <see cref="QuotaExceededException"/> when
+    /// the instance is at quota and <see cref="TerraScale.DotNet.TerraScaleApiException"/> on conflict.</summary>
     public async Task<User> CreateUserAsync(string instanceId, string? email, string? username, string? password, string? name, CancellationToken ct = default)
     {
+        if (!await Quota.AllowsSignUpAsync(store, instanceId, ct))
+            throw new QuotaExceededException();
+
         string? emailKey = null;
         if (email is not null)
         {

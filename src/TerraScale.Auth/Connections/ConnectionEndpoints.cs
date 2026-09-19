@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Auth.Api;
 using TerraScale.Auth.Configuration;
+using TerraScale.Auth.Billing;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Keys;
 using TerraScale.Auth.Store;
@@ -308,6 +309,12 @@ public static class ConnectionEndpoints
             var verified = created with { EmailVerified = emailVerified, UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() };
             await store.UpsertUserAsync(verified, ct);
             return verified;
+        }
+        catch (QuotaExceededException)
+        {
+            // At the plan's ceiling a new identity cannot be minted; existing users above never
+            // reach this line (the find returns them first).
+            return null;
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed)
         {

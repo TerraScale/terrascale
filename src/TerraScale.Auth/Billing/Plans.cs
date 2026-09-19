@@ -67,9 +67,18 @@ public sealed record BillingState(string Plan, string Status, int Quota, Subscri
 public static class Quota
 {
     /// True when the instance's effective plan still has room for one more user.
+    /// Advisory check-then-create: two concurrent creates racing for the last seat can both
+    /// pass (ponytail: an atomic seat claim would need a counter document with CAS retries;
+    /// add if over-quota creep ever matters in practice).
     public static async Task<bool> AllowsSignUpAsync(AuthStore store, string instanceId, CancellationToken ct = default)
     {
         var state = await BillingState.CurrentAsync(store, instanceId, ct);
         return await BillingState.CountUsersAsync(store, instanceId, state.Quota, ct) < state.Quota;
     }
 }
+
+/// <summary>Thrown by <see cref="Users.SessionService.CreateUserAsync"/> when the instance's
+/// effective plan is at its user quota — the single gate every user-creation path funnels
+/// through (hosted sign-up, management create, SCIM provisioning, SSO auto-create).</summary>
+public sealed class QuotaExceededException(string message = "the instance has reached its plan's user quota")
+    : Exception(message);

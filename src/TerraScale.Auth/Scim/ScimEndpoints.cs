@@ -3,6 +3,7 @@ namespace TerraScale.Auth.Scim;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using TerraScale.Auth.Api;
+using TerraScale.Auth.Billing;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Users;
@@ -218,6 +219,10 @@ public static class ScimEndpoints
             try
             {
                 created = await sessions.CreateUserAsync(directory.InstanceId, body.UserName, null, null, JoinName(body.Name), ct);
+            }
+            catch (QuotaExceededException)
+            {
+                return ScimError(403, "the instance has reached its plan's user quota");
             }
             catch (TerraScaleApiException)
             {

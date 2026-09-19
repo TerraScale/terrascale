@@ -16,10 +16,9 @@ public static class BillingEndpoints
     /// <summary>Maps Billing endpoints.</summary>
     public static void Map(WebApplication app)
     {
-        // TODO(users owner): gate user creation in UserEndpoints (POST /v1/{slug}/users and the
-        // sign-up UI) on Quota.AllowsSignUpAsync(store, instanceId) → 403 "quota_exceeded" when
-        // false. This module owns the check but not that file; until wired, the enforce-check
-        // endpoint below is the integration seam.
+        // User creation is gated on the plan quota in SessionService.CreateUserAsync (the
+        // funnel for hosted sign-up, management, SCIM, and SSO auto-create); it throws
+        // QuotaExceededException, which each surface maps to its own error shape.
         MapManagement(app);
         MapWebhook(app);
         MapUi(app);
@@ -126,8 +125,8 @@ public static class BillingEndpoints
             return Results.Ok(new { portal_url = Str(portal, "url") });
         });
 
-        // The quota gate as a management endpoint: the integration seam for tests and for
-        // other modules until UserEndpoints wires Quota.AllowsSignUpAsync into user creation.
+        // The quota gate as a management endpoint: plan/quota introspection for tests and
+        // operators, taking the caller's current_users instead of walking the users collection.
         app.MapPost("/v1/{slug}/billing/enforce-check", async (
             string slug, HttpRequest request, InstanceResolver resolver, AuthStore store, CancellationToken ct) =>
         {
