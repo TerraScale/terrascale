@@ -284,12 +284,19 @@ public sealed class OAuthE2eTests
         var (noOpenid, _, _) = await FullFlowAsync(arranged, scope: "email profile");
         await Assert.That(noOpenid.TryGetProperty("id_token", out _)).IsFalse();
 
+        // RFC 6750 3: every 401 carries WWW-Authenticate; the challenge omits the
+        // error code when no token was presented at all.
         using var noHeader = new HttpRequestMessage(HttpMethod.Get, $"/{arranged.Slug}/oauth/userinfo");
-        await Assert.That((await arranged.Service.Http.SendAsync(noHeader)).StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        var noHeaderResponse = await arranged.Service.Http.SendAsync(noHeader);
+        await Assert.That(noHeaderResponse.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(string.Join(",", noHeaderResponse.Headers.GetValues("WWW-Authenticate"))).IsEqualTo("Bearer");
 
         using var garbage = new HttpRequestMessage(HttpMethod.Get, $"/{arranged.Slug}/oauth/userinfo");
         garbage.Headers.Authorization = new("Bearer", "not.a.jwt");
-        await Assert.That((await arranged.Service.Http.SendAsync(garbage)).StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        var garbageResponse = await arranged.Service.Http.SendAsync(garbage);
+        await Assert.That(garbageResponse.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(string.Join(",", garbageResponse.Headers.GetValues("WWW-Authenticate")))
+            .IsEqualTo("Bearer error=\"invalid_token\", error_description=\"invalid access token\"");
     }
 
     // ---- authorize rejections ----------------------------------------------------------

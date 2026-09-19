@@ -173,11 +173,11 @@ public static class OAuthEndpoints
                 return ApiResults.NotFound();
 
             if (BearerToken(request) is not { } token)
-                return UnauthorizedBearer("missing bearer token");
+                return UnauthorizedBearer(request, "missing bearer token");
 
             var claims = await VerifyAccessTokenAsync(keys, store, options, instance, token, ct);
             if (claims is null || ClaimString(claims, "sub") is not { } sub || await store.GetUserAsync(sub, ct) is not { } user)
-                return UnauthorizedBearer("invalid access token");
+                return UnauthorizedBearer(request, "invalid access token");
 
             var granted = (ClaimString(claims, "scope") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var body = new Dictionary<string, object> { ["sub"] = user.Id };
@@ -648,8 +648,15 @@ public static class OAuthEndpoints
             : null;
     }
 
-    private static IResult UnauthorizedBearer(string description) =>
-        Results.Json(new { error = "invalid_token", error_description = description }, statusCode: 401);
+    /// <summary>RFC 6750 3: every 401 from a bearer resource carries WWW-Authenticate; the error code is omitted when no token was presented.</summary>
+    private static IResult UnauthorizedBearer(HttpRequest request, string description)
+    {
+        var missing = description == "missing bearer token";
+        request.HttpContext.Response.Headers.WWWAuthenticate = missing
+            ? "Bearer"
+            : $"Bearer error=\"invalid_token\", error_description=\"{description}\"";
+        return Results.Json(new { error = missing ? "invalid_request" : "invalid_token", error_description = description }, statusCode: 401);
+    }
 
     /// <summary>The safe client shape returned by the management API (never the secret hash).</summary>
     private static object ClientView(OAuthClient client) => new
