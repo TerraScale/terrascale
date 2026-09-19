@@ -16,6 +16,11 @@ public sealed class RemoveMfaFactorEndpoint(DashboardStore store) : EndpointWith
     {
         var form = await HttpContext.Request.ReadFormAsync(ct);
         var factor = form["factor"].ToString();
+        if (!store.VerifyPassword(form["password"].ToString()))
+        {
+            return Results.Redirect("/profile?tab=security&error=" + Uri.EscapeDataString("Incorrect password."), false, false);
+        }
+
         if (factor.Length > 0)
         {
             store.RemoveMfaFactor(factor);

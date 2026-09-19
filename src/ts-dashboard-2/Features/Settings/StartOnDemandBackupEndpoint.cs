@@ -17,7 +17,8 @@ public sealed class StartOnDemandBackupEndpoint(DashboardStore store) : Endpoint
     public override async Task<IResult> HandleAsync(CancellationToken ct)
     {
         var form = await HttpContext.Request.ReadFormAsync(ct);
-        store.StartOnDemandBackup(form["databaseId"].ToString());
-        return Results.Redirect("/settings?tab=backups", false, false);
+        var databaseId = form["databaseId"].ToString();
+        store.StartOnDemandBackup(databaseId);
+        return Results.Redirect($"/settings?tab=backups&database={databaseId}", false, false);
     }
 }

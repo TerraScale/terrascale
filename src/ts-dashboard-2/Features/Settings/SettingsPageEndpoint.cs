@@ -16,8 +16,8 @@ public sealed class SettingsPageEndpoint(DashboardStore store) : EndpointWithout
     {
         var query = HttpContext.Request.Query;
         var tab = query["tab"].FirstOrDefault() is { Length: > 0 } t ? t : "identity";
+        var database = query["database"].ToString();
         var toast = query["toast"].ToString() is { Length: > 0 } toastValue ? toastValue : null;
-        var rotated = query["rotated"].Count > 0;
-        return Task.FromResult<IResult>(SettingsSlice.Create(SettingsPageModel.From(store, "/settings", tab, toast, rotated)));
+        return Task.FromResult<IResult>(SettingsSlice.Create(SettingsPageModel.From(store, "/settings", tab, database, toast)));
     }
 }

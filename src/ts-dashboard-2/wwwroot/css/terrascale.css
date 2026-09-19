@@ -127,7 +127,7 @@ single-selector rules may stay on one line.
   /* Radius. */
   --ts-radius-badge: 6px;
   --ts-radius-control: 8px;
-  --ts-radius-panel: 12px;
+  --ts-radius-panel: 11.2px;
   --ts-radius-pill: 9999px;
 
   /* Typography (Oxanium has no italic — never use italic). */
@@ -326,7 +326,7 @@ single-selector rules may stay on one line.
   .ts-page {
     display: flex;
     flex-direction: column;
-    gap: var(--ts-xl);
+    gap: 20px;
     min-width: 0;
   }
 
@@ -420,15 +420,21 @@ single-selector rules may stay on one line.
     -webkit-backdrop-filter: blur(var(--ts-blur));
   }
 
+  /* v1 Panel: borderless glass card, 20px rhythm, header divider
+     (components/ui/Panel.tsx). */
   .ts-panel {
     display: flex;
     flex-direction: column;
-    gap: var(--ts-md);
-    border: 1px solid var(--ts-line);
+    gap: 20px;
+    overflow: hidden;
+    border: 0;
     border-radius: var(--ts-radius-panel);
-    background-color: var(--ts-surface);
-    box-shadow: var(--ts-shadow-panel);
-    padding: var(--ts-lg);
+    background-color: rgba(22, 24, 31, 0.52);
+    backdrop-filter: blur(var(--ts-blur));
+    -webkit-backdrop-filter: blur(var(--ts-blur));
+    box-shadow: var(--ts-card-edge);
+    padding: 0;
+    padding-block: 20px;
     min-width: 0;
   }
 
@@ -799,7 +805,7 @@ single-selector rules may stay on one line.
   .ts-field {
     display: flex;
     flex-direction: column;
-    gap: var(--ts-xs);
+    gap: var(--ts-sm);
     min-width: 0;
   }
 
@@ -835,7 +841,7 @@ single-selector rules may stay on one line.
   .ts-select,
   .ts-textarea {
     width: 100%;
-    min-height: var(--ts-control-h);
+    min-height: var(--ts-control-h-lg);
     padding: 0 var(--ts-pad-inline);
     border-radius: var(--ts-radius-control);
     border: 1px solid var(--ts-line);
@@ -3260,8 +3266,13 @@ single-selector rules may stay on one line.
 
   /* Bare table shell inside a panel: scroll wide tables on narrow viewports. */
   .ts-table-frame {
-    width: 100%;
+    width: auto;
     overflow-x: auto;
+    margin-inline: 20px;
+  }
+
+  @media (min-width: 64rem) {
+    .ts-table-frame { margin-inline: 16px; }
   }
 
   .ts-panel-pad20 { padding: 20px; gap: 20px; }
@@ -3302,7 +3313,11 @@ single-selector rules may stay on one line.
 
   .ts-min-width { min-width: 0; }
 
-  .ts-padded { padding: var(--ts-lg); }
+  .ts-padded { padding: var(--ts-lg) 20px; }
+
+  @media (min-width: 64rem) {
+    .ts-padded { padding-inline: 16px; }
+  }
 
   /* minmax(0,1fr) keeps the implicit track clamped — auto tracks size to
   max-content and let wide tables/code blow out narrow viewports. */
@@ -3409,12 +3424,6 @@ single-selector rules may stay on one line.
     gap: var(--ts-md);
   }
 
-  .ts-summary-grid {
-    display: grid;
-    gap: var(--ts-md);
-    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-  }
-
   .ts-summary-field {
     display: grid;
     gap: var(--ts-xs);
@@ -3431,7 +3440,8 @@ single-selector rules may stay on one line.
 
   .ts-break-all { overflow-wrap: anywhere; }
 
-  /* Security summary strip (1px line grid). */
+  /* Security summary strip (1px line grid); inset from the borderless
+     panel edge like v1's content blocks. */
   .ts-summary-grid {
     display: grid;
     gap: 1px;
@@ -3439,6 +3449,7 @@ single-selector rules may stay on one line.
     background-color: var(--ts-line);
     border-radius: var(--ts-radius-control);
     border: 1px solid var(--ts-line);
+    margin-inline: 20px;
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -3447,7 +3458,10 @@ single-selector rules may stay on one line.
   }
 
   @media (min-width: 64rem) {
-    .ts-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .ts-summary-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-inline: 16px;
+    }
   }
 
   .ts-summary-cell {
@@ -4782,7 +4796,7 @@ single-selector rules may stay on one line.
     border-radius: var(--ts-radius-control);
     background-color: var(--ts-surface-muted);
     display: grid;
-    gap: 2px;
+    gap: 0;
     min-width: 0;
   }
 
@@ -4794,11 +4808,13 @@ single-selector rules may stay on one line.
   }
 
   .ts-summary-term dd {
-    margin: 0;
+    margin: var(--ts-xs) 0 0;
     color: var(--ts-ink);
     font-size: var(--ts-fs-ui);
-    font-weight: var(--ts-fw-medium);
-    overflow-wrap: anywhere;
+    font-weight: var(--ts-fw-semibold);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Two-column feature panes. */
@@ -4903,21 +4919,24 @@ single-selector rules may stay on one line.
     .ts-profile-heading { font-size: 30px; }
   }
 
-  .ts-form-inline-row { grid-template-columns: minmax(0, 1fr); }
-
-  @media (min-width: 40rem) {
-    .ts-form-inline-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; }
-  }
-
   .ts-posture-row {
     padding: var(--ts-md);
     border: 1px solid var(--ts-line);
     border-radius: var(--ts-radius-control);
     gap: var(--ts-md);
-    align-items: center;
+    align-items: flex-start;
+    background-color: var(--ts-surface-muted);
     display: flex;
+    flex-direction: column;
     justify-content: space-between;
     min-width: 0;
+  }
+
+  @media (min-width: 40rem) {
+    .ts-posture-row {
+      flex-direction: row;
+      align-items: center;
+    }
   }
 
   .ts-posture-label {
@@ -4925,6 +4944,7 @@ single-selector rules may stay on one line.
     align-items: center;
     gap: var(--ts-sm);
     min-width: 0;
+    white-space: nowrap;
   }
 
   .ts-claims-grid {
@@ -4945,17 +4965,11 @@ single-selector rules may stay on one line.
   }
 
   .ts-claim-title {
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
-    font-weight: var(--ts-fw-semibold);
-    text-transform: uppercase;
-  }
-
-  .ts-claim-value {
-    font-family: var(--ts-font-mono);
-    font-size: var(--ts-fs-meta);
+    margin: 0;
     color: var(--ts-ink);
-    overflow-wrap: anywhere;
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-semibold);
+    text-transform: none;
   }
 
   /* Settings specifics. */
@@ -5008,7 +5022,7 @@ single-selector rules may stay on one line.
     display: flex;
     font-size: var(--ts-fs-ui);
     font-weight: var(--ts-fw-semibold);
-    margin-bottom: var(--ts-md);
+    margin-bottom: 0;
   }
 
   .ts-setting-icon {
@@ -6388,28 +6402,6 @@ single-selector rules may stay on one line.
     border: 1px solid var(--ts-line);
     border-radius: var(--ts-radius-control);
     background-color: var(--ts-surface-muted);
-  }
-
-  /* ===== Feature: Settings webhooks ===== */
-  .ts-webhook-usage {
-    margin: 0;
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-ui);
-    line-height: 1.5;
-  }
-
-  .ts-webhook-deliveries {
-    display: grid;
-    gap: var(--ts-sm);
-    padding-top: var(--ts-md);
-    border-top: 1px solid var(--ts-line);
-  }
-
-  .ts-webhook-deliveries-title {
-    margin: 0;
-    font-size: var(--ts-fs-ui);
-    font-weight: 600;
-    color: var(--ts-ink);
   }
 
   /* ===== Feature: AccessRules ===== */

@@ -16,6 +16,6 @@ public sealed class UpdateLanguagePreferenceEndpoint(DashboardStore store) : End
     {
         var form = await HttpContext.Request.ReadFormAsync(ct);
         store.UpdateLocale(form["locale"].ToString());
-        return Results.Redirect("/profile?tab=profile", false, false);
+        return Results.Redirect("/profile?tab=profile&lang=saved", false, false);
     }
 }
