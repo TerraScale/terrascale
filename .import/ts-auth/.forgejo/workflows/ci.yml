@@ -37,6 +37,11 @@ jobs:
           git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase"
           # TerraBase builds TerraScale.Endpoints from the ts-libs sibling when present.
           git clone --depth 1 "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/ts-libs.git" "${parent}/ts-libs"
+          # TerraBase main is .NET 11 only; pin to the first net11 commit until
+          # ts-auth tracks its tip deliberately.
+          git clone --no-checkout "https://oauth2:${ORG_READ_TOKEN}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase-pin"
+          git -C "${parent}/terrabase-pin" checkout --detach fadef600
+          rm -rf "${parent}/terrabase" && mv "${parent}/terrabase-pin" "${parent}/terrabase"
 
       - name: Restore ts-auth tests
         run: |
