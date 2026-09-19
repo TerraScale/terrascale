@@ -19,8 +19,11 @@ public static class Charts
         var span = max - min is 0 ? 1 : max - min;
         var step = values.Count is 1 ? width : (double)width / (values.Count - 1);
         var points = values.Select((v, i) => $"{F(i * step)},{F(height - 2 - (v - min) / span * (height - 4))}");
+        var line = string.Join(" L ", points);
         return new HtmlString(
-            $"<svg class=\"ts-sparkline\" viewBox=\"0 0 {width} {height}\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path d=\"M {string.Join(" L ", points)}\" style=\"stroke:{stroke}\" /></svg>");
+            $"<svg class=\"ts-sparkline\" viewBox=\"0 0 {width} {height}\" preserveAspectRatio=\"none\" aria-hidden=\"true\">"
+            + $"<path class=\"ts-sparkline-area\" d=\"M {line} L {width},{height} L 0,{height} Z\" style=\"fill:{stroke}\" />"
+            + $"<path d=\"M {line}\" style=\"stroke:{stroke}\" /></svg>");
     }
 
     public static HtmlString LineChart(

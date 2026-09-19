@@ -1337,6 +1337,12 @@ details.ts-menu[open] > .ts-menu-panel {
   stroke-linecap: round;
 }
 
+/* Soft gradient-like area fill under the sparkline stroke. */
+.ts-sparkline-area {
+  opacity: 0.1;
+  stroke: none;
+}
+
 /* Progress bar. */
 .ts-progress {
   height: 8px;
@@ -5054,6 +5060,8 @@ details.ts-menu[open] > summary.ts-account-trigger {
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-control);
   background-color: var(--ts-surface-muted);
+}
+
 /* ===== Feature: Settings webhooks ===== */
 .ts-webhook-usage {
   margin: 0;
