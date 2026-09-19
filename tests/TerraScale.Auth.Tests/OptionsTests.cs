@@ -3,13 +3,34 @@ namespace TerraScale.Auth.Tests;
 [NotInParallel]
 public sealed class OptionsTests
 {
+    /// <summary>Snapshots every TS_AUTH_* variable: these tests clear or overwrite the
+    /// block AuthOptions boots from, and must hand back what the fixtures set.</summary>
+    private static IReadOnlyDictionary<string, string?> SnapshotAuthEnvironment() =>
+        Environment.GetEnvironmentVariables().Keys.Cast<string>()
+            .Where(k => k.StartsWith("TS_AUTH_", StringComparison.Ordinal))
+            .ToDictionary(k => k, k => Environment.GetEnvironmentVariable(k));
+
+    private static void RestoreAuthEnvironment(IReadOnlyDictionary<string, string?> snapshot)
+    {
+        foreach (var (name, value) in snapshot)
+            Environment.SetEnvironmentVariable(name, value);
+    }
+
     [Test]
     public async Task RequiredVariablesThrowActionableErrors()
     {
-        foreach (var name in Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(k => k.StartsWith("TS_AUTH_", StringComparison.Ordinal)).ToList())
-            Environment.SetEnvironmentVariable(name, null);
-        var missing = Assert.Throws<InvalidOperationException>(() => TerraScale.Auth.Configuration.AuthOptions.Load([]));
-        await Assert.That(missing.Message).Contains("TS_AUTH_PUBLIC_ORIGIN");
+        var snapshot = SnapshotAuthEnvironment();
+        try
+        {
+            foreach (var name in snapshot.Keys)
+                Environment.SetEnvironmentVariable(name, null);
+            var missing = Assert.Throws<InvalidOperationException>(() => TerraScale.Auth.Configuration.AuthOptions.Load([]));
+            await Assert.That(missing.Message).Contains("TS_AUTH_PUBLIC_ORIGIN");
+        }
+        finally
+        {
+            RestoreAuthEnvironment(snapshot);
+        }
     }
 
     [Test]
@@ -30,9 +51,10 @@ public sealed class OptionsTests
     [Test]
     public async Task ArgsOverrideEnvironment()
     {
-        Environment.SetEnvironmentVariable("TS_AUTH_PUBLIC_ORIGIN", "https://env.example");
+        var snapshot = SnapshotAuthEnvironment();
         try
         {
+            Environment.SetEnvironmentVariable("TS_AUTH_PUBLIC_ORIGIN", "https://env.example");
             var options = TerraScale.Auth.Configuration.AuthOptions.Load(
             [
                 "--public-origin=https://args.example",
@@ -45,7 +67,7 @@ public sealed class OptionsTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("TS_AUTH_PUBLIC_ORIGIN", null);
+            RestoreAuthEnvironment(snapshot);
         }
     }
 }

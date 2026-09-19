@@ -15,21 +15,8 @@ public sealed class ScimE2eTests
     private static async Task<(AuthServiceFixture Service, string InstanceId, string Slug, string ApiKey)> StartAsync()
     {
         var service = await AuthServiceFixture.GetAsync();
-        var (instanceId, slug, _) = await service.CreateInstanceAsync("scim-" + Guid.NewGuid().ToString("N")[..8]);
-
-        // Instance creation stores sha256(secret-part) while InstanceResolver hashes the whole
-        // bearer string, so the operator-issued key cannot resolve; arrange one that does.
-        var secret = "sk_" + SecureTokens.RandomToken(40);
-        await service.Store.CreateApiKeyAsync(new ApiKey
-        {
-            Id = "key_" + SecureTokens.RandomToken(20),
-            InstanceId = instanceId,
-            Name = "e2e",
-            SecretKey = SecureTokens.Sha256Hex(secret),
-            Scopes = ["*"],
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        });
-        return (service, instanceId, slug, secret);
+        var (instanceId, slug, apiKey) = await service.CreateInstanceAsync("scim-" + Guid.NewGuid().ToString("N")[..8]);
+        return (service, instanceId, slug, apiKey);
     }
 
     private static HttpRequestMessage Request(HttpMethod method, string bearer, string url) =>

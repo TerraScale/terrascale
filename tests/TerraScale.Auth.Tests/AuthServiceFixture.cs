@@ -27,12 +27,13 @@ public sealed class AuthServiceFixture : IAsyncDisposable
     private readonly WebApplication application;
     private readonly BreakableHandler engineHandler;
     private readonly string root;
+    private readonly IReadOnlyDictionary<string, string?> savedEnvironment;
 
     public HttpClient Http { get; }
     public TerraScaleClient Sdk { get; }
     public string Database { get; }
 
-    private AuthServiceFixture(EmbeddedTerraBaseHost engine, WebApplication application, HttpClient http, TerraScaleClient sdk, BreakableHandler engineHandler, string database, string root)
+    private AuthServiceFixture(EmbeddedTerraBaseHost engine, WebApplication application, HttpClient http, TerraScaleClient sdk, BreakableHandler engineHandler, string database, string root, IReadOnlyDictionary<string, string?> savedEnvironment)
     {
         this.engine = engine;
         this.application = application;
@@ -41,6 +42,7 @@ public sealed class AuthServiceFixture : IAsyncDisposable
         this.engineHandler = engineHandler;
         Database = database;
         this.root = root;
+        this.savedEnvironment = savedEnvironment;
     }
 
     public static async Task<AuthServiceFixture> StartAsync()
@@ -70,11 +72,19 @@ public sealed class AuthServiceFixture : IAsyncDisposable
             new HttpClient(engineHandler) { BaseAddress = new Uri("http://127.0.0.1/") },
             new TerraScaleClientOptions { BaseAddress = new Uri("http://127.0.0.1/"), ApiKey = "e2e-key" });
 
-        Environment.SetEnvironmentVariable("TS_AUTH_PUBLIC_ORIGIN", "https://auth.test");
-        Environment.SetEnvironmentVariable("TS_AUTH_TERRASCALE_API_KEY", "e2e-key");
-        Environment.SetEnvironmentVariable("TS_AUTH_DATABASE", database);
-        Environment.SetEnvironmentVariable("TS_AUTH_MASTER_KEY", Convert.ToBase64String(new byte[32]));
-        Environment.SetEnvironmentVariable("TS_AUTH_OPERATOR_KEY", OperatorKey);
+        var environment = new Dictionary<string, string?>
+        {
+            ["TS_AUTH_PUBLIC_ORIGIN"] = "https://auth.test",
+            ["TS_AUTH_TERRASCALE_API_KEY"] = "e2e-key",
+            ["TS_AUTH_DATABASE"] = database,
+            ["TS_AUTH_MASTER_KEY"] = Convert.ToBase64String(new byte[32]),
+            ["TS_AUTH_OPERATOR_KEY"] = OperatorKey,
+        };
+        // Set for the build, restored on dispose: private fixture boots must not leave
+        // their database/key pointing out of a disposed engine for later boots to inherit.
+        var savedEnvironment = environment.Keys.ToDictionary(name => name, name => Environment.GetEnvironmentVariable(name));
+        foreach (var (name, value) in environment)
+            Environment.SetEnvironmentVariable(name, value);
 
         var (builder, options) = TerraScale.Auth.App.CreateBuilder([]);
         builder.WebHost.UseTestServer();
@@ -95,7 +105,7 @@ public sealed class AuthServiceFixture : IAsyncDisposable
             await Task.Delay(100);
         }
 
-        return new AuthServiceFixture(engine, application, http, engineClient, engineHandler, database, root);
+        return new AuthServiceFixture(engine, application, http, engineClient, engineHandler, database, root, savedEnvironment);
     }
 
 
@@ -146,6 +156,8 @@ public sealed class AuthServiceFixture : IAsyncDisposable
         await application.StopAsync();
         await application.DisposeAsync();
         await engine.DisposeAsync();
+        foreach (var (name, value) in savedEnvironment)
+            Environment.SetEnvironmentVariable(name, value);
         if (Directory.Exists(root))
             Directory.Delete(root, recursive: true);
     }

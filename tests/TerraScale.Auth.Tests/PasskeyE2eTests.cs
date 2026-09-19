@@ -287,20 +287,7 @@ public sealed class PasskeyE2eTests
     private static async Task<(string InstanceId, string Slug, string ApiKey, User User, string Cookie)> ArrangeAsync()
     {
         var service = await AuthServiceFixture.GetAsync();
-        var (instanceId, slug, _) = await service.CreateInstanceAsync("passkeys-" + Guid.NewGuid().ToString("N")[..8]);
-
-        // The operator endpoint stores sha256(raw secret) while InstanceResolver hashes the full
-        // "sk_..." bearer, so its key can never resolve; arrange a key the resolver actually accepts.
-        var (keyId, _, apiKey) = TerraScale.Auth.Crypto.SecureTokens.NewSecret("sk");
-        await service.Store.CreateApiKeyAsync(new ApiKey
-        {
-            Id = keyId,
-            InstanceId = instanceId,
-            Name = "passkeys-test",
-            SecretKey = TerraScale.Auth.Crypto.SecureTokens.Sha256Hex(apiKey),
-            Scopes = ["*"],
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        });
+        var (instanceId, slug, apiKey) = await service.CreateInstanceAsync("passkeys-" + Guid.NewGuid().ToString("N")[..8]);
 
         var sessions = new SessionService(service.Store);
         var user = await sessions.CreateUserAsync(instanceId, $"pk-{Guid.NewGuid().ToString("N")[..8]}@example.com", null, null, "Pat Doe");

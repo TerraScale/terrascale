@@ -274,25 +274,12 @@ public sealed class WebhooksE2eTests
 
     // ---- helpers --------------------------------------------------------------------------
 
-    /// <summary>Creates an instance and an sk_ key that the InstanceResolver can actually
-    /// authenticate: the operator endpoint stores the hash of the raw secret tail while the
-    /// resolver hashes the whole presented token, so operator-issued keys cannot resolve yet.
-    /// Arranging the key through the store keeps these tests independent of that mismatch.</summary>
+    /// <summary>Creates an instance with its operator-issued sk_ key (a normal resolver-
+    /// compatible key: the operator endpoint stores the sha256 of the full bearer).</summary>
     private static async Task<(string InstanceId, string Slug, string ApiKey)> NewInstanceWithKeyAsync()
     {
         var service = await AuthServiceFixture.GetAsync();
-        var (instanceId, slug, _) = await service.CreateInstanceAsync("hooks-" + Guid.NewGuid().ToString("N")[..8]);
-        var apiKey = "sk_" + TerraScale.Auth.Crypto.SecureTokens.RandomToken(40);
-        await service.Store.CreateApiKeyAsync(new ApiKey
-        {
-            Id = "key_" + TerraScale.Auth.Crypto.SecureTokens.RandomToken(20),
-            InstanceId = instanceId,
-            Name = "webhooks-e2e",
-            SecretKey = TerraScale.Auth.Crypto.SecureTokens.Sha256Hex(apiKey),
-            Scopes = ["*"],
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        });
-        return (instanceId, slug, apiKey);
+        return await service.CreateInstanceAsync("hooks-" + Guid.NewGuid().ToString("N")[..8]);
     }
 
     private static HttpRequestMessage Get(string url, string apiKey)

@@ -745,22 +745,11 @@ public sealed class ConnectionsE2eTests
 
     // ---- Arrange helpers ----------------------------------------------------------------------
 
-    /// <summary>Store-arranged sk_ key (the operator endpoint's keys cannot resolve; see WebhooksE2eTests).</summary>
+    /// <summary>Creates an instance with its operator-issued sk_ key.</summary>
     private static async Task<(string InstanceId, string Slug, string ApiKey)> NewInstanceWithKeyAsync()
     {
         var service = await AuthServiceFixture.GetAsync();
-        var (instanceId, slug, _) = await service.CreateInstanceAsync("sso-" + Guid.NewGuid().ToString("N")[..8]);
-        var apiKey = "sk_" + SecureTokens.RandomToken(40);
-        await service.Store.CreateApiKeyAsync(new ApiKey
-        {
-            Id = "key_" + SecureTokens.RandomToken(20),
-            InstanceId = instanceId,
-            Name = "connections-e2e",
-            SecretKey = SecureTokens.Sha256Hex(apiKey),
-            Scopes = ["*"],
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        });
-        return (instanceId, slug, apiKey);
+        return await service.CreateInstanceAsync("sso-" + Guid.NewGuid().ToString("N")[..8]);
     }
 
     private static HttpRequestMessage Get(string url, string? apiKey = null, string? cookie = null)

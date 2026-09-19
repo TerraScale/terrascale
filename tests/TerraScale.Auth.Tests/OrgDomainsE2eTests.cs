@@ -4,7 +4,6 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
-using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Users;
 
@@ -22,30 +21,17 @@ public sealed class OrgDomainsE2eTests
     private static async Task<Context> ArrangeAsync(string label)
     {
         var service = await AuthServiceFixture.GetAsync();
-        var (instanceId, slug, _) = await service.CreateInstanceAsync("orgdom-" + label + "-" + Guid.NewGuid().ToString("N")[..6]);
-
-        // Instance creation stores sha256(secret-part) while InstanceResolver hashes the whole
-        // bearer string, so the operator-issued key cannot resolve; arrange one that does.
-        var secret = "sk_" + SecureTokens.RandomToken(40);
-        await service.Store.CreateApiKeyAsync(new ApiKey
-        {
-            Id = "key_" + SecureTokens.RandomToken(20),
-            InstanceId = instanceId,
-            Name = "e2e",
-            SecretKey = SecureTokens.Sha256Hex(secret),
-            Scopes = ["*"],
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        });
+        var (instanceId, slug, apiKey) = await service.CreateInstanceAsync("orgdom-" + label + "-" + Guid.NewGuid().ToString("N")[..6]);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/{slug}/organizations")
         {
-            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", secret) },
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", apiKey) },
             Content = JsonContent.Create(new { name = "Acme " + label }),
         };
         using var response = await service.Http.SendAsync(request);
         response.EnsureSuccessStatusCode();
         var orgId = (await response.Content.ReadFromJsonAsync<JsonElement>())!.GetProperty("id").GetString()!;
-        return new Context(service, instanceId, slug, secret, orgId);
+        return new Context(service, instanceId, slug, apiKey, orgId);
     }
 
     private static HttpRequestMessage Request(Context c, HttpMethod method, string path, object? body = null)

@@ -8,22 +8,7 @@ using System.Text.Json;
 [NotInParallel]
 public sealed class ServiceE2eTests
 {
-    private static AuthServiceFixture? fixture;
-    private static readonly SemaphoreSlim Lock = new(1, 1);
-
-    private static async Task<AuthServiceFixture> FixtureAsync()
-    {
-        await Lock.WaitAsync();
-        try
-        {
-            fixture ??= await AuthServiceFixture.StartAsync();
-            return fixture;
-        }
-        finally
-        {
-            Lock.Release();
-        }
-    }
+    private static Task<AuthServiceFixture> FixtureAsync() => AuthServiceFixture.GetAsync();
 
     [Test]
     public async Task HealthReportsOk()

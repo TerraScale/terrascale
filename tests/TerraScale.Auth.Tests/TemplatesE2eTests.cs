@@ -22,24 +22,11 @@ public sealed class TemplatesE2eTests
     private static async Task<Context> ArrangeAsync(string label)
     {
         var service = await AuthServiceFixture.GetAsync();
-        var (instanceId, slug, _) = await service.CreateInstanceAsync("tpl-" + label + "-" + Guid.NewGuid().ToString("N")[..6]);
-
-        // Instance creation stores sha256(secret-part) while InstanceResolver hashes the whole
-        // bearer string, so the operator-issued key cannot resolve; arrange one that does.
-        var secret = "sk_" + SecureTokens.RandomToken(40);
-        await service.Store.CreateApiKeyAsync(new ApiKey
-        {
-            Id = "key_" + SecureTokens.RandomToken(20),
-            InstanceId = instanceId,
-            Name = "e2e",
-            SecretKey = SecureTokens.Sha256Hex(secret),
-            Scopes = ["*"],
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        });
+        var (instanceId, slug, apiKey) = await service.CreateInstanceAsync("tpl-" + label + "-" + Guid.NewGuid().ToString("N")[..6]);
 
         var user = await new SessionService(service.Store).CreateUserAsync(
             instanceId, $"{label}-{Guid.NewGuid().ToString("N")[..6]}@example.com", $"u_{label}", null, "Template Tester");
-        return new Context(service, instanceId, slug, secret, user);
+        return new Context(service, instanceId, slug, apiKey, user);
     }
 
     private static HttpRequestMessage Request(Context c, HttpMethod method, string path, object? body = null)

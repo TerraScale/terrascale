@@ -383,21 +383,7 @@ public sealed class MfaE2eTests
     private static async Task<Context> ArrangeAsync(string label)
     {
         var service = await AuthServiceFixture.GetAsync();
-        var (instanceId, slug, _) = await service.CreateInstanceAsync($"mfa-{label}-{Guid.NewGuid().ToString("N")[..6]}");
-
-        // InstanceResolver hashes the full bearer token, but the operator endpoint
-        // stores sha256 of only the secret half of the sk_ key it returns — arrange a
-        // key whose stored hash matches the resolver as written.
-        var apiKey = "sk_" + SecureTokens.RandomToken(40);
-        await service.Store.CreateApiKeyAsync(new ApiKey
-        {
-            Id = "key_" + SecureTokens.RandomToken(20),
-            InstanceId = instanceId,
-            Name = "e2e",
-            SecretKey = SecureTokens.Sha256Hex(apiKey),
-            Scopes = ["*"],
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        });
+        var (instanceId, slug, apiKey) = await service.CreateInstanceAsync($"mfa-{label}-{Guid.NewGuid().ToString("N")[..6]}");
 
         var sessions = new SessionService(service.Store);
         var user = await sessions.CreateUserAsync(instanceId, $"{label}-{Guid.NewGuid().ToString("N")[..6]}@example.com", null, "correct horse battery staple", null);

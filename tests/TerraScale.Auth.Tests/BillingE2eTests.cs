@@ -927,27 +927,27 @@ public sealed class BillingE2eTests
             new TerraScaleClientOptions { BaseAddress = new Uri("http://127.0.0.1/"), ApiKey = "billing-e2e-key" });
 
         // AuthOptions loads from the process environment at build time. The shared fixture's
-        // app already captured its own options, so the Stripe vars affect only this app; they
-        // are restored right after the build so no later AuthOptions.Load call sees them.
-        var stripeVars = new Dictionary<string, string?>
+        // app already captured its own options, so these vars affect only this app; every one
+        // is restored right after the build so no later AuthOptions.Load call sees them.
+        var environment = new Dictionary<string, string?>
         {
+            ["TS_AUTH_PUBLIC_ORIGIN"] = "https://auth.test",
+            ["TS_AUTH_TERRASCALE_API_KEY"] = "billing-e2e-key",
+            ["TS_AUTH_DATABASE"] = database,
+            ["TS_AUTH_MASTER_KEY"] = Convert.ToBase64String(new byte[32]),
+            ["TS_AUTH_OPERATOR_KEY"] = OperatorKey,
             ["TS_AUTH_STRIPE_SECRET_KEY"] = "test_key",
             ["TS_AUTH_STRIPE_WEBHOOK_SECRET"] = WebhookSecret,
             ["TS_AUTH_STRIPE_API_URL"] = $"http://127.0.0.1:{stripe.Port}",
             ["TS_AUTH_PRICE_PRO"] = "price_pro",
             ["TS_AUTH_PRICE_ENTERPRISE"] = priceEnterprise,
         };
-        var saved = stripeVars.Keys.ToDictionary(name => name, name => Environment.GetEnvironmentVariable(name));
-        foreach (var (name, value) in stripeVars)
-            Environment.SetEnvironmentVariable(name, value);
+        var saved = environment.Keys.ToDictionary(name => name, name => Environment.GetEnvironmentVariable(name));
         WebApplication application;
         try
         {
-            Environment.SetEnvironmentVariable("TS_AUTH_PUBLIC_ORIGIN", "https://auth.test");
-            Environment.SetEnvironmentVariable("TS_AUTH_TERRASCALE_API_KEY", "billing-e2e-key");
-            Environment.SetEnvironmentVariable("TS_AUTH_DATABASE", database);
-            Environment.SetEnvironmentVariable("TS_AUTH_MASTER_KEY", Convert.ToBase64String(new byte[32]));
-            Environment.SetEnvironmentVariable("TS_AUTH_OPERATOR_KEY", OperatorKey);
+            foreach (var (name, value) in environment)
+                Environment.SetEnvironmentVariable(name, value);
 
             var (builder, options) = TerraScale.Auth.App.CreateBuilder([]);
             builder.WebHost.UseTestServer();
