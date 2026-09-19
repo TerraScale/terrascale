@@ -88,9 +88,8 @@ public sealed class AccountWorld
     /// demo account sees its seeded data.</summary>
     public bool MonitoringStale { get; set; } = true;
 
-    /// <summary>Error the databases list renders for fresh members, matching
-    /// the validation failure ts-dashboard's e2e backend returns in this
-    /// state ("Invalid database page." + Retry).</summary>
+    /// <summary>Per-request list error surfaced through ?error=; the fresh
+    /// world seeds none (v1 lists the member's databases normally).</summary>
     public string? DatabaseListError { get; set; }
 
     // --- Organization & projects -------------------------------------------
@@ -255,7 +254,6 @@ public sealed class AccountWorld
         ];
 
         OwnerSession = false;
-        DatabaseListError = "Invalid database page.";
 
         CurrentUser = new DashboardUser(
             Id: NewId("usr"),

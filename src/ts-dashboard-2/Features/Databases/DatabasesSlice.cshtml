@@ -106,7 +106,7 @@
     </section>
 </div>
 
-<dialog class="ts-dialog" id="create-database" data-autoopen="@(Model.CreateOpen ? "" : null)">
+<dialog class="ts-dialog" id="create-database" @(Model.CreateOpen ? "data-autoopen" : null)>
     <div class="ts-dialog-content">
         <div class="ts-dialog-header">
             <h2 class="ts-dialog-title">Create a database</h2>
@@ -148,7 +148,7 @@
 
 @foreach (var row in Model.Databases)
 {
-    <dialog class="ts-dialog" id="delete-@row.Id" data-autoopen="@(deleteOpenFor == row.Id ? "" : null)">
+    <dialog class="ts-dialog" id="delete-@row.Id" @(deleteOpenFor == row.Id ? "data-autoopen" : null)>
         <div class="ts-dialog-content">
             <div class="ts-dialog-header">
                 <h2 class="ts-dialog-title">Delete database</h2>

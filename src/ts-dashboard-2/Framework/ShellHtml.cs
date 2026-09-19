@@ -22,7 +22,9 @@ public static class ShellHtml
                 <meta charset="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
             """);
-        builder.AppendLine($"    <title>{Escape(shell.PageTitle)} · TerraScale</title>");
+        builder.AppendLine(shell.PageTitle is { } title
+            ? $"    <title>{Escape(title)} · TerraScale</title>"
+            : "    <title>TerraScale</title>");
         builder.AppendLine("""
                 <link rel="icon" href="/brand/logo-icon-blue.svg" type="image/svg+xml" />
                 <link rel="stylesheet" href="/css/terrascale.css" />
@@ -41,7 +43,10 @@ public static class ShellHtml
         builder.AppendLine("        <div class=\"ts-inset\">");
         builder.AppendLine("""            <button type="button" class="ts-fab ts-fab-nav" aria-label="Open navigation" data-on-click="navOpen=!navOpen">""" + Icons.PanelLeft(18).Value + "</button>");
         builder.AppendLine("            <main class=\"ts-main\">");
-        builder.AppendLine($"                <h1 class=\"ts-page-title\">{Escape(shell.PageTitle)}</h1>");
+        if (shell.PageTitle is { } pageTitle)
+        {
+            builder.AppendLine($"                <h1 class=\"ts-page-title\">{Escape(pageTitle)}</h1>");
+        }
         return new HtmlString(builder.ToString());
     }
 

@@ -14,6 +14,6 @@ public static class ShellFactory
             AccountEmail: user.Email,
             AccountInitials: store.Initials(user.Name, user.Email),
             UnreadNotifications: store.UnreadNotifications,
-            PageTitle: route?.Label ?? "TerraScale");
+            PageTitle: route?.Label);
     }
 }

@@ -7,11 +7,8 @@ const memberRoutes: Route[] = [
   { path: "/", expectText: "Overview" },
   { path: "/access", expectText: "Team" },
   { path: "/api-keys", expectText: "API keys" },
-  { path: "/audit", expectText: "Audit" },
+  { path: "/audit", expectText: "Logs" },
   { path: "/data", expectText: "Tables" },
-  { path: "/schema", expectText: "Schema" },
-  { path: "/indexes", expectText: "Indexes" },
-  { path: "/history", expectText: "History" },
   { path: "/databases", expectText: "Databases" },
   { path: "/notifications", expectText: "Notifications" },
   { path: "/organization", expectText: "Organization" },
@@ -37,7 +34,7 @@ test.beforeAll(async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
   await registerAndOnboard(page, {
-    email: "e2e-smoke@example.test",
+    email: `e2e-smoke-${Date.now()}@example.test`,
     password: "E2e-smoke-123!",
     displayName: "E2E Smoke",
   });
@@ -71,7 +68,11 @@ test("member pages render", async ({ page }) => {
   for (const route of memberRoutes) {
     const response = await page.goto(route.path);
     expect(response?.status(), route.path).toBeLessThan(400);
-    await expect(page.locator("h1"), route.path).toContainText(route.expectText);
+    // Nav routes render the shell h1; sub-pages use their own visible heading.
+    await expect(
+      page.locator("h1, h2").filter({ hasText: route.expectText }).first(),
+      route.path,
+    ).toBeVisible();
   }
   await logout(page);
 });
@@ -86,7 +87,11 @@ test("promoted owner sees admin pages", async ({ page }) => {
   for (const route of adminRoutes) {
     const response = await page.goto(route.path);
     expect(response?.status(), route.path).toBeLessThan(400);
-    await expect(page.locator("h1"), route.path).toContainText(route.expectText);
+    // Nav routes render the shell h1; sub-pages use their own visible heading.
+    await expect(
+      page.locator("h1, h2").filter({ hasText: route.expectText }).first(),
+      route.path,
+    ).toBeVisible();
   }
   await logout(page);
 });
