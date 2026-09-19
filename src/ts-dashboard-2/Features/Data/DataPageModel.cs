@@ -37,11 +37,13 @@ public sealed record DataPageModel(
     {
         var selectedDatabase = database ?? "";
         var selectedCollection = collection ?? "";
-        var analysis = view is "sql" && (sql ?? "").Length > 0 ? SqlAnalyzer.Analyze(sql!) : null;
+        // v1 analyses the statement on every render, so the default statement shows its verdict on first load.
+        var effectiveSql = sql is { Length: > 0 } ? sql : "SELECT * FROM orders LIMIT 25";
+        var analysis = view is "sql" ? SqlAnalyzer.Analyze(effectiveSql) : null;
         return new(
             View: view,
             ProjectName: store.ActiveProject.Name,
-            LoadedAt: DateTimeOffset.Now.ToString("O"),
+            LoadedAt: DateTimeOffset.UtcNow.ToString("O"),
             SavedQueryCount: store.SavedQueries.Length,
             Databases: [.. store.ProjectDatabases(store.ActiveProjectId).Select(d => (d.Id, d.Name))],
             SelectedDatabase: selectedDatabase,
@@ -54,7 +56,7 @@ public sealed record DataPageModel(
             Editing: edit is { Length: > 0 } id ? store.SavedQueries.FirstOrDefault(q => q.Id == id) : null,
             DeletingId: delete,
             Conflict: conflict,
-            Sql: sql ?? "SELECT * FROM orders LIMIT 25",
+            Sql: effectiveSql,
             SqlCollection: sqlCollection is { Length: > 0 } c ? c : "orders",
             SqlChecked: sqlChecked,
             SqlAnalysis: analysis)

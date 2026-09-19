@@ -15,7 +15,7 @@ public sealed class ApplyIndexRecommendationEndpoint(DashboardStore store) : End
     public override async Task<IResult> HandleAsync(CancellationToken ct)
     {
         var form = await HttpContext.Request.ReadFormAsync(ct);
-        store.ApplyIndexRecommendation(form["recommendationId"].ToString());
-        return Results.Redirect("/indexes", false, false);
+        var applied = store.ApplyIndexRecommendation(form["recommendationId"].ToString());
+        return Results.Redirect("/indexes" + (applied ? "" : "?applyError=1"), false, false);
     }
 }

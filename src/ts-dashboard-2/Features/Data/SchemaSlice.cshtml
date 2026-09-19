@@ -4,8 +4,17 @@
     var document = Model.Document;
     var migration = document.Migration;
     var currentSchemaJson = System.Text.Json.JsonSerializer.Serialize(
-        new { collections = document.Collections.Select(c => new { c.Name, fields = c.Fields.Select(f => new { f.Name, f.Type, f.Required }), indexes = c.Indexes.Select(i => new { i.Name, i.Fields }) }) },
-        new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        new
+        {
+            collections = document.Collections.Select(c => new
+            {
+                name = c.Name,
+                fields = c.Fields.Select(f => new { name = f.Name, type = f.Type, required = f.Required, indexed = f.Indexed }),
+                indexes = c.Indexes.Select(i => new { name = i.Name, fields = i.Fields }),
+                historyRetentionDays = c.HistoryRetentionDays,
+            }),
+        },
+        new System.Text.Json.JsonSerializerOptions { WriteIndented = true, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
@@ -16,23 +25,23 @@
         </div>
     </section>
 
-    @if (Model.Error is { } error)
+    @if (Model.LoadError is { } loadError)
     {
         <div class="ts-alert ts-alert-danger" role="alert" data-code="schema_data_load_failed">
-            <span class="ts-alert-title">@Icons.CircleAlert(16) @error</span>
+            <span class="ts-alert-title">@Icons.CircleAlert(16) @loadError</span>
         </div>
     }
 
     <section class="ts-panel">
         <div class="ts-panel-header">
             <h3 class="ts-panel-title">Schema viewer</h3>
-            <p class="ts-panel-subtitle">orders</p>
+            <p class="ts-panel-subtitle">@Model.Collection</p>
         </div>
-        <div class="ts-panel-pad">
+        <div class="ts-panel-pad ts-stack-lg">
             <div class="ts-schema-toolbar">
                 <label class="ts-field ts-schema-collection">
                     <span class="ts-label">Collection</span>
-                    <input class="ts-input" value="orders" readonly />
+                    <input class="ts-input" value="@Model.Collection" readonly />
                     <span class="ts-hint">Schema version @document.Version</span>
                 </label>
                 <span class="ts-badge ts-badge-success">Producer available</span>
@@ -80,7 +89,7 @@
                 var tone = migration.State == "failed" ? "ts-badge-danger" : migration.State == "complete" ? "ts-badge-success" : "ts-badge-info";
                 <div class="ts-stack-xs">
                     <span>Migration · <span class="ts-badge @tone">@migration.State</span></span>
-                    <div class="ts-progress"><div class="ts-progress-bar ts-progress-bar-success" style="width:@percent%"></div></div>
+                    <div class="ts-progress"><div class="ts-progress-bar" style="width:@percent%"></div></div>
                     <span class="ts-meta">@completed / @total · @percent%@(migration.Watermark is { } watermark ? $" · watermark {watermark}" : "")</span>
                 </div>
             }
@@ -95,10 +104,16 @@
                         <span class="ts-label">Proposed schema JSON</span>
                         <textarea class="ts-textarea ts-textarea-mono" name="schema" rows="10" spellcheck="false" placeholder="@currentSchemaJson">@Model.ProposedJson</textarea>
                     </label>
-                    @if (Model.Error is not null)
+                    @if (Model.DraftError is { } draftError)
                     {
                         <div class="ts-alert ts-alert-danger" role="alert" data-code="schema_draft_invalid">
-                            <span class="ts-alert-title">@Icons.CircleAlert(16) @Model.Error</span>
+                            <span class="ts-alert-title">@Icons.CircleAlert(16) @draftError</span>
+                        </div>
+                    }
+                    @if (Model.Applied)
+                    {
+                        <div class="ts-alert ts-alert-success" role="alert" data-code="schema_apply_requested">
+                            <span class="ts-alert-title">@Icons.CircleCheck(16) Schema migration requested.</span>
                         </div>
                     }
                     @if (Model.Diff is { } diff)

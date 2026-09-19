@@ -67,31 +67,9 @@ public sealed partial class DashboardStore
     public IndexMigration IndexMigrationState { get; private set; } = new("running", 8_640, 12_480, "doc_01JC9XQ1T3V5X7Z9B2D4F7HJ2");
 
     public DocumentHistoryState DocumentHistory { get; private set; } = new(
-        Database: "core-primary",
-        Collection: "orders",
-        DocumentId: "doc_01JC9XS3V5X7Z9B2D4F8H1N5P",
-        MergePolicy: "last-writer-wins",
+        Message: "A database, collection, and document are required to view history.",
         RetentionDays: 30,
-        LimitedByRetention: false,
-        Winner: new(
-            "ver_01JC9ZH2Q7V3X6Y9B1D4F7GJ5",
-            new("node-a", 7),
-            "2026-09-14T18:22:41.512Z",
-            new(["(node-a, 5)", "(node-b, 4)"], false),
-            "update",
-            "winner",
-            """{ "status": "refunded", "customer": "northwind", "total": 42 }""",
-            "Highest HLC among the concurrent writers; the deterministic merge policy picked this dot."),
-        Versions:
-        [
-            new("ver_01JC9ZF1P6T2W5X8A0C3E6FI4", new("node-b", 4), "2026-09-14T18:21:09.004Z", new([], false), "create", "version", """{ "status": "active", "customer": "northwind", "total": 42 }""", "Initial write; no causal context recorded."),
-            new("ver_01JC9ZG2Q7U3X6Y9B1D4E7H2I", new("node-a", 5), "2026-09-14T18:21:55.338Z", new(["(node-b, 4)"], false), "patch", "version", """{ "status": "paid", "customer": "northwind", "total": 42 }""", "Patch carried the create dot; applied cleanly."),
-            new("ver_01JC9ZH2Q7V3X6Y9B1D4F7GJ5", new("node-a", 7), "2026-09-14T18:22:41.512Z", new(["(node-a, 5)", "(node-b, 4)"], false), "update", "winner", """{ "status": "refunded", "customer": "northwind", "total": 42 }""", "Highest HLC among the concurrent writers; the deterministic merge policy picked this dot."),
-        ],
-        Losers:
-        [
-            new("ver_01JC9ZI3R8W4Y7Z1C2E5F8J3K", new("node-c", 6), "2026-09-14T18:22:40.998Z", new(["(node-b, 4)"], false), "update", "loser", """{ "status": "void", "customer": "northwind", "total": 0 }""", "Concurrent update on node-c lost the race by HLC; retained as causal history."),
-        ]);
+        LimitedByRetention: false);
 
     // --- Queries -----------------------------------------------------------
 
@@ -199,25 +177,107 @@ public sealed partial class DashboardStore
             return "Schema JSON must contain a collections array.";
         }
 
-        var before = Schema.Collections.Select(c => c.Name).ToHashSet();
-        var after = collections.EnumerateArray()
-            .Where(c => c.TryGetProperty("name", out _))
-            .Select(c => c.GetProperty("name").GetString() ?? "")
-            .Where(n => n.Length > 0)
-            .ToHashSet();
+        var proposed = collections.EnumerateArray()
+            .Select(ParseSchemaCollection)
+            .Where(c => c.Name.Length > 0)
+            .ToArray();
+
+        // Port of schema-data.ts diffSchemas/diffNamedItems.
         var changes = new List<SchemaDiffChange>();
-        foreach (var name in after.Where(name => !before.Contains(name)))
+        var before = Schema.Collections.ToDictionary(c => c.Name);
+        var after = proposed.ToDictionary(c => c.Name);
+        foreach (var (name, collection) in after)
         {
-            changes.Add(new("added", $"collections.{name}"));
+            if (!before.TryGetValue(name, out var previous))
+            {
+                changes.Add(new("added", $"collections.{name}"));
+                continue;
+            }
+
+            DiffNamedItems(changes, $"collections.{name}.fields",
+                previous.Fields.Select(f => (f.Name, Key: FieldKey(f))),
+                collection.Fields.Select(f => (f.Name, Key: FieldKey(f))));
+            DiffNamedItems(changes, $"collections.{name}.indexes",
+                previous.Indexes.Select(i => (i.Name, Key: IndexKey(i))),
+                collection.Indexes.Select(i => (i.Name, Key: IndexKey(i))));
+            if ((previous.HistoryRetentionDays?.ToString() ?? "") != (collection.HistoryRetentionDays?.ToString() ?? ""))
+            {
+                changes.Add(new("changed", $"collections.{name}.historyRetentionDays"));
+            }
         }
 
-        foreach (var name in before.Where(name => !after.Contains(name)))
+        foreach (var name in before.Keys.Where(name => !after.ContainsKey(name)))
         {
             changes.Add(new("removed", $"collections.{name}"));
         }
 
-        PendingSchemaDiff = new SchemaDiff([.. changes], changes.Any(c => c.Kind == "removed"));
-        ProposedSchemaJson = proposedJson;
+        // The apply succeeds: adopt the proposed schema and start its migration (v1 putSchema response).
+        PendingSchemaDiff = new SchemaDiff([.. changes], changes.Any(c => c.Kind == "removed" || c.Path.EndsWith(".fields")));
+        ProposedSchemaJson = JsonSerializer.Serialize(parsed, Indented);
+        Schema = new SchemaDocument(
+            [.. proposed],
+            Version: Schema.Version + 1,
+            UpdatedAt: DateTimeOffset.UtcNow.ToString("O"),
+            Migration: new("running", 0, 12_480, $"wal-{Guid.NewGuid().ToString("N")[..10].ToUpperInvariant()}"));
         return null;
+    }
+
+    private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
+
+    private static string FieldKey(SchemaField field) => $"{field.Name}|{field.Type}|{field.Required}|{field.Indexed}";
+
+    private static string IndexKey(SchemaIndex index) => $"{index.Name}|{string.Join(",", index.Fields)}";
+
+    private static void DiffNamedItems(List<SchemaDiffChange> changes, string prefix,
+        IEnumerable<(string Name, string Key)> before, IEnumerable<(string Name, string Key)> after)
+    {
+        var previous = before.ToDictionary(item => item.Name);
+        var next = after.ToDictionary(item => item.Name);
+        foreach (var (name, key) in next)
+        {
+            if (!previous.TryGetValue(name, out var oldKey))
+            {
+                changes.Add(new("added", $"{prefix}.{name}"));
+            }
+            else if (oldKey != key)
+            {
+                changes.Add(new("changed", $"{prefix}.{name}"));
+            }
+        }
+
+        foreach (var name in previous.Keys.Where(name => !next.ContainsKey(name)))
+        {
+            changes.Add(new("removed", $"{prefix}.{name}"));
+        }
+    }
+
+    private static SchemaCollection ParseSchemaCollection(JsonElement element)
+    {
+        string String(JsonElement node, string name) =>
+            node.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+
+        bool Flag(JsonElement node, string name) =>
+            node.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
+
+        var fields = element.TryGetProperty("fields", out var fieldsElement) && fieldsElement.ValueKind == JsonValueKind.Array
+            ? fieldsElement.EnumerateArray().Select(f => new SchemaField(String(f, "name"), String(f, "type"), Flag(f, "required"), Flag(f, "indexed"))).ToArray()
+            : [];
+
+        var indexes = element.TryGetProperty("indexes", out var indexesElement) && indexesElement.ValueKind == JsonValueKind.Array
+            ? indexesElement.EnumerateArray().Select(i => new SchemaIndex(
+                String(i, "name"),
+                i.TryGetProperty("fields", out var fieldsList) && fieldsList.ValueKind == JsonValueKind.Array
+                    ? [.. fieldsList.EnumerateArray().Select(f => f.GetString() ?? "")]
+                    : [])).ToArray()
+            : [];
+
+        return new SchemaCollection(
+            String(element, "name"),
+            fields,
+            indexes,
+            HistoryRetentionDays: element.TryGetProperty("historyRetentionDays", out var days)
+                && days.ValueKind == JsonValueKind.Number && days.TryGetInt32(out var retention)
+                ? retention
+                : null);
     }
 }

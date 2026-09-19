@@ -24,9 +24,15 @@
     <section class="ts-panel">
         <div class="ts-panel-header">
             <h3 class="ts-panel-title">Query performance and indexes</h3>
-            <p class="ts-panel-subtitle">orders</p>
+            <p class="ts-panel-subtitle">@Model.Collection</p>
         </div>
         <div class="ts-panel-pad ts-stack-lg">
+            @if (Model.ActionError is { } actionError)
+            {
+                <div class="ts-alert ts-alert-danger" role="alert" data-code="index_action_failed">
+                    <span class="ts-alert-title">@Icons.CircleAlert(16) @actionError</span>
+                </div>
+            }
             <section class="ts-stack-sm" aria-labelledby="index-states-title">
                 <h3 id="index-states-title" class="ts-section-h3">Index state</h3>
                 @if (Model.Indexes.Length == 0)
@@ -96,8 +102,8 @@
                                 {
                                     <tr>
                                         <td><span class="ts-code-meta">@template.Sql</span></td>
-                                        <td class="ts-table-num">@template.QueryCount.ToString("N0")</td>
-                                        <td class="ts-table-num">@template.TotalLogicalCost.ToString("N0")</td>
+                                        <td class="ts-table-num">@template.QueryCount</td>
+                                        <td class="ts-table-num">@template.TotalLogicalCost</td>
                                     </tr>
                                 }
                             </tbody>
@@ -171,7 +177,7 @@
             }
             <div class="ts-alert @(migration.State == "failed" ? "ts-alert-danger" : "ts-alert-info")" role="alert" data-code="index_migration_progress">
                 <span class="ts-alert-title">@Icons.Info(16) Migration · @migration.State</span>
-                <span class="ts-alert-body">@migration.Completed.ToString("N0") / @(total > 0 ? total.ToString("N0") : "?") · @percent%@(migration.Watermark is { } mWatermark ? $" · watermark {mWatermark}" : "")</span>
+                <span class="ts-alert-body">@migration.Completed / @(total > 0 ? total.ToString() : "?") · @percent%@(migration.Watermark is { } mWatermark ? $" · watermark {mWatermark}" : "")@(migration.Error is { } mError ? $" · {mError}" : "")</span>
             </div>
 
             <p class="ts-meta">Every state transition is evidence-backed and journaled across regions. Pin and forbid controls remain unavailable until the producer publishes lifecycle mutations.</p>

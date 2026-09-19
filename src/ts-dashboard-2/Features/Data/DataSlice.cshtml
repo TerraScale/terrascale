@@ -43,16 +43,16 @@
                 @if (store.SavedQueries.Length == 0)
                 {
                     <div class="ts-empty">
-                        @Icons.BookOpen(28)
+                        <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
                         <span class="ts-empty-title">No saved queries</span>
                         <span class="ts-ui">Save a project query to make it available to collaborators.</span>
-                        <a class="ts-btn ts-btn-primary" href="/data?view=queries&amp;create=1">Save query</a>
+                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/data?view=queries&amp;create=1">Save query</a>
                     </div>
                 }
                 else
                 {
                     <div class="ts-actions-row">
-                        <a class="ts-btn ts-btn-primary" href="/data?view=queries&amp;create=1">@Icons.Plus(16) Save query</a>
+                        <a class="ts-btn ts-btn-primary ts-btn-lg" href="/data?view=queries&amp;create=1">@Icons.Plus(16) Save query</a>
                     </div>
                     <div class="ts-table-frame">
                         <table class="ts-table">
@@ -60,7 +60,7 @@
                                 <tr>
                                     <th>Name</th>
                                     <th>Query</th>
-                                    <th></th>
+                                    <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -96,16 +96,13 @@
                 </div>
                 <form class="ts-explorer-controls" method="get" action="/data">
                     <input type="hidden" name="view" value="table" />
-                    <label class="ts-field">
-                        <span class="ts-label">Database</span>
-                        <select class="ts-select" name="database">
-                            <option value="">Choose a database</option>
-                            @foreach (var database in Model.Databases)
-                            {
-                                <option value="@database.Name" selected="@(database.Name == Model.SelectedDatabase)">@database.Name</option>
-                            }
-                        </select>
-                    </label>
+                    <select class="ts-select" name="database" aria-label="Database" data-on-change="evt.target.closest('form').requestSubmit()">
+                        <option value="">Choose a database</option>
+                        @foreach (var database in Model.Databases)
+                        {
+                            <option value="@database.Name" selected="@(database.Name == Model.SelectedDatabase)">@database.Name</option>
+                        }
+                    </select>
                     <label class="ts-field">
                         <span class="ts-label">Collection</span>
                         <input class="ts-input" name="collection" value="@Model.SelectedCollection" />
@@ -116,7 +113,7 @@
                 @if (Model.Documents.Length == 0)
                 {
                     <div class="ts-empty">
-                        @Icons.Table(28)
+                        <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
                         <span class="ts-empty-title">No documents loaded</span>
                         <span class="ts-ui">Select a collection to read live documents from TerraBase.</span>
                     </div>
@@ -206,7 +203,7 @@
                 <p class="ts-panel-subtitle">Create, replace, patch, or delete a document</p>
             </div>
             <div class="ts-panel-pad">
-                <form class="ts-form" method="post" action="/api/v1/dashboard/data/documents">
+                <form class="ts-form" method="post" action="/api/v1/dashboard/data/documents" data-signals="{ docOp: 'create' }">
                     <input type="hidden" name="database" value="@Model.SelectedDatabase" />
                     <input type="hidden" name="collection" value="@Model.SelectedCollection" />
                     <label class="ts-field">
@@ -221,7 +218,7 @@
                     </label>
                     <label class="ts-field">
                         <span class="ts-label">Operation</span>
-                        <select class="ts-select" name="operation">
+                        <select class="ts-select" name="operation" data-on-change="$docOp = evt.target.value">
                             <option value="create">Create (PUT)</option>
                             <option value="update">Update (replace)</option>
                             <option value="patch">Patch (merge)</option>
@@ -233,10 +230,11 @@
                         <input class="ts-input ts-input-mono" name="id" value="@(editingDocument?.Id ?? "")" placeholder="Generated for create" />
                         <span class="ts-hint">Required for update, patch, and delete.</span>
                     </label>
-                    <label class="ts-field">
+                    <label class="ts-field" data-show="$docOp !== 'delete'">
                         <span class="ts-label">Document JSON</span>
                         <textarea class="ts-textarea ts-textarea-mono" name="document" rows="8" spellcheck="false" aria-invalid="@(Model.Error is null ? null : "true")">@(editingDocument?.Json ?? "{\n  \"status\": \"active\"\n}")</textarea>
                     </label>
+                    <p class="ts-ui" data-show="$docOp === 'delete'">The JSON body is ignored for delete.</p>
                     <div><button class="ts-btn ts-btn-primary" type="submit">Apply document operation</button></div>
                 </form>
             </div>
@@ -254,7 +252,7 @@
                     <input type="hidden" name="collection" value="@Model.SqlCollection" />
                     <label class="ts-field">
                         <span class="ts-label">Load a saved query</span>
-                        <select class="ts-select" name="savedQueryId">
+                        <select class="ts-select" name="savedQueryId" data-on-change="window.location.assign('/data?view=sql&amp;collection=@Model.SqlCollection&amp;savedQueryId=' + evt.target.value)">
                             <option value="">Choose a saved query...</option>
                             @foreach (var query in store.SavedQueries)
                             {
@@ -262,7 +260,6 @@
                             }
                         </select>
                     </label>
-                    <button class="ts-btn ts-btn-secondary" type="submit">Load</button>
                 </form>
                 <form class="ts-form" method="post" action="/api/v1/dashboard/data/sql/check">
                     <label class="ts-field">
@@ -337,11 +334,12 @@
 
     @if (Model.View == "queries" && Model.Editing is not null)
     {
-        <div class="ts-dialog-overlay"><section class="ts-dialog-card" role="dialog" aria-label="Edit saved query">
-            <div class="ts-dialog-header">
-                <h3 class="ts-dialog-title">Edit saved query</h3>
-                <p class="ts-dialog-description">Saved queries are available to everyone with access to this project.</p>
-            </div>
+        <dialog class="ts-dialog" data-autoopen>
+            <div class="ts-dialog-content">
+                <div class="ts-dialog-header">
+                    <h3 class="ts-dialog-title">Edit saved query</h3>
+                    <p class="ts-dialog-description">Saved queries are available to everyone with access to this project.</p>
+                </div>
             @if (Model.Conflict)
             {
                 <div class="ts-alert ts-alert-warning" role="alert">
@@ -367,51 +365,53 @@
                     <button class="ts-btn ts-btn-primary" type="submit">Save query</button>
                 </div>
             </form>
-        </section>
-</div>
+            </div>
+        </dialog>
     }
     else if (Model.View == "queries" && isCreate)
     {
-        <div class="ts-dialog-overlay"><section class="ts-dialog-card" role="dialog" aria-label="Save query">
-            <div class="ts-dialog-header">
-                <h3 class="ts-dialog-title">Save query</h3>
-                <p class="ts-dialog-description">Saved queries are available to everyone with access to this project.</p>
-            </div>
-            <form class="ts-form" method="post" action="/api/v1/dashboard/data/saved-queries">
-                <input type="hidden" name="view" value="queries" />
-                <label class="ts-field">
-                    <span class="ts-label">Name</span>
-                    <input class="ts-input" name="name" required />
-                </label>
-                <label class="ts-field">
-                    <span class="ts-label">SQL query</span>
-                    <textarea class="ts-textarea ts-textarea-mono" name="query" rows="6" spellcheck="false" required></textarea>
-                </label>
-                <div class="ts-form-actions">
-                    <a class="ts-btn ts-btn-secondary" href="/data?view=queries">Cancel</a>
-                    <button class="ts-btn ts-btn-primary" type="submit">Save query</button>
+        <dialog class="ts-dialog" data-autoopen>
+            <div class="ts-dialog-content">
+                <div class="ts-dialog-header">
+                    <h3 class="ts-dialog-title">Save query</h3>
+                    <p class="ts-dialog-description">Saved queries are available to everyone with access to this project.</p>
                 </div>
-            </form>
-        </section>
-</div>
+                <form class="ts-form" method="post" action="/api/v1/dashboard/data/saved-queries">
+                    <input type="hidden" name="view" value="queries" />
+                    <label class="ts-field">
+                        <span class="ts-label">Name</span>
+                        <input class="ts-input" name="name" required />
+                    </label>
+                    <label class="ts-field">
+                        <span class="ts-label">SQL query</span>
+                        <textarea class="ts-textarea ts-textarea-mono" name="query" rows="6" spellcheck="false" required></textarea>
+                    </label>
+                    <div class="ts-form-actions">
+                        <a class="ts-btn ts-btn-secondary" href="/data?view=queries">Cancel</a>
+                        <button class="ts-btn ts-btn-primary" type="submit">Save query</button>
+                    </div>
+                </form>
+            </div>
+        </dialog>
     }
     else if (Model.View == "queries" && deleting is not null)
     {
-        <div class="ts-dialog-overlay"><section class="ts-dialog-card" role="dialog" aria-label="Delete saved query">
-            <div class="ts-dialog-header">
-                <h3 class="ts-dialog-title">Delete saved query</h3>
-                <p class="ts-dialog-description">Delete @deleting.Name? This cannot be undone.</p>
+        <dialog class="ts-dialog" data-autoopen>
+            <div class="ts-dialog-content">
+                <div class="ts-dialog-header">
+                    <h3 class="ts-dialog-title">Delete saved query</h3>
+                    <p class="ts-dialog-description">Delete @deleting.Name? This cannot be undone.</p>
+                </div>
+                <div class="ts-form-actions">
+                    <a class="ts-btn ts-btn-secondary" href="/data?view=queries">Cancel</a>
+                    <form method="post" action="/api/v1/dashboard/data/saved-queries/delete">
+                        <input type="hidden" name="view" value="queries" />
+                        <input type="hidden" name="savedQueryId" value="@deleting.Id" />
+                        <button class="ts-btn ts-btn-destructive" type="submit">Delete</button>
+                    </form>
+                </div>
             </div>
-            <div class="ts-form-actions">
-                <a class="ts-btn ts-btn-secondary" href="/data?view=queries">Cancel</a>
-                <form method="post" action="/api/v1/dashboard/data/saved-queries/delete">
-                    <input type="hidden" name="view" value="queries" />
-                    <input type="hidden" name="savedQueryId" value="@deleting.Id" />
-                    <button class="ts-btn ts-btn-destructive" type="submit">Delete</button>
-                </form>
-            </div>
-        </section>
-</div>
+        </dialog>
     }
 </div>
 @functions
