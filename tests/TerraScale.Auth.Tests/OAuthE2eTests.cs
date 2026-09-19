@@ -273,6 +273,17 @@ public sealed class OAuthE2eTests
         await Assert.That(claims.TryGetProperty("email", out _)).IsFalse();
         await Assert.That(claims.TryGetProperty("name", out _)).IsFalse();
 
+        // The id_token from the same flow carries no email claims (scope denied)
+        // and no nonce (none was sent).
+        var id = JwtPayload(tokens.GetProperty("id_token").GetString()!);
+        await Assert.That(id.TryGetProperty("email", out _)).IsFalse();
+        await Assert.That(id.TryGetProperty("email_verified", out _)).IsFalse();
+        await Assert.That(id.TryGetProperty("nonce", out _)).IsFalse();
+
+        // Without the openid scope the token response has no id_token at all.
+        var (noOpenid, _, _) = await FullFlowAsync(arranged, scope: "email profile");
+        await Assert.That(noOpenid.TryGetProperty("id_token", out _)).IsFalse();
+
         using var noHeader = new HttpRequestMessage(HttpMethod.Get, $"/{arranged.Slug}/oauth/userinfo");
         await Assert.That((await arranged.Service.Http.SendAsync(noHeader)).StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
 
