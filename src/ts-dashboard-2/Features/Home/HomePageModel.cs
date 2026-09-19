@@ -21,8 +21,9 @@ public sealed record HomePageModel(
         var workloads = store.Workloads;
         if (workloads.IsEmpty)
         {
-            // Fresh accounts: the three range tabs render with no data.
-            workloads = [("24h", []), ("7d", []), ("30d", [])];
+            // Fresh accounts: v1's API returns zero-valued buckets, so the
+            // activity chart renders a flat line instead of no chart.
+            workloads = [.. ZeroWorkload()];
         }
 
         var activity = workloads.FirstOrDefault(w => w.Range == range);
@@ -48,4 +49,11 @@ public sealed record HomePageModel(
             Shell = ShellFactory.Create(store, href),
         };
     }
+
+    private static (string Range, ImmutableArray<WorkloadPoint> Points)[] ZeroWorkload() =>
+    [
+        ("24h", [.. Enumerable.Range(0, 24).Select(i => new WorkloadPoint(i.ToString(), 0))]),
+        ("7d", [.. Enumerable.Range(0, 7).Select(i => new WorkloadPoint(i.ToString(), 0))]),
+        ("30d", [.. Enumerable.Range(0, 30).Select(i => new WorkloadPoint(i.ToString(), 0))]),
+    ];
 }

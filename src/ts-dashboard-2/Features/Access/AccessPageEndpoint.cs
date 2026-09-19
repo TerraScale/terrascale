@@ -24,13 +24,16 @@ public sealed class AccessPageEndpoint(DashboardStore store) : SlicePageEndpoint
                 IsOrganizationOwner: m.Role == "owner",
                 RoleLabel: m.Role == "owner" ? "Organization Owner" : "Member",
                 JoinedAtText: FormatUtc(m.LastActiveAt),
-                Initials: Store.Initials(m.Name, m.Email)))
+                Initials: Initials(m.Name, m.Email)))
             .ToList();
 
         var projects = Store.Projects.Select(p => new AccessProjectView(
             p.Id, p.Name, p.Id == Store.ActiveProjectId, FormatUtc(p.CreatedAt))).ToList();
 
         var invitations = Store.Invitations
+            // The seeded 01J… token exists so /invitations renders; it has no
+            // invitee email and never appears in v1's organization list.
+            .Where(i => i.Email.Length > 0)
             .OrderBy(i => i.Status == "Pending" ? 0 : 1)
             .Select(i => new AccessInvitationView(
                 InvitationId: i.Id,
@@ -75,6 +78,20 @@ public sealed class AccessPageEndpoint(DashboardStore store) : SlicePageEndpoint
         {
             Shell = ShellFactory.Create(Store, PageRoute),
         };
+    }
+
+    // v1 initials (AccessMembersTable.tsx): split on [ .@_-]+, first two
+    // parts, "TS" fallback — not the store's first+last helper.
+    private static string Initials(string name, string email)
+    {
+        var source = name.Trim().Length > 0 ? name : email;
+        var parts = System.Text.RegularExpressions.Regex.Split(source, @"[ .@_-]+").Where(p => p.Length > 0).ToArray();
+        if (parts.Length == 0)
+        {
+            return "TS";
+        }
+
+        return string.Concat(parts.Take(2).Select(p => char.ToUpperInvariant(p[0])));
     }
 
     internal static string FormatUtc(string iso)
