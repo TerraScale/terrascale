@@ -45,6 +45,15 @@ public static class WebhookEndpointsModule
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             };
             await store.CreateWebhookEndpointAsync(endpoint, ct);
+            await store.CreateAuditEventAsync(new AuditEvent
+            {
+                Id = "evt_" + Crypto.SecureTokens.RandomToken(20),
+                InstanceId = context.Instance.Id,
+                Type = "webhook.created",
+                ActorId = context.ApiKeyId,
+                Data = new Dictionary<string, object> { ["endpoint_id"] = endpoint.Id },
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            }, ct);
             dispatcher.EnsureInstance(context.Instance.Id);
             return Results.Ok(new { endpoint.Id, endpoint.Url, endpoint.Events, signing_secret = endpoint.SigningSecret });
         });
@@ -66,6 +75,15 @@ public static class WebhookEndpointsModule
             if (await store.GetWebhookEndpointAsync(id, ct) is not { } endpoint || endpoint.InstanceId != context.Instance.Id)
                 return ApiResults.NotFound();
             await store.DeleteWebhookEndpointAsync(id, ct);
+            await store.CreateAuditEventAsync(new AuditEvent
+            {
+                Id = "evt_" + Crypto.SecureTokens.RandomToken(20),
+                InstanceId = context.Instance.Id,
+                Type = "webhook.deleted",
+                ActorId = context.ApiKeyId,
+                Data = new Dictionary<string, object> { ["endpoint_id"] = id },
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            }, ct);
             return Results.NoContent();
         });
 

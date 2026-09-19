@@ -58,6 +58,10 @@ public static class OrganizationEndpoints
             {
                 return ApiResults.Conflict("organization_exists", "an organization with this slug already exists");
             }
+            await AuditAsync(store, context.Instance.Id, "organization.created", context.ApiKeyId, new Dictionary<string, object>
+            {
+                ["organization_id"] = organization.Id,
+            }, ct);
             return Results.Ok(Render(organization, context.Instance.Id));
         });
 

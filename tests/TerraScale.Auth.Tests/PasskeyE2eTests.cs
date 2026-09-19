@@ -356,7 +356,7 @@ public sealed class PasskeyE2eTests
     }
 
     /// <summary>Builds authenticator-side material with a real P-256 keypair for the test RP.</summary>
-    private sealed class FakeAuthenticator(string rpId = RpId, string origin = Origin) : IDisposable
+    internal sealed class FakeAuthenticator(string rpId = RpId, string origin = Origin) : IDisposable
     {
         private readonly ECDsa ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         private uint signCount = 5;
