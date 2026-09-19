@@ -748,10 +748,9 @@ public static class ScimEndpoints
     }
 
     /// <summary>
-    /// All users of one instance, walking the shared users collection by cursor
-    /// (the store filters in memory). ponytail: a full page with zero of this
-    /// instance's users ends the scan early — wrong past 1000 interleaved
-    /// foreign users; move to an indexed query when the engine has one.
+    /// All users of one instance, walking the shared users collection by the raw
+    /// page cursor (the store filters in memory); the walk ends only when the
+    /// engine returns an empty page, so foreign-user interleave cannot truncate it.
     /// </summary>
     private static async Task<List<User>> ListInstanceUsersAsync(AuthStore store, string instanceId, CancellationToken ct)
     {
@@ -759,11 +758,11 @@ public static class ScimEndpoints
         string? after = null;
         while (true)
         {
-            var page = await store.ListUsersAsync(instanceId, 1000, after, ct);
+            var (page, next) = await store.ListUsersAsync(instanceId, 1000, after, ct);
             users.AddRange(page);
-            if (page.Count == 0)
+            if (next is null)
                 return users;
-            after = page[^1].Id;
+            after = next;
         }
     }
 

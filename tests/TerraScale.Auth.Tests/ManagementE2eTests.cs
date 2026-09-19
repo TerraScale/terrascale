@@ -7,6 +7,7 @@ using System.Text.Json;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Management;
 using TerraScale.Auth.Store;
+using TerraScale.Auth.Users;
 
 /// <summary>Management API end-to-end coverage over the real service + embedded TerraBase.</summary>
 [NotInParallel]
@@ -38,6 +39,18 @@ public sealed class ManagementE2eTests
         var request = new HttpRequestMessage(method, uri);
         if (body is not null)
             request.Content = JsonContent.Create(body);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        return request;
+    }
+
+    /// <summary>Sends a raw JSON body: JsonContent drops null-valued properties (Web
+    /// defaults), so explicit-null PATCH probes need the literal bytes on the wire.</summary>
+    private static HttpRequestMessage RawRequest(HttpMethod method, string uri, string apiKey, string jsonBody)
+    {
+        var request = new HttpRequestMessage(method, uri)
+        {
+            Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json"),
+        };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         return request;
     }
@@ -213,6 +226,10 @@ public sealed class ManagementE2eTests
         await Assert.That(session.Status).IsEqualTo("active");
         await Assert.That(session.ExpiresAt).IsEqualTo(expiresAt);
 
+        var resolved = await new SessionService(service.Store).ResolveAsync(instanceId, token);
+        await Assert.That(resolved).IsNotNull();
+        await Assert.That(resolved!.Value.User.Id).IsEqualTo(userId);
+
         var audit = await service.Store.ListAuditEventsAsync(instanceId, 100);
         await Assert.That(audit.Any(e => e.Type == "user.impersonated" && e.Data.TryGetValue("api_key_id", out _))).IsTrue();
     }
@@ -268,6 +285,269 @@ public sealed class ManagementE2eTests
         await SendAsync(http, Request(HttpMethod.Delete, $"/v1/{slug}/api-keys/{keyId}", key), HttpStatusCode.NoContent);
         using var revoked = await http.SendAsync(Request(HttpMethod.Get, $"/v1/{slug}/users", secret));
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task UserListSurvivesAFullEnginePageOfForeignUsers()
+    {
+        var (service, instanceId, slug, key) = await InstanceAsync();
+        var store = service.Store;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        User Seed(string id, string instance) => new()
+        {
+            Id = id,
+            InstanceId = instance,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+        // One target user, then a full raw engine page (1000 documents) with zero of
+        // this instance's users, then another target user whose id sorts after the block.
+        await store.CreateUserAsync(Seed("usr_probe0", instanceId));
+        foreach (var batch in Enumerable.Range(1, 1000).Chunk(50))
+            await Task.WhenAll(batch.Select(i => store.CreateUserAsync(Seed($"usr_probef{i:0000}", "inst_probe_foreign"))));
+        await store.CreateUserAsync(Seed("usr_probezz", instanceId));
+
+        var ids = (await SendAsync(service.Http, Request(HttpMethod.Get, $"/v1/{slug}/users?limit=100", key), HttpStatusCode.OK))
+            .GetProperty("data").EnumerateArray().Select(u => u.GetProperty("id").GetString()!).ToList();
+        await Assert.That(ids).Contains("usr_probe0");
+        await Assert.That(ids).Contains("usr_probezz");
+    }
+
+    [Test]
+    public async Task UserListWalkIsCompleteAndUnknownCursorStillPages()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+        var http = service.Http;
+        for (var i = 0; i < 9; i++)
+            await CreateUserAsync(http, slug, key, $"walk-{i}@example.com");
+
+        // Walk every page: no skips, no duplicates, ids strictly ascending.
+        var seen = new List<string>();
+        string? after = null;
+        while (true)
+        {
+            var uri = $"/v1/{slug}/users?limit=3" + (after is null ? "" : $"&starting_after={after}");
+            var page = (await SendAsync(http, Request(HttpMethod.Get, uri, key), HttpStatusCode.OK))
+                .GetProperty("data").EnumerateArray().Select(u => u.GetProperty("id").GetString()!).ToList();
+            if (page.Count == 0)
+                break;
+            seen.AddRange(page);
+            after = page[^1];
+        }
+        await Assert.That(seen.Count).IsEqualTo(9);
+        await Assert.That(seen.Distinct().Count()).IsEqualTo(9);
+        await Assert.That(seen.SequenceEqual(seen.Order(StringComparer.Ordinal))).IsTrue();
+
+        // starting_after an id that never existed still pages from the top.
+        var unknown = (await SendAsync(http, Request(HttpMethod.Get, $"/v1/{slug}/users?limit=3&starting_after=usr_", key), HttpStatusCode.OK))
+            .GetProperty("data").EnumerateArray().Select(u => u.GetProperty("id").GetString()!).ToList();
+        await Assert.That(unknown.Count).IsEqualTo(3);
+        await Assert.That(unknown[0]).IsEqualTo(seen[0]);
+    }
+
+    [Test]
+    public async Task PatchDistinguishesAbsentFromExplicitNull()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+        var http = service.Http;
+
+        var created = await CreateUserAsync(http, slug, key, "tri@example.com", "tri");
+        var userId = created.GetProperty("id").GetString()!;
+
+        // Absent properties leave every field alone.
+        var untouched = await SendAsync(http, Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { }), HttpStatusCode.OK);
+        await Assert.That(untouched.GetProperty("name").GetString()).IsEqualTo("Test User");
+        await Assert.That(untouched.GetProperty("username").GetString()).IsEqualTo("tri");
+
+        // Explicit null unsets — and the released username is reusable by another account.
+        var unnamed = await SendAsync(http, RawRequest(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, """{"name":null,"username":null}"""), HttpStatusCode.OK);
+        await Assert.That(unnamed.GetProperty("name").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(unnamed.GetProperty("username").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That((await service.Store.GetUserAsync(userId))!.UsernameKey).IsNull();
+        await CreateUserAsync(http, slug, key, "tri-reuse@example.com", "tri");
+
+        // A value sets (and re-keys) the username.
+        var renamed = await SendAsync(http, Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { username = "renamed" }), HttpStatusCode.OK);
+        await Assert.That(renamed.GetProperty("username").GetString()).IsEqualTo("renamed");
+
+        // A taken username conflicts without clobbering the current one.
+        await CreateUserAsync(http, slug, key, "tri-taken@example.com", "claimer");
+        using var taken = await http.SendAsync(Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { username = "claimer" }));
+        await Assert.That(taken.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That((await service.Store.GetUserAsync(userId))!.Username).IsEqualTo("renamed");
+
+        // Metadata: absent keeps, a value replaces wholesale, explicit null clears.
+        await SendAsync(http, Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { public_metadata = new { a = 1, b = 2 } }), HttpStatusCode.OK);
+        var kept = await SendAsync(http, Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { }), HttpStatusCode.OK);
+        await Assert.That(kept.GetProperty("public_metadata").EnumerateObject().Count()).IsEqualTo(2);
+        var cleared = await SendAsync(http, RawRequest(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, """{"public_metadata":null}"""), HttpStatusCode.OK);
+        await Assert.That(cleared.GetProperty("public_metadata").EnumerateObject().Count()).IsEqualTo(0);
+
+        // Email cannot be removed, only changed.
+        using var nullEmail = await http.SendAsync(RawRequest(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, """{"email":null}"""));
+        await Assert.That(nullEmail.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task PatchPasswordHashesAndExplicitNullGoesPasswordless()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+        var http = service.Http;
+        var created = await CreateUserAsync(http, slug, key, "pwpatch@example.com");
+        var userId = created.GetProperty("id").GetString()!;
+
+        using var tooShort = await http.SendAsync(Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { password = "short" }));
+        await Assert.That(tooShort.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
+        await SendAsync(http, Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { password = "newpassword1" }), HttpStatusCode.OK);
+        var user = await service.Store.GetUserAsync(userId);
+        await Assert.That(SessionService.VerifyPassword(user!, "newpassword1")).IsTrue();
+        await Assert.That(SessionService.VerifyPassword(user!, "passw0rd!")).IsFalse();
+
+        using var signIn = await http.PostAsync($"/ui/{slug}/sign-in", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["email"] = "pwpatch@example.com",
+            ["password"] = "newpassword1",
+        }));
+        await Assert.That(signIn.StatusCode).IsEqualTo(HttpStatusCode.Found);
+
+        // Explicit null removes the credential entirely.
+        await SendAsync(http, RawRequest(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, """{"password":null}"""), HttpStatusCode.OK);
+        using var noPassword = await http.PostAsync($"/ui/{slug}/sign-in", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["email"] = "pwpatch@example.com",
+            ["password"] = "newpassword1",
+        }));
+        await Assert.That(noPassword.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await noPassword.Content.ReadAsStringAsync()).Contains("Invalid email or password")).IsTrue();
+    }
+
+    [Test]
+    public async Task PatchEmailConflictLeavesUserUnchanged()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+        var http = service.Http;
+
+        var user = await CreateUserAsync(http, slug, key, "keepme@example.com");
+        var userId = user.GetProperty("id").GetString()!;
+        await CreateUserAsync(http, slug, key, "held@example.com");
+        var stored = await service.Store.GetUserAsync(userId);
+        await service.Store.UpsertUserAsync(stored! with { EmailVerified = true });
+
+        using var conflict = await http.SendAsync(Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { email = "held@example.com" }));
+        await Assert.That(conflict.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+
+        var after = (await service.Store.GetUserAsync(userId))!;
+        await Assert.That(after.Email).IsEqualTo("keepme@example.com");
+        await Assert.That(after.EmailKey).IsEqualTo(stored!.EmailKey);
+        await Assert.That(after.EmailVerified).IsTrue();
+    }
+
+    [Test]
+    public async Task PatchBanTakesEffectImmediatelyOnSessionsAndImpersonation()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+        var http = service.Http;
+        var user = await CreateUserAsync(http, slug, key, "banpatch@example.com");
+        var userId = user.GetProperty("id").GetString()!;
+
+        var impersonated = await SendAsync(http, Request(HttpMethod.Post, $"/v1/{slug}/users/{userId}/impersonate", key), HttpStatusCode.Created);
+        var cookie = "tsauth_session=" + impersonated.GetProperty("token").GetString()!;
+
+        using var before = await http.SendAsync(WithCookie(HttpMethod.Get, $"/ui/{slug}/account", cookie));
+        await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        await SendAsync(http, Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { banned = true, ban_reason = "abuse" }), HttpStatusCode.OK);
+
+        using var banned = await http.SendAsync(WithCookie(HttpMethod.Get, $"/ui/{slug}/account", cookie));
+        await Assert.That(banned.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(banned.Headers.Location?.ToString()).Contains("sign-in");
+        using var bannedImpersonation = await http.SendAsync(Request(HttpMethod.Post, $"/v1/{slug}/users/{userId}/impersonate", key));
+        await Assert.That(bannedImpersonation.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+
+        // Unban restores the still-active session.
+        await SendAsync(http, Request(HttpMethod.Patch, $"/v1/{slug}/users/{userId}", key, new { banned = false }), HttpStatusCode.OK);
+        using var restored = await http.SendAsync(WithCookie(HttpMethod.Get, $"/ui/{slug}/account", cookie));
+        await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    private static HttpRequestMessage WithCookie(HttpMethod method, string uri, string cookie)
+    {
+        var request = new HttpRequestMessage(method, uri);
+        request.Headers.TryAddWithoutValidation("Cookie", cookie);
+        return request;
+    }
+
+    [Test]
+    public async Task DeleteUserKillsSessionsSignInAndReleasesEveryClaim()
+    {
+        var (service, instanceId, slug, key) = await InstanceAsync();
+        var http = service.Http;
+
+        var created = await CreateUserAsync(http, slug, key, "gone@example.com", "gone");
+        var userId = created.GetProperty("id").GetString()!;
+
+        using var signIn = await http.PostAsync($"/ui/{slug}/sign-in", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["email"] = "gone@example.com",
+            ["password"] = "passw0rd!",
+        }));
+        await Assert.That(signIn.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        var cookie = (signIn.Headers.GetValues("Set-Cookie").First().Split(';'))[0];
+
+        // The user holds a passkey credential claim too (a separate document).
+        await service.Store.CreatePasskeyAsync(new Passkey
+        {
+            Id = "pky_probe",
+            InstanceId = instanceId,
+            UserId = userId,
+            CredentialKey = "probe-credential-key",
+            PublicKeyCborBase64 = "x",
+            Algorithm = "ES256",
+            SignCount = 0,
+            Nickname = "probe",
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        await SendAsync(http, Request(HttpMethod.Delete, $"/v1/{slug}/users/{userId}", key), HttpStatusCode.NoContent);
+
+        using var secondDelete = await http.SendAsync(Request(HttpMethod.Delete, $"/v1/{slug}/users/{userId}", key));
+        await Assert.That(secondDelete.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var getGone = await http.SendAsync(Request(HttpMethod.Get, $"/v1/{slug}/users/{userId}", key));
+        await Assert.That(getGone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var impersonateGone = await http.SendAsync(Request(HttpMethod.Post, $"/v1/{slug}/users/{userId}/impersonate", key));
+        await Assert.That(impersonateGone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        var listed = (await SendAsync(http, Request(HttpMethod.Get, $"/v1/{slug}/users?limit=100", key), HttpStatusCode.OK))
+            .GetProperty("data").EnumerateArray().Select(u => u.GetProperty("id").GetString()!).ToList();
+        await Assert.That(listed.Contains(userId)).IsFalse();
+
+        using var deadSession = await http.SendAsync(WithCookie(HttpMethod.Get, $"/ui/{slug}/account", cookie));
+        await Assert.That(deadSession.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(deadSession.Headers.Location?.ToString()).Contains("sign-in");
+
+        using var deadSignIn = await http.PostAsync($"/ui/{slug}/sign-in", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["email"] = "gone@example.com",
+            ["password"] = "passw0rd!",
+        }));
+        await Assert.That((await deadSignIn.Content.ReadAsStringAsync()).Contains("Invalid email or password")).IsTrue();
+
+        // Every uniqueness claim the user held is released: email, username, passkey credential.
+        await CreateUserAsync(http, slug, key, "gone@example.com", "someone-else");
+        await service.Store.CreatePasskeyAsync(new Passkey
+        {
+            Id = "pky_probe2",
+            InstanceId = instanceId,
+            UserId = "usr_whatever",
+            CredentialKey = "probe-credential-key",
+            PublicKeyCborBase64 = "x",
+            Algorithm = "ES256",
+            SignCount = 0,
+            Nickname = "probe",
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
     }
 
     [Test]

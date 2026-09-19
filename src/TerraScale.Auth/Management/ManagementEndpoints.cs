@@ -1,6 +1,7 @@
 namespace TerraScale.Auth.Management;
 
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using TerraScale.Auth.Api;
@@ -112,52 +113,112 @@ public static class ManagementEndpoints
             if (body is null)
                 return bodyFailure ?? ApiResults.BadRequest("invalid_request", "a JSON body is required");
 
+            // PATCH tri-state: absent leaves a field alone, explicit null unsets it, a value sets it.
+            if (PatchShapeFailure(body) is { } shapeFailure)
+                return shapeFailure;
+
             var user = await FindLiveUserAsync(store, context.Instance.Id, userId, ct);
             if (user is null)
                 return ApiResults.NotFound("user_not_found", "no user with this id in this instance");
 
-            var updated = user with { UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() };
-            if (body.Name is not null)
-                updated = updated with { Name = body.Name };
-            if (body.PublicMetadata is not null)
-                updated = updated with { PublicMetadata = body.PublicMetadata };
-            if (body.PrivateMetadata is not null)
-                updated = updated with { PrivateMetadata = body.PrivateMetadata };
-            if (body.BanReason is not null)
-                updated = updated with { BanReason = body.BanReason };
-            if (body.Banned is not null)
-                updated = updated with { Banned = body.Banned.Value, BanReason = body.Banned.Value ? updated.BanReason : null };
-
-            if (body.Email is not null)
+            var updated = user with
             {
-                if (!SessionService.IsValidEmail(body.Email))
-                    return ApiResults.BadRequest("invalid_email", "email is not a valid address");
-                var normalized = SessionService.NormalizeEmail(body.Email);
-                if (!string.Equals(normalized, user.Email, StringComparison.Ordinal))
+                UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Name = PatchString(body.Name, user.Name),
+                BanReason = PatchString(body.BanReason, user.BanReason),
+                PublicMetadata = PatchMetadata(body.PublicMetadata, user.PublicMetadata),
+                PrivateMetadata = PatchMetadata(body.PrivateMetadata, user.PrivateMetadata),
+            };
+            if (body.Banned is { } banned)
+                updated = updated with { Banned = banned, BanReason = banned ? updated.BanReason : null };
+            if (body.Password.ValueKind != JsonValueKind.Undefined)
+                updated = updated with { PasswordHash = body.Password.ValueKind == JsonValueKind.Null ? null : PasswordHasher.Hash(body.Password.GetString()!) };
+
+            // Identifier re-keys are claim-first; the new claims are held before the user
+            // write and released again if that write fails, so a crash cannot strand them.
+            string? claimedEmailKey = null;
+            string? claimedUsernameKey = null;
+            var usernameKeyChanged = false;
+            try
+            {
+                if (body.Email.ValueKind == JsonValueKind.String)
                 {
-                    var newEmailKey = $"{context.Instance.Id}:{normalized}";
-                    var existing = await store.FindUserByEmailAsync(context.Instance.Id, normalized, ct);
-                    if (existing is not null && existing.Id != user.Id)
-                        return ApiResults.Conflict("email_taken", "an account with this email already exists");
-                    // Claim-first keeps the re-key atomic against concurrent creates.
-                    try
+                    var raw = body.Email.GetString()!;
+                    if (!SessionService.IsValidEmail(raw))
+                        return ApiResults.BadRequest("invalid_email", "email is not a valid address");
+                    var normalized = SessionService.NormalizeEmail(raw);
+                    if (!string.Equals(normalized, user.Email, StringComparison.Ordinal))
                     {
-                        await store.ClaimUniqueAsync("user-email", newEmailKey, user.Id, ct);
+                        var newEmailKey = $"{context.Instance.Id}:{normalized}";
+                        var existing = await store.FindUserByEmailAsync(context.Instance.Id, normalized, ct);
+                        if (existing is not null && existing.Id != user.Id)
+                            return ApiResults.Conflict("email_taken", "an account with this email already exists");
+                        try
+                        {
+                            await store.ClaimUniqueAsync("user-email", newEmailKey, user.Id, ct);
+                            claimedEmailKey = newEmailKey;
+                        }
+                        catch (TerraScale.DotNet.TerraScaleApiException)
+                        {
+                            return ApiResults.Conflict("email_taken", "an account with this email already exists");
+                        }
+                        // An email change invalidates verification: it re-proves nothing about the new address.
+                        updated = updated with { Email = normalized, EmailVerified = false, EmailKey = newEmailKey };
                     }
-                    catch (TerraScale.DotNet.TerraScaleApiException)
-                    {
-                        return ApiResults.Conflict("email_taken", "an account with this email already exists");
-                    }
-                    // Email change invalidates verification and re-keys the uniqueness claim.
-                    updated = updated with { Email = normalized, EmailVerified = false, EmailKey = newEmailKey };
-                    // Pending verification links prove the OLD address; they must not verify the new one.
-                    await store.InvalidateVerificationTokensAsync(user.Id, "verify_email", ct);
-                    if (user.EmailKey is not null)
-                        await store.ReleaseUniqueAsync("user-email", user.EmailKey, ct);
                 }
+
+                if (body.Username.ValueKind is JsonValueKind.String or JsonValueKind.Null)
+                {
+                    var username = body.Username.ValueKind == JsonValueKind.Null || body.Username.GetString()!.Trim() is { Length: 0 }
+                        ? null
+                        : body.Username.GetString()!.Trim();
+                    var newUsernameKey = username is null ? null : $"{context.Instance.Id}:{username.ToLowerInvariant()}";
+                    if (newUsernameKey != user.UsernameKey)
+                    {
+                        if (newUsernameKey is not null)
+                        {
+                            try
+                            {
+                                await store.ClaimUniqueAsync("user-username", newUsernameKey, user.Id, ct);
+                                claimedUsernameKey = newUsernameKey;
+                            }
+                            catch (TerraScale.DotNet.TerraScaleApiException)
+                            {
+                                return ApiResults.Conflict("username_taken", "an account with this username already exists");
+                            }
+                        }
+                        updated = updated with { Username = username, UsernameKey = newUsernameKey };
+                        usernameKeyChanged = true;
+                    }
+                    else
+                    {
+                        // Same normalized username: display-only change (e.g. casing), the claim stays.
+                        updated = updated with { Username = username };
+                    }
+                }
+
+                await store.UpsertUserAsync(updated, ct);
+            }
+            catch
+            {
+                if (claimedEmailKey is not null)
+                    await store.ReleaseUniqueAsync("user-email", claimedEmailKey, ct);
+                if (claimedUsernameKey is not null)
+                    await store.ReleaseUniqueAsync("user-username", claimedUsernameKey, ct);
+                throw;
             }
 
-            await store.UpsertUserAsync(updated, ct);
+            if (claimedEmailKey is not null)
+            {
+                // Pending verification links prove the OLD address; they must not verify the new one.
+                await store.InvalidateVerificationTokensAsync(user.Id, "verify_email", ct);
+                if (user.EmailKey is not null)
+                    await store.ReleaseUniqueAsync("user-email", user.EmailKey, ct);
+            }
+            // A username change or unset retires the old claim, whichever direction the key moved.
+            if (usernameKeyChanged && user.UsernameKey is not null)
+                await store.ReleaseUniqueAsync("user-username", user.UsernameKey, ct);
+
             await AuditAsync(store, context, "user.updated", new() { ["user_id"] = updated.Id }, ct);
             return Results.Json(UserView(updated, includePrivate: true));
         });
@@ -174,11 +235,14 @@ public static class ManagementEndpoints
             if (user is null)
                 return ApiResults.NotFound("user_not_found", "no user with this id in this instance");
 
-            // Soft delete: the identifier claims are released so the keys free up for reuse.
+            // Soft delete: every uniqueness claim the user holds is released so the keys
+            // free up for reuse — email, username, and each passkey credential.
             if (user.EmailKey is not null)
                 await store.ReleaseUniqueAsync("user-email", user.EmailKey, ct);
             if (user.UsernameKey is not null)
                 await store.ReleaseUniqueAsync("user-username", user.UsernameKey, ct);
+            foreach (var passkey in await store.ListPasskeysAsync(user.Id, ct))
+                await store.DeletePasskeyAsync(passkey.Id, ct);
             await store.UpsertUserAsync(user with
             {
                 Deleted = true,
@@ -402,9 +466,8 @@ public static class ManagementEndpoints
 
     /// <summary>
     /// All users of one instance. The engine lists the shared users collection and
-    /// the store filters in memory, so walk pages by document-id cursor.
-    /// ponytail: a page with zero of this instance's users ends the scan early —
-    /// correct until 1000 foreign users interleave; move to an indexed query then.
+    /// the store filters in memory, so the walk advances by the raw page's last
+    /// document id and only ends when the engine returns an empty page.
     /// </summary>
     private static async Task<List<User>> ListInstanceUsersAsync(AuthStore store, string instanceId, CancellationToken ct)
     {
@@ -412,11 +475,11 @@ public static class ManagementEndpoints
         string? after = null;
         while (true)
         {
-            var page = await store.ListUsersAsync(instanceId, 1000, after, ct);
+            var (page, next) = await store.ListUsersAsync(instanceId, 1000, after, ct);
             users.AddRange(page);
-            if (page.Count == 0)
+            if (next is null)
                 return users;
-            after = page[^1].Id;
+            after = next;
         }
     }
 
@@ -467,13 +530,56 @@ public static class ManagementEndpoints
 
     private sealed record CreateUserBody(string? Email, string? Username, string? Password, string? Name);
 
+    /// <summary>
+    /// PATCH tri-state body. Non-nullable <see cref="JsonElement"/> properties are the
+    /// only System.Text.Json shape that separates the three cases: absent property is
+    /// <see cref="JsonValueKind.Undefined"/>, explicit JSON null is
+    /// <see cref="JsonValueKind.Null"/>, and a value carries its own kind. A nullable
+    /// JsonElement would collapse null and absent.
+    /// </summary>
     private sealed record UpdateUserBody(
-        string? Name,
-        [property: JsonPropertyName("public_metadata")] Dictionary<string, object>? PublicMetadata,
-        [property: JsonPropertyName("private_metadata")] Dictionary<string, object>? PrivateMetadata,
+        JsonElement Name,
+        JsonElement Username,
+        JsonElement Password,
+        [property: JsonPropertyName("public_metadata")] JsonElement PublicMetadata,
+        [property: JsonPropertyName("private_metadata")] JsonElement PrivateMetadata,
         bool? Banned,
-        [property: JsonPropertyName("ban_reason")] string? BanReason,
-        string? Email);
+        [property: JsonPropertyName("ban_reason")] JsonElement BanReason,
+        JsonElement Email);
 
     private sealed record CreateApiKeyBody(string? Name, string[]? Scopes);
+
+    /// <summary>Rejects PATCH bodies whose fields carry JSON kinds the field cannot hold.</summary>
+    private static IResult? PatchShapeFailure(UpdateUserBody body)
+    {
+        foreach (var (field, element) in new (string Field, JsonElement Element)[]
+        {
+            ("name", body.Name), ("username", body.Username), ("password", body.Password), ("ban_reason", body.BanReason), ("email", body.Email),
+        })
+            if (element.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.String or JsonValueKind.Null))
+                return ApiResults.BadRequest("invalid_request", $"{field} must be a string or null");
+        foreach (var (field, element) in new (string Field, JsonElement Element)[]
+        {
+            ("public_metadata", body.PublicMetadata), ("private_metadata", body.PrivateMetadata),
+        })
+            if (element.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Object or JsonValueKind.Null))
+                return ApiResults.BadRequest("invalid_request", $"{field} must be an object or null");
+        if (body.Email.ValueKind == JsonValueKind.Null)
+            return ApiResults.BadRequest("invalid_request", "email cannot be removed; supply a new address instead");
+        if (body.Password.ValueKind == JsonValueKind.String && body.Password.GetString()!.Length < 8)
+            return ApiResults.BadRequest("invalid_password", "password must be at least 8 characters");
+        return null;
+    }
+
+    /// <summary>PATCH tri-state for a string field: absent keeps <paramref name="current"/>, explicit null unsets, a value sets.</summary>
+    private static string? PatchString(JsonElement property, string? current) =>
+        property.ValueKind == JsonValueKind.Undefined ? current
+        : property.ValueKind == JsonValueKind.Null ? null
+        : property.GetString();
+
+    /// <summary>PATCH tri-state for metadata: absent keeps, explicit null clears, an object replaces wholesale (no deep merge).</summary>
+    private static Dictionary<string, object> PatchMetadata(JsonElement property, Dictionary<string, object> current) =>
+        property.ValueKind == JsonValueKind.Undefined ? current
+        : property.ValueKind == JsonValueKind.Null ? []
+        : property.Deserialize<Dictionary<string, object>>() ?? [];
 }

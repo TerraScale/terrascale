@@ -45,20 +45,19 @@ public sealed record BillingState(string Plan, string Status, int Quota, Subscri
 
     /// <summary>Live (non-deleted) users of the instance, stopping once <paramref name="cap"/>
     /// is reached — callers only need "at quota?" and a display number, not exact totals.
-    /// Walks the shared users collection by document-id cursor, same as ManagementEndpoints.
-    /// ponytail: an engine page with zero of this instance's users ends the scan early —
-    /// correct until 1000 foreign users interleave; move to an indexed query then.</summary>
+    /// Walks the shared users collection by the raw page cursor, same as ManagementEndpoints,
+    /// so foreign-user interleave cannot end the scan early.</summary>
     public static async Task<int> CountUsersAsync(AuthStore store, string instanceId, int cap, CancellationToken ct = default)
     {
         var count = 0;
         string? after = null;
         while (count < cap)
         {
-            var page = await store.ListUsersAsync(instanceId, 1000, after, ct);
+            var (page, next) = await store.ListUsersAsync(instanceId, 1000, after, ct);
             count += page.Count(u => !u.Deleted);
-            if (page.Count == 0)
+            if (next is null)
                 return count;
-            after = page[^1].Id;
+            after = next;
         }
         return count;
     }

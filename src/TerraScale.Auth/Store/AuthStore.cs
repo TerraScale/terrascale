@@ -170,10 +170,21 @@ public sealed class AuthStore(TerraScaleClient client, string database)
         return matches.FirstOrDefault();
     }
 
-    public async Task<IReadOnlyList<User>> ListUsersAsync(string instanceId, int limit, string? after, CancellationToken ct = default)
+    /// <summary>
+    /// One raw engine page of the shared users collection filtered to one instance,
+    /// plus the cursor the walk must continue from: the RAW page's last document id,
+    /// not the last match — a page holding zero of this instance's users must not
+    /// end the scan while more documents follow.
+    /// </summary>
+    public async Task<(IReadOnlyList<User> Users, string? NextAfter)> ListUsersAsync(string instanceId, int limit, string? after, CancellationToken ct = default)
     {
         var page = await client.Documents.ListAsync(Database, "users", limit, after, ct);
-        return page.Items.Select(item => item.Value.Deserialize<User>(Json)).OfType<User>().Where(u => u.InstanceId == instanceId).ToList();
+        var users = page.Items
+            .Select(item => item.Value.Deserialize<User>(Json))
+            .OfType<User>()
+            .Where(u => u.InstanceId == instanceId)
+            .ToList();
+        return (users, page.Items.Count == 0 ? null : page.Items[^1].Id);
     }
 
     // ---- Passkeys -----------------------------------------------------------------
