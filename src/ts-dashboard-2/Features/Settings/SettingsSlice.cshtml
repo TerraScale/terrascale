@@ -67,10 +67,12 @@
     {
         <div class="ts-stack-20">
             <section class="ts-panel">
-                <div class="ts-panel-header">
-                    <h3 class="ts-panel-title">@t("Authentication product")</h3>
-                    <p class="ts-panel-subtitle">@t("Control project-wide access to TerraScale Authentication")</p>
-                    <span class="ts-badge @(Model.AuthenticationEnabled ? "ts-badge-success" : "ts-badge-warning")">@(Model.AuthenticationEnabled ? t("On") : t("Off"))</span>
+                <div class="ts-panel-header ts-panel-header-row">
+                    <div>
+                        <h3 class="ts-panel-title">@t("Authentication product")</h3>
+                        <p class="ts-panel-subtitle">@t("Control project-wide access to TerraScale Authentication")</p>
+                    </div>
+                    <span class="ts-panel-head-actions"><span class="ts-badge @(Model.AuthenticationEnabled ? "ts-badge-success" : "ts-badge-warning")">@(Model.AuthenticationEnabled ? t("On") : t("Off"))</span></span>
                 </div>
                 <div class="ts-stack-16 ts-padded">
                     @if (!Model.AuthenticationEnabled)
@@ -104,7 +106,7 @@
                 </div>
             }
             <section class="ts-panel">
-                <div class="ts-panel-header">
+                <div class="ts-panel-header ts-panel-header-row">
                     <div>
                         <h3 class="ts-panel-title">@t("Identity providers")</h3>
                         <p class="ts-panel-subtitle">@t("Project authentication providers returned by the TerraScale Dashboard API")</p>
@@ -199,7 +201,7 @@
     else if (Model.Tab == "credentials")
     {
         <section class="ts-panel">
-            <div class="ts-panel-header">
+            <div class="ts-panel-header ts-panel-header-row">
                 <div>
                     <h3 class="ts-panel-title">@t("Project credentials")</h3>
                     <p class="ts-panel-subtitle">@t("API keys and M2M applications returned by the TerraScale Dashboard API")</p>
@@ -265,7 +267,7 @@
     else if (Model.Tab == "webhooks")
     {
         <section class="ts-panel">
-            <div class="ts-panel-header">
+            <div class="ts-panel-header ts-panel-header-row">
                 <div>
                     <h3 class="ts-panel-title">@t("Webhooks")</h3>
                     <p class="ts-panel-subtitle">@t("No persisted records were returned for this collection")</p>
@@ -286,7 +288,7 @@
         @if (Model.Databases.Length == 0)
         {
             <section class="ts-panel">
-                <div class="ts-panel-header">
+                <div class="ts-panel-header ts-panel-header-row">
                     <div>
                         <h3 class="ts-panel-title">@t("Backups")</h3>
                         <p class="ts-panel-subtitle">@t("Create a database before configuring backup policy or restores")</p>
@@ -306,7 +308,7 @@
         {
             <div class="ts-stack-20">
                 <section class="ts-panel">
-                    <div class="ts-panel-header">
+                    <div class="ts-panel-header ts-panel-header-row">
                         <div>
                             <h3 class="ts-panel-title">@t("Backups")</h3>
                             <p class="ts-panel-subtitle">@t("Per-database backup policy, backup jobs, restore points, and side-by-side restores")</p>
@@ -337,7 +339,7 @@
 
                 <section class="ts-backups-section">
                     <section class="ts-panel">
-                        <div class="ts-panel-header">
+                        <div class="ts-panel-header ts-panel-header-row">
                             <div>
                                 <h3 class="ts-panel-title">@t("Backup policy")</h3>
                                 <p class="ts-panel-subtitle">@t("Selected database:") @Model.SelectedDatabaseName</p>
@@ -369,7 +371,7 @@
                         </form>
                     </section>
                     <section class="ts-panel">
-                        <div class="ts-panel-header">
+                        <div class="ts-panel-header ts-panel-header-row">
                             <div>
                                 <h3 class="ts-panel-title">@t("On-demand backup")</h3>
                                 <p class="ts-panel-subtitle">@t("Review a confirmation before a backup job starts")</p>
@@ -595,7 +597,7 @@
                             <input class="ts-input" id="confirmProjectName" name="confirmName" autocomplete="off" spellcheck="false" />
                         </label>
                         <div>
-                            <button type="button" class="ts-btn ts-btn-danger-solid ts-btn-lg" data-on-click="document.getElementById('delete-project-confirm').showModal()">@Icons.Trash2(16) @t("Permanently delete project")</button>
+                            <button type="button" class="ts-btn ts-btn-destructive ts-btn-lg" data-on-click="document.getElementById('delete-project-confirm').showModal()">@Icons.Trash2(16) @t("Permanently delete project")</button>
                         </div>
                     </form>
                 }
@@ -631,7 +633,7 @@
                     <div class="ts-detail-row"><span class="ts-detail-label">@t("Action")</span><span class="ts-detail-value">backup.trigger</span></div>
                     <div class="ts-detail-row"><span class="ts-detail-label">@t("Expires (UTC)")</span><span class="ts-detail-value">@Model.BackupPlanExpiresLabel</span></div>
                 </div>
-                <div class="ts-dialog-actions">
+                <div class="ts-dialog-footer">
                     <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('backup-confirm').close()">@t("Cancel")</button>
                     <form method="post" action="/api/v1/dashboard/settings/backup-now">
                         <input type="hidden" name="databaseId" value="@Model.SelectedDatabaseId" />
@@ -665,7 +667,7 @@
                             <span class="ts-mono">@DashboardStore.ShortId(point.BackupId)</span>
                         </div>
                     </div>
-                    <div class="ts-dialog-actions">
+                    <div class="ts-dialog-footer">
                         <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('restore-@point.BackupId').close()">@t("Cancel")</button>
                         <form method="post" action="/api/v1/dashboard/settings/restore">
                             <input type="hidden" name="generation" value="@point.BackupId" />
@@ -691,9 +693,9 @@
                     <span class="ts-alert-title">@t("This cannot be undone")</span>
                     <span class="ts-alert-body">@t("Confirm deletion of") <strong>@Model.ProjectName</strong> @t("and all associated databases, authentication data, and metadata.")</span>
                 </div>
-                <div class="ts-dialog-actions">
+                <div class="ts-dialog-footer">
                     <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('delete-project-confirm').close()">@t("Cancel")</button>
-                    <button type="submit" form="delete-project-form" class="ts-btn ts-btn-danger-solid ts-btn-lg">@t("Delete project")</button>
+                    <button type="submit" form="delete-project-form" class="ts-btn ts-btn-destructive ts-btn-lg">@t("Delete project")</button>
                 </div>
             </div>
         </div>
