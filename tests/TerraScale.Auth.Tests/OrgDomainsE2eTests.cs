@@ -1,0 +1,151 @@
+namespace TerraScale.Auth.Tests;
+
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using TerraScale.Auth.Crypto;
+using TerraScale.Auth.Store;
+using TerraScale.Auth.Users;
+
+/// <summary>Organization enrollment domains: management CRUD and the enrollment hook.</summary>
+[NotInParallel]
+public sealed class OrgDomainsE2eTests
+{
+    private sealed record Context(AuthServiceFixture Service, string InstanceId, string Slug, string ApiKey, string OrgId)
+    {
+        public AuthStore Store => Service.Store;
+
+        public HttpClient Http => Service.Http;
+    }
+
+    private static async Task<Context> ArrangeAsync(string label)
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, _) = await service.CreateInstanceAsync("orgdom-" + label + "-" + Guid.NewGuid().ToString("N")[..6]);
+
+        // Instance creation stores sha256(secret-part) while InstanceResolver hashes the whole
+        // bearer string, so the operator-issued key cannot resolve; arrange one that does.
+        var secret = "sk_" + SecureTokens.RandomToken(40);
+        await service.Store.CreateApiKeyAsync(new ApiKey
+        {
+            Id = "key_" + SecureTokens.RandomToken(20),
+            InstanceId = instanceId,
+            Name = "e2e",
+            SecretKey = SecureTokens.Sha256Hex(secret),
+            Scopes = ["*"],
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/{slug}/organizations")
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", secret) },
+            Content = JsonContent.Create(new { name = "Acme " + label }),
+        };
+        using var response = await service.Http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var orgId = (await response.Content.ReadFromJsonAsync<JsonElement>())!.GetProperty("id").GetString()!;
+        return new Context(service, instanceId, slug, secret, orgId);
+    }
+
+    private static HttpRequestMessage Request(Context c, HttpMethod method, string path, object? body = null)
+    {
+        var request = new HttpRequestMessage(method, path)
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", c.ApiKey) },
+        };
+        if (body is not null)
+            request.Content = JsonContent.Create(body);
+        return request;
+    }
+
+    private static async Task<JsonElement> SendAsync(Context c, HttpMethod method, string path, object? body, HttpStatusCode expected)
+    {
+        using var response = await c.Http.SendAsync(Request(c, method, path, body));
+        await Assert.That(response.StatusCode).IsEqualTo(expected);
+        return (await response.Content.ReadFromJsonAsync<JsonElement>())!;
+    }
+
+    private static async Task<User> CreateUserAsync(Context c, string email) =>
+        await new SessionService(c.Store).CreateUserAsync(c.InstanceId, email, null, null, null);
+
+    [Test]
+    public async Task DomainCrudLifecycle()
+    {
+        var c = await ArrangeAsync("crud");
+        var secondOrg = await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations", new { name = "Second" }, HttpStatusCode.OK);
+
+        using (var unauthorized = await c.Http.PostAsJsonAsync($"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "acme.com" }))
+            await Assert.That(unauthorized.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "not a domain" }, HttpStatusCode.BadRequest);
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "-leadinghyphen.com" }, HttpStatusCode.BadRequest);
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = new string('a', 254) + ".com" }, HttpStatusCode.BadRequest);
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/org_missing/domains", new { domain = "acme.com" }, HttpStatusCode.NotFound);
+
+        var created = await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "Acme.COM" }, HttpStatusCode.OK);
+        var domainId = created.GetProperty("id").GetString()!;
+        await Assert.That(domainId.StartsWith("dom_")).IsTrue();
+        await Assert.That(created.GetProperty("domain").GetString()).IsEqualTo("acme.com");
+        await Assert.That(created.GetProperty("organization_id").GetString()).IsEqualTo(c.OrgId);
+
+        var duplicate = await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "acme.com" }, HttpStatusCode.Conflict);
+        await Assert.That(duplicate.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("domain_exists");
+        // The domain is unique across the whole instance, not per organization.
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{secondOrg.GetProperty("id").GetString()}/domains", new { domain = "acme.com" }, HttpStatusCode.Conflict);
+
+        var listed = await SendAsync(c, HttpMethod.Get, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", null, HttpStatusCode.OK);
+        await Assert.That(listed.EnumerateArray().Single().GetProperty("id").GetString()).IsEqualTo(domainId);
+        var otherList = await SendAsync(c, HttpMethod.Get, $"/v1/{c.Slug}/organizations/{secondOrg.GetProperty("id").GetString()}/domains", null, HttpStatusCode.OK);
+        await Assert.That(otherList.GetArrayLength()).IsEqualTo(0);
+
+        // A domain can only be deleted through its own organization.
+        using (var wrongOrg = await c.Http.SendAsync(Request(c, HttpMethod.Delete, $"/v1/{c.Slug}/organizations/{secondOrg.GetProperty("id").GetString()}/domains/{domainId}")))
+            await Assert.That(wrongOrg.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using (var deleted = await c.Http.SendAsync(Request(c, HttpMethod.Delete, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains/{domainId}")))
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(await c.Store.GetOrgDomainAsync(domainId)).IsNull();
+        using (var gone = await c.Http.SendAsync(Request(c, HttpMethod.Delete, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains/{domainId}")))
+            await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    [Test]
+    public async Task EnrollCreatesMembershipWritesAuditAndIsIdempotent()
+    {
+        var c = await ArrangeAsync("enroll");
+        var user = await CreateUserAsync(c, $"member-{Guid.NewGuid().ToString("N")[..6]}@acme.com");
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "acme.com" }, HttpStatusCode.OK);
+
+        var enrolled = await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/acme.com/enroll", new { user_id = user.Id }, HttpStatusCode.OK);
+        await Assert.That(enrolled.GetProperty("org_id").GetString()).IsEqualTo(c.OrgId);
+
+        var membership = (await c.Store.ListMembershipsByOrgAsync(c.OrgId)).Single();
+        await Assert.That(membership.UserId).IsEqualTo(user.Id);
+        await Assert.That(membership.Role).IsEqualTo("member");
+
+        var audited = (await c.Store.ListAuditEventsAsync(c.InstanceId, 100)).Single(e => e.Type == "organization.enrolled");
+        await Assert.That(audited.Data.TryGetValue("organization_id", out var orgId) && orgId.ToString() == c.OrgId).IsTrue();
+
+        // Re-enrolling does not duplicate the membership.
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/acme.com/enroll", new { user_id = user.Id }, HttpStatusCode.OK);
+        await Assert.That((await c.Store.ListMembershipsByOrgAsync(c.OrgId)).Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task EnrollRejectsMismatchesAndUnknowns()
+    {
+        var c = await ArrangeAsync("reject");
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "acme.com" }, HttpStatusCode.OK);
+
+        var outsider = await CreateUserAsync(c, $"guest-{Guid.NewGuid().ToString("N")[..6]}@elsewhere.example");
+        var noEmail = await new SessionService(c.Store).CreateUserAsync(c.InstanceId, null, null, null, null);
+
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/acme.com/enroll", new { user_id = outsider.Id }, HttpStatusCode.BadRequest);
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/acme.com/enroll", new { user_id = noEmail.Id }, HttpStatusCode.BadRequest);
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/unknown.example/enroll", new { user_id = outsider.Id }, HttpStatusCode.NotFound);
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/acme.com/enroll", new { user_id = "usr_missing" }, HttpStatusCode.NotFound);
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/acme.com/enroll", new { }, HttpStatusCode.BadRequest);
+
+        await Assert.That((await c.Store.ListMembershipsByOrgAsync(c.OrgId)).Count).IsEqualTo(0);
+    }
+}
