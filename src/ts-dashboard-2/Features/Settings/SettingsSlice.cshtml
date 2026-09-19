@@ -1,5 +1,4 @@
 @inherits RazorSlice<SettingsPageModel>
-@using TerraScale.Dashboard2.Features.Backups
 @{
     var shell = Model.Shell;
     var t = (string s) => s;
@@ -406,7 +405,7 @@
                                                 <tr>
                                                     <td>
                                                         <div class="ts-grid-tight">
-                                                            <span class="ts-mono">@BackupsPageModel.ShortId(job.Id)</span>
+                                                            <span class="ts-mono">@DashboardStore.ShortId(job.Id)</span>
                                                             <span class="ts-mono ts-meta">@job.DestinationType</span>
                                                         </div>
                                                     </td>
@@ -471,7 +470,7 @@
                                                     <td>
                                                         <div class="ts-grid-tight">
                                                             <span class="ts-text-strong">@point.Name</span>
-                                                            <span class="ts-mono ts-meta">@(point.BackupId.Length == 0 ? t("No backup id") : BackupsPageModel.ShortId(point.BackupId))</span>
+                                                            <span class="ts-mono ts-meta">@(point.BackupId.Length == 0 ? t("No backup id") : DashboardStore.ShortId(point.BackupId))</span>
                                                         </div>
                                                     </td>
                                                     <td>
@@ -545,8 +544,8 @@
                                             <tr>
                                                 <td>
                                                     <div class="ts-grid-tight">
-                                                        <span class="ts-mono">@BackupsPageModel.ShortId(job.Id)</span>
-                                                        <span class="ts-mono ts-meta">@t("Source") @BackupsPageModel.ShortId(job.SourceDatabaseId)</span>
+                                                        <span class="ts-mono">@DashboardStore.ShortId(job.Id)</span>
+                                                        <span class="ts-mono ts-meta">@t("Source") @DashboardStore.ShortId(job.SourceDatabaseId)</span>
                                                     </div>
                                                 </td>
                                                 <td>
@@ -663,7 +662,7 @@
                         </div>
                         <div class="ts-detail-row">
                             <span class="ts-detail-label">@t("Backup")</span>
-                            <span class="ts-mono">@BackupsPageModel.ShortId(point.BackupId)</span>
+                            <span class="ts-mono">@DashboardStore.ShortId(point.BackupId)</span>
                         </div>
                     </div>
                     <div class="ts-dialog-actions">

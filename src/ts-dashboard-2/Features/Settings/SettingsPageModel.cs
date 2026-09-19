@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using TerraScale.Dashboard2.Features.Backups;
 
 namespace TerraScale.Dashboard2.Features.Settings;
 
@@ -40,7 +39,7 @@ public sealed record SettingsPageModel(
 
         return new(
             ProjectId: project.Id,
-            ShortProjectId: BackupsPageModel.ShortId(project.Id),
+            ShortProjectId: DashboardStore.ShortId(project.Id),
             ProjectName: project.Name,
             AuthenticationEnabled: store.AuthenticationEnabled,
             SecuritySettingsUpdatedAt: store.SecuritySettingsUpdatedAt,

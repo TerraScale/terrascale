@@ -107,10 +107,6 @@ public sealed record UsagePageModel(
         var historyRanges = offeredRanges
             .Select(r => new UsageHistoryRangeOption(r, RangeLabel(r), r == selectedRange))
             .ToList();
-        var history = store.Workloads.FirstOrDefault(w => w.Range == selectedRange) is { } selected
-            ? selected.Points
-            : [];
-
         var activePlan = store.Plans.First(p => p.Id == store.BillingPlanId);
 
         // v1 buildPlanImpactRows: current usage vs. each plan's included storage/writes.

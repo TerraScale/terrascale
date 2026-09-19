@@ -56,7 +56,7 @@ public sealed class OnboardingStepEndpoint(DashboardStore store) : EndpointWitho
                 // names it instead of adding a second one.
                 if (store.Projects.Length == 1 && store.Projects[0].Name == "Personal")
                 {
-                    store.RenameProject(store.Projects[0].Id, name);
+                    store.RenameProject(store.Projects[0].Id, name, null, null);
                 }
                 else
                 {

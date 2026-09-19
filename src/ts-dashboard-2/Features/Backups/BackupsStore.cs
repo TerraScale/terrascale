@@ -7,6 +7,9 @@ namespace TerraScale.Dashboard2;
 // State lives on the active account world.
 public sealed partial class DashboardStore
 {
+
+    /// <summary>v1 shortId: first 6 + last 4 characters of long ids.</summary>
+    public static string ShortId(string id) => id.Length <= 12 ? id : $"{id[..6]}...{id[^4..]}";
     public static readonly TimeSpan RestoreConfirmationTtl = TimeSpan.FromMinutes(5);
 
     public ImmutableArray<BackupRestorePoint> RestorePoints { get => World.RestorePoints; private set => World.RestorePoints = value; }

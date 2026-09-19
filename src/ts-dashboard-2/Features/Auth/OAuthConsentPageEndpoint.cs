@@ -16,7 +16,7 @@ public sealed class OAuthConsentPageEndpoint(DashboardStore store) : EndpointWit
     public override Task<IResult> HandleAsync(CancellationToken ct)
     {
         // v1 sends anonymous visitors to login with a next return path.
-        if (!DashboardAuthMiddleware.IsAuthenticated(HttpContext))
+        if (!store.IsAuthenticated(HttpContext))
         {
             var target = HttpContext.Request.Path.Value + (HttpContext.Request.QueryString.Value ?? "");
             return Task.FromResult<IResult>(Results.Redirect("/login?next=" + Uri.EscapeDataString(target)));
