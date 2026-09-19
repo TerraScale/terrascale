@@ -368,9 +368,9 @@ public static class ScimEndpoints
                         if (await ReplaceUserAttributeAsync(attribute.Name, attribute.Value) is { } nestedFailure)
                             return nestedFailure;
                 }
-                else if (await ReplaceUserAttributeAsync(path, operation.Value ?? default) is { } failure)
+                else if (await ReplaceUserAttributeAsync(path, operation.Value ?? default) is { } opFailure)
                 {
-                    return failure;
+                    return opFailure;
                 }
             }
 
@@ -579,9 +579,9 @@ public static class ScimEndpoints
                         if (await ReplaceGroupAttributeAsync(attribute.Name, attribute.Value) is { } nestedFailure)
                             return nestedFailure;
                 }
-                else if (await ReplaceGroupAttributeAsync(path, operation.Value ?? default) is { } failure)
+                else if (await ReplaceGroupAttributeAsync(path, operation.Value ?? default) is { } opFailure)
                 {
-                    return failure;
+                    return opFailure;
                 }
             }
 
