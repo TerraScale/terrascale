@@ -4820,9 +4820,14 @@ single-selector rules may stay on one line.
     background-color: var(--ts-surface-muted);
   }
 
-  /* v1 AdminPricingControls: field gap spacing.sm, input 44px / fontSizeBody. */
+  /* v1 AdminPricingControls: field gap spacing.sm, label leading-none,
+     input 44px / fontSizeBody. */
   .ts-admin-plan-form .ts-field {
     gap: var(--ts-sm);
+  }
+
+  .ts-admin-plan-form .ts-label {
+    line-height: 1; /* v1 styles.label lineHeight 1 (old Label leading-none) */
   }
 
   .ts-admin-plan-form .ts-input {
@@ -5390,6 +5395,11 @@ single-selector rules may stay on one line.
   .ts-admin-root .ts-panel-subtitle {
     font-size: var(--ts-fs-body);
     line-height: 1.6;
+  }
+
+  /* v1 PanelHeader title: lineHeight 1.375. */
+  .ts-admin-root .ts-panel-title {
+    line-height: 1.375;
   }
 
   /* v1 DataTable: 16px body, fixed equal columns, 16px/20px padding,
