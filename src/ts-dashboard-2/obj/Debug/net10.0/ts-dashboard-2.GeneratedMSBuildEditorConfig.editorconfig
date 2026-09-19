@@ -12,274 +12,274 @@ build_property.EntryPointFilePath =
 build_property._SupportedPlatformList = Linux,macOS,Windows
 build_property.RootNamespace = TerraScale.Dashboard2
 build_property.RootNamespace = TerraScale.Dashboard2
-build_property.ProjectDir = /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/
+build_property.ProjectDir = /home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/
 build_property.EnableComHosting = 
 build_property.EnableGeneratedComInterfaceComImportInterop = 
 build_property.RazorSliceProxiesAsRecords = false
 build_property.RazorLangVersion = 10.0
 build_property.SupportLocalizedComponentNames = 
 build_property.GenerateRazorMetadataSourceChecksumAttributes = 
-build_property.MSBuildProjectDirectory = /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2
+build_property.MSBuildProjectDirectory = /home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2
 build_property._RazorSourceGeneratorDebug = 
 build_property.EffectiveAnalysisLevelStyle = 10.0
 build_property.EnableCodeStyleSeverity = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Access/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Access/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWNjZXNzL19WaWV3SW1wb3J0cy5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Admin/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Admin/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWRtaW4vX1ZpZXdJbXBvcnRzLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/ApiKeys/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/ApiKeys/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXBpS2V5cy9fVmlld0ltcG9ydHMuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Audit/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Audit/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXVkaXQvX1ZpZXdJbXBvcnRzLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Auth/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Auth/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXV0aC9fVmlld0ltcG9ydHMuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Data/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Data/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRGF0YS9fVmlld0ltcG9ydHMuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Databases/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Databases/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRGF0YWJhc2VzL19WaWV3SW1wb3J0cy5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Engine/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Engine/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRW5naW5lL19WaWV3SW1wb3J0cy5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Home/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Home/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvSG9tZS9fVmlld0ltcG9ydHMuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Notifications/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Notifications/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvTm90aWZpY2F0aW9ucy9fVmlld0ltcG9ydHMuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Onboarding/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Onboarding/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvT25ib2FyZGluZy9fVmlld0ltcG9ydHMuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Organization/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Organization/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvT3JnYW5pemF0aW9uL19WaWV3SW1wb3J0cy5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Profile/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Profile/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvUHJvZmlsZS9fVmlld0ltcG9ydHMuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Settings/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Settings/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvU2V0dGluZ3MvX1ZpZXdJbXBvcnRzLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Shared/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Shared/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvU2hhcmVkL19WaWV3SW1wb3J0cy5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Status/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Status/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvU3RhdHVzL19WaWV3SW1wb3J0cy5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Subscriptions/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Subscriptions/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvU3Vic2NyaXB0aW9ucy9fVmlld0ltcG9ydHMuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Usage/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Usage/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvVXNhZ2UvX1ZpZXdJbXBvcnRzLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/_ViewImports.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/_ViewImports.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = 
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvX1ZpZXdJbXBvcnRzLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Access/AccessSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Access/AccessSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWNjZXNzL0FjY2Vzc1NsaWNlLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Access/InvitationSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Access/InvitationSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWNjZXNzL0ludml0YXRpb25TbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Admin/AdminDatabasesSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Admin/AdminDatabasesSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWRtaW4vQWRtaW5EYXRhYmFzZXNTbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Admin/AdminEstateSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Admin/AdminEstateSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWRtaW4vQWRtaW5Fc3RhdGVTbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Admin/AdminOrganizationsSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Admin/AdminOrganizationsSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWRtaW4vQWRtaW5Pcmdhbml6YXRpb25zU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Admin/AdminPricingSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Admin/AdminPricingSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWRtaW4vQWRtaW5QcmljaW5nU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Admin/AdminUsageSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Admin/AdminUsageSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWRtaW4vQWRtaW5Vc2FnZVNsaWNlLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Admin/AdminUsersSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Admin/AdminUsersSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQWRtaW4vQWRtaW5Vc2Vyc1NsaWNlLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/ApiKeys/ApiKeysSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/ApiKeys/ApiKeysSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXBpS2V5cy9BcGlLZXlzU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Audit/AuditSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Audit/AuditSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXVkaXQvQXVkaXRTbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Auth/AgentApproveSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Auth/AgentApproveSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXV0aC9BZ2VudEFwcHJvdmVTbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Auth/CliApproveSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Auth/CliApproveSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXV0aC9DbGlBcHByb3ZlU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Auth/LoginSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Auth/LoginSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXV0aC9Mb2dpblNsaWNlLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Auth/OAuthConsentSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Auth/OAuthConsentSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXV0aC9PQXV0aENvbnNlbnRTbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Auth/ResetPasswordSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Auth/ResetPasswordSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvQXV0aC9SZXNldFBhc3N3b3JkU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Data/DataSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Data/DataSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRGF0YS9EYXRhU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Data/HistorySlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Data/HistorySlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRGF0YS9IaXN0b3J5U2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Data/IndexesSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Data/IndexesSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRGF0YS9JbmRleGVzU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Data/SchemaSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Data/SchemaSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRGF0YS9TY2hlbWFTbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Databases/DatabaseDetailSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Databases/DatabaseDetailSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRGF0YWJhc2VzL0RhdGFiYXNlRGV0YWlsU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Databases/DatabasesSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Databases/DatabasesSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRGF0YWJhc2VzL0RhdGFiYXNlc1NsaWNlLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Engine/EngineSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Engine/EngineSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvRW5naW5lL0VuZ2luZVNsaWNlLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Home/HomeSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Home/HomeSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvSG9tZS9Ib21lU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Notifications/NotificationsSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Notifications/NotificationsSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvTm90aWZpY2F0aW9ucy9Ob3RpZmljYXRpb25zU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Onboarding/OnboardingSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Onboarding/OnboardingSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvT25ib2FyZGluZy9PbmJvYXJkaW5nU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Organization/OrganizationSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Organization/OrganizationSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvT3JnYW5pemF0aW9uL09yZ2FuaXphdGlvblNsaWNlLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Organization/OrganizationsNewSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Organization/OrganizationsNewSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvT3JnYW5pemF0aW9uL09yZ2FuaXphdGlvbnNOZXdTbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Profile/ProfileSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Profile/ProfileSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvUHJvZmlsZS9Qcm9maWxlU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Settings/SettingsSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Settings/SettingsSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvU2V0dGluZ3MvU2V0dGluZ3NTbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Subscriptions/BillingPortalSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Subscriptions/BillingPortalSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvU3Vic2NyaXB0aW9ucy9CaWxsaW5nUG9ydGFsU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Subscriptions/CheckoutSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Subscriptions/CheckoutSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvU3Vic2NyaXB0aW9ucy9DaGVja291dFNsaWNlLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Subscriptions/SubscriptionsSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Subscriptions/SubscriptionsSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvU3Vic2NyaXB0aW9ucy9TdWJzY3JpcHRpb25zU2xpY2UuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/Features/Usage/UsageSlice.cshtml]
+[/home/mariogk/Projects/TerraScale/ts-dashboard-2/.claude/worktrees/w2-access-root/src/ts-dashboard-2/Features/Usage/UsageSlice.cshtml]
 build_metadata.RazorGenerate.GenerateRazorSlice = true
 build_metadata.AdditionalFiles.TargetPath = RmVhdHVyZXMvVXNhZ2UvVXNhZ2VTbGljZS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 

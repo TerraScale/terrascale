@@ -21,6 +21,7 @@ public static class HomeCopy
         public string CurrentSnapshot => "Current snapshot";
         public string ActivityTitle => "Activity";
         public string ActivitySubtitle => "Persisted project audit activity";
+        public string ActivityChart(int count) => $"Project activity chart with {count} time buckets";
         public string GettingStarted => "Getting started";
         public string GettingStartedSubtitle => "Provision your project and connect the tools you already use";
         public string GettingStartedIntro => "Work through these steps to get a database online and wire it into your stack.";

@@ -3073,6 +3073,38 @@ single-selector rules may stay on one line.
     }
   }
 
+  /* Stale monitoring alert (v1 compat alert.tsx + shadcn alert: padding
+     14px/16px, radii.panel 11.2px, medium title, icon offset 2px; the
+     staleLayout row is page-styles.ts staleLayout). */
+  .ts-home {
+    gap: var(--ts-xl);
+  }
+
+  .ts-home .ts-alert {
+    padding: 14px 16px;
+    border-radius: 11.2px;
+  }
+
+  .ts-home .ts-alert-title {
+    font-weight: var(--ts-fw-medium);
+  }
+
+  .ts-home .ts-alert-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .ts-home .ts-alert-body {
+    gap: 0;
+  }
+
+  .ts-stale-layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ts-md);
+    align-items: center;
+    justify-content: space-between;
+  }
 
 }
 

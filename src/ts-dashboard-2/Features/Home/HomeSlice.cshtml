@@ -5,6 +5,19 @@
 }
 @ShellHtml.Top(shell)
 <div class="ts-page ts-home">
+    @if (Model.MonitoringStale)
+    {
+        <div class="ts-alert ts-alert-warning ts-home-stale" role="alert">
+            <span class="ts-alert-icon" aria-hidden="true">@Icons.TriangleAlert(19)</span>
+            <div class="ts-alert-body">
+                <span class="ts-alert-title">@copy.StaleTitle</span>
+                <div class="ts-stale-layout">
+                    <span>@copy.StaleBody</span>
+                    <a class="ts-btn ts-btn-secondary" href="/">@Icons.RefreshCw(16) @copy.Refresh</a>
+                </div>
+            </div>
+        </div>
+    }
     <div class="ts-overview-grid">
         <div class="ts-stack-xl">
             <section class="ts-grid ts-grid-cards ts-home-metrics" aria-label="@copy.WorkspaceMetrics">
@@ -48,7 +61,7 @@
                     {
                         <div class="ts-activity-empty">@copy.NoActivity</div>
                     }
-                    @Charts.LineChart([.. Model.ActivityPoints], $"Workload over {Model.ActivityRange}")
+                    @Charts.LineChart([.. Model.ActivityPoints], copy.ActivityChart(Model.ActivityPoints.Length))
                 </div>
             </section>
         </div>
