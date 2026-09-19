@@ -6,6 +6,8 @@ public sealed class OptionsTests
     [Test]
     public async Task RequiredVariablesThrowActionableErrors()
     {
+        foreach (var name in Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(k => k.StartsWith("TS_AUTH_", StringComparison.Ordinal)).ToList())
+            Environment.SetEnvironmentVariable(name, null);
         var missing = Assert.Throws<InvalidOperationException>(() => TerraScale.Auth.Configuration.AuthOptions.Load([]));
         await Assert.That(missing.Message).Contains("TS_AUTH_PUBLIC_ORIGIN");
     }
@@ -22,6 +24,7 @@ public sealed class OptionsTests
                 "--terrascale-api-key=k",
                 "--database=ts-auth",
                 "--master-key=" + Convert.ToBase64String(new byte[32]),
+                "--operator-key=op",
             ]);
             await Assert.That(options.PublicOrigin.Host).IsEqualTo("args.example");
         }

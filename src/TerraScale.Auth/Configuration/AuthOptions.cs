@@ -27,8 +27,11 @@ public sealed record AuthOptions
     /// <summary>TerraBase database that backs ts-auth. Env <c>TS_AUTH_DATABASE</c>.</summary>
     public required string Database { get; init; }
 
-    /// <summary>Master encryption key (base64, 32 bytes) protecting signing keys at rest. Env <c>TS_AUTH_MASTER_KEY</c>.</summary>
+    /// <summary>Master encryption key (base64, 32 bytes) protecting recoverable secrets (TOTP seeds) at rest. Env <c>TS_AUTH_MASTER_KEY</c>.</summary>
     public required byte[] MasterKey { get; init; }
+
+    /// <summary>Operator key that can create instances. Env <c>TS_AUTH_OPERATOR_KEY</c>.</summary>
+    public required string OperatorKey { get; init; }
 
     /// <summary>Load options from environment variables, then <c>--key=value</c> args.</summary>
     public static AuthOptions Load(string[] args)
@@ -77,6 +80,7 @@ public sealed record AuthOptions
             TerrascaleTenantId = values.GetValueOrDefault("terrascale-tenant-id"),
             Database = Required("database"),
             MasterKey = masterKeyBytes,
+            OperatorKey = Required("operator-key"),
         };
     }
 
