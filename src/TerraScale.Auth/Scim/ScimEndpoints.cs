@@ -153,10 +153,7 @@ public static class ScimEndpoints
                 return failure;
             var directory = gate.Directory!;
 
-            var pageSize = count ?? MaxResults;
-            var offset = startIndex ?? 1;
-            if (pageSize is < 1 or > MaxResults || offset < 1)
-                return ScimError(400, $"count must be between 1 and {MaxResults}, and startIndex must be at least 1");
+            var (offset, pageSize) = Paginate(startIndex, count);
 
             List<User> matched;
             if (filter is null)
@@ -165,7 +162,7 @@ public static class ScimEndpoints
             }
             else if (ParseFilter(filter) is not { } parsed)
             {
-                return ScimError(400, "only simple filters of the form 'userName eq \"value\"' or 'externalId eq \"value\"' are supported");
+                return ScimError(400, "only simple filters of the form 'userName eq \"value\"' or 'externalId eq \"value\"' are supported", "invalidFilter");
             }
             else if (parsed.Attribute == "username")
             {
@@ -215,7 +212,7 @@ public static class ScimEndpoints
             if (body is null)
                 return bodyFailure ?? ScimError(400, "a JSON body is required");
             if (string.IsNullOrWhiteSpace(body.UserName) || !SessionService.IsValidEmail(body.UserName))
-                return ScimError(400, "userName is required and must be a valid email address");
+                return ScimError(400, "userName is required and must be a valid email address", "invalidValue");
 
             User created;
             try
@@ -224,7 +221,7 @@ public static class ScimEndpoints
             }
             catch (TerraScaleApiException)
             {
-                return ScimError(409, "another user with this userName already exists");
+                return ScimError(409, "another user with this userName already exists", "uniqueness");
             }
 
             var externalId = NormalizeExternalId(body.ExternalId);
@@ -267,7 +264,7 @@ public static class ScimEndpoints
             if (externalId is not null)
                 data["external_id"] = externalId;
             await AuditAsync(store, directory, "directory.user_provisioned", data, ct);
-            return ScimJson(UserView(directory.Id, created), 201);
+            return ScimCreated(UserView(directory.Id, created), $"/scim/{directory.Id}/Users/{created.Id}");
         });
 
         app.MapPut("/scim/{directoryId}/Users/{userId}", async (
@@ -286,7 +283,7 @@ public static class ScimEndpoints
             if (user is null)
                 return ScimError(404, $"no user with id '{userId}'");
             if (string.IsNullOrWhiteSpace(body.UserName) || !SessionService.IsValidEmail(body.UserName))
-                return ScimError(400, "userName is required and must be a valid email address");
+                return ScimError(400, "userName is required and must be a valid email address", "invalidValue");
 
             // Replace semantics: absent name/externalId clear, absent active keeps the current state.
             var externalId = NormalizeExternalId(body.ExternalId);
@@ -326,38 +323,54 @@ public static class ScimEndpoints
             if (body is null)
                 return bodyFailure ?? ScimError(400, "a JSON body is required");
             if (body.Operations is not { Count: > 0 })
-                return ScimError(400, "Operations with at least one replace operation are required");
+                return ScimError(400, "Operations with at least one replace operation are required", "invalidValue");
 
             var user = await FindScimUserAsync(store, directory, userId, ct);
             if (user is null)
                 return ScimError(404, $"no user with id '{userId}'");
 
             var updated = user;
+            async Task<IResult?> ReplaceUserAttributeAsync(string attribute, JsonElement value)
+            {
+                if (attribute.Equals("active", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                        return ScimError(400, "replacing 'active' requires a boolean value", "invalidValue");
+                    var active = value.GetBoolean();
+                    updated = updated with { Banned = !active, BanReason = active ? null : "directory deprovisioned" };
+                    return null;
+                }
+                if (attribute.Equals("userName", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (value.ValueKind != JsonValueKind.String)
+                        return ScimError(400, "replacing 'userName' requires a string value", "invalidValue");
+                    var (rekeyed, rekeyFailure) = await WithEmailAsync(store, directory.InstanceId, updated, value.GetString()!, ct);
+                    if (rekeyFailure is not null)
+                        return rekeyFailure;
+                    updated = rekeyed;
+                    return null;
+                }
+                return ScimError(400, $"unsupported patch path '{attribute}'; only 'active' and 'userName' are supported", "invalidPath");
+            }
+
             foreach (var operation in body.Operations)
             {
                 var op = (operation.Op ?? "replace").Trim().ToLowerInvariant();
                 var path = operation.Path?.Trim();
                 if (op != "replace")
-                    return ScimError(400, $"only 'replace' operations are supported, got '{op}'");
-                if (path is "active" or "Active")
+                    return ScimError(400, $"only 'replace' operations are supported, got '{op}'", "invalidValue");
+                if (path is null)
                 {
-                    if (operation.Value is not { ValueKind: JsonValueKind.True or JsonValueKind.False })
-                        return ScimError(400, "replacing 'active' requires a boolean value");
-                    var active = operation.Value.Value.GetBoolean();
-                    updated = updated with { Banned = !active, BanReason = active ? null : "directory deprovisioned" };
+                    // RFC 7644 3.5.2: without a path, the value names the attributes to replace on the resource itself.
+                    if (operation.Value is not { ValueKind: JsonValueKind.Object } attributes)
+                        return ScimError(400, "a patch operation without 'path' requires an object value of attributes to replace", "invalidValue");
+                    foreach (var attribute in attributes.EnumerateObject())
+                        if (await ReplaceUserAttributeAsync(attribute.Name, attribute.Value) is { } nestedFailure)
+                            return nestedFailure;
                 }
-                else if (path is "userName" or "UserName")
+                else if (await ReplaceUserAttributeAsync(path, operation.Value ?? default) is { } failure)
                 {
-                    if (operation.Value is not { ValueKind: JsonValueKind.String } userName)
-                        return ScimError(400, "replacing 'userName' requires a string value");
-                    var (rekeyed, rekeyFailure) = await WithEmailAsync(store, directory.InstanceId, updated, userName.GetString()!, ct);
-                    if (rekeyFailure is not null)
-                        return rekeyFailure;
-                    updated = rekeyed;
-                }
-                else
-                {
-                    return ScimError(400, $"unsupported patch path '{path}'; only 'active' and 'userName' are supported");
+                    return failure;
                 }
             }
 
@@ -407,21 +420,27 @@ public static class ScimEndpoints
     private static void MapScimGroups(WebApplication app)
     {
         app.MapGet("/scim/{directoryId}/Groups", async (
-            string directoryId, HttpRequest request, AuthStore store, TerraScaleClient client, CancellationToken ct) =>
+            string directoryId, HttpRequest request, AuthStore store, TerraScaleClient client, CancellationToken ct,
+            string? filter, int? count, int? startIndex) =>
         {
             var gate = await RequireDirectoryAsync(request, store, directoryId, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var directory = gate.Directory!;
 
+            if (filter is not null)
+                return ScimError(400, "filters are not supported on the Groups endpoint", "invalidFilter");
+            var (offset, pageSize) = Paginate(startIndex, count);
+
             var groups = new ScimGroups(client, store.Database);
             var ordered = (await groups.ListByDirectoryAsync(directory.Id, ct)).OrderBy(g => g.Id, StringComparer.Ordinal).ToList();
+            var resources = ordered.Skip(offset - 1).Take(pageSize).Select(g => GroupView(directory.Id, g)).ToList();
             return ScimJson(new ScimListResponse(
                 Schemas: [ListResponseSchema],
                 TotalResults: ordered.Count,
-                StartIndex: 1,
-                ItemsPerPage: ordered.Count,
-                Resources: [.. ordered.Select(g => GroupView(directory.Id, g))]));
+                StartIndex: offset,
+                ItemsPerPage: resources.Count,
+                Resources: resources));
         });
 
         app.MapGet("/scim/{directoryId}/Groups/{groupId}", async (
@@ -450,9 +469,9 @@ public static class ScimEndpoints
             if (body is null)
                 return bodyFailure ?? ScimError(400, "a JSON body is required");
             if (string.IsNullOrWhiteSpace(body.DisplayName))
-                return ScimError(400, "displayName is required");
+                return ScimError(400, "displayName is required", "invalidValue");
             if (await ParseMembersAsync(store, directory, body.Members, ct) is not { } memberIds)
-                return ScimError(400, "members must reference existing users by their id");
+                return ScimError(400, "members must reference existing users by their id", "invalidValue");
 
             var now = Now();
             var group = new ScimGroup
@@ -467,7 +486,7 @@ public static class ScimEndpoints
             };
             await new ScimGroups(client, store.Database).CreateAsync(group, ct);
             await AuditAsync(store, directory, "directory.group_provisioned", new() { ["group_id"] = group.Id }, ct);
-            return ScimJson(GroupView(directory.Id, group), 201);
+            return ScimCreated(GroupView(directory.Id, group), $"/scim/{directory.Id}/Groups/{group.Id}");
         });
 
         app.MapPut("/scim/{directoryId}/Groups/{groupId}", async (
@@ -487,9 +506,9 @@ public static class ScimEndpoints
             if (group is null)
                 return ScimError(404, $"no group with id '{groupId}'");
             if (string.IsNullOrWhiteSpace(body.DisplayName))
-                return ScimError(400, "displayName is required");
+                return ScimError(400, "displayName is required", "invalidValue");
             if (await ParseMembersAsync(store, directory, body.Members, ct) is not { } memberIds)
-                return ScimError(400, "members must reference existing users by their id");
+                return ScimError(400, "members must reference existing users by their id", "invalidValue");
 
             var updated = group with
             {
@@ -514,7 +533,7 @@ public static class ScimEndpoints
             if (body is null)
                 return bodyFailure ?? ScimError(400, "a JSON body is required");
             if (body.Operations is not { Count: > 0 })
-                return ScimError(400, "Operations with at least one replace operation are required");
+                return ScimError(400, "Operations with at least one replace operation are required", "invalidValue");
 
             var groups = new ScimGroups(client, store.Database);
             var group = await FindScimGroupAsync(groups, directory.Id, groupId, ct);
@@ -522,31 +541,47 @@ public static class ScimEndpoints
                 return ScimError(404, $"no group with id '{groupId}'");
 
             var updated = group;
+            async Task<IResult?> ReplaceGroupAttributeAsync(string attribute, JsonElement value)
+            {
+                if (attribute.Equals("displayName", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (value.ValueKind != JsonValueKind.String)
+                        return ScimError(400, "replacing 'displayName' requires a string value", "invalidValue");
+                    if (string.IsNullOrWhiteSpace(value.GetString()))
+                        return ScimError(400, "displayName cannot be empty", "invalidValue");
+                    updated = updated with { DisplayName = value.GetString()! };
+                    return null;
+                }
+                if (attribute.Equals("members", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (value.ValueKind != JsonValueKind.Array)
+                        return ScimError(400, "replacing 'members' requires an array value", "invalidValue");
+                    if (await ParseMembersAsync(store, directory, value.Deserialize<List<ScimMember>>(Json), ct) is not { } memberIds)
+                        return ScimError(400, "members must reference existing users by their id", "invalidValue");
+                    updated = updated with { MemberUserIds = [.. memberIds] };
+                    return null;
+                }
+                return ScimError(400, $"unsupported patch path '{attribute}'; only 'displayName' and 'members' are supported", "invalidPath");
+            }
+
             foreach (var operation in body.Operations)
             {
                 var op = (operation.Op ?? "replace").Trim().ToLowerInvariant();
                 var path = operation.Path?.Trim();
                 if (op != "replace")
-                    return ScimError(400, $"only 'replace' operations are supported, got '{op}'");
-                if (path is "displayName" or "DisplayName")
+                    return ScimError(400, $"only 'replace' operations are supported, got '{op}'", "invalidValue");
+                if (path is null)
                 {
-                    if (operation.Value is not { ValueKind: JsonValueKind.String } displayName)
-                        return ScimError(400, "replacing 'displayName' requires a string value");
-                    if (string.IsNullOrWhiteSpace(displayName.GetString()))
-                        return ScimError(400, "displayName cannot be empty");
-                    updated = updated with { DisplayName = displayName.GetString()! };
+                    // RFC 7644 3.5.2: without a path, the value names the attributes to replace on the resource itself.
+                    if (operation.Value is not { ValueKind: JsonValueKind.Object } attributes)
+                        return ScimError(400, "a patch operation without 'path' requires an object value of attributes to replace", "invalidValue");
+                    foreach (var attribute in attributes.EnumerateObject())
+                        if (await ReplaceGroupAttributeAsync(attribute.Name, attribute.Value) is { } nestedFailure)
+                            return nestedFailure;
                 }
-                else if (path is "members" or "Members")
+                else if (await ReplaceGroupAttributeAsync(path, operation.Value ?? default) is { } failure)
                 {
-                    if (operation.Value is not { ValueKind: JsonValueKind.Array })
-                        return ScimError(400, "replacing 'members' requires an array value");
-                    if (await ParseMembersAsync(store, directory, operation.Value.Value.Deserialize<List<ScimMember>>(Json), ct) is not { } memberIds)
-                        return ScimError(400, "members must reference existing users by their id");
-                    updated = updated with { MemberUserIds = [.. memberIds] };
-                }
-                else
-                {
-                    return ScimError(400, $"unsupported patch path '{path}'; only 'displayName' and 'members' are supported");
+                    return failure;
                 }
             }
 
@@ -673,8 +708,43 @@ public static class ScimEndpoints
     private static IResult ScimJson(object body, int statusCode = 200) =>
         Results.Json(body, contentType: ScimContentType, statusCode: statusCode);
 
-    private static IResult ScimError(int status, string detail) =>
-        ScimJson(new { schemas = new[] { ErrorSchema }, status, detail }, status);
+    private static IResult ScimError(int status, string detail, string? scimType = null)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["schemas"] = new[] { ErrorSchema },
+            ["status"] = status.ToString(),
+            ["detail"] = detail,
+        };
+        if (scimType is not null)
+            body["scimType"] = scimType;
+        // RFC 7644 s2: the provider SHALL advertise its auth scheme via WWW-Authenticate.
+        return status == StatusCodes.Status401Unauthorized
+            ? new WithHeader(ScimJson(body, status), "WWW-Authenticate", "Bearer")
+            : ScimJson(body, status);
+    }
+
+    /// <summary>RFC 7644 s3.3: the created resource's URI SHALL ride the Location header.</summary>
+    private static IResult ScimCreated(object body, string location) =>
+        new WithHeader(ScimJson(body, 201), "Location", location);
+
+    private sealed record WithHeader(IResult Inner, string Name, string Value) : IResult
+    {
+        public async Task ExecuteAsync(HttpContext context)
+        {
+            context.Response.Headers[Name] = Value;
+            await Inner.ExecuteAsync(context);
+        }
+    }
+
+    /// <summary>RFC 7644 s3.4.2.4: startIndex below 1 reads as 1, negative count reads as 0,
+    /// and a count above the server maximum is clamped — none of these is an error.</summary>
+    private static (int StartIndex, int PageSize) Paginate(int? startIndex, int? count)
+    {
+        var start = startIndex is > 0 ? startIndex.Value : 1;
+        var size = count is null ? MaxResults : Math.Clamp(count.Value, 0, MaxResults);
+        return (start, size);
+    }
 
     private static async Task<(TBody? Body, IResult? Failure)> ReadBodyAsync<TBody>(HttpRequest request, CancellationToken ct) where TBody : class
     {
@@ -685,7 +755,12 @@ public static class ScimEndpoints
         }
         catch (JsonException)
         {
-            return (null, ScimError(400, "the request body is not valid JSON"));
+            return (null, ScimError(400, "the request body is not valid JSON", "invalidSyntax"));
+        }
+        catch (InvalidOperationException)
+        {
+            // A body that is not JSON at all (e.g. text/plain) must not surface as a 500.
+            return (null, ScimError(400, "the request body must be JSON", "invalidSyntax"));
         }
     }
 
@@ -785,14 +860,14 @@ public static class ScimEndpoints
         var newKey = $"{instanceId}:{normalized}";
         var existing = await store.FindUserByEmailAsync(instanceId, normalized, ct);
         if (existing is not null && existing.Id != current.Id)
-            return new(current, ScimError(409, "another user with this userName already exists"));
+            return new(current, ScimError(409, "another user with this userName already exists", "uniqueness"));
         try
         {
             await store.ClaimUniqueAsync("user-email", newKey, current.Id, ct);
         }
         catch (TerraScaleApiException)
         {
-            return new(current, ScimError(409, "another user with this userName already exists"));
+            return new(current, ScimError(409, "another user with this userName already exists", "uniqueness"));
         }
         if (current.EmailKey is not null)
             await store.ReleaseUniqueAsync("user-email", current.EmailKey, ct);

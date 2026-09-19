@@ -50,15 +50,23 @@ internal sealed class ScimGroups(TerraScaleClient client, string database)
 
     public async Task<IReadOnlyList<ScimGroup>> ListByDirectoryAsync(string directoryId, CancellationToken ct = default)
     {
-        var result = await client.Documents.QueryAsync(
-            database,
-            Collection,
-            new TerraScaleDocumentQuery(
-                Predicates: [new TerraScaleDocumentPredicate("directoryId", TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement(directoryId))],
-                Projection: null,
-                Limit: 100,
-                After: null),
-            cancellationToken: ct);
-        return result.Documents.Select(row => row.Value.Deserialize<ScimGroup>(Json)).OfType<ScimGroup>().ToList();
+        var groups = new List<ScimGroup>();
+        string? after = null;
+        while (true)
+        {
+            var result = await client.Documents.QueryAsync(
+                database,
+                Collection,
+                new TerraScaleDocumentQuery(
+                    Predicates: [new TerraScaleDocumentPredicate("directoryId", TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement(directoryId))],
+                    Projection: null,
+                    Limit: 100,
+                    After: after),
+                cancellationToken: ct);
+            groups.AddRange(result.Documents.Select(row => row.Value.Deserialize<ScimGroup>(Json)).OfType<ScimGroup>());
+            if (!result.HasMore || result.NextAfter is null)
+                return groups;
+            after = result.NextAfter;
+        }
     }
 }

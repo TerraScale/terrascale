@@ -135,7 +135,7 @@ public sealed class ScimE2eTests
         var missingBody = await missing.Content.ReadFromJsonAsync<JsonElement>();
         await Assert.That(missingBody.GetProperty("schemas").EnumerateArray().Single().GetString())
             .IsEqualTo("urn:ietf:params:scim:api:messages:2.0:Error");
-        await Assert.That(missingBody.GetProperty("status").GetInt32()).IsEqualTo(401);
+        await Assert.That(missingBody.GetProperty("status").GetString()).IsEqualTo("401");
 
         await SendAsync(http, HttpMethod.Get, "scim_not-a-real-token", $"/scim/{directoryId}/Users", null, HttpStatusCode.Unauthorized, "application/scim+json");
         await SendAsync(http, HttpMethod.Get, apiKey, $"/scim/{directoryId}/Users", null, HttpStatusCode.Unauthorized, "application/scim+json");
@@ -229,7 +229,8 @@ public sealed class ScimE2eTests
         var duplicate = await SendAsync(http, HttpMethod.Post, token, $"/scim/{directoryId}/Users", new { userName = email }, HttpStatusCode.Conflict, "application/scim+json");
         await Assert.That(duplicate.GetProperty("schemas").EnumerateArray().Single().GetString())
             .IsEqualTo("urn:ietf:params:scim:api:messages:2.0:Error");
-        await Assert.That(duplicate.GetProperty("status").GetInt32()).IsEqualTo(409);
+        await Assert.That(duplicate.GetProperty("status").GetString()).IsEqualTo("409");
+        await Assert.That(duplicate.GetProperty("scimType").GetString()).IsEqualTo("uniqueness");
 
         await SendAsync(http, HttpMethod.Post, token, $"/scim/{directoryId}/Users", new { userName = "not-an-email" }, HttpStatusCode.BadRequest, "application/scim+json");
         await Assert.That((await store.FindUserByEmailAsync((await store.GetScimDirectoryAsync(directoryId))!.InstanceId, email.ToLowerInvariant()))).IsNotNull();
@@ -282,7 +283,8 @@ public sealed class ScimE2eTests
         // Renaming onto an email another user now holds conflicts.
         var other = (await ProvisionAsync(http, token, directoryId, $"held-{Guid.NewGuid().ToString("N")[..8]}@example.com"));
         var conflict = await SendAsync(http, HttpMethod.Put, token, $"/scim/{directoryId}/Users/{userId}", new { userName = other.Email }, HttpStatusCode.Conflict, "application/scim+json");
-        await Assert.That(conflict.GetProperty("status").GetInt32()).IsEqualTo(409);
+        await Assert.That(conflict.GetProperty("status").GetString()).IsEqualTo("409");
+        await Assert.That(conflict.GetProperty("scimType").GetString()).IsEqualTo("uniqueness");
         await SendAsync(http, HttpMethod.Put, token, $"/scim/{directoryId}/Users/{userId}", new { userName = "not-an-email" }, HttpStatusCode.BadRequest, "application/scim+json");
     }
 
@@ -415,6 +417,178 @@ public sealed class ScimE2eTests
         using var deleted = await http.SendAsync(Request(HttpMethod.Delete, token, $"/scim/{directoryId}/Groups/{groupId}"));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Groups/{groupId}", null, HttpStatusCode.NotFound, "application/scim+json");
+    }
+
+    [Test]
+    public async Task PaginationFollowsRfc7644ClampingRules()
+    {
+        var (service, _, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug);
+        await ProvisionAsync(http, token, directoryId);
+        await ProvisionAsync(http, token, directoryId);
+        await ProvisionAsync(http, token, directoryId);
+
+        // RFC 7644 3.4.2.4: startIndex below 1 reads as 1 — never a 400.
+        var early = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Users?startIndex=0", null, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(early.GetProperty("startIndex").GetInt32()).IsEqualTo(1);
+        await Assert.That(early.GetProperty("totalResults").GetInt32()).IsEqualTo(3);
+
+        // count=0 and negative counts return no resources but still report totalResults.
+        foreach (var query in new[] { "count=0", "count=-5" })
+        {
+            var empty = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Users?{query}", null, HttpStatusCode.OK, "application/scim+json");
+            await Assert.That(empty.GetProperty("totalResults").GetInt32()).IsEqualTo(3);
+            await Assert.That(empty.GetProperty("Resources").GetArrayLength()).IsEqualTo(0);
+            await Assert.That(empty.GetProperty("itemsPerPage").GetInt32()).IsEqualTo(0);
+        }
+
+        // A count above the server maximum is clamped, not rejected.
+        var clamped = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Users?count=1000", null, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(clamped.GetProperty("Resources").GetArrayLength()).IsEqualTo(3);
+
+        // Pages slice the full result set: totalResults stays 3 across pages.
+        var page = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Users?count=2&startIndex=2", null, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(page.GetProperty("startIndex").GetInt32()).IsEqualTo(2);
+        await Assert.That(page.GetProperty("itemsPerPage").GetInt32()).IsEqualTo(2);
+        await Assert.That(page.GetProperty("Resources").GetArrayLength()).IsEqualTo(2);
+        await Assert.That(page.GetProperty("totalResults").GetInt32()).IsEqualTo(3);
+        var firstPage = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Users?count=2&startIndex=1", null, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(page.GetProperty("Resources").EnumerateArray().Select(u => u.GetProperty("id").GetString())
+            .IntersectBy(firstPage.GetProperty("Resources").EnumerateArray().Select(u => u.GetProperty("id").GetString()), id => id)).IsEmpty();
+
+        // Groups honor the same pagination contract; an unsupported filter is declined, not ignored.
+        await SendAsync(http, HttpMethod.Post, token, $"/scim/{directoryId}/Groups", new { displayName = "G1" }, HttpStatusCode.Created, "application/scim+json");
+        await SendAsync(http, HttpMethod.Post, token, $"/scim/{directoryId}/Groups", new { displayName = "G2" }, HttpStatusCode.Created, "application/scim+json");
+        var groupPage = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Groups?count=1&startIndex=2", null, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(groupPage.GetProperty("Resources").GetArrayLength()).IsEqualTo(1);
+        await Assert.That(groupPage.GetProperty("itemsPerPage").GetInt32()).IsEqualTo(1);
+        await Assert.That(groupPage.GetProperty("totalResults").GetInt32()).IsEqualTo(2);
+        var declined = await SendAsync(http, HttpMethod.Get, token,
+            $"/scim/{directoryId}/Groups?filter={Uri.EscapeDataString("displayName eq \"G1\"")}", null, HttpStatusCode.BadRequest, "application/scim+json");
+        await Assert.That(declined.GetProperty("scimType").GetString()).IsEqualTo("invalidFilter");
+    }
+
+    [Test]
+    public async Task GroupListWalksEveryEnginePagePastTheFirstHundred()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug);
+
+        // Seed directly through the store: 101 groups must not silently truncate at the engine's page size.
+        var groups = new TerraScale.Auth.Scim.ScimGroups(service.Sdk, service.Database);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        for (var i = 0; i < 101; i++)
+        {
+            await groups.CreateAsync(new TerraScale.Auth.Scim.ScimGroup
+            {
+                Id = $"grp_bulk{i:000}_{SecureTokens.RandomToken(6)}",
+                InstanceId = instanceId,
+                DirectoryId = directoryId,
+                DisplayName = $"Bulk {i:000}",
+                MemberUserIds = [],
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+        }
+
+        var list = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Groups", null, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(list.GetProperty("schemas").EnumerateArray().Single().GetString())
+            .IsEqualTo("urn:ietf:params:scim:api:messages:2.0:ListResponse");
+        await Assert.That(list.GetProperty("totalResults").GetInt32()).IsEqualTo(101);
+        await Assert.That(list.GetProperty("Resources").GetArrayLength()).IsEqualTo(101);
+        await Assert.That(list.GetProperty("startIndex").GetInt32()).IsEqualTo(1);
+        await Assert.That(list.GetProperty("itemsPerPage").GetInt32()).IsEqualTo(101);
+    }
+
+    [Test]
+    public async Task CreateResponsesCarryTheRfcLocationHeader()
+    {
+        var (service, _, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug);
+
+        using var user = await http.SendAsync(Request(HttpMethod.Post, token, $"/scim/{directoryId}/Users",
+            new { userName = $"loc-{Guid.NewGuid().ToString("N")[..8]}@example.com" }, "application/scim+json"));
+        await Assert.That(user.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var userId = (await user.Content.ReadFromJsonAsync<JsonElement>())!.GetProperty("id").GetString()!;
+        await Assert.That(user.Headers.Location!.ToString()).IsEqualTo($"/scim/{directoryId}/Users/{userId}");
+
+        using var group = await http.SendAsync(Request(HttpMethod.Post, token, $"/scim/{directoryId}/Groups",
+            new { displayName = "Located" }, "application/scim+json"));
+        await Assert.That(group.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var groupId = (await group.Content.ReadFromJsonAsync<JsonElement>())!.GetProperty("id").GetString()!;
+        await Assert.That(group.Headers.Location!.ToString()).IsEqualTo($"/scim/{directoryId}/Groups/{groupId}");
+    }
+
+    [Test]
+    public async Task UnauthorizedResponsesAdvertiseTheBearerScheme()
+    {
+        var (service, _, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var (directoryId, _) = await CreateDirectoryAsync(http, apiKey, slug);
+
+        using var missing = await http.GetAsync($"/scim/{directoryId}/Users");
+        await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(missing.Headers.WwwAuthenticate.Single(s => s.Scheme == "Bearer")).IsNotNull();
+    }
+
+    [Test]
+    public async Task PatchWithoutPathReplacesAttributesOnTheWholeResource()
+    {
+        var (service, _, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+
+        var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug);
+        var (userId, _) = await ProvisionAsync(http, token, directoryId);
+        var (userA, _) = await ProvisionAsync(http, token, directoryId);
+
+        // Path-less replace (RFC 7644 3.5.2): the value names the attributes to replace.
+        var deactivated = await SendAsync(http, HttpMethod.Patch, token, $"/scim/{directoryId}/Users/{userId}", new
+        {
+            Operations = new object[] { new { op = "replace", value = new { active = false } } },
+        }, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(deactivated.GetProperty("active").GetBoolean()).IsFalse();
+        await Assert.That((await store.GetUserAsync(userId))!.Banned).IsTrue();
+
+        var group = await SendAsync(http, HttpMethod.Post, token, $"/scim/{directoryId}/Groups", new { displayName = "Engineers" }, HttpStatusCode.Created, "application/scim+json");
+        var groupId = group.GetProperty("id").GetString()!;
+        var renamed = await SendAsync(http, HttpMethod.Patch, token, $"/scim/{directoryId}/Groups/{groupId}", new
+        {
+            Operations = new object[] { new { op = "replace", value = new { displayName = "Renamed", members = new object[] { new { value = userA } } } } },
+        }, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(renamed.GetProperty("displayName").GetString()).IsEqualTo("Renamed");
+        await Assert.That(renamed.GetProperty("members").EnumerateArray().Single().GetProperty("value").GetString()).IsEqualTo(userA);
+
+        // Unknown attributes inside a path-less replace are rejected like unknown paths.
+        await SendAsync(http, HttpMethod.Patch, token, $"/scim/{directoryId}/Users/{userId}",
+            new { Operations = new object[] { new { op = "replace", value = new { nickName = "nope" } } } }, HttpStatusCode.BadRequest, "application/scim+json");
+        var badPath = await SendAsync(http, HttpMethod.Patch, token, $"/scim/{directoryId}/Users/{userId}",
+            new { Operations = new object[] { new { op = "replace", path = "nickName", value = "nope" } } }, HttpStatusCode.BadRequest, "application/scim+json");
+        await Assert.That(badPath.GetProperty("scimType").GetString()).IsEqualTo("invalidPath");
+    }
+
+    [Test]
+    public async Task NonJsonBodyIsABadRequestNotAServerError()
+    {
+        var (service, _, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug);
+        var (userId, _) = await ProvisionAsync(http, token, directoryId);
+
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/scim/{directoryId}/Users/{userId}")
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) },
+            Content = new StringContent("this is not json", System.Text.Encoding.UTF8, "text/plain"),
+        };
+        using var response = await http.SendAsync(request);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var body = (await response.Content.ReadFromJsonAsync<JsonElement>())!;
+        await Assert.That(body.GetProperty("schemas").EnumerateArray().Single().GetString())
+            .IsEqualTo("urn:ietf:params:scim:api:messages:2.0:Error");
+        await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("400");
     }
 
     [Test]
