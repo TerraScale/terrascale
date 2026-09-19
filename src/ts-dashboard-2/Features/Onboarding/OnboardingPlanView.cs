@@ -1,3 +1,13 @@
 namespace TerraScale.Dashboard2.Features.Onboarding;
 
-public sealed record OnboardingPlanView(string PlanId, string Name, decimal MonthlyUsd, bool IsFree, long RequestLimit);
+/// <summary>One checkout-selectable billing plan (v1 billing catalog entry:
+/// monthly + annual base price, trial days, marketing copy).</summary>
+public sealed record OnboardingPlanView(
+    string PlanId,
+    string Key,
+    string Name,
+    decimal MonthlyUsd,
+    decimal AnnualUsd,
+    int TrialDays,
+    string Description,
+    IReadOnlyList<string> Features);
