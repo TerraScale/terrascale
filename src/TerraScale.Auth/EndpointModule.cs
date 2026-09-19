@@ -20,5 +20,6 @@ public static class EndpointModules
         Templates.JwtTemplateEndpoints.Map(app);
         Users.PasscodeEndpoints.Map(app);
         Management.InstanceSettingsEndpoints.Map(app);
+        Admin.AdminPortalEndpoints.Map(app);
     }
 }
