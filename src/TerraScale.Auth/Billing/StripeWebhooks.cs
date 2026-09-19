@@ -31,10 +31,13 @@ internal static class StripeWebhooks
         using (var reader = new StreamReader(request.Body, Encoding.UTF8))
             payload = await reader.ReadToEndAsync(ct);
 
-        // Non-descriptive on purpose: never say which check failed.
-        if (!StripeWebhookSignatures.Verify(
-                options.StripeWebhookSecret, request.Headers["Stripe-Signature"], payload,
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds()))
+        // Both rejection bodies are non-descriptive on purpose: never say which check failed.
+        var verification = StripeWebhookSignatures.Verify(
+            options.StripeWebhookSecret, request.Headers["Stripe-Signature"], payload,
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (verification == StripeWebhookVerification.StaleTimestamp)
+            return ApiResults.BadRequest("invalid_request", "the webhook could not be accepted");
+        if (verification != StripeWebhookVerification.Valid)
             return ApiResults.Unauthorized();
 
         JsonDocument document;
@@ -56,14 +59,33 @@ internal static class StripeWebhooks
     private static async Task<IResult> DispatchAsync(
         JsonElement root, AuthStore store, AuthOptions options, TerraScaleClient sdk, CancellationToken ct)
     {
-        if (Str(root, "id") is { } eventId)
+        var source = Obj(Obj(root, "data"), "object");
+        if (Str(root, "id") is not { } eventId)
         {
-            if (!ProcessedEventIds.TryAdd(eventId, DateTimeOffset.UtcNow.ToUnixTimeSeconds()))
-                return Results.Ok(); // Stripe retry of an already-processed event
-            Prune();
+            await ProcessAsync(root, source, store, options, sdk, ct);
+            return Results.Ok();
         }
 
-        var source = Obj(Obj(root, "data"), "object");
+        if (!ProcessedEventIds.TryAdd(eventId, DateTimeOffset.UtcNow.ToUnixTimeSeconds()))
+            return Results.Ok(); // Stripe retry of an already-processed event
+        try
+        {
+            await ProcessAsync(root, source, store, options, sdk, ct);
+        }
+        catch
+        {
+            // Processing failed and the 500 will make Stripe retry: release the id so the
+            // retry can apply the event instead of being deduped into a silent loss.
+            ProcessedEventIds.TryRemove(eventId, out _);
+            throw;
+        }
+        Prune();
+        return Results.Ok();
+    }
+
+    private static async Task ProcessAsync(
+        JsonElement root, JsonElement source, AuthStore store, AuthOptions options, TerraScaleClient sdk, CancellationToken ct)
+    {
         switch (source.ValueKind == JsonValueKind.Object ? Str(root, "type") : null)
         {
             case "checkout.session.completed":
@@ -78,7 +100,6 @@ internal static class StripeWebhooks
             default:
                 break; // unknown event types are acknowledged so Stripe stops retrying
         }
-        return Results.Ok();
     }
 
     private static void Prune()
@@ -103,6 +124,13 @@ internal static class StripeWebhooks
             return; // unknown instance: acknowledge so Stripe stops retrying
         if (Str(session, "customer") is not { } customer)
             return;
+
+        var existing = await store.FindSubscriptionByCustomerAsync(customer, ct);
+        if (existing is not null && existing.InstanceId != instance.Id)
+            return; // the customer belongs to another instance: a foreign pairing (only an
+                    // externally-created session can produce it) must not link this instance to
+                    // that customer (which would open their billing portal here) or touch their
+                    // subscription — acknowledge and leave both sides alone.
 
         if (instance.StripeCustomerId != customer)
         {
@@ -132,8 +160,8 @@ internal static class StripeWebhooks
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var updated = await store.FindSubscriptionByCustomerAsync(customer, ct) is { } existing
-            ? existing with
+        var updated = existing is { } current
+            ? current with
             {
                 StripeCustomerId = customer,
                 StripeSubscriptionId = subscriptionId ?? existing.StripeSubscriptionId,

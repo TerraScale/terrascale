@@ -4,8 +4,18 @@ using System.Globalization;
 using System.Text;
 using TerraScale.Auth.Crypto;
 
+/// The outcome of verifying a Stripe-Signature header. The caller maps
+/// <see cref="StaleTimestamp"/> and <see cref="InvalidSignature"/> to different status
+/// codes but equally non-descriptive bodies.
+public enum StripeWebhookVerification
+{
+    Valid,
+    InvalidSignature,
+    StaleTimestamp,
+}
+
 /// Stripe webhook signature parsing and verification. The header is
-/// <c>t=unixseconds,v1=hexsignature[,v2=...]</c>; the signature is
+/// <c>t=unixseconds,v1=hexsignature[,v1=...]</c>; the signature is
 /// HMAC-SHA256(secret, "{t}.{rawBody}") compared constant-time against any v1 entry.
 /// Pure functions — unit-testable without HTTP.
 internal static class StripeWebhookSignatures
@@ -38,15 +48,18 @@ internal static class StripeWebhookSignatures
             Encoding.UTF8.GetBytes(secret),
             Encoding.UTF8.GetBytes(timestamp.ToString(CultureInfo.InvariantCulture) + "." + payload)));
 
-    /// True when any v1 entry matches the computed signature (constant-time, per entry) and
-    /// the timestamp is within <paramref name="toleranceSeconds"/> of <paramref name="nowUnixSeconds"/>.
-    public static bool Verify(string secret, string? header, string payload, long nowUnixSeconds, long toleranceSeconds = 300)
+    /// <see cref="StripeWebhookVerification.Valid"/> when any v1 entry matches the computed
+    /// signature (constant-time, per entry) and the timestamp is within
+    /// <paramref name="toleranceSeconds"/> of <paramref name="nowUnixSeconds"/>;
+    /// <see cref="StripeWebhookVerification.StaleTimestamp"/> when only the timestamp check
+    /// fails; <see cref="StripeWebhookVerification.InvalidSignature"/> otherwise.
+    public static StripeWebhookVerification Verify(string secret, string? header, string payload, long nowUnixSeconds, long toleranceSeconds = 300)
     {
         var (timestamp, signatures) = Parse(header);
         if (timestamp is null || signatures.Count == 0)
-            return false;
+            return StripeWebhookVerification.InvalidSignature;
         if (Math.Abs(nowUnixSeconds - timestamp.Value) > toleranceSeconds)
-            return false;
+            return StripeWebhookVerification.StaleTimestamp;
 
         var expected = Encodings.HexDecode(Compute(secret, timestamp.Value, payload));
         foreach (var signature in signatures)
@@ -61,8 +74,8 @@ internal static class StripeWebhookSignatures
                 continue; // a malformed entry is not a match, not a failure
             }
             if (CryptographicOperations.FixedTimeEquals(candidate, expected))
-                return true;
+                return StripeWebhookVerification.Valid;
         }
-        return false;
+        return StripeWebhookVerification.InvalidSignature;
     }
 }

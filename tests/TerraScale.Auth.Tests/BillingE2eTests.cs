@@ -35,7 +35,17 @@ public sealed class StripeSignatureTests
     public async Task VerifiesWithCorrectSignature()
     {
         var t = Now;
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t},v1={HexHmac(Secret, t, Payload)}", Payload, t)).IsTrue();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t},v1={HexHmac(Secret, t, Payload)}", Payload, t))
+            .IsEqualTo(StripeWebhookVerification.Valid);
+    }
+
+    [Test]
+    public async Task VerifiesUppercaseHexSignature()
+    {
+        var t = Now;
+        var upper = HexHmac(Secret, t, Payload).ToUpperInvariant();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t},v1={upper}", Payload, t))
+            .IsEqualTo(StripeWebhookVerification.Valid);
     }
 
     [Test]
@@ -43,16 +53,22 @@ public sealed class StripeSignatureTests
     {
         var t = Now;
         var header = $"t={t},v1={HexHmac(Secret, t, Payload)}";
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, header, Payload + " ", t)).IsFalse();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, header, Payload + " ", t))
+            .IsEqualTo(StripeWebhookVerification.InvalidSignature);
     }
 
     [Test]
     public async Task RejectsStaleTimestamp()
     {
         var stale = Now - 301;
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={stale},v1={HexHmac(Secret, stale, Payload)}", Payload, Now)).IsFalse();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={stale},v1={HexHmac(Secret, stale, Payload)}", Payload, Now))
+            .IsEqualTo(StripeWebhookVerification.StaleTimestamp);
         var future = Now + 301;
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={future},v1={HexHmac(Secret, future, Payload)}", Payload, Now)).IsFalse();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={future},v1={HexHmac(Secret, future, Payload)}", Payload, Now))
+            .IsEqualTo(StripeWebhookVerification.StaleTimestamp);
+        // At exactly the 300s tolerance (both directions) it still verifies.
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={Now - 300},v1={HexHmac(Secret, Now - 300, Payload)}", Payload, Now))
+            .IsEqualTo(StripeWebhookVerification.Valid);
     }
 
     [Test]
@@ -60,8 +76,9 @@ public sealed class StripeSignatureTests
     {
         var t = Now;
         var header = $"t={t},v1={HexHmac("whsec_other", t, Payload)},v1={HexHmac(Secret, t, Payload)}";
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, header, Payload, t)).IsTrue();
-        await Assert.That(StripeWebhookSignatures.Verify("whsec_other", $"t={t},v1={HexHmac(Secret, t, Payload)}", Payload, t)).IsFalse();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, header, Payload, t)).IsEqualTo(StripeWebhookVerification.Valid);
+        await Assert.That(StripeWebhookSignatures.Verify("whsec_other", $"t={t},v1={HexHmac(Secret, t, Payload)}", Payload, t))
+            .IsEqualTo(StripeWebhookVerification.InvalidSignature);
     }
 
     [Test]
@@ -69,12 +86,23 @@ public sealed class StripeSignatureTests
     {
         var t = Now;
         var valid = HexHmac(Secret, t, Payload);
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, null, Payload, t)).IsFalse();
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, "", Payload, t)).IsFalse();
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, "garbage", Payload, t)).IsFalse();
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t}", Payload, t)).IsFalse();
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t},v1=zz-not-hex", Payload, t)).IsFalse();
-        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"v1={valid},t={t}", Payload, t)).IsTrue(); // order-independent
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, null, Payload, t)).IsEqualTo(StripeWebhookVerification.InvalidSignature);
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, "", Payload, t)).IsEqualTo(StripeWebhookVerification.InvalidSignature);
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, "garbage", Payload, t)).IsEqualTo(StripeWebhookVerification.InvalidSignature);
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t}", Payload, t)).IsEqualTo(StripeWebhookVerification.InvalidSignature);
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t},v1=zz-not-hex", Payload, t)).IsEqualTo(StripeWebhookVerification.InvalidSignature);
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"v1={valid},t={t}", Payload, t)).IsEqualTo(StripeWebhookVerification.Valid); // order-independent
+    }
+
+    [Test]
+    public async Task RejectsNonNumericTimestamp()
+    {
+        var valid = HexHmac(Secret, Now, Payload);
+        // A t that fails to parse leaves no timestamp: a signature failure, not a stale one.
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t=not-a-number,v1={valid}", Payload, Now))
+            .IsEqualTo(StripeWebhookVerification.InvalidSignature);
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t=17.5,v1={valid}", Payload, Now))
+            .IsEqualTo(StripeWebhookVerification.InvalidSignature);
     }
 }
 
@@ -309,6 +337,168 @@ public sealed class BillingE2eTests
     }
 
     [Test]
+    public async Task WebhookStaleTimestampRejectedAs400()
+    {
+        var app = await SharedApp;
+        var (instanceId, _, _, customer) = await InstanceWithActiveProAsync(app);
+
+        // Correctly signed for its own (stale) timestamp: outside tolerance it must be a 400,
+        // not a 401, and must not touch state.
+        var json = CheckoutCompletedJson("evt_" + Unique(), instanceId, customer);
+        using var response = await SendWebhookAsync(app.Http, json, ageSeconds: 600);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
+        var subscription = await app.Store.FindSubscriptionByCustomerAsync(customer);
+        await Assert.That(subscription!.Status).IsEqualTo("active");
+    }
+
+    [Test]
+    public async Task WebhookBadOrMissingSignatureReturnsNonDescriptive401()
+    {
+        var app = await SharedApp;
+        var (instanceId, _, _, customer) = await InstanceWithActiveProAsync(app);
+
+        var json = CheckoutCompletedJson("evt_" + Unique(), instanceId, customer);
+
+        using var wrongSecret = await SendWebhookAsync(app.Http, json, secret: "whsec_wrong");
+        await Assert.That(wrongSecret.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        var wrongBody = (await wrongSecret.Content.ReadAsStringAsync()).ToLowerInvariant();
+        await Assert.That(wrongBody).DoesNotContain("signature");
+        await Assert.That(wrongBody).DoesNotContain("secret");
+        await Assert.That(wrongBody).DoesNotContain("timestamp");
+
+        using var noHeader = new HttpRequestMessage(HttpMethod.Post, "/v1/billing/webhook")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        using var missing = await app.Http.SendAsync(noHeader);
+        await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        var subscription = await app.Store.FindSubscriptionByCustomerAsync(customer);
+        await Assert.That(subscription!.Status).IsEqualTo("active");
+    }
+
+    [Test]
+    public async Task WebhookCheckoutForForeignCustomerDoesNotCrossInstances()
+    {
+        var app = await SharedApp;
+        var (instanceA, _, _, customerA) = await InstanceWithActiveProAsync(app);
+        var (instanceB, _, _) = await NewInstanceAsync(app);
+
+        // A checkout event referencing instance B but paid by instance A's customer: B must
+        // not steal A's customer link (which would open A's billing portal to B), and A's
+        // subscription must not be mutated by B's event — here it would flip A to enterprise.
+        app.Stripe.SubscriptionBodies["sub_ent"] = """{"id":"sub_ent","customer":"cus_x","items":[{"price":{"id":"price_ent"}}],"current_period_end":1893456000}""";
+        var json = CheckoutCompletedJson("evt_" + Unique(), instanceB, customerA, subscription: "sub_ent");
+        using var response = await SendWebhookAsync(app.Http, json);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        await Assert.That((await app.Store.GetInstanceAsync(instanceB))!.StripeCustomerId).IsNull();
+        await Assert.That((await app.Store.ListSubscriptionsAsync(instanceB)).Count).IsEqualTo(0);
+
+        var subscriptionA = await app.Store.FindSubscriptionByCustomerAsync(customerA);
+        await Assert.That(subscriptionA!.InstanceId).IsEqualTo(instanceA);
+        await Assert.That(subscriptionA.Plan).IsEqualTo("pro");
+        await Assert.That(subscriptionA.Status).IsEqualTo("active");
+
+        var auditsB = await app.Store.ListAuditEventsAsync(instanceB, 100);
+        await Assert.That(auditsB.Any(e => e.Type.StartsWith("billing.", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    public async Task WebhookUnknownInstanceReferenceAcknowledgedAsNoOp()
+    {
+        var app = await SharedApp;
+        var customer = "cus_" + Unique();
+
+        var json = CheckoutCompletedJson("evt_" + Unique(), "ins_does_not_exist", customer);
+        using var response = await SendWebhookAsync(app.Http, json);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        await Assert.That(await app.Store.FindSubscriptionByCustomerAsync(customer)).IsNull();
+    }
+
+    [Test]
+    public async Task WebhookFailedProcessingCanRetry()
+    {
+        var app = await SharedApp;
+        var (instanceId, _, _) = await NewInstanceAsync(app);
+        var customer = "cus_" + Unique();
+        var json = CheckoutCompletedJson("evt_retry_" + Unique(), instanceId, customer, subscription: "sub_bad");
+
+        // The subscription fetch returns a 200 with a garbage body: processing fails (Kestrel
+        // answers 500; the test host instead propagates the server exception to the client).
+        app.Stripe.SubscriptionBodies["sub_bad"] = "{not json";
+        try
+        {
+            using var failed = await SendWebhookAsync(app.Http, json);
+        }
+        catch
+        {
+            // the unhandled server-side JsonException surfaced through the test host
+        }
+
+        app.Stripe.SubscriptionBodies.Remove("sub_bad");
+        using var retry = await SendWebhookAsync(app.Http, json);
+        await Assert.That(retry.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var subscriptions = await app.Store.ListSubscriptionsAsync(instanceId);
+        await Assert.That(subscriptions.Count).IsEqualTo(1);
+        await Assert.That(subscriptions[0].Plan).IsEqualTo("pro");
+        await Assert.That(subscriptions[0].Status).IsEqualTo("active");
+    }
+
+    [Test]
+    public async Task WebhookSubscriptionTransitionsEnforceQuotaPerPlan()
+    {
+        var app = await SharedApp;
+        var (_, slug, apiKey, customer) = await InstanceWithActiveProAsync(app); // pro, quota 10_000
+
+        // Upgrade to enterprise: quota rises to 1_000_000.
+        await SendSubscriptionUpdatedAsync(app, customer, "active", "price_ent");
+        var upgraded = await EnforceCheckAsync(app, slug, apiKey, 999_999);
+        await Assert.That(upgraded.GetProperty("plan").GetString()).IsEqualTo("enterprise");
+        await Assert.That(upgraded.GetProperty("allowed").GetBoolean()).IsTrue();
+        await Assert.That((await EnforceCheckAsync(app, slug, apiKey, 1_000_000)).GetProperty("allowed").GetBoolean()).IsFalse();
+
+        // Downgrade to pro: the quota is enforced at the new lower ceiling immediately.
+        await SendSubscriptionUpdatedAsync(app, customer, "active", "price_pro");
+        var downgraded = await EnforceCheckAsync(app, slug, apiKey, 9_999);
+        await Assert.That(downgraded.GetProperty("plan").GetString()).IsEqualTo("pro");
+        await Assert.That(downgraded.GetProperty("quota").GetInt32()).IsEqualTo(10_000);
+        await Assert.That(downgraded.GetProperty("allowed").GetBoolean()).IsTrue();
+        await Assert.That((await EnforceCheckAsync(app, slug, apiKey, 10_000)).GetProperty("allowed").GetBoolean()).IsFalse();
+
+        // An unknown price id keeps the current plan instead of crashing or wiping it.
+        await SendSubscriptionUpdatedAsync(app, customer, "active", "price_unknown");
+        var unknown = await EnforceCheckAsync(app, slug, apiKey, 0);
+        await Assert.That(unknown.GetProperty("plan").GetString()).IsEqualTo("pro");
+        await Assert.That(unknown.GetProperty("quota").GetInt32()).IsEqualTo(10_000);
+
+        // Cancellation falls back to the free quota.
+        var deleted = $$"""
+            {
+              "id": "evt_{{Unique()}}",
+              "type": "customer.subscription.deleted",
+              "data": { "object": {
+                "id": "sub_1", "object": "subscription", "customer": "{{customer}}",
+                "status": "canceled", "current_period_end": 1893456000,
+                "items": [ { "price": { "id": "price_pro" } } ]
+              } }
+            }
+            """;
+        using var cancelResponse = await SendWebhookAsync(app.Http, deleted);
+        await Assert.That(cancelResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var canceled = await EnforceCheckAsync(app, slug, apiKey, 99);
+        await Assert.That(canceled.GetProperty("plan").GetString()).IsEqualTo("free");
+        await Assert.That(canceled.GetProperty("quota").GetInt32()).IsEqualTo(100);
+        await Assert.That(canceled.GetProperty("allowed").GetBoolean()).IsTrue();
+        await Assert.That((await EnforceCheckAsync(app, slug, apiKey, 100)).GetProperty("allowed").GetBoolean()).IsFalse();
+        var subscription = await app.Store.FindSubscriptionByCustomerAsync(customer);
+        await Assert.That(subscription!.Plan).IsEqualTo("pro"); // kept on the document, canceled flags it
+    }
+
+    [Test]
     public async Task SharedFixtureWithoutStripeEnvReturns503()
     {
         var service = await AuthServiceFixture.GetAsync();
@@ -321,6 +511,11 @@ public sealed class BillingE2eTests
 
         using var portal = await service.Http.SendAsync(PostJson($"/v1/{slug}/billing/portal", apiKey, new { }));
         await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+
+        // The webhook receiver fails loudly instead of processing unsigned traffic.
+        using var webhook = await service.Http.PostAsync(
+            "/v1/billing/webhook", new StringContent("""{"id":"evt_x","type":"invoice.paid"}""", Encoding.UTF8, "application/json"));
+        await Assert.That(webhook.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
     }
 
     [Test]
@@ -371,7 +566,7 @@ public sealed class BillingE2eTests
         return (instanceId, slug, apiKey, customer);
     }
 
-    private static string CheckoutCompletedJson(string eventId, string instanceId, string customer) => $$"""
+    private static string CheckoutCompletedJson(string eventId, string instanceId, string customer, string subscription = "sub_1") => $$"""
         {
           "id": "{{eventId}}",
           "type": "checkout.session.completed",
@@ -379,7 +574,7 @@ public sealed class BillingE2eTests
             "id": "cs_test_1", "object": "checkout_session",
             "client_reference_id": "{{instanceId}}",
             "customer": "{{customer}}",
-            "subscription": "sub_1",
+            "subscription": "{{subscription}}",
             "metadata": { "instance_id": "{{instanceId}}" }
           } }
         }
@@ -413,9 +608,9 @@ public sealed class BillingE2eTests
         return request;
     }
 
-    private static async Task<HttpResponseMessage> SendWebhookAsync(HttpClient http, string json, string secret = WebhookSecret)
+    private static async Task<HttpResponseMessage> SendWebhookAsync(HttpClient http, string json, string secret = WebhookSecret, long ageSeconds = 0)
     {
-        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - ageSeconds;
         var signature = Convert.ToHexStringLower(HMACSHA256.HashData(
             Encoding.UTF8.GetBytes(secret),
             Encoding.UTF8.GetBytes($"{timestamp}.{json}")));
@@ -425,6 +620,23 @@ public sealed class BillingE2eTests
         };
         request.Headers.Add("Stripe-Signature", $"t={timestamp},v1={signature}");
         return await http.SendAsync(request);
+    }
+
+    private static async Task SendSubscriptionUpdatedAsync(BillingApp app, string customer, string status, string priceId)
+    {
+        var json = $$"""
+            {
+              "id": "evt_{{Unique()}}",
+              "type": "customer.subscription.updated",
+              "data": { "object": {
+                "id": "sub_1", "object": "subscription", "customer": "{{customer}}",
+                "status": "{{status}}", "current_period_end": 1893456000,
+                "items": [ { "price": { "id": "{{priceId}}" } } ]
+              } }
+            }
+            """;
+        using var response = await SendWebhookAsync(app.Http, json);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     // ---- The dedicated app: fixture boot + Stripe env + fake Stripe ----------------------
@@ -532,6 +744,11 @@ public sealed class BillingE2eTests
 
         public int Port { get; }
 
+        /// <summary>Per-subscription-id response overrides for GET /v1/subscriptions/{id},
+        /// used to inject a failing (unparseable) or alternate-plan fetch for one specific
+        /// subscription. Keyed by id so concurrently running tests cannot cross-contaminate.</summary>
+        public readonly Dictionary<string, string> SubscriptionBodies = new();
+
         private FakeStripe(int port) => Port = port;
 
         public static FakeStripe Start()
@@ -600,7 +817,10 @@ public sealed class BillingE2eTests
             {
                 ("POST", "/v1/checkout/sessions") => (200, """{"id":"cs_test_1","url":"https://checkout.example/s_1"}"""),
                 ("POST", "/v1/billing_portal/sessions") => (200, """{"url":"https://portal.example/p_1"}"""),
-                ("GET", "/v1/subscriptions/sub_1") => (200, """{"id":"sub_1","customer":"cus_1","items":[{"price":{"id":"price_pro"}}],"current_period_end":1893456000}"""),
+                ("GET", var p) when p.StartsWith("/v1/subscriptions/", StringComparison.Ordinal)
+                    => (200, SubscriptionBodies.GetValueOrDefault(
+                        p["/v1/subscriptions/".Length..],
+                        """{"id":"sub_1","customer":"cus_1","items":[{"price":{"id":"price_pro"}}],"current_period_end":1893456000}""")),
                 _ => (404, """{"error":{"message":"no such route"}}"""),
             };
             var body = Encoding.UTF8.GetBytes(json);
