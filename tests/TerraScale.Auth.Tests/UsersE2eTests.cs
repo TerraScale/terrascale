@@ -187,6 +187,14 @@ public sealed class UsersE2eTests
         }));
         await Assert.That(shortPassword.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await BodyAsync(shortPassword)).Contains("at least 8 characters");
+
+        using var doubleAt = await service.Http.SendAsync(Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
+        {
+            ["email"] = "a@b.example.com@c",
+            ["password"] = "password123",
+        }));
+        await Assert.That(doubleAt.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await BodyAsync(doubleAt)).Contains("valid email");
     }
 
     [Test]

@@ -15,11 +15,10 @@ public sealed class SessionService(AuthStore store)
     /// <summary>Normalizes an email address for uniqueness keys.</summary>
     public static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 
-    /// <summary>Validates an email shape (pragmatic: local@domain.tld).</summary>
+    /// <summary>Validates an email shape (pragmatic: local@domain.tld, exactly one @).</summary>
     public static bool IsValidEmail(string email) =>
         email.Length is >= 3 and <= 254
-        && email.Contains('@')
-        && email.Split('@') is [var local, var domain, ..]
+        && email.Split('@') is [var local, var domain]
         && local.Length > 0
         && domain.Contains('.')
         && !email.Any(c => char.IsWhiteSpace(c));

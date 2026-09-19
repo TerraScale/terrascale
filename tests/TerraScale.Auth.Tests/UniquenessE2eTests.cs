@@ -64,6 +64,35 @@ public sealed class UniquenessE2eTests
     }
 
     [Test]
+    public async Task UsernameConflictRollsBackTheEmailClaim()
+    {
+        var (store, instanceId) = await ArrangeAsync();
+        var usernameKey = $"{instanceId}:taken-name";
+        await store.CreateUserAsync(new User
+        {
+            Id = "usr_uname_owner", InstanceId = instanceId, Email = "owner@example.com",
+            EmailKey = $"{instanceId}:owner@example.com", UsernameKey = usernameKey,
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        // Fresh email but a taken username: the email claim succeeds, the username
+        // claim conflicts. The email claim of this failed create must unwind, or
+        // that address reads as "already registered" forever with no user behind it.
+        var conflict = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            store.CreateUserAsync(new User
+            {
+                Id = "usr_uname_victim", InstanceId = instanceId, Email = "fresh-uname@example.com",
+                EmailKey = $"{instanceId}:fresh-uname@example.com", UsernameKey = usernameKey,
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            }));
+        await Assert.That(conflict!.StatusCode is System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.PreconditionFailed).IsTrue();
+
+        await store.CreateUserAsync(NewUser(instanceId, "fresh-uname@example.com", "usr_uname_fresh"));
+    }
+
+    [Test]
     public async Task ReleaseAllowsReclaim()
     {
         var (store, instanceId) = await ArrangeAsync();

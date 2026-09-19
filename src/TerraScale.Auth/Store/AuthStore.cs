@@ -115,21 +115,32 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public async Task<User> CreateUserAsync(User user, CancellationToken ct = default)
     {
         // Random high-entropy keys (sessions, codes, api keys) tolerate check-then-act;
-        // user-chosen identifiers (email, username) need the atomic claim.
-        if (user.EmailKey is not null)
-            await ClaimUniqueAsync("user-email", user.EmailKey, user.Id, ct);
-        if (user.UsernameKey is not null)
-            await ClaimUniqueAsync("user-username", user.UsernameKey, user.Id, ct);
+        // user-chosen identifiers (email, username) need the atomic claim. Claims are
+        // taken inside the try and only released once actually held — a conflicting
+        // later claim must not strand the earlier one, and a failed claim must not
+        // release a key owned by someone else.
+        var emailClaimed = false;
+        var usernameClaimed = false;
         try
         {
+            if (user.EmailKey is not null)
+            {
+                await ClaimUniqueAsync("user-email", user.EmailKey, user.Id, ct);
+                emailClaimed = true;
+            }
+            if (user.UsernameKey is not null)
+            {
+                await ClaimUniqueAsync("user-username", user.UsernameKey, user.Id, ct);
+                usernameClaimed = true;
+            }
             return await CreateAsync("users", user.Id, user, ct);
         }
         catch
         {
-            if (user.EmailKey is not null)
-                await ReleaseUniqueAsync("user-email", user.EmailKey, ct);
-            if (user.UsernameKey is not null)
-                await ReleaseUniqueAsync("user-username", user.UsernameKey, ct);
+            if (emailClaimed)
+                await ReleaseUniqueAsync("user-email", user.EmailKey!, ct);
+            if (usernameClaimed)
+                await ReleaseUniqueAsync("user-username", user.UsernameKey!, ct);
             throw;
         }
     }
