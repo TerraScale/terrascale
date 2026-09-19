@@ -282,20 +282,15 @@ public static class ConnectionEndpoints
         return token;
     }
 
-    /// <summary>Single-use consume: instance, purpose, connection (UserId), expiry, and consumed flag, then marks consumed.</summary>
-    internal static async Task<VerificationToken?> ConsumeStateAsync(AuthStore store, Instance instance, string connectionId, string token, string purpose, CancellationToken ct)
-    {
-        var record = await store.FindVerificationTokenAsync(SecureTokens.Sha256Hex(token), ct);
-        if (record is null
-            || record.InstanceId != instance.Id
-            || record.Purpose != purpose
-            || record.UserId != connectionId
-            || record.Consumed
-            || record.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
-            return null;
-        await store.UpsertVerificationTokenAsync(record with { Consumed = true }, ct);
-        return record;
-    }
+    /// <summary>Single-use consume: instance, purpose, connection (UserId), expiry, and consumed
+    /// flag, then atomically marks consumed (If-Match CAS — of two concurrent consumes only one wins).</summary>
+    internal static Task<VerificationToken?> ConsumeStateAsync(AuthStore store, Instance instance, string connectionId, string token, string purpose, CancellationToken ct) =>
+        store.ConsumeVerificationTokenAsync(SecureTokens.Sha256Hex(token), record =>
+            record.InstanceId == instance.Id
+            && record.Purpose == purpose
+            && record.UserId == connectionId
+            && !record.Consumed
+            && record.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds(), ct);
 
     /// <summary>Find-or-create by email; null when the identifier is unusable or the account is banned/deleted.</summary>
     internal static async Task<User?> FindOrCreateUserAsync(AuthStore store, SessionService sessions, Instance instance, string email, bool emailVerified, string? name, CancellationToken ct)

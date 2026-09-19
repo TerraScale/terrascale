@@ -65,7 +65,7 @@ internal static class OidcLogin
         {
             return await CompleteSignInAsync(slug, instance, connection, code, options, store, sessions, request.HttpContext, ct);
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException or CryptographicException)
         {
             return ConnectionEndpoints.ErrorPage(slug, "Contacting the identity provider failed.", 502);
         }
@@ -92,6 +92,12 @@ internal static class OidcLogin
 
         var keys = await GetSigningKeysAsync(connection, ct);
         var claims = keys is null ? null : JsonWebToken.Verify(idToken, kid => ResolveKey(keys, kid));
+        if (claims is null)
+        {
+            // The cached JWKS may be stale after an upstream key rotation: force one refresh and retry.
+            if ((keys = await GetSigningKeysAsync(connection, ct, forceRefresh: true)) is not null)
+                claims = JsonWebToken.Verify(idToken, kid => ResolveKey(keys, kid));
+        }
         if (claims is null)
             return ConnectionEndpoints.ErrorPage(slug, "The id_token signature could not be verified.");
         if (!string.Equals(ClaimString(claims, "iss"), connection.IssuerUrl, StringComparison.OrdinalIgnoreCase))
@@ -122,7 +128,11 @@ internal static class OidcLogin
 
         if (email is null)
             return ConnectionEndpoints.ErrorPage(slug, "The identity provider did not provide an email address.");
-        var user = await ConnectionEndpoints.FindOrCreateUserAsync(store, sessions, instance, email, emailVerified ?? false, name, ct);
+        // An unconfirmed upstream email must never link to (or create) a local account: a lax or
+        // attacker-controlled provider could otherwise assert a victim's address and take it over.
+        if (emailVerified is not true)
+            return ConnectionEndpoints.ErrorPage(slug, "The identity provider did not confirm this email address.");
+        var user = await ConnectionEndpoints.FindOrCreateUserAsync(store, sessions, instance, email, emailVerified.Value, name, ct);
         if (user is null)
             return ConnectionEndpoints.ErrorPage(slug, "Could not create or access an account for this identity.");
 
@@ -157,9 +167,9 @@ internal static class OidcLogin
     }
 
     /// <summary>Cached JWKS for the connection: discovery gives the jwks_uri, the JWKs become signing keys.</summary>
-    private static async Task<List<SigningKey>?> GetSigningKeysAsync(Connection connection, CancellationToken ct)
+    private static async Task<List<SigningKey>?> GetSigningKeysAsync(Connection connection, CancellationToken ct, bool forceRefresh = false)
     {
-        if (JwksCache.TryGetValue(connection.Id, out var cached) && cached.FetchedAt + JwksTtl > DateTimeOffset.UtcNow)
+        if (!forceRefresh && JwksCache.TryGetValue(connection.Id, out var cached) && cached.FetchedAt + JwksTtl > DateTimeOffset.UtcNow)
             return cached.Keys;
 
         if ((await FetchDiscoveryAsync(new Uri(connection.IssuerUrl!), ct))?.JwksUri is not { } jwksUri)
@@ -182,7 +192,7 @@ internal static class OidcLogin
             JwksCache[connection.Id] = (DateTimeOffset.UtcNow, keys);
             return keys;
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException or JsonException or FormatException)
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException or JsonException or FormatException or CryptographicException or ArgumentException)
         {
             return null;
         }

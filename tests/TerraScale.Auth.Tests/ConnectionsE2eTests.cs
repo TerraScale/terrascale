@@ -221,6 +221,97 @@ public sealed class ConnectionsE2eTests
         await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, idp.Email)).IsNull();
     }
 
+    [Test]
+    public async Task OidcUnverifiedEmailMustNotLinkOrCreateAccounts()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        await using var idp = await FakeIdP.StartAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (connectionId, _) = await CreateOidcConnectionAsync(service, slug, apiKey, idp);
+
+        // A local password account exists for the victim.
+        var victim = $"victim{Guid.NewGuid().ToString("N")[..8]}@example.test";
+        using (var signUp = await service.Http.PostAsync($"/ui/{slug}/sign-up",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["email"] = victim, ["password"] = "password123", ["name"] = "Victim" })))
+        {
+            await Assert.That(signUp.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        }
+        var before = await service.Store.FindUserByEmailAsync(instanceId, victim)
+            ?? throw new InvalidOperationException("victim missing from store");
+
+        // The upstream asserts the victim's email as unverified: the callback must reject it,
+        // not sign the attacker into the victim's account.
+        idp.Email = victim;
+        idp.EmailVerifiedClaim = false;
+        var state = await AuthorizeStateAsync(service, slug, connectionId);
+        using var takeover = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(state)}");
+        await Assert.That(takeover.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(takeover.Headers.TryGetValues("Set-Cookie", out _)).IsFalse();
+
+        // An absent email_verified claim is equally unverified.
+        idp.EmailVerifiedClaim = null;
+        state = await AuthorizeStateAsync(service, slug, connectionId);
+        using var absent = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(state)}");
+        await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(absent.Headers.TryGetValues("Set-Cookie", out _)).IsFalse();
+
+        // The victim's account was untouched: password intact, no SSO sign-in recorded.
+        var after = await service.Store.FindUserByEmailAsync(instanceId, victim)
+            ?? throw new InvalidOperationException("victim missing from store");
+        await Assert.That(after.PasswordHash).IsNotNull();
+        await Assert.That(after.LastSignInAt).IsEqualTo(before.LastSignInAt);
+        var oidcSignIn = (await service.Store.ListAuditEventsAsync(instanceId, 100))
+            .Any(e => e.Type == "user.signed_in" && e.ActorId == after.Id
+                && e.Data.TryGetValue("method", out var method) && method.ToString() == $"oidc:{connectionId}");
+        await Assert.That(oidcSignIn).IsFalse();
+    }
+
+    [Test]
+    public async Task OidcPicksUpRotatedUpstreamKeysWithoutWaitingForCacheExpiry()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        await using var idp = await FakeIdP.StartAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (connectionId, _) = await CreateOidcConnectionAsync(service, slug, apiKey, idp);
+
+        // First sign-in primes the 1h JWKS cache.
+        var state = await AuthorizeStateAsync(service, slug, connectionId);
+        using var first = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(state)}");
+        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.Found);
+
+        // The IdP rotates its signing key; the cached JWKS is instantly stale but sign-in must still work.
+        idp.RotateSigningKey();
+        state = await AuthorizeStateAsync(service, slug, connectionId);
+        using var second = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(state)}");
+        await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(second.Headers.Location!.ToString()).IsEqualTo($"/ui/{slug}/account");
+    }
+
+    [Test]
+    public async Task OidcMalformedUpstreamResponsesNever500()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        await using var idp = await FakeIdP.StartAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (connectionId, _) = await CreateOidcConnectionAsync(service, slug, apiKey, idp);
+
+        // A 200 token response with a non-JSON body: a clean 502, not an unhandled exception.
+        idp.GarbageTokenResponse = true;
+        var state = await AuthorizeStateAsync(service, slug, connectionId);
+        using var garbage = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(state)}");
+        await Assert.That(garbage.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
+        await Assert.That((await garbage.Content.ReadAsStringAsync()).Contains("Sign-in failed")).IsTrue();
+
+        // An unsigned alg=none id_token: rejected, no session, no user.
+        idp.GarbageTokenResponse = false;
+        idp.SignAlgNone = true;
+        state = await AuthorizeStateAsync(service, slug, connectionId);
+        using var none = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(state)}");
+        await Assert.That(none.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(none.Headers.TryGetValues("Set-Cookie", out _)).IsFalse();
+        await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, idp.Email)).IsNull();
+    }
+
     // ---- SAML sign-in ------------------------------------------------------------------------
 
     [Test]
@@ -574,10 +665,19 @@ public sealed class ConnectionsE2eTests
     {
         private const string Kid = "fake-idp-rsa-1";
         private readonly HttpListener listener;
-        private readonly RSA signingKey = RSA.Create(2048);
+        private RSA signingKey = RSA.Create(2048);
+        private string currentKid = Kid;
         private readonly RSA wrongKey = RSA.Create(2048);
         private readonly Task acceptLoop;
         private readonly string baseUrl;
+
+        /// <summary>Simulates an upstream key rotation: new key material and a new kid in the JWKS.</summary>
+        public void RotateSigningKey()
+        {
+            signingKey.Dispose();
+            signingKey = RSA.Create(2048);
+            currentKid = "fake-idp-rsa-rotated";
+        }
 
         private FakeIdP(HttpListener listener, string baseUrl)
         {
@@ -593,9 +693,13 @@ public sealed class ConnectionsE2eTests
 
         public string ClientId { get; } = "cid_" + Guid.NewGuid().ToString("N")[..10];
         public string ClientSecret { get; } = "csec_" + Guid.NewGuid().ToString("N")[..16];
-        public string Email { get; } = $"oidc{Guid.NewGuid().ToString("N")[..8]}@example.test";
+        public string Email { get; set; } = $"oidc{Guid.NewGuid().ToString("N")[..8]}@example.test";
         public bool IncludeEmailClaim { get; set; } = true;
+        /// <summary>null omits the claim entirely; the email claim then carries no verification.</summary>
+        public bool? EmailVerifiedClaim { get; set; } = true;
         public bool SignWithWrongKey { get; set; }
+        public bool SignAlgNone { get; set; }
+        public bool GarbageTokenResponse { get; set; }
         public List<Dictionary<string, string>> TokenRequests { get; } = [];
 
         public static async Task<FakeIdP> StartAsync()
@@ -668,7 +772,7 @@ public sealed class ConnectionsE2eTests
                                 ["kty"] = "RSA",
                                 ["use"] = "sig",
                                 ["alg"] = "RS256",
-                                ["kid"] = Kid,
+                                ["kid"] = currentKid,
                                 ["n"] = Encodings.Base64UrlEncode(parameters.Modulus!),
                                 ["e"] = Encodings.Base64UrlEncode(parameters.Exponent!),
                             },
@@ -679,6 +783,15 @@ public sealed class ConnectionsE2eTests
                     var form = await ReadFormAsync(context.Request);
                     lock (TokenRequests)
                         TokenRequests.Add(form);
+                    if (GarbageTokenResponse)
+                    {
+                        var garbage = Encoding.UTF8.GetBytes("not json at all");
+                        context.Response.ContentType = "application/json";
+                        context.Response.ContentLength64 = garbage.Length;
+                        await context.Response.OutputStream.WriteAsync(garbage);
+                        context.Response.Close();
+                        return;
+                    }
                     if (form.GetValueOrDefault("client_secret") != ClientSecret)
                     {
                         context.Response.StatusCode = 401;
@@ -698,24 +811,27 @@ public sealed class ConnectionsE2eTests
                     if (IncludeEmailClaim)
                     {
                         claims["email"] = Email;
-                        claims["email_verified"] = true;
+                        if (EmailVerifiedClaim is { } verified)
+                            claims["email_verified"] = verified;
                     }
                     await WriteJsonAsync(context, new Dictionary<string, object>
                     {
                         ["access_token"] = "at_" + Guid.NewGuid().ToString("N")[..12],
                         ["token_type"] = "Bearer",
                         ["expires_in"] = 3600,
-                        ["id_token"] = SignRs256(SignWithWrongKey ? wrongKey : signingKey, claims),
+                        ["id_token"] = SignAlgNone ? UnsignedToken(claims) : SignRs256(SignWithWrongKey ? wrongKey : signingKey, claims),
                     });
                     return;
                 case "/userinfo":
-                    await WriteJsonAsync(context, new Dictionary<string, object>
+                    var userinfo = new Dictionary<string, object>
                     {
                         ["sub"] = "fake-idp-subject",
                         ["email"] = Email,
-                        ["email_verified"] = true,
                         ["name"] = "Jane Doe",
-                    });
+                    };
+                    if (EmailVerifiedClaim is { } userinfoVerified)
+                        userinfo["email_verified"] = userinfoVerified;
+                    await WriteJsonAsync(context, userinfo);
                     return;
                 default:
                     context.Response.StatusCode = 404;
@@ -724,13 +840,21 @@ public sealed class ConnectionsE2eTests
             }
         }
 
-        private static string SignRs256(RSA key, Dictionary<string, object> claims)
+        private string SignRs256(RSA key, Dictionary<string, object> claims)
         {
-            var header = JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object> { ["alg"] = "RS256", ["typ"] = "JWT", ["kid"] = Kid });
+            var header = JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object> { ["alg"] = "RS256", ["typ"] = "JWT", ["kid"] = currentKid });
             var payload = JsonSerializer.SerializeToUtf8Bytes(claims);
             var signingInput = Encoding.ASCII.GetBytes(Encodings.Base64UrlEncode(header) + "." + Encodings.Base64UrlEncode(payload));
             var signature = key.SignData(signingInput, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
             return Encodings.Base64UrlEncode(header) + "." + Encodings.Base64UrlEncode(payload) + "." + Encodings.Base64UrlEncode(signature);
+        }
+
+        /// <summary>An unsigned alg=none token with a trailing empty signature segment.</summary>
+        private static string UnsignedToken(Dictionary<string, object> claims)
+        {
+            var header = Encodings.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object> { ["alg"] = "none", ["typ"] = "JWT" }));
+            var payload = Encodings.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(claims));
+            return header + "." + payload + ".";
         }
 
         private static async Task WriteJsonAsync(HttpListenerContext context, Dictionary<string, object> body)
