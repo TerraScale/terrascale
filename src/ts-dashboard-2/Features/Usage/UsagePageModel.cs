@@ -37,11 +37,19 @@ public sealed record UsagePageModel(
     string Renewal,
     long InvoiceCount,
     IReadOnlyList<DashboardStore.InvoiceRow> Invoices,
-    string? BillingReturn) : IPageModel
+    string? BillingReturn,
+    bool HasManagedSubscription,
+    IReadOnlyList<UsagePlanImpactRow> PlanImpact,
+    bool UsagePartial,
+    bool BillingPartial,
+    bool BillingActionRequired,
+    string? StorageCoverageDeadline,
+    string RetentionAlertBody,
+    string? SavedControlsMessage) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 
-    public static UsagePageModel From(DashboardStore store, string href, string? range, string? billing)
+    public static UsagePageModel From(DashboardStore store, string href, string? range, string? billing, string? saved)
     {
         var databases = store.ProjectDatabases(store.ActiveProjectId);
 
@@ -75,23 +83,63 @@ public sealed record UsagePageModel(
             .OrderByDescending(s => s.Value).ThenBy(s => s.Label, StringComparer.Ordinal)
             .ToList();
 
-        var selectedRange = store.Workloads.Any(w => w.Range == range) ? range! : "7d";
-        var historyRanges = store.Workloads
-            .Select(w => new UsageHistoryRangeOption(
-                w.Range,
-                w.Range switch
-                {
-                    "24h" => "Last 24 hours",
-                    "7d" => "Last 7 days",
-                    "30d" => "Last 30 days",
-                    "90d" => "Last 90 days",
-                    _ => "Last year",
-                },
-                w.Range == selectedRange))
+        // v1 UsageHistoryPanel: 24h is always offered; longer ranges only within retention.
+        var retentionDays = store.UsageRetentionDays;
+        string RangeLabel(string value) => value switch
+        {
+            "24h" => "Last 24 hours",
+            "7d" => "Last 7 days",
+            "30d" => "Last 30 days",
+            "90d" => "Last 90 days",
+            _ => "Last year",
+        };
+        int RangeDays(string value) => value switch { "24h" => 1, "7d" => 7, "30d" => 30, "90d" => 90, _ => 365 };
+        string[] allRanges = ["24h", "7d", "30d", "90d", "365d"];
+        var offeredRanges = allRanges
+            .Where(r => r is "24h" || RangeDays(r) <= retentionDays)
             .ToList();
-        var history = store.Workloads.First(w => w.Range == selectedRange).Points;
+        var selectedRange = range is not null && offeredRanges.Contains(range) ? range : "7d";
+        var history = store.Workloads
+            .Where(w => w.Range == selectedRange)
+            .SelectMany(w => w.Points)
+            .ToList();
+        var retentionLimited = range is not null && allRanges.Contains(range) && RangeDays(range) > retentionDays;
+        var historyRanges = offeredRanges
+            .Select(r => new UsageHistoryRangeOption(r, RangeLabel(r), r == selectedRange))
+            .ToList();
 
         var activePlan = store.Plans.First(p => p.Id == store.BillingPlanId);
+
+        // v1 buildPlanImpactRows: current usage vs. each plan's included storage/writes.
+        List<UsagePlanImpactRow> planImpact = [.. store.Plans.Select(plan =>
+        {
+            var isCurrent = plan.Id == activePlan.Id;
+            List<string> excess = [];
+            var storageExcess = store.StorageBytesTotal - plan.StorageLimitMb * 1024L * 1024;
+            if (storageExcess > 0)
+            {
+                excess.Add($"{DashboardStore.FormatBytes(storageExcess)} storage");
+            }
+
+            var writeExcess = store.Usage.WriteUnits - plan.RequestLimit;
+            if (writeExcess > 0)
+            {
+                excess.Add($"{DashboardStore.FormatNumber(writeExcess)} writes");
+            }
+
+            return new UsagePlanImpactRow(
+                plan.Name,
+                isCurrent ? "Current plan" : excess.Count > 0 ? "Over current usage" : "Within limits",
+                isCurrent ? "info" : excess.Count > 0 ? "warning" : "success",
+                excess.Count > 0
+                    ? $"Current usage exceeds this plan by {string.Join(" and ", excess)}."
+                    : "Current logical storage and writes fit this plan's included resources.",
+                isCurrent ? "Current plan"
+                    : plan.MonthlyUsd > activePlan.MonthlyUsd ? "Immediately; proration may apply"
+                    : plan.MonthlyUsd < activePlan.MonthlyUsd ? "Next billing cycle"
+                    : "Confirmed by the billing provider");
+        })];
+
         var storageTone = store.StoragePercentUsed >= 100 ? "danger"
             : store.StoragePercentUsed >= 80 ? "warning" : "success";
 
@@ -113,7 +161,9 @@ public sealed record UsagePageModel(
             StorageRemainingLabel: DashboardStore.FormatBytes(Math.Max(0, store.StorageLimitBytes - store.StorageBytesTotal)),
             StoragePercentLabel: $"{DashboardStore.FormatPercent(store.StoragePercentUsed)} used",
             HistoryRanges: historyRanges,
-            RetentionWarning: selectedRange is "30d" or "90d",
+            RetentionWarning: retentionLimited,
+            RetentionAlertBody:
+                $"The requested period exceeds the {retentionDays}-day retention window. The accessible range starts {DashboardStore.FormatUtcDateTime(store.UsagePeriodStart)}.",
             History: [.. history],
             MeasuredUsage: measured,
             RegionPlacement: regionPlacement,
@@ -137,7 +187,19 @@ public sealed record UsagePageModel(
             Renewal: DashboardStore.FormatDate(store.BillingRenewal),
             InvoiceCount: store.TotalInvoices,
             Invoices: [.. store.Invoices],
-            BillingReturn: billing)
+            BillingReturn: billing,
+            HasManagedSubscription: store.HasManagedSubscription,
+            PlanImpact: planImpact,
+            UsagePartial: store.UsagePartial,
+            BillingPartial: store.BillingPartial,
+            BillingActionRequired: store.BillingActionRequired,
+            StorageCoverageDeadline: store.StorageCoverageDeadline,
+            SavedControlsMessage: saved switch
+            {
+                "ok" => "Spending controls saved.",
+                "invalid" => "Enter a non-negative dollar amount with at most two decimal places.",
+                _ => null,
+            })
         {
             Shell = ShellFactory.Create(store, href),
         };

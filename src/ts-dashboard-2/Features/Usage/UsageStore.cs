@@ -14,7 +14,9 @@ public sealed partial class DashboardStore
         string Status,          // paid | open | void
         string PeriodStart,
         string PeriodEnd,
-        string IssuedAt);
+        string IssuedAt,
+        string? HostedInvoiceUrl = null,
+        string? InvoicePdf = null);
 
     public sealed record PlanResourceRow(
         string Resource,
@@ -42,8 +44,12 @@ public sealed partial class DashboardStore
 
     public ImmutableArray<InvoiceRow> Invoices { get; private set; } =
     [
-        new("in_01JCA2QG4M6P8S1V3X5Z7B9DF", 2900, "USD", "paid", "2026-08-01T00:00:00Z", "2026-09-01T00:00:00Z", "2026-09-01T08:02:00Z"),
-        new("in_01JCA3RH5N7Q9T2W4Y6A8C2EG", 4140, "USD", "open", "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z", "2026-10-01T08:00:00Z"),
+        new("in_01JCA2QG4M6P8S1V3X5Z7B9DF", 2900, "USD", "paid", "2026-08-01T00:00:00Z", "2026-09-01T00:00:00Z", "2026-09-01T08:02:00Z",
+            "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA2QG4M6P8S1V3X5Z7B9DF",
+            "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA2QG4M6P8S1V3X5Z7B9DF/pdf"),
+        new("in_01JCA3RH5N7Q9T2W4Y6A8C2EG", 4140, "USD", "open", "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z", "2026-10-01T08:00:00Z",
+            "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA3RH5N7Q9T2W4Y6A8C2EG",
+            "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA3RH5N7Q9T2W4Y6A8C2EG/pdf"),
     ];
 
     public long TotalInvoices => Invoices.Length;
@@ -51,6 +57,23 @@ public sealed partial class DashboardStore
     public string UsagePeriodStart => "2026-09-01T00:00:00Z";
     public string UsagePeriodEnd => "2026-10-01T00:00:00Z";
     public string OrganizationUpdatedAt => FormatUtcDateTime(UsagePeriodStart);
+
+    // v1 usage-page account states. The demo world mirrors the v1 screenshot
+    // member: usage sources partially loaded, billing fully loaded.
+    public bool UsagePartial => true;
+    public bool BillingPartial => false;
+    public string? StorageCoverageDeadline => null;
+    public int UsageRetentionDays => 7;
+
+    // v1 BillingControls: a managed subscription (active/trialing with a
+    // scheduled renewal) hides checkout and shows portal-only "Manage subscription".
+    public bool HasManagedSubscription =>
+        BillingAccountStatus is "active" or "trialing"
+        && DateTimeOffset.TryParse(BillingRenewal, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var renewal)
+        && renewal > DateTimeOffset.UtcNow;
+
+    // v1: past_due/unpaid accounts get the "Billing action required" warning.
+    public bool BillingActionRequired => BillingAccountStatus is "past_due" or "unpaid";
 
     public long StorageBytesTotal => Usage.StorageMb * 1024 * 1024;
     public long StorageLimitBytes => Usage.StorageLimitMb * 1024 * 1024;

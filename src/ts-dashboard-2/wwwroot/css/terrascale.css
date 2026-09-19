@@ -2938,10 +2938,96 @@ single-selector rules may stay on one line.
   /* Stat card grids: 2-up on tablet, 4-up on desktop (usage summary + billing). */
   .ts-usage-stats { gap: var(--ts-md); }
 
-  .ts-billing-grid { gap: var(--ts-md); }
+  /* v1 usageStats: 1 col → 2 @40rem → 4 @80rem, margin-top 24px above the grid. */
+  .ts-usage-summary {
+    gap: var(--ts-md);
+    margin-top: var(--ts-xl);
+    grid-template-columns: minmax(0, 1fr);
+  }
 
+  @media (min-width: 40rem) {
+    .ts-usage-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (min-width: 80rem) {
+    .ts-usage-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+
+  /* v1 billingGrid: 6 metric cards in one row @48rem. */
+  .ts-billing-grid {
+    gap: var(--ts-md);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @media (min-width: 48rem) {
+    .ts-billing-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  }
+
+  /* v1 UsageHistoryPanel controlsEnd: select right-aligned under the header. */
+  .ts-usage-controls-end {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* v1 usage-page metricIconBrand / metricIconWarning. */
+  .ts-metric-icon-accent { color: var(--ts-accent); }
+  .ts-metric-icon-warning { color: var(--ts-warning); }
+
+  /* v1 quotaMetric: tighter card, 18px semibold sans value. */
+  .ts-quota-metric {
+    padding: var(--ts-md);
+    gap: var(--ts-xs);
+    display: grid;
+  }
+
+  .ts-quota-metric .ts-metric-label {
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-quota-metric .ts-metric-value-sm {
+    font-family: var(--ts-font-sans);
+    font-weight: var(--ts-fw-semibold);
+    font-size: var(--ts-fs-panel-title);
+    line-height: 1.375;
+  }
+
+  /* v1 EmptyState restyle (global per spec exact values): dashed panel, icon box. */
+  .ts-empty {
+    padding: var(--ts-xl);
+    border: 1px dashed var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: color-mix(in oklab, var(--ts-surface-muted) 30%, transparent);
+  }
+
+  .ts-empty-title {
+    font-size: var(--ts-fs-ui);
+    font-weight: var(--ts-fw-medium);
+  }
+
+  .ts-empty-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--ts-radius-control);
+    background-color: var(--ts-surface-muted);
+    color: var(--ts-ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: var(--ts-sm);
+    flex-shrink: 0;
+  }
+
+  .ts-empty-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* v1 statValue: 24px sans semibold, 32px line (global per spec exact values). */
   .ts-metric-value-sm {
-    font-size: var(--ts-fs-page-title);
+    font-family: var(--ts-font-sans);
+    font-weight: var(--ts-fw-semibold);
+    font-size: 24px;
+    line-height: 32px;
   }
 
   .ts-metric-inline {
@@ -2999,7 +3085,11 @@ single-selector rules may stay on one line.
     min-width: 2px;
   }
 
-  .ts-bar-fill-2 { background-color: var(--ts-chart-2); }
+  /* v1 UsageBreakdown: all breakdown bars use tokens.accent. Scoped to the
+     usage charts grid so other features' bars keep their palette. */
+  .ts-usage-charts .ts-bar-fill {
+    background-color: var(--ts-accent);
+  }
 
   .ts-bar-value {
     font-size: var(--ts-fs-meta);
