@@ -16,7 +16,7 @@ loopback stub with `--allow-http`. No absent counter is replaced with zero.
 Run a real measurement only with credentials supplied outside source control:
 
 ```sh
-cd bench/reader-ramp
+cd ts-atlas/reader-ramp
 go run . run \
   --endpoint 'https://sync.api.example/api/v1/reactive/views/V/1/log?offset=0' \
   --capability "$READER_RAMP_CAPABILITY" \
@@ -45,7 +45,7 @@ rejects stub mode by default. `--allow-stub` is useful for checking local
 reader and MessagePack behavior, but it cannot prove Cloudflare metrics or
 the zero-Worker production claim.
 
-Build and test without changing the ts-proxy package manifest:
+Build and test without changing the ts-atlas package manifest:
 
 ```sh
 go test ./...
