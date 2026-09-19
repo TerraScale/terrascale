@@ -97,21 +97,22 @@ jobs:
       - name: Publish immutable container on protected main
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
         env:
-          TERRASCALE_BOT_TOKEN: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
         run: |
           set -euo pipefail
           source_commit="${FORGEJO_SHA:?event SHA is required}"
           local_image="localhost/terrascale/ts-auth:${source_commit}"
-          remote_image="git.terrascale.tech/terrascale/ts-auth:${source_commit}"
+          remote_image="git.terrascale.tech/${REPOSITORY_OWNER:?owner is required}/ts-auth:${source_commit}"
           # The runner exports REGISTRY_AUTH_FILE as a bind-mounted file under
           # /etc/containers; podman login rewrites its auth file via rename,
           # which fails with EBUSY on a bind mount. Use a job-local auth file.
           export REGISTRY_AUTH_FILE="${RUNNER_TEMP:-/tmp}/ts-auth-podman-auth.json"
           # The job token authenticates but cannot write packages: the layer
-          # upload fails with 'authentication required'. The organization bot
-          # token carries the package write grant for the registry.
-          printf '%s\n' "${TERRASCALE_BOT_TOKEN:?organization bot token is required}" | \
-            podman login git.terrascale.tech --username terrascale-bot --password-stdin >/dev/null
+          # upload fails with 'authentication required'. A user/org token with
+          # the package write grant is required.
+          printf '%s\n' "${REGISTRY_PUSH_TOKEN:?registry push token is required}" | \
+            podman login git.terrascale.tech --username "${REPOSITORY_OWNER}" --password-stdin >/dev/null
           podman tag "${local_image}" "${remote_image}"
           podman push "${remote_image}"
           podman image inspect "${remote_image}"
