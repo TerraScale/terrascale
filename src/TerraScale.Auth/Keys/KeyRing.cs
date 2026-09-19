@@ -10,7 +10,10 @@ using TerraScale.Auth.Store;
 /// </summary>
 public sealed class KeyRing(AuthStore store)
 {
-    private readonly ConcurrentDictionary<string, List<EcdsaSigningKey>> cache = new(StringComparer.Ordinal);
+    // ponytail: Lazy dedup only guards this process; two cold-starting replicas can
+    // still each generate a key (both stay active, all tokens verify). Claim-based
+    // generation if multi-replica key identity ever matters.
+    private readonly ConcurrentDictionary<string, Lazy<Task<List<EcdsaSigningKey>>>> cache = new(StringComparer.Ordinal);
 
     /// <summary>Returns the current signing key for the instance, generating one if needed.</summary>
     public async Task<EcdsaSigningKey> GetCurrentAsync(string instanceId, CancellationToken ct = default)
@@ -25,9 +28,24 @@ public sealed class KeyRing(AuthStore store)
 
     private async Task<List<EcdsaSigningKey>> LoadAsync(string instanceId, CancellationToken ct)
     {
-        if (cache.TryGetValue(instanceId, out var cached))
-            return cached;
+        // The shared load ignores the first caller's token: one cancelled request
+        // must not cancel (or cache the cancellation of) the fill for everyone.
+        var lazy = cache.GetOrAdd(instanceId,
+            _ => new Lazy<Task<List<EcdsaSigningKey>>>(() => LoadUncachedAsync(instanceId, CancellationToken.None)));
+        try
+        {
+            return await lazy.Value;
+        }
+        catch
+        {
+            // Don't cache a failed load (e.g. store unreachable) for the process lifetime.
+            cache.TryRemove(new KeyValuePair<string, Lazy<Task<List<EcdsaSigningKey>>>>(instanceId, lazy));
+            throw;
+        }
+    }
 
+    private async Task<List<EcdsaSigningKey>> LoadUncachedAsync(string instanceId, CancellationToken ct)
+    {
         var records = await store.ListSigningKeysAsync(instanceId, ct);
         var active = records.Where(r => r.Active).OrderByDescending(r => r.CreatedAt).ToList();
 
@@ -53,7 +71,6 @@ public sealed class KeyRing(AuthStore store)
                 keys.Add(EcdsaSigningKey.FromSecret(Convert.FromBase64String(record.SecretBase64), record.Id));
         }
 
-        cache[instanceId] = keys;
         return keys;
     }
 }
@@ -78,6 +95,8 @@ public static class SecretBox
         if (!boxed.StartsWith("v1:", StringComparison.Ordinal))
             throw new FormatException("unknown secret box version");
         var raw = Convert.FromBase64String(boxed["v1:".Length..]);
+        if (raw.Length < 12 + 16)
+            throw new FormatException("truncated secret box");
         var nonce = raw.AsSpan(0, 12);
         var ciphertext = raw.AsSpan(12, raw.Length - 12 - 16);
         var tag = raw.AsSpan(raw.Length - 16);

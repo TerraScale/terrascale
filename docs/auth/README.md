@@ -72,7 +72,7 @@ TS_AUTH_OPERATOR_KEY=$(head -c 32 /dev/urandom | base64) \
 | `TS_AUTH_TERRASCALE_API_KEY` | Project API key for TerraBase |
 | `TS_AUTH_TERRASCALE_PROJECT_ID` / `TS_AUTH_TERRASCALE_TENANT_ID` | Optional project/tenant selectors |
 | `TS_AUTH_DATABASE` | TerraBase database backing ts-auth |
-| `TS_AUTH_MASTER_KEY` | base64 32/48/64 bytes; encrypts recoverable secrets (TOTP seeds) |
+| `TS_AUTH_MASTER_KEY` | base64 32 bytes; encrypts recoverable secrets (TOTP seeds) |
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
 | `TS_AUTH_LISTEN` | Listen URL (default `http://+:8080`) |
 | `TS_AUTH_RATE_LIMIT` | Management API requests per key per 5 min (default 1000) |

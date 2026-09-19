@@ -85,8 +85,10 @@ public sealed record AuthOptions
         {
             throw new InvalidOperationException("TS_AUTH_MASTER_KEY must be base64", exception);
         }
-        if (masterKeyBytes.Length is not (32 or 48 or 64))
-            throw new InvalidOperationException("TS_AUTH_MASTER_KEY must decode to 32, 48, or 64 bytes");
+        // SecretBox feeds this straight to AES-GCM, which only accepts 128/192/256-bit
+        // keys — so anything but 32 bytes must fail here, not at first use.
+        if (masterKeyBytes.Length != 32)
+            throw new InvalidOperationException("TS_AUTH_MASTER_KEY must decode to 32 bytes");
 
         return new AuthOptions
         {
