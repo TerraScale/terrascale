@@ -32,6 +32,7 @@ const adminRoutes: Route[] = [
   { path: "/admin/pricing", expectText: "Pricing" },
 ];
 
+
 test.beforeAll(async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -70,7 +71,7 @@ test("member pages render", async ({ page }) => {
   for (const route of memberRoutes) {
     const response = await page.goto(route.path);
     expect(response?.status(), route.path).toBeLessThan(400);
-    await expect(page.getByText(route.expectText).first(), route.path).toBeVisible();
+    await expect(page.locator("h1"), route.path).toContainText(route.expectText);
   }
   await logout(page);
 });
@@ -85,7 +86,7 @@ test("promoted owner sees admin pages", async ({ page }) => {
   for (const route of adminRoutes) {
     const response = await page.goto(route.path);
     expect(response?.status(), route.path).toBeLessThan(400);
-    await expect(page.getByText(route.expectText).first(), route.path).toBeVisible();
+    await expect(page.locator("h1"), route.path).toContainText(route.expectText);
   }
   await logout(page);
 });
