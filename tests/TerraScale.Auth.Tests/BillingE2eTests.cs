@@ -15,6 +15,7 @@ using TerraBase.Api;
 using TerraBase.Integration;
 using TerraBase.Security;
 using TerraScale.Auth.Billing;
+using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Store;
 using TerraScale.DotNet;
 
@@ -106,6 +107,155 @@ public sealed class StripeSignatureTests
     }
 }
 
+/// Unit tests for the outbound Stripe client: the wire format it produces (Stripe's
+/// bracket-nested form encoding) and the failure modes of the upstream response.
+/// A one-shot local HttpListener stands in for Stripe.
+public sealed class StripeClientTests
+{
+    private static AuthOptions Options(int port) => new()
+    {
+        Listen = "http://+:0",
+        PublicOrigin = new Uri("https://auth.test"),
+        TerrascaleApiUrl = new Uri("https://api.terrascale.tech"),
+        TerrascaleApiKey = "key",
+        Database = "db",
+        MasterKey = new byte[32],
+        OperatorKey = "op",
+        StripeSecretKey = "sk_test_key",
+        StripeApiUrl = new Uri($"http://127.0.0.1:{port}"),
+    };
+
+    /// A listener answering every request with <paramref name="respond"/>; captures raw
+    /// body and headers. <see cref="Stop"/> kills the listener for transport-failure probes.
+    private sealed class OneShotStripe : IDisposable
+    {
+        private readonly HttpListener listener = new();
+        private readonly Func<(int, string)> respond;
+
+        public string? RawBody { get; private set; }
+        public string? Authorization { get; private set; }
+        public string? ContentType { get; private set; }
+        public int Port { get; }
+
+        private OneShotStripe(int port, Func<(int, string)> respond)
+        {
+            Port = port;
+            this.respond = respond;
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            listener.Start();
+            _ = Task.Run(ListenAsync);
+        }
+
+        public static OneShotStripe Start(Func<(int, string)> respond)
+        {
+            for (var port = 18241; port <= 18259; port++)
+            {
+                try
+                {
+                    return new OneShotStripe(port, respond);
+                }
+                catch (HttpListenerException)
+                {
+                }
+            }
+            throw new InvalidOperationException("no free port in 18241-18259 for the one-shot Stripe");
+        }
+
+        private async Task ListenAsync()
+        {
+            while (listener.IsListening)
+            {
+                HttpListenerContext context;
+                try
+                {
+                    context = await listener.GetContextAsync();
+                }
+                catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException)
+                {
+                    return;
+                }
+                using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
+                RawBody = await reader.ReadToEndAsync();
+                Authorization = context.Request.Headers["Authorization"];
+                ContentType = context.Request.ContentType;
+                var (status, body) = respond();
+                var bytes = Encoding.UTF8.GetBytes(body);
+                context.Response.StatusCode = status;
+                context.Response.ContentType = "application/json";
+                await context.Response.OutputStream.WriteAsync(bytes);
+                context.Response.Close();
+            }
+        }
+
+        public void Stop() => listener.Close();
+
+        public void Dispose() => listener.Close();
+    }
+
+    /// Decodes a form body with standard form semantics (what Stripe's server does):
+    /// `+` is space in encoded values, %xx everywhere, keys are decoded too.
+    private static Dictionary<string, string?> DecodeForm(string raw) =>
+        raw.Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2))
+            .ToDictionary(pair => WebUtility.UrlDecode(pair[0]), pair => pair.Length > 1 ? WebUtility.UrlDecode(pair[1]) : null);
+
+    [Test]
+    public async Task PostsBracketNestedFormWithFullyEscapedValues()
+    {
+        using var stripe = OneShotStripe.Start(() => (200, """{"id":"cs_1","url":"https://checkout.example/s_1"}"""));
+        var value = "price pro & + = %20 ünï-🙂";
+        await StripeClient.PostAsync(Options(stripe.Port), "/v1/checkout/sessions", new Dictionary<string, string>
+        {
+            ["mode"] = "subscription",
+            ["line_items[0][price]"] = value,
+            ["line_items[0][quantity]"] = "1",
+            ["metadata[instance_id]"] = value,
+        }, default);
+
+        await Assert.That(stripe.Authorization).IsEqualTo("Bearer sk_test_key");
+        await Assert.That(stripe.ContentType).IsEqualTo("application/x-www-form-urlencoded");
+        var form = DecodeForm(stripe.RawBody!);
+        // Exact bracket nesting — a `line_items[0].price` flat key would fail this.
+        await Assert.That(form.ContainsKey("line_items[0][price]")).IsTrue();
+        await Assert.That(form.ContainsKey("line_items[0][quantity]")).IsTrue();
+        await Assert.That(form.ContainsKey("metadata[instance_id]")).IsTrue();
+        await Assert.That(form["line_items[0][price]"]).IsEqualTo(value); // + survives, & and = and unicode round-trip
+        await Assert.That(form["metadata[instance_id]"]).IsEqualTo(value);
+        // No dot-style keys and no raw (unescaped) separators leaked into the wire body.
+        await Assert.That(stripe.RawBody!.Contains("line_items[0].")).IsFalse();
+        await Assert.That(stripe.RawBody!.Split('&').Select(p => p.Split('=')[0]).Any(k => k.Contains('.'))).IsFalse();
+    }
+
+    [Test]
+    public async Task ErrorStatusSurfacesAsStripeApiException()
+    {
+        using var stripe = OneShotStripe.Start(() => (402, """{"error":{"message":"card declined"}}"""));
+        var exception = await Assert.ThrowsAsync<StripeApiException>(
+            () => StripeClient.PostAsync(Options(stripe.Port), "/v1/checkout/sessions", new Dictionary<string, string> { ["mode"] = "subscription" }, default));
+        await Assert.That(exception!.StatusCode).IsEqualTo(402);
+    }
+
+    [Test]
+    public async Task UnparseableSuccessBodySurfacesAsStripeResponseException()
+    {
+        // A proxy/interceptor answering 200 with HTML must not surface as an unhandled
+        // JsonException — the caller maps this to a clean 502 envelope.
+        using var stripe = OneShotStripe.Start(() => (200, "<html>maintenance</html>"));
+        await Assert.ThrowsAsync<StripeResponseException>(
+            () => StripeClient.PostAsync(Options(stripe.Port), "/v1/checkout/sessions", new Dictionary<string, string> { ["mode"] = "subscription" }, default));
+    }
+
+    [Test]
+    public async Task TransportFailureSurfacesAsHttpRequestException()
+    {
+        using var stripe = OneShotStripe.Start(() => (200, "{}"));
+        var port = stripe.Port;
+        stripe.Stop();
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => StripeClient.PostAsync(Options(port), "/v1/checkout/sessions", new Dictionary<string, string> { ["mode"] = "subscription" }, default));
+    }
+}
+
 /// Stripe billing end to end: a second app+engine booted with Stripe env pointing at an
 /// in-process fake Stripe, driven through checkout, the signed webhook receiver, and the
 /// hosted billing pages. The shared fixture (no Stripe env) covers the 503 path.
@@ -117,6 +267,10 @@ public sealed class BillingE2eTests
 
     /// <summary>The dedicated app: booted once for this class, Stripe vars set at build time only.</summary>
     private static readonly Task<BillingApp> SharedApp = BootAsync();
+
+    /// <summary>A second app booted lazily without TS_AUTH_PRICE_ENTERPRISE, for the
+    /// unconfigured-plan probes. Shares nothing with <see cref="SharedApp"/>.</summary>
+    private static Task<BillingApp>? noEnterpriseApp;
 
     // ---- Tests -------------------------------------------------------------------------
 
@@ -166,6 +320,110 @@ public sealed class BillingE2eTests
 
         using var badPlan = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/checkout", apiKey, new { plan = "gold" }));
         await Assert.That(badPlan.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task CheckoutRejectsFreeMissingAndMalformedPlansBeforeCallingStripe()
+    {
+        var app = await SharedApp;
+        var (_, slug, apiKey) = await NewInstanceAsync(app);
+        var stripeCalls = app.Stripe.RequestCount("/v1/checkout/sessions");
+
+        // Free has no price to check out; missing/uppercase plans are invalid; malformed
+        // JSON and non-JSON bodies are 400s — all without a Stripe round-trip.
+        foreach (var body in new object[] { new { plan = "free" }, new { }, new { plan = "PRO" }, new { plan = (string?)null } })
+        {
+            using var rejected = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/checkout", apiKey, body));
+            await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            var error = await rejected.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_plan");
+        }
+
+        using var invalidJson = new HttpRequestMessage(HttpMethod.Post, $"/v1/{slug}/billing/checkout")
+        {
+            Content = new StringContent("{not json", Encoding.UTF8, "application/json"),
+        };
+        invalidJson.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+        using var malformed = await app.Http.SendAsync(invalidJson);
+        await Assert.That(malformed.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var malformedError = await malformed.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(malformedError.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_json");
+
+        using var textBody = new HttpRequestMessage(HttpMethod.Post, $"/v1/{slug}/billing/checkout")
+        {
+            Content = new StringContent("plan=pro", Encoding.UTF8, "text/plain"),
+        };
+        textBody.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+        using var nonJson = await app.Http.SendAsync(textBody);
+        await Assert.That(nonJson.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
+        await Assert.That(app.Stripe.RequestCount("/v1/checkout/sessions")).IsEqualTo(stripeCalls);
+
+        // The success/cancel URLs come from the configured origin only: query parameters,
+        // headers, and body fields cannot steer where Stripe redirects the operator.
+        using var influenced = await app.Http.SendAsync(PostJson(
+            $"/v1/{slug}/billing/checkout?success_url=https%3A%2F%2Fevil.example&cancel_url=https%3A%2F%2Fevil.example&plan=enterprise", apiKey, new { plan = "pro" }));
+        await Assert.That(influenced.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var request = app.Stripe.LastRequest("/v1/checkout/sessions")!;
+        await Assert.That(request.Form["success_url"]).IsEqualTo($"https://auth.test/ui/{slug}/billing/return?status=success");
+        await Assert.That(request.Form["cancel_url"]).IsEqualTo($"https://auth.test/ui/{slug}/billing/return?status=cancel");
+        await Assert.That(request.Form["line_items[0][price]"]).IsEqualTo("price_pro");
+    }
+
+    [Test]
+    public async Task CheckoutAndPortalMapUpstreamFailuresTo502()
+    {
+        var app = await SharedApp;
+        var (_, slug, apiKey) = await NewInstanceAsync(app);
+
+        // Error statuses (Stripe declines with 402, throttles with 429) and an interceptor
+        // answering 200 with HTML all map to the clean 502 envelope — never a raw crash.
+        foreach (var (status, body) in new[]
+                 {
+                     (402, """{"error":{"message":"card declined","type":"card_error"}}"""),
+                     (429, """{"error":{"message":"rate limited"}}"""),
+                     (500, """{"error":{"message":"internal"}}"""),
+                     (200, "<html>proxy maintenance page</html>"),
+                 })
+        {
+            app.Stripe.ResponseOverrides["POST /v1/checkout/sessions"] = (status, body);
+            using var checkout = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/checkout", apiKey, new { plan = "pro" }));
+            await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
+            var error = await checkout.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("stripe_error");
+            // The upstream body (HTML or Stripe error detail) never leaks into the response.
+            var raw = await checkout.Content.ReadAsStringAsync();
+            await Assert.That(raw.Contains("maintenance")).IsFalse();
+            await Assert.That(raw.Contains("card declined")).IsFalse();
+        }
+        app.Stripe.ResponseOverrides.Remove("POST /v1/checkout/sessions");
+
+        app.Stripe.ResponseOverrides["POST /v1/billing_portal/sessions"] = (429, """{"error":{"message":"rate limited"}}""");
+        var (_, slug2, apiKey2, _) = await InstanceWithActiveProAsync(app);
+        using var portal = await app.Http.SendAsync(PostJson($"/v1/{slug2}/billing/portal", apiKey2, new { }));
+        await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
+        app.Stripe.ResponseOverrides.Remove("POST /v1/billing_portal/sessions");
+    }
+
+    [Test]
+    public async Task CheckoutForPlanWithoutConfiguredPriceReturns503WithoutCallingStripe()
+    {
+        noEnterpriseApp ??= BootAsync(priceEnterprise: null);
+        var app = await noEnterpriseApp;
+        var (_, slug, apiKey) = await NewInstanceAsync(app);
+
+        // Enterprise has no price id in this deployment: a clean 503 before any Stripe call.
+        using var enterprise = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/checkout", apiKey, new { plan = "enterprise" }));
+        await Assert.That(enterprise.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var error = await enterprise.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("billing_not_configured");
+        await Assert.That(app.Stripe.LastRequest("/v1/checkout/sessions")).IsNull();
+
+        // Pro is configured and still works; the posted price id is the configured one.
+        using var pro = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/checkout", apiKey, new { plan = "pro" }));
+        await Assert.That(pro.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var request = app.Stripe.LastRequest("/v1/checkout/sessions")!;
+        await Assert.That(request.Form["line_items[0][price]"]).IsEqualTo("price_pro");
     }
 
     [Test]
@@ -641,7 +899,7 @@ public sealed class BillingE2eTests
 
     // ---- The dedicated app: fixture boot + Stripe env + fake Stripe ----------------------
 
-    private static async Task<BillingApp> BootAsync()
+    private static async Task<BillingApp> BootAsync(string? priceEnterprise = "price_ent")
     {
         var stripe = FakeStripe.Start();
         var database = "tsauth-billing-" + Guid.NewGuid().ToString("N")[..8];
@@ -677,7 +935,7 @@ public sealed class BillingE2eTests
             ["TS_AUTH_STRIPE_WEBHOOK_SECRET"] = WebhookSecret,
             ["TS_AUTH_STRIPE_API_URL"] = $"http://127.0.0.1:{stripe.Port}",
             ["TS_AUTH_PRICE_PRO"] = "price_pro",
-            ["TS_AUTH_PRICE_ENTERPRISE"] = "price_ent",
+            ["TS_AUTH_PRICE_ENTERPRISE"] = priceEnterprise,
         };
         var saved = stripeVars.Keys.ToDictionary(name => name, name => Environment.GetEnvironmentVariable(name));
         foreach (var (name, value) in stripeVars)
@@ -749,6 +1007,10 @@ public sealed class BillingE2eTests
         /// subscription. Keyed by id so concurrently running tests cannot cross-contaminate.</summary>
         public readonly Dictionary<string, string> SubscriptionBodies = new();
 
+        /// <summary>Per-route canned responses overriding the defaults ("POST /v1/..."):
+        /// failure-path probes (error statuses, HTML interception) point Stripe routes at these.</summary>
+        public readonly Dictionary<string, (int Status, string Body)> ResponseOverrides = new();
+
         private FakeStripe(int port) => Port = port;
 
         public static FakeStripe Start()
@@ -775,6 +1037,12 @@ public sealed class BillingE2eTests
         {
             lock (requests)
                 return requests.LastOrDefault(request => request.Path == path);
+        }
+
+        public int RequestCount(string path)
+        {
+            lock (requests)
+                return requests.Count(request => request.Path == path);
         }
 
         private async Task ListenAsync()
@@ -813,7 +1081,9 @@ public sealed class BillingE2eTests
             lock (requests)
                 requests.Add(new(request.HttpMethod, path, request.Headers["Authorization"], form is null ? [] : ParseForm(form)));
 
-            var (status, json) = (request.HttpMethod, path) switch
+            var (status, json) = ResponseOverrides.TryGetValue($"{request.HttpMethod} {path}", out var canned)
+                ? canned
+                : (request.HttpMethod, path) switch
             {
                 ("POST", "/v1/checkout/sessions") => (200, """{"id":"cs_test_1","url":"https://checkout.example/s_1"}"""),
                 ("POST", "/v1/billing_portal/sessions") => (200, """{"url":"https://portal.example/p_1"}"""),

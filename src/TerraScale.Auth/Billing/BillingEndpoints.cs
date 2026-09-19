@@ -83,6 +83,11 @@ public static class BillingEndpoints
             {
                 return ApiResults.Error(502, "stripe_error", $"Stripe rejected the checkout session request (HTTP {exception.StatusCode}).");
             }
+            catch (Exception exception) when (exception is StripeResponseException or HttpRequestException)
+            {
+                // Stripe unreachable, or an interceptor answered 200 with a non-JSON body.
+                return ApiResults.Error(502, "stripe_error", "Stripe was unreachable or returned an unusable response.");
+            }
 
             // Stripe returns url today; the session id is the fallback for flows without one.
             var url = Str(session, "url") ?? Str(session, "id");
@@ -113,6 +118,10 @@ public static class BillingEndpoints
             catch (StripeApiException exception)
             {
                 return ApiResults.Error(502, "stripe_error", $"Stripe rejected the portal session request (HTTP {exception.StatusCode}).");
+            }
+            catch (Exception exception) when (exception is StripeResponseException or HttpRequestException)
+            {
+                return ApiResults.Error(502, "stripe_error", "Stripe was unreachable or returned an unusable response.");
             }
             return Results.Ok(new { portal_url = Str(portal, "url") });
         });
@@ -190,8 +199,10 @@ public static class BillingEndpoints
                 ? (null, ApiResults.BadRequest("invalid_request", "a JSON body is required"))
                 : (body, null);
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
+            // JsonException: malformed JSON; InvalidOperationException: not a JSON content
+            // type (e.g. text/plain). Both are client errors, not 500s.
             return (null, ApiResults.BadRequest("invalid_json", "the request body is not valid JSON"));
         }
     }

@@ -33,7 +33,14 @@ internal static class StripeClient
         var body = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
             throw new StripeApiException((int)response.StatusCode, body);
-        return JsonDocument.Parse(body).RootElement.Clone();
+        try
+        {
+            return JsonDocument.Parse(body).RootElement.Clone();
+        }
+        catch (JsonException exception)
+        {
+            throw new StripeResponseException(body, exception);
+        }
     }
 }
 
@@ -42,4 +49,13 @@ internal sealed class StripeApiException(int statusCode, string body)
     : Exception($"Stripe API returned HTTP {statusCode}: {body}")
 {
     public int StatusCode { get; } = statusCode;
+}
+
+/// A 2xx response whose body is not JSON (an intercepting proxy, captive portal, or a
+/// misrouted origin). Distinct from <see cref="StripeApiException"/> so callers can treat
+/// it differently: the webhook rethrows it (500 → Stripe retries) while the checkout and
+/// portal endpoints map it to a clean 502.
+internal sealed class StripeResponseException(string body, Exception inner)
+    : Exception($"Stripe returned an unparseable 2xx response: {(body.Length <= 200 ? body : body[..200])}", inner)
+{
 }
