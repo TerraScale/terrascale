@@ -3,15 +3,6 @@
     var shell = Model.Shell;
     var history = Model.History;
 }
-@functions
-{
-    private static string RoleClass(string role) => role switch
-    {
-        "winner" => "ts-hist-role ts-hist-role-winner",
-        "loser" => "ts-hist-role ts-hist-role-loser",
-        _ => "ts-hist-role",
-    };
-}
 @ShellHtml.Top(shell)
 <div class="ts-page">
     <section class="ts-panel ts-panel-pad20">
@@ -35,79 +26,9 @@
         </div>
     }
 
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h3 class="ts-panel-title">History · @history.DocumentId</h3>
-            <p class="ts-panel-subtitle">@history.Database / @history.Collection</p>
-        </div>
-        <div class="ts-hist-summary">
-            <div class="ts-hist-summary-item">
-                <span class="ts-hist-summary-label">Versions</span>
-                <strong class="ts-hist-summary-value">@history.Versions.Length</strong>
-            </div>
-            <div class="ts-hist-summary-item">
-                <span class="ts-hist-summary-label">Winner</span>
-                <strong class="ts-hist-summary-value">@(history.Winner?.Id ?? "None")</strong>
-            </div>
-            <div class="ts-hist-summary-item">
-                <span class="ts-hist-summary-label">Losers</span>
-                <strong class="ts-hist-summary-value">@history.Losers.Length</strong>
-            </div>
-            <div class="ts-hist-summary-item">
-                <span class="ts-hist-summary-label">Policy</span>
-                <strong class="ts-hist-summary-value">@history.MergePolicy</strong>
-            </div>
-        </div>
-    </section>
-
-    <section class="ts-panel">
-        <div class="ts-panel-header">
-            <h3 class="ts-panel-title">Causal history</h3>
-            <p class="ts-panel-subtitle">Dots, HLCs, causal context, and deterministic merge explanations</p>
-        </div>
-        @if (history.Versions.Length == 0)
-        {
-            <div class="ts-empty">
-                <span class="ts-empty-title">No retained document history</span>
-                <span class="ts-ui">This document has no versions within its retention window.</span>
-            </div>
-        }
-        else
-        {
-            <div class="ts-hist-timeline">
-                @foreach (var version in history.Versions)
-                {
-                    <article class="ts-hist-version @(version.Role == "winner" ? "ts-hist-winner" : null) @(version.Role == "loser" ? "ts-hist-loser" : null)">
-                        <div class="ts-hist-version-header">
-                            <div class="ts-hist-version-meta">
-                                <code class="ts-code-meta">@version.Id</code>
-                                <span>dot (@version.Dot.Origin, @version.Dot.Seq)</span>
-                                <span>HLC @version.Hlc</span>
-                                <span>@version.Kind</span>
-                            </div>
-                            <span class="@RoleClass(version.Role)">@version.Role</span>
-                        </div>
-                        <p class="ts-hist-explanation">@version.Explanation</p>
-                        <div class="ts-hist-detail-grid">
-                            <div class="ts-stack-xs">
-                                <span class="ts-hist-detail-title">Causal context</span>
-                                <span class="ts-meta">@(version.Context.Dots.Length == 0
-                                    ? "No preceding dots"
-                                    : string.Join(" · ", version.Context.Dots))
-                                    @(version.Context.Truncated ? " · context truncated" : "")</span>
-                            </div>
-                            @if (version.ValueJson is { } value)
-                            {
-                                <div class="ts-stack-xs">
-                                    <span class="ts-hist-detail-title">Version value</span>
-                                    <pre class="ts-hist-value">@value</pre>
-                                </div>
-                            }
-                        </div>
-                    </article>
-                }
-            </div>
-        }
-    </section>
+    <div class="ts-alert ts-alert-danger" role="alert">
+        <span class="ts-alert-title">@Icons.CircleAlert(16) Document history could not be loaded</span>
+        <span class="ts-alert-body">@history.Message</span>
+    </div>
 </div>
 @ShellHtml.Bottom(shell)
