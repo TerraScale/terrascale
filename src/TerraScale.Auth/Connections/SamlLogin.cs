@@ -52,6 +52,8 @@ internal static class SamlLogin
         if (instance is null)
             return ConnectionEndpoints.NotFoundPage();
 
+        if (!request.HasFormContentType)
+            return ConnectionEndpoints.ErrorPage(slug, "The SAML response must be posted as a form.");
         var form = await request.ReadFormAsync(ct);
         var relayState = form["RelayState"].ToString();
         var samlResponse = form["SAMLResponse"].ToString();
@@ -118,9 +120,19 @@ internal static class SamlLogin
                 || (after is { } expired && now - ClockSkew >= expired))
                 return ConnectionEndpoints.ErrorPage(slug, "The assertion is outside its validity window.");
         }
-        var audience = assertion.SelectSingleNode("saml:Conditions/saml:AudienceRestriction/saml:Audience", namespaces)?.InnerText.Trim();
-        if (!string.Equals(audience, spEntityId, StringComparison.Ordinal))
-            return ConnectionEndpoints.ErrorPage(slug, "The assertion audience does not match this service provider.");
+        // Audience: exact match only (never a substring). Any audience within a restriction
+        // satisfies it, but every AudienceRestriction must name this SP, and there must be one.
+        var restrictions = assertion.SelectNodes("saml:Conditions/saml:AudienceRestriction", namespaces);
+        if (restrictions is null || restrictions.Count == 0)
+            return ConnectionEndpoints.ErrorPage(slug, "The assertion names no audience for this service provider.");
+        foreach (XmlElement restriction in restrictions.Cast<XmlElement>())
+        {
+            var named = restriction.SelectNodes("saml:Audience", namespaces)?
+                .Cast<XmlElement>()
+                .Select(element => element.InnerText.Trim());
+            if (named?.Contains(spEntityId) != true)
+                return ConnectionEndpoints.ErrorPage(slug, "The assertion audience does not match this service provider.");
+        }
 
         var nameId = assertion.SelectSingleNode("saml:Subject/saml:NameID", namespaces)?.InnerText.Trim();
         var email = AttributeValue(assertion, "email")
@@ -142,27 +154,48 @@ internal static class SamlLogin
     }
 
     /// <summary>Enveloped-signature check in a standalone document: the element is re-serialized
-    /// alone so canonicalization matches exactly what the IdP signed.</summary>
+    /// alone so canonicalization matches exactly what the IdP signed. Signature-wrapping
+    /// hardening: the signature's single Reference must point at the trusted element's own ID,
+    /// and that ID must be unique in the document, so a valid signature over an embedded decoy
+    /// element can never be taken as proof of the element whose claims are trusted.</summary>
     private static bool VerifySignature(XmlElement signedElement, X509Certificate2 certificate)
     {
         var document = new XmlDocument { PreserveWhitespace = true };
         document.LoadXml(signedElement.OuterXml);
-        if (document.GetElementsByTagName("Signature", SignedXml.XmlDsigNamespaceUrl)[0] is not XmlElement signature)
+        var id = document.DocumentElement!.GetAttribute("ID");
+        if (id.Length == 0)
             return false;
-        try
-        {
-            var signedXml = new SignedXml(document);
-            signedXml.LoadXml(signature);
-            return signedXml.CheckSignature(certificate, verifySignatureOnly: true);
-        }
-        catch (CryptographicException)
-        {
+
+        // Exactly one element may carry this ID: duplicate IDs are wrapping fuel.
+        var idClaims = 0;
+        foreach (var element in document.SelectNodes("//*[@ID or @Id or @id]")!.Cast<XmlElement>())
+            if (element.GetAttribute("ID") == id || element.GetAttribute("Id") == id || element.GetAttribute("id") == id)
+                idClaims++;
+        if (idClaims != 1)
             return false;
-        }
-        catch (XmlException)
+
+        foreach (var signature in document.GetElementsByTagName("Signature", SignedXml.XmlDsigNamespaceUrl)!.Cast<XmlElement>())
         {
-            return false;
+            try
+            {
+                var signedXml = new SignedXml(document);
+                signedXml.LoadXml(signature);
+                var signedInfo = signedXml.SignedInfo;
+                if (signedInfo is null || signedInfo.References.Count != 1)
+                    continue;
+                if (((Reference)signedInfo.References[0]!).Uri != "#" + id)
+                    continue;
+                if (signedXml.CheckSignature(certificate, verifySignatureOnly: true))
+                    return true;
+            }
+            catch (CryptographicException)
+            {
+            }
+            catch (XmlException)
+            {
+            }
         }
+        return false;
     }
 
     private static string? AttributeValue(XmlElement assertion, string name) => assertion

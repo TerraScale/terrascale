@@ -460,6 +460,289 @@ public sealed class ConnectionsE2eTests
         }
     }
 
+    [Test]
+    public async Task SamlAcceptsResponseLevelSignature()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_respSig");
+            var samlResponse = BuildSignedSamlResponse(certificate, "_respSig", acs, email: "resp-signed@acme.test", signResponse: true);
+
+            using var response = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = samlResponse, ["RelayState"] = relayState }));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "resp-signed@acme.test")).IsNotNull();
+        }
+    }
+
+    // ---- XML signature wrapping (XSW) ---------------------------------------------------------
+
+    /// <summary>XSW "assertion wrap": the IdP-signed assertion for the attacker is stripped of its
+    /// signature, hidden inside the attacker's own assertion (which carries the victim's NameID),
+    /// and the lifted signature is re-attached to the attacker assertion. The signature still
+    /// verifies — but only over the embedded decoy, never over the assertion being trusted.</summary>
+    [Test]
+    public async Task SamlRejectsAssertionSignatureWrapping()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_xswA");
+
+            var original = SignEnveloped(certificate, AssertionXml("_attacker" + Guid.NewGuid().ToString("N")[..8], "_xswA", acs, "attacker@acme.test"));
+            var decoy = StripSignature(original);
+            var lifted = CopiedSignature(original);
+            var evil = $"""
+                <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_evil{Guid.NewGuid().ToString("N")[..8]}" IssueInstant="{DateTimeOffset.UtcNow:yyyy-MM-dd'T'HH:mm:ss'Z'}" Version="2.0"><saml:Issuer>https://idp.example/metadata</saml:Issuer><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">victim@acme.test</saml:NameID></saml:Subject><saml:Conditions NotBefore="{DateTimeOffset.UtcNow.AddMinutes(-10):yyyy-MM-dd'T'HH:mm:ss'Z'}" NotOnOrAfter="{DateTimeOffset.UtcNow.AddMinutes(10):yyyy-MM-dd'T'HH:mm:ss'Z'}"><saml:AudienceRestriction><saml:Audience>{acs}</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>victim@acme.test</saml:AttributeValue></saml:Attribute></saml:AttributeStatement><saml:Advice>{decoy}</saml:Advice>{lifted}</saml:Assertion>
+                """;
+
+            using var response = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = Base64Response(ResponseXml("_xswA", evil)), ["RelayState"] = relayState }));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "victim@acme.test")).IsNull();
+        }
+    }
+
+    /// <summary>XSW "response wrap": a signed Response is stripped of its signature, embedded inside an
+    /// attacker Response that carries an unsigned assertion for the victim, and the lifted signature is
+    /// re-attached to the wrapper. The signature verifies over the embedded original, not the wrapper.</summary>
+    [Test]
+    public async Task SamlRejectsResponseSignatureWrapping()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_xswB");
+            var responseId = "_origresp" + Guid.NewGuid().ToString("N")[..8];
+
+            var original = SignEnveloped(certificate, ResponseXml("_xswB", AssertionXml("_wrapped" + Guid.NewGuid().ToString("N")[..8], "_xswB", acs, "attacker@acme.test"), responseId));
+            var decoy = StripSignature(original);
+            var lifted = CopiedSignature(original);
+            var evil = $"""
+                <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_evilresp{Guid.NewGuid().ToString("N")[..8]}" InResponseTo="_xswB" Version="2.0" IssueInstant="{DateTimeOffset.UtcNow:yyyy-MM-dd'T'HH:mm:ss'Z'}" Destination="https://idp.example/sso"><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status><saml:Assertion ID="_evil{Guid.NewGuid().ToString("N")[..8]}" IssueInstant="{DateTimeOffset.UtcNow:yyyy-MM-dd'T'HH:mm:ss'Z'}" Version="2.0"><saml:Issuer>https://idp.example/metadata</saml:Issuer><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">victim@acme.test</saml:NameID></saml:Subject><saml:Conditions NotBefore="{DateTimeOffset.UtcNow.AddMinutes(-10):yyyy-MM-dd'T'HH:mm:ss'Z'}" NotOnOrAfter="{DateTimeOffset.UtcNow.AddMinutes(10):yyyy-MM-dd'T'HH:mm:ss'Z'}"><saml:AudienceRestriction><saml:Audience>{acs}</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>victim@acme.test</saml:AttributeValue></saml:Attribute></saml:AttributeStatement></saml:Assertion><samlp:Extensions>{decoy}</samlp:Extensions>{lifted}</samlp:Response>
+                """;
+
+            using var response = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = Base64Response(evil), ["RelayState"] = relayState }));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "victim@acme.test")).IsNull();
+        }
+    }
+
+    /// <summary>XSW "same-ID wrapper": the attacker Response reuses the signed original's ID, so a naive
+    /// URI==ID check would pass — the duplicate ID must itself be rejected.</summary>
+    [Test]
+    public async Task SamlRejectsDuplicateIdResponseWrapping()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_xswC");
+            var responseId = "_clonedresp" + Guid.NewGuid().ToString("N")[..8];
+
+            var original = SignEnveloped(certificate, ResponseXml("_xswC", AssertionXml("_wrapped" + Guid.NewGuid().ToString("N")[..8], "_xswC", acs, "attacker@acme.test"), responseId));
+            var decoy = StripSignature(original);
+            var lifted = CopiedSignature(original);
+            var evil = $"""
+                <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="{responseId}" InResponseTo="_xswC" Version="2.0" IssueInstant="{DateTimeOffset.UtcNow:yyyy-MM-dd'T'HH:mm:ss'Z'}" Destination="https://idp.example/sso"><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status><saml:Assertion ID="_evil{Guid.NewGuid().ToString("N")[..8]}" IssueInstant="{DateTimeOffset.UtcNow:yyyy-MM-dd'T'HH:mm:ss'Z'}" Version="2.0"><saml:Issuer>https://idp.example/metadata</saml:Issuer><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">victim@acme.test</saml:NameID></saml:Subject><saml:Conditions NotBefore="{DateTimeOffset.UtcNow.AddMinutes(-10):yyyy-MM-dd'T'HH:mm:ss'Z'}" NotOnOrAfter="{DateTimeOffset.UtcNow.AddMinutes(10):yyyy-MM-dd'T'HH:mm:ss'Z'}"><saml:AudienceRestriction><saml:Audience>{acs}</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>victim@acme.test</saml:AttributeValue></saml:Attribute></saml:AttributeStatement></saml:Assertion><samlp:Extensions>{decoy}</samlp:Extensions>{lifted}</samlp:Response>
+                """;
+
+            using var response = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = Base64Response(evil), ["RelayState"] = relayState }));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "victim@acme.test")).IsNull();
+        }
+    }
+
+    /// <summary>XSW "evil twin" (SAMLRaider classic): the attacker's assertion copies the signed
+    /// assertion's ID and is placed where the SP reads it; the genuine signed assertion rides along.</summary>
+    [Test]
+    public async Task SamlRejectsEvilTwinAssertionWithCopiedId()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_xswD");
+            var assertionId = "_cloned" + Guid.NewGuid().ToString("N")[..8];
+
+            var signed = SignEnveloped(certificate, AssertionXml(assertionId, "_xswD", acs, "attacker@acme.test"));
+            var twin = AssertionXml(assertionId, "_xswD", acs, "victim@acme.test");
+
+            using var response = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = Base64Response(ResponseXml("_xswD", twin + signed)), ["RelayState"] = relayState }));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "victim@acme.test")).IsNull();
+        }
+    }
+
+    [Test]
+    public async Task SamlRejectsForeignSigningKey()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_wrongkey");
+            using var attackerKey = NewIdpCertificate().Certificate;
+            var samlResponse = BuildSignedSamlResponse(attackerKey, "_wrongkey", acs, email: "attacker@acme.test");
+
+            using var response = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = samlResponse, ["RelayState"] = relayState }));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "attacker@acme.test")).IsNull();
+        }
+    }
+
+    [Test]
+    public async Task SamlRejectsFutureAndLongExpiredConditions()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+
+            var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_future");
+            using var future = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = BuildSignedSamlResponse(certificate, "_future", acs, email: "skew@acme.test", notBefore: DateTimeOffset.UtcNow.AddDays(1)), ["RelayState"] = relayState }));
+            await Assert.That(future.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
+            relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_stale");
+            using var stale = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = BuildSignedSamlResponse(certificate, "_stale", acs, email: "skew@acme.test", notOnOrAfter: DateTimeOffset.UtcNow.AddDays(-1)), ["RelayState"] = relayState }));
+            await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "skew@acme.test")).IsNull();
+        }
+    }
+
+    [Test]
+    public async Task SamlRejectsInResponseToMismatch()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_expected");
+            var samlResponse = BuildSignedSamlResponse(certificate, "_someOtherRequest", acs, email: "irt@acme.test");
+
+            using var response = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = samlResponse, ["RelayState"] = relayState }));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "irt@acme.test")).IsNull();
+        }
+    }
+
+    [Test]
+    public async Task SamlAudienceStrictness()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+
+            // Substring/prefix/suffix/empty look-alikes must never pass.
+            foreach (var (label, audience) in new[]
+            {
+                ("prefix", acs[..^4]),
+                ("suffix", acs + "/extra"),
+                ("substring", "https://auth.test"),
+                ("empty", ""),
+            })
+            {
+                var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_aud" + label);
+                using var response = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                    new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = BuildSignedSamlResponse(certificate, "_aud" + label, acs, email: "aud@acme.test", audience: audience), ["RelayState"] = relayState }));
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            }
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "aud@acme.test")).IsNull();
+
+            // Multiple audiences naming this SP among them are spec-valid (any-of within a restriction).
+            var relayStateOk = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_audMulti");
+            using var multi = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = BuildSignedSamlResponse(certificate, "_audMulti", acs, email: "multi-aud@acme.test", audiences: ["https://other-sp.example/acs", acs]), ["RelayState"] = relayStateOk }));
+            await Assert.That(multi.StatusCode).IsEqualTo(HttpStatusCode.Found);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "multi-aud@acme.test")).IsNotNull();
+
+            // Two AudienceRestrictions where the second omits this SP: every restriction must name the SP.
+            var assertionId = "_audRestr" + Guid.NewGuid().ToString("N")[..8];
+            var now = DateTimeOffset.UtcNow;
+            var before = now.AddMinutes(-10).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+            var expiry = now.AddMinutes(10).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+            var restricted = $"""
+                <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="{assertionId}" IssueInstant="{now:yyyy-MM-dd'T'HH:mm:ss'Z'}" Version="2.0"><saml:Issuer>https://idp.example/metadata</saml:Issuer><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">restrict@acme.test</saml:NameID></saml:Subject><saml:Conditions NotBefore="{before}" NotOnOrAfter="{expiry}"><saml:AudienceRestriction><saml:Audience>{acs}</saml:Audience></saml:AudienceRestriction><saml:AudienceRestriction><saml:Audience>https://other-sp.example/acs</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>restrict@acme.test</saml:AttributeValue></saml:Attribute></saml:AttributeStatement></saml:Assertion>
+                """;
+            var relayStateRestr = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_audRestr");
+            using var restrict = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = Base64Response(ResponseXml("_audRestr", SignEnveloped(certificate, restricted))), ["RelayState"] = relayStateRestr }));
+            await Assert.That(restrict.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await service.Store.FindUserByEmailAsync(instanceId, "restrict@acme.test")).IsNull();
+        }
+    }
+
+    [Test]
+    public async Task SamlAcsSurvivesMalformedInput()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (certificate, pem) = NewIdpCertificate();
+        using (certificate)
+        {
+            var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
+            var acsUrl = $"/ui/{slug}/connections/{connectionId}/saml/acs";
+
+            async Task<HttpResponseMessage> PostAsync(Func<string, HttpContent> content)
+            {
+                var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_malformed");
+                using var request = new HttpRequestMessage(HttpMethod.Post, acsUrl) { Content = content(relayState) };
+                return await service.Http.SendAsync(request);
+            }
+
+            foreach (var (label, content) in new (string, Func<string, HttpContent>)[]
+            {
+                ("bad base64", relay => new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = "%%%not-base64%%%", ["RelayState"] = relay })),
+                ("malformed xml", relay => new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = Convert.ToBase64String(Encoding.UTF8.GetBytes("<samlp:Response xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol")), ["RelayState"] = relay })),
+                ("missing response", relay => new FormUrlEncodedContent(new Dictionary<string, string> { ["RelayState"] = relay })),
+                ("not a form", _ => new StringContent("plain text body")),
+            })
+            {
+                using var response = await PostAsync(content);
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            }
+        }
+    }
+
     // ---- Arrange helpers ----------------------------------------------------------------------
 
     /// <summary>Store-arranged sk_ key (the operator endpoint's keys cannot resolve; see WebhooksE2eTests).</summary>
@@ -614,48 +897,98 @@ public sealed class ConnectionsE2eTests
     /// base64-encoded for the POST binding.</summary>
     private static string BuildSignedSamlResponse(
         X509Certificate2 certificate, string requestId, string acs, string email,
-        string? audience = null, DateTimeOffset? notOnOrAfter = null, bool tamperNameId = false, bool sign = true)
+        string? audience = null, DateTimeOffset? notOnOrAfter = null, bool tamperNameId = false, bool sign = true,
+        bool signResponse = false, string[]? audiences = null, DateTimeOffset? notBefore = null)
     {
         var assertionId = "_assertion" + Guid.NewGuid().ToString("N")[..12];
-        var now = DateTimeOffset.UtcNow;
-        var issueInstant = now.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
-        var notBefore = now.AddMinutes(-10).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
-        var expiry = (notOnOrAfter ?? now.AddMinutes(10)).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
-        var assertion = $"""
-            <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="{assertionId}" IssueInstant="{issueInstant}" Version="2.0"><saml:Issuer>https://idp.example/metadata</saml:Issuer><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">{email}</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData InResponseTo="{requestId}" Recipient="{acs}" NotOnOrAfter="{expiry}"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="{notBefore}" NotOnOrAfter="{expiry}"><saml:AudienceRestriction><saml:Audience>{audience ?? acs}</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AuthnStatement AuthnInstant="{issueInstant}" SessionIndex="{assertionId}"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Password</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement><saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>{email}</saml:AttributeValue></saml:Attribute><saml:Attribute Name="firstName"><saml:AttributeValue>Jane</saml:AttributeValue></saml:Attribute><saml:Attribute Name="lastName"><saml:AttributeValue>Doe</saml:AttributeValue></saml:Attribute></saml:AttributeStatement></saml:Assertion>
-            """;
+        var assertion = AssertionXml(assertionId, requestId, acs, email, audiences ?? (audience is null ? null : [audience]), notBefore, notOnOrAfter);
 
-        if (sign)
-        {
-            var document = new XmlDocument { PreserveWhitespace = true };
-            document.LoadXml(assertion);
-            var signedXml = new SignedXml(document)
-            {
-                SigningKey = certificate.GetRSAPrivateKey()!,
-            };
-            var reference = new Reference("#" + assertionId);
-            reference.AddTransform(new XmlDsigEnvelopedSignatureTransform());
-            reference.AddTransform(new XmlDsigExcC14NTransform());
-            reference.DigestMethod = SignedXml.XmlDsigSHA256Url;
-            signedXml.AddReference(reference);
-            signedXml.SignedInfo!.CanonicalizationMethod = SignedXml.XmlDsigExcC14NTransformUrl;
-            signedXml.SignedInfo!.SignatureMethod = SignedXml.XmlDsigRSASHA256Url;
-            var keyInfo = new KeyInfo();
-            keyInfo.AddClause(new KeyInfoX509Data(certificate));
-            signedXml.KeyInfo = keyInfo;
-            signedXml.ComputeSignature();
-            document.DocumentElement!.AppendChild(document.ImportNode(signedXml.GetXml(), true));
-            assertion = document.DocumentElement.OuterXml;
-        }
+        if (sign && !signResponse)
+            assertion = SignEnveloped(certificate, assertion);
 
         if (tamperNameId)
             assertion = assertion.Replace(email, "attacker@acme.test");
 
-        var response = $"""
-            <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="_response{Guid.NewGuid().ToString("N")[..12]}" InResponseTo="{requestId}" Version="2.0" IssueInstant="{issueInstant}" Destination="https://idp.example/sso"><saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.example/metadata</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>{assertion}</samlp:Response>
-            """;
+        var response = ResponseXml(requestId, assertion);
+        if (signResponse)
+            response = SignEnveloped(certificate, response);
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(response));
     }
+
+    private static string AssertionXml(
+        string assertionId, string requestId, string acs, string email, string[]? audiences = null,
+        DateTimeOffset? notBefore = null, DateTimeOffset? notOnOrAfter = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var issueInstant = now.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+        var before = (notBefore ?? now.AddMinutes(-10)).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+        var expiry = (notOnOrAfter ?? now.AddMinutes(10)).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+        var audience = string.Join("", (audiences ?? [acs]).Select(a => $"<saml:Audience>{a}</saml:Audience>"));
+        return $"""
+            <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="{assertionId}" IssueInstant="{issueInstant}" Version="2.0"><saml:Issuer>https://idp.example/metadata</saml:Issuer><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">{email}</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData InResponseTo="{requestId}" Recipient="{acs}" NotOnOrAfter="{expiry}"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="{before}" NotOnOrAfter="{expiry}"><saml:AudienceRestriction>{audience}</saml:AudienceRestriction></saml:Conditions><saml:AuthnStatement AuthnInstant="{issueInstant}" SessionIndex="{assertionId}"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Password</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement><saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>{email}</saml:AttributeValue></saml:Attribute><saml:Attribute Name="firstName"><saml:AttributeValue>Jane</saml:AttributeValue></saml:Attribute><saml:Attribute Name="lastName"><saml:AttributeValue>Doe</saml:AttributeValue></saml:Attribute></saml:AttributeStatement></saml:Assertion>
+            """;
+    }
+
+    private static string ResponseXml(string requestId, string assertion, string? responseId = null)
+    {
+        var issueInstant = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+        return $"""
+            <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="{responseId ?? "_response" + Guid.NewGuid().ToString("N")[..12]}" InResponseTo="{requestId}" Version="2.0" IssueInstant="{issueInstant}" Destination="https://idp.example/sso"><saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.example/metadata</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>{assertion}</samlp:Response>
+            """;
+    }
+
+    /// <summary>Enveloped-signs a standalone XML element (RS256, exc-C14N) by its ID attribute.</summary>
+    private static string SignEnveloped(X509Certificate2 certificate, string xml)
+    {
+        var document = new XmlDocument { PreserveWhitespace = true };
+        document.LoadXml(xml);
+        var signedXml = new SignedXml(document)
+        {
+            SigningKey = certificate.GetRSAPrivateKey()!,
+        };
+        var reference = new Reference("#" + document.DocumentElement!.GetAttribute("ID"));
+        reference.AddTransform(new XmlDsigEnvelopedSignatureTransform());
+        reference.AddTransform(new XmlDsigExcC14NTransform());
+        reference.DigestMethod = SignedXml.XmlDsigSHA256Url;
+        signedXml.AddReference(reference);
+        signedXml.SignedInfo!.CanonicalizationMethod = SignedXml.XmlDsigExcC14NTransformUrl;
+        signedXml.SignedInfo!.SignatureMethod = SignedXml.XmlDsigRSASHA256Url;
+        var keyInfo = new KeyInfo();
+        keyInfo.AddClause(new KeyInfoX509Data(certificate));
+        signedXml.KeyInfo = keyInfo;
+        signedXml.ComputeSignature();
+        document.DocumentElement.AppendChild(document.ImportNode(signedXml.GetXml(), true));
+        return document.DocumentElement.OuterXml;
+    }
+
+    // ---- XML signature wrapping (XSW) helpers: keep the IdP-signed content, drop or move the proof --
+
+    /// <summary>Removes the root element's ds:Signature child — the IdP-signed content without its proof.</summary>
+    private static string StripSignature(string xml)
+    {
+        var document = new XmlDocument { PreserveWhitespace = true };
+        document.LoadXml(xml);
+        var root = document.DocumentElement!;
+        foreach (var child in root.ChildNodes.Cast<XmlNode>()
+                     .Where(child => child is XmlElement element
+                         && element.LocalName == "Signature"
+                         && element.NamespaceURI == SignedXml.XmlDsigNamespaceUrl).ToList())
+            root.RemoveChild(child);
+        return root.OuterXml;
+    }
+
+    /// <summary>The root element's ds:Signature child verbatim — the blob a wrapper attack copies around.</summary>
+    private static string CopiedSignature(string xml)
+    {
+        var document = new XmlDocument { PreserveWhitespace = true };
+        document.LoadXml(xml);
+        return document.DocumentElement!.ChildNodes.Cast<XmlNode>()
+            .First(child => child is XmlElement element
+                && element.LocalName == "Signature"
+                && element.NamespaceURI == SignedXml.XmlDsigNamespaceUrl).OuterXml;
+    }
+
+    private static string Base64Response(string responseXml) => Convert.ToBase64String(Encoding.UTF8.GetBytes(responseXml));
 
     // ---- Fake OIDC identity provider -----------------------------------------------------------
 
