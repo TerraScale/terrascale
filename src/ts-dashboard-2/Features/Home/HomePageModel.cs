@@ -21,6 +21,10 @@ public sealed record HomePageModel(
         var activity = workloads.FirstOrDefault(w => w.Range == range);
         if (string.IsNullOrEmpty(activity.Range))
         {
+            activity = workloads.FirstOrDefault(w => w.Range == "7d");
+        }
+        if (string.IsNullOrEmpty(activity.Range))
+        {
             activity = workloads[0];
         }
         return new(

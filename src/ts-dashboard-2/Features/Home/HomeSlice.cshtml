@@ -4,116 +4,117 @@
     var copy = HomeCopy.En;
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
-    <section class="ts-grid ts-grid-cards" aria-label="Workspace metrics">
-        @foreach (var metric in new[]
-        {
-            (Label: copy.Databases, Value: Model.Databases, Detail: copy.DatabaseDetail(Model.Databases), Tone: Model.Databases == 0 ? "ts-badge-neutral" : "ts-badge-success", Spark: Model.Workloads[0].Points.Select(p => p.Value).ToArray()),
-            (Label: copy.UnreadAlerts, Value: Model.UnreadNotifications, Detail: copy.NotificationsLoaded(Model.TotalNotifications), Tone: Model.UnreadNotifications == 0 ? "ts-badge-success" : "ts-badge-warning", Spark: Model.Workloads[2].Points.Take(24).Select(p => p.Value).ToArray()),
-        })
-        {
-            <div class="ts-card ts-metric">
-                <span class="ts-metric-label">@metric.Label</span>
-                <strong class="ts-metric-value">@metric.Value</strong>
-                <small class="ts-metric-detail">@metric.Detail</small>
-                @Charts.Sparkline(metric.Spark)
-            </div>
-        }
-    </section>
-
+<div class="ts-page ts-home">
     <div class="ts-overview-grid">
-        <div class="ts-stack-lg">
-            <section class="ts-panel" aria-label="Activity">
-                <div class="ts-panel-header">
-                    <h2 class="ts-panel-title">@copy.ActivityTitle</h2>
-                    <p class="ts-panel-subtitle">@copy.ActivitySubtitle</p>
-                </div>
-                <div class="ts-panel-header-row">
-                    <div class="ts-tabs" role="tablist" aria-label="Activity range">
-                        @foreach (var (range, _) in Model.Workloads)
-                        {
-                            <a class="ts-tab" role="tab" aria-selected="@(range == Model.ActivityRange ? "true" : "false")" href="/?range=@range">@range</a>
-                        }
+        <div class="ts-stack-xl">
+            <section class="ts-grid ts-grid-cards ts-home-metrics" aria-label="@copy.WorkspaceMetrics">
+                @foreach (var metric in new[]
+                {
+                    (Label: copy.Databases, Value: Model.Databases, Detail: copy.DatabaseDetail(Model.Databases)),
+                    (Label: copy.UnreadAlerts, Value: Model.UnreadNotifications, Detail: copy.NotificationsLoaded(Model.TotalNotifications)),
+                })
+                {
+                    <div class="ts-card ts-metric">
+                        <span class="ts-metric-label">@metric.Label</span>
+                        <strong class="ts-metric-value">@metric.Value</strong>
+                        <small class="ts-metric-detail">@metric.Detail</small>
+                        <div class="ts-metric-chart">
+                            <div class="ts-metric-summary"><span>@copy.Days30</span><span>@copy.CurrentSnapshot</span></div>
+                            @Charts.Sparkline(Enumerable.Repeat((double)metric.Value, 30).ToArray())
+                        </div>
                     </div>
-                    <span class="ts-meta"><strong>Events @Model.ActivityEvents</strong></span>
+                }
+            </section>
+
+            <section class="ts-panel" aria-label="Activity">
+                <div class="ts-panel-header ts-panel-header-row">
+                    <div class="ts-stack-xs">
+                        <h2 class="ts-panel-title">@copy.ActivityTitle</h2>
+                        <p class="ts-panel-subtitle">@copy.ActivitySubtitle</p>
+                    </div>
+                    <span class="ts-panel-icon" aria-hidden="true">@Icons.BarChart3(18)</span>
                 </div>
-                <div class="ts-chart-shell">
-                    @if (Model.ActivityPoints.IsEmpty)
+                <div class="ts-chart-body">
+                    <div class="ts-activity-controls">
+                        <div class="ts-tabs ts-activity-tabs" role="tablist" aria-label="Activity range">
+                            @foreach (var (range, _) in Model.Workloads)
+                            {
+                                <a class="ts-tab" role="tab" aria-selected="@(range == Model.ActivityRange ? "true" : "false")" href="/?range=@range">@range</a>
+                            }
+                        </div>
+                        <span class="ts-activity-total"><span class="ts-activity-total-dot" aria-hidden="true"></span> @copy.Events <strong>@Model.ActivityEvents.ToString("N0")</strong></span>
+                    </div>
+                    @if (Model.ActivityEvents == 0)
                     {
-                        <div class="ts-muted ts-meta">No activity recorded in this range yet.</div>
+                        <div class="ts-activity-empty">@copy.NoActivity</div>
                     }
-                    else
-                    {
-                        @Charts.LineChart([.. Model.ActivityPoints], $"Workload over {Model.ActivityRange}")
-                    }
+                    @Charts.LineChart([.. Model.ActivityPoints], $"Workload over {Model.ActivityRange}")
                 </div>
             </section>
         </div>
 
-        <div class="ts-stack-lg">
-            <section class="ts-panel">
-                <div class="ts-panel-header">
-                    <h2 class="ts-panel-title">@copy.GettingStarted</h2>
-                    <p class="ts-panel-subtitle">@copy.GettingStartedSubtitle</p>
-                </div>
+        <section class="ts-panel">
+            <div class="ts-panel-header">
+                <h2 class="ts-panel-title">@copy.GettingStarted</h2>
+                <p class="ts-panel-subtitle">@copy.GettingStartedSubtitle</p>
+            </div>
+            <div class="ts-home-panel-body">
+                <p class="ts-muted ts-home-intro">@copy.GettingStartedIntro</p>
                 <div class="ts-stack-lg">
-                    <p class="ts-muted">@copy.GettingStartedIntro</p>
-                    <div class="ts-stack-md">
-                        @{ var steps = new[] {
-                               (Title: copy.CreateFirstDatabase, Body: copy.StepDatabaseBody, Cta: copy.StepDatabaseCta, Href: "/databases", Icon: "Database", Done: Model.Databases > 0),
-                               (Title: copy.CreateCredential, Body: copy.StepCredentialBody, Cta: copy.StepCredentialCta, Href: "/api-keys", Icon: "KeyRound", Done: Model.ActiveCredentials > 0),
-                           }; }
-                        @for (var i = 0; i < steps.Length; i++)
-                        {
-                            var step = steps[i];
-                            <div class="ts-getting-started-item">
-                                <span class="ts-getting-started-number">@(i + 1)</span>
-                                <div class="ts-stack-xs">
-                                    <div class="ts-row-between">
-                                        <span class="ts-getting-started-title">@step.Title</span>
-                                        <span class="ts-badge @(step.Done ? "ts-badge-success" : "ts-badge-warning")">@(step.Done ? copy.Done : copy.Open)</span>
-                                    </div>
-                                    <p class="ts-muted ts-ui">@step.Body</p>
-                                    <a class="ts-getting-started-cta" href="@step.Href">
-                                        @(typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [15]))
-                                        @step.Cta
-                                        @Icons.ArrowRight(14)
-                                    </a>
+                    @{ var steps = new[] {
+                           (Title: copy.CreateFirstDatabase, Body: copy.StepDatabaseBody, Cta: copy.StepDatabaseCta, Href: "/databases", Icon: "Database", Done: Model.Databases > 0),
+                           (Title: copy.CreateCredential, Body: copy.StepCredentialBody, Cta: copy.StepCredentialCta, Href: "/api-keys", Icon: "KeyRound", Done: Model.ActiveCredentials > 0),
+                       }; }
+                    @for (var i = 0; i < steps.Length; i++)
+                    {
+                        var step = steps[i];
+                        <div class="ts-getting-started-item">
+                            <span class="ts-getting-started-number">@(i + 1)</span>
+                            <div class="ts-stack-xs">
+                                <div class="ts-row-between">
+                                    <span class="ts-getting-started-title">@step.Title</span>
+                                    <span class="ts-badge @(step.Done ? "ts-badge-success" : "ts-badge-warning")">@(step.Done ? copy.Done : copy.Open)</span>
                                 </div>
+                                <p class="ts-muted ts-ui">@step.Body</p>
+                                <a class="ts-getting-started-cta" href="@step.Href">
+                                    @(typeof(Icons).GetMethod(step.Icon)?.Invoke(null, [15]))
+                                    @step.Cta
+                                    @Icons.ArrowRight(14)
+                                </a>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="ts-connect-section">
+                    <div class="ts-stack-xs">
+                        <span class="ts-panel-title">@copy.ConnectTitle</span>
+                        <p class="ts-muted ts-ui">@copy.ConnectSubtitle</p>
+                    </div>
+                    <div class="ts-grid ts-grid-cards ts-connect-grid">
+                        @foreach (var option in new[]
+                        {
+                            (Title: copy.ConnectMcpTitle, Body: copy.ConnectMcpBody, Icon: "Bot"),
+                            (Title: copy.ConnectSdkTitle, Body: copy.ConnectSdkBody, Icon: "Cpu"),
+                            (Title: copy.ConnectApiTitle, Body: copy.ConnectApiBody, Icon: "Network"),
+                            (Title: copy.ConnectCliTitle, Body: copy.ConnectCliBody, Icon: "Terminal"),
+                        })
+                        {
+                            <div class="ts-card ts-connect-card">
+                                <span class="ts-connect-icon">@(typeof(Icons).GetMethod(option.Icon)?.Invoke(null, [18]))</span>
+                                <span class="ts-getting-started-title">@option.Title</span>
+                                <p class="ts-muted ts-ui">@option.Body</p>
+                                <span class="ts-badge ts-badge-outline ts-badge-preview">@copy.ConnectSoon</span>
                             </div>
                         }
                     </div>
-
-                    <div class="ts-stack-md">
-                        <div class="ts-stack-xs">
-                            <span class="ts-panel-title">@copy.ConnectTitle</span>
-                            <p class="ts-muted ts-ui">@copy.ConnectSubtitle</p>
-                        </div>
-                        <div class="ts-grid ts-grid-cards ts-connect-grid">
-                            @foreach (var option in new[]
-                            {
-                                (Title: copy.ConnectMcpTitle, Body: copy.ConnectMcpBody, Icon: "Bot"),
-                                (Title: copy.ConnectSdkTitle, Body: copy.ConnectSdkBody, Icon: "Cpu"),
-                                (Title: copy.ConnectApiTitle, Body: copy.ConnectApiBody, Icon: "Network"),
-                                (Title: copy.ConnectCliTitle, Body: copy.ConnectCliBody, Icon: "Terminal"),
-                            })
-                            {
-                                <div class="ts-card ts-connect-card">
-                                    <span class="ts-connect-icon">@(typeof(Icons).GetMethod(option.Icon)?.Invoke(null, [18]))</span>
-                                    <span class="ts-getting-started-title">@option.Title</span>
-                                    <p class="ts-muted ts-meta">@option.Body</p>
-                                    <span class="ts-badge ts-badge-outline">@copy.ConnectSoon</span>
-                                </div>
-                            }
-                        </div>
-                        <div class="ts-snippet">
-                            <div class="ts-snippet-header">@Icons.Terminal(14) @copy.ConnectSnippetLabel</div>
-                            <pre class="ts-snippet-body">@copy.ConnectSnippet</pre>
-                        </div>
+                    <div class="ts-snippet ts-connect-snippet">
+                        <div class="ts-snippet-header">@Icons.Terminal(14) @copy.ConnectSnippetLabel</div>
+                        <pre class="ts-snippet-body">@copy.ConnectSnippet</pre>
                     </div>
                 </div>
-            </section>
-        </div>
+            </div>
+        </section>
     </div>
 </div>
 @ShellHtml.Bottom(shell)

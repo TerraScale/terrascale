@@ -46,5 +46,9 @@ public static class HomeCopy
             """;
         public string Done => "Done";
         public string Open => "Open";
+        public string Days30 => "30 days";
+        public string CurrentSnapshot => "Current snapshot";
+        public string Events => "Events";
+        public string NoActivity => "No activity recorded in this range yet.";
     }
 }
