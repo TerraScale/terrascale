@@ -16,22 +16,9 @@ public sealed class ManagementE2eTests
     private static async Task<(AuthServiceFixture Service, string InstanceId, string Slug, string ApiKey)> InstanceAsync()
     {
         var service = await AuthServiceFixture.GetAsync();
-        var (instanceId, slug, _) = await service.CreateInstanceAsync("mgmt-" + Guid.NewGuid().ToString("N")[..8]);
-
-        // App.cs's operator key stores sha256(secret part) while InstanceResolver matches
-        // sha256(full bearer), so operator-issued keys cannot authenticate; seed a
-        // resolver-compatible key directly through the store.
-        var (keyId, _, combined) = SecureTokens.NewSecret("sk");
-        await service.Store.CreateApiKeyAsync(new ApiKey
-        {
-            Id = keyId,
-            InstanceId = instanceId,
-            Name = "test-root",
-            SecretKey = SecureTokens.Sha256Hex(combined),
-            Scopes = ["*"],
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-        });
-        return (service, instanceId, slug, combined);
+        // The operator endpoint's key hashes the full bearer, exactly what InstanceResolver matches.
+        var (instanceId, slug, apiKey) = await service.CreateInstanceAsync("mgmt-" + Guid.NewGuid().ToString("N")[..8]);
+        return (service, instanceId, slug, apiKey);
     }
 
     private static HttpRequestMessage Request(HttpMethod method, string uri, string apiKey, object? body = null)
@@ -285,6 +272,115 @@ public sealed class ManagementE2eTests
         await SendAsync(http, Request(HttpMethod.Delete, $"/v1/{slug}/api-keys/{keyId}", key), HttpStatusCode.NoContent);
         using var revoked = await http.SendAsync(Request(HttpMethod.Get, $"/v1/{slug}/users", secret));
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task ApiKeyCreateStoresOnlyTheHash()
+    {
+        var (service, instanceId, slug, key) = await InstanceAsync();
+
+        var created = await SendAsync(service.Http, Request(HttpMethod.Post, $"/v1/{slug}/api-keys", key, new { name = "at-rest" }), HttpStatusCode.Created);
+        var secret = created.GetProperty("api_key").GetString()!;
+        var keyId = created.GetProperty("id").GetString()!;
+
+        // The stored document must hold the sha256 of the full bearer, never the secret.
+        var stored = (await service.Store.ListApiKeysAsync(instanceId)).Single(k => k.Id == keyId);
+        await Assert.That(stored.SecretKey).IsEqualTo(SecureTokens.Sha256Hex(secret));
+        await Assert.That(stored.SecretKey).IsNotEqualTo(secret);
+
+        // Audit trails for the create carry the key id only.
+        var audited = await service.Store.ListAuditEventsAsync(instanceId, 100);
+        var created1 = audited.First(e => e.Type == "api_key.created"
+            && e.Data.TryGetValue("api_key_id", out var id) && ((JsonElement)id).GetString() == keyId);
+        await Assert.That(JsonSerializer.Serialize(created1.Data).Contains(secret)).IsFalse();
+    }
+
+    [Test]
+    public async Task OperatorIssuedKeyAuthenticatesAndRevokesImmediately()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, slug, key) = await service.CreateInstanceAsync("opkey-" + Guid.NewGuid().ToString("N")[..8]);
+
+        // The operator bootstrap key must be resolver-compatible: it authorizes the management API.
+        using var works = await service.Http.SendAsync(Request(HttpMethod.Get, $"/v1/{slug}/users", key));
+        await Assert.That(works.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        // Revoking it via the API must 401 the very next request (no caching in the resolver).
+        var keyId = (await service.Store.ListApiKeysAsync(instanceId)).Single(k => !k.Revoked).Id;
+        await SendAsync(service.Http, Request(HttpMethod.Delete, $"/v1/{slug}/api-keys/{keyId}", key), HttpStatusCode.NoContent);
+        using var revoked = await service.Http.SendAsync(Request(HttpMethod.Get, $"/v1/{slug}/users", key));
+        await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task CrossInstanceKeyIsUnauthorizedOnEveryRouteGroup()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+        var (_, _, otherSlug, otherKey) = await InstanceAsync();
+        var http = service.Http;
+
+        // A valid key for instance A probing EVERY route group under instance B's slug: uniform 401,
+        // never 403/404 — those would confirm the key is valid and only the instance is wrong.
+        var probes = new (HttpMethod Method, string Uri)[]
+        {
+            new(HttpMethod.Get, $"/v1/{otherSlug}/users"),
+            new(HttpMethod.Get, $"/v1/{otherSlug}/api-keys"),
+            new(HttpMethod.Post, $"/v1/{otherSlug}/api-keys"),
+            new(HttpMethod.Patch, $"/v1/{otherSlug}/instance"),
+            new(HttpMethod.Get, $"/v1/{otherSlug}/billing"),
+            new(HttpMethod.Post, $"/v1/{otherSlug}/connections"),
+            new(HttpMethod.Post, $"/v1/{otherSlug}/directories"),
+            new(HttpMethod.Post, $"/v1/{otherSlug}/organizations"),
+            new(HttpMethod.Get, $"/v1/{otherSlug}/jwt-templates"),
+            new(HttpMethod.Post, $"/v1/{otherSlug}/organizations/org_x/domains"),
+            new(HttpMethod.Post, $"/v1/{otherSlug}/domains/example.com/enroll"),
+            new(HttpMethod.Post, $"/v1/{otherSlug}/webhooks"),
+            new(HttpMethod.Get, $"/v1/{otherSlug}/audit-events"),
+            new(HttpMethod.Post, $"/v1/{otherSlug}/oauth-clients"),
+            new(HttpMethod.Get, $"/v1/{otherSlug}/users/usr_x/mfa-factors"),
+            new(HttpMethod.Get, $"/v1/{otherSlug}/users/usr_x/passkeys"),
+        };
+        foreach (var (method, uri) in probes)
+        {
+            using var response = await http.SendAsync(Request(method, uri, key));
+            await Assert.That(response.StatusCode)
+                .IsEqualTo(HttpStatusCode.Unauthorized)
+                .Because($"{method} {uri} must reject a foreign-instance key with 401");
+        }
+
+        // The ?key= billing page follows the same rule.
+        using var ui = await http.GetAsync($"/ui/{otherSlug}/billing?key={key}");
+        await Assert.That(ui.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        // Control: the same key against its own slug still works, and the other key vice versa.
+        using var own = await http.SendAsync(Request(HttpMethod.Get, $"/v1/{slug}/users", key));
+        await Assert.That(own.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var otherOwn = await http.SendAsync(Request(HttpMethod.Get, $"/v1/{otherSlug}/users", otherKey));
+        await Assert.That(otherOwn.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task SlugAliasesDoNotBypassTheInstanceGate()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+
+        // Case tricks, URL-encoding of the slug, and trailing whitespace must all miss the
+        // key's own slug and 401 — they must never resolve a different (or the same) instance.
+        var probes = new[]
+        {
+            $"/v1/{slug.ToUpperInvariant()}/users",
+            $"/v1/{slug.ToUpperInvariant()}/api-keys",
+            $"/v1/%73{slug[1..]}/users",
+            $"/v1/{slug}%20/users",
+            $"/v1/{slug}-/users",
+        };
+        foreach (var uri in probes)
+        {
+            using var response = await service.Http.SendAsync(Request(HttpMethod.Get, uri, key));
+            await Assert.That(response.StatusCode)
+                .IsEqualTo(HttpStatusCode.Unauthorized)
+                .Because($"alias form {uri} must not satisfy the gate");
+        }
     }
 
     [Test]

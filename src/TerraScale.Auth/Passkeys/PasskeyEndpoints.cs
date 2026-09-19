@@ -273,7 +273,7 @@ public static class PasskeyEndpoints
             return ApiResults.Unauthorized();
         var instance = await store.FindInstanceBySlugAsync(slug, ct);
         if (instance is null || instance.Id != context.Instance.Id)
-            return ApiResults.NotFound("instance_not_found", "unknown instance");
+            return ApiResults.Unauthorized();
         var user = await store.GetUserAsync(userId, ct);
         if (user is null || user.InstanceId != instance.Id)
             return ApiResults.NotFound("user_not_found", "unknown user");
@@ -293,7 +293,7 @@ public static class PasskeyEndpoints
             return ApiResults.Unauthorized();
         var instance = await store.FindInstanceBySlugAsync(slug, ct);
         if (instance is null || instance.Id != context.Instance.Id)
-            return ApiResults.NotFound("instance_not_found", "unknown instance");
+            return ApiResults.Unauthorized();
 
         var passkey = await store.GetPasskeyAsync(passkeyId, ct);
         if (passkey is null || passkey.InstanceId != instance.Id || passkey.UserId != userId)

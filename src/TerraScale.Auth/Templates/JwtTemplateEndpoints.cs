@@ -155,16 +155,15 @@ public static class JwtTemplateEndpoints
     // ---- Shared helpers (also used by OrgDomainEndpoints) -----------------------------
 
     /// <summary>Resolves the sk_ key (401 on a bad key), checks the slug matches the
-    /// key's instance (404), then runs the handler with the instance context.</summary>
+    /// key's instance (401 on mismatch — a foreign-instance key must look exactly like
+    /// an invalid one), then runs the handler with the instance context.</summary>
     internal static async Task<IResult> WithScopeAsync(
         InstanceResolver resolver, HttpRequest request, string slug,
         Func<InstanceContext, Task<IResult>> handler, CancellationToken ct)
     {
         var context = await resolver.ResolveAsync(request, ct);
-        if (context is null)
+        if (context is null || context.Instance.Slug != slug)
             return ApiResults.Unauthorized();
-        if (context.Instance.Slug != slug)
-            return ApiResults.NotFound();
         return await handler(context);
     }
 

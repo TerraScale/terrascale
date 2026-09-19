@@ -307,7 +307,7 @@ public static class OAuthEndpoints
             if (await resolver.ResolveAsync(request, ct) is not { } context)
                 return ApiResults.Unauthorized();
             if (context.Instance.Slug != slug)
-                return ApiResults.Forbidden("this API key does not belong to the instance");
+                return ApiResults.Unauthorized();
 
             var body = await request.ReadFromJsonAsync<CreateOAuthClientRequest>(ct);
             if (body is null || string.IsNullOrWhiteSpace(body.Name) || body.RedirectUris is not { Length: > 0 })
@@ -346,7 +346,7 @@ public static class OAuthEndpoints
             if (await resolver.ResolveAsync(request, ct) is not { } context)
                 return ApiResults.Unauthorized();
             if (context.Instance.Slug != slug)
-                return ApiResults.Forbidden("this API key does not belong to the instance");
+                return ApiResults.Unauthorized();
 
             var page = await sdk.Documents.ListAsync(store.Database, "oauth_clients", 200, null, ct);
             var clients = page.Items
@@ -364,7 +364,7 @@ public static class OAuthEndpoints
             if (await resolver.ResolveAsync(request, ct) is not { } context)
                 return ApiResults.Unauthorized();
             if (context.Instance.Slug != slug)
-                return ApiResults.Forbidden("this API key does not belong to the instance");
+                return ApiResults.Unauthorized();
 
             if (await store.GetOAuthClientAsync(id, ct) is not { } client || client.InstanceId != context.Instance.Id)
                 return ApiResults.NotFound("not_found", "no such oauth client");

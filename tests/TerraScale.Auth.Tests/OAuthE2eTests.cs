@@ -824,12 +824,12 @@ public sealed class OAuthE2eTests
         await Assert.That(clients[0].GetProperty("clientId").GetString()).IsEqualTo(arranged.ClientId);
         await Assert.That(clients[0].TryGetProperty("clientSecretHash", out _)).IsFalse();
 
-        // A client from another instance's key is invisible.
+        // A foreign-instance key is rejected like an invalid one: uniform 401.
         var (otherInstanceId, otherSlug, otherKey) = await arranged.Service.CreateInstanceAsync("oauth-" + Guid.NewGuid().ToString("N")[..10]);
         _ = otherInstanceId;
         using var crossList = new HttpRequestMessage(HttpMethod.Get, $"/v1/{otherSlug}/oauth-clients");
         crossList.Headers.Authorization = new("Bearer", arranged.ApiKey);
-        await Assert.That((await arranged.Service.Http.SendAsync(crossList)).StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That((await arranged.Service.Http.SendAsync(crossList)).StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
 
         using var delete = new HttpRequestMessage(HttpMethod.Delete, $"/v1/{arranged.Slug}/oauth-clients/{arranged.ClientRecordId}");
         delete.Headers.Authorization = new("Bearer", arranged.ApiKey);

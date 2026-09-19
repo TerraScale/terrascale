@@ -325,17 +325,15 @@ public static class MfaEndpoints
             CreatedAt = Now(),
         }, ct);
 
-    /// <summary>Resolves the sk_ key (401 on a bad key), checks the slug and user match
-    /// the key's instance (404), then runs the handler with the instance context.</summary>
+    /// <summary>Resolves the sk_ key (401 on a bad key or a slug outside the key's
+    /// instance), checks the user belongs to the instance (404), then runs the handler.</summary>
     private static async Task<IResult> WithScopeAsync(
         InstanceResolver resolver, HttpRequest request, AuthStore store, string slug, string userId,
         Func<InstanceContext, Task<IResult>> handler, CancellationToken ct)
     {
         var context = await resolver.ResolveAsync(request, ct);
-        if (context is null)
+        if (context is null || context.Instance.Slug != slug)
             return ApiResults.Unauthorized();
-        if (context.Instance.Slug != slug)
-            return ApiResults.NotFound();
         var user = await store.GetUserAsync(userId, ct);
         if (user is null || user.InstanceId != context.Instance.Id)
             return ApiResults.NotFound();
