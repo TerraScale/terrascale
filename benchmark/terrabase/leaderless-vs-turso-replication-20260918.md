@@ -47,27 +47,30 @@ warmups, 60 samples each, nearest-rank percentiles.
 
 ## Results — send→ack (write acknowledged)
 
-Final same-window quiet pair (host load ~1.5, 60 samples per side,
-back-to-back minutes apart; raw `receipts/…/turso-lag-final.jsonl` and
-`terrabase-lag-final2.jsonl`), after pacing peer-ack persistence off the
-drain path:
+Same-window quiet pairs (60 samples per side, back-to-back minutes
+apart; raw `receipts/…/turso-lag-final*.jsonl` and
+`terrabase-lag-final*.jsonl`), after host-composed fan-out, paced
+peer-ack persistence, and gate-free exports. Quietest pair (host load
+~1.5) first; the second pair ran at load ~3.4 and shows each side's
+sensitivity to a busy host:
 
-| Batch | TerraBase p50 | TerraBase p95 | Turso p50 | Turso p95 | Faster |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 1 | **0.51 ms** | 1.34 ms | 3.00 ms | 5.85 ms | TerraBase 5.9× |
-| 16 | **1.85 ms** | 4.04 ms | 3.58 ms | 6.12 ms | TerraBase 1.9× |
-| 128 | 8.06 ms | 12.26 ms | 4.39 ms | 9.10 ms | Turso 1.8× |
+| Batch | TerraBase p50 (quiet) | TerraBase p50 (load 3.4) | Turso p50 (quiet) | Turso p50 (load 3.4) |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | **0.51 ms** | **0.46 ms** | 3.00 ms | 3.50 ms |
+| 16 | **1.85 ms** | **1.83 ms** | 3.58 ms | 4.18 ms |
+| 128 | 8.06 ms | 10.79 ms | **4.39 ms** | **6.05 ms** |
 
-Earlier same-day windows put batch-128 ack at 7.2–8.1 ms (TerraBase) vs
-4.4–5.6 ms (Turso); batch-16 ack won every window, batch-1 ack won every
-window by 5–7×.
+Batch-1 ack won every window by 5–7×; batch-16 ack won every window by
+~2×. Batch-128 ack loses by 1.8–2× — and unlike Turso's, it is a
+verified local WAL `fdatasync`, which is also why it degrades more under
+host load while Turso's default (unverified, no fsync) ack barely moves.
 
 ## Results — send→visible on the replica (end-to-end)
 
-| Batch | TerraBase p50 | TerraBase p95 | Turso p50 | Turso p95 | Faster |
+| Batch | TerraBase p50 (quiet) | TerraBase p95 | Turso p50 (quiet) | Turso p95 | Faster |
 | --- | ---: | ---: | ---: | ---: | --- |
 | 1 | **3.78 ms** | 8.72 ms | 5.16 ms | 10.84 ms | TerraBase 1.4× |
-| 16 | 7.57 ms | 14.10 ms | **6.49 ms** | 14.52 ms | ~parity (Turso 1.2×) |
+| 16 | 7.57 ms | 14.10 ms | 6.49 ms | 14.52 ms | ~parity |
 | 128 | 37.76 ms | 62.07 ms | **7.85 ms** | 15.96 ms | Turso 4.8× |
 
 Batch-16 end-to-end flipped between windows (5.59 vs 6.06 in TerraBase's
@@ -102,30 +105,32 @@ deduplicates by dot.
 Phase profile of one 128-record drain (temporary instrumentation,
 removed before commit; averages over a run): export ~1.5 ms,
 materialize ~0.4 ms, batch idempotency digest ~0.5 ms, peer handler
-~5.3 ms (validate ~1.3 + durable apply ~4.0), and ~13 ms of wire time —
-of which roughly 7–8 ms is a **fixed per-RPC transport overhead** that
-does not scale with batch size (it appears identically at batch 16).
-The drain's per-round peer-ack persistence (one journal append +
-fdatasync on the source per drain) was removed from the drain path; the
-remaining levers, in order:
+~5.3 ms (validate ~1.3 + durable apply ~4.0), and wire time dominated by
+the peer handler plus payload-proportional codec work. A tiny-RPC probe
+through the same mTLS stack round-trips in **1.18 ms p50** (0.83 ms
+min), so the per-call machinery is not the bottleneck; earlier
+"fixed overhead" readings were contention, and the exports that held
+the runtime gate were moved off it.
 
-1. The fixed per-RPC overhead in the MagicOnion/Kestrel call path — the
-   dominant discrete chunk at every batch size; needs its own
-   investigation (filters, activation, codec).
-2. Source-side admit contention: the local admit at batch 128 measures
-   ~8 ms while the identical peer-side apply runs ~4–5 ms; the
-   difference is the drain's export and response handling contending
-   for the source journal's gate.
-3. The push response ships 128 per-record results the fan-out never
-   reads, and the caller recomputes per-record lattice digests for the
-   batch idempotency key (~0.5 ms); both are contract additions.
+What remains at batch 128 is structural, not incidental:
 
-For calibration: the durability semantics differ. TerraBase's ack is a
-verified local WAL `fdatasync` and its end-to-end number includes the
-peer's verified durable apply over mTLS; Turso's numbers are default
-(unverified) durability with an unauthenticated streamed WAL frame
-inside the pod. Closing the raw batch-128 gap means either matching
-that fidelity or trimming the transport chain above.
+1. **The ack is a verified local WAL `fdatasync`.** Turso's default ack
+   performs no fsync, which is exactly why its number is flat under
+   host load while ours moves with fsync latency. The uncontended
+   TerraBase admit (measured on the peer side of the same push path)
+   runs ~4–5 ms ≈ Turso's ack — parity at equal fidelity.
+2. **The end-to-end path includes the peer's own verified durable
+   apply** (a second fdatasync) behind a full mTLS gRPC round trip;
+   Turso's replica applies a streamed WAL frame with no per-batch RPC,
+   no authentication, and no replica fsync by default.
+
+Two contract-level trims remain unimplemented (the push response ships
+128 per-record results the fan-out never reads; the caller recomputes
+per-record lattice digests for the batch idempotency key, ~0.5 ms) —
+together worth ~1 ms, which cannot flip the batch-128 comparison.
+Closing the raw gap means matching Turso's durability fidelity
+(unverified ack, unverified replica apply, unauthenticated transport),
+not optimizing this path.
 
 ## Caveats
 
