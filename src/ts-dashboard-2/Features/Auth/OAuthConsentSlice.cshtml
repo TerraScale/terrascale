@@ -3,13 +3,12 @@
 <main class="ts-flow-root">
     <section class="ts-flow-panel">
         <div class="ts-wordmark-wrap">
-            <img src="/brand/logo-terrascale-blue.svg" alt="" aria-hidden="true" decoding="async" />
+            <img src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async" />
         </div>
         @if (!Model.ValidRequest)
         {
             <div class="ts-alert ts-alert-danger" role="alert">
-                <span class="ts-alert-title">@Icons.CircleAlert(16) Invalid authorization request</span>
-                <span class="ts-alert-body">The request is missing required parameters. Return to the application and try again.</span>
+                <span class="ts-alert-title">@Icons.CircleAlert(16) @Model.Error</span>
             </div>
         }
         else if (Model.Outcome is { } outcome)
@@ -39,34 +38,40 @@
                 </div>
             </div>
 
-            <dl class="ts-kv ts-flow-details">
-                <dt>Application</dt>
-                <dd>@Model.ClientName</dd>
-                <dd class="ts-meta ts-mono">@Model.ClientId</dd>
-                <dt>Requested access</dt>
-                <dd>
-                    @if (Model.Scopes.Length == 0)
-                    {
-                        <span class="ts-muted">No scopes requested</span>
-                    }
-                    else
-                    {
-                        <ul class="ts-flow-scopes" aria-label="Requested scopes">
-                            @foreach (var scope in Model.Scopes)
-                            {
-                                <li>@scope</li>
-                            }
-                        </ul>
-                    }
-                </dd>
+            <dl class="ts-flow-details ts-flow-details-consent">
+                <div class="ts-flow-detail">
+                    <dt>Application</dt>
+                    <dd>@Model.ClientName</dd>
+                    <dd class="ts-meta ts-mono">@Model.ClientId</dd>
+                </div>
+                <div class="ts-flow-detail">
+                    <dt>Requested access</dt>
+                    <dd>
+                        @if (Model.Scopes.Length == 0)
+                        {
+                            <span class="ts-muted">No scopes requested</span>
+                        }
+                        else
+                        {
+                            <ul class="ts-flow-scopes" aria-label="Requested scopes">
+                                @foreach (var scope in Model.Scopes)
+                                {
+                                    <li>@scope</li>
+                                }
+                            </ul>
+                        }
+                    </dd>
+                </div>
                 @if (Model.Claims is { } claims)
                 {
-                    <dt>Optional claims</dt>
-                    <dd><pre class="ts-flow-pre">@claims</pre></dd>
+                    <div class="ts-flow-detail">
+                        <dt>Optional claims</dt>
+                        <dd><pre class="ts-flow-pre ts-flow-pre-claims">@claims</pre></dd>
+                    </div>
                 }
             </dl>
 
-            <p class="ts-muted ts-ui">Approving grants only the scopes shown above. You can deny this request and return to the application at any time.</p>
+            <p class="ts-muted ts-ui ts-flow-note">Approving grants only the scopes shown above. You can deny this request and return to the application at any time.</p>
             <div class="ts-flow-actions-row">
                 <form method="post" action="/oauth/consent/submit">
                     <input type="hidden" name="client_id" value="@Model.ClientId" />

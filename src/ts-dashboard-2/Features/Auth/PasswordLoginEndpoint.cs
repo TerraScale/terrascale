@@ -45,7 +45,7 @@ public sealed class PasswordLoginEndpoint(DashboardStore store) : EndpointWithou
         if (email != store.CurrentUser.Email || !store.VerifyPassword(password ?? ""))
         {
             return isForm
-                ? Results.Redirect("/login?error=" + Uri.EscapeDataString("Invalid email or password."))
+                ? Results.Redirect("/login?error=" + Uri.EscapeDataString("Incorrect email or password."))
                 : Results.Json(new { error = "invalid_credentials" }, statusCode: StatusCodes.Status401Unauthorized);
         }
 

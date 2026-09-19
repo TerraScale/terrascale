@@ -4,8 +4,8 @@ using TerraScale.Endpoints;
 namespace TerraScale.Dashboard2.Features.Auth;
 
 /// <summary>Accepts the reset-password form. Demo flow: request mode redirects
-/// back with <c>?sent=1</c>; token mode accepts any 8+ char password and
-/// redirects to the login page.</summary>
+/// back with <c>?sent=1</c>; token mode accepts any 12+ char password and
+/// stays on the page with the updated confirmation.</summary>
 public sealed class ResetPasswordEndpoint : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
@@ -24,12 +24,12 @@ public sealed class ResetPasswordEndpoint : EndpointWithoutRequest<IResult>
 
         if (token.Length > 0)
         {
-            if (password.Length < 8)
+            if (password.Length < 12)
             {
-                return Results.Redirect("/reset-password?token=" + Uri.EscapeDataString(token) + "&error=" + Uri.EscapeDataString("Password must be at least 8 characters."), false, false);
+                return Results.Redirect("/reset-password?token=" + Uri.EscapeDataString(token) + "&error=" + Uri.EscapeDataString("Use at least 12 characters."), false, false);
             }
 
-            return Results.Redirect("/login", false, false);
+            return Results.Redirect("/reset-password?token=" + Uri.EscapeDataString(token) + "&updated=1", false, false);
         }
 
         return Results.Redirect("/reset-password?sent=1", false, false);

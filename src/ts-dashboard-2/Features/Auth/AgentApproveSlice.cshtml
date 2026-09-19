@@ -1,9 +1,9 @@
 @inherits RazorSlice<AgentApprovePageModel>
 @FlowHtml.Document("Approve agent access | TerraScale")
 <main class="ts-flow-root">
-    <section class="ts-flow-panel ts-flow-panel-wide">
+    <section class="ts-flow-panel ts-flow-panel-wide ts-flow-panel-compact">
         <div class="ts-flow-header">
-            <span class="ts-flow-icon-lg" aria-hidden="true">@Icons.Bot(22)</span>
+            <span class="ts-flow-icon-badge" aria-hidden="true">@Icons.Bot(22)</span>
             <div class="ts-flow-header-content">
                 <h1 class="ts-flow-title">Approve agent access</h1>
                 <p class="ts-flow-subtitle">Review what this agent is requesting before allowing it to act for your account.</p>
@@ -20,11 +20,17 @@
             }
             else
             {
-                <div class="ts-alert ts-alert-info" role="status">
-                    <span class="ts-alert-title">@Icons.CircleAlert(16) Access denied</span>
-                    <span class="ts-alert-body">The agent will not receive access for this request.</span>
+                <div class="ts-alert ts-alert-success" role="status">
+                    <span class="ts-alert-title">@Icons.CircleCheckBig(16) Access denied</span>
+                    <span class="ts-alert-body">The agent will not receive access to this request.</span>
                 </div>
             }
+        }
+        else if (Model.Error is { Length: > 0 } pageError)
+        {
+            <div class="ts-alert @(pageError == "Sign in before reviewing this approval request." ? "ts-alert-warning" : "ts-alert-danger")" role="alert">
+                <span class="ts-alert-title">@Icons.CircleAlert(16) @pageError</span>
+            </div>
         }
         else if (Model.Request is { } request)
         {
@@ -50,7 +56,7 @@
                     </dl>
                 </section>
 
-                <section class="ts-flow-section" aria-labelledby="agent-approval-capabilities">
+                <section class="ts-flow-section ts-flow-section-tight" aria-labelledby="agent-approval-capabilities">
                     <div class="ts-flow-section-heading-row">
                         @Icons.ShieldCheck(17)
                         <h2 id="agent-approval-capabilities" class="ts-flow-section-heading">Requested capabilities</h2>
@@ -78,7 +84,7 @@
 
                 @if (request.ConstraintsJson is { } constraints)
                 {
-                    <section class="ts-flow-section" aria-labelledby="agent-approval-constraints">
+                    <section class="ts-flow-section ts-flow-section-tight" aria-labelledby="agent-approval-constraints">
                         <h2 id="agent-approval-constraints" class="ts-flow-section-heading">Constraints</h2>
                         <pre class="ts-flow-pre">@constraints</pre>
                     </section>
@@ -87,23 +93,19 @@
                 <div class="ts-flow-section">
                     <form class="ts-flow-form" method="post" action="/agent/approve/submit">
                         <input type="hidden" name="action" value="approve" />
-                        <div class="ts-field ts-flow-field-narrow">
+                        <div class="ts-field">
                             <label class="ts-label" for="agentApprovalCode">Approval code</label>
-                            <input class="ts-input ts-input-mono" type="text" id="agentApprovalCode" name="code" maxlength="256" autocomplete="one-time-code" spellcheck="false" value="@Model.UserCode" required />
+                            <input class="ts-input" type="text" id="agentApprovalCode" name="code" maxlength="256" autocomplete="one-time-code" spellcheck="false" value="@Model.UserCode" required />
                         </div>
-                        <div class="ts-form-actions">
-                            <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.Check(20) Approve access</button>
-                        </div>
+                        <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.Check(20) Approve access</button>
                     </form>
                     <form class="ts-flow-form ts-flow-form-denial" method="post" action="/agent/approve/submit">
                         <input type="hidden" name="action" value="deny" />
                         <div class="ts-field">
                             <label class="ts-label" for="denyReason">Reason for denying (optional)</label>
-                            <input class="ts-input" type="text" id="denyReason" name="reason" maxlength="280" placeholder="Why are you denying this request?" />
+                            <input class="ts-input" type="text" id="denyReason" name="reason" maxlength="280" />
                         </div>
-                        <div class="ts-form-actions">
-                            <button class="ts-btn ts-btn-destructive ts-btn-lg" type="submit">@Icons.X(20) Deny access</button>
-                        </div>
+                        <button class="ts-btn ts-btn-destructive ts-btn-lg" type="submit">@Icons.X(20) Deny access</button>
                     </form>
                 </div>
             </div>
