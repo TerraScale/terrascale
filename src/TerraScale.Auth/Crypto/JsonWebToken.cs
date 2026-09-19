@@ -200,3 +200,34 @@ public sealed class EcdsaSigningKey : SigningKey
     };
 
 }
+
+/// <summary>RS256 signing key over modulus/exponent (JWK-compatible).</summary>
+public sealed class RsaSigningKey : SigningKey
+{
+    private readonly RSA rsa = RSA.Create();
+    public override string Algorithm => "RS256";
+
+    /// <summary>Restores a key from n || e (big-endian, no leading zeros).</summary>
+    public static RsaSigningKey FromModulusExponent(byte[] modulus, byte[] exponent, string id)
+    {
+        var key = new RsaSigningKey { Id = id };
+        key.rsa.ImportParameters(new RSAParameters { Modulus = modulus, Exponent = exponent });
+        return key;
+    }
+
+    public override byte[] Sign(ReadOnlySpan<byte> input) =>
+        rsa.SignData(input.ToArray(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+    public override bool Verify(ReadOnlySpan<byte> input, ReadOnlySpan<byte> signature) =>
+        rsa.VerifyData(input.ToArray(), signature.ToArray(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+    public override Dictionary<string, object> ToPublicJwk() => new()
+    {
+        ["kty"] = "RSA",
+        ["use"] = "sig",
+        ["alg"] = "RS256",
+        ["kid"] = Id,
+        ["n"] = Encodings.Base64UrlEncode(rsa.ExportParameters(false).Modulus!),
+        ["e"] = Encodings.Base64UrlEncode(rsa.ExportParameters(false).Exponent!),
+    };
+}

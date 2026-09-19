@@ -36,6 +36,21 @@ public sealed record AuthOptions
     /// <summary>Management API requests allowed per API key per 5-minute window. Env <c>TS_AUTH_RATE_LIMIT</c>, default 1000.</summary>
     public int RateLimitPerWindow { get; init; } = 1000;
 
+    /// <summary>Stripe secret key; billing routes 503 when unset. Env <c>TS_AUTH_STRIPE_SECRET_KEY</c>.</summary>
+    public string? StripeSecretKey { get; init; }
+
+    /// <summary>Stripe webhook signing secret. Env <c>TS_AUTH_STRIPE_WEBHOOK_SECRET</c>.</summary>
+    public string? StripeWebhookSecret { get; init; }
+
+    /// <summary>Stripe API origin (overridable for tests). Env <c>TS_AUTH_STRIPE_API_URL</c>.</summary>
+    public Uri StripeApiUrl { get; init; } = new("https://api.stripe.com", UriKind.Absolute);
+
+    /// <summary>Stripe price id for the pro plan. Env <c>TS_AUTH_PRICE_PRO</c>.</summary>
+    public string? PricePro { get; init; }
+
+    /// <summary>Stripe price id for the enterprise plan. Env <c>TS_AUTH_PRICE_ENTERPRISE</c>.</summary>
+    public string? PriceEnterprise { get; init; }
+
     /// <summary>Load options from environment variables, then <c>--key=value</c> args.</summary>
     public static AuthOptions Load(string[] args)
     {
@@ -85,6 +100,13 @@ public sealed record AuthOptions
             MasterKey = masterKeyBytes,
             OperatorKey = Required("operator-key"),
             RateLimitPerWindow = int.TryParse(values.GetValueOrDefault("rate-limit"), out var rateLimit) && rateLimit > 0 ? rateLimit : 1000,
+            StripeSecretKey = values.GetValueOrDefault("stripe-secret-key"),
+            StripeWebhookSecret = values.GetValueOrDefault("stripe-webhook-secret"),
+            StripeApiUrl = string.IsNullOrWhiteSpace(values.GetValueOrDefault("stripe-api-url"))
+                ? new Uri("https://api.stripe.com", UriKind.Absolute)
+                : new Uri(values.GetValueOrDefault("stripe-api-url")!, UriKind.Absolute),
+            PricePro = values.GetValueOrDefault("price-pro"),
+            PriceEnterprise = values.GetValueOrDefault("price-enterprise"),
         };
     }
 
