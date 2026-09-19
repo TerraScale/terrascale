@@ -3,7 +3,9 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Settings;
 
-public sealed class SaveBackupPolicyEndpoint : EndpointWithoutRequest<IResult>
+/// <summary>Port of the settings backup policy form: stores schedule and
+/// retention per database.</summary>
+public sealed class SaveBackupPolicyEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -12,6 +14,15 @@ public sealed class SaveBackupPolicyEndpoint : EndpointWithoutRequest<IResult>
         Tags("Settings");
     }
 
-    public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(Results.Redirect("/settings?tab=backups", false, false));
+    public override async Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var form = await HttpContext.Request.ReadFormAsync(ct);
+        var databaseId = form["databaseId"].ToString();
+        if (store.FindDatabase(databaseId) is not null)
+        {
+            store.SaveBackupPolicy(databaseId, form["schedule"].ToString(), form["retention"].ToString());
+        }
+
+        return Results.Redirect("/settings?tab=backups", false, false);
+    }
 }

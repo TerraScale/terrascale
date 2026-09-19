@@ -31,7 +31,7 @@ public sealed class OnboardingRegisterEndpoint(DashboardStore store) : EndpointW
             return Results.Redirect("/onboarding?error=" + Uri.EscapeDataString(error), false, false);
         }
 
-        store.CompleteOnboardingStep("account-information");
+        store.StartOnboardingForNewAccount();
         HttpContext.Response.Cookies.Append(
             DashboardAuthMiddleware.SessionCookie,
             DashboardAuthMiddleware.SessionToken,

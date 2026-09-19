@@ -42,6 +42,11 @@ public sealed class OnboardingStepEndpoint(DashboardStore store) : EndpointWitho
         }
 
         store.CompleteOnboardingStep(step);
+        if (step == "organization" && form["name"].ToString() is { Length: > 0 } organizationName)
+        {
+            store.RenameOrganization(organizationName);
+        }
+
         if (step == "project")
         {
             var name = form["name"].ToString();

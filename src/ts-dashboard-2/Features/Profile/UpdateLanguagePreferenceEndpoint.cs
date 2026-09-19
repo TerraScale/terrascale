@@ -3,7 +3,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Profile;
 
-public sealed class UpdateLanguagePreferenceEndpoint : EndpointWithoutRequest<IResult>
+public sealed class UpdateLanguagePreferenceEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -12,6 +12,10 @@ public sealed class UpdateLanguagePreferenceEndpoint : EndpointWithoutRequest<IR
         Tags("Profile");
     }
 
-    public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(Results.Redirect("/profile?tab=profile", false, false));
+    public override async Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var form = await HttpContext.Request.ReadFormAsync(ct);
+        store.UpdateLocale(form["locale"].ToString());
+        return Results.Redirect("/profile?tab=profile", false, false);
+    }
 }

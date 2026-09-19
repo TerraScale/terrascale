@@ -3,7 +3,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Profile;
 
-public sealed class RemoveMfaFactorEndpoint : EndpointWithoutRequest<IResult>
+public sealed class RemoveMfaFactorEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -12,6 +12,15 @@ public sealed class RemoveMfaFactorEndpoint : EndpointWithoutRequest<IResult>
         Tags("Profile");
     }
 
-    public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(Results.Redirect("/profile?tab=security", false, false));
+    public override async Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var form = await HttpContext.Request.ReadFormAsync(ct);
+        var factor = form["factor"].ToString();
+        if (factor.Length > 0)
+        {
+            store.RemoveMfaFactor(factor);
+        }
+
+        return Results.Redirect("/profile?tab=security", false, false);
+    }
 }

@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard2;
 /// <summary>Seeded in-memory demo data powering every page.</summary>
 public sealed partial class DashboardStore
 {
-    public DashboardUser CurrentUser { get; } = new(
+    public DashboardUser CurrentUser { get; private set; } = new(
         Id: "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB",
         Name: "Mario Kraus",
         Email: "mario@terrascale.tech",
@@ -16,7 +16,7 @@ public sealed partial class DashboardStore
         Provider: "password");
 
     public string ActiveOrganizationId => "org_01JC9Q5V2N4P6T8R0X2Z4B6D8";
-    public string ActiveOrganizationName => "TerraScale Labs";
+    public string ActiveOrganizationName { get; private set; } = "TerraScale Labs";
     public bool OnboardingCompleted => true;
     public bool OwnerSession => true;
 

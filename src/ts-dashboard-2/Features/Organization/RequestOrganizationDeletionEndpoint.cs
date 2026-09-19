@@ -3,7 +3,9 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Organization;
 
-public sealed class RequestOrganizationDeletionEndpoint : EndpointWithoutRequest<IResult>
+/// <summary>Port of requestOrganizationDeletionAction: requires typing the
+/// organization name, then records the deletion request for review.</summary>
+public sealed class RequestOrganizationDeletionEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -12,6 +14,15 @@ public sealed class RequestOrganizationDeletionEndpoint : EndpointWithoutRequest
         Tags("Organization");
     }
 
-    public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(Results.Redirect("/organization", false, false));
+    public override async Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var form = await HttpContext.Request.ReadFormAsync(ct);
+        if (form["confirmation"].ToString().Trim() != store.ActiveOrganizationName)
+        {
+            return Results.Redirect("/organization?error=" + Uri.EscapeDataString("Organization name does not match."), false, false);
+        }
+
+        store.RequestOrganizationDeletion();
+        return Results.Redirect("/organization", false, false);
+    }
 }

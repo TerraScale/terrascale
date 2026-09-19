@@ -269,6 +269,12 @@
                                             <td>
                                                 @if (invitation.Status == "pending")
                                                 {
+                                                    <form method="post" action="/api/v1/access/invitations/@invitation.InvitationId/resend">
+                                                        <button class="ts-btn ts-btn-ghost ts-access-compact-action" type="submit" title="Resend invitation for @invitation.Email">
+                                                            @Icons.Mail(15)
+                                                            Resend
+                                                        </button>
+                                                    </form>
                                                     <form method="post" action="/api/v1/access/invitations/@invitation.InvitationId/revoke">
                                                         <button class="ts-btn ts-btn-ghost ts-access-compact-action" type="submit" title="Cancel invitation for @invitation.Email">
                                                             @Icons.Trash2(15)

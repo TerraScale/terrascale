@@ -320,6 +320,10 @@
                                                     <input type="hidden" name="webhookId" value="@webhook.Id" />
                                                     <button type="submit" class="ts-btn ts-btn-ghost ts-btn-sm">Rotate secret</button>
                                                 </form>
+                                                <form method="post" action="/api/v1/dashboard/webhooks/delete">
+                                                    <input type="hidden" name="webhookId" value="@webhook.Id" />
+                                                    <button type="submit" class="ts-btn ts-btn-ghost ts-btn-sm ts-text-danger">Delete</button>
+                                                </form>
                                             </div>
                                         </td>
                                     </tr>

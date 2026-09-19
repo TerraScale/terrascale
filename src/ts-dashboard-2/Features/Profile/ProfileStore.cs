@@ -18,7 +18,13 @@ public sealed partial class DashboardStore
         "credentials:read", "credentials:write", "audit:read", "usage:read",
     ];
 
-    public ImmutableArray<string> MfaFactors => ["totp"];
+    public ImmutableArray<string> MfaFactors { get; private set; } = ["totp"];
+
+    public void RemoveMfaFactor(string factor)
+    {
+        MfaFactors = [.. MfaFactors.Where(f => f != factor)];
+        CurrentUser = CurrentUser with { MfaEnabled = MfaFactors.Length > 0 };
+    }
 
     public ImmutableArray<ProfilePasskeyView> Passkeys { get; private set; } =
     [

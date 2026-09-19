@@ -60,6 +60,14 @@ public sealed partial class DashboardStore
 
     private readonly HashSet<string> backupsDisabled = [];
 
+    private readonly Dictionary<string, (string Schedule, string Retention)> backupPolicies = [];
+
+    public (string Schedule, string Retention)? BackupPolicy(string databaseId) =>
+        backupPolicies.TryGetValue(databaseId, out var policy) ? policy : null;
+
+    public void SaveBackupPolicy(string databaseId, string schedule, string retention) =>
+        backupPolicies[databaseId] = (schedule, retention);
+
     public bool BackupsEnabled(string databaseId) =>
         FindDatabase(databaseId)?.BackupRegion is not null && !backupsDisabled.Contains(databaseId);
 

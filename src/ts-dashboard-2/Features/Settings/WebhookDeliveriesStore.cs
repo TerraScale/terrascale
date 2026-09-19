@@ -43,6 +43,13 @@ public sealed partial class DashboardStore
     public ImmutableArray<WebhookDelivery> DeliveriesFor(string webhookId) =>
         [.. WebhookDeliveries.Where(d => d.WebhookId == webhookId)];
 
+    /// <summary>Port of deleteWebhookEndpoint: drops the endpoint and its deliveries.</summary>
+    public void RemoveWebhook(string webhookId)
+    {
+        Webhooks = [.. Webhooks.Where(w => w.Id != webhookId)];
+        WebhookDeliveries = [.. WebhookDeliveries.Where(d => d.WebhookId != webhookId)];
+    }
+
     /// <summary>Port of the pause/resume/enable/disable endpoint controls via a state field.</summary>
     public void ToggleWebhook(string webhookId, string state)
     {

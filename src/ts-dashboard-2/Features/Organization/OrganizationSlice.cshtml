@@ -192,6 +192,12 @@
                             <h3 class="ts-panel-title">@t("Organization deletion")</h3>
                             <p class="ts-panel-subtitle">@t("Deletion preserves linked projects and data until the operation completes")</p>
                         </div>
+                        @if (Model.DeletionRequested)
+                        {
+                            <p class="ts-alert ts-alert-warning">@t("Deletion requested — the organization is queued for review. Linked projects stay available until the operation completes.")</p>
+                        }
+                        else
+                        {
                         <form method="post" action="/api/v1/dashboard/organization/deletion/request" class="ts-org-deletion-form">
                             <div class="ts-field">
                                 <label class="ts-label" for="deletionConfirmationName">@($"Enter “{Model.OrganizationName}” to confirm")</label>
@@ -201,6 +207,7 @@
                                 <button class="ts-btn ts-btn-destructive" type="submit">@Icons.Trash2(20) @t("Request deletion")</button>
                             </div>
                         </form>
+                        }
                     </div>
                 </div>
             }

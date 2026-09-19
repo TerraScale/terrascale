@@ -65,6 +65,20 @@ public sealed partial class DashboardStore
             ? next
             : "project";
 
+    /// <summary>Resets the wizard for a freshly registered account: the demo
+    /// seed pre-completes organization/payment, a real signup must walk them.</summary>
+    public void StartOnboardingForNewAccount()
+    {
+        _onboardingSteps =
+        [
+            new("account-information", "completed"),
+            new("organization", "current"),
+            new("payment-method", "pending"),
+            new("payment-validation", "pending"),
+            new("project", "pending"),
+        ];
+    }
+
     public void CompleteOnboardingStep(string key)
     {
         _onboardingSteps = [.. _onboardingSteps.Select(s => s.Key == key ? s with { State = "completed" } : s)];

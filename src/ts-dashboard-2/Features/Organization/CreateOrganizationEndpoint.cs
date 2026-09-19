@@ -3,7 +3,10 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Organization;
 
-public sealed class CreateOrganizationEndpoint : EndpointWithoutRequest<IResult>
+/// <summary>Port of createOrganizationAction. The demo store is single-org,
+/// so the new organization replaces the active organization identity before
+/// the wizard continues to its first database.</summary>
+public sealed class CreateOrganizationEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -12,6 +15,10 @@ public sealed class CreateOrganizationEndpoint : EndpointWithoutRequest<IResult>
         Tags("Organization");
     }
 
-    public override Task<IResult> HandleAsync(CancellationToken ct) =>
-        Task.FromResult<IResult>(Results.Redirect("/organizations/new?step=2", false, false));
+    public override async Task<IResult> HandleAsync(CancellationToken ct)
+    {
+        var form = await HttpContext.Request.ReadFormAsync(ct);
+        store.RenameOrganization(form["name"].ToString());
+        return Results.Redirect("/organizations/new?step=2", false, false);
+    }
 }

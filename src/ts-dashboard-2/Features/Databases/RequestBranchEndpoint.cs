@@ -3,7 +3,9 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Databases;
 
-public sealed class RequestBranchEndpoint : EndpointWithoutRequest<IResult>
+/// <summary>Port of requestDatabaseBranchAction: provisions a preview branch
+/// as a new database copy in the same region.</summary>
+public sealed class RequestBranchEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -12,9 +14,16 @@ public sealed class RequestBranchEndpoint : EndpointWithoutRequest<IResult>
         Tags("Databases");
     }
 
-    public override Task<IResult> HandleAsync(CancellationToken ct)
+    public override async Task<IResult> HandleAsync(CancellationToken ct)
     {
-        var databaseId = HttpContext.Request.Form["databaseId"].ToString();
-        return Task.FromResult<IResult>(Results.Redirect("/databases/" + databaseId + "?branched=1", false, false));
+        var form = await HttpContext.Request.ReadFormAsync(ct);
+        var databaseId = form["databaseId"].ToString();
+        if (store.FindDatabase(databaseId) is { } source)
+        {
+            store.CreateDatabase($"{source.Name}-preview-branch");
+            return Results.Redirect("/databases/" + databaseId + "?branched=1", false, false);
+        }
+
+        return Results.Redirect("/databases", false, false);
     }
 }

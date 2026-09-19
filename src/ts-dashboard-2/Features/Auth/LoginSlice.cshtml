@@ -55,13 +55,15 @@
                     <a class="ts-btn ts-btn-outline ts-btn-lg ts-auth-create" href="/onboarding">Create account</a>
                     <button class="ts-btn ts-btn-primary ts-btn-lg ts-auth-submit" type="submit">Sign in</button>
                 </div>
-                <div class="ts-auth-divider" aria-hidden="true"><span></span><span class="ts-auth-divider-label">Or continue with</span><span></span></div>
-                <div class="ts-auth-providers">
-                    <button class="ts-btn ts-btn-outline ts-auth-provider" type="button" aria-label="Continue with passkey" title="Continue with passkey">@Icons.Fingerprint(18) Passkey</button>
-                    <a class="ts-btn ts-btn-outline ts-auth-provider" href="/api/v1/auth/external-login/begin?provider=google" role="button" aria-label="Continue with Google" title="Continue with Google"><img src="/brand/google.svg" alt="" aria-hidden="true" /></a>
-                    <a class="ts-btn ts-btn-outline ts-auth-provider" href="/api/v1/auth/external-login/begin?provider=github" role="button" aria-label="Continue with GitHub" title="Continue with GitHub"><img src="/brand/github.svg" alt="" aria-hidden="true" /></a>
-                </div>
             </form>
+            <div class="ts-auth-divider" aria-hidden="true"><span></span><span class="ts-auth-divider-label">Or continue with</span><span></span></div>
+            <div class="ts-auth-providers">
+                <form method="post" action="/api/v1/auth/passkey/login">
+                    <button class="ts-btn ts-btn-outline ts-auth-provider" type="submit" aria-label="Continue with passkey" title="Continue with passkey">@Icons.Fingerprint(18) Passkey</button>
+                </form>
+                <a class="ts-btn ts-btn-outline ts-auth-provider" href="/api/v1/auth/external-login/begin?provider=google" role="button" aria-label="Continue with Google" title="Continue with Google"><img src="/brand/google.svg" alt="" aria-hidden="true" /></a>
+                <a class="ts-btn ts-btn-outline ts-auth-provider" href="/api/v1/auth/external-login/begin?provider=github" role="button" aria-label="Continue with GitHub" title="Continue with GitHub"><img src="/brand/github.svg" alt="" aria-hidden="true" /></a>
+            </div>
             <div class="ts-auth-locale-footer">
                 <label class="ts-sr-only" for="auth-locale">Language</label>
                 <select id="auth-locale" class="ts-auth-locale" aria-label="Language">

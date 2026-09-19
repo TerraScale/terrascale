@@ -42,7 +42,7 @@ public sealed class PasswordLoginEndpoint(DashboardStore store) : EndpointWithou
             redirectTo = null;
         }
 
-        if (email != store.CurrentUser.Email || password != DemoPassword)
+        if (email != store.CurrentUser.Email || !store.VerifyPassword(password ?? ""))
         {
             return isForm
                 ? Results.Redirect("/login?error=" + Uri.EscapeDataString("Invalid email or password."))
