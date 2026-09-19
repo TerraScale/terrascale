@@ -1,5 +1,6 @@
 namespace TerraScale.Auth.Tests;
 
+using System.Security.Cryptography;
 using TerraScale.Auth.Crypto;
 
 public sealed class JwtTests

@@ -62,13 +62,12 @@ public static class JsonWebToken
         if (header is null || payload is null)
             return null;
 
-        var algorithm = header.GetValueOrDefault("alg") as string;
+        var algorithm = GetString(header, "alg");
         if (string.IsNullOrEmpty(algorithm))
             return null;
         // The algorithm comes from attacker-controlled input; resolveKey must
         // return a key whose own algorithm matches before any signature check runs.
-        var kid = header.GetValueOrDefault("kid") as string;
-        var key = resolveKey(kid ?? string.Empty);
+        var key = resolveKey(GetString(header, "kid") ?? string.Empty);
         if (key is null || key.Algorithm != algorithm)
             return null;
 
@@ -83,6 +82,11 @@ public static class JsonWebToken
 
         return payload;
     }
+
+    private static string? GetString(Dictionary<string, object> map, string key) =>
+        map.TryGetValue(key, out var value)
+            ? value as string ?? (value is JsonElement { ValueKind: JsonValueKind.String } element ? element.GetString() : null)
+            : null;
 
     /// <summary>Decodes payload claims without verification — for debugging and display only.</summary>
     public static Dictionary<string, object>? DecodeUnverified(string token)
