@@ -60,7 +60,7 @@ jobs:
           set -euo pipefail
           export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
           exec dotnet run \
-            tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
+            --project tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
             --configuration Release --no-build -- \
             --minimum-expected-tests 50
 
