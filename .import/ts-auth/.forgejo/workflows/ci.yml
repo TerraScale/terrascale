@@ -103,7 +103,8 @@ jobs:
           set -euo pipefail
           source_commit="${FORGEJO_SHA:?event SHA is required}"
           local_image="localhost/terrascale/ts-auth:${source_commit}"
-          remote_image="git.terrascale.tech/${REPOSITORY_OWNER:?owner is required}/ts-auth:${source_commit}"
+          # Container repository names must be lowercase; the org ("TerraScale") maps to "terrascale".
+          remote_image="git.terrascale.tech/$(printf '%s' "${REPOSITORY_OWNER:?owner is required}" | tr '[:upper:]' '[:lower:]')/ts-auth:${source_commit}"
           # The runner exports REGISTRY_AUTH_FILE as a bind-mounted file under
           # /etc/containers; podman login rewrites its auth file via rename,
           # which fails with EBUSY on a bind mount. Use a job-local auth file.
