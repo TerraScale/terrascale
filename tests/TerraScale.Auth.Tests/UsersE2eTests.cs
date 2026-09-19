@@ -743,10 +743,47 @@ public sealed class UsersE2eTests
         using var replay = await service.Http.SendAsync(Get($"/ui/{slug}/reset-password?token={token}"));
         await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
 
+        using var replayPost = await service.Http.SendAsync(Post($"/ui/{slug}/reset-password", new Dictionary<string, string>
+        {
+            ["token"] = token,
+            ["password"] = "anotherpassword1",
+        }));
+        await Assert.That(replayPost.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
         await SignInAsync(service, slug, email, "freshpassword1");
 
         var audits = await service.Store.ListAuditEventsAsync(instanceId, 100);
         await Assert.That(audits.Any(e => e.Type == "password.reset")).IsTrue();
+    }
+
+    [Test]
+    public async Task BannedUserCannotRequestOrUsePasswordReset()
+    {
+        var service = await ServiceAsync();
+        var (instanceId, slug) = await InstanceAsync();
+        var email = Email();
+        await SignUpAsync(service, slug, email);
+        var user = await service.Store.FindUserByEmailAsync(instanceId, email);
+        var token = await KnownTokenAsync(service.Store, instanceId, user!.Id, "reset_password", TimeSpan.FromMinutes(30));
+
+        await service.Store.UpsertUserAsync(user with { Banned = true });
+
+        using var forgot = await service.Http.SendAsync(Post($"/ui/{slug}/forgot-password", new Dictionary<string, string> { ["email"] = email }));
+        await Assert.That(forgot.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await BodyAsync(forgot)).Contains("Check your email");
+        var unconsumed = (await service.Store.ListVerificationTokensAsync(instanceId, "reset_password", 100))
+            .Where(t => t.InstanceId == instanceId && t.UserId == user.Id && !t.Consumed).ToList();
+        await Assert.That(unconsumed.Count).IsEqualTo(1); // only the pre-ban KnownTokenAsync one
+
+        using var reset = await service.Http.SendAsync(Post($"/ui/{slug}/reset-password", new Dictionary<string, string>
+        {
+            ["token"] = token,
+            ["password"] = "attackerpassword1",
+        }));
+        await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
+        var after = await service.Store.FindUserByEmailAsync(instanceId, email);
+        await Assert.That(SessionService.VerifyPassword(after!, "password123")).IsTrue();
     }
 
     [Test]

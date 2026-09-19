@@ -309,7 +309,7 @@ public static class UserEndpoints
         if (SessionService.IsValidEmail(email))
         {
             var user = await store.FindUserByEmailAsync(instance.Id, SessionService.NormalizeEmail(email), ct);
-            if (user is not null && !user.Deleted)
+            if (user is not null && !user.Deleted && !user.Banned)
             {
                 var token = await IssueTokenAsync(store, instance.Id, user.Id, "reset_password", ResetPasswordTtl, ct);
                 await emailSender.SendAsync(user.Email!, "Reset your password",
@@ -348,7 +348,7 @@ public static class UserEndpoints
 
         var record = await ConsumeTokenAsync(store, instance.Id, token, "reset_password", ct);
         var user = record?.UserId is { } userId ? await store.GetUserAsync(userId, ct) : null;
-        if (user is null || user.Deleted)
+        if (user is null || user.Deleted || user.Banned)
             return InvalidLinkPage(slug);
 
         await store.UpsertUserAsync(user with
