@@ -52,7 +52,7 @@ public static class MfaGate
         foreach (var factor in factors)
         {
             if (factor.Type == "totp" && factor.Confirmed && factor.SecretBox is not null
-                && Totp.Verify(SecretBox.Decrypt(masterKey, factor.SecretBox), code))
+                && Totp.Verify(SecretBox.Decrypt(masterKey, factor.SecretBox), code, DateTimeOffset.UtcNow))
                 return true;
 
             if (factor.Type == "recovery" && factor.RecoveryCodes is { } codes)
