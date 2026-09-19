@@ -77,6 +77,41 @@ Batch-16 end-to-end flipped between windows (5.59 vs 6.06 in TerraBase's
 favor earlier the same day); treat it as parity. Batch-128 end-to-end is
 TerraBase's open gap.
 
+## The Anna tier (AsyncWal): accept on merge, paced durability
+
+`TERRABASE_DATABASE_WAL_DURABILITY=ASYNC` moves the durable host onto the
+Anna durability model: commits publish their WAL bytes to the operating
+system and acknowledge without the device barrier, a background timer
+flushes the log (100 ms), and every compaction, truncate, and close
+forces one flush. Acknowledged commits survive process crashes; only the
+tail between the last flush and a power cut may be lost — SQLite's
+`synchronous=NORMAL` class. SYNCED (per-commit fdatasync) remains the
+default. The exported frontier still tracks published records, so the
+fan-out ships accepts immediately instead of waiting for a flush, and
+delta-only shipping is unchanged (`quietDelta=0` in every run below).
+
+Same-window fair pair at host load ~2.4 (raw
+`receipts/…/turso-lag-annatier2.jsonl`, `terrabase-lag-annatier2.jsonl`),
+60 samples per side:
+
+| Batch | ack p50 (TerraBase / Turso) | send→visible p50 (TerraBase / Turso) |
+| --- | ---: | ---: |
+| 1 | **0.14 ms** / 2.98 ms — 21× | **1.71 ms** / 4.76 ms — 2.8× |
+| 16 | **0.62 ms** / 3.52 ms — 5.7× | **3.32 ms** / 5.23 ms — 1.6× |
+| 128 | 5.07 ms / **4.41 ms** — Turso by 15% | 23.51 ms / **7.81 ms** — Turso ~3× |
+
+Versus the same build's SYNCED tier, same morning windows
+(`terrabase-lag-final4.jsonl`, load ~1.6–5.5): ack 0.40→0.14,
+1.38→0.62, 6.49→5.07 ms; send→visible 2.61→1.71, 4.78→3.32,
+27.76→23.51 ms. Faster than before at every batch size on both metrics.
+
+At batch 128 the ack is now ~parity with Turso; what remains is
+per-record lattice work (content digests, read-model merge, response
+outcomes) — there is no fdatasync left to remove. The batch-128
+end-to-end gap is one mTLS push round trip plus the peer's durable-index
+apply versus Turso's streamed, unauthenticated WAL frame with no
+per-batch RPC.
+
 ## Bytes on the wire
 
 Each admitted batch shipped exactly its own records — nothing else:
