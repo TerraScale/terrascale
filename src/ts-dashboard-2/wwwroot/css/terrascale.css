@@ -2684,14 +2684,86 @@ single-selector rules may stay on one line.
     text-decoration: underline;
   }
 
-  .ts-db-id,
-  .ts-db-id-line {
+  .ts-db-id {
     overflow: hidden;
     color: var(--ts-ink-muted);
     font-family: var(--ts-font-mono);
     font-size: var(--ts-fs-meta);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .ts-db-id-line {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-sm);
+    overflow: hidden;
+    color: var(--ts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-size: var(--ts-fs-meta);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Create-dialog region map: v1 RegionMap compact readOnly (map over, static
+     dots; selected hubs grow and take the accent glow). The panel keeps the
+     136x80 map aspect so percent-positioned dots stay glued to the map. */
+  .ts-region-map-panel {
+    position: relative;
+    overflow: hidden;
+    aspect-ratio: 136 / 80;
+    min-height: 180px;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: var(--ts-surface-muted);
+  }
+
+  .ts-region-map-panel .ts-region-map {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.9;
+  }
+
+  .ts-region-map-dot {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 2px solid var(--ts-surface);
+    background-color: var(--ts-ink-muted);
+  }
+
+  .ts-region-map-dot-selected {
+    width: 17px;
+    height: 17px;
+    background-color: var(--ts-accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
+  }
+
+  /* v1 createDialog gap is 20px (Old gap-5); the delete dialog keeps 16px. */
+  .ts-dialog-form-20 { gap: 20px; }
+
+  /* v1 DataTable body cells are top-aligned. */
+  .ts-db-table td { vertical-align: top; }
+
+  /* v1 DatabaseLifecyclePanel summary: plain label-over-value fields. */
+  .ts-db-summary-grid {
+    display: grid;
+    gap: var(--ts-md);
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  }
+
+  /* Switch ON state for the button role=switch (inputs keep :checked). */
+  .ts-switch[aria-checked="true"] {
+    background-color: var(--ts-accent);
+    border-color: var(--ts-accent);
+  }
+
+  .ts-switch[aria-checked="true"]::after {
+    transform: translateX(13.6px);
   }
 
   /* ===== Feature: Data ===== */
@@ -2823,14 +2895,6 @@ single-selector rules may stay on one line.
     font-size: var(--ts-fs-meta);
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .ts-db-id-line {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-sm);
-    color: var(--ts-ink);
-    font-size: var(--ts-fs-ui);
   }
 
   .ts-db-placement-note {

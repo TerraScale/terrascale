@@ -30,17 +30,15 @@ public sealed record DatabaseDetailPageModel(
         }
 
         var row = store.ToRow(database);
-        var latency = store.LatencyFor(database);
-        var nearest = store.Regions.First(r => r.Code == database.PrimaryRegion);
         return new(
             Database: row,
-            PlacementLock: string.Join(", ", row.Regions.Split(',')),
-            PlacementStatus: "Locked",
-            PlacementGeneration: 2,
-            Latency: latency,
+            PlacementLock: string.Join(", ", row.Regions.Split(',').Distinct()),
+            PlacementStatus: "Provisioning",
+            PlacementGeneration: 1,
+            Latency: store.LatencyFor(database),
             LatencyCapturedAt: "2026-09-18T07:00:00Z",
-            NearestRegion: nearest.Code,
-            BranchPhysicalClone: database.Status == "Active",
+            NearestRegion: DashboardStore.HubCode(database.PrimaryRegion),
+            BranchPhysicalClone: true,
             BranchPromotion: false,
             BranchMerge: false,
             BackupsEnabled: store.BackupsEnabled(database.Id),

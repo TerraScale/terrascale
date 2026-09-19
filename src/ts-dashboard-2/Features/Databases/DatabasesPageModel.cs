@@ -5,13 +5,20 @@ namespace TerraScale.Dashboard2.Features.Databases;
 
 public sealed record DatabasesPageModel(
     ImmutableArray<DatabaseRow> Databases,
-    ImmutableArray<RegionInfo> RegionCatalog,
     ImmutableArray<string> ProjectRegions,
     string Query,
     bool CreateOpen,
     string? Error) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
+
+    /// <summary>The v1 region catalog: exactly the three airport hubs.</summary>
+    public static readonly ImmutableArray<RegionHub> RegionHubs =
+    [
+        new("sfo", "San Francisco", 21, 28.58),
+        new("fra", "Frankfurt", 71.5, 20.78),
+        new("gru", "Sao Paulo", 50, 59.76),
+    ];
 
     public static DatabasesPageModel From(DashboardStore store, string? query, bool createOpen, string? error)
     {
@@ -25,8 +32,7 @@ public sealed record DatabasesPageModel(
 
         return new(
             Databases: [.. rows],
-            RegionCatalog: store.Regions,
-            ProjectRegions: [project.Region],
+            ProjectRegions: [DashboardStore.HubCode(project.Region)],
             Query: query ?? "",
             CreateOpen: createOpen,
             Error: error)
@@ -35,27 +41,13 @@ public sealed record DatabasesPageModel(
         };
     }
 
-    public static string FormatUtc(string iso) =>
-        DateTimeOffset.TryParse(iso, out var time) ? time.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'") : iso;
-
-    /// <summary>Project regions are cloud ids; the region map draws airport hubs.</summary>
-    public static string RegionMapCode(string region) => region switch
-    {
-        "us-east-1" or "us-west-2" => "SFO",
-        "eu-central-1" or "eu-west-1" => "FRA",
-        "sa-east-1" => "GRU",
-        _ => "SFO",
-    };
-
     public static string RegionDisplay(string code) => code.ToUpperInvariant() + " · " + RegionName(code);
 
-    private static string RegionName(string code) => code switch
+    private static string RegionName(string code) => code.ToLowerInvariant() switch
     {
-        "us-east-1" => "Virginia, US",
-        "us-west-2" => "Oregon, US",
-        "eu-central-1" => "Frankfurt, DE",
-        "eu-west-1" => "Dublin, IE",
-        "sa-east-1" => "São Paulo, BR",
-        _ => code,
+        "sfo" => "San Francisco",
+        "fra" => "Frankfurt",
+        "gru" => "Sao Paulo",
+        _ => code.ToUpperInvariant(),
     };
 }
