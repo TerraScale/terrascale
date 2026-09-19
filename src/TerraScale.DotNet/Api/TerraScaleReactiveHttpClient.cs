@@ -75,14 +75,49 @@ public sealed class TerraScaleReactiveHttpClient
         // Transport is a local delivery choice; it is not part of the
         // owner-published attach request and must never be serialized.
         var requestBody = new ReactiveAttachRequest(databaseId, statement, Convert.ToBase64String(parameters.ToArray()), checkpoint?.Token, subscription, 0);
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(AttachOrigin(), "/api/v1/reactive/views"))
+        // ADR 0050 §5.7/§5.8: attach goes directly to the discovered regional
+        // endpoint. A discovery miss degrades to the catalog-selected regional
+        // origin — there is no proxy to fall back to.
+        var routedOrigin = await ResolveAttachOriginAsync(databaseId, cancellationToken).ConfigureAwait(false);
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(routedOrigin?.BaseAddress ?? AttachOrigin(), "/api/v1/reactive/views"))
         {
             Content = JsonContent.Create(requestBody, ReactiveJsonContext.Default.ReactiveAttachRequest),
         };
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         if (!string.IsNullOrWhiteSpace(options.RegionHint)) request.Headers.TryAddWithoutValidation("X-TerraScale-Region-Hint", options.RegionHint);
         await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
-        using var response = await SendWithRetryAsync(request, cancellationToken).ConfigureAwait(false);
+        HttpResponseMessage response;
+        try
+        {
+            response = await SendWithRetryAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (HttpRequestException)
+        {
+            // A transport failure against a discovered regional endpoint
+            // demotes that region; the next attach resolves to the next
+            // eligible endpoint.
+            if (routedOrigin is { Region: { } region } && options.DiscoveryRouter is { } router)
+            {
+                router.ReportRegionFailure(databaseId, region);
+            }
+
+            throw;
+        }
+        using (response)
+        {
+            return await ReadAttachmentAsync(response, databaseId, subscription, statement, parameters, transport, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<TerraScaleReactiveSubscription> ReadAttachmentAsync(
+        HttpResponseMessage response,
+        string databaseId,
+        string subscription,
+        string statement,
+        ReadOnlyMemory<byte> parameters,
+        TerraScaleReactiveTransport transport,
+        CancellationToken cancellationToken)
+    {
         if (response.StatusCode != HttpStatusCode.Created) throw await TerraScaleReactiveHttpException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
         var attach = await response.Content.ReadFromJsonAsync(ReactiveJsonContext.Default.ReactiveAttachResponse, cancellationToken).ConfigureAwait(false)
             ?? throw new TerraScaleReactiveProtocolException("The reactive attach response was empty.");
@@ -271,6 +306,27 @@ public sealed class TerraScaleReactiveHttpClient
         string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase) && left.Port == right.Port;
 
     private Uri AttachOrigin() => options.ApiBaseAddress ?? options.BaseAddress;
+
+    /// <summary>
+    /// The discovered regional endpoint for one database, the catalog-selected
+    /// fallback, or null when routing is not active for this client.
+    /// </summary>
+    private async Task<(Uri BaseAddress, string? Region)?> ResolveAttachOriginAsync(string databaseId, CancellationToken cancellationToken)
+    {
+        if (options.DiscoveryRouter is not { } router)
+        {
+            return null;
+        }
+
+        if (await router.ResolveBaseAsync(databaseId, needsWrite: false, cancellationToken).ConfigureAwait(false) is { } discovered)
+        {
+            return (discovered.BaseAddress, discovered.Region);
+        }
+
+        return await router.ResolveCatalogBaseAsync(cancellationToken).ConfigureAwait(false) is { } catalogHost
+            ? (catalogHost, null)
+            : null;
+    }
 
     private static Uri CreateWebSocketUri(Uri log, string view, ulong generation)
     {
@@ -791,6 +847,7 @@ public sealed record TerraScaleReactiveHttpClientOptions
     public string? BearerToken { get; set; }
     public Func<CancellationToken, ValueTask<string>>? BearerTokenProvider { get; set; }
     public string? RegionHint { get; set; }
+    public TerraScaleDiscoveryRouter? DiscoveryRouter { get; set; }
     public int MaxRetryAttempts { get; set; } = 3;
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromMilliseconds(250);
     public int MaxResponseBytes { get; set; } = TerraScaleReactiveHttpClient.MaxMessageBytes;

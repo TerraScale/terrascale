@@ -7,7 +7,8 @@ using TerraScale.DotNet.Generated;
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// Client for TerraScale region discovery endpoints.
+/// Client for TerraScale region metadata: the Atlas region catalog and the
+/// serving member's health.
 /// </summary>
 public sealed class TerraScaleRegionsClient
 {
@@ -18,15 +19,23 @@ public sealed class TerraScaleRegionsClient
         this.client = client;
     }
 
-    /// <summary>Returns the serving member's own region and health, so a client discovers where its request landed.</summary>
-    public async Task<TerraScaleRegionHealth> GetAsync(CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Returns the Atlas region catalog (ADR 0050 §8): the orchestrator's
+    /// regions with availability and the validated regional member hosts. On
+    /// the public product origin the route targets Atlas itself; custom
+    /// origins serve it from their configured origin.
+    /// </summary>
+    public async Task<TerraScaleRegionCatalog> GetAsync(CancellationToken cancellationToken = default)
     {
-        var response = await client.SendJsonAsync(
-            HttpMethod.Get,
-            "/api/v1/regions",
-            TerraScaleContractJsonContext.Default.HealthResponse,
-            cancellationToken).ConfigureAwait(false);
-        return new TerraScaleRegionHealth(response.Region, response.Healthy, response.Version);
+        var payload = await client.SendMetadataJsonAsync(HttpMethod.Get, "/api/v1/regions", cancellationToken).ConfigureAwait(false);
+        return TerraScaleRoutingValidation.TryParseRegionCatalog(payload, client.LoopbackConfiguredOrigin)
+            ?? throw new TerraScaleApiException(
+                System.Net.HttpStatusCode.OK,
+                "The region catalog response is not a valid TerraScale region catalog.",
+                errorCode: null,
+                requestId: null,
+                responseBody: null,
+                retryAfter: null);
     }
 
     /// <summary>Returns the serving member's region and health.</summary>

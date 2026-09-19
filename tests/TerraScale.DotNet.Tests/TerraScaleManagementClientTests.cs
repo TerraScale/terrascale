@@ -29,7 +29,13 @@ public sealed class TerraScaleManagementClientTests
                 .Single(value => value.GetProperty("operationId").GetString() == operationId);
             foreach (var response in operation.GetProperty("responses").EnumerateArray())
             {
-                using var handler = new CorpusHandler(response);
+                // ADR 0050 §8 moved the SDK's /api/v1/regions target to the
+                // Atlas metadata origin, whose published shape is the region
+                // catalog (ts-atlas contracts/v1/openapi.json) — not the member
+                // health form the member corpus records for this path. The
+                // success replay therefore substitutes the catalog shape; the
+                // member health form stays covered by the health operation.
+                using var handler = new CorpusHandler(response, operationId == "regions" ? AtlasCatalogBody : null);
                 using var http = new HttpClient(handler);
                 var client = Client(http);
                 var result = await Invoke(client, operationId, operation);
@@ -125,6 +131,9 @@ public sealed class TerraScaleManagementClientTests
         });
     }
 
+    private const string AtlasCatalogBody =
+        """{"regions":[{"code":"GRU","name":"Sao Paulo","country":"BR","latitude":-23.5475,"longitude":-46.6361,"available":true},{"code":"FRA","name":"Frankfurt","country":"DE","latitude":50.1109,"longitude":8.6821,"available":true}],"hosts":{"GRU":"https://gru.api.terrascale.tech","FRA":"https://fra.api.terrascale.tech"}}""";
+
     private static T Request<T>(JsonElement operation, JsonTypeInfo<T> type) =>
         JsonSerializer.Deserialize(operation.GetProperty("request").GetProperty("body").GetProperty("value").GetRawText(), type)!;
 
@@ -195,7 +204,7 @@ public sealed class TerraScaleManagementClientTests
         ApiKey = "test-key",
     });
 
-    private sealed class CorpusHandler(JsonElement fixture) : HttpMessageHandler
+    private sealed class CorpusHandler(JsonElement fixture, string? successBodyOverride = null) : HttpMessageHandler
     {
         public int Attempts { get; private set; }
         public string? Method { get; private set; }
@@ -214,7 +223,14 @@ public sealed class TerraScaleManagementClientTests
             AuthTransaction = request.Headers.TryGetValues("X-TerraScale-Auth-Transaction", out var transactions) ? transactions.Single() : null;
             IfMatch = request.Headers.IfMatch.FirstOrDefault()?.ToString();
             var response = new HttpResponseMessage((HttpStatusCode)fixture.GetProperty("status").GetInt32());
-            if (fixture.TryGetProperty("body", out var body) && body.ValueKind != JsonValueKind.Null)
+            var hasBody = fixture.TryGetProperty("body", out var body) && body.ValueKind != JsonValueKind.Null;
+            if (hasBody && successBodyOverride is not null && fixture.GetProperty("status").GetInt32() < 400)
+            {
+                response.Content = new StringContent(successBodyOverride, Encoding.UTF8, "application/json");
+                return response;
+            }
+
+            if (hasBody)
             {
                 var media = fixture.GetProperty("mediaType").GetString()!;
                 response.Content = new StringContent(media == "application/octet-stream" ? body.GetString()! : body.GetRawText(), Encoding.UTF8, media);

@@ -5,12 +5,50 @@ The C#/.NET 11 client SDK for TerraScale. The workspace
 models and route metadata consume the pinned public contract published by
 terrabase; named clients implement customer operations against that contract.
 
+## Atlas routing (ADR 0050)
+
+`api.terrascale.tech` is the dashboard-owned product API origin only; the
+per-request proxy is retired. Metadata lives on `atlas.terrascale.tech`
+(ts-atlas), and every database operation connects directly to a regional
+member:
+
+- **Discovery** — the first database-scoped request resolves its routing scope
+  (`GET https://atlas.terrascale.tech/api/v1/discovery?database=…&branch=main`).
+  The document is strictly validated (region codes, HTTPS
+  `{region}.api.terrascale.tech` endpoints — loopback dev origins for local
+  workers — capabilities, priority), cached per scope for the served
+  `refreshSeconds` clamped to 60–3600 s, fetched single-flight, and pinned
+  regionally while eligible. Refreshes never re-pin a healthy route; a `421`
+  adopts the member's authoritative `X-TerraScale-Placement` (repair once,
+  safe or idempotency-keyed requests only) and schedules one corrective
+  rediscovery (`stale=1`). `404` never rediscovers.
+- **Catalog fallback** — a discovery failure degrades to the region catalog
+  (`GET https://atlas.terrascale.tech/api/v1/regions`, cached five minutes)
+  and the first available regional host. There is no proxy fallback; member
+  data never targets the bare product origin.
+- **Route table** — database-scoped requests (`/api/v1/databases/{name}/…`)
+  use discovery; product routes (`/api/v1/organizations*`,
+  `/api/v1/projects*`, `/api/v1/regions/{code}`) target the configured
+  `BaseAddress`; `/api/v1/regions` exactly is the catalog on Atlas; every
+  other database-less member route (database create/list, operations, health)
+  uses catalog selection.
+- **Reactive** — view attach targets the discovered regional endpoint, with
+  the same catalog fallback; advertised snapshot/log URL canonicalization is
+  unchanged.
+
+Routing is active for the public product origin and any client configured
+with `DiscoveryBaseAddress`; custom origins, regional hosts, strict affinity,
+and the loopback emulator keep direct routing exactly as before. Set
+`DiscoveryBaseAddress` (and optionally `DiscoveryTimeout`, default 3 s) in
+`TerraScaleClientOptions` for tests and local development.
+
 ## What is here
 
 - `TerraScaleClient` over a caller-owned `HttpClient`: authentication (API key
-  or bearer token/provider), region pinning with 421 repair, bounded transient
-  retries, idempotency and request IDs, typed `TerraScaleApiException`
-  errors, and dependency-injection registration.
+  or bearer token/provider), Atlas discovery and direct regional routing with
+  421 repair and endpoint failover, bounded transient retries, idempotency and
+  request IDs, typed `TerraScaleApiException` errors, and
+  dependency-injection registration.
 - Named clients for document CRUD, collections, databases, database branches,
   regions, backups, SQL, reactive views, usage, schemas, indexes, webhooks,
   development operations, and durable exports. Provisioning creation distinguishes

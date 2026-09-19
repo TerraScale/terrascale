@@ -31,6 +31,9 @@ public static class TerraScaleRegions
 
 internal static class TerraScaleRegionCodes
 {
+    public static bool IsKnown(string? regionCode) =>
+        regionCode is TerraScaleRegions.Gru or TerraScaleRegions.Sfo or TerraScaleRegions.Fra;
+
     public static string Validate(string regionCode, string parameterName)
     {
         ArgumentNullException.ThrowIfNull(regionCode, parameterName);

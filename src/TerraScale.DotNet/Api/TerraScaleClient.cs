@@ -29,10 +29,10 @@ public sealed class TerraScaleClient
     private readonly HttpClient httpClient;
     private readonly TerraScaleClientOptions options;
     private readonly JsonSerializerOptions jsonOptions;
+    private readonly TerraScaleDiscoveryRouter? router;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> sessionConsistencyTokens =
         new(StringComparer.OrdinalIgnoreCase);
     private volatile AuthenticationHeaderValue? cachedApiKeyHeader;
-    private Uri? pinnedRestBaseAddress;
 
     /// <summary>
     /// Creates a TerraScale client over a caller-owned <see cref="HttpClient"/>.
@@ -55,6 +55,7 @@ public sealed class TerraScaleClient
         this.httpClient = httpClient;
         this.options = optionSnapshot;
         jsonOptions = DefaultJsonOptions;
+        router = CreateDiscoveryRouter(optionSnapshot);
 
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Databases = new TerraScaleDatabasesClient(this);
@@ -83,7 +84,39 @@ public sealed class TerraScaleClient
                 MaxRetryAttempts = optionSnapshot.MaxRetryAttempts,
                 RetryDelay = optionSnapshot.RetryDelay,
                 RegionHint = optionSnapshot.PreferredRegion,
+                DiscoveryRouter = router,
             });
+    }
+
+    /// <summary>
+    /// The Atlas discovery router shared with the reactive client, or null when
+    /// the configured origin keeps direct routing (custom, regional, strict, or
+    /// loopback origins).
+    /// </summary>
+    internal TerraScaleDiscoveryRouter? DiscoveryRouter => router;
+
+    private TerraScaleDiscoveryRouter? CreateDiscoveryRouter(TerraScaleClientOptions snapshot)
+    {
+        if (snapshot.RegionAffinity == TerraScaleRegionAffinity.Strict)
+        {
+            return null;
+        }
+
+        Uri? origin = snapshot.DiscoveryBaseAddress;
+        if (origin is null &&
+            !string.Equals(snapshot.BaseAddress.Host, "api.terrascale.tech", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        origin ??= new Uri(TerraScaleDiscoveryRouter.DefaultDiscoveryBaseUrl, UriKind.Absolute);
+        return new TerraScaleDiscoveryRouter(
+            httpClient,
+            origin,
+            snapshot.DiscoveryTimeout,
+            snapshot.PreferredRegion,
+            snapshot.ProjectId,
+            snapshot.TenantId);
     }
 
     /// <summary>
@@ -787,6 +820,35 @@ public sealed class TerraScaleClient
         return await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>True when the configured origin is loopback; loopback clients accept dev-origin metadata hosts.</summary>
+    internal bool LoopbackConfiguredOrigin => TerraScaleRoutingValidation.IsDevOrigin(options.BaseAddress);
+
+    /// <summary>
+    /// Sends one unauthenticated metadata GET through the routing pipeline and
+    /// returns the raw JSON body (the Atlas region catalog).
+    /// </summary>
+    internal async Task<string> SendMetadataJsonAsync(HttpMethod method, string requestUri, CancellationToken cancellationToken)
+    {
+        using var activity = StartActivity(method, requestUri);
+        using var response = await SendWithRetriesAsync(
+            method,
+            requestUri,
+            static () => null,
+            RequestAuthenticationMode.Anonymous,
+            configureRequest: null,
+            activity,
+            cancellationToken).ConfigureAwait(false);
+
+        SetResponseTags(activity, response);
+        if (!response.IsSuccessStatusCode)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     internal async Task<TResponse> SendAnonymousJsonAsync<TResponse>(
         HttpMethod method,
         TerraScaleBoundRoute route,
@@ -951,13 +1013,16 @@ public sealed class TerraScaleClient
         var requestId = CreateRequestId();
         var idempotencyKey = idempotencyKeyOverride ?? CreateIdempotencyKey(method);
         var attempt = 0;
-        var repairedRestPin = false;
+        var repairedMisdirect = false;
+        var routing = TerraScaleRequestRouting.Classify(method, requestUri, router);
 
         while (true)
         {
+            var routedBase = await ResolveRoutedBaseAsync(routing, requestCancellationToken).ConfigureAwait(false);
             using var request = await CreateRequestAsync(
                 method,
                 requestUri,
+                routedBase?.BaseAddress,
                 contentFactory,
                 authenticationMode,
                 configureRequest,
@@ -967,21 +1032,32 @@ public sealed class TerraScaleClient
 
             try
             {
+                var attemptStartedAt = Stopwatch.GetTimestamp();
                 var response = await httpClient.SendAsync(
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
                     requestCancellationToken).ConfigureAwait(false);
 
-                if (response.StatusCode == HttpStatusCode.MisdirectedRequest &&
-                    !repairedRestPin &&
-                    TryRepairRestPin(response, request.RequestUri))
+                if (routedBase is ({ }, { } region) && (int)response.StatusCode < 500)
                 {
-                    repairedRestPin = true;
+                    // Measured client-to-region latency feeds the next discovery
+                    // request (ADR 0050 §2); only discovered endpoints report it.
+                    router?.RecordLatency(region, Stopwatch.GetElapsedTime(attemptStartedAt).TotalMilliseconds);
+                }
+
+                if (response.StatusCode == HttpStatusCode.MisdirectedRequest &&
+                    !repairedMisdirect &&
+                    CanRepairMisdirect(method, idempotencyKey, allowUnkeyedPutRetry) &&
+                    TryAdoptPlacement(response, routing))
+                {
+                    // Repair once from the placement header: the adopted
+                    // placement becomes the next route and schedules one
+                    // corrective rediscovery (stale=1).
+                    repairedMisdirect = true;
                     response.Dispose();
                     continue;
                 }
 
-                ObserveRestPin(response);
                 if (!ShouldRetryResponse(response, method, idempotencyKey, attempt, allowUnkeyedPutRetry))
                 {
                     return response;
@@ -993,12 +1069,14 @@ public sealed class TerraScaleClient
                     return response;
                 }
 
+                ReportRoutingFailure(routing, routedBase);
                 AddRetryEvent(activity, attempt + 1, delay, $"HTTP {(int)response.StatusCode}");
                 response.Dispose();
                 await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
             }
             catch (HttpRequestException exception) when (CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry))
             {
+                ReportRoutingFailure(routing, routedBase);
                 var delay = GetRetryDelay(response: null, attempt);
                 AddRetryEvent(activity, attempt + 1, delay, exception.GetType().Name);
                 await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
@@ -1008,9 +1086,90 @@ public sealed class TerraScaleClient
         }
     }
 
+    /// <summary>
+    /// Resolves the request base per the route classification (ADR 0050 §5/§8):
+    /// discovered regional endpoint for database routes, the discovery origin for
+    /// the catalog route, a catalog-selected regional host for other member
+    /// routes, and the configured origin for product routes. A null result keeps
+    /// the configured origin — the last resort when discovery cannot answer.
+    /// </summary>
+    private async Task<(Uri BaseAddress, string? Region)?> ResolveRoutedBaseAsync(
+        TerraScaleRequestRouting routing,
+        CancellationToken cancellationToken)
+    {
+        if (router is null)
+        {
+            return null;
+        }
+
+        switch (routing.Kind)
+        {
+            case TerraScaleRouteKind.ConfiguredOrigin:
+                return null;
+            case TerraScaleRouteKind.DiscoveryOrigin:
+                return (router.DiscoveryOrigin, null);
+            case TerraScaleRouteKind.Database:
+                if (await router.ResolveBaseAsync(routing.Database!, routing.NeedsWrite, cancellationToken).ConfigureAwait(false) is { } discovered)
+                {
+                    return (discovered.BaseAddress, discovered.Region);
+                }
+
+                return await router.ResolveCatalogBaseAsync(cancellationToken).ConfigureAwait(false) is { } discoveryFallback
+                    ? (discoveryFallback, null)
+                    : null;
+            case TerraScaleRouteKind.CatalogSelected:
+                return await router.ResolveCatalogBaseAsync(cancellationToken).ConfigureAwait(false) is { } catalogHost
+                    ? (catalogHost, null)
+                    : null;
+            default:
+                return null;
+        }
+    }
+
+    private bool TryAdoptPlacement(HttpResponseMessage response, TerraScaleRequestRouting routing)
+    {
+        if (router is null || routing.Database is null)
+        {
+            return false;
+        }
+
+        if (!response.Headers.TryGetValues("X-TerraScale-Placement", out var values))
+        {
+            return false;
+        }
+
+        var regions = values
+            .SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Where(TerraScaleRegionCodes.IsKnown)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (regions.Count == 0)
+        {
+            return false;
+        }
+
+        // Adopt the member's authoritative placement: it replaces any
+        // remembered region and marks the scope for one corrective lookup.
+        // A 404 never adopts or rediscovers.
+        router.NotePlacement(routing.Database, regions);
+        return true;
+    }
+
+    /// <summary>A routing failure against a discovered regional endpoint demotes that region behind the alternatives.</summary>
+    private void ReportRoutingFailure(TerraScaleRequestRouting routing, (Uri BaseAddress, string? Region)? routedBase)
+    {
+        if (routing.Database is not null &&
+            routedBase is ({ }, { } region) &&
+            TerraScaleRegionCodes.IsKnown(region))
+        {
+            router?.ReportRegionFailure(routing.Database, region);
+        }
+    }
+
     private async ValueTask<HttpRequestMessage> CreateRequestAsync(
         HttpMethod method,
         string requestUri,
+        Uri? routedBaseAddress,
         Func<HttpContent?> contentFactory,
         RequestAuthenticationMode authenticationMode,
         Action<HttpRequestMessage>? configureRequest,
@@ -1021,7 +1180,7 @@ public sealed class TerraScaleClient
         var request = new HttpRequestMessage(method, requestUri);
         try
         {
-            ApplyRestPin(request);
+            ApplyRoutingBase(request, routedBaseAddress);
             ApplyRequestVersion(request);
             if (authenticationMode == RequestAuthenticationMode.Authenticated)
             {
@@ -1061,86 +1220,13 @@ public sealed class TerraScaleClient
         }
     }
 
-    private void ApplyRestPin(HttpRequestMessage request)
+    private static void ApplyRoutingBase(HttpRequestMessage request, Uri? routedBaseAddress)
     {
-        var pinnedBaseAddress = Volatile.Read(ref pinnedRestBaseAddress);
-        if (pinnedBaseAddress is not null && request.RequestUri is { IsAbsoluteUri: false } relativeUri)
+        if (routedBaseAddress is not null && request.RequestUri is { IsAbsoluteUri: false } relativeUri)
         {
-            request.RequestUri = new Uri(pinnedBaseAddress, relativeUri);
+            request.RequestUri = new Uri(routedBaseAddress, relativeUri);
         }
     }
-
-    private void ObserveRestPin(HttpResponseMessage response)
-    {
-        if (TryReadRegionHeader(response, "X-TerraScale-Region", out var region))
-        {
-            PinRestRegion(region);
-        }
-    }
-
-    private bool TryRepairRestPin(HttpResponseMessage response, Uri? requestUri)
-    {
-        if (options.RegionAffinity == TerraScaleRegionAffinity.Strict ||
-            !IsTerraScaleRestHost(options.BaseAddress.Host) ||
-            !response.Headers.TryGetValues("X-TerraScale-Placement", out var values))
-        {
-            return false;
-        }
-
-        var requestRegion = RegionFromHost(requestUri?.Host);
-        foreach (var value in values)
-        {
-            foreach (var candidate in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                if (IsRegion(candidate) && !string.Equals(candidate, requestRegion, StringComparison.Ordinal))
-                {
-                    PinRestRegion(candidate);
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private void PinRestRegion(string region)
-    {
-        if (options.RegionAffinity == TerraScaleRegionAffinity.Strict ||
-            !IsTerraScaleRestHost(options.BaseAddress.Host) ||
-            !IsRegion(region))
-        {
-            return;
-        }
-
-        var builder = new UriBuilder(options.BaseAddress)
-        {
-            Host = $"{region.ToLowerInvariant()}.api.terrascale.tech"
-        };
-        Volatile.Write(ref pinnedRestBaseAddress, builder.Uri);
-    }
-
-    private static bool TryReadRegionHeader(
-        HttpResponseMessage response,
-        string headerName,
-        out string region)
-    {
-        if (response.Headers.TryGetValues(headerName, out var values))
-        {
-            var candidate = values.FirstOrDefault()?.Trim();
-            if (candidate is not null && IsRegion(candidate))
-            {
-                region = candidate;
-                return true;
-            }
-        }
-
-        region = string.Empty;
-        return false;
-    }
-
-    private static bool IsTerraScaleRestHost(string host) =>
-        string.Equals(host, "api.terrascale.tech", StringComparison.OrdinalIgnoreCase) ||
-        RegionFromHost(host) is not null;
 
     private static string? RegionFromHost(string? host)
     {
@@ -1151,11 +1237,8 @@ public sealed class TerraScaleClient
         }
 
         var candidate = host[..^suffix.Length].ToUpperInvariant();
-        return IsRegion(candidate) ? candidate : null;
+        return TerraScaleRegionCodes.IsKnown(candidate) ? candidate : null;
     }
-
-    private static bool IsRegion(string region) =>
-        region is TerraScaleRegions.Gru or TerraScaleRegions.Sfo or TerraScaleRegions.Fra;
 
     private static Uri ResolveReactiveBaseAddress(Uri restBaseAddress)
     {
@@ -1395,6 +1478,15 @@ public sealed class TerraScaleClient
         attempt < options.MaxRetryAttempts &&
         ((IsSafeRetryMethod(method) && (method != HttpMethod.Put || allowUnkeyedPutRetry)) ||
          !string.IsNullOrWhiteSpace(idempotencyKey));
+
+    /// <summary>
+    /// 421 repair replays safe reads or idempotency-keyed mutations (ADR 0043
+    /// §4) and is routing repair, not a retry: it is never gated on the
+    /// transient-retry budget.
+    /// </summary>
+    private static bool CanRepairMisdirect(HttpMethod method, string? idempotencyKey, bool allowUnkeyedPutRetry) =>
+        (IsSafeRetryMethod(method) && (method != HttpMethod.Put || allowUnkeyedPutRetry)) ||
+        !string.IsNullOrWhiteSpace(idempotencyKey);
 
     private TimeSpan GetRetryDelay(HttpResponseMessage? response, int attempt)
     {
