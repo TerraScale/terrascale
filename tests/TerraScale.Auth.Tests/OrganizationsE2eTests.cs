@@ -312,6 +312,136 @@ public sealed class OrganizationsE2eTests
     }
 
     [Test]
+    public async Task InvitationAcceptAfterRevokeIsRejectedAndCreatesNothing()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+        var sessions = new SessionService(store);
+
+        var orgId = (await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp")).GetProperty("id").GetString()!;
+        var email = $"revoked-{Guid.NewGuid().ToString("N")[..6]}@example.com";
+        var invitationId = (await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/invitations", new { email, role = "member" }, HttpStatusCode.OK))
+            .GetProperty("id").GetString()!;
+        var user = await sessions.CreateUserAsync(instanceId, email, null, null, null);
+        var (_, cookie) = await sessions.CreateSessionAsync(instanceId, user.Id, null, null);
+
+        var knownToken = SecureTokens.RandomToken(48);
+        await store.CreateVerificationTokenAsync(new VerificationToken
+        {
+            Id = "vtok_" + SecureTokens.RandomToken(20),
+            InstanceId = instanceId,
+            UserId = invitationId,
+            Purpose = "invitation",
+            TokenKey = SecureTokens.Sha256Hex(knownToken),
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/invitations/{invitationId}/revoke", null, HttpStatusCode.OK);
+
+        using var accept = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}");
+        accept.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={cookie}");
+        using var page = await http.SendAsync(accept);
+        await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await page.Content.ReadAsStringAsync()).Contains("expired or was revoked");
+        await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Count).IsEqualTo(0);
+        await Assert.That((await store.GetInvitationAsync(invitationId))!.Status).IsEqualTo("revoked");
+    }
+
+    [Test]
+    public async Task InvitationAcceptTokenIsSingleUse()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+        var sessions = new SessionService(store);
+
+        var orgId = (await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp")).GetProperty("id").GetString()!;
+        var email = $"replay-{Guid.NewGuid().ToString("N")[..6]}@example.com";
+        var invitationId = (await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/invitations", new { email, role = "member" }, HttpStatusCode.OK))
+            .GetProperty("id").GetString()!;
+        var user = await sessions.CreateUserAsync(instanceId, email, null, null, null);
+        var (_, cookie) = await sessions.CreateSessionAsync(instanceId, user.Id, null, null);
+
+        var knownToken = SecureTokens.RandomToken(48);
+        await store.CreateVerificationTokenAsync(new VerificationToken
+        {
+            Id = "vtok_" + SecureTokens.RandomToken(20),
+            InstanceId = instanceId,
+            UserId = invitationId,
+            Purpose = "invitation",
+            TokenKey = SecureTokens.Sha256Hex(knownToken),
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        using var first = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}");
+        first.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={cookie}");
+        using var firstPage = await http.SendAsync(first);
+        await Assert.That(firstPage.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await firstPage.Content.ReadAsStringAsync()).Contains("joined Acme Corp");
+
+        // The very same link, replayed: rejected as used, and nothing changes.
+        using var replay = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}");
+        replay.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={cookie}");
+        using var replayPage = await http.SendAsync(replay);
+        await Assert.That(replayPage.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await replayPage.Content.ReadAsStringAsync()).Contains("invalid or has already been used");
+        await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Count).IsEqualTo(1);
+        await Assert.That((await store.ListAuditEventsAsync(instanceId, 100)).Count(e => e.Type == "invitation.accepted")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ConcurrentInvitationAcceptsLetExactlyOneWin()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+        var sessions = new SessionService(store);
+
+        var orgId = (await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp")).GetProperty("id").GetString()!;
+        var email = $"race-{Guid.NewGuid().ToString("N")[..6]}@example.com";
+        var invitationId = (await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/invitations", new { email, role = "member" }, HttpStatusCode.OK))
+            .GetProperty("id").GetString()!;
+        var user = await sessions.CreateUserAsync(instanceId, email, null, null, null);
+        var (_, cookie) = await sessions.CreateSessionAsync(instanceId, user.Id, null, null);
+
+        var knownToken = SecureTokens.RandomToken(48);
+        await store.CreateVerificationTokenAsync(new VerificationToken
+        {
+            Id = "vtok_" + SecureTokens.RandomToken(20),
+            InstanceId = instanceId,
+            UserId = invitationId,
+            Purpose = "invitation",
+            TokenKey = SecureTokens.Sha256Hex(knownToken),
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        HttpRequestMessage Accept()
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}");
+            request.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={cookie}");
+            return request;
+        }
+
+        // One single-use link, two concurrent accepts: the token consume must be a
+        // compare-and-set, so exactly one request accepts; the loser reads as used.
+        using var first = Accept();
+        using var second = Accept();
+        var responses = await Task.WhenAll(http.SendAsync(first), http.SendAsync(second));
+        var statuses = responses.Select(r => r.StatusCode).OrderBy(s => (int)s).ToList();
+        await Assert.That(statuses).IsEquivalentTo([HttpStatusCode.OK, HttpStatusCode.BadRequest]);
+        await Assert.That(await responses.Single(r => r.StatusCode == HttpStatusCode.BadRequest).Content.ReadAsStringAsync())
+            .Contains("invalid or has already been used");
+
+        await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Count).IsEqualTo(1);
+        await Assert.That((await store.GetInvitationAsync(invitationId))!.Status).IsEqualTo("accepted");
+        await Assert.That((await store.ListAuditEventsAsync(instanceId, 100)).Count(e => e.Type == "invitation.accepted")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task ConcurrentOrganizationCreatesWithTheSameSlugProduceExactlyOneWinner()
     {
         var (service, instanceId, slug, apiKey) = await StartAsync();

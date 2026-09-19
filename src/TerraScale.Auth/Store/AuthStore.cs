@@ -426,6 +426,43 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task UpsertInvitationAsync(Invitation invitation, CancellationToken ct = default) =>
         UpsertAsync("invitations", invitation.Id, invitation, ct);
 
+    /// <summary>
+    /// Atomic invitation status transition (accept: pending→accepted, revoke: pending→revoked).
+    /// The write carries an exact-version If-Match, so a concurrent transition of the same
+    /// invitation — a double accept, or an accept racing a revoke — loses with 412 and
+    /// reads as null.
+    /// </summary>
+    public async Task<Invitation?> TryTransitionInvitationAsync(string id, string fromStatus, string toStatus, CancellationToken ct = default)
+    {
+        TerraScaleDocument document;
+        try
+        {
+            document = await client.Documents.GetAsync(Database, "invitations", id, cancellationToken: ct);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        if (document.Data.Deserialize<Invitation>(Json) is not { } invitation || invitation.Status != fromStatus)
+            return null;
+        var transitioned = invitation with { Status = toStatus };
+        try
+        {
+            await client.Documents.PutAsync(
+                Database,
+                "invitations",
+                id,
+                transitioned,
+                new TerraScaleDocumentMutationOptions(ExpectedChangeToken: document.ChangeToken),
+                ct);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+        {
+            return null;
+        }
+        return transitioned;
+    }
+
     public Task<IReadOnlyList<Invitation>> ListInvitationsAsync(string orgId, CancellationToken ct = default) =>
         QueryAsync<Invitation>("invitations", "orgId", orgId, 100, ct);
 

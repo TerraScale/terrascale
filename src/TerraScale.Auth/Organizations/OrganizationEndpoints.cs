@@ -332,9 +332,12 @@ public static class OrganizationEndpoints
             if (invitation.Status != "pending")
                 return ApiResults.Conflict("invitation_not_pending", "only pending invitations can be revoked");
 
-            invitation = invitation with { Status = "revoked" };
-            await store.UpsertInvitationAsync(invitation, ct);
-            return Results.Ok(Render(invitation));
+            // Atomic pending→revoked: an accept that lands first wins the transition, so a
+            // revoke can never overwrite an accepted invitation (and vice versa below).
+            var revoked = await store.TryTransitionInvitationAsync(invitation.Id, "pending", "revoked", ct);
+            if (revoked is null)
+                return ApiResults.Conflict("invitation_not_pending", "only pending invitations can be revoked");
+            return Results.Ok(Render(revoked));
         });
 
         // ---- Hosted acceptance page (public) ------------------------------------------------
@@ -347,13 +350,18 @@ public static class OrganizationEndpoints
 
             var now = Now();
             var invitation = await store.GetInvitationAsync(invitationId, ct);
-            if (invitation is null || invitation.InstanceId != instance.Id || invitation.Status != "pending" || invitation.ExpiresAt <= now)
-                return Ui.Page("Invitation no longer valid", """<div class="error">This invitation has expired or was revoked. Ask an administrator to send a new one.</div>""", status: 400);
+            if (invitation is null || invitation.InstanceId != instance.Id)
+                return Ui.Page("Invitation not found", """<div class="error">This invitation link is not valid.</div>""", status: 404);
 
+            // Token first, invitation state second: a replayed link must read as used, not
+            // as expired/revoked (an accepted invitation still has a perfectly valid token shape).
             var verification = string.IsNullOrEmpty(token) ? null : await store.FindVerificationTokenAsync(SecureTokens.Sha256Hex(token), ct);
             if (verification is null || verification.Purpose != "invitation" || verification.InstanceId != instance.Id
                 || verification.UserId != invitation.Id || verification.Consumed || verification.ExpiresAt <= now)
                 return Ui.Page("Invalid link", """<div class="error">This acceptance link is invalid or has already been used.</div>""", status: 400);
+
+            if (invitation.Status != "pending" || invitation.ExpiresAt <= now)
+                return Ui.Page("Invitation no longer valid", """<div class="error">This invitation has expired or was revoked. Ask an administrator to send a new one.</div>""", status: 400);
 
             var organization = await store.GetOrganizationAsync(invitation.OrgId, ct);
             if (organization is null || organization.InstanceId != instance.Id)
@@ -383,6 +391,23 @@ public static class OrganizationEndpoints
                     """);
 
             var alreadyMember = (await store.ListMembershipsByOrgAsync(organization.Id, ct)).Any(m => m.UserId == current.User.Id);
+
+            // Atomic single-use gate: the consume is an exact-version compare-and-set, so of
+            // two concurrent accepts of one link only the first proceeds; the loser reads
+            // the token as already used and nothing is created.
+            var consumed = await store.ConsumeVerificationTokenAsync(
+                verification.TokenKey,
+                record => record.Purpose == "invitation" && record.InstanceId == instance.Id
+                    && record.UserId == invitation.Id && !record.Consumed && record.ExpiresAt > now,
+                ct);
+            if (consumed is null)
+                return Ui.Page("Invalid link", """<div class="error">This acceptance link is invalid or has already been used.</div>""", status: 400);
+
+            // Atomic pending→accepted: a revoke that landed after the checks above wins here,
+            // so a revoked invitation never creates a membership and is never reset to accepted.
+            if (await store.TryTransitionInvitationAsync(invitation.Id, "pending", "accepted", ct) is null)
+                return Ui.Page("Invitation no longer valid", """<div class="error">This invitation has expired or was revoked. Ask an administrator to send a new one.</div>""", status: 400);
+
             if (!alreadyMember)
             {
                 try
@@ -404,8 +429,6 @@ public static class OrganizationEndpoints
                 }
             }
 
-            await store.UpsertVerificationTokenAsync(verification with { Consumed = true }, ct);
-            await store.UpsertInvitationAsync(invitation with { Status = "accepted" }, ct);
             await AuditAsync(store, instance.Id, "invitation.accepted", current.User.Id, new Dictionary<string, object>
             {
                 ["organization_id"] = organization.Id,
