@@ -19,6 +19,10 @@ public static class Icons
     public static HtmlString Building(int size = 18) => new(SvgText(BuildingSvg, size));
     public static HtmlString Calendar(int size = 18) => new(SvgText(CalendarSvg, size));
     public static HtmlString Check(int size = 18) => new(SvgText(CheckSvg, size));
+    public static HtmlString FolderKanban(int size = 18) => new(SvgText(FolderKanbanSvg, size));
+
+    public static HtmlString MapPin(int size = 18) => new(SvgText(MapPinSvg, size));
+
     public static HtmlString ChevronDown(int size = 18) => new(SvgText(ChevronDownSvg, size));
     public static HtmlString ChevronRight(int size = 18) => new(SvgText(ChevronRightSvg, size));
     public static HtmlString CircleCheckBig(int size = 18) => new(SvgText(CircleCheckBigSvg, size));
@@ -81,6 +85,10 @@ public static class Icons
     public const string DatabaseSvg = """<ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5V19A9 3 0 0 0 21 19V5"></path><path d="M3 12A9 3 0 0 0 21 12"></path>""";
     public const string ExternalLinkSvg = """<path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>""";
     public const string FileTextSvg = """<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path>""";
+    public const string FolderKanbanSvg = """<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M8 10v4"/><path d="M12 10v2"/><path d="M16 10v4"/>""";
+
+    public const string MapPinSvg = """<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>""";
+
     public const string GlobeSvg = """<circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path>""";
     public const string Globe2Svg = """<path d="M21.54 15H17a2 2 0 0 0-2 2v4.54"></path><path d="M7 3.34V5a3 3 0 0 0 3 3a2 2 0 0 1 2 2c0 1.1.9 2 2 2a2 2 0 0 0 2-2c0-1.1.9-2 2-2h3.17"></path><path d="M11 21.95V18a2 2 0 0 0-2-2a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05"></path><circle cx="12" cy="12" r="10"></circle>""";
     public const string HardDriveSvg = """<path d="M10 16h.01"></path><path d="M2.212 11.577a2 2 0 0 0-.212.896V18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.527a2 2 0 0 0-.212-.896L18.55 5.11A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path><path d="M21.946 12.013H2.054"></path><path d="M6 16h.01"></path>""";

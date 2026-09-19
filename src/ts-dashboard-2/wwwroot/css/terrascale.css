@@ -1577,14 +1577,14 @@ single-selector rules may stay on one line.
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: var(--ts-md);
-    padding: var(--ts-sm) var(--ts-sm) var(--ts-md);
+    gap: 0;
+    padding: 0 var(--ts-md) var(--ts-md);
   }
 
   .ts-sidebar-footer {
     display: flex;
     flex-direction: column;
-    gap: var(--ts-sm);
+    gap: var(--ts-md);
     padding: var(--ts-md);
     border-top: 1px solid var(--ts-line);
     flex-shrink: 0;
@@ -1858,6 +1858,130 @@ single-selector rules may stay on one line.
     display: flex;
     flex-direction: column;
     gap: var(--ts-sm);
+  }
+
+  /* v1 ProjectSwitcher: one collapsed trigger, everything else in the popover. */
+  .ts-project-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-md);
+    width: 100%;
+  }
+
+  .ts-project-trigger-label {
+    font-weight: var(--ts-fw-semibold);
+    text-align: left;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ts-project-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .ts-project-panel-header {
+    padding: var(--ts-sm) var(--ts-md);
+    border-bottom: 1px solid var(--ts-line);
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  .ts-project-panel-scroll {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ts-sm);
+    padding: var(--ts-sm) var(--ts-md);
+    max-height: min(60vh, 420px);
+    overflow-y: auto;
+  }
+
+  .ts-project-section-label {
+    font-size: var(--ts-fs-meta);
+    font-weight: var(--ts-fw-medium);
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-current-project {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ts-sm);
+    padding: var(--ts-md);
+    border-radius: var(--ts-radius-control);
+    border: 1px solid var(--ts-line);
+    background-color: var(--ts-surface-muted);
+  }
+
+  .ts-project-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-xs);
+  }
+
+  .ts-project-rename {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border-radius: var(--ts-radius-control);
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-project-rename:hover {
+    color: var(--ts-ink);
+    background-color: var(--ts-surface-muted);
+  }
+
+  .ts-project-search-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ts-xs);
+  }
+
+  .ts-project-search {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-xs);
+  }
+
+  .ts-project-search .ts-input {
+    height: 32px;
+    min-height: 32px;
+  }
+
+  .ts-project-search svg {
+    color: var(--ts-ink-muted);
+    flex-shrink: 0;
+  }
+
+  .ts-project-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ts-xs);
+  }
+
+  .ts-project-option-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .ts-project-meta-compact {
+    gap: var(--ts-sm);
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-project-footer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ts-xs);
+    padding: var(--ts-sm) var(--ts-md);
+    border-top: 1px solid var(--ts-line);
   }
 
   .ts-current-project {

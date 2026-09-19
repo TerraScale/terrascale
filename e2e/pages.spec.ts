@@ -13,7 +13,6 @@ const memberRoutes: Route[] = [
   { path: "/indexes", expectText: "Indexes" },
   { path: "/history", expectText: "History" },
   { path: "/databases", expectText: "Databases" },
-  { path: "/backups", expectText: "Backups" },
   { path: "/notifications", expectText: "Notifications" },
   { path: "/organization", expectText: "Organization" },
   { path: "/organizations/new", expectText: "Create organization" },

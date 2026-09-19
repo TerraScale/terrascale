@@ -5,13 +5,10 @@ public enum RouteId
 {
     Home,
     Databases,
-    Backups,
     Data,
     ApiKeys,
     Access,
-    AccessRules,
     Usage,
-    Engine,
     Audit,
     Notifications,
     Settings,

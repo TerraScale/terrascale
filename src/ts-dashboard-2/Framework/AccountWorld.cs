@@ -136,12 +136,6 @@ public sealed class AccountWorld
 
     // --- Feature collections -----------------------------------------------
 
-    public ImmutableArray<AccessRule> AccessRules { get; set; } = [];
-
-    public AccessRuleValidationState? LastAccessRuleValidation { get; set; }
-
-    public AccessRuleDryRunState? LastAccessRuleDryRun { get; set; }
-
     public ImmutableArray<M2mCredential> M2mCredentials { get; set; } = [];
 
     public (string CredentialId, string Name, string Secret)? PendingSecret { get; set; }
@@ -427,14 +421,6 @@ public sealed class AccountWorld
             new("usr_01JC9S9V6Q1X4Z6B8D0F3H6JN", "Ravi Patel", "ravi@terrascale.tech", "member", "Active", false, "RP", Provider: "google", OrganizationName: "TerraScale Labs"),
             new("usr_01JC9TA1Z3C5E7G9I1K4M7P0S", "Dana White", "dana@northwind.io", "owner", "Suspended", false, "DW", Provider: "sso", SupportNote: "Billing dispute open.", OrganizationName: "Northwind"),
             new("usr_01JC9TB2D4F6H8J0L2N5P8S1V", "Igor Ivanov", "igor@northwind.io", "member", "Active", true, "II", Provider: "password", OrganizationName: "Northwind"),
-        ];
-
-        AccessRules =
-        [
-            new("rule_01JCAB2D4F6H8J1M4P7S1V4ZB", "Owner read", "principal.id == document.ownerId", "local-draft", "local"),
-            new("rule_01JCAB3E5G7J9K2N5Q8T2W5YC", "Public visibility", "document.visibility in [\"public\", \"unlisted\"]", "local-draft", "local"),
-            new("rule_01JCAB4F6H8K1M3P6R9V3X6ZD", "Editor write", "principal.role in [\"owner\", \"admin\"] && has(document.status)", "local-draft", "local"),
-            new("rule_01JCAB5G7I9L2N4Q7S1W4Y5AE", "Audit deny draft", "principal.id == document.ownerId &&", "local-draft", "local"),
         ];
 
         M2mCredentials =
