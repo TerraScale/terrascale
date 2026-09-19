@@ -453,8 +453,10 @@ public sealed class ScimE2eTests
         await Assert.That(page.GetProperty("itemsPerPage").GetInt32()).IsEqualTo(2);
         await Assert.That(page.GetProperty("Resources").GetArrayLength()).IsEqualTo(2);
         await Assert.That(page.GetProperty("totalResults").GetInt32()).IsEqualTo(3);
+        var tail = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Users?count=2&startIndex=3", null, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(tail.GetProperty("Resources").GetArrayLength()).IsEqualTo(1);
         var firstPage = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Users?count=2&startIndex=1", null, HttpStatusCode.OK, "application/scim+json");
-        await Assert.That(page.GetProperty("Resources").EnumerateArray().Select(u => u.GetProperty("id").GetString())
+        await Assert.That(tail.GetProperty("Resources").EnumerateArray().Select(u => u.GetProperty("id").GetString())
             .IntersectBy(firstPage.GetProperty("Resources").EnumerateArray().Select(u => u.GetProperty("id").GetString()), id => id)).IsEmpty();
 
         // Groups honor the same pagination contract; an unsupported filter is declined, not ignored.
@@ -493,13 +495,19 @@ public sealed class ScimE2eTests
             });
         }
 
+        // Default paging: one 100-item page, but totalResults must count every match on every engine page.
         var list = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Groups", null, HttpStatusCode.OK, "application/scim+json");
         await Assert.That(list.GetProperty("schemas").EnumerateArray().Single().GetString())
             .IsEqualTo("urn:ietf:params:scim:api:messages:2.0:ListResponse");
         await Assert.That(list.GetProperty("totalResults").GetInt32()).IsEqualTo(101);
-        await Assert.That(list.GetProperty("Resources").GetArrayLength()).IsEqualTo(101);
+        await Assert.That(list.GetProperty("Resources").GetArrayLength()).IsEqualTo(100);
         await Assert.That(list.GetProperty("startIndex").GetInt32()).IsEqualTo(1);
-        await Assert.That(list.GetProperty("itemsPerPage").GetInt32()).IsEqualTo(101);
+        await Assert.That(list.GetProperty("itemsPerPage").GetInt32()).IsEqualTo(100);
+
+        // The 101st group is reachable on the next page instead of being lost to truncation.
+        var next = await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Groups?count=100&startIndex=101", null, HttpStatusCode.OK, "application/scim+json");
+        await Assert.That(next.GetProperty("Resources").GetArrayLength()).IsEqualTo(1);
+        await Assert.That(next.GetProperty("totalResults").GetInt32()).IsEqualTo(101);
     }
 
     [Test]
