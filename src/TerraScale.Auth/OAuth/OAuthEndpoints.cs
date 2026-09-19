@@ -203,8 +203,9 @@ public static class OAuthEndpoints
             // RFC 7009: unknown or already-invalid tokens still return 200; access
             // tokens are stateless JWTs, so only refresh tokens need store work.
             var tokenValue = form["token"].ToString();
-            if (tokenValue.Length > 0
-                && await store.FindRefreshTokenAsync(SecureTokens.Sha256Hex(tokenValue), ct) is { } refresh
+            if (tokenValue.Length == 0)
+                return TokenError("invalid_request", "token is required");
+            if (await store.FindRefreshTokenAsync(SecureTokens.Sha256Hex(tokenValue), ct) is { } refresh
                 && refresh.InstanceId == instance.Id
                 && refresh.ClientId == authentication.Client.ClientId
                 && refresh.Status == "active")
@@ -225,6 +226,8 @@ public static class OAuthEndpoints
                 return TokenError("invalid_client", authentication.Description ?? "client authentication failed", 401);
 
             var tokenValue = form["token"].ToString();
+            if (tokenValue.Length == 0)
+                return TokenError("invalid_request", "token is required");
             if (tokenValue.Contains('.'))
             {
                 var claims = await VerifyAccessTokenAsync(keys, store, options, instance, tokenValue, ct);
@@ -242,12 +245,16 @@ public static class OAuthEndpoints
                         ["iat"] = ClaimLong(claims, "iat") ?? 0,
                     });
             }
+            // Truthful only if the token endpoint would actually honor it: the
+            // refresh grant refuses banned/deleted users, so introspection must
+            // not report those tokens as active.
             else if (tokenValue.Length > 0
                 && await store.FindRefreshTokenAsync(SecureTokens.Sha256Hex(tokenValue), ct) is { } refresh
                 && refresh.InstanceId == instance.Id
                 && refresh.ClientId == authentication.Client.ClientId
                 && refresh.Status == "active"
-                && refresh.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+                && refresh.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                && await store.GetUserAsync(refresh.UserId, ct) is { Banned: false, Deleted: false })
             {
                 return Results.Json(new Dictionary<string, object>
                 {

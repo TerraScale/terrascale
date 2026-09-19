@@ -684,6 +684,28 @@ public sealed class OAuthE2eTests
         await Assert.That(activeRefresh.GetProperty("active").GetBoolean()).IsTrue();
         await Assert.That(activeRefresh.GetProperty("token_type").GetString()).IsEqualTo("refresh_token");
 
+        // Rotation retires the old refresh token: it must introspect as inactive.
+        var rotated = await arranged.Service.Http.SendAsync(TokenRequest(arranged, new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = refreshToken,
+        }));
+        await Assert.That(rotated.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await IntrospectAsync(arranged, refreshToken)).GetProperty("active").GetBoolean()).IsFalse();
+        var rotatedRefresh = (await rotated.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("refresh_token").GetString()!;
+
+        // The token endpoint refuses banned users, so introspection must agree.
+        await arranged.Service.Store.UpsertUserAsync(arranged.User with { Banned = true });
+        await Assert.That((await IntrospectAsync(arranged, rotatedRefresh)).GetProperty("active").GetBoolean()).IsFalse();
+        await arranged.Service.Store.UpsertUserAsync(arranged.User with { Banned = false });
+
+        // A request without the required token parameter is invalid_request, not a
+        // silent active:false / 200.
+        await Assert.That((await arranged.Service.Http.SendAsync(AuthenticatedForm(arranged, "oauth/introspect",
+            new Dictionary<string, string>()))).StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await arranged.Service.Http.SendAsync(AuthenticatedForm(arranged, "oauth/revoke",
+            new Dictionary<string, string>()))).StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
         // RFC 7009: always 200, even for junk; revoking a stateless access token is a no-op.
         await Assert.That((await RevokeAsync(arranged, "garbage")).StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((await RevokeAsync(arranged, accessToken)).StatusCode).IsEqualTo(HttpStatusCode.OK);
