@@ -101,6 +101,9 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<Instance?> GetInstanceAsync(string id, CancellationToken ct = default) =>
         GetOrNullAsync<Instance>("instances", id, ct);
 
+    public Task UpsertInstanceAsync(Instance instance, CancellationToken ct = default) =>
+        UpsertAsync("instances", instance.Id, instance, ct);
+
     public async Task<Instance?> FindInstanceBySlugAsync(string slug, CancellationToken ct = default)
     {
         var matches = await QueryAsync<Instance>("instances", "slug", slug, 2, ct);

@@ -19,5 +19,6 @@ public static class EndpointModules
         Billing.BillingEndpoints.Map(app);
         Templates.JwtTemplateEndpoints.Map(app);
         Users.PasscodeEndpoints.Map(app);
+        Management.InstanceSettingsEndpoints.Map(app);
     }
 }
