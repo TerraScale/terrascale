@@ -4,18 +4,10 @@ namespace TerraScale.Dashboard2;
 
 public sealed partial class DashboardStore
 {
-    public ImmutableArray<M2mCredential> M2mCredentials { get; private set; } =
-    [
-        new("m2m_01JC9Q8A2C4E6G8J0L2N4Q7ST", "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA", "ingest-worker",
-            "tsm_live_4e1", "7ab2", ["documents:write"], "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC",
-            "mario@terrascale.tech", "2026-02-18T08:00:00Z", null, "2026-09-18T04:12:00Z", null),
-        new("m2m_01JC9R9B3D5F7H9K1M3P5S8UV", "prj_01JC9R2X4P6T8V1Z3B5D7F9HC", "edge-sync",
-            "tsm_live_b90", "3f17", ["documents:read", "documents:write"], "",
-            "ana@terrascale.tech", "2026-03-05T13:30:00Z", "2026-09-30T00:00:00Z", "2026-09-18T02:55:00Z", null),
-    ];
+    public ImmutableArray<M2mCredential> M2mCredentials { get => World.M2mCredentials; private set => World.M2mCredentials = value; }
 
     /// <summary>Secret revealed once by create/rotate; consumed by the next page render.</summary>
-    public (string CredentialId, string Name, string Secret)? PendingSecret { get; private set; }
+    public (string CredentialId, string Name, string Secret)? PendingSecret { get => World.PendingSecret; private set => World.PendingSecret = value; }
 
     /// <summary>Port of credentialStatus: revoked wins, then expiring-within-14-days.</summary>
     public static string CredentialStatus(string? revokedAt, string? expiresAt) =>

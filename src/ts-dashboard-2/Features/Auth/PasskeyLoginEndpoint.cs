@@ -20,7 +20,7 @@ public sealed class PasskeyLoginEndpoint(DashboardStore store) : EndpointWithout
         store.AdoptExternalProvider("passkey");
         HttpContext.Response.Cookies.Append(
             DashboardAuthMiddleware.SessionCookie,
-            DashboardAuthMiddleware.SessionToken,
+            store.BeginSession(store.World),
             new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, Path = "/" });
         return Task.FromResult<IResult>(Results.Redirect("/", false, false));
     }

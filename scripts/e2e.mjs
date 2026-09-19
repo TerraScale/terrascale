@@ -1,5 +1,6 @@
-// End-to-end walkthrough of the demo dashboard: create account → onboarding →
-// inner dashboard → every mutating flow. Exits non-zero if any check fails.
+// End-to-end walkthrough: demo login + every mutating flow, then the fresh
+// account journey (register → onboarding → member states → owner promotion).
+// Exits non-zero if any check fails.
 //
 //   node scripts/e2e.mjs [baseUrl]      (default http://127.0.0.1:5199)
 //
@@ -28,6 +29,13 @@ const openDialog = async (sel) => {
   });
   await page.waitForSelector(`${sel}[open]`, { timeout: 2000 });
 };
+const login = async (email, password) => {
+  await go("/login");
+  await page.fill('input[name="email"]', email);
+  await page.fill('input[name="password"]', password);
+  await page.click('button[type="submit"]');
+  await page.waitForTimeout(700);
+};
 
 // ── 1. Login page ─────────────────────────────────────────────────────────
 await go("/login");
@@ -37,52 +45,16 @@ ok((await page.locator('form[action="/api/v1/auth/passkey/login"]').count()) ===
 ok((await page.locator('a[href*="external-login/begin?provider=google"]').count()) === 1, "google provider present");
 ok((await page.locator('a[href*="external-login/begin?provider=github"]').count()) === 1, "github provider present");
 
-// wrong password bounces back
 await page.fill('input[name="email"]', "mario@terrascale.tech");
 await page.fill('input[name="password"]', "wrong-password");
 await page.click('button[type="submit"]');
 await page.waitForURL("**/login?error=*");
 ok(decodeURIComponent(page.url()).includes("Invalid email or password"), "wrong password shows error");
 
-// ── 2. Create account (onboarding register) ──────────────────────────────
-await go("/onboarding");
-ok(await has("Activate your TerraScale account"), "onboarding landing renders");
-const register = async (password, confirm) => {
-  await page.fill('input[name="displayName"]', "E2E Probe");
-  await page.fill('input[name="email"]', "e2e-probe@terrascale.tech");
-  await page.fill('input[name="password"]', password);
-  await page.fill('input[name="confirmPassword"]', confirm);
-  await page.check('input[name="terms"]').catch(() => {});
-  await page.click('button[type="submit"]');
-  await page.waitForTimeout(700);
-};
-await register("short", "short");
-ok(decodeURIComponent(page.url()).includes("at least 12"), "short password rejected");
-await register("Probe-E2E-123456!", "different!");
-ok(decodeURIComponent(page.url()).includes("do not match"), "mismatched passwords rejected");
-await register("Probe-E2E-123456!", "Probe-E2E-123456!");
-ok(!page.url().includes("error"), "valid registration accepted");
+// ── 2. Demo session: every data-rich mutating flow ───────────────────────
+await login("mario@terrascale.tech", "terrascale");
+ok(new URL(page.url()).pathname === "/", "demo login reaches dashboard");
 
-// ── 3. Onboarding wizard: organization → payment (checkout) → project ────
-ok((await page.locator('input[name="name"][id="organizationName"], #organizationName').count()) > 0 || await has("Organization"), "organization step reached");
-await page.fill('input[name="name"]', "Probe Labs");
-await page.click('button[type="submit"]');
-await page.waitForTimeout(700);
-ok(await has("Billing plan"), "organization saved, payment step reached");
-
-await page.click('button:has-text("Continue to secure payment setup")');
-await page.waitForTimeout(700);
-ok(page.url().includes("/checkout/"), "checkout session opened");
-await page.click('form[action*="/checkout/"] button[type="submit"]');
-await page.waitForTimeout(800);
-ok(page.url().includes("payment=success"), "checkout completed, payment validated");
-
-await page.fill('input[name="name"]', "probe-production");
-await page.click('button[type="submit"]');
-await page.waitForTimeout(900);
-ok(new URL(page.url()).pathname === "/", `project step done, dashboard reached (${new URL(page.url()).pathname})`);
-
-// ── 4. Inner dashboard shell ─────────────────────────────────────────────
 await go("/?range=7d");
 ok((await page.locator('.ts-tab[aria-selected="true"]:has-text("7d")').count()) === 1, "activity range switcher selects 7d");
 ok((await page.locator(".ts-chart-shell").count()) === 1, "activity renders a single chart for the range");
@@ -94,7 +66,7 @@ for (const label of ["Databases", "Settings", "Usage"]) {
   ok(await page.locator(`.ts-nav-link:has-text("${label}")`).count() >= 1, `nav link: ${label}`);
 }
 
-// ── 5. Databases: create → branch → delete ───────────────────────────────
+// Databases: create → delete
 await go("/databases?create=1");
 await openDialog("#create-database");
 await page.fill('#database-name', "e2e-database");
@@ -102,7 +74,7 @@ await page.click('form[action="/api/v1/dashboard/databases/create"] button[type=
 await page.waitForTimeout(500);
 ok(await has("e2e-database"), "database created and listed");
 
-// ── 6. API key ───────────────────────────────────────────────────────────
+// API key
 await go("/api-keys?create=key");
 await openDialog("#create-key-dialog");
 await page.fill('#key-name', "e2e-key");
@@ -111,7 +83,7 @@ await page.click('form[action="/api/v1/dashboard/credentials/key"] button[type="
 await page.waitForTimeout(500);
 ok(await has("e2e-key"), "api key created");
 
-// ── 7. Access: invite → resend → revoke ──────────────────────────────────
+// Access: invite → resend → revoke
 await go("/access?create=1");
 await page.fill("#invite-email", "e2e-teammate@terrascale.tech");
 await page.click('form[action="/api/v1/access/invitations"] button[type="submit"]');
@@ -124,7 +96,7 @@ const cancel = page.locator('form[action*="/revoke"] button:has-text("Cancel")')
 if (await cancel.count()) { await cancel.first().click(); await page.waitForTimeout(400); }
 ok(await has("Canceled"), "invitation revoked (shown as Canceled)");
 
-// ── 8. Webhooks: create → toggle → delete ────────────────────────────────
+// Webhooks: create → delete
 await go("/settings?tab=webhooks");
 await page.fill("#webhookUrl", "https://e2e.example.net/hooks/probe");
 await page.click('form[action="/api/v1/dashboard/webhooks"] button[type="submit"]');
@@ -134,13 +106,13 @@ await page.locator("tr", { hasText: "e2e.example.net" }).locator('form[action*="
 await page.waitForTimeout(500);
 ok(!(await has("e2e.example.net")), "webhook deleted");
 
-// ── 9. Notifications read-all ────────────────────────────────────────────
+// Notifications read-all
 await go("/notifications");
 await page.click('form[action="/api/v1/notifications/read-all"] button');
 await page.waitForTimeout(500);
 ok(true, "notifications marked read");
 
-// ── 10. Saved query create/delete ────────────────────────────────────────
+// Saved query create/delete
 await go("/data?view=queries&create=1");
 const sqForm = page.locator('form[action="/api/v1/dashboard/data/saved-queries"]').first();
 await sqForm.locator('input[name="name"]').fill("e2e-query").catch(() => {});
@@ -151,13 +123,13 @@ ok(await has("e2e-query").catch(() => false), "saved query created");
 await page.locator('form[action="/api/v1/dashboard/data/saved-queries/delete"] button').first().click().catch(() => {});
 await page.waitForTimeout(400);
 
-// ── 11. Profile: email, language, password ───────────────────────────────
+// Profile: email, language, password
 await go("/profile?tab=profile");
-await page.fill('input[name="newEmail"]', "renamed-probe@terrascale.tech");
+await page.fill('input[name="newEmail"]', "renamed-demo@terrascale.tech");
 await page.fill('form[action="/api/v1/dashboard/profile/email-change"] input[name="password"]', "terrascale");
 await page.click('form[action="/api/v1/dashboard/profile/email-change"] button[type="submit"]');
 await page.waitForTimeout(500);
-ok(await has("renamed-probe@terrascale.tech"), "email change applied");
+ok(await has("renamed-demo@terrascale.tech"), "email change applied");
 
 await page.selectOption('form[action="/api/v1/dashboard/profile/language"] select[name="locale"]', "pt-BR");
 await page.click('form[action="/api/v1/dashboard/profile/language"] button[type="submit"]');
@@ -178,14 +150,10 @@ await page.click('form[action="/api/v1/dashboard/profile/password"] button[type=
 await page.waitForURL("**/login**");
 ok(true, "password change signs out");
 
-await go("/login");
-await page.fill('input[name="email"]', "renamed-probe@terrascale.tech");
-await page.fill('input[name="password"]', "New-E2E-123456!");
-await page.click('button[type="submit"]');
-await page.waitForURL((u) => !u.pathname.includes("login"));
-ok(true, "login works with new email + new password");
+await login("renamed-demo@terrascale.tech", "New-E2E-123456!");
+ok(new URL(page.url()).pathname === "/", "login works with new email + new password");
 
-// ── 12. Organization: rename + deletion request ──────────────────────────
+// Organization: rename + deletion request
 await go("/organization");
 await page.fill('#organizationName', "Renamed Labs");
 await page.click('form[action="/api/v1/dashboard/organization/rename"] button[type="submit"]');
@@ -201,7 +169,7 @@ await page.click('form[action*="deletion/request"] button[type="submit"]');
 await page.waitForTimeout(500);
 ok(await has("Deletion requested"), "deletion request recorded");
 
-// ── 13. Settings: backup policy + on-demand backup ───────────────────────
+// Settings: backup policy + on-demand backup
 await go("/settings?tab=backups");
 await page.selectOption('select[name="schedule"]', "hourly").catch(() => {});
 await page.click('form[action="/api/v1/dashboard/settings/backup-policy"] button[type="submit"]');
@@ -213,7 +181,7 @@ await page.waitForTimeout(600);
 ok(await has("On-demand"), "on-demand backup listed");
 ok((await page.locator("table tbody tr").count()) > jobsBefore, "backup job table grew");
 
-// ── 13b. Profile security: MFA + passkeys ────────────────────────────────
+// Profile security: MFA + passkeys
 await go("/profile?tab=security");
 await page.fill("#recoveryPassword", "New-E2E-123456!");
 await page.click('form[action*="recovery-codes"] button[type="submit"]');
@@ -232,7 +200,7 @@ await page.click('form[action*="passkeys/register"] button[type="submit"]');
 await page.waitForTimeout(600);
 ok(await has("E2E Key"), "passkey registered");
 
-// ── 13c. Usage: per-database spending caps ───────────────────────────────
+// Usage: per-database spending caps
 await go("/usage");
 const capInput = page.locator('input[name^="dbCap_"]').first();
 await capInput.fill("25");
@@ -240,13 +208,80 @@ await page.click('form[action="/api/v1/dashboard/usage/spending-controls"] butto
 await page.waitForTimeout(600);
 ok((await page.locator('input[name^="dbCap_"]').first().inputValue()) === "25", "per-database spending cap saved");
 
-// ── 14. External + passkey sign-in ───────────────────────────────────────
-await page.locator('.ts-menu-item:has-text("Sign out"), form[action="/api/v1/auth/logout"] button').first().click().catch(() => {});
+await page.request.post(`${base}/api/v1/auth/logout`);
+await page.context().clearCookies();
+
+// ── 3. Fresh account: register → onboarding → member states → owner ──────
+await go("/onboarding");
+ok(await has("Activate your TerraScale account"), "onboarding landing renders");
+const register = async (password, confirm) => {
+  await page.fill('input[name="displayName"]', "E2E Probe");
+  await page.fill('input[name="email"]', "e2e-probe@terrascale.tech");
+  await page.fill('input[name="password"]', password);
+  await page.fill('input[name="confirmPassword"]', confirm);
+  await page.check('input[name="terms"]').catch(() => {});
+  await page.click('button[type="submit"]');
+  await page.waitForTimeout(700);
+};
+await register("short", "short");
+ok(decodeURIComponent(page.url()).includes("at least 12"), "short password rejected");
+await register("Probe-E2E-123456!", "different!");
+ok(decodeURIComponent(page.url()).includes("do not match"), "mismatched passwords rejected");
+await register("Probe-E2E-123456!", "Probe-E2E-123456!");
+ok(!page.url().includes("error"), "valid registration accepted");
+
+// Onboarding wizard: organization → payment (checkout) → project
+await page.fill('input[name="name"]', "Probe Labs");
+await page.click('button[type="submit"]');
+await page.waitForTimeout(700);
+ok(await has("Billing plan"), "organization saved, payment step reached");
+
+await page.click('button:has-text("Continue to secure payment setup")');
+await page.waitForTimeout(700);
+ok(page.url().includes("/checkout/"), "checkout session opened");
+await page.click('form[action*="/checkout/"] button[type="submit"]');
+await page.waitForTimeout(800);
+ok(page.url().includes("payment=success"), "checkout completed, payment validated");
+
+await page.fill('input[name="name"]', "probe-production");
+await page.click('button[type="submit"]');
+await page.waitForTimeout(900);
+ok(new URL(page.url()).pathname === "/", `project step done, dashboard reached (${new URL(page.url()).pathname})`);
+
+// Member state: degraded monitoring + no admin chrome.
+ok(await has("Monitoring snapshot may be stale"), "member root shows the stale snapshot banner");
+await go("/databases");
+ok(await has("Invalid database page."), "member databases page shows the fleet error");
+ok(await has("Retry"), "member databases page offers retry");
+const sidebarText = await page.locator(".ts-sidebar").innerText();
+ok(!sidebarText.includes("Estate"), "member sidebar hides the admin section");
+
+// Promote to owner (dev shim) → admin surfaces appear.
+await page.request.post(`${base}/api/v1/testing/dev-shim/reset`, { data: { promoteOwner: true } });
+await go("/");
+ok(!(await has("Monitoring snapshot may be stale")), "promoted owner sees live monitoring");
+await go("/admin/users");
+ok(await has("Owner-only user administration"), "admin users page renders for promoted owner");
+ok(await has("e2e-probe@terrascale.tech"), "admin users lists the registered account");
+await go("/databases");
+ok(!(await has("Invalid database page.")), "promoted owner sees the normal databases page");
+
+// Database lifecycle on the fresh world.
+await go("/databases?create=1");
+await openDialog("#create-database");
+await page.fill('#database-name', "probe-primary");
+await page.click('form[action="/api/v1/dashboard/databases/create"] button[type="submit"]');
 await page.waitForTimeout(500);
+ok(await has("probe-primary"), "database created and listed on the fresh account");
+
+// ── 4. External + passkey sign-in ────────────────────────────────────────
+await page.request.post(`${base}/api/v1/auth/logout`);
+await page.context().clearCookies();
 await go("/api/v1/auth/external-login/begin?provider=google");
 await page.waitForTimeout(400);
 ok(!page.url().includes("/login"), "google sign-in reaches dashboard");
-await go("/api/v1/auth/logout");
+await page.request.post(`${base}/api/v1/auth/logout`);
+await page.context().clearCookies();
 await go("/login");
 await page.click('form[action="/api/v1/auth/passkey/login"] button');
 await page.waitForTimeout(400);

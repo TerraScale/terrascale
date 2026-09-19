@@ -5,6 +5,16 @@
 }
 @ShellHtml.Top(shell)
 <div class="ts-page">
+    @if (Model.MonitoringStale)
+    {
+        <div class="ts-alert ts-alert-warning ts-stale-banner" role="status">
+            <div class="ts-stale-banner-body">
+                <span class="ts-stale-banner-title">@Icons.TriangleAlert(18) @copy.StaleTitle</span>
+                <p class="ts-stale-banner-text">@copy.StaleBody</p>
+            </div>
+            <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/">@Icons.RefreshCw(16) @copy.Refresh</a>
+        </div>
+    }
     <section class="ts-grid ts-grid-cards" aria-label="Workspace metrics">
         @foreach (var metric in new[]
         {
@@ -16,7 +26,17 @@
                 <span class="ts-metric-label">@metric.Label</span>
                 <strong class="ts-metric-value">@metric.Value</strong>
                 <small class="ts-metric-detail">@metric.Detail</small>
-                @Charts.Sparkline(metric.Spark)
+                @if (metric.Spark.Length > 0)
+                {
+                    @Charts.Sparkline(metric.Spark)
+                }
+                else
+                {
+                    <div class="ts-metric-footer">
+                        <span>@copy.Days30</span>
+                        <span>@copy.CurrentSnapshot</span>
+                    </div>
+                }
             </div>
         }
     </section>

@@ -27,7 +27,7 @@ public sealed class ExternalLoginBeginEndpoint(DashboardStore store) : EndpointW
         store.AdoptExternalProvider(provider);
         HttpContext.Response.Cookies.Append(
             DashboardAuthMiddleware.SessionCookie,
-            DashboardAuthMiddleware.SessionToken,
+            store.BeginSession(store.World),
             new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, Path = "/" });
         return Task.FromResult<IResult>(Results.Redirect("/", false, false));
     }

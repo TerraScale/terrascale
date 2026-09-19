@@ -89,7 +89,9 @@ public sealed record UsagePageModel(
                 },
                 w.Range == selectedRange))
             .ToList();
-        var history = store.Workloads.First(w => w.Range == selectedRange).Points;
+        var history = store.Workloads.FirstOrDefault(w => w.Range == selectedRange) is { } selected
+            ? selected.Points
+            : [];
 
         var activePlan = store.Plans.First(p => p.Id == store.BillingPlanId);
         var storageTone = store.StoragePercentUsed >= 100 ? "danger"

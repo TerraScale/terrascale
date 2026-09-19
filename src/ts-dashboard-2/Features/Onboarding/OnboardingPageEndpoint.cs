@@ -30,7 +30,7 @@ public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWitho
 
         // Anonymous visitors get the account registration form (activation
         // step 1), mirroring ts-dashboard's anonymous onboarding branch.
-        if (!DashboardAuthMiddleware.IsAuthenticated(HttpContext))
+        if (!store.IsAuthenticated(HttpContext))
         {
             return Task.FromResult<IResult>(OnboardingSlice.Create(RegistrationModel()
                 with { RegistrationError = query["error"].FirstOrDefault() }));

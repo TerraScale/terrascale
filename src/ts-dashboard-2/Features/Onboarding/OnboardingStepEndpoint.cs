@@ -52,7 +52,16 @@ public sealed class OnboardingStepEndpoint(DashboardStore store) : EndpointWitho
             var name = form["name"].ToString();
             if (name.Length > 0)
             {
-                store.CreateProject(name, form["region"].ToString() is { Length: > 0 } region ? region : "us-east-1");
+                // The fresh world pre-seeds one "Personal" project; the wizard
+                // names it instead of adding a second one.
+                if (store.Projects.Length == 1 && store.Projects[0].Name == "Personal")
+                {
+                    store.RenameProject(store.Projects[0].Id, name);
+                }
+                else
+                {
+                    store.CreateProject(name, form["region"].ToString() is { Length: > 0 } region ? region : "us-east-1");
+                }
             }
 
             return Results.Redirect("/", false, false);

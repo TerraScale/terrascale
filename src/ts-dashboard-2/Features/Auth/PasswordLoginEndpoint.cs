@@ -6,7 +6,8 @@ namespace TerraScale.Dashboard2.Features.Auth;
 
 /// <summary>Signs in with email + password. Accepts the login form (redirects)
 /// or a JSON body (returns the session payload), mirroring ts-dashboard's
-/// /api/v1/auth/password/login contract.</summary>
+/// /api/v1/auth/password/login contract. Any registered account or the demo
+/// account signs in to its own world.</summary>
 public sealed class PasswordLoginEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public const string DemoPassword = "terrascale";
@@ -42,16 +43,18 @@ public sealed class PasswordLoginEndpoint(DashboardStore store) : EndpointWithou
             redirectTo = null;
         }
 
-        if (email != store.CurrentUser.Email || !store.VerifyPassword(password ?? ""))
+        var world = store.FindAccount(email ?? "");
+        if (world is null || !world.VerifyPassword(password ?? ""))
         {
             return isForm
                 ? Results.Redirect("/login?error=" + Uri.EscapeDataString("Invalid email or password."))
                 : Results.Json(new { error = "invalid_credentials" }, statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        var token = store.BeginSession(world);
         HttpContext.Response.Cookies.Append(
             DashboardAuthMiddleware.SessionCookie,
-            DashboardAuthMiddleware.SessionToken,
+            token,
             new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, Path = "/" });
 
         if (isForm)
@@ -62,7 +65,7 @@ public sealed class PasswordLoginEndpoint(DashboardStore store) : EndpointWithou
 
         return Results.Ok(new
         {
-            user = new { store.CurrentUser.Email, store.CurrentUser.Name, onboardingCompleted = store.OnboardingCompleted },
+            user = new { world.CurrentUser.Email, world.CurrentUser.Name, onboardingCompleted = world.OnboardingCompleted },
         });
     }
 }

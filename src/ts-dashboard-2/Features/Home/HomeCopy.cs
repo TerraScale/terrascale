@@ -14,6 +14,11 @@ public static class HomeCopy
         public string UnreadAlerts => "Unread alerts";
         public string NotificationsLoaded(int count) => $"{count} notifications loaded";
         public string WorkspaceMetrics => "Workspace metrics";
+        public string StaleTitle => "Monitoring snapshot may be stale";
+        public string StaleBody => "Some monitoring sources are temporarily unavailable. The last successful project data remains visible.";
+        public string Refresh => "Refresh snapshot";
+        public string Days30 => "30 days";
+        public string CurrentSnapshot => "Current snapshot";
         public string ActivityTitle => "Activity";
         public string ActivitySubtitle => "Persisted project audit activity";
         public string GettingStarted => "Getting started";

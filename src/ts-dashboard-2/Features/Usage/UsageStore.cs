@@ -4,7 +4,7 @@ using System.Globalization;
 namespace TerraScale.Dashboard2;
 
 // Billing + organization usage surfaces for the Usage page (1:1 with the
-// usage-data views ts-dashboard consumes). Extends the seeded store.
+// usage-data views ts-dashboard consumes). Extends the active account world.
 public sealed partial class DashboardStore
 {
     public sealed record InvoiceRow(
@@ -40,11 +40,7 @@ public sealed partial class DashboardStore
     public string BillingInterval => "monthly";
     public string BillingRenewal => "2026-10-01";
 
-    public ImmutableArray<InvoiceRow> Invoices { get; private set; } =
-    [
-        new("in_01JCA2QG4M6P8S1V3X5Z7B9DF", 2900, "USD", "paid", "2026-08-01T00:00:00Z", "2026-09-01T00:00:00Z", "2026-09-01T08:02:00Z"),
-        new("in_01JCA3RH5N7Q9T2W4Y6A8C2EG", 4140, "USD", "open", "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z", "2026-10-01T08:00:00Z"),
-    ];
+    public ImmutableArray<InvoiceRow> Invoices { get => World.Invoices; private set => World.Invoices = value; }
 
     public long TotalInvoices => Invoices.Length;
 
@@ -66,8 +62,8 @@ public sealed partial class DashboardStore
     ];
 
     // Spending controls (paid-excess consent + organization cap), persisted in memory.
-    public bool PaidExcessEnabled { get; private set; }
-    public string? SpendCapUsd { get; private set; }
+    public bool PaidExcessEnabled { get => World.PaidExcessEnabled; private set => World.PaidExcessEnabled = value; }
+    public string? SpendCapUsd { get => World.SpendCapUsd; private set => World.SpendCapUsd = value; }
 
     public void UpdateSpendingControls(bool enabled, string? capUsd)
     {
@@ -84,10 +80,8 @@ public sealed partial class DashboardStore
     }
 
     // Optional lower caps per database, on top of the organization cap.
-    private readonly Dictionary<string, string> databaseSpendCaps = [];
-
     public string? DatabaseSpendCap(string databaseId) =>
-        databaseSpendCaps.TryGetValue(databaseId, out var cap) && cap.Length > 0 ? cap : null;
+        World.DatabaseSpendCaps.TryGetValue(databaseId, out var cap) && cap.Length > 0 ? cap : null;
 
     public void UpdateDatabaseSpendCaps(IReadOnlyDictionary<string, string> capsById)
     {
@@ -98,7 +92,7 @@ public sealed partial class DashboardStore
                     && value >= 0
                     && decimal.Round(value, 2) == value))
             {
-                databaseSpendCaps[databaseId] = cap.Trim();
+                World.DatabaseSpendCaps[databaseId] = cap.Trim();
             }
         }
     }

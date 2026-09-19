@@ -4,65 +4,23 @@ using TerraScale.Dashboard2.Features.Data;
 
 namespace TerraScale.Dashboard2;
 
-// Store extension: seeded demo data + mutations for the Data Explorer pages
+// Store extension: mutations + read-only fixtures for the Data Explorer pages.
+// Per-account state lives on the active world.
 public sealed partial class DashboardStore
 {
-    private ImmutableArray<ExplorerDocument> explorerDocuments =
-    [
-        new("doc_01JC9XQ1T3V5X7Z9B2D4F7HJ2", """{ "_id": "doc_01JC9XQ1T3V5X7Z9B2D4F7HJ2", "status": "active", "customer": "northwind", "total": 640 }"""),
-        new("doc_01JC9XR2U4W6Y8A1C3E6G9K4M", """{ "_id": "doc_01JC9XR2U4W6Y8A1C3E6G9K4M", "status": "active", "customer": "acme", "total": 128 }"""),
-        new("doc_01JC9XS3V5X7Z9B2D4F8H1N5P", """{ "_id": "doc_01JC9XS3V5X7Z9B2D4F8H1N5P", "status": "refunded", "customer": "northwind", "total": 42 }"""),
-        new("doc_01JC9XT4W6Y8A1C3E7G2L6Q7R", """{ "_id": "doc_01JC9XT4W6Y8A1C3E7G2L6Q7R", "status": "active", "customer": "globex", "total": 902 }"""),
-    ];
+    public ImmutableArray<ExplorerDocument> ExplorerDocumentsState { get => World.ExplorerDocuments; private set => World.ExplorerDocuments = value; }
 
-    public SchemaDocument Schema { get; private set; } = new(
-        Collections:
-        [
-            new("orders",
-            [
-                new("id", "string", Required: true, Indexed: true),
-                new("status", "string", Required: true, Indexed: true),
-                new("customer", "string", Required: false, Indexed: false),
-                new("total", "number", Required: true, Indexed: false),
-                new("createdAt", "string", Required: true, Indexed: false),
-            ],
-            [new("orders_status_idx", ["status"]), new("orders_id_idx", ["id"])],
-            HistoryRetentionDays: 30),
-            new("sessions",
-            [
-                new("id", "string", Required: true, Indexed: true),
-                new("startedAt", "string", Required: true, Indexed: false),
-                new("principal", "string", Required: false, Indexed: false),
-            ],
-            [new("sessions_id_idx", ["id"])]),
-        ],
-        Version: 4,
-        UpdatedAt: "2026-09-10T14:22:00Z",
-        Migration: new("complete", 12_480, 12_480, "wal-01JC9M2Q7V"));
+    public SchemaDocument Schema { get => World.Schema; private set => World.Schema = value; }
 
-    public SchemaDiff? PendingSchemaDiff { get; private set; }
+    public SchemaDiff? PendingSchemaDiff { get => World.PendingSchemaDiff; private set => World.PendingSchemaDiff = value; }
 
-    public string ProposedSchemaJson { get; private set; } = "";
+    public string ProposedSchemaJson { get => World.ProposedSchemaJson; private set => World.ProposedSchemaJson = value; }
 
-    public ImmutableArray<IndexState> Indexes { get; private set; } =
-    [
-        new("idx_01JC9YA3C5E7G9J1L4N7Q2S5V", "orders_id_idx", ["id"], "active", 42, 0, null, "2026-09-17T22:41:00Z"),
-        new("idx_01JC9YB4D6F8H1K3M5P8R3T6W", "orders_status_idx", ["status"], "active", 88, 0, null, "2026-09-17T22:41:00Z"),
-        new("idx_01JC9YC5E7G9J2L4N6Q1S8U9X", "orders_customer_total_idx", ["customer", "total"], "building", null, 3_140, "doc_01JC9XS3V5X7Z9B2D4F8H1N5P", null),
-    ];
+    public ImmutableArray<IndexState> Indexes { get => World.Indexes; private set => World.Indexes = value; }
 
-    public ImmutableArray<QueryTemplate> QueryTemplates { get; private set; } =
-    [
-        new("tpl_01JC9YR6F8H1K3M5P7R2T5W8Z", "SELECT * FROM orders WHERE status = $1 LIMIT 25", 14_820, 3, 44_460, 6),
-        new("tpl_01JC9YS7G9J2L4N6Q8S3U6X1A", "SELECT id, total FROM orders WHERE customer = $1 ORDER BY total DESC", 3_206, 9, 28_854, 14),
-        new("tpl_01JC9YT8H1K3M5P7R9T4U7Y2B", "SELECT * FROM sessions WHERE startedAt > $1", 918, 12, 11_016, 21),
-    ];
+    public ImmutableArray<QueryTemplate> QueryTemplates { get => World.QueryTemplates; private set => World.QueryTemplates = value; }
 
-    public ImmutableArray<IndexRecommendation> IndexRecommendations { get; private set; } =
-    [
-        new("rec_01JC9ZZ4N6Q1S4V7X9B2D5G8J", ["customer", "total"], "Template tpl_01JC9YS7G9J2L4N6Q8S3U6X1A scans 3,206 executions without a covering index.", 71, "recommended"),
-        new("rec_01JCA0A5P7R2T5W8Y1C3E6H9K", ["startedAt"], "Template tpl_01JC9YT8H1K3M5P7R9T4U7Y2B filters on an unindexed column.", 44, "applied"),
-    ];
+    public ImmutableArray<IndexRecommendation> IndexRecommendations { get => World.IndexRecommendations; private set => World.IndexRecommendations = value; }
 
     public IndexMigration IndexMigrationState { get; private set; } = new("running", 8_640, 12_480, "doc_01JC9XQ1T3V5X7Z9B2D4F7HJ2");
 
@@ -96,7 +54,7 @@ public sealed partial class DashboardStore
     // --- Queries -----------------------------------------------------------
 
     public ImmutableArray<ExplorerDocument> ExplorerDocuments(string database, string collection) =>
-        database is "core-primary" && collection is "orders" ? explorerDocuments : [];
+        database is "core-primary" && collection is "orders" ? ExplorerDocumentsState : [];
 
     // --- Mutations ---------------------------------------------------------
 
@@ -130,7 +88,7 @@ public sealed partial class DashboardStore
     {
         if (operation is "delete")
         {
-            explorerDocuments = explorerDocuments.Remove(explorerDocuments.FirstOrDefault(d => d.Id == id) ?? new("", ""));
+            ExplorerDocumentsState = ExplorerDocumentsState.Remove(ExplorerDocumentsState.FirstOrDefault(d => d.Id == id) ?? new("", ""));
             return null;
         }
 
@@ -145,10 +103,10 @@ public sealed partial class DashboardStore
 
         var documentId = id.Length > 0 ? id : $"doc_{Guid.NewGuid():N}"[..24];
         var normalized = json.Trim();
-        explorerDocuments = operation switch
+        ExplorerDocumentsState = operation switch
         {
-            "create" => explorerDocuments.Add(new(documentId, normalized)),
-            _ => explorerDocuments.Select(d => d.Id == documentId ? new ExplorerDocument(documentId, normalized) : d).ToImmutableArray(),
+            "create" => ExplorerDocumentsState.Add(new(documentId, normalized)),
+            _ => ExplorerDocumentsState.Select(d => d.Id == documentId ? new ExplorerDocument(documentId, normalized) : d).ToImmutableArray(),
         };
         return null;
     }

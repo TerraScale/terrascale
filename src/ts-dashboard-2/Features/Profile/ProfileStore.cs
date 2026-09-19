@@ -3,9 +3,9 @@ namespace TerraScale.Dashboard2;
 
 public sealed partial class DashboardStore
 {
-    public string ProfileDisplayName { get; private set; } = "";   // empty → CurrentUser.Name
+    public string ProfileDisplayName { get => World.ProfileDisplayName; private set => World.ProfileDisplayName = value; }   // empty → CurrentUser.Name
 
-    public string ProfilePhoneNumber { get; private set; } = "+55 11 90000-0000";
+    public string ProfilePhoneNumber { get => World.ProfilePhoneNumber; private set => World.ProfilePhoneNumber = value; }
 
     public string EffectiveDisplayName =>
         ProfileDisplayName.Length > 0 ? ProfileDisplayName : CurrentUser.Name;
@@ -18,11 +18,11 @@ public sealed partial class DashboardStore
         "credentials:read", "credentials:write", "audit:read", "usage:read",
     ];
 
-    public ImmutableArray<string> MfaFactors { get; private set; } = ["totp"];
+    public ImmutableArray<string> MfaFactors { get => World.MfaFactors; private set => World.MfaFactors = value; }
 
     /// <summary>Codes revealed once by a regeneration; consumed by the next
     /// security tab render, like the webhook secret reveal.</summary>
-    public ImmutableArray<string> PendingRecoveryCodes { get; private set; } = [];
+    public ImmutableArray<string> PendingRecoveryCodes { get => World.PendingRecoveryCodes; private set => World.PendingRecoveryCodes = value; }
 
     public void EnrollTotp() => MfaFactors = ["totp"];
 
@@ -49,12 +49,9 @@ public sealed partial class DashboardStore
         return codes;
     }
 
-    public ImmutableArray<ProfilePasskeyView> Passkeys { get; private set; } =
-    [
-        new("pass_01JC9ZQ7T9V2X5A8C1E4G9K2N", "YubiKey 5C", "2026-05-02T10:11:00Z"),
-    ];
+    public ImmutableArray<ProfilePasskeyView> Passkeys { get => World.Passkeys; private set => World.Passkeys = value; }
 
-    public string PersonalOrganizationId => "org_01JC9Q5V2N4P6T8R0X2Z4B6D9";
+    public string PersonalOrganizationId => World.ActiveOrganizationId;
 
     public void UpdateProfile(string name, string phoneNumber)
     {

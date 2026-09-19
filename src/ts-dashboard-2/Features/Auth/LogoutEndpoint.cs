@@ -3,7 +3,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Auth;
 
-public sealed class LogoutEndpoint : EndpointWithoutRequest<IResult>
+public sealed class LogoutEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -15,6 +15,7 @@ public sealed class LogoutEndpoint : EndpointWithoutRequest<IResult>
 
     public override Task<IResult> HandleAsync(CancellationToken ct)
     {
+        store.EndSession(HttpContext.Request.Cookies[DashboardAuthMiddleware.SessionCookie]);
         HttpContext.Response.Cookies.Delete(DashboardAuthMiddleware.SessionCookie);
         return Task.FromResult<IResult>(Results.Redirect("/login", false, false));
     }

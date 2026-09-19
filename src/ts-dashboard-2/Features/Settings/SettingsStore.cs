@@ -3,26 +3,11 @@ namespace TerraScale.Dashboard2;
 
 public sealed partial class DashboardStore
 {
-    public bool AuthenticationEnabled { get; private set; } = true;
+    public bool AuthenticationEnabled { get => World.AuthenticationEnabled; private set => World.AuthenticationEnabled = value; }
 
-    public string SecuritySettingsUpdatedAt { get; private set; } = "2026-08-30T14:22:00Z";
+    public string SecuritySettingsUpdatedAt { get => World.SecuritySettingsUpdatedAt; private set => World.SecuritySettingsUpdatedAt = value; }
 
-    public ImmutableArray<SettingsAuthProvider> AuthProviders { get; private set; } =
-    [
-        new("entra-id", "Microsoft Entra ID", "OIDC", "Enabled", false,
-            "00000000-0000-0000-0000-000000000000", "Secret configured",
-            "https://login.microsoftonline.com/9c1f4d2e-4f6b-4a7e-9d3a-1b2c3d4e5f6a/oauth2/v2.0/authorize",
-            "https://login.microsoftonline.com/9c1f4d2e-4f6b-4a7e-9d3a-1b2c3d4e5f6a/oauth2/v2.0/token",
-            "https://graph.microsoft.com/oidc/userinfo",
-            "https://dashboard.terrascale.tech/api/v1/auth/callback",
-            "", "", "", "", "2026-08-30T14:22:00Z"),
-        new("okta-saml", "Okta (SAML)", "SAML", "Enabled", false,
-            "", "",
-            "", "", "", "",
-            "https://terrascale.okta.com/saml/sp/01JC9Q7T4N8Y2M3P", "https://terrascale.okta.com/app/terrascale/sso/saml",
-            "Certificate valid until 2027-04-12", "https://dashboard.terrascale.tech/api/v1/auth/saml/acs",
-            "2026-07-18T09:40:00Z"),
-    ];
+    public ImmutableArray<SettingsAuthProvider> AuthProviders { get => World.AuthProviders; private set => World.AuthProviders = value; }
 
     public bool CanManageByok => false;     // demo: not on an Enterprise plan
     public bool CanDeleteProject => true;   // demo session is the org owner

@@ -31,12 +31,26 @@
         @if (Model.Databases.Length == 0)
         {
             <div class="ts-panel-pad ts-stack-lg">
+                <form class="ts-db-search" method="get" action="/databases">
+                    <label class="ts-sr-only" for="db-filter">Filter databases</label>
+                    <span class="ts-db-search-icon">@Icons.Search(16)</span>
+                    <input class="ts-input" id="db-filter" type="search" name="q" value="@Model.Query" placeholder="Search databases..." />
+                </form>
                 <div class="ts-empty">
                     <span class="ts-empty-icon">@Icons.Database(28)</span>
-                    <span class="ts-empty-title">@(string.IsNullOrEmpty(Model.Query) ? "No databases saved" : "No databases match")</span>
-                    <p class="ts-muted">@(string.IsNullOrEmpty(Model.Query)
-                        ? "Create a logical database to persist it through the TerraScale Dashboard API."
-                        : "Adjust the filter to see another saved database.")</p>
+                    @if (Model.Error is { } listError)
+                    {
+                        <span class="ts-empty-title">@listError</span>
+                        <code class="ts-meta ts-mono">database_data_load_failed</code>
+                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/databases">Retry</a>
+                    }
+                    else
+                    {
+                        <span class="ts-empty-title">@(string.IsNullOrEmpty(Model.Query) ? "No databases saved" : "No databases match")</span>
+                        <p class="ts-muted">@(string.IsNullOrEmpty(Model.Query)
+                            ? "Create a logical database to persist it through the TerraScale Dashboard API."
+                            : "Adjust the filter to see another saved database.")</p>
+                    }
                 </div>
             </div>
         }
@@ -101,7 +115,7 @@
     </section>
 </div>
 
-<dialog class="ts-dialog" id="create-database" data-autoopen="@(Model.CreateOpen ? "" : null)">
+<dialog class="ts-dialog" id="create-database" @(Model.CreateOpen ? "data-autoopen" : null)>
     <div class="ts-dialog-content">
         <div class="ts-dialog-header">
             <h2 class="ts-dialog-title">Create a database</h2>
@@ -130,7 +144,7 @@
 
 @foreach (var row in Model.Databases)
 {
-    <dialog class="ts-dialog" id="delete-@row.Id" data-autoopen="@(deleteOpenFor == row.Id ? "" : null)">
+    <dialog class="ts-dialog" id="delete-@row.Id" @(deleteOpenFor == row.Id ? "data-autoopen" : null)>
         <div class="ts-dialog-content">
             <div class="ts-dialog-header">
                 <h2 class="ts-dialog-title">Delete database</h2>

@@ -17,7 +17,7 @@ public sealed class CliApprovePageEndpoint(DashboardStore store) : EndpointWitho
     {
         var query = HttpContext.Request.Query;
         var raw = query["user_code"].ToString();
-        var authenticated = DashboardAuthMiddleware.IsAuthenticated(HttpContext);
+        var authenticated = store.IsAuthenticated(HttpContext);
         string? error = null;
         string? code = null;
 

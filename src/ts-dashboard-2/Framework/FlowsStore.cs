@@ -45,45 +45,20 @@ public sealed partial class DashboardStore
 
     public string[] DemoOAuthScopes { get; } = ["openid", "offline_access", "databases:read", "documents:write"];
 
-    // --- Onboarding wizard state (demo session) ---------------------------
+    // --- Onboarding wizard state (per account world) ------------------------
 
-    public sealed record OnboardingStep(string Key, string State);
-
-    private ImmutableArray<OnboardingStep> _onboardingSteps =
-    [
-        new("account-information", "completed"),
-        new("organization", "completed"),
-        new("payment-method", "current"),
-        new("payment-validation", "pending"),
-        new("project", "pending"),
-    ];
-
-    public ImmutableArray<OnboardingStep> OnboardingSteps => _onboardingSteps;
+    public ImmutableArray<OnboardingWizardStep> OnboardingSteps => World.OnboardingStepsValue;
 
     public string OnboardingNextStep =>
-        _onboardingSteps.FirstOrDefault(s => s.State is "current" or "pending")?.Key is { Length: > 0 } next
+        World.OnboardingStepsValue.FirstOrDefault(s => s.State is "current" or "pending")?.Key is { Length: > 0 } next
             ? next
             : "project";
 
-    /// <summary>Resets the wizard for a freshly registered account: the demo
-    /// seed pre-completes organization/payment, a real signup must walk them.</summary>
-    public void StartOnboardingForNewAccount()
-    {
-        _onboardingSteps =
-        [
-            new("account-information", "completed"),
-            new("organization", "current"),
-            new("payment-method", "pending"),
-            new("payment-validation", "pending"),
-            new("project", "pending"),
-        ];
-    }
-
     public void CompleteOnboardingStep(string key)
     {
-        _onboardingSteps = [.. _onboardingSteps.Select(s => s.Key == key ? s with { State = "completed" } : s)];
+        World.OnboardingStepsValue = [.. World.OnboardingStepsValue.Select(s => s.Key == key ? s with { State = "completed" } : s)];
         var advanced = false;
-        _onboardingSteps = [.. _onboardingSteps.Select(s =>
+        World.OnboardingStepsValue = [.. World.OnboardingStepsValue.Select(s =>
         {
             if (!advanced && s.State == "pending")
             {
@@ -93,6 +68,10 @@ public sealed partial class DashboardStore
 
             return s;
         })];
+        if (key == "project")
+        {
+            World.OnboardingCompleted = true;
+        }
     }
 
     public void RespondToInvitation(string invitationId, string status) =>

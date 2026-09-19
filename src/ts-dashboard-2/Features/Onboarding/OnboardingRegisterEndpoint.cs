@@ -4,8 +4,8 @@ using TerraScale.Endpoints;
 namespace TerraScale.Dashboard2.Features.Onboarding;
 
 /// <summary>Account registration (activation step 1). Validates the form the
-/// way ts-dashboard's client validation does, starts the demo session, and
-/// returns to the wizard for the next step.</summary>
+/// way ts-dashboard's client validation does, creates the account's world in
+/// the in-memory store, starts its session, and returns to the wizard.</summary>
 public sealed class OnboardingRegisterEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {
     private const int MinPasswordLength = 12;
@@ -26,15 +26,22 @@ public sealed class OnboardingRegisterEndpoint(DashboardStore store) : EndpointW
         var password = form["password"].ToString();
         var confirmPassword = form["confirmPassword"].ToString();
         var error = Validate(displayName, email, password, confirmPassword, form["terms"] == "true");
+        if (error is null && store.FindAccount(email) is not null)
+        {
+            error = "An account with this email already exists.";
+        }
+
         if (error is { Length: > 0 })
         {
             return Results.Redirect("/onboarding?error=" + Uri.EscapeDataString(error), false, false);
         }
 
-        store.StartOnboardingForNewAccount();
+        var world = AccountWorld.Fresh(displayName, email);
+        world.AccountPassword = password;
+        var token = store.BeginSession(world);
         HttpContext.Response.Cookies.Append(
             DashboardAuthMiddleware.SessionCookie,
-            DashboardAuthMiddleware.SessionToken,
+            token,
             new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, Path = "/" });
         return Results.Redirect("/onboarding", false, false);
     }

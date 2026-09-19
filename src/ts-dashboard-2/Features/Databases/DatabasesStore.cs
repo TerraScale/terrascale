@@ -45,11 +45,16 @@ public sealed partial class DashboardStore
     /// <summary>Inter-region round-trip estimates for the detail page latency table.</summary>
     public ImmutableArray<LatencyRow> LatencyFor(DashboardDatabase database)
     {
-        var primary = Regions.First(r => r.Code == database.PrimaryRegion);
-        var rows = new List<LatencyRow> { new(primary.Code, $"{primary.LatencyMs} ms") };
-        if (database.BackupRegion is { } backup && Regions.FirstOrDefault(r => r.Code == backup) is { } backupRegion)
+        // Fresh projects sit in authority regions (SFO/GRU/FRA) that are not in
+        // the placement catalog; the table still renders a primary row.
+        var primary = Regions.FirstOrDefault(r => r.Code == database.PrimaryRegion);
+        var rows = primary is null
+            ? [new LatencyRow(database.PrimaryRegion, "—")]
+            : new List<LatencyRow> { new(primary.Code, $"{primary.LatencyMs} ms") };
+        if (primary is { } p && database.BackupRegion is { } backup
+            && Regions.FirstOrDefault(r => r.Code == backup) is { } backupRegion)
         {
-            rows.Add(new(backupRegion.Code, $"{Math.Max(primary.LatencyMs, backupRegion.LatencyMs) + 18} ms"));
+            rows.Add(new(backupRegion.Code, $"{Math.Max(p.LatencyMs, backupRegion.LatencyMs) + 18} ms"));
         }
 
         return [.. rows];
@@ -58,28 +63,24 @@ public sealed partial class DashboardStore
     public DashboardDatabase? FindDatabase(string databaseId) =>
         Databases.FirstOrDefault(d => d.Id == databaseId);
 
-    private readonly HashSet<string> backupsDisabled = [];
-
-    private readonly Dictionary<string, (string Schedule, string Retention)> backupPolicies = [];
-
     public (string Schedule, string Retention)? BackupPolicy(string databaseId) =>
-        backupPolicies.TryGetValue(databaseId, out var policy) ? policy : null;
+        World.BackupPolicies.TryGetValue(databaseId, out var policy) ? policy : null;
 
     public void SaveBackupPolicy(string databaseId, string schedule, string retention) =>
-        backupPolicies[databaseId] = (schedule, retention);
+        World.BackupPolicies[databaseId] = (schedule, retention);
 
     public bool BackupsEnabled(string databaseId) =>
-        FindDatabase(databaseId)?.BackupRegion is not null && !backupsDisabled.Contains(databaseId);
+        FindDatabase(databaseId)?.BackupRegion is not null && !World.BackupsDisabled.Contains(databaseId);
 
     public void SetBackupsEnabled(string databaseId, bool enabled)
     {
         if (!enabled)
         {
-            backupsDisabled.Add(databaseId);
+            World.BackupsDisabled.Add(databaseId);
         }
         else
         {
-            backupsDisabled.Remove(databaseId);
+            World.BackupsDisabled.Remove(databaseId);
         }
     }
 }
