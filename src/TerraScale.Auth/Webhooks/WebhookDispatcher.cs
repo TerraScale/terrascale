@@ -28,10 +28,21 @@ public sealed class WebhookDispatcher(AuthStore store, ILogger<WebhookDispatcher
     /// <summary>The poll loop; runs until <paramref name="stopping"/> fires and never throws.</summary>
     public async Task RunAsync(CancellationToken stopping)
     {
+        var discovered = false;
         while (!stopping.IsCancellationRequested)
         {
             try
             {
+                if (!discovered)
+                {
+                    // Restart semantics: instances that already hold webhook endpoints must be
+                    // re-registered, or a restart silently stops all deliveries. Their cursors
+                    // start at "now" like a first sighting — no backfill (the in-memory-cursor
+                    // trade-off above).
+                    foreach (var instanceId in await store.ListWebhookInstanceIdsAsync(stopping))
+                        EnsureInstance(instanceId);
+                    discovered = true;
+                }
                 await TickAsync(stopping);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
@@ -110,7 +121,11 @@ public sealed class WebhookDispatcher(AuthStore store, ILogger<WebhookDispatcher
                     return;
                 logger.LogWarning("webhook {EndpointId} delivery of {EventType} returned {Status}", endpoint.Id, auditEvent.Type, (int)response.StatusCode);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            // HttpClient timeouts surface as TaskCanceledException (an OperationCanceledException
+            // subclass) — those must retry like any transport error; only genuine token
+            // cancellation escapes, or one timeout would abort the whole tick and silently
+            // drop the event (its id is already marked delivered) for every endpoint.
+            catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 logger.LogWarning(exception, "webhook {EndpointId} delivery of {EventType} failed", endpoint.Id, auditEvent.Type);
             }

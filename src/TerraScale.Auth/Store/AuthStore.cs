@@ -570,6 +570,24 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<IReadOnlyList<WebhookEndpoint>> ListWebhookEndpointsAsync(string instanceId, CancellationToken ct = default) =>
         QueryAsync<WebhookEndpoint>("webhooks", "instanceId", instanceId, 100, ct);
 
+    /// <summary>Distinct instance ids that have webhook endpoints, so a restarted
+    /// dispatcher can re-register them (its in-memory cursors start empty).</summary>
+    public async Task<IReadOnlyList<string>> ListWebhookInstanceIdsAsync(CancellationToken ct = default)
+    {
+        var ids = new HashSet<string>();
+        string? after = null;
+        while (true)
+        {
+            var page = await client.Documents.ListAsync(Database, "webhooks", 100, after, ct);
+            if (page.Items.Count == 0)
+                return ids.ToArray();
+            foreach (var item in page.Items)
+                if (item.Value.Deserialize<WebhookEndpoint>(Json) is { } endpoint)
+                    ids.Add(endpoint.InstanceId);
+            after = page.Items[^1].Id;
+        }
+    }
+
     // ---- Audit events ----------------------------------------------------------------------
 
     public Task<AuditEvent> CreateAuditEventAsync(AuditEvent auditEvent, CancellationToken ct = default) =>
