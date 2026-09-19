@@ -26,6 +26,9 @@ public sealed record NavRoute(
         new(RouteId.Databases, "/databases", "Databases", "Databases", "Logical database fleet",
             "Provisioning, region placement, replication, backups, restores, and capacity.",
             "Database", "Create database", "Restore backup", "database"),
+        new(RouteId.Backups, "/backups", "Backups", "Backups", "Backup and restore",
+            "Per-database restore points and side-by-side restores gated by expiring confirmations.",
+            "ShieldCheck", "Restore side-by-side", "Refresh backups"),
         new(RouteId.Data, "/data", "Tables", "Data Explorer", "Saved queries",
             "Project queries with revision-protected editing.",
             "Table", "Save query", null, "query"),
@@ -86,6 +89,7 @@ public sealed record NavRoute(
         {
             [RouteId.Home] = "#3B82F6",
             [RouteId.Databases] = "#8B5CF6",
+            [RouteId.Backups] = "#06B6D4",
             [RouteId.Data] = "#14B8A6",
             [RouteId.ApiKeys] = "#F59E0B",
             [RouteId.Access] = "#EC4899",

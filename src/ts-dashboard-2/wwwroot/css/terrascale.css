@@ -4922,3 +4922,33 @@ details.ts-menu[open] > summary.ts-account-trigger {
   background-color: var(--ts-surface);
   cursor: pointer;
 }
+
+/* ===== Feature: Backups ===== */
+
+/* Metric strip (1:1 with BackupSettingsPanel metrics: 1/2/4 columns). */
+.ts-backups-metrics {
+  display: grid;
+  gap: var(--ts-md);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 40rem) {
+  .ts-backups-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 80rem) {
+  .ts-backups-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* Pending restore confirmation plan (dialog detail box equivalent). */
+.ts-backups-plan { border-color: var(--ts-accent); }
+
+.ts-backups-plan-box {
+  display: grid;
+  gap: var(--ts-sm);
+  padding: var(--ts-md);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-control);
+  background-color: var(--ts-surface-muted);
+}
+

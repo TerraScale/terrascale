@@ -5,6 +5,7 @@ public enum RouteId
 {
     Home,
     Databases,
+    Backups,
     Data,
     ApiKeys,
     Access,
