@@ -235,15 +235,24 @@ public static class ShellHtml
         }
 
         var builder = new StringBuilder("""        <aside class="ts-datasubnav" aria-label="Data views">""");
+        var viewKey = shell.ActiveHref.Contains("view=", StringComparison.Ordinal)
+            ? shell.ActiveHref.Split("view=", StringSplitOptions.RemoveEmptyEntries)[^1]
+            : "";
         builder.AppendLine("""            <div class="ts-datasubnav-header">TABLES</div>""");
         builder.AppendLine("""            <div class="ts-datasubnav-menu">""");
-        builder.AppendLine("""                <a class="ts-nav-link" href="/data" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("BookOpen", 16) + """</span><span>Saved queries</span></a>""");
-        builder.AppendLine("""                <a class="ts-nav-link" href="/data?view=table" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("Table", 16) + """</span><span>Collection documents</span></a>""");
-        builder.AppendLine("""                <a class="ts-nav-link" href="/data?view=editor" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("FileText", 16) + """</span><span>Document editor</span></a>""");
-        builder.AppendLine("""                <a class="ts-nav-link" href="/data?view=sql" style="--ts-nav-accent:#14B8A6"><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">""" + Icon("Terminal", 16) + """</span><span>SQL console</span></a>""");
+        builder.AppendLine(SubNavLink("/data", "Saved queries", "BookOpen", viewKey.Length == 0));
+        builder.AppendLine(SubNavLink("/data?view=table", "Collection documents", "Table", viewKey == "table"));
+        builder.AppendLine(SubNavLink("/data?view=editor", "Document editor", "FileText", viewKey == "editor"));
+        builder.AppendLine(SubNavLink("/data?view=sql", "SQL console", "Terminal", viewKey == "sql"));
         builder.AppendLine("            </div>");
         builder.AppendLine("        </aside>");
         return builder.ToString();
+    }
+
+    private static string SubNavLink(string href, string label, string icon, bool active)
+    {
+        var current = active ? " aria-current=\"page\"" : "";
+        return $"""                <a class="ts-nav-link" href="{href}" style="--ts-nav-accent:#14B8A6"{current}><span class="ts-nav-indicator" aria-hidden="true"></span><span class="ts-nav-icon">{Icon(icon, 16)}</span><span>{label}</span></a>""";
     }
 
     private static string Icon(string name, int size = 18) =>

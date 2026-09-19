@@ -45,7 +45,6 @@
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/compressed/jsguhvzjgx-{0}-s1gkjlw57r-s1gkjlw57r.gz
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/compressed/26a5i22zy8-{0}-ia8oxghaz9-ia8oxghaz9.gz
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/compressed/00g7drtng9-{0}-5qrw3h5k6o-5qrw3h5k6o.gz
-/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/compressed/qq14dpnrtw-{0}-y1ebeyvs8n-y1ebeyvs8n.gz
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/staticwebassets.build.json
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/staticwebassets.build.json.cache
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/staticwebassets.development.json
@@ -58,3 +57,4 @@
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/ts-dashboard-2.genruntimeconfig.cache
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/ref/ts-dashboard-2.dll
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/compressed/s3sbueuyim-{0}-8ryvfcnx5w-8ryvfcnx5w.gz
+/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/Debug/net10.0/compressed/qq14dpnrtw-{0}-3c9k2icfeu-3c9k2icfeu.gz

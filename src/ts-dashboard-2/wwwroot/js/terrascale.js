@@ -11,6 +11,14 @@
     }
   });
 
+  // Destructive forms opt into a native confirm() with the exact v1 copy.
+  document.addEventListener("submit", (event) => {
+    const form = event.target.closest("form[data-confirm]");
+    if (form && !window.confirm(form.dataset.confirm ?? "")) {
+      event.preventDefault();
+    }
+  });
+
   // Native <dialog> open/close: declarative attributes used by the slices
   // (data-open-dialog="#id", data-close-dialog, dialog[data-autoopen]).
   document.addEventListener("click", (event) => {
