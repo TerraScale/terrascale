@@ -39,7 +39,7 @@ instance-scoped keys.
 ```
 src/TerraScale.Auth/
   App.cs                  # composition + operator onboarding
-  EndpointModules.cs      # feature slice registry
+  EndpointModule.cs       # feature slice registry
   Configuration/          # TS_AUTH_* env options
   Crypto/                 # BLAKE2b, Argon2id, JWT, TOTP, encodings, PHC hashing
   WebAuthn/               # WebAuthn verifier + COSE keys
@@ -54,7 +54,8 @@ tests/TerraScale.Auth.Tests/
 
 ## Running
 
-The service needs a TerraScale API endpoint + project API key + database:
+The build references the sibling `ts-dotnet` SDK checkout (see AGENTS.md);
+the service itself needs a TerraScale API endpoint + project API key + database:
 
 ```sh
 TS_AUTH_PUBLIC_ORIGIN=https://auth.example.com \
@@ -62,7 +63,7 @@ TS_AUTH_TERRASCALE_API_KEY=sk_... \
 TS_AUTH_DATABASE=ts-auth \
 TS_AUTH_MASTER_KEY=$(head -c 32 /dev/urandom | base64) \
 TS_AUTH_OPERATOR_KEY=$(head -c 32 /dev/urandom | base64) \
-./run
+dotnet run --project src/TerraScale.Auth
 ```
 
 | Variable | Meaning |
@@ -96,6 +97,7 @@ TERRABASE_HOST_URL=http://127.0.0.1:8420 \
 TERRABASE_DATABASE_ROUTE=ts-auth-dev TERRABASE_DATABASE_TENANT=ts-auth \
 TERRABASE_DATABASE_ULID=01ARZ3NDEKTSV4RRFFQ69G5FAV TERRABASE_DATABASE_MODE=explicit \
 TERRABASE_DATABASE_PATH=/tmp/ts-auth-dev TERRABASE_REGION=GRU \
+TERRABASE_DATABASE_HOME_REGION=GRU TERRABASE_DATABASE_SELECTED_REGIONS=GRU \
 dotnet run --project terrabase/src/TerraBase.Host
 # then point ts-auth at it:
 TS_AUTH_TERRASCALE_API_URL=http://127.0.0.1:8420 TS_AUTH_TERRASCALE_API_KEY=dev ...
@@ -121,14 +123,16 @@ project — see `scripts/provision.sh`:
 - Hosted UI: `/ui/S/sign-in`, `/sign-up`, `/account`, `/account/sessions`,
   `/forgot-password`, `/reset-password`, `/verify-email`, `/magic-link`,
   `/passcode`, `/mfa/*`, `/passkeys/*`, `/connections/*`, `/admin`,
-  `/invitations/{id}/accept`
+  `/billing`, `/invitations/{id}/accept`
 - OAuth/OIDC: `/S/.well-known/openid-configuration`, `/S/.well-known/jwks.json`,
   `/S/oauth/{authorize,token,userinfo,revoke,introspect,logout}`
-- SCIM: `/scim/{directoryId}/Users`, `/Groups`, `/ServiceProviderConfig`
+- SCIM: `/scim/{directoryId}/Users`, `/Groups`, `/ServiceProviderConfig`,
+  `/ResourceTypes`, `/Schemas`
 - Management (Bearer `sk_...`): `/v1/S/users*`, `/v1/S/sessions*`,
   `/v1/S/api-keys*`, `/v1/S/oauth-clients*`, `/v1/S/connections*`,
-  `/v1/S/directories*`, `/v1/S/organizations*`, `/v1/S/domains*`,
-  `/v1/S/jwt-templates*`, `/v1/S/webhooks*`, `/v1/S/audit-events`,
+  `/v1/S/directories*`, `/v1/S/organizations*` (incl. org `domains*`),
+  `/v1/S/domains/{domain}/enroll`, `/v1/S/jwt-templates*`, `/v1/S/webhooks*`,
+  `/v1/S/audit-events`,
   `/v1/S/billing*`, `/v1/S/instance`
 - Billing webhook: `POST /v1/billing/webhook` (Stripe signature)
 - Operator: `POST /v1/instances` (Bearer `TS_AUTH_OPERATOR_KEY`)
