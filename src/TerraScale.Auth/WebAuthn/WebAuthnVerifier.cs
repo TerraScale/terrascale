@@ -272,7 +272,11 @@ public static class WebAuthnVerifier
         if (!credentialPublicKey.Verify(signed, signature))
             throw new InvalidOperationException("assertion signature invalid");
 
-        if (authData.SignCount != 0 && storedSignCount != 0 && authData.SignCount <= storedSignCount)
+        // W3C L2 §7.2 step 21: if either counter is nonzero, the new one must be strictly
+        // greater. 0 means "counter unsupported" (both zero passes); but a credential that
+        // stored a nonzero counter must never be allowed to zero it out — a clone can
+        // otherwise suppress detection by always reporting 0.
+        if ((authData.SignCount != 0 || storedSignCount != 0) && authData.SignCount <= storedSignCount)
             throw new InvalidOperationException("authenticator may be cloned (sign count did not advance)");
 
         return new AssertionResult(authData.SignCount, authData.UserVerified);

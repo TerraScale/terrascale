@@ -70,9 +70,17 @@ public sealed class PasskeyE2eTests
 
         var after = await service.Store.ListSessionsByUserAsync(user.Id);
         await Assert.That(after.Count).IsEqualTo(before.Count + 1);
+        var setCookie = string.Join("; ", verification.Headers.GetValues("Set-Cookie"));
+        await Assert.That(setCookie.Contains("tsauth_session=")).IsTrue();
         var used = await service.Store.FindPasskeyByCredentialIdAsync(authenticator.CredentialKey);
         await Assert.That(used!.LastUsedAt).IsNotNull();
         await Assert.That(used.SignCount).IsEqualTo(registration.SignCount + 1);
+
+        var signedIn = await service.Store.GetUserAsync(user.Id);
+        await Assert.That(signedIn!.LastSignInAt).IsNotNull();
+        var audits = await service.Store.ListAuditEventsAsync(instanceId, 100);
+        var signIn = audits.FirstOrDefault(e => e.Type == "user.signed_in" && e.ActorId == user.Id);
+        await Assert.That(signIn is not null && signIn.Data.ContainsKey("passkeyId")).IsTrue();
     }
 
     [Test]

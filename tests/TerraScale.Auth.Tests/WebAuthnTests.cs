@@ -98,6 +98,63 @@ public sealed class WebAuthnTests
     }
 
     [Test]
+    public async Task FirstAssertionWithZeroSignCountsIsAccepted()
+    {
+        // Counter-less authenticators report 0 forever: register at 0, assert at 0 — no clone flag.
+        using var authenticator = new FakeAuthenticator();
+        var challenge = NewChallenge();
+        var (credentialId, publicKey, signCount) = WebAuthnVerifier.VerifyRegistration(
+            authenticator.ClientDataJson("webauthn.create", challenge),
+            authenticator.AttestationObject(signCountOverride: 0),
+            challenge, RpId, Origin);
+        await Assert.That(signCount).IsEqualTo(0u);
+
+        var challenge2 = NewChallenge();
+        var (authData, signature) = authenticator.Assertion(challenge2, signCountOverride: 0);
+        var result = WebAuthnVerifier.VerifyAssertion(
+            authenticator.ClientDataJson("webauthn.get", challenge2), authData, signature,
+            challenge2, RpId, Origin, credentialId, publicKey, storedSignCount: 0);
+        await Assert.That(result.SignCount).IsEqualTo(0u);
+    }
+
+    [Test]
+    public async Task AssertionZeroingTheCounterAgainstAStoredCountIsRejected()
+    {
+        // A credential that stored a nonzero counter must not be allowed to zero it out:
+        // otherwise a clone suppresses detection by always reporting 0.
+        using var authenticator = new FakeAuthenticator();
+        var challenge = NewChallenge();
+        var (credentialId, publicKey, _) = WebAuthnVerifier.VerifyRegistration(
+            authenticator.ClientDataJson("webauthn.create", challenge),
+            authenticator.AttestationObject(), challenge, RpId, Origin);
+
+        var challenge2 = NewChallenge();
+        var (authData, signature) = authenticator.Assertion(challenge2, signCountOverride: 0);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Task.Run(() =>
+            WebAuthnVerifier.VerifyAssertion(
+                authenticator.ClientDataJson("webauthn.get", challenge2), authData, signature,
+                challenge2, RpId, Origin, credentialId, publicKey, storedSignCount: 5)));
+    }
+
+    [Test]
+    public async Task AssertionRejectsMismatchedCredentialIdInAuthData()
+    {
+        using var authenticator = new FakeAuthenticator();
+        var challenge = NewChallenge();
+        var (credentialId, publicKey, _) = WebAuthnVerifier.VerifyRegistration(
+            authenticator.ClientDataJson("webauthn.create", challenge),
+            authenticator.AttestationObject(), challenge, RpId, Origin);
+
+        // Validly signed by the real key, but authData carries a foreign credential id.
+        var challenge2 = NewChallenge();
+        var (authData, signature) = authenticator.Assertion(challenge2, credentialIdOverride: RandomNumberGenerator.GetBytes(32));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Task.Run(() =>
+            WebAuthnVerifier.VerifyAssertion(
+                authenticator.ClientDataJson("webauthn.get", challenge2), authData, signature,
+                challenge2, RpId, Origin, credentialId, publicKey, storedSignCount: 5)));
+    }
+
+    [Test]
     public async Task PackedSelfAttestationSignatureIsVerified()
     {
         using var authenticator = new FakeAuthenticator();
@@ -175,28 +232,29 @@ public sealed class WebAuthnTests
         public string ClientDataJson(string type, string challenge) =>
             $$"""{"type":"{{type}}","challenge":"{{challenge}}","origin":"{{Origin}}"}""";
 
-        public byte[] AuthenticatorData(bool attested, byte? flagsOverride = null)
+        public byte[] AuthenticatorData(bool attested, byte? flagsOverride = null, uint? signCountOverride = null, byte[]? credentialIdOverride = null)
         {
             using var stream = new MemoryStream();
             stream.Write(SHA256.HashData(Encoding.ASCII.GetBytes(RpId)));
             var flags = attested ? (byte)0x45 : (byte)0x05; // UP | UV [| AT]
             stream.WriteByte(flagsOverride ?? flags);
-            var count = signCount;
+            var count = signCountOverride ?? signCount;
             stream.Write([(byte)(count >> 24), (byte)(count >> 16), (byte)(count >> 8), (byte)count]);
             if (attested)
             {
+                var credentialId = credentialIdOverride ?? CredentialId;
                 stream.Write(new byte[16]);
-                stream.Write([(byte)(CredentialId.Length >> 8), (byte)CredentialId.Length]);
-                stream.Write(CredentialId);
+                stream.Write([(byte)(credentialId.Length >> 8), (byte)credentialId.Length]);
+                stream.Write(credentialId);
                 var parameters = ecdsa.ExportParameters(false);
                 stream.Write(CoseKey.EncodeEc2(parameters.Q.X!, parameters.Q.Y!));
             }
             return stream.ToArray();
         }
 
-        public byte[] AttestationObject(string clientDataJson = "", string format = "none", bool tamperSignature = false, byte? flagsOverride = null)
+        public byte[] AttestationObject(string clientDataJson = "", string format = "none", bool tamperSignature = false, byte? flagsOverride = null, uint? signCountOverride = null)
         {
-            var authData = AuthenticatorData(attested: true, flagsOverride);
+            var authData = AuthenticatorData(attested: true, flagsOverride, signCountOverride);
             var writer = new CborWriter();
             writer.WriteStartMap(3);
             writer.WriteInt32(1); writer.WriteTextString(format);
@@ -216,10 +274,10 @@ public sealed class WebAuthnTests
             return writer.Encode();
         }
 
-        public (byte[] AuthData, byte[] Signature) Assertion(string challenge)
+        public (byte[] AuthData, byte[] Signature) Assertion(string challenge, uint? signCountOverride = null, byte[]? credentialIdOverride = null)
         {
             signCount++; // advance the counter like a real token
-            var authData = AuthenticatorData(attested: false);
+            var authData = AuthenticatorData(attested: credentialIdOverride is not null, signCountOverride: signCountOverride, credentialIdOverride: credentialIdOverride);
             var signed = authData.Concat(SHA256.HashData(Encoding.UTF8.GetBytes(ClientDataJson("webauthn.get", challenge)))).ToArray();
             var signature = ecdsa.SignData(signed, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
             return (authData, signature);
