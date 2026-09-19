@@ -16,6 +16,7 @@ public sealed record OrganizationPageModel(
     ImmutableArray<DashboardProject> Projects,
     ImmutableArray<TeamMember> Users,
     ImmutableArray<Invitation> Invitations,
+    ImmutableArray<DashboardStore.OwnershipTransfer> OwnershipTransfers,
     ImmutableArray<DashboardStore.OrganizationRegion> RegionCatalog,
     string SuggestedRegion) : IPageModel
 {
@@ -34,9 +35,10 @@ public sealed record OrganizationPageModel(
             SignedInEmail: user.Email,
             CanManageOrganization: store.OwnerSession,
             DeletionRequested: store.OrganizationDeletionRequested,
-            Projects: store.Projects,
+            Projects: store.OrganizationProjects,
             Users: store.TeamMembers,
             Invitations: store.Invitations,
+            OwnershipTransfers: store.OrganizationOwnershipTransfers,
             RegionCatalog: store.OrganizationRegions,
             SuggestedRegion: store.SuggestedRegion)
         {

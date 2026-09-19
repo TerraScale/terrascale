@@ -19,6 +19,6 @@ public sealed class OrganizationsNewPageEndpoint(DashboardStore store) : Endpoin
         var payment = query["payment"].FirstOrDefault();
         var paymentStatus = payment is "success" or "canceled" ? payment : null;
         return Task.FromResult<IResult>(OrganizationsNewSlice.Create(
-            OrganizationsNewPageModel.From(store, "/organization", step, paymentStatus)));
+            OrganizationsNewPageModel.From(store, "/organizations/new", step, paymentStatus)));
     }
 }

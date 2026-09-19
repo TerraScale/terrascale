@@ -3486,6 +3486,192 @@ single-selector rules may stay on one line.
     .ts-org-deletion-form .ts-form-actions { align-self: end; }
   }
 
+  /* Organization switcher (v1 switchForm: bordered grid below the terms). */
+  .ts-org-switch-form {
+    display: grid;
+    gap: var(--ts-md);
+    grid-template-columns: minmax(0, 1fr);
+    border-top: 1px solid var(--ts-line);
+    margin-top: 20px;
+    padding-top: 20px;
+  }
+
+  @media (min-width: 40rem) {
+    .ts-org-switch-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+  }
+
+  /* Region picker map (v1 RegionMap): checkbox pins over the dotted map. */
+  .ts-region-picker {
+    position: relative;
+    min-height: 224px;
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-panel);
+    background-color: var(--ts-surface-muted);
+    overflow: hidden;
+  }
+
+  .ts-region-picker-compact { min-height: 180px; }
+
+  .ts-region-picker .ts-region-map { pointer-events: none; }
+
+  .ts-region-pin-btn {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    transform: translate(-50%, -50%);
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    background-color: transparent;
+    cursor: pointer;
+  }
+
+  .ts-region-pin-btn:has(.ts-sr-only:focus-visible) {
+    outline: 2px solid var(--ts-accent);
+    outline-offset: 2px;
+  }
+
+  .ts-region-pin-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: var(--ts-radius-pill);
+    border: 2px solid var(--ts-surface);
+    background-color: var(--ts-ink-muted);
+    transition:
+    box-shadow 150ms ease-out,
+    width 150ms ease-out,
+    height 150ms ease-out;
+  }
+
+  .ts-region-pin-btn:has(input:checked) .ts-region-pin-dot {
+    width: 17px;
+    height: 17px;
+    background-color: var(--ts-accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-accent) 35%, transparent);
+  }
+
+  /* Create-project form (v1 projectForm: bordered, md gap, sm region stack). */
+  .ts-project-form {
+    gap: var(--ts-md);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-project-regions { gap: var(--ts-sm); }
+
+  /* Buttons that fill narrow viewports like v1 buttonFull. */
+  .ts-btn-full { width: 100%; }
+
+  @media (min-width: 48rem) {
+    .ts-btn-full { width: auto; }
+  }
+
+  /* v1 actionEnd: actions anchored to the leading edge. */
+  .ts-form-actions-start { justify-content: flex-start; }
+
+  /* Inline rename disclosure (v1 renameRoot + renameForm). */
+  .ts-rename {
+    display: grid;
+    gap: var(--ts-sm);
+    min-width: 14rem;
+    justify-items: start;
+  }
+
+  .ts-rename-form {
+    display: grid;
+    gap: var(--ts-md);
+    width: 100%;
+    border-top: 1px solid var(--ts-line);
+    padding-top: var(--ts-md);
+  }
+
+  /* Invitation create form (v1 formBorderBottom). */
+  .ts-form-stacked {
+    display: grid;
+    gap: var(--ts-md);
+    padding: var(--ts-lg);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  /* Member row controls (v1 memberControls grid + ownership transfer). */
+  .ts-member-controls {
+    display: grid;
+    gap: var(--ts-sm);
+    justify-items: start;
+  }
+
+  .ts-org-transfer {
+    display: grid;
+    gap: var(--ts-sm);
+  }
+
+  .ts-org-transfer-summary {
+    cursor: pointer;
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+  }
+
+  /* ===== organizations/new wizard ===== */
+
+  /* v1 renders no page heading for /organizations/new (DashboardShell skips
+     the h1 when no route matches the href); scoped here until ShellHtml
+     guards it centrally. */
+  .ts-main:has(.ts-neworg) > .ts-page-title { display: none; }
+
+  /* v1 Progress primitive is 4px tall. */
+  .ts-neworg .ts-progress { height: 4px; }
+
+  /* Wizard Panel padding: 20px block + the root's 16px. */
+  .ts-neworg-wizard { padding: 36px var(--ts-lg); }
+
+  .ts-neworg-header {
+    border-bottom: 1px solid var(--ts-line);
+    padding-bottom: var(--ts-lg);
+    padding-inline: var(--ts-lg);
+  }
+
+  /* v1 PanelHeader descriptions are body-size. */
+  .ts-panel-subtitle-lg {
+    font-size: var(--ts-fs-body);
+    line-height: 1.6;
+  }
+
+  /* v1 form density: md form gap, sm label gap, 44px controls. */
+  .ts-neworg .ts-form { gap: var(--ts-md); }
+  .ts-neworg .ts-field { gap: var(--ts-sm); }
+  .ts-neworg .ts-input,
+  .ts-neworg .ts-select { min-height: var(--ts-control-h-lg); }
+
+  /* Payment summary (v1 wizardStyles.summary). */
+  .ts-wizard-summary {
+    display: grid;
+    gap: var(--ts-sm);
+    margin: 0;
+  }
+
+  .ts-wizard-summary-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-md);
+  }
+
+  .ts-wizard-summary-row dt {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-meta);
+  }
+
+  .ts-wizard-summary-row dd {
+    margin: 0;
+    color: var(--ts-ink);
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-wizard-link {
+    font-size: var(--ts-fs-meta);
+    text-decoration: underline;
+  }
+
   /* ===== Feature: Usage/Audit/Notifications ===== */
 
   /* Stat card grids: 2-up on tablet, 4-up on desktop (usage summary + billing). */
@@ -4902,11 +5088,12 @@ single-selector rules may stay on one line.
     background-color: color-mix(in oklab, var(--ts-success) 8%, transparent);
   }
 
-  /* Wizard (organizations/new). */
+  /* Wizard (organizations/new) — chips 1:1 with new-organization-styles.ts:
+     sm gaps, no fill on the active chip (full-accent border), done = ink. */
   .ts-wizard-steps {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--ts-md);
+    gap: var(--ts-sm);
     list-style: none;
     margin: 0;
     padding: 0;
@@ -4916,7 +5103,7 @@ single-selector rules may stay on one line.
     display: inline-flex;
     align-items: center;
     gap: var(--ts-sm);
-    padding: var(--ts-xs) var(--ts-md);
+    padding: var(--ts-xs) var(--ts-sm);
     border-radius: var(--ts-radius-pill);
     border: 1px solid var(--ts-line);
     color: var(--ts-ink-muted);
@@ -4924,13 +5111,14 @@ single-selector rules may stay on one line.
   }
 
   .ts-wizard-step-active {
-    border-color: color-mix(in oklab, var(--ts-accent) 42%, transparent);
-    background-color: color-mix(in oklab, var(--ts-accent) 14%, transparent);
+    border-color: var(--ts-accent);
+    background: none;
     color: var(--ts-ink);
+    font-weight: var(--ts-fw-medium);
   }
 
   .ts-wizard-step-done {
-    color: var(--ts-success);
+    color: var(--ts-ink);
   }
 
   /* ===== Feature: Subscriptions ============================================ */
