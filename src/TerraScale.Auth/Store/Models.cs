@@ -6,6 +6,9 @@ public sealed record Instance
     public required string Id { get; init; }               // ins_...
     public required string Slug { get; init; }             // unique, url-safe
     public required string Name { get; init; }
+    public string? LogoUrl { get; init; }                  // hosted UI branding
+    public string? ThemeColor { get; init; }               // hosted UI accent, e.g. #6c5ce7
+    public string? StripeCustomerId { get; init; }         // billing linkage
     public required long CreatedAt { get; init; }
 }
 
@@ -220,4 +223,74 @@ public sealed record SigningKeyRecord
     public bool Active { get; init; }
     public long CreatedAt { get; init; }
     public long? RetiredAt { get; init; }
+}
+
+/// <summary>An upstream identity connection: social OIDC or enterprise SAML SSO.</summary>
+public sealed record Connection
+{
+    public required string Id { get; init; }               // con_...
+    public required string InstanceId { get; init; }
+    public required string Type { get; init; }             // oidc | saml
+    public required string Name { get; init; }
+    public bool Enabled { get; init; } = true;
+    public string? OrgId { get; init; }                    // scoped to an organization when set
+    // OIDC fields.
+    public string? IssuerUrl { get; init; }
+    public string? ClientId { get; init; }
+    public string? ClientSecretBox { get; init; }          // SecretBox(master key)
+    public string? AuthorizationEndpoint { get; init; }
+    public string? TokenEndpoint { get; init; }
+    public string? UserinfoEndpoint { get; init; }
+    // SAML fields.
+    public string? IdpEntityId { get; init; }
+    public string? SsoRedirectUrl { get; init; }
+    public string? X509CertificatePem { get; init; }
+    public string? SpEntityId { get; init; }               // defaults to the instance ACS URL
+    public long CreatedAt { get; init; }
+}
+
+/// <summary>A SCIM directory: bearer-token-authenticated provisioning endpoint set.</summary>
+public sealed record ScimDirectory
+{
+    public required string Id { get; init; }               // dir_...
+    public required string InstanceId { get; init; }
+    public string? OrgId { get; init; }                    // memberships land in this org
+    public required string TokenKey { get; init; }         // sha256(bearer token) — unique
+    public long CreatedAt { get; init; }
+}
+
+/// <summary>The instance's billing state, driven by Stripe webhooks.</summary>
+public sealed record Subscription
+{
+    public required string Id { get; init; }               // sub_...
+    public required string InstanceId { get; init; }
+    public required string StripeCustomerId { get; init; }
+    public string? StripeSubscriptionId { get; init; }
+    public required string Plan { get; init; }             // free | pro | enterprise
+    public required string Status { get; init; }           // active | trialing | past_due | canceled | incomplete
+    public long? CurrentPeriodEnd { get; init; }
+    public long CreatedAt { get; init; }
+    public long UpdatedAt { get; init; }
+}
+
+/// <summary>A named JWT template: custom claims minted on demand per instance.</summary>
+public sealed record JwtTemplate
+{
+    public required string Id { get; init; }               // jtp_...
+    public required string InstanceId { get; init; }
+    public required string Name { get; init; }             // url-safe, used in the mint route
+    public required Dictionary<string, string> Claims { get; init; } // {{user.email}} substitution
+    public int LifetimeSeconds { get; init; } = 300;
+    public long CreatedAt { get; init; }
+}
+
+/// <summary>An organization enrollment rule by verified email domain.</summary>
+public sealed record OrgDomain
+{
+    public required string Id { get; init; }               // dom_...
+    public required string InstanceId { get; init; }
+    public required string OrgId { get; init; }
+    public required string Domain { get; init; }           // lowercase, e.g. acme.com
+    public required string DomainKey { get; init; }        // instanceId:domain — unique
+    public required long CreatedAt { get; init; }
 }

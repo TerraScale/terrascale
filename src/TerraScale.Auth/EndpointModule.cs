@@ -14,5 +14,10 @@ public static class EndpointModules
         Organizations.OrganizationEndpoints.Map(app);
         Management.ManagementEndpoints.Map(app);
         Webhooks.WebhookEndpointsModule.Map(app);
+        Connections.ConnectionEndpoints.Map(app);
+        Scim.ScimEndpoints.Map(app);
+        Billing.BillingEndpoints.Map(app);
+        Templates.JwtTemplateEndpoints.Map(app);
+        Users.PasscodeEndpoints.Map(app);
     }
 }

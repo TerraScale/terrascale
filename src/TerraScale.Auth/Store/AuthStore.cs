@@ -450,6 +450,121 @@ public sealed class AuthStore(TerraScaleClient client, string database)
         return recent.Where(e => e.CreatedAt >= sinceUnixSeconds).OrderBy(e => e.CreatedAt).ToList();
     }
 
+    // ---- Connections (social OIDC + SAML SSO) ------------------------------------------------
+
+    public async Task<Connection> CreateConnectionAsync(Connection connection, CancellationToken ct = default) =>
+        await CreateAsync("connections", connection.Id, connection, ct);
+
+    public Task<Connection?> GetConnectionAsync(string id, CancellationToken ct = default) =>
+        GetOrNullAsync<Connection>("connections", id, ct);
+
+    public Task UpsertConnectionAsync(Connection connection, CancellationToken ct = default) =>
+        UpsertAsync("connections", connection.Id, connection, ct);
+
+    public Task DeleteConnectionAsync(string id, CancellationToken ct = default) =>
+        client.Documents.DeleteAsync(Database, "connections", id, ct);
+
+    public Task<IReadOnlyList<Connection>> ListConnectionsAsync(string instanceId, CancellationToken ct = default) =>
+        QueryAsync<Connection>("connections", "instanceId", instanceId, 100, ct);
+
+    // ---- SCIM directories ---------------------------------------------------------------------
+
+    public async Task<ScimDirectory> CreateScimDirectoryAsync(ScimDirectory directory, CancellationToken ct = default)
+    {
+        await ClaimUniqueAsync("scim-token", directory.TokenKey, directory.Id, ct);
+        try
+        {
+            return await CreateAsync("scim_directories", directory.Id, directory, ct);
+        }
+        catch
+        {
+            await ReleaseUniqueAsync("scim-token", directory.TokenKey, ct);
+            throw;
+        }
+    }
+
+    public Task<ScimDirectory?> GetScimDirectoryAsync(string id, CancellationToken ct = default) =>
+        GetOrNullAsync<ScimDirectory>("scim_directories", id, ct);
+
+    public Task DeleteScimDirectoryAsync(string id, CancellationToken ct = default) =>
+        client.Documents.DeleteAsync(Database, "scim_directories", id, ct);
+
+    public async Task<ScimDirectory?> FindScimDirectoryByTokenAsync(string tokenKey, CancellationToken ct = default)
+    {
+        var matches = await QueryAsync<ScimDirectory>("scim_directories", "tokenKey", tokenKey, 2, ct);
+        return matches.FirstOrDefault();
+    }
+
+    public Task<IReadOnlyList<ScimDirectory>> ListScimDirectoriesAsync(string instanceId, CancellationToken ct = default) =>
+        QueryAsync<ScimDirectory>("scim_directories", "instanceId", instanceId, 100, ct);
+
+    // ---- Subscriptions (Stripe) ------------------------------------------------------------------
+
+    public Task<Subscription> CreateSubscriptionAsync(Subscription subscription, CancellationToken ct = default) =>
+        CreateAsync("subscriptions", subscription.Id, subscription, ct);
+
+    public Task<Subscription?> GetSubscriptionAsync(string id, CancellationToken ct = default) =>
+        GetOrNullAsync<Subscription>("subscriptions", id, ct);
+
+    public Task UpsertSubscriptionAsync(Subscription subscription, CancellationToken ct = default) =>
+        UpsertAsync("subscriptions", subscription.Id, subscription, ct);
+
+    public async Task<Subscription?> FindSubscriptionByCustomerAsync(string stripeCustomerId, CancellationToken ct = default)
+    {
+        var matches = await QueryAsync<Subscription>("subscriptions", "stripeCustomerId", stripeCustomerId, 2, ct);
+        return matches.FirstOrDefault();
+    }
+
+    public Task<IReadOnlyList<Subscription>> ListSubscriptionsAsync(string instanceId, CancellationToken ct = default) =>
+        QueryAsync<Subscription>("subscriptions", "instanceId", instanceId, 100, ct);
+
+    // ---- JWT templates -----------------------------------------------------------------------------
+
+    public Task<JwtTemplate> CreateJwtTemplateAsync(JwtTemplate template, CancellationToken ct = default) =>
+        CreateAsync("jwt_templates", template.Id, template, ct);
+
+    public Task<JwtTemplate?> GetJwtTemplateAsync(string id, CancellationToken ct = default) =>
+        GetOrNullAsync<JwtTemplate>("jwt_templates", id, ct);
+
+    public Task UpsertJwtTemplateAsync(JwtTemplate template, CancellationToken ct = default) =>
+        UpsertAsync("jwt_templates", template.Id, template, ct);
+
+    public Task DeleteJwtTemplateAsync(string id, CancellationToken ct = default) =>
+        client.Documents.DeleteAsync(Database, "jwt_templates", id, ct);
+
+    public Task<IReadOnlyList<JwtTemplate>> ListJwtTemplatesAsync(string instanceId, CancellationToken ct = default) =>
+        QueryAsync<JwtTemplate>("jwt_templates", "instanceId", instanceId, 100, ct);
+
+    // ---- Organization enrollment domains ---------------------------------------------------------------
+
+    public async Task<OrgDomain> CreateOrgDomainAsync(OrgDomain domain, CancellationToken ct = default)
+    {
+        await ClaimUniqueAsync("org-domain", domain.DomainKey, domain.Id, ct);
+        try
+        {
+            return await CreateAsync("org_domains", domain.Id, domain, ct);
+        }
+        catch
+        {
+            await ReleaseUniqueAsync("org-domain", domain.DomainKey, ct);
+            throw;
+        }
+    }
+
+    public Task<OrgDomain?> GetOrgDomainAsync(string id, CancellationToken ct = default) =>
+        GetOrNullAsync<OrgDomain>("org_domains", id, ct);
+
+    public async Task DeleteOrgDomainAsync(string id, CancellationToken ct = default)
+    {
+        var domain = await GetOrgDomainAsync(id, ct);
+        await client.Documents.DeleteAsync(Database, "org_domains", id, ct);
+        if (domain is not null)
+            await ReleaseUniqueAsync("org-domain", domain.DomainKey, ct);
+    }
+
+    public Task<IReadOnlyList<OrgDomain>> ListOrgDomainsAsync(string instanceId, CancellationToken ct = default) =>
+        QueryAsync<OrgDomain>("org_domains", "instanceId", instanceId, 100, ct);
+
     // ---- Signing keys -----------------------------------------------------------------------
 
     public Task<SigningKeyRecord> CreateSigningKeyAsync(SigningKeyRecord key, CancellationToken ct = default) =>
