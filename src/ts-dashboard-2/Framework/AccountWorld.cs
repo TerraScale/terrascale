@@ -650,8 +650,12 @@ public sealed class AccountWorld
 
         Invoices =
         [
-            new("in_01JCA2QG4M6P8S1V3X5Z7B9DF", 2900, "USD", "paid", "2026-08-01T00:00:00Z", "2026-09-01T00:00:00Z", "2026-09-01T08:02:00Z"),
-            new("in_01JCA3RH5N7Q9T2W4Y6A8C2EG", 4140, "USD", "open", "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z", "2026-10-01T08:00:00Z"),
+            new("in_01JCA2QG4M6P8S1V3X5Z7B9DF", 2900, "USD", "paid", "2026-08-01T00:00:00Z", "2026-09-01T00:00:00Z", "2026-09-01T08:02:00Z",
+            "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA2QG4M6P8S1V3X5Z7B9DF",
+            "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA2QG4M6P8S1V3X5Z7B9DF/pdf"),
+            new("in_01JCA3RH5N7Q9T2W4Y6A8C2EG", 4140, "USD", "open", "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z", "2026-10-01T08:00:00Z",
+            "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA3RH5N7Q9T2W4Y6A8C2EG",
+            "https://pay.terrascale.tech/i/acct_1TERRAscale/in_01JCA3RH5N7Q9T2W4Y6A8C2EG/pdf"),
         ];
 
         AccountLocale = "en";

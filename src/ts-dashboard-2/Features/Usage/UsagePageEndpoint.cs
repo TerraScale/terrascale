@@ -9,5 +9,6 @@ public sealed class UsagePageEndpoint(DashboardStore store) : SlicePageEndpoint<
             Store,
             PageRoute,
             HttpContext.Request.Query["range"].FirstOrDefault(),
-            HttpContext.Request.Query["billing"].FirstOrDefault());
+            HttpContext.Request.Query["billing"].FirstOrDefault(),
+            HttpContext.Request.Query["saved"].FirstOrDefault());
 }
