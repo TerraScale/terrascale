@@ -40,16 +40,17 @@ public sealed class RateLimiter(int windowSeconds)
 }
 
 /// <summary>
-/// Applies the Management API rate limit uniformly: every request that presents
-/// an sk_ bearer passes through here, no matter which endpoint module serves it,
-/// so no module can accidentally ship outside the limit. Register once in App.
+/// The uniform Management API gate: every request that presents an sk_ bearer
+/// passes through here, no matter which endpoint module serves it, so no module
+/// can accidentally ship outside the API-key scope check or the rate limit.
+/// Register once in App.
 /// </summary>
-public static class ManagementRateLimit
+public static class ManagementGate
 {
     private const int WindowSeconds = 300;
     private static readonly RateLimiter Limiter = new(WindowSeconds);
 
-    /// <summary>Installs the rate-limit middleware. Invalid or non-sk_ bearers pass
+    /// <summary>Installs the gate middleware. Invalid or non-sk_ bearers pass
     /// through untouched — the endpoint's own auth answers those with 401.</summary>
     public static void Use(WebApplication app) =>
         app.Use(async (context, next) =>
@@ -62,6 +63,16 @@ public static class ManagementRateLimit
                     .ResolveAsync(context.Request, context.RequestAborted);
                 if (resolved is not null)
                 {
+                    if (!ScopeAllows(resolved.Scopes, context.Request.Path))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                        await context.Response.WriteAsJsonAsync(new
+                        {
+                            error = new { code = "insufficient_scope", message = "The API key's scopes do not allow this route." },
+                        });
+                        return;
+                    }
+
                     var limit = context.RequestServices.GetRequiredService<AuthOptions>().RateLimitPerWindow;
                     var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                     if (!Limiter.Allow(resolved.ApiKeyId!, limit, now, out var remaining))
@@ -81,4 +92,16 @@ public static class ManagementRateLimit
 
             await next();
         });
+
+    /// <summary>True when the key's scopes allow the request: management routes are
+    /// grouped by family — the path segment after the instance slug in
+    /// "/v1/{slug}/{family}/..." — and a key must carry that exact family or "*".
+    /// Paths outside the /v1 management surface are unrestricted.</summary>
+    internal static bool ScopeAllows(string[]? scopes, string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 3 || segments[0] != "v1")
+            return true;
+        return scopes is not null && (scopes.Contains("*") || scopes.Contains(segments[2]));
+    }
 }

@@ -53,7 +53,7 @@ ts-auth. Statuses reflect the code on `main` — each ✅ is backed by tests.
 | Invitations | ✅ | ✅ | ✅ | `/v1/{slug}/organizations/{id}/invitations` + accept page |
 | Domain enrollment | ✅ | ➖ | ✅ | `/v1/{slug}/organizations/{id}/domains` + enroll |
 | Directory sync (SCIM 2.0) | ✅ | ✅ | ✅ | `/v1/{slug}/directories` + `/scim/{dirId}/*` |
-| Admin portal (self-serve connection setup) | ✅ | ✅ | ➖ | hosted pages for connection + directory management |
+| Admin portal (self-serve connection setup) | ✅ | ✅ | ➖ | hosted pages: manage SSO connections, view SCIM directories |
 
 ## Platform
 

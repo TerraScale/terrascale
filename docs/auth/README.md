@@ -24,7 +24,7 @@ hashing, JWT, OAuth 2.1/OIDC, WebAuthn, TOTP, webhook signing.
 | Directory sync | SCIM 2.0 `/scim/{dir}` — users, groups, deprovisioning |
 | Organizations | Orgs, memberships, roles, invitations, enrollment domains |
 | Admin portal | Hosted page for org admins to manage SSO connections and directories |
-| Management API | Full developer REST API with `sk_...` keys, pagination, rate limiting |
+| Management API | Full developer REST API with `sk_...` keys, per-family key scopes, pagination, rate limiting |
 | JWT templates | Custom-claim tokens (`{{user.email}}` substitution) minted on demand |
 | Webhooks | HMAC-signed outbound events with retries, driven by the audit log |
 | Audit logs | Every significant action, queryable API |

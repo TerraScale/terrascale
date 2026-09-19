@@ -12,8 +12,8 @@ using TerraScale.Auth.Users;
 /// <summary>
 /// Management feature endpoints: the developer API (Clerk Backend API
 /// equivalent) over users, sessions, and API keys, keyed by bearer <c>sk_</c>
-/// secrets. Rate limiting is applied process-wide by <see cref="ManagementRateLimit"/>,
-/// not per module.
+/// secrets. Rate limiting and API-key scope enforcement are applied process-wide
+/// by <see cref="ManagementGate"/>, not per module.
 /// </summary>
 public static class ManagementEndpoints
 {
@@ -402,7 +402,7 @@ public static class ManagementEndpoints
     // ---- Shared plumbing ------------------------------------------------------------
 
     /// <summary>Authentication gate; exactly one of <see cref="InstanceGate.Context"/>/<see cref="InstanceGate.Failure"/> is set.
-    /// Rate limiting happens upstream in <see cref="ManagementRateLimit"/>.</summary>
+    /// Rate limiting happens upstream in <see cref="ManagementGate"/>.</summary>
     private sealed record InstanceGate(InstanceContext? Context, IResult? Failure);
 
     private static async Task<InstanceGate> RequireInstanceAsync(
@@ -529,6 +529,8 @@ public static class ManagementEndpoints
         [property: JsonPropertyName("ban_reason")] JsonElement BanReason,
         JsonElement Email);
 
+    /// <summary>Scopes are Management API route families ("users", "webhooks", ...),
+    /// enforced by <see cref="ManagementGate"/>; omitted scopes mean "*" (full access).</summary>
     private sealed record CreateApiKeyBody(string? Name, string[]? Scopes);
 
     /// <summary>Rejects PATCH bodies whose fields carry JSON kinds the field cannot hold.</summary>

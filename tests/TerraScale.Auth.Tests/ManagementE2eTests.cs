@@ -744,6 +744,41 @@ public sealed class ManagementE2eTests
     }
 
     [Test]
+    public async Task ApiKeyScopesLimitTheKeyToItsRouteFamily()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+        var http = service.Http;
+
+        var created = await SendAsync(http, Request(HttpMethod.Post, $"/v1/{slug}/api-keys", key,
+            new { name = "scoped", scopes = new[] { "users" } }), HttpStatusCode.Created);
+        var secret = created.GetProperty("api_key").GetString()!;
+        await Assert.That(created.GetProperty("scopes").EnumerateArray().Select(s => s.GetString()).Single()).IsEqualTo("users");
+
+        // In-family routes answer normally, including nested ones.
+        await SendAsync(http, Request(HttpMethod.Get, $"/v1/{slug}/users", secret), HttpStatusCode.OK);
+        var user = await CreateUserAsync(http, slug, secret, $"scoped-{Guid.NewGuid().ToString("N")[..6]}@example.com");
+        await SendAsync(http, Request(HttpMethod.Get, $"/v1/{slug}/users/{user.GetProperty("id").GetString()}", secret), HttpStatusCode.OK);
+
+        // Every other family answers 403 insufficient_scope — enforced by the uniform
+        // gate, so it holds for modules outside ManagementEndpoints too.
+        foreach (var uri in new[]
+                 {
+                     $"/v1/{slug}/api-keys", $"/v1/{slug}/organizations", $"/v1/{slug}/webhooks",
+                     $"/v1/{slug}/connections", $"/v1/{slug}/jwt-templates", $"/v1/{slug}/directories",
+                     $"/v1/{slug}/audit-events", $"/v1/{slug}/billing", $"/v1/{slug}/instance",
+                 })
+        {
+            using var denied = await http.SendAsync(Request(HttpMethod.Get, uri, secret));
+            await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            var body = await denied.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("insufficient_scope");
+        }
+
+        // The unrestricted key the scoped one was created with still reaches everything.
+        await SendAsync(http, Request(HttpMethod.Get, $"/v1/{slug}/organizations", key), HttpStatusCode.OK);
+    }
+
+    [Test]
     public async Task RateLimitAppliesUniformlyAcrossManagementModules()
     {
         var (service, _, slug, key) = await InstanceAsync();

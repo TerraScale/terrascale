@@ -14,8 +14,9 @@ public static class ApiResults
     public static IResult Conflict(string code, string message) => Error(409, code, message);
 }
 
-/// <summary>The instance context resolved for a request, plus who resolved it.</summary>
-public sealed record InstanceContext(Store.Instance Instance, string? ApiKeyId = null);
+/// <summary>The instance context resolved for a request, plus who resolved it.
+/// <paramref name="Scopes"/> are the API key's route families ("*" = everything).</summary>
+public sealed record InstanceContext(Store.Instance Instance, string? ApiKeyId = null, string[]? Scopes = null);
 
 /// <summary>Resolves the ts-auth instance for management API requests from the bearer API key.</summary>
 public sealed class InstanceResolver(Store.AuthStore store)
@@ -45,7 +46,7 @@ public sealed class InstanceResolver(Store.AuthStore store)
         if (instance is null)
             return null;
 
-        var context = new InstanceContext(instance, apiKey.Id);
+        var context = new InstanceContext(instance, apiKey.Id, apiKey.Scopes);
         request.HttpContext.Items[ContextItemKey] = context;
         return context;
     }

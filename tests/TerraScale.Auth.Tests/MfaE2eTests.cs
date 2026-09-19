@@ -2,6 +2,7 @@ namespace TerraScale.Auth.Tests;
 
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Auth.Crypto;
@@ -148,6 +149,71 @@ public sealed class MfaE2eTests
         var events = await c.Store.ListAuditEventsAsync(c.InstanceId, 100);
         var signedIn = events.Single(e => e.Type == "user.signed_in");
         await Assert.That(signedIn.Data.TryGetValue("method", out var method) && method.ToString() == "password+mfa").IsTrue();
+    }
+
+    [Test]
+    public async Task PasskeySignInSatisfiesTheStepUpForATotpUser()
+    {
+        var c = await ArrangeAsync("passkey");
+        await EnrollAsync(c); // confirmed TOTP: the step-up gate is armed for this user
+
+        // Password sign-in is intercepted by the MFA gate: pending redirect, no session cookie.
+        using var password = await c.Http.PostAsync(
+            $"/ui/{c.Slug}/sign-in",
+            Form(("email", c.User.Email!), ("password", "correct horse battery staple")));
+        await Assert.That(password.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await Assert.That(password.Headers.Location?.ToString().Contains("mfa/verify")).IsTrue();
+        await Assert.That(SessionCookie(password)).IsNull();
+
+        // Register a passkey for the same user.
+        using var authenticator = new PasskeyE2eTests.FakeAuthenticator();
+        string challenge;
+        using (var options = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/passkeys/register/options")))
+        {
+            await Assert.That(options.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            challenge = (await options.Content.ReadFromJsonAsync<JsonElement>())
+                .GetProperty("publicKey").GetProperty("challenge").GetString()!;
+        }
+        var register = SessionRequest(c, HttpMethod.Post, "/passkeys/register");
+        register.Content = JsonContent.Create(new
+        {
+            id = authenticator.CredentialKey,
+            nickname = "Step-up key",
+            response = new
+            {
+                clientDataJSON = Encodings.Base64UrlEncode(Encoding.UTF8.GetBytes(
+                    authenticator.ClientDataJson("webauthn.create", challenge))),
+                attestationObject = Encodings.Base64UrlEncode(authenticator.AttestationObject()),
+                transports = new[] { "internal" },
+            },
+        });
+        using (var registered = await c.Http.SendAsync(register))
+            await Assert.That(registered.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        // The passkey ceremony alone mints a usable session — no TOTP is ever presented.
+        using var assertOptions = await c.Http.PostAsync($"/ui/{c.Slug}/passkeys/assert/options", content: null);
+        var assertChallenge = (await assertOptions.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("publicKey").GetProperty("challenge").GetString()!;
+        var (authData, signature) = authenticator.Assertion(assertChallenge);
+        using var verified = await c.Http.PostAsJsonAsync($"/ui/{c.Slug}/passkeys/assert/verify", new
+        {
+            id = authenticator.CredentialKey,
+            response = new
+            {
+                clientDataJSON = Encodings.Base64UrlEncode(Encoding.UTF8.GetBytes(
+                    authenticator.ClientDataJson("webauthn.get", assertChallenge))),
+                authenticatorData = Encodings.Base64UrlEncode(authData),
+                signature = Encodings.Base64UrlEncode(signature),
+            },
+        });
+        await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var cookie = SessionCookie(verified);
+        await Assert.That(cookie).IsNotNull();
+
+        using var accountRequest = new HttpRequestMessage(HttpMethod.Get, $"/ui/{c.Slug}/account");
+        accountRequest.Headers.Add("Cookie", $"tsauth_session={cookie}");
+        using var account = await c.Http.SendAsync(accountRequest);
+        await Assert.That(account.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]

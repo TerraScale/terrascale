@@ -50,7 +50,7 @@ public static class App
 
         // Every sk_-authenticated management request is rate limited here, uniformly
         // across all endpoint modules.
-        Management.ManagementRateLimit.Use(app);
+        Management.ManagementGate.Use(app);
 
         app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
         EndpointModules.MapAll(app);
