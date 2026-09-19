@@ -148,4 +148,82 @@ public sealed class OrgDomainsE2eTests
 
         await Assert.That((await c.Store.ListMembershipsByOrgAsync(c.OrgId)).Count).IsEqualTo(0);
     }
+
+    [Test]
+    public async Task EnrollMatchesExactDomainOnlyAndIgnoresCase()
+    {
+        var c = await ArrangeAsync("exact");
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "acme.com" }, HttpStatusCode.OK);
+
+        // Subdomains and lookalike suffixes are NOT the enrolled domain.
+        var subdomain = await CreateUserAsync(c, "sub@corp.acme.com");
+        var lookalike = await CreateUserAsync(c, "look@notacme.com");
+        var mismatched = await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/acme.com/enroll", new { user_id = subdomain.Id }, HttpStatusCode.BadRequest);
+        await Assert.That(mismatched.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("email_domain_mismatch");
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/acme.com/enroll", new { user_id = lookalike.Id }, HttpStatusCode.BadRequest);
+
+        // The route domain is matched case-insensitively.
+        var member = await CreateUserAsync(c, "member@acme.com");
+        var enrolled = await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/domains/ACME.COM/enroll", new { user_id = member.Id }, HttpStatusCode.OK);
+        await Assert.That(enrolled.GetProperty("org_id").GetString()).IsEqualTo(c.OrgId);
+
+        var memberships = await c.Store.ListMembershipsByOrgAsync(c.OrgId);
+        await Assert.That(memberships.Count).IsEqualTo(1);
+        await Assert.That(memberships.Single().UserId).IsEqualTo(member.Id);
+    }
+
+    [Test]
+    public async Task ConcurrentDuplicateDomainCreateYieldsExactlyOneWinner()
+    {
+        var c = await ArrangeAsync("race");
+        var other = await ArrangeAsync("race-other");
+        var domain = $"race-{Guid.NewGuid().ToString("N")[..6]}.example";
+
+        var responses = await Task.WhenAll(
+            c.Http.SendAsync(Request(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain })),
+            c.Http.SendAsync(Request(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain })));
+        var statuses = responses.Select(r => r.StatusCode).ToList();
+        await Assert.That(statuses.Count(s => s == HttpStatusCode.OK)).IsEqualTo(1);
+        await Assert.That(statuses.Count(s => s == HttpStatusCode.Conflict)).IsEqualTo(1);
+        await Assert.That((await c.Store.ListOrgDomainsAsync(c.InstanceId)).Count(d => d.Domain == domain)).IsEqualTo(1);
+
+        // The claim is scoped per instance: the same domain may enroll in another instance's org.
+        await SendAsync(other, HttpMethod.Post, $"/v1/{other.Slug}/organizations/{other.OrgId}/domains", new { domain }, HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task SignUpAutoJoinsByExactDomainMatch()
+    {
+        var c = await ArrangeAsync("signup");
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "acme.com" }, HttpStatusCode.OK);
+
+        // Matching domain (mixed case, normalized on store) auto-joins with the member role.
+        await SignUpAsync(c, "Newbie@ACME.com");
+        // Subdomain and unrelated domains must not sneak in.
+        await SignUpAsync(c, "sneaky@corp.acme.com");
+        await SignUpAsync(c, "outsider@elsewhere.example");
+
+        var memberships = await c.Store.ListMembershipsByOrgAsync(c.OrgId);
+        await Assert.That(memberships.Count).IsEqualTo(1);
+        var joined = memberships.Single();
+        var newbie = await c.Store.FindUserByEmailAsync(c.InstanceId, "newbie@acme.com");
+        await Assert.That(newbie).IsNotNull();
+        await Assert.That(joined.UserId).IsEqualTo(newbie!.Id);
+        await Assert.That(joined.Role).IsEqualTo("member");
+
+        var audited = (await c.Store.ListAuditEventsAsync(c.InstanceId, 100)).Single(e => e.Type == "organization.enrolled");
+        await Assert.That(audited.Data.TryGetValue("organization_id", out var orgId) && orgId.ToString() == c.OrgId).IsTrue();
+        await Assert.That(audited.Data.TryGetValue("user_id", out var userId) && userId.ToString() == newbie.Id).IsTrue();
+    }
+
+    private static async Task SignUpAsync(Context c, string email)
+    {
+        using var response = await c.Http.PostAsync($"/ui/{c.Slug}/sign-up", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["email"] = email,
+            ["password"] = "password123",
+            ["name"] = "Auto Join",
+        }));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
+    }
 }

@@ -64,7 +64,7 @@ public static class UserEndpoints
                         InstanceId = instanceId,
                         Type = "organization.enrolled",
                         ActorId = user.Id,
-                        Data = new Dictionary<string, object> { ["org_id"] = orgDomain.OrgId, ["domain"] = orgDomain.Domain },
+                        Data = new Dictionary<string, object> { ["organization_id"] = orgDomain.OrgId, ["user_id"] = user.Id, ["domain"] = orgDomain.Domain },
                         CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                     }, ct);
                 }
