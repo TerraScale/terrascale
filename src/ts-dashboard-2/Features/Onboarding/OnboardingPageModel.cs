@@ -10,7 +10,7 @@ public sealed record OnboardingPageModel(
     int ProgressPercent,
     bool PaymentCanceled,
     IReadOnlyList<OnboardingPlanView> Plans,
-    IReadOnlyList<string> Regions,
+    IReadOnlyList<OnboardingRegionView> Regions,
     string DisplayName,
     string Email,
     string? OrganizationName,
