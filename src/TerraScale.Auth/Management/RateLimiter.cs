@@ -1,6 +1,9 @@
 namespace TerraScale.Auth.Management;
 
 using System.Collections.Concurrent;
+using System.Globalization;
+using TerraScale.Auth.Api;
+using TerraScale.Auth.Configuration;
 
 /// <summary>
 /// Fixed-window rate limiter for the Management API: counts requests per API
@@ -31,4 +34,51 @@ public sealed class RateLimiter(int windowSeconds)
         remaining = Math.Max(0, limit - used);
         return used <= limit;
     }
+
+    /// <summary>Live bucket count — test observability for the eviction behavior.</summary>
+    internal int BucketCount => counts.Count;
+}
+
+/// <summary>
+/// Applies the Management API rate limit uniformly: every request that presents
+/// an sk_ bearer passes through here, no matter which endpoint module serves it,
+/// so no module can accidentally ship outside the limit. Register once in App.
+/// </summary>
+public static class ManagementRateLimit
+{
+    private const int WindowSeconds = 300;
+    private static readonly RateLimiter Limiter = new(WindowSeconds);
+
+    /// <summary>Installs the rate-limit middleware. Invalid or non-sk_ bearers pass
+    /// through untouched — the endpoint's own auth answers those with 401.</summary>
+    public static void Use(WebApplication app) =>
+        app.Use(async (context, next) =>
+        {
+            var authorization = context.Request.Headers.Authorization.ToString();
+            if (authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                && authorization["Bearer ".Length..].TrimStart().StartsWith("sk_", StringComparison.Ordinal))
+            {
+                var resolved = await context.RequestServices.GetRequiredService<InstanceResolver>()
+                    .ResolveAsync(context.Request, context.RequestAborted);
+                if (resolved is not null)
+                {
+                    var limit = context.RequestServices.GetRequiredService<AuthOptions>().RateLimitPerWindow;
+                    var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    if (!Limiter.Allow(resolved.ApiKeyId!, limit, now, out var remaining))
+                    {
+                        var retryAfter = Limiter.RetryAfterSeconds(now);
+                        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                        context.Response.Headers.RetryAfter = retryAfter.ToString(CultureInfo.InvariantCulture);
+                        context.Response.Headers["X-RateLimit-Remaining"] = remaining.ToString(CultureInfo.InvariantCulture);
+                        await context.Response.WriteAsJsonAsync(new
+                        {
+                            error = new { code = "rate_limited", message = $"Management API rate limit exceeded; retry after {retryAfter} seconds." },
+                        });
+                        return;
+                    }
+                }
+            }
+
+            await next();
+        });
 }

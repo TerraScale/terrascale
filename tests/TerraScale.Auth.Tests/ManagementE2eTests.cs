@@ -647,6 +647,48 @@ public sealed class ManagementE2eTests
     }
 
     [Test]
+    public async Task RateLimitAppliesUniformlyAcrossManagementModules()
+    {
+        var (service, _, slug, key) = await InstanceAsync();
+        var http = service.Http;
+
+        // Exhaust the per-key window through instance settings — a module outside
+        // ManagementEndpoints. Loop instead of assuming the default 1000 limit.
+        var exhausted = false;
+        for (var i = 0; i < 2000 && !exhausted; i++)
+        {
+            using var response = await http.SendAsync(Request(HttpMethod.Get, $"/v1/{slug}/instance", key));
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                exhausted = true;
+            else
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+        await Assert.That(exhausted).IsTrue();
+
+        // The bucket is per key, not per module: every management surface must 429.
+        foreach (var uri in new[]
+                 {
+                     $"/v1/{slug}/instance", $"/v1/{slug}/users", $"/v1/{slug}/webhooks",
+                     $"/v1/{slug}/organizations", $"/v1/{slug}/connections", $"/v1/{slug}/jwt-templates",
+                     $"/v1/{slug}/directories", $"/v1/{slug}/api-keys", $"/v1/{slug}/audit-events", $"/v1/{slug}/billing",
+                 })
+        {
+            using var denied = await http.SendAsync(Request(HttpMethod.Get, uri, key));
+            await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        }
+
+        // The 429 envelope: uniform error body, Retry-After inside the window, no remaining quota.
+        using var probe = await http.SendAsync(Request(HttpMethod.Get, $"/v1/{slug}/instance", key));
+        await Assert.That(probe.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        await Assert.That(probe.Headers.TryGetValues("Retry-After", out var retryAfterValues)).IsTrue();
+        var retryAfter = int.Parse(retryAfterValues!.Single(), System.Globalization.CultureInfo.InvariantCulture);
+        await Assert.That(retryAfter is >= 1 and <= 300).IsTrue();
+        await Assert.That(probe.Headers.GetValues("X-RateLimit-Remaining").Single()).IsEqualTo("0");
+        var body = await probe.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("rate_limited");
+    }
+
+    [Test]
     public async Task RateLimiterAllowsUpToLimitAndResetsOnWindowRollover()
     {
         var limiter = new RateLimiter(300);
@@ -669,5 +711,42 @@ public sealed class ManagementE2eTests
         // The next window resets the counter.
         await Assert.That(limiter.Allow("key", 3, windowStart + 300, out var reset)).IsTrue();
         await Assert.That(reset).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task RateLimiterCountsConcurrentBurstsAtomically()
+    {
+        var limiter = new RateLimiter(300);
+        const int limit = 50;
+        var now = 7 * 300L;
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 200)
+            .Select(_ => Task.Run(() => limiter.Allow("burst", limit, now, out _))));
+
+        // A parallel burst admits exactly `limit` requests — a check-then-increment race would let more through.
+        await Assert.That(results.Count(admitted => admitted)).IsEqualTo(limit);
+    }
+
+    [Test]
+    public async Task RateLimiterRetryAfterNeverZeroOrNegativeAtBoundary()
+    {
+        var limiter = new RateLimiter(300);
+
+        await Assert.That(limiter.RetryAfterSeconds(0)).IsEqualTo(300); // epoch tick: fresh window
+        await Assert.That(limiter.RetryAfterSeconds(299)).IsEqualTo(1); // last second of the first window
+        await Assert.That(limiter.RetryAfterSeconds(300)).IsEqualTo(300); // exact rollover: full window again
+        await Assert.That(limiter.RetryAfterSeconds(600 + 150)).IsEqualTo(150);
+    }
+
+    [Test]
+    public async Task RateLimiterEvictsStaleWindows()
+    {
+        var limiter = new RateLimiter(300);
+        limiter.Allow("old", 10, 0, out _);
+        limiter.Allow("stale", 10, 1 * 300, out _);
+        limiter.Allow("current", 10, 3 * 300, out _);
+
+        // Buckets older than current window - 2 are pruned; the two most recent windows stay.
+        await Assert.That(limiter.BucketCount).IsEqualTo(2);
     }
 }

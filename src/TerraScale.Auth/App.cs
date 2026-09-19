@@ -42,6 +42,10 @@ public static class App
     /// <summary>Maps all endpoints. Call once on the built application.</summary>
     public static void Configure(WebApplication app, AuthOptions options)
     {
+        // First in the pipeline: every sk_-authenticated management request is rate
+        // limited here, uniformly across all endpoint modules.
+        Management.ManagementRateLimit.Use(app);
+
         app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
         EndpointModules.MapAll(app);
 

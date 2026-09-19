@@ -1,11 +1,9 @@
 namespace TerraScale.Auth.Management;
 
-using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using TerraScale.Auth.Api;
-using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Users;
@@ -13,25 +11,21 @@ using TerraScale.Auth.Users;
 /// <summary>
 /// Management feature endpoints: the developer API (Clerk Backend API
 /// equivalent) over users, sessions, and API keys, keyed by bearer <c>sk_</c>
-/// secrets and rate limited per key.
+/// secrets. Rate limiting is applied process-wide by <see cref="ManagementRateLimit"/>,
+/// not per module.
 /// </summary>
 public static class ManagementEndpoints
 {
-    private const int RateWindowSeconds = 300;
-
-    /// <summary>One limiter for the whole process; every management endpoint passes through it.</summary>
-    private static readonly RateLimiter Limiter = new(RateWindowSeconds);
-
     /// <summary>Maps Management endpoints.</summary>
     public static void Map(WebApplication app)
     {
         // ---- Users -----------------------------------------------------------------
 
         app.MapGet("/v1/{slug}/users", async (
-            string slug, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store,
+            string slug, HttpRequest request, InstanceResolver resolver, AuthStore store,
             CancellationToken ct, int? limit, [FromQuery(Name = "starting_after")] string? startingAfter) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -50,9 +44,9 @@ public static class ManagementEndpoints
         });
 
         app.MapGet("/v1/{slug}/users/{userId}", async (
-            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, CancellationToken ct) =>
+            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthStore store, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -64,9 +58,9 @@ public static class ManagementEndpoints
         });
 
         app.MapPost("/v1/{slug}/users", async (
-            string slug, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, SessionService sessions, CancellationToken ct) =>
+            string slug, HttpRequest request, InstanceResolver resolver, AuthStore store, SessionService sessions, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -102,9 +96,9 @@ public static class ManagementEndpoints
         });
 
         app.MapPatch("/v1/{slug}/users/{userId}", async (
-            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, CancellationToken ct) =>
+            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthStore store, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -224,9 +218,9 @@ public static class ManagementEndpoints
         });
 
         app.MapDelete("/v1/{slug}/users/{userId}", async (
-            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, CancellationToken ct) =>
+            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthStore store, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -255,9 +249,9 @@ public static class ManagementEndpoints
         });
 
         app.MapPost("/v1/{slug}/users/{userId}/impersonate", async (
-            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, SessionService sessions, CancellationToken ct) =>
+            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthStore store, SessionService sessions, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -282,9 +276,9 @@ public static class ManagementEndpoints
         // ---- Sessions -----------------------------------------------------------------
 
         app.MapGet("/v1/{slug}/users/{userId}/sessions", async (
-            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, CancellationToken ct) =>
+            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthStore store, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -301,9 +295,9 @@ public static class ManagementEndpoints
         });
 
         app.MapPost("/v1/{slug}/sessions/{sessionId}/revoke", async (
-            string slug, string sessionId, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, SessionService sessions, CancellationToken ct) =>
+            string slug, string sessionId, HttpRequest request, InstanceResolver resolver, AuthStore store, SessionService sessions, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -317,9 +311,9 @@ public static class ManagementEndpoints
         });
 
         app.MapPost("/v1/{slug}/users/{userId}/sessions/revoke-all", async (
-            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, SessionService sessions, CancellationToken ct) =>
+            string slug, string userId, HttpRequest request, InstanceResolver resolver, AuthStore store, SessionService sessions, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -337,9 +331,9 @@ public static class ManagementEndpoints
         // ---- API keys -----------------------------------------------------------------
 
         app.MapPost("/v1/{slug}/api-keys", async (
-            string slug, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, CancellationToken ct) =>
+            string slug, HttpRequest request, InstanceResolver resolver, AuthStore store, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -368,9 +362,9 @@ public static class ManagementEndpoints
         });
 
         app.MapGet("/v1/{slug}/api-keys", async (
-            string slug, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, CancellationToken ct) =>
+            string slug, HttpRequest request, InstanceResolver resolver, AuthStore store, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -382,9 +376,9 @@ public static class ManagementEndpoints
         });
 
         app.MapDelete("/v1/{slug}/api-keys/{keyId}", async (
-            string slug, string keyId, HttpRequest request, InstanceResolver resolver, AuthOptions options, AuthStore store, CancellationToken ct) =>
+            string slug, string keyId, HttpRequest request, InstanceResolver resolver, AuthStore store, CancellationToken ct) =>
         {
-            var gate = await RequireInstanceAsync(request, slug, resolver, options, ct);
+            var gate = await RequireInstanceAsync(request, slug, resolver, ct);
             if (gate.Failure is { } failure)
                 return failure;
             var context = gate.Context!;
@@ -401,35 +395,17 @@ public static class ManagementEndpoints
 
     // ---- Shared plumbing ------------------------------------------------------------
 
-    /// <summary>Authentication + rate-limit gate; exactly one of <see cref="InstanceGate.Context"/>/<see cref="InstanceGate.Failure"/> is set.</summary>
+    /// <summary>Authentication gate; exactly one of <see cref="InstanceGate.Context"/>/<see cref="InstanceGate.Failure"/> is set.
+    /// Rate limiting happens upstream in <see cref="ManagementRateLimit"/>.</summary>
     private sealed record InstanceGate(InstanceContext? Context, IResult? Failure);
 
     private static async Task<InstanceGate> RequireInstanceAsync(
-        HttpRequest request, string slug, InstanceResolver resolver, AuthOptions options, CancellationToken ct)
+        HttpRequest request, string slug, InstanceResolver resolver, CancellationToken ct)
     {
         var context = await resolver.ResolveAsync(request, ct);
-        if (context is null || context.Instance.Slug != slug)
-            return new(null, ApiResults.Unauthorized());
-
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        return Limiter.Allow(context.ApiKeyId!, options.RateLimitPerWindow, now, out var remaining)
+        return context is not null && context.Instance.Slug == slug
             ? new(context, null)
-            : new(null, new RateLimitedResult(Limiter.RetryAfterSeconds(now), remaining));
-    }
-
-    /// <summary>The 429 response: error envelope plus Retry-After.</summary>
-    private sealed class RateLimitedResult(int retryAfterSeconds, int remaining) : IResult
-    {
-        public async Task ExecuteAsync(HttpContext httpContext)
-        {
-            httpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-            httpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
-            httpContext.Response.Headers["X-RateLimit-Remaining"] = remaining.ToString(CultureInfo.InvariantCulture);
-            await httpContext.Response.WriteAsJsonAsync(new
-            {
-                error = new { code = "rate_limited", message = $"Management API rate limit exceeded; retry after {retryAfterSeconds} seconds." },
-            });
-        }
+            : new(null, ApiResults.Unauthorized());
     }
 
     private static async Task<(TBody? Body, IResult? Failure)> ReadBodyAsync<TBody>(HttpRequest request, CancellationToken ct) where TBody : class

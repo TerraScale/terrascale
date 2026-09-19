@@ -20,9 +20,16 @@ public sealed record InstanceContext(Store.Instance Instance, string? ApiKeyId =
 /// <summary>Resolves the ts-auth instance for management API requests from the bearer API key.</summary>
 public sealed class InstanceResolver(Store.AuthStore store)
 {
-    /// <summary>Maps a request's Authorization header to an instance; null when not authenticated.</summary>
+    private const string ContextItemKey = "ts-auth:instance-context";
+
+    /// <summary>Maps a request's Authorization header to an instance; null when not authenticated.
+    /// The rate-limit middleware resolves sk_ requests before any handler runs; the
+    /// result is cached per request so handlers reuse it instead of re-querying the store.</summary>
     public async Task<InstanceContext?> ResolveAsync(HttpRequest request, CancellationToken ct = default)
     {
+        if (request.HttpContext.Items[ContextItemKey] is InstanceContext cached)
+            return cached;
+
         var authorization = request.Headers.Authorization.ToString();
         if (!authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             return null;
@@ -38,6 +45,8 @@ public sealed class InstanceResolver(Store.AuthStore store)
         if (instance is null)
             return null;
 
-        return new InstanceContext(instance, apiKey.Id);
+        var context = new InstanceContext(instance, apiKey.Id);
+        request.HttpContext.Items[ContextItemKey] = context;
+        return context;
     }
 }
