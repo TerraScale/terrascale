@@ -17,7 +17,7 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: `dotnet run --project src/ts-dashboard-2 --no-build --urls ${baseURL}`,
+    command: `TS2_E2E=1 dotnet run --project src/ts-dashboard-2 --no-build --urls ${baseURL}`,
     url: `${baseURL}/health/live`,
     reuseExistingServer: false,
     timeout: 120_000,
