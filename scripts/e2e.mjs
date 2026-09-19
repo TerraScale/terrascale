@@ -83,6 +83,10 @@ await page.waitForTimeout(900);
 ok(new URL(page.url()).pathname === "/", `project step done, dashboard reached (${new URL(page.url()).pathname})`);
 
 // ── 4. Inner dashboard shell ─────────────────────────────────────────────
+await go("/?range=7d");
+ok((await page.locator('.ts-tab[aria-selected="true"]:has-text("7d")').count()) === 1, "activity range switcher selects 7d");
+ok((await page.locator(".ts-chart-shell").count()) === 1, "activity renders a single chart for the range");
+ok(await has("Events "), "activity shows the events total");
 await go("/");
 ok((await page.locator(".ts-shell").count()) === 1, "shell renders");
 ok((await page.locator(".ts-sidebar").count()) === 1, "sidebar renders");
@@ -163,6 +167,13 @@ ok(true, "language preference saved");
 await go("/profile?tab=security");
 await page.fill('input[name="currentPassword"]', "terrascale");
 await page.fill('input[name="newPassword"]', "New-E2E-123456!");
+await page.fill('input[name="confirmPassword"]', "different!");
+await page.click('form[action="/api/v1/dashboard/profile/password"] button[type="submit"]');
+await page.waitForTimeout(700);
+ok(page.url().includes("/profile?tab=security&error="), "password change rejects mismatched confirmation");
+await page.fill('input[name="currentPassword"]', "terrascale");
+await page.fill('input[name="newPassword"]', "New-E2E-123456!");
+await page.fill('input[name="confirmPassword"]', "New-E2E-123456!");
 await page.click('form[action="/api/v1/dashboard/profile/password"] button[type="submit"]');
 await page.waitForURL("**/login**");
 ok(true, "password change signs out");
@@ -190,12 +201,44 @@ await page.click('form[action*="deletion/request"] button[type="submit"]');
 await page.waitForTimeout(500);
 ok(await has("Deletion requested"), "deletion request recorded");
 
-// ── 13. Settings: backup policy ──────────────────────────────────────────
+// ── 13. Settings: backup policy + on-demand backup ───────────────────────
 await go("/settings?tab=backups");
 await page.selectOption('select[name="schedule"]', "hourly").catch(() => {});
 await page.click('form[action="/api/v1/dashboard/settings/backup-policy"] button[type="submit"]');
 await page.waitForTimeout(400);
 ok(true, "backup policy saved");
+const jobsBefore = await page.locator("table tbody tr").count();
+await page.click('form[action="/api/v1/dashboard/settings/backup-now"] button[type="submit"]');
+await page.waitForTimeout(600);
+ok(await has("On-demand"), "on-demand backup listed");
+ok((await page.locator("table tbody tr").count()) > jobsBefore, "backup job table grew");
+
+// ── 13b. Profile security: MFA + passkeys ────────────────────────────────
+await go("/profile?tab=security");
+await page.fill("#recoveryPassword", "New-E2E-123456!");
+await page.click('form[action*="recovery-codes"] button[type="submit"]');
+await page.waitForTimeout(600);
+ok(await has("Store these recovery codes securely"), "recovery codes revealed once");
+await page.click('form[action*="mfa/remove"] button[type="submit"]');
+await page.waitForTimeout(600);
+ok(await has("Verify authenticator"), "MFA removal shows the enroll form");
+await page.fill("#mfaPassword", "New-E2E-123456!");
+await page.fill("#mfaCode", "123456");
+await page.click('form[action*="mfa/enroll"] button[type="submit"]');
+await page.waitForTimeout(600);
+ok(await has("Regenerate recovery codes"), "TOTP enrollment restores factors");
+await page.fill("#passkeyName", "E2E Key");
+await page.click('form[action*="passkeys/register"] button[type="submit"]');
+await page.waitForTimeout(600);
+ok(await has("E2E Key"), "passkey registered");
+
+// ── 13c. Usage: per-database spending caps ───────────────────────────────
+await go("/usage");
+const capInput = page.locator('input[name^="dbCap_"]').first();
+await capInput.fill("25");
+await page.click('form[action="/api/v1/dashboard/usage/spending-controls"] button[type="submit"]');
+await page.waitForTimeout(600);
+ok((await page.locator('input[name^="dbCap_"]').first().inputValue()) === "25", "per-database spending cap saved");
 
 // ── 14. External + passkey sign-in ───────────────────────────────────────
 await page.locator('.ts-menu-item:has-text("Sign out"), form[action="/api/v1/auth/logout"] button').first().click().catch(() => {});

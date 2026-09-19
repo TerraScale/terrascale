@@ -8,19 +8,30 @@ public sealed record HomePageModel(
     int UnreadNotifications,
     int TotalNotifications,
     int ActiveCredentials,
-    (string Range, ImmutableArray<WorkloadPoint> Points)[] Workloads) : IPageModel
+    (string Range, ImmutableArray<WorkloadPoint> Points)[] Workloads,
+    string ActivityRange,
+    ImmutableArray<WorkloadPoint> ActivityPoints,
+    int ActivityEvents) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 
-    public static HomePageModel From(DashboardStore store, string href)
+    public static HomePageModel From(DashboardStore store, string href, string? range = null)
     {
-        var databases = store.ProjectDatabases(store.ActiveProjectId);
+        var workloads = store.Workloads;
+        var activity = workloads.FirstOrDefault(w => w.Range == range);
+        if (string.IsNullOrEmpty(activity.Range))
+        {
+            activity = workloads[0];
+        }
         return new(
-            Databases: databases.Length,
+            Databases: store.ProjectDatabases(store.ActiveProjectId).Length,
             UnreadNotifications: store.UnreadNotifications,
             TotalNotifications: store.Notifications.Length,
             ActiveCredentials: store.ApiKeys.Count(k => k.IsActive),
-            Workloads: [.. store.Workloads])
+            Workloads: [.. workloads],
+            ActivityRange: activity.Range,
+            ActivityPoints: activity.Points,
+            ActivityEvents: (int)activity.Points.Sum(p => p.Value))
         {
             Shell = ShellFactory.Create(store, href),
         };

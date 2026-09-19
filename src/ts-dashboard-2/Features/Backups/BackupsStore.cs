@@ -39,6 +39,32 @@ public sealed partial class DashboardStore
     public ImmutableArray<BackupRestoreJob> RestoreJobs => _restoreJobs;
     public string BackupsLoadedAt => _backupsLoadedAt;
 
+    private ImmutableArray<BackupJob> _backupJobs =
+    [
+        new("bkj_01JCC1A3C5E7G9J1K3M5P7R9T", "core-primary", "Daily 03:00 UTC", "Succeeded", "2026-09-19T03:04:00Z"),
+        new("bkj_01JCC2B4D6F8H0K2L4N6Q8SAV", "core-sessions", "Daily 03:00 UTC", "Succeeded", "2026-09-19T03:07:00Z"),
+        new("bkj_01JCC3C5E7G9I1K3M5O7S9UBW", "core-primary", "On-demand", "Succeeded", "2026-09-18T21:12:00Z"),
+    ];
+
+    public ImmutableArray<BackupJob> BackupJobs => _backupJobs;
+
+    /// <summary>On-demand backup action: records the job and an incremental
+    /// restore point for the database, the way the worker would.</summary>
+    public string? StartOnDemandBackup(string databaseId)
+    {
+        if (FindDatabase(databaseId) is not { } database)
+        {
+            return null;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        _backupJobs = _backupJobs.Add(new($"bkj_{Guid.NewGuid():N}"[..24], database.Name, "On-demand", "Succeeded", now.ToString("O")));
+        _restorePoints = _restorePoints.Add(new(
+            $"gen_{Guid.NewGuid():N}"[..24], database.Id, database.Name, database.PrimaryRegion,
+            "Incremental", true, 96, 512 * 1024 * 1024L, now.ToString("O")));
+        return database.Name;
+    }
+
     /// <summary>Summary tile: the most recent restore job by start time.</summary>
     public BackupRestoreJob? LatestRestore =>
         _restoreJobs.OrderByDescending(job => job.StartedAt, StringComparer.Ordinal).FirstOrDefault();

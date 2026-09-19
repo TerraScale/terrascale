@@ -171,6 +171,13 @@
             <span class="ts-muted">Select a period below</span>
         </div>
         <div class="ts-stack-md">
+            @if (Model.RetentionWarning)
+            {
+                <div class="ts-alert ts-alert-info" role="status">
+                    <span class="ts-alert-title">@Icons.Info(16) History limited by retention</span>
+                    <span class="ts-alert-body">The requested period exceeds the 7-day retention window. The accessible range starts at the beginning of the current cycle.</span>
+                </div>
+            }
             <div class="ts-row">
                 <select class="ts-select" aria-label="Usage history period" data-on-change="window.location.assign('/usage?range=' + evt.target.value)">
                     @foreach (var option in Model.HistoryRanges)
@@ -328,6 +335,16 @@
                 <label class="ts-label" for="spendCap">Monthly organization spending cap in USD (blank means no cap)</label>
                 <input class="ts-input" id="spendCap" name="spendCap" inputmode="decimal" value="@Model.SpendCap" placeholder="" />
             </div>
+            @if (Model.DatabaseCaps.Count > 0)
+            {
+                <div class="ts-field">
+                    <span class="ts-label">Optional lower database spending caps in USD (blank means no cap)</span>
+                    @foreach (var database in Model.DatabaseCaps)
+                    {
+                        <input class="ts-input" name="dbCap_@database.Id" inputmode="decimal" value="@database.Cap" placeholder="@database.Name" />
+                    }
+                </div>
+            }
             <div class="ts-form-actions">
                 <button class="ts-btn ts-btn-primary" type="submit">Save spending controls</button>
             </div>

@@ -20,10 +20,33 @@ public sealed partial class DashboardStore
 
     public ImmutableArray<string> MfaFactors { get; private set; } = ["totp"];
 
+    /// <summary>Codes revealed once by a regeneration; consumed by the next
+    /// security tab render, like the webhook secret reveal.</summary>
+    public ImmutableArray<string> PendingRecoveryCodes { get; private set; } = [];
+
+    public void EnrollTotp() => MfaFactors = ["totp"];
+
     public void RemoveMfaFactor(string factor)
     {
         MfaFactors = [.. MfaFactors.Where(f => f != factor)];
         CurrentUser = CurrentUser with { MfaEnabled = MfaFactors.Length > 0 };
+    }
+
+    public void RegisterPasskey(string name) =>
+        Passkeys = Passkeys.Add(new(
+            $"pas_{Guid.NewGuid():N}"[..20],
+            name.Trim().Length > 0 ? name.Trim() : "Unnamed passkey",
+            DateTimeOffset.UtcNow.ToString("O")));
+
+    public void RegenerateRecoveryCodes() =>
+        PendingRecoveryCodes = [.. Enumerable.Range(0, 8)
+            .Select(_ => Convert.ToHexString(Guid.NewGuid().ToByteArray())[..10].ToLowerInvariant())];
+
+    public ImmutableArray<string> ConsumeRecoveryCodes()
+    {
+        var codes = PendingRecoveryCodes;
+        PendingRecoveryCodes = [];
+        return codes;
     }
 
     public ImmutableArray<ProfilePasskeyView> Passkeys { get; private set; } =

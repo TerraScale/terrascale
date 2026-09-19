@@ -38,6 +38,15 @@ public sealed record DatabasesPageModel(
     public static string FormatUtc(string iso) =>
         DateTimeOffset.TryParse(iso, out var time) ? time.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'") : iso;
 
+    /// <summary>Project regions are cloud ids; the region map draws airport hubs.</summary>
+    public static string RegionMapCode(string region) => region switch
+    {
+        "us-east-1" or "us-west-2" => "SFO",
+        "eu-central-1" or "eu-west-1" => "FRA",
+        "sa-east-1" => "GRU",
+        _ => "SFO",
+    };
+
     public static string RegionDisplay(string code) => code.ToUpperInvariant() + " · " + RegionName(code);
 
     private static string RegionName(string code) => code switch

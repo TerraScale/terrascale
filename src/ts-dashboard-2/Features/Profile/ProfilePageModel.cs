@@ -17,6 +17,7 @@ public sealed record ProfilePageModel(
     string ProjectId,
     ImmutableArray<Session> Sessions,
     ImmutableArray<string> MfaFactors,
+    ImmutableArray<string> RecoveryCodes,
     ImmutableArray<ProfilePasskeyView> Passkeys,
     string LoadedAtText,
     string Tab) : IPageModel
@@ -40,6 +41,7 @@ public sealed record ProfilePageModel(
             ProjectId: store.ActiveProjectId,
             Sessions: store.Sessions,
             MfaFactors: store.MfaFactors,
+            RecoveryCodes: store.ConsumeRecoveryCodes(),
             Passkeys: store.Passkeys,
             LoadedAtText: DashboardStore.FormatUtcDateTime(DateTimeOffset.UtcNow.ToString("O")),
             Tab: tab)

@@ -115,6 +115,7 @@
             </div>
             <div class="ts-stack-sm">
                 <p class="ts-db-placement-note">Placement is inherited from Project settings and changes asynchronously for every database and authentication resource in this project.</p>
+                @RegionMap.Highlight([.. Model.ProjectRegions.Select(DatabasesPageModel.RegionMapCode)])
             </div>
             <div class="ts-dialog-actions-between">
                 <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-close-dialog>Cancel</button>

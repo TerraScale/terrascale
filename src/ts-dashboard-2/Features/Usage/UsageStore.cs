@@ -83,6 +83,26 @@ public sealed partial class DashboardStore
         SpendCapUsd = capUsd is { Length: > 0 } ? capUsd : null;
     }
 
+    // Optional lower caps per database, on top of the organization cap.
+    private readonly Dictionary<string, string> databaseSpendCaps = [];
+
+    public string? DatabaseSpendCap(string databaseId) =>
+        databaseSpendCaps.TryGetValue(databaseId, out var cap) && cap.Length > 0 ? cap : null;
+
+    public void UpdateDatabaseSpendCaps(IReadOnlyDictionary<string, string> capsById)
+    {
+        foreach (var (databaseId, cap) in capsById)
+        {
+            if (cap.Trim().Length == 0
+                || (decimal.TryParse(cap.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var value)
+                    && value >= 0
+                    && decimal.Round(value, 2) == value))
+            {
+                databaseSpendCaps[databaseId] = cap.Trim();
+            }
+        }
+    }
+
     /// <summary>Organization allowances vs. current totals (plan resource table).</summary>
     public ImmutableArray<PlanResourceRow> OrganizationPlanResources()
     {

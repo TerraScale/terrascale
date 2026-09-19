@@ -19,14 +19,20 @@ public sealed class ChangePasswordEndpoint(DashboardStore store) : EndpointWitho
         var form = await HttpContext.Request.ReadFormAsync(ct);
         var current = form["currentPassword"].ToString();
         var next = form["newPassword"].ToString();
+        var confirm = form["confirmPassword"].ToString();
         if (!store.VerifyPassword(current))
         {
             return Results.Redirect("/profile?tab=security&error=" + Uri.EscapeDataString("Current password is incorrect."), false, false);
         }
 
-        if (next.Length < 8)
+        if (next.Length < 12)
         {
-            return Results.Redirect("/profile?tab=security&error=" + Uri.EscapeDataString("Use at least 8 characters."), false, false);
+            return Results.Redirect("/profile?tab=security&error=" + Uri.EscapeDataString("Use at least 12 characters."), false, false);
+        }
+
+        if (next != confirm)
+        {
+            return Results.Redirect("/profile?tab=security&error=" + Uri.EscapeDataString("Passwords do not match."), false, false);
         }
 
         store.ChangePassword(current, next);

@@ -446,9 +446,89 @@
                             <button class="ts-btn ts-btn-primary" type="submit">Save backup policy</button>
                         </div>
                     </form>
+                    <form method="post" action="/api/v1/dashboard/settings/backup-now" class="ts-form">
+                        <div class="ts-field">
+                            <label class="ts-label" for="onDemandDatabase">On-demand backup</label>
+                            <select class="ts-select" id="onDemandDatabase" name="databaseId">
+                                @foreach (var database in Model.Databases)
+                                {
+                                    <option value="@database.Id">@database.Name</option>
+                                }
+                            </select>
+                            <span class="ts-hint">A confirmation is reviewed before a backup job starts.</span>
+                        </div>
+                        <div class="ts-form-actions">
+                            <button class="ts-btn ts-btn-secondary" type="submit">Back up now</button>
+                        </div>
+                    </form>
                 }
             </div>
         </section>
+        @if (Model.Databases.Length > 0)
+        {
+            <section class="ts-panel">
+                <div class="ts-panel-header">
+                    <h3 class="ts-panel-title">Backup jobs</h3>
+                    <p class="ts-panel-subtitle">Policy and on-demand runs for this project</p>
+                </div>
+                <div class="ts-table-frame">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>Job</th>
+                                <th>Database</th>
+                                <th>Policy</th>
+                                <th>Status</th>
+                                <th>Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var job in Model.BackupJobs.OrderByDescending(j => j.UpdatedAt, StringComparer.Ordinal))
+                            {
+                                <tr>
+                                    <td><code class="ts-mono ts-meta">@job.Id</code></td>
+                                    <td>@job.DatabaseName</td>
+                                    <td class="ts-meta">@job.Policy</td>
+                                    <td><span class="ts-badge ts-badge-success">@job.State</span></td>
+                                    <td class="ts-meta">@DashboardStore.FormatUtcDateTime(job.UpdatedAt)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+            <section class="ts-panel">
+                <div class="ts-panel-header">
+                    <h3 class="ts-panel-title">Restore points</h3>
+                    <p class="ts-panel-subtitle">Completed generations available for a side-by-side restore</p>
+                </div>
+                <div class="ts-table-frame">
+                    <table class="ts-table">
+                        <thead>
+                            <tr>
+                                <th>Restore point</th>
+                                <th>Database</th>
+                                <th>Mode</th>
+                                <th>Files</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var point in Model.RestorePoints.OrderByDescending(p => p.CreatedAt, StringComparer.Ordinal).Take(8))
+                            {
+                                <tr>
+                                    <td><code class="ts-mono ts-meta">@point.Generation</code></td>
+                                    <td>@point.DatabaseName</td>
+                                    <td class="ts-meta">@point.Mode</td>
+                                    <td class="ts-meta">@point.FilesToRestore</td>
+                                    <td class="ts-meta">@DashboardStore.FormatUtcDateTime(point.CreatedAt)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        }
     }
     else
     {

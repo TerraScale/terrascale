@@ -145,16 +145,42 @@
                     <p class="ts-panel-subtitle">@t("A verified authenticator is required on every new login.")</p>
                 </div>
                 <div class="ts-stack-12 ts-padded">
+                    @if (Model.RecoveryCodes.Length > 0)
+                    {
+                        <div class="ts-alert ts-alert-success">
+                            <span class="ts-alert-title">@Icons.CircleCheckBig(16) @t("Store these recovery codes securely")</span>
+                            <span class="ts-alert-body ts-mono">@string.Join(" · ", Model.RecoveryCodes)</span>
+                            <span class="ts-alert-body">@t("Generating new codes invalidates the previous set. Each code works once.")</span>
+                        </div>
+                    }
                     @if (Model.MfaFactors.Length == 0)
                     {
                         <p class="ts-ui">@t("MFA is not configured")</p>
                         <p class="ts-muted ts-ui">@t("Add an authenticator to protect new sign-ins.")</p>
+                        <form method="post" action="/api/v1/dashboard/profile/mfa/enroll" class="ts-form">
+                            <div class="ts-field">
+                                <label class="ts-label" for="mfaPassword">@t("Current password")</label>
+                                <input class="ts-input" id="mfaPassword" name="password" type="password" autocomplete="current-password" required />
+                            </div>
+                            <div class="ts-field">
+                                <span class="ts-label">@t("Enter this key in your authenticator")</span>
+                                <code class="ts-mono ts-meta">JBSW Y3DP EHPK 3PXP</code>
+                            </div>
+                            <div class="ts-field">
+                                <label class="ts-label" for="mfaCode">@t("Verification code")</label>
+                                <input class="ts-input" id="mfaCode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required />
+                            </div>
+                            <div class="ts-form-actions">
+                                <button class="ts-btn ts-btn-primary" type="submit">@t("Verify authenticator")</button>
+                            </div>
+                        </form>
                     }
                     else
                     {
                         <div class="ts-posture-row">
                             <span class="ts-muted ts-ui ts-posture-label">@Icons.ShieldCheck(16) TOTP @t("authenticator")</span>
                             <form method="post" action="/api/v1/dashboard/profile/mfa/remove">
+                                <input type="hidden" name="factor" value="totp" />
                                 <button class="ts-btn ts-btn-ghost ts-btn-sm" type="submit">@t("Remove")</button>
                             </form>
                         </div>
@@ -162,6 +188,15 @@
                             <span class="ts-alert-title">@t("Store these recovery codes securely")</span>
                             <span class="ts-alert-body">@t("Generating new codes invalidates the previous set. Each code works once.")</span>
                         </div>
+                        <form method="post" action="/api/v1/dashboard/profile/mfa/recovery-codes" class="ts-form">
+                            <div class="ts-field">
+                                <label class="ts-label" for="recoveryPassword">@t("Current password")</label>
+                                <input class="ts-input" id="recoveryPassword" name="password" type="password" autocomplete="current-password" required />
+                            </div>
+                            <div class="ts-form-actions">
+                                <button class="ts-btn ts-btn-secondary" type="submit">@t("Regenerate recovery codes")</button>
+                            </div>
+                        </form>
                     }
                     <form method="post" action="/api/v1/dashboard/profile/password" class="ts-form">
                         <div class="ts-field">
@@ -172,6 +207,10 @@
                             <label class="ts-label" for="newPassword">@t("New password")</label>
                             <input class="ts-input" id="newPassword" name="newPassword" type="password" autocomplete="new-password" required />
                             <span class="ts-hint">@t("Use at least 12 characters.")</span>
+                        </div>
+                        <div class="ts-field">
+                            <label class="ts-label" for="confirmPassword">@t("Confirm new password")</label>
+                            <input class="ts-input" id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" required />
                         </div>
                         <div class="ts-form-actions">
                             <button class="ts-btn ts-btn-primary" type="submit">@t("Change password and sign out")</button>
@@ -205,6 +244,15 @@
                             </div>
                         }
                     }
+                    <form method="post" action="/api/v1/dashboard/profile/passkeys/register" class="ts-form">
+                        <div class="ts-field">
+                            <label class="ts-label" for="passkeyName">@t("Passkey name")</label>
+                            <input class="ts-input" id="passkeyName" name="name" placeholder="@t("TerraScale passkey")" />
+                        </div>
+                        <div class="ts-form-actions">
+                            <button class="ts-btn ts-btn-secondary" type="submit">@t("Register passkey")</button>
+                        </div>
+                    </form>
                 </div>
             </section>
         </section>
@@ -263,7 +311,7 @@
                                             <p>@session.Location</p>
                                         </div>
                                     </td>
-                                    <td class="ts-meta">@Icons.Clock(14) @session.LastActiveAt</td>
+                                    <td class="ts-meta">@Icons.Clock(14) @session.CreatedAt</td>
                                     <td class="ts-meta">@Icons.Monitor(14) @session.LastActiveAt</td>
                                     <td>
                                         @if (!session.Current)

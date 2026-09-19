@@ -1,49 +1,49 @@
 /* ==========================================================================
-   terrascale.css — the TerraScale Dashboard CSS framework (single file)
+terrascale.css — the TerraScale Dashboard CSS framework (single file)
 
-   1:1 port of the ts-dashboard design system v1 (dark-only):
-   tokens from src/design/tokens.stylex.ts, anatomy from
-   docs/design-system.md. Framework = tokens + base + components + shell.
-   Everything a TerraScale dashboard page needs lives here; pages compose
-   these classes and never ship their own stylesheets.
+1:1 port of the ts-dashboard design system v1 (dark-only):
+tokens from src/design/tokens.stylex.ts, anatomy from
+docs/design-system.md. Framework = tokens + base + components + shell.
+Everything a TerraScale dashboard page needs lives here; pages compose
+these classes and never ship their own stylesheets.
 
-   Table of contents
-     1. Tokens            (custom properties)
-     2. Fonts             (@font-face, self-hosted latin woff2)
-     3. Base              (reset, html/body, scrollbar, focus, selection)
-     4. Layout primitives (stack, grid, page, section)
-     5. Surfaces          (glass, panel, card)
-     6. Buttons           (variants, sizes, icon button, FABs)
-     7. Badges & status   (badge, alert, pip)
-     8. Forms             (label, input, select, textarea, checkbox, switch,
-                           field, form actions)
-     9. Tables            (glass table, compact rows, empty state)
-    10. Tabs, dialogs, menus, tooltips, toasts
-    11. Charts & data viz (sparkline, chart shell, metric cards)
-    12. Text & code       (muted, mono, snippet, breadcrumb, progress)
-    13. Shell             (sidebar, nav, data sub-nav, inset, account menu,
-                           project switcher, blurred inset backdrop, auth pages)
-    14. Motion & utilities
+Table of contents
+1. Tokens            (custom properties)
+2. Fonts             (@font-face, self-hosted latin woff2)
+3. Base              (reset, html/body, scrollbar, focus, selection)
+4. Layout primitives (stack, grid, page, section)
+5. Surfaces          (glass, panel, card)
+6. Buttons           (variants, sizes, icon button, FABs)
+7. Badges & status   (badge, alert, pip)
+8. Forms             (label, input, select, textarea, checkbox, switch,
+field, form actions)
+9. Tables            (glass table, compact rows, empty state)
+10. Tabs, dialogs, menus, tooltips, toasts
+11. Charts & data viz (sparkline, chart shell, metric cards)
+12. Text & code       (muted, mono, snippet, breadcrumb, progress)
+13. Shell             (sidebar, nav, data sub-nav, inset, account menu,
+project switcher, blurred inset backdrop, auth pages)
+14. Motion & utilities
 
-   Conventions
-     - Cascade layers (declared below): base < layout < components < features;
-       unlayered = tokens only. Put rules in the matching layer — never rely
-       on source order across layers. `utilities` is reserved for future
-       one-property helpers; nothing lives there yet.
-     - Colors: reference tokens, never raw hex/rgba in rules. Translucent
-       accent tints go through rgba(var(--ts-accent-rgb), a); blends through
-       color-mix(in oklab, ...).
-     - Breakpoints: 40 / 48 / 64 / 80 / 96rem only, co-located with the rule
-       they modify.
-     - Motion: animate transform/opacity/stroke-dashoffset only; every
-       animation must be neutralized by the prefers-reduced-motion block in
-       section 14.
-     - Format: 2 spaces per depth, one declaration per line; short
-       single-selector rules may stay on one line.
-   ========================================================================== */
+Conventions
+- Cascade layers (declared below): base < layout < components < features;
+unlayered = tokens only. Put rules in the matching layer — never rely
+on source order across layers. `utilities` is reserved for future
+one-property helpers; nothing lives there yet.
+- Colors: reference tokens, never raw hex/rgba in rules. Translucent
+accent tints go through rgba(var(--ts-accent-rgb), a); blends through
+color-mix(in oklab, ...).
+- Breakpoints: 40 / 48 / 64 / 80 / 96rem only, co-located with the rule
+they modify.
+- Motion: animate transform/opacity/stroke-dashoffset only; every
+animation must be neutralized by the prefers-reduced-motion block in
+section 14.
+- Format: 2 spaces per depth, one declaration per line; short
+single-selector rules may stay on one line.
+========================================================================== */
 
 /* Layer order — first declaration wins the cascade race; unlayered styles
-   (the tokens below) always beat layered ones. */
+(the tokens below) always beat layered ones. */
 @layer reset, base, layout, components, features, utilities;
 
 /* 1. Tokens =============================================================== */
@@ -2269,6 +2269,8 @@
     inset: 0;
     width: 100%;
     height: 100%;
+    /* decorative overlay: never swallow clicks on controls beneath */
+    pointer-events: none;
   }
 
   /* Connection arcs between hubs; dash flow mirrors the original auth visual. */

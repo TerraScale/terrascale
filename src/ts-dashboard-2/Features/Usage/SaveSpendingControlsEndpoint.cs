@@ -20,6 +20,9 @@ public sealed class SaveSpendingControlsEndpoint(DashboardStore store) : Endpoin
         var enabled = form["paidExcess"] == "true";
         var cap = form["spendCap"].ToString().Trim();
         store.UpdateSpendingControls(enabled, cap.Length is 0 ? null : cap);
+        var dbCaps = form.Where(pair => pair.Key.StartsWith("dbCap_", StringComparison.Ordinal))
+            .ToDictionary(pair => pair.Key["dbCap_".Length..], pair => pair.Value.ToString());
+        store.UpdateDatabaseSpendCaps(dbCaps);
         return Results.Redirect("/usage", false, false);
     }
 }

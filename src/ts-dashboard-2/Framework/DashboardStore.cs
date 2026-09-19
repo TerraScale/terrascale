@@ -123,9 +123,9 @@ public sealed partial class DashboardStore
 
     public ImmutableArray<Session> Sessions { get; private set; } =
     [
-        new("ses_01JC9ZQ7T9V2X5A8C1E4G9K2N", "Chrome on Linux", "203.0.113.24", "São Paulo, BR", "2026-09-18T07:12:00Z", "password", true),
-        new("ses_01JC9ZR8U1W3Y6B9D2F5H0M4P", "ts-cli", "203.0.113.24", "São Paulo, BR", "2026-09-17T22:41:00Z", "api-key", false),
-        new("ses_01JC9ZS9V2X4Z7C0E3G6J3N6Q", "Safari on macOS", "198.51.100.7", "Frankfurt, DE", "2026-09-12T09:26:00Z", "github", false),
+        new("ses_01JC9ZQ7T9V2X5A8C1E4G9K2N", "Chrome on Linux", "203.0.113.24", "São Paulo, BR", "2026-09-05T14:02:00Z", "2026-09-18T07:12:00Z", "password", true),
+        new("ses_01JC9ZR8U1W3Y6B9D2F5H0M4P", "ts-cli", "203.0.113.24", "São Paulo, BR", "2026-09-16T18:30:00Z", "2026-09-17T22:41:00Z", "api-key", false),
+        new("ses_01JC9ZS9V2X4Z7C0E3G6J3N6Q", "Safari on macOS", "198.51.100.7", "Frankfurt, DE", "2026-09-02T08:11:00Z", "2026-09-12T09:26:00Z", "github", false),
     ];
 
     public ImmutableArray<WebhookEndpoint> Webhooks { get; private set; } =

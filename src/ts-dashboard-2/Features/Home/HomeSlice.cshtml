@@ -28,18 +28,25 @@
                     <h2 class="ts-panel-title">@copy.ActivityTitle</h2>
                     <p class="ts-panel-subtitle">@copy.ActivitySubtitle</p>
                 </div>
-                <div class="ts-tabs" role="tablist" aria-label="Activity range">
-                    @foreach (var (range, _) in Model.Workloads)
+                <div class="ts-panel-header-row">
+                    <div class="ts-tabs" role="tablist" aria-label="Activity range">
+                        @foreach (var (range, _) in Model.Workloads)
+                        {
+                            <a class="ts-tab" role="tab" aria-selected="@(range == Model.ActivityRange ? "true" : "false")" href="/?range=@range">@range</a>
+                        }
+                    </div>
+                    <span class="ts-meta"><strong>Events @Model.ActivityEvents</strong></span>
+                </div>
+                <div class="ts-chart-shell">
+                    @if (Model.ActivityPoints.IsEmpty)
                     {
-                        <a class="ts-tab" role="tab" aria-selected="@(range == "24h" ? "true" : "false")" href="#activity-@range">@range</a>
+                        <div class="ts-muted ts-meta">No activity recorded in this range yet.</div>
+                    }
+                    else
+                    {
+                        @Charts.LineChart([.. Model.ActivityPoints], $"Workload over {Model.ActivityRange}")
                     }
                 </div>
-                @foreach (var (range, points) in Model.Workloads)
-                {
-                    <div id="activity-@range" class="ts-chart-shell">
-                        @Charts.LineChart([.. points], $"Workload over {range}")
-                    </div>
-                }
             </section>
         </div>
 
