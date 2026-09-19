@@ -10,7 +10,7 @@
         </div>
         <p class="ts-admin-subtitle">Owner-only user administration.</p>
     </div>
-    <section class="ts-admin-summary" aria-label="User summary">
+    <section class="ts-admin-summary-three" aria-label="User summary">
         @(AdminPresentation.Stat("USERS", Model.Rows.Count.ToString()))
         @(AdminPresentation.Stat("ENABLED", Model.Rows.Count(r => r.Enabled).ToString()))
         @(AdminPresentation.Stat("OWNERS", Model.Rows.Count(r => r.Owner).ToString()))
@@ -23,7 +23,7 @@
     }
     else
     {
-        <div class="ts-table-wrap">
+        <div class="ts-table-wrap ts-table-flush">
             <table class="ts-table">
                 <thead>
                     <tr>
@@ -39,7 +39,7 @@
                     {
                         <tr>
                             <td>
-                                <div class="ts-admin-cell-name">@row.DisplayName</div>
+                                <div class="ts-admin-cell-name">@(string.IsNullOrWhiteSpace(row.DisplayName) ? row.Email : row.DisplayName)</div>
                                 <div class="ts-admin-cell-id">@row.UserId</div>
                             </td>
                             <td>@row.Email</td>

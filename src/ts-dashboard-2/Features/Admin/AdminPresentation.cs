@@ -42,10 +42,10 @@ public static class AdminPresentation
 
     public static HtmlString TableEmpty(string title) => new(
         $"""
-        <div class="ts-empty">
-            <span class="ts-empty-icon">{Icons.Search(20).Value}</span>
-            <span class="ts-empty-title">No admin {title.ToLowerInvariant()}</span>
-            <span class="ts-meta">No owner-visible records matched this request.</span>
+        <div class="ts-empty-card">
+            <span class="ts-empty-icon-box">{Icons.SearchX(16).Value}</span>
+            <span class="ts-empty-card-title">No admin {title.ToLowerInvariant()}</span>
+            <span class="ts-empty-card-desc">No owner-visible records matched this request.</span>
         </div>
         """);
 

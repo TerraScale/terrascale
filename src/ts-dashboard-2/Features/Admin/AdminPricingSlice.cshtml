@@ -9,12 +9,6 @@
         <h2 class="ts-admin-title">Pricing</h2>
         <p class="ts-admin-subtitle">Owner-only pricing plan administration.</p>
     </div>
-    @if (Model.Notice is { } pageNotice)
-    {
-        <div class="ts-alert ts-alert-success" role="status">
-            <span class="ts-alert-title">@Icons.CircleCheckBig(16) @pageNotice</span>
-        </div>
-    }
     <section class="ts-panel">
         <div class="ts-panel-header">
             <h2 class="ts-panel-title">Pricing</h2>
@@ -34,6 +28,12 @@
                     </div>
                 </section>
             }
+            @if (Model.Notice is { } notice)
+            {
+                <div class="ts-alert ts-alert-success" role="status">
+                    <span class="ts-alert-title">@Icons.CircleCheckBig(16) @notice</span>
+                </div>
+            }
         </div>
     </section>
     <section class="ts-panel">
@@ -44,14 +44,15 @@
         <div class="ts-admin-table-body">
             @if (Model.Plans.Count == 0)
             {
-                <div class="ts-empty">
-                    <span class="ts-empty-title">No pricing plans</span>
-                    <span class="ts-meta">No owner-visible pricing plans matched this request.</span>
+                <div class="ts-empty-card">
+                    <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                    <span class="ts-empty-card-title">No pricing plans</span>
+                    <span class="ts-empty-card-desc">No owner-visible pricing plans matched this request.</span>
                 </div>
             }
             else
             {
-                <div class="ts-table-wrap">
+                <div class="ts-table-wrap ts-table-flush">
                     <table class="ts-table">
                         <thead>
                             <tr>
@@ -67,23 +68,23 @@
                             {
                                 <tr>
                                     <td>@row.Name</td>
-                                    <td class="ts-table-mono">@row.Key</td>
-                                    <td class="ts-table-num">@((row.MonthlyBaseCents / 100m).ToString("C", CultureInfo.GetCultureInfo("en-US")))</td>
+                                    <td>@row.Key</td>
+                                    <td>@((row.MonthlyBaseCents / 100m).ToString("C", CultureInfo.GetCultureInfo("en-US")))</td>
                                     <td><span class="ts-badge @(row.Visible ? "ts-badge-success" : "ts-badge-neutral")">@(row.Visible ? "Visible" : "Hidden")</span></td>
                                     <td>
                                         <div class="ts-row">
                                             <form method="post" action="/api/v1/admin/plans/visibility">
                                                 <input type="hidden" name="planId" value="@row.PlanId" />
                                                 <input type="hidden" name="visible" value="@(row.Visible ? "false" : "true")" />
-                                                <button type="submit" class="ts-btn ts-btn-secondary ts-btn-sm">
-                                                    @(row.Visible ? Icons.EyeOff(14) : Icons.Eye(14))
+                                                <button type="submit" class="ts-btn ts-btn-secondary ts-btn-lg">
+                                                    @(row.Visible ? Icons.EyeOff(20) : Icons.Eye(20))
                                                     @(row.Visible ? "Hide" : "Show")
                                                 </button>
                                             </form>
                                             <form method="post" action="/api/v1/admin/plans/delete">
                                                 <input type="hidden" name="planId" value="@row.PlanId" />
-                                                <button type="submit" class="ts-btn ts-btn-destructive ts-btn-sm">
-                                                    @Icons.Trash2(14)
+                                                <button type="submit" class="ts-btn ts-btn-destructive ts-btn-lg">
+                                                    @Icons.Trash2(20)
                                                     Delete
                                                 </button>
                                             </form>
@@ -115,27 +116,27 @@
                 <fieldset class="ts-admin-fieldset">
                     <legend class="ts-admin-legend">{(editing ? $"Edit: {plan!.Name}" : "Create pricing plan")}</legend>
                     <div class="ts-admin-plan-fields">
-                        {Field($"{prefix}-plan-key", "planKey", "Plan key", "startup", plan?.Key ?? "")}
-                        {Field($"{prefix}-plan-name", "planName", "Plan name", "Startup", plan?.Name ?? "")}
-                        {Field($"{prefix}-monthly-base-cents", "monthlyBaseCents", "Monthly cents", "", plan?.MonthlyBaseCents.ToString() ?? "")}
-                        {Field($"{prefix}-max-databases", "maxDatabases", "Databases", "", plan?.MaxDatabases.ToString() ?? "")}
-                        {Field($"{prefix}-storage-overage-cents", "storageOverageCents", "Storage overage cents per GB-region", "", Text(plan?.StorageOverageCentsPerGbRegion), "Storage overage is billed per region; the abuse guards below are unbilled.")}
+                        {Field($"{prefix}-plan-key", "planKey", "Plan key", "text", "startup", plan?.Key ?? "")}
+                        {Field($"{prefix}-plan-name", "planName", "Plan name", "text", "Startup", plan?.Name ?? "")}
+                        {Field($"{prefix}-monthly-base-cents", "monthlyBaseCents", "Monthly cents", "number", "", plan?.MonthlyBaseCents.ToString() ?? "")}
+                        {Field($"{prefix}-max-databases", "maxDatabases", "Databases", "number", "", plan?.MaxDatabases.ToString() ?? "")}
+                        {Field($"{prefix}-storage-overage-cents", "storageOverageCents", "Storage overage cents per GB-region", "number", "", Text(plan?.StorageOverageCentsPerGbRegion), "Storage overage is billed per region; the abuse guards below are unbilled.")}
                     </div>
                 </fieldset>
                 <fieldset class="ts-admin-fieldset">
                     <legend class="ts-admin-legend">Unbilled abuse guards</legend>
                     <p class="ts-admin-help">Set owner-tunable D-64 limits for each database.</p>
                     <div class="ts-admin-plan-fields">
-                        {Field($"{prefix}-read-qps", "readQps", "Read and query requests per second", "", guards?.ReadQps.ToString() ?? "")}
-                        {Field($"{prefix}-direct-read-bandwidth", "directReadBandwidth", "Direct member read bandwidth bytes per month", "", guards?.DirectReadBandwidthBytesPerMonth.ToString() ?? "")}
-                        {Field($"{prefix}-active-views", "activeViews", "Distinct active shared views", "", guards?.ActiveViews.ToString() ?? "")}
-                        {Field($"{prefix}-websocket-connections", "websocketConnections", "WebSocket connections", "", guards?.WebsocketConnections.ToString() ?? "")}
-                        {Field($"{prefix}-webhook-endpoints", "webhookEndpoints", "Webhook endpoints", "", guards?.WebhookEndpoints.ToString() ?? "")}
+                        {Field($"{prefix}-read-qps", "readQps", "Read and query requests per second", "number", "", guards?.ReadQps.ToString() ?? "")}
+                        {Field($"{prefix}-direct-read-bandwidth", "directReadBandwidth", "Direct member read bandwidth bytes per month", "number", "", guards?.DirectReadBandwidthBytesPerMonth.ToString() ?? "")}
+                        {Field($"{prefix}-active-views", "activeViews", "Distinct active shared views", "number", "", guards?.ActiveViews.ToString() ?? "")}
+                        {Field($"{prefix}-websocket-connections", "websocketConnections", "WebSocket connections", "number", "", guards?.WebsocketConnections.ToString() ?? "")}
+                        {Field($"{prefix}-webhook-endpoints", "webhookEndpoints", "Webhook endpoints", "number", "", guards?.WebhookEndpoints.ToString() ?? "")}
                     </div>
                 </fieldset>
                 <div class="ts-admin-form-actions">
                     <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">
-                        {(editing ? Icons.Save(16) : Icons.Plus(16))}
+                        {(editing ? Icons.Save(20) : Icons.Plus(20))}
                         {(editing ? "Save changes" : "Create")}
                     </button>
                 </div>
@@ -143,11 +144,15 @@
             """);
     }
 
-    private static string Field(string id, string name, string label, string placeholder, string value, string? help = null) => $"""
-        <div class="ts-field">
-            <label class="ts-label" for="{id}">{label}</label>
-            <input class="ts-input" id="{id}" name="{name}" type="text" inputmode="{(placeholder.Length is 0 ? "numeric" : "text")}" min="0" value="{value}" placeholder="{placeholder}" />
-            {(help is null ? "" : $"<span class=\"ts-hint\" id=\"{id}-help\">{help}</span>")}
-        </div>
-        """;
+    private static string Field(string id, string name, string label, string type, string placeholder, string value, string? help = null)
+    {
+        var min = type == "number" ? " min=\"0\"" : "";
+        return $"""
+            <div class="ts-field">
+                <label class="ts-label" for="{id}">{label}</label>
+                <input class="ts-input" id="{id}" name="{name}" type="{type}"{min} value="{value}" placeholder="{placeholder}" />
+                {(help is null ? "" : $"<span class=\"ts-admin-help\" id=\"{id}-help\">{help}</span>")}
+            </div>
+            """;
+    }
 }
