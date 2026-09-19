@@ -87,7 +87,7 @@
                 </dl>
             }
             <div class="ts-form-actions">
-                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/organizations/new?step=3">@Icons.ArrowRight(20) @t("Continue without payment")</a>
+                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/organizations/new?step=database">@Icons.ArrowRight(20) @t("Continue without payment")</a>
                 <a class="ts-btn ts-btn-primary ts-btn-lg" href="@checkoutHref">@Icons.CreditCard(20) @t("Continue to secure payment setup")</a>
             </div>
         }
@@ -127,12 +127,12 @@
                     </div>
                 </fieldset>
                 <div class="ts-form-actions">
-                    <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/organizations/new?step=2">@Icons.ArrowLeft(20) @t("Back")</a>
+                    <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/organizations/new?step=payment">@Icons.ArrowLeft(20) @t("Back")</a>
                     <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">@Icons.Plus(20) @t("Create database and open Dashboard")</button>
                 </div>
             </form>
         }
-        <p class="ts-meta"><a class="ts-link ts-wizard-link" href="/organizations/new?step=1">@t("Restart this setup")</a></p>
+        <p class="ts-meta"><a class="ts-link ts-wizard-link" href="/organizations/new?step=organization">@t("Restart this setup")</a></p>
     </section>
 </div>
 @ShellHtml.Bottom(shell)

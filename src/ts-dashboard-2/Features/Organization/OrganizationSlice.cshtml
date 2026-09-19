@@ -18,8 +18,8 @@
         project.Regions.Any(r => string.Equals(r, code, StringComparison.OrdinalIgnoreCase));
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
-    <section class="ts-panel">
+<div class="ts-page ts-org">
+    <section class="ts-panel ts-org-summary">
         <div class="ts-row-header">
             <div class="ts-row ts-gap-16">
                 <span class="ts-avatar ts-avatar-org" aria-hidden="true">@Icons.Building(24)</span>
@@ -248,7 +248,7 @@
             <h3 class="ts-panel-title">@t("Create organization")</h3>
             <p class="ts-panel-subtitle">@t("Repeat only the onboarding steps a new tenant needs: organization, payment, and database.")</p>
         </div>
-        <div class="ts-padded ts-muted ts-ui">
+        <div class="ts-padded ts-muted ts-ui ts-org-desc">
             @t("Creating another organization opens a guided flow for the tenant, its payment method, and the first database.")
         </div>
         <div class="ts-padded">
@@ -299,7 +299,7 @@
                                         <div class="ts-member-controls">
                                             <form method="post" action="/api/v1/dashboard/organization/members/role" class="ts-row ts-gap-8">
                                                 <input type="hidden" name="userId" value="@member.UserId" />
-                                                <select class="ts-select ts-select-sm" name="role" aria-label='@t("Organization role for") @member.Email' onchange="this.form.submit()">
+                                                <select class="ts-select" name="role" aria-label='@t("Organization role for") @member.Email' onchange="this.form.submit()">
                                                     <option value="owner" @(member.Role == "owner" ? "selected" : null) @(member.Role == "owner" ? null : "disabled")>@t("Organization Owner")</option>
                                                     <option value="member" @(member.Role == "owner" ? null : "selected")>@t("Member")</option>
                                                 </select>
@@ -312,8 +312,8 @@
                                                 </form>
                                                 @if (member.Role != "owner")
                                                 {
-                                                    <details class="ts-org-transfer">
-                                                        <summary class="ts-org-transfer-summary">@t("Transfer ownership to") @member.Email. @t("Your role will become admin. Sign in again before starting.")</summary>
+                                                    <div class="ts-org-transfer">
+                                                        <p>@t("Transfer ownership to") @member.Email. @t("Your role will become admin. Sign in again before starting.")</p>
                                                         @if (Model.OwnershipTransfers.FirstOrDefault(transfer => transfer.TargetUserId == member.UserId) is { } transfer)
                                                         {
                                                             <p role="status">@t("Check your verified email for the confirmation code. Expires at") @DashboardStore.FormatUtcDateTime(transfer.ExpiresAt).</p>
@@ -333,7 +333,7 @@
                                                                 <button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit">@t("Request ownership transfer")</button>
                                                             </form>
                                                         }
-                                                    </details>
+                                                    </div>
                                                 }
                                             }
                                         </div>

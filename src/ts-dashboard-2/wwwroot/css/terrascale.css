@@ -3626,15 +3626,109 @@ single-selector rules may stay on one line.
     justify-items: start;
   }
 
+  /* v1 OwnershipTransferControls: fieldGroup with plain body-size text. */
   .ts-org-transfer {
     display: grid;
     gap: var(--ts-sm);
+    justify-items: start;
   }
 
-  .ts-org-transfer-summary {
-    cursor: pointer;
-    color: var(--ts-ink-muted);
-    font-size: var(--ts-fs-meta);
+  /* ===== organization page (v1 app/(dashboard)/organization) ============== */
+
+  /* v1 PanelHeader insets: 20px inline, 16px from 64rem (ui/Panel.tsx);
+     the shared .ts-panel-header has none because .ts-panel pads block only. */
+  .ts-org .ts-panel-header { padding-inline: 20px; }
+
+  @media (min-width: 64rem) {
+    .ts-org .ts-panel-header { padding-inline: 16px; }
+  }
+
+  /* v1 summary Panel carries panel20 (20px all round) — .ts-panel only
+     provides the 20px block rhythm, so the inline inset is scoped here. */
+  .ts-org-summary { padding-inline: 20px; }
+
+  /* v1 padded/body sections are 16px inline at every width (shared-page-styles
+     padding: spacing.lg); .ts-padded widens to 20px below 64rem to track the
+     header instead. */
+  .ts-org .ts-padded { padding-inline: 16px; }
+
+  /* v1 pageStyles.summaryTerms: the dl holds a 32rem floor from 64rem. */
+  @media (min-width: 64rem) {
+    .ts-org .ts-summary-terms { min-width: 32rem; }
+  }
+
+  /* v1 DataTable (ui/DataTable.tsx): 16px body, 14px semibold wide-tracked
+     head, 16/20 cell padding, top-aligned cells, chrome-less scroller and a
+     50% muted row hover — the shared .ts-table base is denser and boxed. */
+  .ts-org .ts-table { font-size: var(--ts-fs-body); }
+
+  .ts-org .ts-table thead th {
+    padding: 16px 20px;
+    font-size: var(--ts-fs-ui);
+    letter-spacing: 0.025em;
+  }
+
+  .ts-org .ts-table tbody td {
+    padding: 16px 20px;
+    vertical-align: top;
+  }
+
+  .ts-org .ts-table-wrap {
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .ts-org .ts-table tbody tr:hover {
+    background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
+  }
+
+  /* v1 statusSuccess: 10px block / 12px inline padding, 10% success fill. */
+  .ts-org .ts-status-success {
+    padding: 10px 12px;
+    background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+  }
+
+  /* v1 textDescription: 24px line-height capped at 42rem. */
+  .ts-org-desc {
+    line-height: 24px;
+    max-width: 42rem;
+  }
+
+  /* v1 Input/NativeSelect render body-size (16px) control text; the shared
+     control base is ui-size. */
+  .ts-org .ts-input,
+  .ts-org .ts-select,
+  .ts-neworg .ts-input,
+  .ts-neworg .ts-select {
+    font-size: var(--ts-fs-body);
+  }
+
+  /* v1 grids stretch their button children (formTight, memberControls,
+     OwnershipTransferControls fieldGroup; switchForm and deletionForm only
+     below their two-column breakpoints). The v2 button wrappers sit inside
+     no-JS <form>s, so the forms stretch too. */
+  .ts-org .ts-inline-form { grid-template-columns: minmax(0, 1fr); }
+
+  .ts-org .ts-inline-form .ts-btn,
+  .ts-org .ts-stack-12 > form .ts-btn,
+  .ts-org .ts-member-controls .ts-btn,
+  .ts-org .ts-org-transfer .ts-btn,
+  .ts-org .ts-org-switch-form .ts-btn,
+  .ts-org .ts-org-deletion-form .ts-btn {
+    width: 100%;
+  }
+
+  .ts-org .ts-member-controls form,
+  .ts-org .ts-org-transfer form { width: 100%; }
+
+  @media (min-width: 40rem) {
+    .ts-org .ts-org-switch-form .ts-btn { width: auto; }
+  }
+
+  @media (min-width: 64rem) {
+    .ts-org .ts-org-deletion-form .ts-btn { width: auto; }
   }
 
   /* ===== organizations/new wizard ===== */
@@ -3644,16 +3738,27 @@ single-selector rules may stay on one line.
      guards it centrally. */
   .ts-main:has(.ts-neworg) > .ts-page-title { display: none; }
 
+  /* v1 header Panel: panel20 (20px) around the PanelHeader's own 20px → 16px
+     (64rem) inline inset — 40px / 36px from the panel edge. */
+  .ts-neworg-header { padding-inline: 40px; }
+
+  @media (min-width: 64rem) {
+    .ts-neworg-header { padding-inline: 36px; }
+  }
+
   /* v1 Progress primitive is 4px tall. */
   .ts-neworg .ts-progress { height: 4px; }
 
-  /* Wizard Panel padding: 20px block + the root's 16px. */
-  .ts-neworg-wizard { padding: 36px var(--ts-lg); }
+  /* Wizard Panel padding: 20px block + the root's 16px; panelFlush squares
+     the corners below the rounded header panel. */
+  .ts-neworg-wizard {
+    padding: 36px var(--ts-lg);
+    border-radius: 0;
+  }
 
   .ts-neworg-header {
     border-bottom: 1px solid var(--ts-line);
     padding-bottom: var(--ts-lg);
-    padding-inline: var(--ts-lg);
   }
 
   /* v1 PanelHeader descriptions are body-size. */
