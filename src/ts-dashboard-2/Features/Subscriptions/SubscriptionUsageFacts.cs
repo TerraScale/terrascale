@@ -1,8 +1,8 @@
 namespace TerraScale.Dashboard2;
 
 public sealed record SubscriptionUsageFacts(
-    int? ActiveViews,
-    int? Subscribers,
-    double? CdnHitRatio,
-    long? OriginFills,
-    int? WebsocketConnections);
+    int? ActiveViews = null,
+    int? Subscribers = null,
+    double? CdnHitRatio = null,
+    long? OriginFills = null,
+    int? WebsocketConnections = null);

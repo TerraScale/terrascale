@@ -17,15 +17,15 @@
 <div class="ts-page">
     <section class="ts-panel">
         <div class="ts-stack-12">
-            <h2 class="ts-page-title-24">@t("Subscriptions")</h2>
-            <p class="ts-page-desc">@t("Attach to an authorized shared result view and observe the revision, checkpoint, delivery, and policy state from the TerraScale SDK.")</p>
-            <div class="ts-grid ts-grid-cards-4">
+            <h2 class="ts-title-22">@t("Subscriptions")</h2>
+            <p class="ts-sub-desc">@t("Attach to an authorized shared result view and observe the revision, checkpoint, delivery, and policy state from the TerraScale SDK.")</p>
+            <div class="ts-sub-stats">
                 @foreach (var stat in stats)
                 {
-                    <div class="ts-card ts-metric">
-                        <span class="ts-metric-label">@stat.Label</span>
-                        <strong class="ts-metric-value">@stat.Value</strong>
-                        <small class="ts-metric-detail">@stat.Detail</small>
+                    <div class="ts-sub-stat">
+                        <span class="ts-sub-stat-label">@stat.Label</span>
+                        <strong class="ts-sub-stat-value">@stat.Value</strong>
+                        <small class="ts-sub-stat-detail">@stat.Detail</small>
                     </div>
                 }
             </div>
@@ -35,11 +35,11 @@
     <section class="ts-panel">
         <div class="ts-panel-header">
             <h3 class="ts-panel-title">@t("Live shared view")</h3>
-            <p class="ts-panel-subtitle">@t("HTTP + CDN is the default transport; WebSocket is optional and remains opt-in.")</p>
+            <p class="ts-panel-subtitle ts-sub-subtitle">@t("HTTP + CDN is the default transport; WebSocket is optional and remains opt-in.")</p>
         </div>
         <div class="ts-padded ts-subscriptions-grid">
             <section aria-label="Attach a shared view">
-                <form method="post" action="/api/v1/dashboard/subscriptions/attach" class="ts-form">
+                <form method="post" action="/api/v1/dashboard/subscriptions/attach" class="ts-form ts-sub-form" data-signals="{ transport: 'http' }">
                     <div class="ts-field">
                         <label class="ts-label" for="subscription-database">Database</label>
                         <select class="ts-select" id="subscription-database" name="databaseId" @(Model.Databases.Length == 0 ? "disabled" : null)>
@@ -55,7 +55,7 @@
                     </div>
                     <div class="ts-field">
                         <label class="ts-label" for="subscription-query">Live SQL statement</label>
-                        <textarea class="ts-textarea ts-input-mono" id="subscription-query" name="query" rows="5" spellcheck="false">SELECT * FROM documents LIMIT 100</textarea>
+                        <textarea class="ts-textarea" id="subscription-query" name="query" rows="5" spellcheck="false">SELECT * FROM documents LIMIT 100</textarea>
                     </div>
                     <div class="ts-field">
                         <label class="ts-label" for="subscription-transport">Delivery transport</label>
@@ -64,21 +64,22 @@
                             <option value="websocket">WebSocket (optional)</option>
                         </select>
                     </div>
-                    <div class="ts-form-actions">
-                        <button class="ts-btn ts-btn-primary" type="submit">Attach shared view</button>
+                    <div class="ts-sub-form-actions">
+                        <button class="ts-btn ts-btn-primary" type="submit" @(Model.Databases.Length == 0 ? "disabled" : null)>Attach shared view</button>
                         @if (Model.AttachedViewId is not null)
                         {
                             <a class="ts-btn ts-btn-secondary" href="/subscriptions">Stop view</a>
                         }
                     </div>
                 </form>
+                <p class="ts-meta ts-sub-note" data-show="transport === 'websocket'">WebSocket is an explicit opt-in. The current SDK contract fails closed until a direct WebSocket transport is supplied.</p>
             </section>
             <section class="ts-sub-view" aria-label="Shared view state">
                 <div class="ts-row-between">
                     <div>
                         <div class="ts-row ts-gap-8">
                             <span class="ts-pip @(Model.Online ? "ts-pip-success" : null)" aria-hidden="true"></span>
-                            <strong>@(Model.AttachedViewId ?? "No active shared view")</strong>
+                            <strong class="ts-sub-view-title">@(Model.AttachedViewId ?? "No active shared view")</strong>
                         </div>
                         <p class="ts-meta">One encoded revision is shared by authorization-equivalent subscribers.</p>
                     </div>
