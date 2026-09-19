@@ -79,7 +79,7 @@ public static class App
                 Id = keyId,
                 InstanceId = instance.Id,
                 Name = "default",
-                SecretKey = Crypto.SecureTokens.Sha256Hex(secret),
+                SecretKey = Crypto.SecureTokens.Sha256Hex(combined),
                 Scopes = ["*"],
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             }, ct);
