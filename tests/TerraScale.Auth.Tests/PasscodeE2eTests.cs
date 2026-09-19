@@ -121,6 +121,27 @@ public sealed class PasscodeE2eTests
     }
 
     [Test]
+    public async Task ConcurrentWrongCodesStillReachTheLockoutCap()
+    {
+        var c = await ArrangeAsync("parallel");
+
+        // Eight simultaneous wrong verifies race the failure counter: every increment
+        // must land (atomic AddOrUpdate), so the cap is reached and the token burned.
+        await MintPasscodeAsync(c.Store, c.InstanceId, c.User.Id, "424242");
+        var wrong = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            c.Http.PostAsJsonAsync($"/ui/{c.Slug}/passcode/verify", new { email = c.User.Email, code = "999999" })));
+        foreach (var response in wrong)
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            response.Dispose();
+        }
+
+        await Assert.That((await PasscodeTokenAsync(c.Store, c.InstanceId, c.User.Id))!.Consumed).IsTrue();
+        using var dead = await c.Http.PostAsJsonAsync($"/ui/{c.Slug}/passcode/verify", new { email = c.User.Email, code = "424242" });
+        await Assert.That(dead.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
     public async Task ReplayedCodeCannotMintASecondSession()
     {
         var c = await ArrangeAsync("replay");

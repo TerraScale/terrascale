@@ -19,13 +19,16 @@ public sealed class WebhookDispatcher(AuthStore store, ILogger<WebhookDispatcher
     // ponytail: in-memory cursors — persist them once exactly-once delivery matters.
     private readonly ConcurrentDictionary<string, long> cursors = new();
     private readonly ConcurrentDictionary<string, HashSet<string>> delivered = new();
+    // Lazy so a registration race cannot start two poll loops (a discarded Lazy never runs).
+    private readonly ConcurrentDictionary<string, Lazy<Task>> pollers = new();
 
     /// <summary>Registers an instance with the dispatcher. The cursor starts at
     /// "now", so events that predate the first sighting are never backfilled.</summary>
     public void EnsureInstance(string instanceId) =>
         cursors.GetOrAdd(instanceId, static _ => DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
-    /// <summary>The poll loop; runs until <paramref name="stopping"/> fires and never throws.</summary>
+    /// <summary>The supervisor: discovers instances and starts one poll loop per
+    /// instance; runs until <paramref name="stopping"/> fires and never throws.</summary>
     public async Task RunAsync(CancellationToken stopping)
     {
         var discovered = false;
@@ -43,14 +46,18 @@ public sealed class WebhookDispatcher(AuthStore store, ILogger<WebhookDispatcher
                         EnsureInstance(instanceId);
                     discovered = true;
                 }
-                await TickAsync(stopping);
+                // One loop per instance, each isolated: a stalled endpoint (timeouts x
+                // retries per event) head-of-line blocks only its own instance's later
+                // deliveries, never another instance's.
+                foreach (var instanceId in cursors.Keys)
+                    _ = pollers.GetOrAdd(instanceId, id => new Lazy<Task>(() => PollInstanceAsync(id, stopping))).Value;
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {
             }
             catch (Exception exception)
             {
-                logger.LogError(exception, "webhook dispatch tick failed");
+                logger.LogError(exception, "webhook dispatch supervision failed");
             }
 
             try
@@ -63,33 +70,66 @@ public sealed class WebhookDispatcher(AuthStore store, ILogger<WebhookDispatcher
         }
     }
 
-    private async Task TickAsync(CancellationToken ct)
+    /// <summary>Per-instance poll loop: tick, sleep, repeat. Errors (including engine
+    /// outages) are logged and retried on the next interval; the cursor advances only
+    /// after a fully settled tick, so nothing is skipped.</summary>
+    private async Task PollInstanceAsync(string instanceId, CancellationToken stopping)
     {
-        foreach (var (instanceId, cursor) in cursors)
+        while (!stopping.IsCancellationRequested)
         {
-            var endpoints = await store.ListWebhookEndpointsAsync(instanceId, ct);
-            var enabled = endpoints.Where(e => e.Enabled).ToList();
-            if (enabled.Count == 0)
-                continue;
+            try
+            {
+                await TickInstanceAsync(instanceId, stopping);
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "webhook dispatch tick failed for {InstanceId}", instanceId);
+            }
 
-            var events = await store.ListAuditEventsSinceAsync(instanceId, cursor, BatchSize, ct);
-            // Audit events only have unix-second timestamps, so the cursor can land in the
-            // middle of a busy second; the delivered-id set dedupes those ties.
-            var seen = delivered.GetOrAdd(instanceId, static _ => []);
-            var fresh = events.Where(e => seen.Add(e.Id)).ToList();
-            if (fresh.Count == 0)
-                continue;
-
-            foreach (var auditEvent in fresh)
-                foreach (var endpoint in enabled)
-                    if (Matches(endpoint.Events, auditEvent.Type))
-                        await DeliverAsync(endpoint, auditEvent, ct);
-
-            cursors[instanceId] = fresh.Max(e => e.CreatedAt);
-            // ponytail: delivered grows per instance unbounded; clear at 1000 (at-least-once tolerates the rare redelivery of a tie).
-            if (seen.Count > 1000)
-                seen.Clear();
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(PollIntervalSeconds), stopping);
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
+    }
+
+    private async Task TickInstanceAsync(string instanceId, CancellationToken ct)
+    {
+        var endpoints = await store.ListWebhookEndpointsAsync(instanceId, ct);
+        var enabled = endpoints.Where(e => e.Enabled).ToList();
+        if (enabled.Count == 0)
+            return;
+
+        var events = await store.ListAuditEventsSinceAsync(instanceId, cursors[instanceId], BatchSize, ct);
+        // Audit events only have unix-second timestamps, so the cursor can land in the
+        // middle of a busy second; the delivered-id set dedupes those ties.
+        var seen = delivered.GetOrAdd(instanceId, static _ => []);
+        var fresh = events.Where(e => seen.Add(e.Id)).ToList();
+        if (fresh.Count == 0)
+            return;
+
+        // Endpoints deliver concurrently (FIFO order preserved per endpoint): one
+        // stalled endpoint must not delay the instance's other endpoints either.
+        await Task.WhenAll(enabled.Select(endpoint => DeliverMatchingAsync(endpoint, fresh, ct)));
+
+        cursors[instanceId] = fresh.Max(e => e.CreatedAt);
+        // ponytail: delivered grows per instance unbounded; clear at 1000 (at-least-once tolerates the rare redelivery of a tie).
+        if (seen.Count > 1000)
+            seen.Clear();
+    }
+
+    /// <summary>Delivers the batch to one endpoint, preserving per-endpoint event order.</summary>
+    private async Task DeliverMatchingAsync(WebhookEndpoint endpoint, IReadOnlyList<Store.AuditEvent> events, CancellationToken ct)
+    {
+        foreach (var auditEvent in events)
+            if (Matches(endpoint.Events, auditEvent.Type))
+                await DeliverAsync(endpoint, auditEvent, ct);
     }
 
     private async Task DeliverAsync(WebhookEndpoint endpoint, Store.AuditEvent auditEvent, CancellationToken ct)

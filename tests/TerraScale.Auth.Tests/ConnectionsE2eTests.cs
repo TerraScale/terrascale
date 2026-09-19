@@ -13,6 +13,7 @@ using System.Xml;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Keys;
 using TerraScale.Auth.Store;
+using TerraScale.Auth.Users;
 
 /// <summary>Upstream identity connections end to end: the management API, the OIDC
 /// authorization code flow against a real in-process fake IdP over real sockets,
@@ -169,6 +170,36 @@ public sealed class ConnectionsE2eTests
         using var replay = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(query["state"])}");
         await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That((await replay.Content.ReadAsStringAsync()).Contains("Sign-in failed")).IsTrue();
+    }
+
+    [Test]
+    public async Task ConcurrentColdCacheCallbacksBothVerifyAndSignIn()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        await using var idp = await FakeIdP.StartAsync();
+        var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
+        var (connectionId, _) = await CreateOidcConnectionAsync(service, slug, apiKey, idp);
+        // Pre-created account: both callbacks find it, so the probe isolates the JWKS cache race.
+        await new SessionService(service.Store).CreateUserAsync(instanceId, idp.Email, null, null, null);
+
+        // The fresh connection's JWKS cache entry is cold: both callbacks fetch and verify
+        // concurrently — a racy cache swap must not leave either callback with missing keys.
+        var redirects = await Task.WhenAll(Enumerable.Range(0, 2).Select(async _ =>
+        {
+            var state = await AuthorizeStateAsync(service, slug, connectionId);
+            using var callback = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(state)}");
+            return (callback.StatusCode, callback.Headers.Location?.ToString());
+        }));
+
+        foreach (var (status, location) in redirects)
+        {
+            await Assert.That(status).IsEqualTo(HttpStatusCode.Found);
+            await Assert.That(location).IsEqualTo($"/ui/{slug}/account");
+        }
+        var user = await service.Store.FindUserByEmailAsync(instanceId, idp.Email)
+            ?? throw new InvalidOperationException("pre-created user missing from store");
+        var sessions = await service.Store.ListSessionsByUserAsync(user.Id);
+        await Assert.That(sessions.Count(s => s.Status == "active")).IsEqualTo(2);
     }
 
     [Test]

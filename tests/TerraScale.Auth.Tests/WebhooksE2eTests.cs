@@ -272,6 +272,93 @@ public sealed class WebhooksE2eTests
         await Assert.That(signature.Length).IsEqualTo("sha256=".Length + 64);
     }
 
+    [Test]
+    public async Task StalledEndpointDoesNotBlockOtherEndpointsOrInstances()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceA, slugA, keyA) = await NewInstanceWithKeyAsync();
+        var (instanceB, slugB, keyB) = await NewInstanceWithKeyAsync();
+        await using var sink = WebhookSink.StartGated("stalled", "quick-a", "quick-b");
+
+        using var stalled = PostJson($"/v1/{slugA}/webhooks", keyA, new { url = sink.BaseUrl + "/stalled", events = new[] { "probe.*" } });
+        await Assert.That((await service.Http.SendAsync(stalled)).StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var quickA = PostJson($"/v1/{slugA}/webhooks", keyA, new { url = sink.BaseUrl + "/quick-a", events = new[] { "probe.*" } });
+        await Assert.That((await service.Http.SendAsync(quickA)).StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var quickB = PostJson($"/v1/{slugB}/webhooks", keyB, new { url = sink.BaseUrl + "/quick-b", events = new[] { "probe.*" } });
+        await Assert.That((await service.Http.SendAsync(quickB)).StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var first = await service.Store.CreateAuditEventAsync(new AuditEvent
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N")[..12],
+            InstanceId = instanceA,
+            Type = "probe.first",
+            Data = new Dictionary<string, object>(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+        var second = await service.Store.CreateAuditEventAsync(new AuditEvent
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N")[..12],
+            InstanceId = instanceA,
+            Type = "probe.second",
+            Data = new Dictionary<string, object>(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+        var other = await service.Store.CreateAuditEventAsync(new AuditEvent
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N")[..12],
+            InstanceId = instanceB,
+            Type = "probe.other",
+            Data = new Dictionary<string, object>(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        // While the stalled endpoint holds its first delivery open, the healthy endpoints —
+        // both on the same instance and on the other instance — must still be served.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        bool gotFirst, gotSecond, gotOther;
+        do
+        {
+            await Task.Delay(250);
+            lock (sink.Deliveries)
+            {
+                gotFirst = sink.Deliveries.Any(d => d.Path.StartsWith("/quick-a", StringComparison.Ordinal) && d.Body.Contains(first.Id));
+                gotSecond = sink.Deliveries.Any(d => d.Path.StartsWith("/quick-a", StringComparison.Ordinal) && d.Body.Contains(second.Id));
+                gotOther = sink.Deliveries.Any(d => d.Path.StartsWith("/quick-b", StringComparison.Ordinal) && d.Body.Contains(other.Id));
+            }
+        }
+        while (!(gotFirst && gotSecond && gotOther) && DateTime.UtcNow < deadline);
+        await Assert.That(gotFirst && gotSecond && gotOther)
+            .IsTrue(); // serial delivery would starve behind the stalled endpoint's retries
+
+        // The stall must not cause redelivery either: exactly one hit per event per healthy endpoint.
+        int firstHits, secondHits, otherHits;
+        lock (sink.Deliveries)
+        {
+            firstHits = sink.Deliveries.Count(d => d.Path.StartsWith("/quick-a", StringComparison.Ordinal) && d.Body.Contains(first.Id));
+            secondHits = sink.Deliveries.Count(d => d.Path.StartsWith("/quick-a", StringComparison.Ordinal) && d.Body.Contains(second.Id));
+            otherHits = sink.Deliveries.Count(d => d.Path.StartsWith("/quick-b", StringComparison.Ordinal) && d.Body.Contains(other.Id));
+        }
+        await Assert.That(firstHits).IsEqualTo(1);
+        await Assert.That(secondHits).IsEqualTo(1);
+        await Assert.That(otherHits).IsEqualTo(1);
+
+        // Released from the stall, the endpoint catches up on both events (retry duplicates allowed).
+        sink.ReleaseGate();
+        var caughtUpBy = DateTime.UtcNow.AddSeconds(20);
+        bool stalledFirst, stalledSecond;
+        do
+        {
+            await Task.Delay(250);
+            lock (sink.Deliveries)
+            {
+                stalledFirst = sink.Deliveries.Any(d => d.Path.StartsWith("/stalled", StringComparison.Ordinal) && d.Body.Contains(first.Id));
+                stalledSecond = sink.Deliveries.Any(d => d.Path.StartsWith("/stalled", StringComparison.Ordinal) && d.Body.Contains(second.Id));
+            }
+        }
+        while (!(stalledFirst && stalledSecond) && DateTime.UtcNow < caughtUpBy);
+        await Assert.That(stalledFirst && stalledSecond).IsTrue();
+    }
+
     // ---- helpers --------------------------------------------------------------------------
 
     /// <summary>Creates an instance with its operator-issued sk_ key (a normal resolver-
@@ -320,14 +407,17 @@ public sealed class WebhooksE2eTests
     /// <summary>Local HTTP sink recording every delivery (path, headers, body).
     /// HttpListener cannot bind :0, so it takes the first free port in 18081-18089.
     /// <paramref name="firstHitDelay"/> stalls the very first delivery before
-    /// responding (for exercising client-side timeouts).</summary>
-    private sealed class WebhookSink(HttpListener listener, string baseUrl, TimeSpan firstHitDelay) : IAsyncDisposable
+    /// responding (for exercising client-side timeouts). <see cref="StartGated"/>
+    /// holds every hit on one path open until <see cref="ReleaseGate"/> (exercising
+    /// a stalled endpoint without blocking the sink's other paths).</summary>
+    private sealed class WebhookSink(HttpListener listener, string baseUrl, TimeSpan firstHitDelay, string? gatedPath = null) : IAsyncDisposable
     {
         public sealed record Delivery(string Path, Dictionary<string, string> Headers, string Body);
 
         public string BaseUrl => baseUrl;
         public List<Delivery> Deliveries { get; } = [];
 
+        private readonly TaskCompletionSource gate = new();
         private Task acceptLoop = Task.CompletedTask;
 
         public static WebhookSink Start(params string[] paths) => Start(TimeSpan.Zero, paths);
@@ -354,6 +444,31 @@ public sealed class WebhooksE2eTests
             throw new InvalidOperationException("no free webhook sink port in 18081-18089");
         }
 
+        public static WebhookSink StartGated(string gatedPath, params string[] paths)
+        {
+            for (var port = 18081; port <= 18089; port++)
+            {
+                var candidate = new HttpListener();
+                foreach (var path in paths.Append(gatedPath))
+                    candidate.Prefixes.Add($"http://127.0.0.1:{port}/{path.Trim('/')}/");
+                try
+                {
+                    candidate.Start();
+                    var sink = new WebhookSink(candidate, $"http://127.0.0.1:{port}", TimeSpan.Zero, gatedPath);
+                    sink.acceptLoop = Task.Run(sink.AcceptLoopAsync);
+                    return sink;
+                }
+                catch (HttpListenerException)
+                {
+                    candidate.Close();
+                }
+            }
+            throw new InvalidOperationException("no free webhook sink port in 18081-18089");
+        }
+
+        /// <summary>Lets every held-open gated-path request respond from here on.</summary>
+        public void ReleaseGate() => gate.TrySetResult();
+
         private async Task AcceptLoopAsync()
         {
             while (listener.IsListening)
@@ -367,18 +482,31 @@ public sealed class WebhooksE2eTests
                 {
                     return; // listener stopped at dispose
                 }
+                // Handle off the accept loop: a gated path held open must not stop
+                // the sink from accepting and answering deliveries to other paths.
+                _ = Task.Run(() => HandleAsync(context));
+            }
+        }
 
-                try
+        private async Task HandleAsync(HttpListenerContext context)
+        {
+            try
+            {
+                using var reader = new StreamReader(context.Request.InputStream);
+                var body = await reader.ReadToEndAsync();
+                lock (Deliveries)
+                    Deliveries.Add(new Delivery(
+                        context.Request.Url?.AbsolutePath ?? "/",
+                        context.Request.Headers.AllKeys.Where(k => k is not null).ToDictionary(k => k!, k => context.Request.Headers[k!] ?? ""),
+                        body));
+                if (gatedPath is not null && context.Request.Url?.AbsolutePath == "/" + gatedPath.Trim('/'))
                 {
-                    using var reader = new StreamReader(context.Request.InputStream);
-                    var body = await reader.ReadToEndAsync();
+                    await gate.Task;
+                }
+                else if (firstHitDelay > TimeSpan.Zero)
+                {
                     lock (Deliveries)
-                    {
-                        Deliveries.Add(new Delivery(
-                            context.Request.Url?.AbsolutePath ?? "/",
-                            context.Request.Headers.AllKeys.Where(k => k is not null).ToDictionary(k => k!, k => context.Request.Headers[k!] ?? ""),
-                            body));
-                        if (firstHitDelay > TimeSpan.Zero && Deliveries.Count == 1)
+                        if (Deliveries.Count == 1)
                         {
                             // Hold the first request open past the client timeout, then 200 it.
                             _ = Task.Run(async () =>
@@ -387,16 +515,15 @@ public sealed class WebhooksE2eTests
                                 try { context.Response.StatusCode = 200; context.Response.Close(); }
                                 catch { context.Response.Abort(); }
                             });
-                            continue;
+                            return;
                         }
-                    }
-                    context.Response.StatusCode = 200;
-                    context.Response.Close();
                 }
-                catch (Exception)
-                {
-                    context.Response.Abort();
-                }
+                context.Response.StatusCode = 200;
+                context.Response.Close();
+            }
+            catch (Exception)
+            {
+                context.Response.Abort();
             }
         }
 
