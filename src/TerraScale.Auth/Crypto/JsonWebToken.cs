@@ -37,11 +37,12 @@ public static class JsonWebToken
         var parts = token.Split('.');
         if (parts.Length != 3)
             return null;
-        byte[] headerBytes, payloadBytes;
+        byte[] headerBytes, payloadBytes, signature;
         try
         {
             headerBytes = Encodings.Base64UrlDecode(parts[0]);
             payloadBytes = Encodings.Base64UrlDecode(parts[1]);
+            signature = Encodings.Base64UrlDecode(parts[2]);
         }
         catch (FormatException)
         {
@@ -71,7 +72,6 @@ public static class JsonWebToken
         if (key is null || key.Algorithm != algorithm)
             return null;
 
-        var signature = Encodings.Base64UrlDecode(parts[2]);
         var signed = System.Text.Encoding.ASCII.GetBytes($"{parts[0]}.{parts[1]}");
         if (!key.Verify(signed, signature))
             return null;

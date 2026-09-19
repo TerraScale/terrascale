@@ -71,6 +71,27 @@ public sealed class JwtTests
     }
 
     [Test]
+    public async Task MalformedSignatureSegmentIsRejectedNotThrown()
+    {
+        var key = EcdsaSigningKey.Generate("key-1");
+        var token = JsonWebToken.Sign(new { sub = "user_123" }, DateTimeOffset.UtcNow.AddMinutes(5), key);
+        var parts = token.Split('.');
+        // Attacker-controlled third segment: bad base64url must yield null, not an exception.
+        await Assert.That(JsonWebToken.Verify($"{parts[0]}.{parts[1]}.!!!", kid => key)).IsNull();
+        await Assert.That(JsonWebToken.Verify($"{parts[0]}.{parts[1]}.a", kid => key)).IsNull();
+        await Assert.That(JsonWebToken.Verify($"{parts[0]}.{parts[1]}", kid => key)).IsNull();
+    }
+
+    [Test]
+    public async Task AlgNoneIsRejected()
+    {
+        var key = EcdsaSigningKey.Generate("key-1");
+        var header = Encodings.Base64UrlEncode("""{"alg":"none","typ":"JWT","kid":"key-1"}"""u8);
+        var payload = Encodings.Base64UrlEncode("""{"sub":"user_123"}"""u8);
+        await Assert.That(JsonWebToken.Verify($"{header}.{payload}.", kid => key)).IsNull();
+    }
+
+    [Test]
     public async Task PublicJwkExposesNoPrivateMaterial()
     {
         var key = EcdsaSigningKey.Generate("key-1");
