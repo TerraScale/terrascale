@@ -9,6 +9,7 @@
     <EnableSdkContainerSupport>true</EnableSdkContainerSupport>
     <ContainerRepository>terrascale/ts-auth</ContainerRepository>
     <ContainerPort>8080</ContainerPort>
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup Condition="Exists('$(TerraScaleSdkProject)')">

@@ -1,0 +1,112 @@
+name: ts-auth CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Check and build ts-auth
+    runs-on: terrascale-builder
+    timeout-minutes: 30
+    env:
+      FORGEJO_SHA: ${{ forgejo.sha }}
+      FORGEJO_TOKEN: ${{ forgejo.token }}
+    steps:
+      - name: Check out the event revision
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Clone sibling sources (TerraScale SDK + TerraBase engine)
+        run: |
+          set -euo pipefail
+          # ts-auth builds against the sibling checkouts of ts-dotnet and terrabase
+          # (the same layout developers use locally).
+          parent="$(pwd)/.."
+          git clone --depth 1 "https://oauth2:${FORGEJO_TOKEN}@git.terrascale.tech/TerraScale/ts-dotnet.git" "${parent}/ts-dotnet"
+          git clone --depth 1 "https://oauth2:${FORGEJO_TOKEN}@git.terrascale.tech/TerraScale/terrabase.git" "${parent}/terrabase"
+
+      - name: Restore ts-auth tests
+        run: |
+          set -euo pipefail
+          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
+          mkdir -p -- "${NUGET_PACKAGES}"
+          exec dotnet restore \
+            tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
+            --runtime linux-x64 --nologo
+
+      - name: Build ts-auth tests and service
+        run: |
+          set -euo pipefail
+          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
+          exec dotnet build \
+            tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
+            --configuration Release --no-restore --nologo
+
+      - name: Run ts-auth tests
+        run: |
+          set -euo pipefail
+          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
+          exec dotnet run \
+            tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
+            --configuration Release --no-build -- \
+            --minimum-expected-tests 50
+
+      - name: Build and inspect the release image
+        run: |
+          set -euo pipefail
+          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
+
+          source_commit="$(git rev-parse HEAD)"
+          test "${source_commit}" = "${FORGEJO_SHA:?event SHA is required}"
+          mkdir -p -- artifacts/ci/container-publish
+          dotnet publish \
+            src/TerraScale.Auth/TerraScale.Auth.csproj \
+            --configuration Release \
+            --runtime linux-x64 \
+            --self-contained true \
+            --no-restore \
+            --output artifacts/ci/container-publish \
+            --nologo \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:DebugType=None
+          test -s artifacts/ci/container-publish/TerraScale.Auth
+          podman build \
+            --pull=missing \
+            --platform linux/amd64 \
+            --tag "localhost/terrascale/ts-auth:${source_commit}" \
+            --file Containerfile .
+          image="localhost/terrascale/ts-auth:${source_commit}"
+          podman image inspect "${image}"
+          test "$(podman image inspect "${image}" --format '{{.Architecture}}')" = amd64
+          test "$(podman image inspect "${image}" --format '{{.Os}}')" = linux
+
+      - name: Publish immutable container on protected main
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        env:
+          TERRASCALE_BOT_TOKEN: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          source_commit="${FORGEJO_SHA:?event SHA is required}"
+          local_image="localhost/terrascale/ts-auth:${source_commit}"
+          remote_image="git.terrascale.tech/terrascale/ts-auth:${source_commit}"
+          # The runner exports REGISTRY_AUTH_FILE as a bind-mounted file under
+          # /etc/containers; podman login rewrites its auth file via rename,
+          # which fails with EBUSY on a bind mount. Use a job-local auth file.
+          export REGISTRY_AUTH_FILE="${RUNNER_TEMP:-/tmp}/ts-auth-podman-auth.json"
+          # The job token authenticates but cannot write packages: the layer
+          # upload fails with 'authentication required'. The organization bot
+          # token carries the package write grant for the registry.
+          printf '%s\n' "${TERRASCALE_BOT_TOKEN:?organization bot token is required}" | \
+            podman login git.terrascale.tech --username terrascale-bot --password-stdin >/dev/null
+          podman tag "${local_image}" "${remote_image}"
+          podman push "${remote_image}"
+          podman image inspect "${remote_image}"

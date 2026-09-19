@@ -79,7 +79,8 @@ public static class App
                 Id = keyId,
                 InstanceId = instance.Id,
                 Name = "default",
-                SecretKey = Crypto.SecureTokens.Sha256Hex(secret),
+                // Hash the full presented key ("sk_id_secret"); InstanceResolver hashes the whole bearer.
+                SecretKey = Crypto.SecureTokens.Sha256Hex(combined),
                 Scopes = ["*"],
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             }, ct);
