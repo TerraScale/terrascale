@@ -14,14 +14,22 @@ public sealed record SettingsPageModel(
     ImmutableArray<SettingsCredentialView> Credentials,
     ImmutableArray<DashboardDatabase> Databases,
     ImmutableArray<WebhookEndpoint> Webhooks,
+    ImmutableArray<WebhookDelivery> WebhookDeliveries,
+    (string Plan, int Used, int Limit) WebhookAllowance,
+    string? WebhookSecretId,
+    string? WebhookSecretUrl,
+    string? WebhookSecretValue,
+    string? Toast,
     string LoadedAtText,
     string Tab) : IPageModel
 {
     public ShellModel Shell { get; init; } = null!;
 
-    public static SettingsPageModel From(DashboardStore store, string href, string tab)
+    public static SettingsPageModel From(DashboardStore store, string href, string tab, string? toast = null, bool rotated = false)
     {
         var project = store.ActiveProject;
+        var pending = store.ConsumePendingWebhookSecret();
+        (string WebhookId, string Url, string Secret)? secret = rotated && pending is { } p ? p : null;
         return new(
             ProjectId: project.Id,
             ProjectName: project.Name,
@@ -32,7 +40,13 @@ public sealed record SettingsPageModel(
             Providers: store.AuthProviders,
             Credentials: store.SettingsCredentials,
             Databases: store.ProjectDatabases(project.Id),
-            Webhooks: store.Webhooks,
+            Webhooks: store.ProjectWebhooks,
+            WebhookDeliveries: store.WebhookDeliveries,
+            WebhookAllowance: store.WebhookEndpointAllowance,
+            WebhookSecretId: secret?.WebhookId,
+            WebhookSecretUrl: secret?.Url,
+            WebhookSecretValue: secret?.Secret,
+            Toast: toast,
             LoadedAtText: DashboardStore.FormatUtcDateTime(DateTimeOffset.UtcNow.ToString("O")),
             Tab: tab)
         {
