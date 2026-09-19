@@ -45,7 +45,7 @@ public static class PasscodeEndpoints
                 return ApiResults.BadRequest("invalid_request", "email is required");
 
             var user = await store.FindUserByEmailAsync(instance.Id, SessionService.NormalizeEmail(body.Email), ct);
-            if (user is not null && !await ThrottledAsync(store, instance.Id, user.Id, ct))
+            if (user is { Banned: false } && !await ThrottledAsync(store, user.Id, ct))
             {
                 var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
                 await store.CreateVerificationTokenAsync(new VerificationToken
@@ -78,13 +78,19 @@ public static class PasscodeEndpoints
                 return ApiResults.BadRequest("invalid_request", "email and code are required");
 
             var user = await store.FindUserByEmailAsync(instance.Id, SessionService.NormalizeEmail(body.Email), ct);
-            var record = await store.FindVerificationTokenAsync(SecureTokens.Sha256Hex(body.Code.Trim()), ct);
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            if (user is null || record is null || record.InstanceId != instance.Id || record.Purpose != "passcode"
-                || record.UserId != user.Id || record.Consumed || record.ExpiresAt <= now)
-                return await InvalidCodeAsync(store, instance.Id, user?.Id, ct);
+            // The consume is atomic (If-Match): of two concurrent verifies of one
+            // code only the first wins, so a double POST mints at most one session.
+            var record = user is { Banned: false }
+                ? await store.ConsumeVerificationTokenAsync(
+                    SecureTokens.Sha256Hex(body.Code.Trim()),
+                    r => r.InstanceId == instance.Id && r.Purpose == "passcode" && r.UserId == user.Id
+                        && !r.Consumed && r.ExpiresAt > now,
+                    ct)
+                : null;
+            if (record is null || user is null)
+                return await InvalidCodeAsync(store, user is { Banned: false } ? user.Id : null, ct);
 
-            await store.UpsertVerificationTokenAsync(record with { Consumed = true }, ct);
             FailedAttempts.TryRemove(user.Id, out _);
 
             if (await MfaGate.RequiredForUserAsync(store, user.Id, ct))
@@ -159,23 +165,21 @@ public static class PasscodeEndpoints
     }
 
     /// <summary>True when the user already received a passcode within the resend window.</summary>
-    private static async Task<bool> ThrottledAsync(AuthStore store, string instanceId, string userId, CancellationToken ct)
+    private static async Task<bool> ThrottledAsync(AuthStore store, string userId, CancellationToken ct)
     {
         var cutoff = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - (long)ResendThrottle.TotalSeconds;
-        var recent = await store.ListVerificationTokensAsync(instanceId, "passcode", 5, ct);
-        return recent.Any(t => t.InstanceId == instanceId && t.UserId == userId && t.CreatedAt > cutoff);
+        return (await store.ListUserVerificationTokensAsync(userId, "passcode", ct)).Any(t => t.CreatedAt > cutoff);
     }
 
     /// <summary>Counts consecutive failures per user; at the cap the user's pending
     /// passcode tokens are marked consumed. Always delayed to blunt brute force.</summary>
-    private static async Task<IResult> InvalidCodeAsync(AuthStore store, string instanceId, string? userId, CancellationToken ct)
+    private static async Task<IResult> InvalidCodeAsync(AuthStore store, string? userId, CancellationToken ct)
     {
         await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
         if (userId is not null && FailedAttempts.AddOrUpdate(userId, 1, (_, count) => count + 1) >= MaxVerifyAttempts)
         {
             FailedAttempts.TryRemove(userId, out _);
-            foreach (var token in (await store.ListVerificationTokensAsync(instanceId, "passcode", 100, ct)).Where(t => t.UserId == userId && !t.Consumed))
-                await store.UpsertVerificationTokenAsync(token with { Consumed = true }, ct);
+            await store.InvalidateVerificationTokensAsync(userId, "passcode", ct);
         }
         return Results.Json(new { ok = false, error = "invalid_code" }, statusCode: 401);
     }

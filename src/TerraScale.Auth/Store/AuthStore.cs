@@ -469,6 +469,14 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<IReadOnlyList<VerificationToken>> ListVerificationTokensAsync(string instanceId, string purpose, int limit, CancellationToken ct = default) =>
         QueryAsync<VerificationToken>("verification_tokens", "purpose", purpose, limit, ct);
 
+    /// <summary>A user's tokens for one purpose. Per-user accurate: the engine
+    /// returns purpose-wide listings id-ordered and bounded, so they cannot answer
+    /// "does this user have a recent token" once other users' tokens exist.</summary>
+    public async Task<IReadOnlyList<VerificationToken>> ListUserVerificationTokensAsync(string userId, string purpose, CancellationToken ct = default) =>
+        (await QueryAsync<VerificationToken>("verification_tokens", "userId", userId, 100, ct))
+        .Where(t => t.Purpose == purpose)
+        .ToList();
+
     /// <summary>
     /// Marks a user's outstanding tokens for a purpose as consumed. Used when the email
     /// changes: a verification link proves control of the OLD address and must not be

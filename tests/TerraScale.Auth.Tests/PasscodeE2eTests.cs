@@ -69,8 +69,8 @@ public sealed class PasscodeE2eTests
             await Assert.That((await notThrottled.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ok").GetBoolean()).IsTrue();
 
         // The second request for the same user was swallowed; the other user got one.
-        await Assert.That((await AllPasscodeTokensAsync(c.Store, c.InstanceId, c.User.Id)).Count).IsEqualTo(1);
-        await Assert.That((await AllPasscodeTokensAsync(c.Store, c.InstanceId, other.Id)).Count).IsEqualTo(1);
+        await Assert.That((await AllPasscodeTokensAsync(c.Store, c.User.Id)).Count).IsEqualTo(1);
+        await Assert.That((await AllPasscodeTokensAsync(c.Store, other.Id)).Count).IsEqualTo(1);
     }
 
     [Test]
@@ -118,6 +118,30 @@ public sealed class PasscodeE2eTests
         await Assert.That((await PasscodeTokenAsync(c.Store, c.InstanceId, c.User.Id))!.Consumed).IsTrue();
         using (var dead = await c.Http.PostAsJsonAsync($"/ui/{c.Slug}/passcode/verify", new { email = c.User.Email, code = "111222" }))
             await Assert.That(dead.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task ReplayedCodeCannotMintASecondSession()
+    {
+        var c = await ArrangeAsync("replay");
+        await MintPasscodeAsync(c.Store, c.InstanceId, c.User.Id, "777888");
+
+        string firstCookie;
+        using (var verified = await c.Http.PostAsJsonAsync($"/ui/{c.Slug}/passcode/verify", new { email = c.User.Email, code = "777888" }))
+        {
+            await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            firstCookie = SessionCookie(verified)!;
+        }
+        using (var replay = await c.Http.PostAsJsonAsync($"/ui/{c.Slug}/passcode/verify", new { email = c.User.Email, code = "777888" }))
+        {
+            await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(replay.Headers.TryGetValues("Set-Cookie", out _)).IsFalse();
+        }
+
+        // Exactly one session document exists for the user.
+        var sessions = await c.Store.ListSessionsByUserAsync(c.User.Id);
+        await Assert.That(sessions.Count(s => s.Status == "active")).IsEqualTo(1);
+        await Assert.That((await new SessionService(c.Store).ResolveAsync(c.InstanceId, firstCookie)) is not null).IsTrue();
     }
 
     [Test]
@@ -216,13 +240,15 @@ public sealed class PasscodeE2eTests
 
     // ---- Helpers ---------------------------------------------------------------------
 
-    /// <summary>Stores a passcode verification token with a code the test knows.</summary>
-    private static async Task MintPasscodeAsync(AuthStore store, string instanceId, string userId, string code)
+    /// <summary>Stores a passcode verification token with a code the test knows.
+    /// The optional id lets tests control where the token lands in the engine's
+    /// id-ordered listings.</summary>
+    private static async Task MintPasscodeAsync(AuthStore store, string instanceId, string userId, string code, string? id = null)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         await store.CreateVerificationTokenAsync(new VerificationToken
         {
-            Id = "vtok_" + SecureTokens.RandomToken(20),
+            Id = id ?? "vtok_" + SecureTokens.RandomToken(20),
             InstanceId = instanceId,
             UserId = userId,
             Purpose = "passcode",
@@ -232,14 +258,11 @@ public sealed class PasscodeE2eTests
         });
     }
 
-    private static async Task<IReadOnlyList<VerificationToken>> AllPasscodeTokensAsync(AuthStore store, string instanceId, string userId)
-    {
-        var tokens = await store.ListVerificationTokensAsync(instanceId, "passcode", 10, default);
-        return tokens.Where(t => t.UserId == userId).ToList();
-    }
+    private static Task<IReadOnlyList<VerificationToken>> AllPasscodeTokensAsync(AuthStore store, string userId) =>
+        store.ListUserVerificationTokensAsync(userId, "passcode");
 
     private static async Task<VerificationToken?> PasscodeTokenAsync(AuthStore store, string instanceId, string userId) =>
-        (await AllPasscodeTokensAsync(store, instanceId, userId)).OrderByDescending(t => t.CreatedAt).FirstOrDefault();
+        (await AllPasscodeTokensAsync(store, userId)).OrderByDescending(t => t.CreatedAt).FirstOrDefault();
 
     private static string? SessionCookie(HttpResponseMessage response)
     {
