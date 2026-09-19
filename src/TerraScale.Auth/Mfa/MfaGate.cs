@@ -1,6 +1,7 @@
 namespace TerraScale.Auth.Mfa;
 
 using TerraScale.Auth.Crypto;
+using TerraScale.Auth.Keys;
 using TerraScale.Auth.Store;
 
 /// <summary>
