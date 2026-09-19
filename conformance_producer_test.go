@@ -93,7 +93,11 @@ func TestProducerHTTPTransportCorpus(t *testing.T) {
 					}
 					return &http.Response{StatusCode: response.Status, Header: http.Header{"Content-Type": {response.MediaType}, "X-Request-Id": {"producer-conformance"}}, Body: io.NopCloser(bytes.NewReader(wireBody))}, nil
 				})
-				client, err := NewClient(Config{HTTPClient: &http.Client{Transport: transport}, AccessToken: "conformance-key"})
+				// The corpus qualifies the per-operation request pipeline against
+				// the producer contract; a loopback origin keeps discovery
+				// routing (ADR 0050 §5.1) out of the way — the harness asserts
+				// the exact producer request and answer.
+				client, err := NewClient(Config{APIBaseURL: "http://127.0.0.1", HTTPClient: &http.Client{Transport: transport}, AccessToken: "conformance-key"})
 				if err != nil {
 					t.Fatal(err)
 				}

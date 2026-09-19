@@ -64,10 +64,13 @@ func ParseRegionCode(s string) (RegionCode, error) {
 type RegionAffinity string
 
 const (
-	// AffinityFailover sends a preferred-region hint and follows one 421
-	// Misdirected Request with X-TerraScale-Placement to repair pinning.
+	// AffinityFailover routes through discovery with per-scope regional
+	// failover on the public origins (ADR 0050); on custom origins it sends
+	// a preferred-region hint and follows one 421 Misdirected Request with
+	// X-TerraScale-Placement to repair pinning.
 	AffinityFailover RegionAffinity = "failover"
-	// AffinityStrict pins REST to <region>.api.terrascale.tech.
+	// AffinityStrict pins REST to <region>.api.terrascale.tech and never
+	// discovers.
 	AffinityStrict RegionAffinity = "strict"
 )
 
@@ -84,13 +87,22 @@ const (
 	ConsistencyWritesFollowReads Consistency = "writes-follow-reads"
 )
 
-// DefaultAPIBaseURL is the first-contact REST entry point (GOAL D-24/D-58).
-const DefaultAPIBaseURL = "https://api.terrascale.tech"
+// DefaultAPIBaseURL is the dashboard-owned product API origin (ADR 0050 §8):
+// product routes only; member traffic routes through discovery to regional
+// endpoints (GOAL D-24/D-58).
+const DefaultAPIBaseURL = "https://" + publicAPIHostname
 
 // Config configures a Client.
 type Config struct {
-	// APIBaseURL overrides the default first-contact URL (tests, proxies).
+	// APIBaseURL overrides the default product API origin (tests, custom
+	// origins).
 	APIBaseURL string
+	// DiscoveryBaseURL overrides the metadata origin — discovery and the
+	// region catalog (ADR 0050) — for tests and development. It defaults to
+	// https://atlas.terrascale.tech and is independent of APIBaseURL.
+	// Discovery routing is active when it is set or the API base is the
+	// public global origin, and never with strict affinity.
+	DiscoveryBaseURL string
 	// AccessToken is a static credential. TokenProvider takes precedence.
 	AccessToken string
 	// TokenProvider returns the credential dynamically, if set.
@@ -122,6 +134,10 @@ type Config struct {
 type Client struct {
 	cfg  Config
 	http *http.Client
+	// router resolves regional endpoints through discovery and the region
+	// catalog (ADR 0050). It is nil when discovery is inactive: custom
+	// origins and strict affinity keep direct configured routing.
+	router *discoveryRouter
 
 	mu     sync.RWMutex
 	pinned RegionCode
@@ -186,6 +202,25 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("sdk: clients may target only the public API, not TBEP or TerraBase")
 	}
 
+	discoveryBase := strings.TrimSpace(cfg.DiscoveryBaseURL)
+	if discoveryBase != "" {
+		discoveryBase = strings.TrimSuffix(discoveryBase, "/")
+		discoveryURL, err := url.Parse(discoveryBase + "/")
+		if err != nil || (discoveryURL.Scheme != "http" && discoveryURL.Scheme != "https") || discoveryURL.Host == "" {
+			return nil, fmt.Errorf("sdk: discovery base URL must be an absolute http or https URL")
+		}
+		if discoveryURL.RawQuery != "" || discoveryURL.Fragment != "" || discoveryURL.User != nil {
+			return nil, fmt.Errorf("sdk: discovery base URL must not contain a query, fragment, or userinfo")
+		}
+		if discoveryURL.Scheme == "http" && !isDevOrigin(discoveryURL.Hostname()) {
+			return nil, fmt.Errorf("sdk: the discovery origin must use HTTPS, except loopback dev origins")
+		}
+		discoveryHost := strings.ToLower(discoveryURL.Hostname())
+		if strings.Contains(discoveryHost, "tbep") || strings.Contains(discoveryHost, "terrabase") {
+			return nil, fmt.Errorf("sdk: clients may target only the public API, not TBEP or TerraBase")
+		}
+	}
+
 	affinity := cfg.Affinity
 	if affinity == "" {
 		affinity = AffinityFailover
@@ -243,6 +278,7 @@ func NewClient(cfg Config) (*Client, error) {
 
 	c := &Client{cfg: Config{
 		APIBaseURL:       base,
+		DiscoveryBaseURL: discoveryBase,
 		AccessToken:      cfg.AccessToken,
 		TokenProvider:    cfg.TokenProvider,
 		ProjectID:        cfg.ProjectID,
@@ -254,6 +290,16 @@ func NewClient(cfg Config) (*Client, error) {
 		RetryDelay:       retryDelay,
 		RequestTimeout:   requestTimeout,
 	}, http: httpClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
+	// Discovery routing (ADR 0050 §5.1) applies only to the public origins:
+	// custom origins and strict affinity keep direct configured routing.
+	if affinity != AffinityStrict {
+		if discoveryBase == "" && strings.EqualFold(lowerHost, publicAPIHostname) {
+			discoveryBase = DefaultDiscoveryBaseURL
+		}
+		if discoveryBase != "" {
+			c.router = newDiscoveryRouter(discoveryBase, base, preferred, httpClient, cfg.ProjectID, cfg.TenantID)
+		}
+	}
 	regional := make(map[RegionCode]string, 3)
 	for _, region := range []RegionCode{RegionGRU, RegionSFO, RegionFRA} {
 		regional[region] = regionalizeHost(base, region)
@@ -400,25 +446,77 @@ func numericToken(token string) (uint64, bool) {
 	return sequence, err == nil
 }
 
-// requestBase returns the current origin and whether that origin was selected
-// without a learned or explicit pin, using one lock acquisition.
-func (c *Client) requestBase() (string, bool) {
+// requestBase returns the origin for a client without discovery routing: a
+// learned or explicit pin's regional origin, else the configured origin.
+func (c *Client) requestBase() string {
 	c.mu.RLock()
 	pinned, cfg := c.pinned, c.cfg
 	c.mu.RUnlock()
-	globalFirstContact := cfg.Affinity == AffinityFailover && pinned == ""
 	switch cfg.Affinity {
 	case AffinityStrict:
 		region := pinned
 		if region == "" {
 			region = cfg.PreferredRegion
 		}
-		return c.regional[region], false
+		return c.regional[region]
 	default:
 		if pinned != "" {
-			return c.regional[pinned], false
+			return c.regional[pinned]
 		}
-		return cfg.APIBaseURL, globalFirstContact
+		return cfg.APIBaseURL
+	}
+}
+
+// routeClass classifies one request path for discovery routing.
+type routeClass int
+
+const (
+	// routeMember covers member-served routes: database-scoped requests and
+	// database-less routes such as database create/list and reactive attach.
+	routeMember routeClass = iota
+	// routeCatalog is /api/v1/regions exactly, served by the atlas origin.
+	routeCatalog
+	// routeProduct covers dashboard-owned product routes on the product origin.
+	routeProduct
+)
+
+// classifyRoute applies the fixed route table (ADR 0050 §1/§8). It is called
+// only when discovery routing is active.
+func classifyRoute(path string) routeClass {
+	switch {
+	case isRegionCatalogRoute(path):
+		return routeCatalog
+	case isProductRoute(path):
+		return routeProduct
+	default:
+		return routeMember
+	}
+}
+
+// resolveAttemptBase returns the origin for one attempt and the region that
+// origin was routed to (empty when the origin was not discovery-selected).
+// Member routes with no resolvable regional endpoint return a typed
+// RoutingError: there is no proxy to fall back to (ADR 0050 §5.8).
+func (c *Client) resolveAttemptBase(ctx context.Context, method, path, route string, class routeClass, database string, needsWrite bool) (string, string, error) {
+	if c.router == nil {
+		return c.requestBase(), "", nil
+	}
+	switch class {
+	case routeCatalog:
+		return c.router.origin, "", nil
+	case routeProduct:
+		return c.cfg.APIBaseURL, "", nil
+	default:
+		if database != "" {
+			if base, ok := c.router.resolveBase(ctx, database, needsWrite); ok {
+				return base.baseURL, base.region, nil
+			}
+		}
+		base, err := c.router.resolveCatalogBase(ctx)
+		if err != nil {
+			return "", "", &RoutingError{Route: route, Method: method, Path: path, Err: err}
+		}
+		return base, "", nil
 	}
 }
 
@@ -463,6 +561,14 @@ type requestConfig struct {
 	createOnly         bool
 	authTransaction    string
 	noRetry            bool
+	// routingDatabase routes a database-less member route (reactive attach)
+	// through the database's discovered regional endpoint (ADR 0050 §5.7).
+	routingDatabase string
+	// retryableRead marks a named read operation whose POST body is safe to
+	// repeat (reactive attach); it selects a read-capable endpoint.
+	retryableRead bool
+	// capturedBase receives the origin each attempt used.
+	capturedBase *string
 }
 
 // RequestOption customizes one request.
@@ -569,6 +675,11 @@ var retryableStatuses = map[int]bool{
 	http.StatusBadGateway:          true,
 	http.StatusServiceUnavailable:  true,
 	http.StatusGatewayTimeout:      true,
+	520:                            true,
+	521:                            true,
+	522:                            true,
+	523:                            true,
+	524:                            true,
 }
 
 // do performs one API call: path must stay under /api/v1.
@@ -676,17 +787,50 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		requestCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
+	// ADR 0050 §1/§8 route classification: database-scoped requests route
+	// through discovery to a direct regional endpoint, product routes target
+	// the product origin, and every other member route selects a regional
+	// endpoint from the catalog. There is no proxy fallback anymore.
+	routingDatabase := rc.routingDatabase
+	if routingDatabase == "" {
+		routingDatabase, _ = parseRoutingDatabase(path)
+	}
+	class := routeMember
+	if c.router != nil {
+		class = classifyRoute(path)
+	}
+	needsWrite := isMutation(method) && !(method == http.MethodPost && rc.retryableRead)
 	attempt := 0
 	followed421 := false
 	recoveredPin := false
 	for {
-		base, globalFirstContact := c.requestBase()
+		base, routedRegion, routingErr := c.resolveAttemptBase(requestCtx, method, path, route, class, routingDatabase, needsWrite)
+		if routingErr != nil {
+			return routingErr
+		}
+		if rc.capturedBase != nil {
+			*rc.capturedBase = base
+		}
+		attemptStart := time.Now()
 		status, headers, respBody, transportErr := c.roundTrip(requestCtx, method, base, path, query, payload, rc, idem)
+		if routedRegion != "" && c.router != nil && transportErr == nil && status < 500 {
+			// Measured latency outranks geography (ADR 0050 §2): every
+			// successful round trip to a discovered regional endpoint feeds
+			// the per-region estimate the next discovery request reports.
+			c.router.observeRtt(routedRegion, time.Since(attemptStart))
+		}
 		if rc.responseHeaders != nil {
 			*rc.responseHeaders = headers.Clone()
 		}
 		if transportErr != nil {
-			if !recoveredPin && requestCtx.Err() == nil && canRecoverRead(method) && c.clearFailedPin(base) {
+			if routingDatabase != "" && c.router != nil && routedRegion != "" {
+				// A regional endpoint implicated by a transport failure moves
+				// behind the eligible alternatives (ADR 0050 §5.3).
+				c.router.reportRegionFailure(routingDatabase, routedRegion)
+			}
+			if !recoveredPin && requestCtx.Err() == nil && routedRegion != "" && canRecoverRead(method) {
+				// The routed endpoint failed to answer; the next attempt
+				// selects the next endpoint in the document.
 				recoveredPin = true
 				continue
 			}
@@ -700,6 +844,12 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			return fmt.Errorf("sdk: %s %s (%s): %w", method, path, route, transportErr)
 		}
 		if status == http.StatusMisdirectedRequest && !followed421 && c.cfg.Affinity != AffinityStrict {
+			if routingDatabase != "" && c.router != nil {
+				// The member is authoritative (ADR 0043 §2): adopt its
+				// placement immediately and schedule a corrective
+				// rediscovery (ADR 0050 §5.4).
+				c.router.notePlacement(routingDatabase, placementRegions(headers))
+			}
 			if code, ok := placementRegionExcluding(headers, c.PinnedRegion()); ok {
 				c.setPinned(code)
 				if canRepairPlacement(method, idem) {
@@ -717,9 +867,6 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		if status >= 200 && status < 300 {
 			// A successful response advances the causal frontier even when the
 			// caller requested no response body (for example DELETE/204).
-			if globalFirstContact {
-				c.observeServingRegion(headers)
-			}
 			c.observeSession(headers)
 			if decoder, ok := out.(interface{ decodeHTTPResponse(int, []byte) error }); ok {
 				return decoder.decodeHTTPResponse(status, respBody)
@@ -732,15 +879,18 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		if route == "health" && status == http.StatusServiceUnavailable {
 			return decodeSuccess(out, respBody, headers.Get("Content-Type"))
 		}
+		if routingDatabase != "" && c.router != nil && routedRegion != "" && retryableStatuses[status] {
+			// A regional endpoint implicated by a retryable failure moves
+			// behind the eligible alternatives (ADR 0050 §5.3).
+			c.router.reportRegionFailure(routingDatabase, routedRegion)
+		}
 		apiErr := errorFromResponse(route, method, path, status, headers, respBody)
-		if !recoveredPin && canRecoverRead(method) && (status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
-			if c.clearFailedPin(base) {
-				if err := sleepContext(requestCtx, c.retryDelayFor(headers, 0)); err != nil {
-					return err
-				}
-				recoveredPin = true
-				continue
+		if !recoveredPin && requestCtx.Err() == nil && routedRegion != "" && canRecoverRead(method) && originFailureStatus(status) {
+			if err := sleepContext(requestCtx, c.retryDelayFor(headers, 0)); err != nil {
+				return err
 			}
+			recoveredPin = true
+			continue
 		}
 		if !rc.noRetry && idem != "" && attempt < c.cfg.MaxRetryAttempts && retryableStatuses[status] {
 			if sleepErr := sleepContext(requestCtx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
@@ -761,32 +911,19 @@ func canRepairPlacement(method, idempotencyKey string) bool {
 	return method == http.MethodGet || (isMutation(method) && idempotencyKey != "")
 }
 
-// clearFailedPin returns to first contact only for the failed canonical
-// regional origin. A concurrent request's newer pin must remain intact.
-// Custom endpoints and strict affinity retain their configured routing.
-func (c *Client) clearFailedPin(base string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.cfg.Affinity != AffinityFailover || c.pinned == "" || base == c.cfg.APIBaseURL || base != c.regional[c.pinned] {
+// originFailureStatus reports the origin-failure statuses a bounded read
+// failover may repair by moving to the next endpoint: the standard gateway
+// failures plus Cloudflare's 52x origin connectivity class (520 unknown,
+// 521 origin down, 522 connection timed out, 523 origin unreachable, 524
+// origin timeout), which are returned before the request reaches the member.
+func originFailureStatus(status int) bool {
+	switch status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout,
+		520, 521, 522, 523, 524:
+		return true
+	default:
 		return false
 	}
-	c.pinned = ""
-	return true
-}
-
-// observeServingRegion learns the serving region only from a successful
-// global first-contact response. A direct regional response cannot move an
-// existing pin, and malformed or untrusted header values are ignored.
-func (c *Client) observeServingRegion(headers http.Header) {
-	region, ok := servingRegion(headers)
-	if !ok {
-		return
-	}
-	c.mu.Lock()
-	if c.cfg.Affinity == AffinityFailover && c.pinned == "" {
-		c.pinned = region
-	}
-	c.mu.Unlock()
 }
 
 func (c *Client) roundTrip(ctx context.Context, method, base, path string, query url.Values, payload []byte, rc requestConfig, idem string) (int, http.Header, []byte, error) {
@@ -824,7 +961,7 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 	hint := rc.regionHint
 	if hint == "" && (c.cfg.Affinity == AffinityFailover || c.cfg.Affinity == AffinityStrict) {
 		// A learned 421 pin wins over the configured preferred region. Strict
-		// affinity also needs this header when APIBaseURL is a custom proxy,
+		// affinity also needs this header when APIBaseURL is a custom origin,
 		// because regionalizeHost cannot rewrite a non-canonical hostname.
 		if pinned != "" {
 			hint = pinned
@@ -1055,40 +1192,32 @@ func defaultErrorCode(status int) string {
 	}
 }
 
-// servingRegionHeaders are the member/proxy response names for the region
-// that actually served a request. The legacy region spelling remains accepted
-// for compatibility with the v1 contract.
-var servingRegionHeaders = []string{
-	"X-TerraScale-Serving-Region",
-	"X-TerraScale-Region",
-}
-
-// servingRegion accepts one canonical region value from a serving-region
-// response header. Header names are compared case-insensitively because
-// callers and test transports may construct http.Header maps directly rather
-// than through Header.Set. Multiple aliases must agree; otherwise an
-// ambiguous response is not trusted for pinning.
-func servingRegion(h http.Header) (RegionCode, bool) {
-	var selected RegionCode
-	seen := false
-	for _, name := range servingRegionHeaders {
-		for _, value := range headerValuesFold(h, name) {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				continue
+// placementRegions returns every known region in the authoritative placement
+// header, order preserved (home first, ADR 0043 §1). The member's placement
+// teaches the routing cache without a discovery round trip (ADR 0050 §5.4).
+func placementRegions(h http.Header) []RegionCode {
+	var regions []RegionCode
+	for _, key := range []string{"X-TerraScale-Placement", "X-TerraScale-Region"} {
+		for _, value := range headerValuesFold(h, key) {
+			for _, candidate := range strings.Split(value, ",") {
+				region, err := ParseRegionCode(candidate)
+				if err != nil {
+					continue
+				}
+				known := false
+				for _, seen := range regions {
+					if seen == region {
+						known = true
+						break
+					}
+				}
+				if !known {
+					regions = append(regions, region)
+				}
 			}
-			region, err := ParseRegionCode(value)
-			if err != nil {
-				return "", false
-			}
-			if seen && region != selected {
-				return "", false
-			}
-			selected = region
-			seen = true
 		}
 	}
-	return selected, seen
+	return regions
 }
 
 func headerValuesFold(h http.Header, name string) []string {
@@ -1109,14 +1238,6 @@ func headerValuesFold(h http.Header, name string) []string {
 		}
 	}
 	return values
-}
-
-func placementOf(h http.Header) string {
-	region, ok := placementRegion(h)
-	if !ok {
-		return ""
-	}
-	return string(region)
 }
 
 // placementRegion accepts only a single known region from the authoritative

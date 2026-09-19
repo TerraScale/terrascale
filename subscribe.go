@@ -315,10 +315,13 @@ type Subscription struct {
 	capability       string
 	capabilityHeader string
 	region           string
-	sessionToken     string
-	statement        string
-	parameters       []byte
-	websocket        *websocket.Conn
+	// memberOrigin is the regional origin that minted the view capability;
+	// the direct WebSocket transport dials it (ADR 0050 §5.7).
+	memberOrigin string
+	sessionToken string
+	statement    string
+	parameters   []byte
+	websocket    *websocket.Conn
 
 	mu         sync.RWMutex
 	checkpoint Checkpoint
@@ -446,7 +449,7 @@ func (s *Subscription) deliver(u Update) bool {
 // Execute attaches to a shared view and returns one snapshot ("subscribe
 // once"). Use Subscribe for the live stream.
 func (c *Client) Execute(ctx context.Context, databaseID, statement string, params []any, opts ...RequestOption) (*Snapshot, error) {
-	attach, err := c.attach(ctx, databaseID, statement, params, SubscriptionOptions{}, opts)
+	attach, _, err := c.attach(ctx, databaseID, statement, params, SubscriptionOptions{}, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +478,7 @@ func (c *Client) Execute(ctx context.Context, databaseID, statement string, para
 // Close is called. A typed reset is delivered as an UpdateReset event and
 // ends the stream; resubscribe for a fresh authorized snapshot.
 func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, params []any, sub SubscriptionOptions, opts ...RequestOption) (*Subscription, error) {
-	attach, err := c.attach(ctx, databaseID, statement, params, sub, opts)
+	attach, memberOrigin, err := c.attach(ctx, databaseID, statement, params, sub, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -512,6 +515,7 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 		capability:       attach.Capability,
 		capabilityHeader: attach.CapabilityHeader,
 		region:           normalizeRegion(attach.Region),
+		memberOrigin:     memberOrigin,
 		sessionToken:     c.SessionToken(),
 		statement:        statement,
 		checkpoint:       attach.Checkpoint,
@@ -575,9 +579,15 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 }
 
 func (c *Client) dialReactiveWebSocket(ctx context.Context, s *Subscription) (*websocket.Conn, error) {
-	origin, err := reactiveOrigin(c)
-	if err != nil {
-		return nil, err
+	// The view capability is region-bound: dial the regional member origin
+	// the attach selected, not the configured origin (ADR 0050 §5.7).
+	origin := s.memberOrigin
+	if origin == "" {
+		var err error
+		origin, err = reactiveOrigin(c)
+		if err != nil {
+			return nil, err
+		}
 	}
 	u, err := url.Parse(origin + canonicalReactivePath(s.viewID, s.generation, "websocket"))
 	if err != nil {
@@ -930,16 +940,16 @@ func mpBinaryValue(v []byte) []byte {
 	return append([]byte{0xc6, byte(len(v) >> 24), byte(len(v) >> 16), byte(len(v) >> 8), byte(len(v))}, v...)
 }
 
-func (c *Client) attach(ctx context.Context, databaseID, statement string, params []any, sub SubscriptionOptions, opts []RequestOption) (*attachResponse, error) {
+func (c *Client) attach(ctx context.Context, databaseID, statement string, params []any, sub SubscriptionOptions, opts []RequestOption) (*attachResponse, string, error) {
 	if strings.TrimSpace(databaseID) == "" {
-		return nil, fmt.Errorf("sdk: database id cannot be empty")
+		return nil, "", fmt.Errorf("sdk: database id cannot be empty")
 	}
 	parameterMap, err := canonicalSQLParameters(params)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := ValidateSQL(statement, parameterMap); err != nil {
-		return nil, fmt.Errorf("sdk: only live-subset read-only statements are subscribable: %w", err)
+		return nil, "", fmt.Errorf("sdk: only live-subset read-only statements are subscribable: %w", err)
 	}
 	transport := sub.Transport
 	if transport == "" {
@@ -948,17 +958,29 @@ func (c *Client) attach(ctx context.Context, databaseID, statement string, param
 	if sub.RegionHint != "" {
 		region, err := ParseRegionCode(string(sub.RegionHint))
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		opts = append(opts, WithRegionHint(region))
 	}
+	var attachBase string
+	var attachHeaders http.Header
+	opts = append(opts, func(rc *requestConfig) {
+		// ADR 0050 §5.7: attach goes to the database's discovered regional
+		// endpoint (the catalog-selected origin when discovery cannot
+		// answer). The captured base and serving region derive the member
+		// origin for the direct WebSocket transport.
+		rc.routingDatabase = databaseID
+		rc.retryableRead = true
+		rc.capturedBase = &attachBase
+		rc.responseHeaders = &attachHeaders
+	})
 	req := attachRequest{
 		DatabaseID: databaseID,
 		Statement:  statement,
 	}
 	parameterBytes, err := json.Marshal(parameterMap)
 	if err != nil {
-		return nil, fmt.Errorf("sdk: encode reactive parameters: %w", err)
+		return nil, "", fmt.Errorf("sdk: encode reactive parameters: %w", err)
 	}
 	req.Parameters = base64.StdEncoding.EncodeToString(parameterBytes)
 	if sub.ResumeFrom != "" {
@@ -967,12 +989,45 @@ func (c *Client) attach(ctx context.Context, databaseID, statement string, param
 	}
 	var out attachResponse
 	if err := c.do(ctx, "POST", "/api/v1/reactive/views", nil, req, &out, "reactive.attach", opts...); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if strings.TrimSpace(out.ViewID) == "" {
-		return nil, fmt.Errorf("sdk: attach response missing view id")
+		return nil, "", fmt.Errorf("sdk: attach response missing view id")
 	}
-	return &out, nil
+	return &out, memberOriginForAttach(attachBase, attachHeaders, out.Region), nil
+}
+
+// memberOriginForAttach derives the regional member origin that minted the
+// view capability: the attach base regionalized by the serving region
+// (ADR 0050 §5.7). A missing region keeps the attach base, which is already
+// regional under discovery; custom origins are never rewritten.
+func memberOriginForAttach(base string, headers http.Header, bodyRegion string) string {
+	if base == "" {
+		return ""
+	}
+	region := normalizeRegion(headerRegion(headers))
+	if region == "" {
+		region = normalizeRegion(bodyRegion)
+	}
+	if region == "" {
+		return base
+	}
+	return regionalizeHost(base, RegionCode(region))
+}
+
+// headerRegion reads the member's serving-region response header. Header
+// names are compared case-insensitively: callers and test transports may
+// construct http.Header maps directly rather than through Header.Set.
+func headerRegion(headers http.Header) string {
+	if headers == nil {
+		return ""
+	}
+	for _, value := range headerValuesFold(headers, "X-TerraScale-Region") {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // decodeCheckpoint converts the producer's base64 checkpoint spelling to the

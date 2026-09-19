@@ -4,7 +4,7 @@
     "title": "TerraScale Edge Region Catalog",
     "version": "v1"
   },
-  "servers": [{ "url": "https://api.terrascale.tech" }],
+  "servers": [{ "url": "https://atlas.terrascale.tech" }],
   "paths": {
     "/api/v1/regions": {
       "get": {

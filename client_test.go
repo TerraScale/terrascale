@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -157,50 +156,6 @@ func TestCoreTransportDoesNotReplayUnkeyedMutationAfterPlacement421(t *testing.T
 	}
 }
 
-func TestCoreTransportLearnsServingRegionAndPinsFollowingReadsAndWrites(t *testing.T) {
-	var calls atomic.Int32
-	transport := pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
-		call := calls.Add(1)
-		wantHost := "api.terrascale.tech"
-		if call > 1 {
-			wantHost = "sfo.api.terrascale.tech"
-		}
-		if r.URL.Host != wantHost {
-			t.Errorf("request %d host = %q, want %q", call, r.URL.Host, wantHost)
-		}
-		headers := make(http.Header)
-		if call == 1 {
-			// Deliberately use a non-canonical map key: Header names are
-			// case-insensitive on the wire and in the SDK trust boundary.
-			headers["x-terrascale-serving-region"] = []string{" sFo "}
-		}
-		headers.Set("Content-Type", "application/json")
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     headers,
-			Body:       io.NopCloser(strings.NewReader(`{}`)),
-			Request:    r,
-		}, nil
-	})
-	httpClient := &http.Client{Transport: transport}
-	c, err := NewClient(Config{APIBaseURL: "https://api.terrascale.tech", HTTPClient: httpClient, AccessToken: "token"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.do(context.Background(), http.MethodGet, "/api/v1/read", nil, nil, nil, "read"); err != nil {
-		t.Fatal(err)
-	}
-	if got := c.PinnedRegion(); got != RegionSFO {
-		t.Fatalf("learned pin = %q, want %q", got, RegionSFO)
-	}
-	if err := c.do(context.Background(), http.MethodPost, "/api/v1/write", nil, map[string]string{"ok": "yes"}, nil, "write", WithIdempotencyKey("stable")); err != nil {
-		t.Fatal(err)
-	}
-	if got := calls.Load(); got != 2 {
-		t.Fatalf("calls = %d, want 2", got)
-	}
-}
-
 func TestStrictAffinitySendsRegionHintThroughCustomProxy(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -223,64 +178,6 @@ func TestStrictAffinitySendsRegionHintThroughCustomProxy(t *testing.T) {
 	}
 	if got != string(RegionSFO) {
 		t.Fatalf("custom proxy region hint = %q, want %q", got, RegionSFO)
-	}
-}
-
-func TestCoreTransportDoesNotLearnMalformedOrMissingServingRegion(t *testing.T) {
-	for _, value := range []string{"", "SFO,GRU", "https://sfo.api.terrascale.tech", "evil.invalid"} {
-		t.Run(value, func(t *testing.T) {
-			transport := pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				headers := make(http.Header)
-				if value != "" {
-					headers["X-TERRASCALE-SERVING-REGION"] = []string{value}
-				}
-				headers.Set("Content-Type", "application/json")
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Header:     headers,
-					Body:       io.NopCloser(strings.NewReader(`{}`)),
-					Request:    r,
-				}, nil
-			})
-			c, err := NewClient(Config{APIBaseURL: "https://api.terrascale.tech", HTTPClient: &http.Client{Transport: transport}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := c.do(context.Background(), http.MethodGet, "/api/v1/read", nil, nil, nil, "read"); err != nil {
-				t.Fatal(err)
-			}
-			if got := c.PinnedRegion(); got != "" {
-				t.Fatalf("untrusted serving region %q was learned", got)
-			}
-		})
-	}
-}
-
-func TestServingRegionObservationIsConcurrentAndDoesNotRepin(t *testing.T) {
-	c, err := NewClient(Config{APIBaseURL: "https://api.terrascale.tech"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var group sync.WaitGroup
-	for i := 0; i < 128; i++ {
-		group.Add(1)
-		go func() {
-			defer group.Done()
-			headers := make(http.Header)
-			headers["x-terrascale-serving-region"] = []string{"sfo"}
-			c.observeServingRegion(headers)
-		}()
-	}
-	group.Wait()
-	if got := c.PinnedRegion(); got != RegionSFO {
-		t.Fatalf("concurrent learned pin = %q, want %q", got, RegionSFO)
-	}
-	// A later response cannot repin an already learned client.
-	headers := make(http.Header)
-	headers.Set("X-TerraScale-Region", "FRA")
-	c.observeServingRegion(headers)
-	if got := c.PinnedRegion(); got != RegionSFO {
-		t.Fatalf("pin was repinned from %q to %q", RegionSFO, got)
 	}
 }
 

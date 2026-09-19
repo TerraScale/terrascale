@@ -2,9 +2,65 @@
 
 Go SDK for the TerraScale public API. The package provides document CRUD,
 typed schema and SQL builders, parameterized SQL execution, reactive
-subscribe/execute with checkpoints and typed resets, region affinity,
-tenant-scoped authorization and leases, database management, durable imports and exports, and auth
-persistence.
+subscribe/execute with checkpoints and typed resets, discovery-driven regional
+routing, tenant-scoped authorization and leases, database management, durable
+imports and exports, and auth persistence.
+
+## Atlas discovery and regional routing (ADR 0050)
+
+There is no per-request proxy anymore. Routing follows the ADR 0050
+discovery-first flow:
+
+- **Database-scoped requests** (`/api/v1/databases/{name}/…`) first resolve
+  the database's eligible regional endpoints with one metadata GET,
+  `https://atlas.terrascale.tech/api/v1/discovery?database=…&branch=main`,
+  then connect directly to the selected `<region>.api.terrascale.tech`
+  member. Documents are cached per routing scope (origin, database, branch,
+  project, tenant) for the document's `refreshSeconds` (clamped to 60–3600s);
+  concurrent lookups for one scope share a single request. The selected
+  region is sticky across refreshes while it stays eligible; a request picks
+  the first endpoint whose capabilities cover the operation (`write` for
+  mutations, `read` otherwise). A transport error or a Cloudflare 52x/503
+  against a regional endpoint demotes that endpoint behind the alternatives
+  for safe reads and idempotency-keyed mutations. Measured latency is fed
+  back into ranking: every successful request to a discovered regional
+  endpoint updates a per-region EWMA (60 s halflife) that travels as the
+  `X-TerraScale-Region-Rtt` header on discovery requests — never to member
+  endpoints — where it outranks geography. Refreshes also send the cached
+  document's revision as the `rev` query parameter for observability and
+  server-side stale detection.
+- **Discovery failure degrades to the region catalog**
+  (`GET https://atlas.terrascale.tech/api/v1/regions`, cached five minutes):
+  the request goes directly to the first available regional host. When the
+  catalog cannot answer either, member routes fail with a typed
+  `*sdk.RoutingError` — they never fall back to a proxy or to the bare
+  product origin.
+- **Product routes** (`/api/v1/organizations…`, `/api/v1/projects…`,
+  `/api/v1/regions/{code}`) target the configured product origin,
+  `api.terrascale.tech`, which the dashboard serves. `/api/v1/regions`
+  exactly is the catalog itself and targets the atlas origin.
+- **Database-less member routes** (for example database create/list and the
+  reactive attach) use the catalog-selected regional endpoint; the reactive
+  attach resolves through the database's discovery scope and its WebSocket
+  dials the regional member origin that minted the view capability.
+- **421 Misdirected Request** keeps the ADR 0043 repair-once contract (safe
+  reads and keyed mutations only) and additionally adopts the member's
+  authoritative placement into the routing cache, scheduling one corrective
+  rediscovery (`stale=1`). `404` never triggers rediscovery.
+
+Discovery is active when `APIBaseURL` is the public global origin (the
+default) or `DiscoveryBaseURL` is configured. Custom origins, the local
+emulator, and `Affinity: AffinityStrict` keep direct configured routing and
+never discover. `Config.DiscoveryBaseURL` overrides the metadata origin for
+tests and development (loopback dev origins may serve `http` regional
+endpoints); it is independent of `APIBaseURL`.
+
+Migration note (from the ADR 0043 flow): the global first-contact pin
+learning, the pin-clearing recovery to the global origin, and every other
+member-data request to the bare `api.terrascale.tech` origin are gone.
+`PinRegion`/`PreferredRegion` remain the explicit region pin and
+`X-TerraScale-Preferred-Region` hint; under discovery the router owns
+stickiness and failover per database scope.
 
 ## Contract source
 
@@ -42,16 +98,17 @@ closed connection ends the subscription; an unexpected transport or protocol
 failure delivers a typed `ResetReconnect` update, after which the caller can
 create a new subscription using its last checkpoint.
 
-## Region discovery and member health
+## Region catalog and member health
 
-`Regions.List` calls the edge-owned `GET /api/v1/regions` route and decodes
+`Regions.List` calls the atlas-owned `GET /api/v1/regions` route (the same
+catalog the SDK consults internally when discovery cannot answer) and decodes
 the ordered `RegionCatalogResponse` (including regional hosts). A regional
-TerraBase member intentionally uses that same path for its health-shaped
-probe; it returns `HealthResponse`, not a catalog. `Regions.Health` and
-`Regions.Status` therefore call the member's `/api/v1/health` route. Keep the
-two producers separate when configuring a client: the edge contract is pinned
-in `contracts/edge/v1`, while the member contract is pinned in the TerraBase
-bundle. See TerraBase ADR 0043.
+TerraBase member intentionally uses that same path shape for its
+health-shaped probe; it returns `HealthResponse`, not a catalog.
+`Regions.Health` and `Regions.Status` therefore call the member's
+`/api/v1/health` route. Keep the two producers separate when configuring a
+client: the atlas contract is pinned in `contracts/edge/v1`, while the member
+contract is pinned in the TerraBase bundle. See TerraBase ADRs 0043 and 0050.
 
 SQL projection numbers in `SQLRow.Value` decode as `json.Number`. Use its
 `Int64` method for integer values; this preserves values above 2^53 without

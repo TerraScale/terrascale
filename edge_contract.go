@@ -11,7 +11,7 @@ type EdgeContractRoute struct {
 
 const (
 	EdgeContractVersion       = "v1"
-	EdgeContractOpenAPISHA256 = "ea10c9124b918774a408c05cc5e6c2d51e7f2f8da512d3a46bc39929581137bc"
+	EdgeContractOpenAPISHA256 = "44705aeb48706308014712a3c04fa365fbc48bceef5ad7565cc3b2a03ec038d4"
 )
 
 var EdgeContractRoutes = []EdgeContractRoute{
