@@ -81,6 +81,8 @@ public static class ManagementEndpoints
                 if (await store.FindUserByEmailAsync(context.Instance.Id, SessionService.NormalizeEmail(body.Email), ct) is not null)
                     return ApiResults.Conflict("email_taken", "an account with this email already exists");
             }
+            if (!await Billing.Quota.AllowsSignUpAsync(store, context.Instance.Id, ct))
+                return ApiResults.Error(402, "quota_exceeded", "the instance has reached its plan's user quota; upgrade to add more users");
 
             User created;
             try

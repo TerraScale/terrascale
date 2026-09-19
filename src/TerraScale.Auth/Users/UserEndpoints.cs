@@ -37,6 +37,45 @@ public static class UserEndpoints
 
     // ---- Handlers -------------------------------------------------------------------
 
+    /// <summary>Auto-joins the user to any organization whose enrollment domain matches their email.</summary>
+    private static async Task EnrollByDomainAsync(AuthStore store, string instanceId, User user, CancellationToken ct)
+    {
+        if (user.Email is null || user.Email.Split('@') is not [_, var domain, ..])
+            return;
+        foreach (var orgDomain in await store.ListOrgDomainsAsync(instanceId, ct))
+        {
+            if (string.Equals(orgDomain.Domain, domain, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    await store.CreateMembershipAsync(new OrgMembership
+                    {
+                        Id = "mem_" + Crypto.SecureTokens.RandomToken(20),
+                        InstanceId = instanceId,
+                        OrgId = orgDomain.OrgId,
+                        UserId = user.Id,
+                        MemberKey = $"{orgDomain.OrgId}:{user.Id}",
+                        Role = "member",
+                        CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    }, ct);
+                    await store.CreateAuditEventAsync(new AuditEvent
+                    {
+                        Id = "evt_" + Crypto.SecureTokens.RandomToken(20),
+                        InstanceId = instanceId,
+                        Type = "organization.enrolled",
+                        ActorId = user.Id,
+                        Data = new Dictionary<string, object> { ["org_id"] = orgDomain.OrgId, ["domain"] = orgDomain.Domain },
+                        CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    }, ct);
+                }
+                catch (TerraScaleApiException exception) when (exception.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed)
+                {
+                    // Already a member — enrollment is idempotent.
+                }
+            }
+        }
+    }
+
     private static async Task<IResult> SignUpAsync(string slug, HttpRequest request, AuthStore store, SessionService sessions, IEmailSender emailSender, AuthOptions options, CancellationToken ct)
     {
         var instance = await PageInstanceAsync(store, slug, ct);
@@ -55,6 +94,8 @@ public static class UserEndpoints
             return SignUpPage(slug, "Please enter a valid email address.", email, name);
         if (password.Length < 8)
             return SignUpPage(slug, "Password must be at least 8 characters.", email, name);
+        if (!await Billing.Quota.AllowsSignUpAsync(store, instance.Id, ct))
+            return SignUpPage(slug, "This app has reached its user limit. The owner can raise it by upgrading the plan.", email, name);
 
         User user;
         try
@@ -70,6 +111,7 @@ public static class UserEndpoints
         }
 
         await AuditAsync(store, instance.Id, user.Id, "user.signed_up");
+        await EnrollByDomainAsync(store, instance.Id, user, ct);
         await EstablishSessionAsync(store, sessions, request.HttpContext, instance, user, "password", ct);
 
         var token = await IssueTokenAsync(store, instance.Id, user.Id, "verify_email", VerifyEmailTtl, ct);
@@ -374,7 +416,8 @@ public static class UserEndpoints
             <input id="si-magic" name="email" type="email" value="{Ui.Esc(email)}" required>
             <button type="submit" class="secondary">Send magic link</button>
             </form>
-            <p class="hint"><a href="/ui/{slug}/passkeys/assert">Sign in with a passkey</a></p>
+            <p class="hint"><a href="/ui/{slug}/passkeys/assert">Sign in with a passkey</a> · <a href="/ui/{slug}/passcode">Sign in with an email code</a></p>
+            <p class="hint"><a href="/ui/{slug}/connections/list">Sign in with SSO</a></p>
             <p class="hint"><a href="/ui/{slug}/forgot-password">Forgot your password?</a> · <a href="/ui/{slug}/sign-up">Create an account</a></p>
             """);
 
