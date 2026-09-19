@@ -106,7 +106,6 @@ public static class ScimEndpoints
                 return ApiResults.NotFound("directory_not_found", "no directory with this id in this instance");
 
             await store.DeleteScimDirectoryAsync(directory.Id, ct);
-            await store.ReleaseUniqueAsync("scim-token", directory.TokenKey, ct);
             await AuditManagementAsync(store, context, "directory.deleted", new() { ["directory_id"] = directory.Id }, ct);
             return Results.NoContent();
         });
@@ -133,7 +132,16 @@ public static class ScimEndpoints
                 return ApiResults.Conflict("token_collision", "the generated token collided; retry the request");
             }
             var rotated = directory with { TokenKey = tokenKey };
-            await client.Documents.PutAsync(store.Database, "scim_directories", rotated.Id, rotated, cancellationToken: ct);
+            try
+            {
+                await client.Documents.PutAsync(store.Database, "scim_directories", rotated.Id, rotated, cancellationToken: ct);
+            }
+            catch
+            {
+                // The write failed: unwind the freshly claimed token so no orphan claim remains.
+                await store.ReleaseUniqueAsync("scim-token", tokenKey, ct);
+                throw;
+            }
             await store.ReleaseUniqueAsync("scim-token", directory.TokenKey, ct);
 
             await AuditManagementAsync(store, context, "directory.token_rotated", new() { ["directory_id"] = directory.Id }, ct);

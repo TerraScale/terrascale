@@ -221,7 +221,7 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public async Task DeletePasskeyAsync(string id, CancellationToken ct = default)
     {
         var passkey = await GetPasskeyAsync(id, ct);
-        await client.Documents.DeleteAsync(Database, "passkeys", id, ct);
+        await DeleteIgnoringMissingAsync("passkeys", id, ct);
         if (passkey is not null)
             await ReleaseUniqueAsync("passkey", passkey.CredentialKey, ct);
     }
@@ -265,7 +265,7 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public async Task DeleteOAuthClientAsync(string id, CancellationToken ct = default)
     {
         var oauthClient = await GetOAuthClientAsync(id, ct);
-        await client.Documents.DeleteAsync(Database, "oauth_clients", id, ct);
+        await DeleteIgnoringMissingAsync("oauth_clients", id, ct);
         if (oauthClient is not null)
             await ReleaseUniqueAsync("oauth-client", oauthClient.ClientKey, ct);
     }
@@ -375,9 +375,21 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public async Task DeleteOrganizationAsync(string id, CancellationToken ct = default)
     {
         var organization = await GetOrganizationAsync(id, ct);
+        if (organization is null)
+            return;
+        // Cascade: everything the org claimed leaves with it. Memberships carry
+        // memberKey claims, and enrollment domains carry an instance-wide domainKey
+        // claim that would otherwise reject the same domain forever with no owner
+        // behind it. The org-bound listings are unpaginated, so re-query until a
+        // round comes back empty rather than walking a mutating cursor.
+        while ((await ListMembershipsByOrgAsync(id, ct)) is { Count: > 0 } memberships)
+            foreach (var membership in memberships)
+                await DeleteMembershipAsync(membership.Id, ct);
+        while ((await ListOrgDomainsAsync(organization.InstanceId, ct)).Where(d => d.OrgId == id).ToList() is { Count: > 0 } domains)
+            foreach (var domain in domains)
+                await DeleteOrgDomainAsync(domain.Id, ct);
         await DeleteIgnoringMissingAsync("organizations", id, ct);
-        if (organization is not null)
-            await ReleaseUniqueAsync("org-slug", organization.SlugKey, ct);
+        await ReleaseUniqueAsync("org-slug", organization.SlugKey, ct);
     }
 
     public Task<Organization?> GetOrganizationAsync(string id, CancellationToken ct = default) =>
@@ -660,8 +672,15 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<ScimDirectory?> GetScimDirectoryAsync(string id, CancellationToken ct = default) =>
         GetOrNullAsync<ScimDirectory>("scim_directories", id, ct);
 
-    public Task DeleteScimDirectoryAsync(string id, CancellationToken ct = default) =>
-        client.Documents.DeleteAsync(Database, "scim_directories", id, ct);
+    /// <summary>Deletes a directory and releases its bearer-token claim, so a rotated-away
+    /// or deleted token's string can be issued again (the token hash is the claim key).</summary>
+    public async Task DeleteScimDirectoryAsync(string id, CancellationToken ct = default)
+    {
+        var directory = await GetScimDirectoryAsync(id, ct);
+        await DeleteIgnoringMissingAsync("scim_directories", id, ct);
+        if (directory is not null)
+            await ReleaseUniqueAsync("scim-token", directory.TokenKey, ct);
+    }
 
     public async Task<ScimDirectory?> FindScimDirectoryByTokenAsync(string tokenKey, CancellationToken ct = default)
     {
@@ -731,7 +750,7 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public async Task DeleteOrgDomainAsync(string id, CancellationToken ct = default)
     {
         var domain = await GetOrgDomainAsync(id, ct);
-        await client.Documents.DeleteAsync(Database, "org_domains", id, ct);
+        await DeleteIgnoringMissingAsync("org_domains", id, ct);
         if (domain is not null)
             await ReleaseUniqueAsync("org-domain", domain.DomainKey, ct);
     }

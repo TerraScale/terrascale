@@ -147,6 +147,28 @@ public sealed class OrganizationsE2eTests
     }
 
     [Test]
+    public async Task UserDeleteRemovesTheirMembershipsAndFreesTheKeys()
+    {
+        var (service, instanceId, slug, apiKey) = await StartAsync();
+        var http = service.Http;
+        var store = service.Store;
+        var sessions = new SessionService(store);
+
+        var orgId = (await CreateOrganizationAsync(http, apiKey, slug, "Acme Corp")).GetProperty("id").GetString()!;
+        var email = $"gone-{Guid.NewGuid().ToString("N")[..6]}@example.com";
+        var user = await sessions.CreateUserAsync(instanceId, email, null, null, null);
+        await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/memberships", new { user_id = user.Id, role = "member" }, HttpStatusCode.OK);
+
+        using var deleted = await http.SendAsync(Request(HttpMethod.Delete, apiKey, $"/v1/{slug}/users/{user.Id}"));
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+        // The membership (and its memberKey claim) left with the user — the org's
+        // roster must not keep listing a deleted user.
+        await Assert.That(await store.ListMembershipsByOrgAsync(orgId)).IsEmpty();
+        await Assert.That(await store.ListMembershipsByUserAsync(user.Id)).IsEmpty();
+    }
+
+    [Test]
     public async Task InvitationCreateListRevokeWithStoreStateAndAudit()
     {
         var (service, instanceId, slug, apiKey) = await StartAsync();

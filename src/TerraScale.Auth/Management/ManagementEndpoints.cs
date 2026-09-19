@@ -232,13 +232,17 @@ public static class ManagementEndpoints
                 return ApiResults.NotFound("user_not_found", "no user with this id in this instance");
 
             // Soft delete: every uniqueness claim the user holds is released so the keys
-            // free up for reuse — email, username, and each passkey credential.
+            // free up for reuse — email, username, each passkey credential, and every
+            // membership (SCIM deprovisioning behaves the same way).
             if (user.EmailKey is not null)
                 await store.ReleaseUniqueAsync("user-email", user.EmailKey, ct);
             if (user.UsernameKey is not null)
                 await store.ReleaseUniqueAsync("user-username", user.UsernameKey, ct);
             foreach (var passkey in await store.ListPasskeysAsync(user.Id, ct))
                 await store.DeletePasskeyAsync(passkey.Id, ct);
+            foreach (var membership in await store.ListMembershipsByUserAsync(user.Id, ct))
+                if (membership.InstanceId == context.Instance.Id)
+                    await store.DeleteMembershipAsync(membership.Id, ct);
             await store.UpsertUserAsync(user with
             {
                 Deleted = true,

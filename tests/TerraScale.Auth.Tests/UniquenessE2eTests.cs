@@ -170,6 +170,97 @@ public sealed class UniquenessE2eTests
     }
 
     [Test]
+    public async Task OrganizationDeleteCascadesDomainsAndMemberships()
+    {
+        var (store, instanceId) = await ArrangeAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var org = await store.CreateOrganizationAsync(new Organization
+        {
+            Id = "org_cascade", InstanceId = instanceId, Name = "Cascade",
+            SlugKey = $"{instanceId}:cascade-{suffix}", CreatedAt = now,
+        });
+        var domainKey = $"{instanceId}:recycle-{suffix}.com";
+        await store.CreateOrgDomainAsync(new OrgDomain
+        {
+            Id = "dom_cascade", InstanceId = instanceId, OrgId = org.Id,
+            Domain = $"recycle-{suffix}.com", DomainKey = domainKey, CreatedAt = now,
+        });
+        await store.CreateMembershipAsync(new OrgMembership
+        {
+            Id = "mem_cascade", InstanceId = instanceId, OrgId = org.Id, UserId = "usr_cascade",
+            MemberKey = $"{org.Id}:usr_cascade", Role = "member", CreatedAt = now,
+        });
+
+        await store.DeleteOrganizationAsync(org.Id);
+
+        // The membership cascade must not leave orphan documents (or their claims).
+        await Assert.That(await store.ListMembershipsByOrgAsync(org.Id, CancellationToken.None)).IsEmpty();
+        // The domain claim was released with the org, so another org can enroll it.
+        await store.CreateOrgDomainAsync(new OrgDomain
+        {
+            Id = "dom_reborn", InstanceId = instanceId, OrgId = "org_other",
+            Domain = $"recycle-{suffix}.com", DomainKey = domainKey, CreatedAt = now,
+        });
+    }
+
+    [Test]
+    public async Task ClaimReleasingDeletesAreIdempotent()
+    {
+        var (store, instanceId) = await ArrangeAsync();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var credentialKey = TerraScale.Auth.Crypto.SecureTokens.RandomToken(32);
+        await store.CreatePasskeyAsync(new Passkey
+        {
+            Id = "pky_idem", InstanceId = instanceId, UserId = "usr_idem", CredentialKey = credentialKey,
+            PublicKeyCborBase64 = "AAECAwQFBgcI", Algorithm = "ES256", SignCount = 1, Nickname = "k",
+            CreatedAt = now,
+        });
+        await store.CreateOAuthClientAsync(new OAuthClient
+        {
+            Id = "cli_idem", InstanceId = instanceId, ClientId = "cid_idem",
+            ClientKey = $"{instanceId}:cid_idem", Name = "idem", RedirectUris = [],
+            TokenEndpointAuthMethod = "none", CreatedAt = now,
+        });
+        await store.CreateOrgDomainAsync(new OrgDomain
+        {
+            Id = "dom_idem", InstanceId = instanceId, OrgId = "org_idem",
+            Domain = "idem.example.com", DomainKey = $"{instanceId}:idem.example.com", CreatedAt = now,
+        });
+
+        // A second delete of the same entity (or one that never existed) is a no-op,
+        // and the released identifier is reclaimable either way.
+        await store.DeletePasskeyAsync("pky_idem");
+        await store.DeletePasskeyAsync("pky_idem");
+        await store.DeletePasskeyAsync("pky_never_existed");
+        await store.CreatePasskeyAsync(new Passkey
+        {
+            Id = "pky_reborn", InstanceId = instanceId, UserId = "usr_idem", CredentialKey = credentialKey,
+            PublicKeyCborBase64 = "AAECAwQFBgcI", Algorithm = "ES256", SignCount = 1, Nickname = "k",
+            CreatedAt = now,
+        });
+
+        await store.DeleteOAuthClientAsync("cli_idem");
+        await store.DeleteOAuthClientAsync("cli_idem");
+        await store.DeleteOAuthClientAsync("cli_never_existed");
+        await store.CreateOAuthClientAsync(new OAuthClient
+        {
+            Id = "cli_reborn", InstanceId = instanceId, ClientId = "cid_idem",
+            ClientKey = $"{instanceId}:cid_idem", Name = "idem", RedirectUris = [],
+            TokenEndpointAuthMethod = "none", CreatedAt = now,
+        });
+
+        await store.DeleteOrgDomainAsync("dom_idem");
+        await store.DeleteOrgDomainAsync("dom_idem");
+        await store.DeleteOrgDomainAsync("dom_never_existed");
+        await store.CreateOrgDomainAsync(new OrgDomain
+        {
+            Id = "dom_reborn2", InstanceId = instanceId, OrgId = "org_idem",
+            Domain = "idem.example.com", DomainKey = $"{instanceId}:idem.example.com", CreatedAt = now,
+        });
+    }
+
+    [Test]
     public async Task PasskeyCredentialKeyIsUniqueGlobally()
     {
         var (store, instanceId) = await ArrangeAsync();

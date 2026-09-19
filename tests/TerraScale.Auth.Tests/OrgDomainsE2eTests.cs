@@ -110,6 +110,22 @@ public sealed class OrgDomainsE2eTests
     }
 
     [Test]
+    public async Task DeletedOrganizationReleasesItsDomainForAnotherOrg()
+    {
+        var c = await ArrangeAsync("cascade");
+        await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{c.OrgId}/domains", new { domain = "handover.example" }, HttpStatusCode.OK);
+
+        using (var deleted = await c.Http.SendAsync(Request(c, HttpMethod.Delete, $"/v1/{c.Slug}/organizations/{c.OrgId}")))
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+        // The org is gone with its domain: a fresh org must be able to enroll the
+        // same domain — a stale claim here would 409 forever with no owner behind it.
+        var successor = await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations", new { name = "Successor" }, HttpStatusCode.OK);
+        var reenrolled = await SendAsync(c, HttpMethod.Post, $"/v1/{c.Slug}/organizations/{successor.GetProperty("id").GetString()}/domains", new { domain = "handover.example" }, HttpStatusCode.OK);
+        await Assert.That(reenrolled.GetProperty("domain").GetString()).IsEqualTo("handover.example");
+    }
+
+    [Test]
     public async Task EnrollCreatesMembershipWritesAuditAndIsIdempotent()
     {
         var c = await ArrangeAsync("enroll");
