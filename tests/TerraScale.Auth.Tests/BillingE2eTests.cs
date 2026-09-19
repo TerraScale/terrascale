@@ -1,0 +1,648 @@
+namespace TerraScale.Auth.Tests;
+
+using System.Net;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using TerraBase.Api;
+using TerraBase.Integration;
+using TerraBase.Security;
+using TerraScale.Auth.Billing;
+using TerraScale.Auth.Store;
+using TerraScale.DotNet;
+
+/// Pure unit tests for the Stripe webhook signature helpers (no HTTP).
+public sealed class StripeSignatureTests
+{
+    private const string Secret = "whsec_test";
+    private const string Payload = """{"id":"evt_1","type":"checkout.session.completed"}""";
+
+    private static long Now => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+    private static string HexHmac(string secret, long timestamp, string payload) =>
+        Convert.ToHexStringLower(HMACSHA256.HashData(
+            Encoding.UTF8.GetBytes(secret),
+            Encoding.UTF8.GetBytes($"{timestamp}.{payload}")));
+
+    [Test]
+    public async Task VerifiesWithCorrectSignature()
+    {
+        var t = Now;
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t},v1={HexHmac(Secret, t, Payload)}", Payload, t)).IsTrue();
+    }
+
+    [Test]
+    public async Task RejectsTamperedBody()
+    {
+        var t = Now;
+        var header = $"t={t},v1={HexHmac(Secret, t, Payload)}";
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, header, Payload + " ", t)).IsFalse();
+    }
+
+    [Test]
+    public async Task RejectsStaleTimestamp()
+    {
+        var stale = Now - 301;
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={stale},v1={HexHmac(Secret, stale, Payload)}", Payload, Now)).IsFalse();
+        var future = Now + 301;
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={future},v1={HexHmac(Secret, future, Payload)}", Payload, Now)).IsFalse();
+    }
+
+    [Test]
+    public async Task VerifiesAnyV1Entry()
+    {
+        var t = Now;
+        var header = $"t={t},v1={HexHmac("whsec_other", t, Payload)},v1={HexHmac(Secret, t, Payload)}";
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, header, Payload, t)).IsTrue();
+        await Assert.That(StripeWebhookSignatures.Verify("whsec_other", $"t={t},v1={HexHmac(Secret, t, Payload)}", Payload, t)).IsFalse();
+    }
+
+    [Test]
+    public async Task RejectsMalformedHeaders()
+    {
+        var t = Now;
+        var valid = HexHmac(Secret, t, Payload);
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, null, Payload, t)).IsFalse();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, "", Payload, t)).IsFalse();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, "garbage", Payload, t)).IsFalse();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t}", Payload, t)).IsFalse();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"t={t},v1=zz-not-hex", Payload, t)).IsFalse();
+        await Assert.That(StripeWebhookSignatures.Verify(Secret, $"v1={valid},t={t}", Payload, t)).IsTrue(); // order-independent
+    }
+}
+
+/// Stripe billing end to end: a second app+engine booted with Stripe env pointing at an
+/// in-process fake Stripe, driven through checkout, the signed webhook receiver, and the
+/// hosted billing pages. The shared fixture (no Stripe env) covers the 503 path.
+[NotInParallel]
+public sealed class BillingE2eTests
+{
+    private const string OperatorKey = "operator-billing-key";
+    private const string WebhookSecret = "whsec_test";
+
+    /// <summary>The dedicated app: booted once for this class, Stripe vars set at build time only.</summary>
+    private static readonly Task<BillingApp> SharedApp = BootAsync();
+
+    // ---- Tests -------------------------------------------------------------------------
+
+    [Test]
+    public async Task BillingStatusStartsFreeAndEnforceCheckTracksQuota()
+    {
+        var app = await SharedApp;
+        var (_, slug, apiKey) = await NewInstanceAsync(app);
+
+        using var status = await app.Http.SendAsync(Get($"/v1/{slug}/billing", apiKey));
+        await Assert.That(status.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var body = await status.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(body.GetProperty("plan").GetString()).IsEqualTo("free");
+        await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("free");
+        await Assert.That(body.GetProperty("quota").GetInt32()).IsEqualTo(100);
+        await Assert.That(body.GetProperty("user_count").GetInt32()).IsEqualTo(0);
+        // Free instances carry no Stripe linkage (null and absent are both acceptable).
+        await Assert.That(body.TryGetProperty("stripe_customer_id", out var customerId)
+            && customerId.ValueKind != JsonValueKind.Null).IsFalse();
+
+        await Assert.That((await EnforceCheckAsync(app, slug, apiKey, 0)).GetProperty("allowed").GetBoolean()).IsTrue();
+        await Assert.That((await EnforceCheckAsync(app, slug, apiKey, 99)).GetProperty("allowed").GetBoolean()).IsTrue();
+        await Assert.That((await EnforceCheckAsync(app, slug, apiKey, 100)).GetProperty("allowed").GetBoolean()).IsFalse();
+    }
+
+    [Test]
+    public async Task CheckoutCreatesStripeSessionWithCorrectForm()
+    {
+        var app = await SharedApp;
+        var (instanceId, slug, apiKey) = await NewInstanceAsync(app);
+
+        using var checkout = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/checkout", apiKey, new { plan = "pro" }));
+        await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var body = await checkout.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(body.GetProperty("checkout_url").GetString()).IsEqualTo("https://checkout.example/s_1");
+
+        var request = app.Stripe.LastRequest("/v1/checkout/sessions");
+        await Assert.That(request).IsNotNull();
+        await Assert.That(request!.Authorization).IsEqualTo("Bearer test_key");
+        await Assert.That(request.Form["mode"]).IsEqualTo("subscription");
+        await Assert.That(request.Form["line_items[0][price]"]).IsEqualTo("price_pro");
+        await Assert.That(request.Form["line_items[0][quantity]"]).IsEqualTo("1");
+        await Assert.That(request.Form["client_reference_id"]).IsEqualTo(instanceId);
+        await Assert.That(request.Form["metadata[instance_id]"]).IsEqualTo(instanceId);
+        await Assert.That(request.Form["success_url"]).IsEqualTo($"https://auth.test/ui/{slug}/billing/return?status=success");
+        await Assert.That(request.Form["cancel_url"]).IsEqualTo($"https://auth.test/ui/{slug}/billing/return?status=cancel");
+
+        using var badPlan = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/checkout", apiKey, new { plan = "gold" }));
+        await Assert.That(badPlan.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task WebhookCheckoutCompletedActivatesSubscriptionAndCustomer()
+    {
+        var app = await SharedApp;
+        var (instanceId, slug, apiKey, customer) = await InstanceWithActiveProAsync(app);
+
+        var instance = await app.Store.GetInstanceAsync(instanceId);
+        await Assert.That(instance!.StripeCustomerId).IsEqualTo(customer);
+
+        var subscriptions = await app.Store.ListSubscriptionsAsync(instanceId);
+        await Assert.That(subscriptions.Count).IsEqualTo(1);
+        await Assert.That(subscriptions[0].Plan).IsEqualTo("pro");
+        await Assert.That(subscriptions[0].Status).IsEqualTo("active");
+        await Assert.That(subscriptions[0].StripeCustomerId).IsEqualTo(customer);
+        await Assert.That(subscriptions[0].StripeSubscriptionId).IsEqualTo("sub_1");
+        await Assert.That(subscriptions[0].CurrentPeriodEnd).IsEqualTo(1893456000L);
+
+        // The plan came from the fake Stripe's GET /v1/subscriptions/sub_1.
+        var fetch = app.Stripe.LastRequest("/v1/subscriptions/sub_1");
+        await Assert.That(fetch).IsNotNull();
+        await Assert.That(fetch!.Method).IsEqualTo("GET");
+
+        using var status = await app.Http.SendAsync(Get($"/v1/{slug}/billing", apiKey));
+        var body = await status.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(body.GetProperty("plan").GetString()).IsEqualTo("pro");
+        await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("active");
+        await Assert.That(body.GetProperty("quota").GetInt32()).IsEqualTo(10_000);
+        await Assert.That(body.GetProperty("stripe_customer_id").GetString()).IsEqualTo(customer);
+        await Assert.That(body.GetProperty("stripe_subscription_id").GetString()).IsEqualTo("sub_1");
+        await Assert.That(body.GetProperty("current_period_end").GetInt64()).IsEqualTo(1893456000L);
+        await Assert.That((await EnforceCheckAsync(app, slug, apiKey, 9_999)).GetProperty("allowed").GetBoolean()).IsTrue();
+        await Assert.That((await EnforceCheckAsync(app, slug, apiKey, 10_000)).GetProperty("allowed").GetBoolean()).IsFalse();
+
+        var audits = await app.Store.ListAuditEventsAsync(instanceId, 100);
+        await Assert.That(audits.Any(e => e.Type == "billing.plan_changed")).IsTrue();
+
+        // With a customer on file, the portal session opens.
+        using var portal = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/portal", apiKey, new { }));
+        await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var portalBody = await portal.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(portalBody.GetProperty("portal_url").GetString()).IsEqualTo("https://portal.example/p_1");
+    }
+
+    [Test]
+    public async Task PortalWithoutCustomerReturns400()
+    {
+        var app = await SharedApp;
+        var (_, slug, apiKey) = await NewInstanceAsync(app);
+
+        using var portal = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/portal", apiKey, new { }));
+        await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var body = await portal.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("no_customer");
+    }
+
+    [Test]
+    public async Task WebhookSubscriptionUpdatedPastDueKeepsPlan()
+    {
+        var app = await SharedApp;
+        var (instanceId, slug, apiKey, customer) = await InstanceWithActiveProAsync(app);
+
+        var json = $$"""
+            {
+              "id": "evt_{{Unique()}}",
+              "type": "customer.subscription.updated",
+              "data": { "object": {
+                "id": "sub_1", "object": "subscription", "customer": "{{customer}}",
+                "status": "past_due", "current_period_end": 1893456000,
+                "items": [ { "price": { "id": "price_pro" } } ]
+              } }
+            }
+            """;
+        using var response = await SendWebhookAsync(app.Http, json);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        using var status = await app.Http.SendAsync(Get($"/v1/{slug}/billing", apiKey));
+        var body = await status.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(body.GetProperty("plan").GetString()).IsEqualTo("pro");
+        await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("past_due");
+
+        var subscription = await app.Store.FindSubscriptionByCustomerAsync(customer);
+        await Assert.That(subscription!.Plan).IsEqualTo("pro");
+        await Assert.That(subscription.Status).IsEqualTo("past_due");
+        var audits = await app.Store.ListAuditEventsAsync(instanceId, 100);
+        await Assert.That(audits.Any(e => e.Type == "billing.subscription_updated")).IsTrue();
+    }
+
+    [Test]
+    public async Task WebhookSubscriptionDeletedCancelsButKeepsPlan()
+    {
+        var app = await SharedApp;
+        var (instanceId, slug, apiKey, customer) = await InstanceWithActiveProAsync(app);
+
+        var json = $$"""
+            {
+              "id": "evt_{{Unique()}}",
+              "type": "customer.subscription.deleted",
+              "data": { "object": {
+                "id": "sub_1", "object": "subscription", "customer": "{{customer}}",
+                "status": "canceled", "current_period_end": 1893456000,
+                "items": [ { "price": { "id": "price_pro" } } ]
+              } }
+            }
+            """;
+        using var response = await SendWebhookAsync(app.Http, json);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        // Canceled flags the subscription; the paid plan stays on the document.
+        var subscription = await app.Store.FindSubscriptionByCustomerAsync(customer);
+        await Assert.That(subscription!.Status).IsEqualTo("canceled");
+        await Assert.That(subscription.Plan).IsEqualTo("pro");
+
+        var audits = await app.Store.ListAuditEventsAsync(instanceId, 100);
+        await Assert.That(audits.Any(e => e.Type == "billing.subscription_canceled")).IsTrue();
+    }
+
+    [Test]
+    public async Task WebhookInvalidSignatureRejectedWithoutSideEffects()
+    {
+        var app = await SharedApp;
+        var (instanceId, _, apiKey, customer) = await InstanceWithActiveProAsync(app);
+
+        var json = CheckoutCompletedJson("evt_" + Unique(), instanceId, customer);
+        using var response = await SendWebhookAsync(app.Http, json, secret: "whsec_wrong");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        // State is unchanged: still exactly one active pro subscription for this customer.
+        var subscription = await app.Store.FindSubscriptionByCustomerAsync(customer);
+        await Assert.That(subscription!.Status).IsEqualTo("active");
+        await Assert.That(subscription.Plan).IsEqualTo("pro");
+        await Assert.That((await app.Store.ListSubscriptionsAsync(instanceId)).Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task WebhookUnknownEventAcknowledgedAsNoOp()
+    {
+        var app = await SharedApp;
+        var (instanceId, _, _) = await NewInstanceAsync(app);
+
+        var json = $$"""{ "id": "evt_{{Unique()}}", "type": "invoice.paid", "data": { "object": {} } }""";
+        using var response = await SendWebhookAsync(app.Http, json);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await app.Store.ListSubscriptionsAsync(instanceId)).Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task WebhookReplayedEventProcessedOnce()
+    {
+        var app = await SharedApp;
+        var (instanceId, slug, apiKey) = await NewInstanceAsync(app);
+        var customer = "cus_" + Unique();
+
+        var json = CheckoutCompletedJson("evt_replay_" + Unique(), instanceId, customer);
+        using var first = await SendWebhookAsync(app.Http, json);
+        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var replay = await SendWebhookAsync(app.Http, json);
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        // One subscription document, one plan-change audit event — not two.
+        await Assert.That((await app.Store.ListSubscriptionsAsync(instanceId)).Count).IsEqualTo(1);
+        var audits = await app.Store.ListAuditEventsAsync(instanceId, 100);
+        await Assert.That(audits.Count(e => e.Type == "billing.plan_changed")).IsEqualTo(1);
+
+        using var status = await app.Http.SendAsync(Get($"/v1/{slug}/billing", apiKey));
+        var body = await status.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(body.GetProperty("plan").GetString()).IsEqualTo("pro");
+    }
+
+    [Test]
+    public async Task SharedFixtureWithoutStripeEnvReturns503()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (_, slug, apiKey) = await service.CreateInstanceAsync("billing-shared-" + Unique());
+
+        using var checkout = await service.Http.SendAsync(PostJson($"/v1/{slug}/billing/checkout", apiKey, new { plan = "pro" }));
+        await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var checkoutBody = await checkout.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(checkoutBody.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("billing_not_configured");
+
+        using var portal = await service.Http.SendAsync(PostJson($"/v1/{slug}/billing/portal", apiKey, new { }));
+        await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+    }
+
+    [Test]
+    public async Task BillingUiShowsReturnPageAndKeyedDashboard()
+    {
+        var app = await SharedApp;
+        var (_, slug, apiKey) = await NewInstanceAsync(app);
+
+        var success = await app.Http.GetStringAsync($"/ui/{slug}/billing/return?status=success");
+        await Assert.That(success).Contains("confirmed");
+        var canceled = await app.Http.GetStringAsync($"/ui/{slug}/billing/return?status=cancel");
+        await Assert.That(canceled).Contains("canceled");
+
+        var dashboard = await app.Http.GetStringAsync($"/ui/{slug}/billing?key={apiKey}");
+        await Assert.That(dashboard).Contains("free");
+        await Assert.That(dashboard).Contains("of 100");
+
+        using var noKey = await app.Http.GetAsync($"/ui/{slug}/billing");
+        await Assert.That(noKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        using var badKey = await app.Http.GetAsync($"/ui/{slug}/billing?key=sk_not_a_key");
+        await Assert.That(badKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    // ---- Arranging helpers ----------------------------------------------------------------
+
+    private static string Unique() => Guid.NewGuid().ToString("N")[..8];
+
+    private static async Task<(string InstanceId, string Slug, string ApiKey)> NewInstanceAsync(BillingApp app)
+    {
+        using var request = PostJson("/v1/instances", OperatorKey, new { slug = "billing-" + Unique(), name = "Billing E2E" });
+        var response = await app.Http.SendAsync(request);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return (
+            body.GetProperty("instance").GetProperty("id").GetString()!,
+            body.GetProperty("instance").GetProperty("slug").GetString()!,
+            body.GetProperty("api_key").GetString()!);
+    }
+
+    /// <summary>A fresh instance driven through a signed checkout.session.completed webhook:
+    /// Stripe customer linked, pro/active subscription in place.</summary>
+    private static async Task<(string InstanceId, string Slug, string ApiKey, string Customer)> InstanceWithActiveProAsync(BillingApp app)
+    {
+        var (instanceId, slug, apiKey) = await NewInstanceAsync(app);
+        var customer = "cus_" + Unique();
+        using var response = await SendWebhookAsync(app.Http, CheckoutCompletedJson("evt_" + Unique(), instanceId, customer));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        return (instanceId, slug, apiKey, customer);
+    }
+
+    private static string CheckoutCompletedJson(string eventId, string instanceId, string customer) => $$"""
+        {
+          "id": "{{eventId}}",
+          "type": "checkout.session.completed",
+          "data": { "object": {
+            "id": "cs_test_1", "object": "checkout_session",
+            "client_reference_id": "{{instanceId}}",
+            "customer": "{{customer}}",
+            "subscription": "sub_1",
+            "metadata": { "instance_id": "{{instanceId}}" }
+          } }
+        }
+        """;
+
+    private static async Task<JsonElement> EnforceCheckAsync(BillingApp app, string slug, string apiKey, int currentUsers)
+    {
+        using var response = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/enforce-check", apiKey, new { current_users = currentUsers }));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        return await response.Content.ReadFromJsonAsync<JsonElement>();
+    }
+
+    private static HttpRequestMessage Get(string path, string bearer) =>
+        Send(HttpMethod.Get, path, bearer);
+
+    private static HttpRequestMessage PostJson(string path, string? bearer, object body)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(body),
+        };
+        if (bearer is not null)
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        return request;
+    }
+
+    private static HttpRequestMessage Send(HttpMethod method, string path, string bearer)
+    {
+        var request = new HttpRequestMessage(method, path);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        return request;
+    }
+
+    private static async Task<HttpResponseMessage> SendWebhookAsync(HttpClient http, string json, string secret = WebhookSecret)
+    {
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var signature = Convert.ToHexStringLower(HMACSHA256.HashData(
+            Encoding.UTF8.GetBytes(secret),
+            Encoding.UTF8.GetBytes($"{timestamp}.{json}")));
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/billing/webhook")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("Stripe-Signature", $"t={timestamp},v1={signature}");
+        return await http.SendAsync(request);
+    }
+
+    // ---- The dedicated app: fixture boot + Stripe env + fake Stripe ----------------------
+
+    private static async Task<BillingApp> BootAsync()
+    {
+        var stripe = FakeStripe.Start();
+        var database = "tsauth-billing-" + Guid.NewGuid().ToString("N")[..8];
+        var root = Path.Combine(Path.GetTempPath(), "ts-auth-billing-e2e", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var engine = TerraBaseHost.CreateEmbedded(builder =>
+        {
+            builder.Services.AddSingleton<IStartupFilter, AuthenticatedPrincipalStartupFilter>();
+            builder.Services.AddSingleton<ITenantAuthorizationHook, AllowAllAuthorizationHook>();
+            builder.Configuration["TERRABASE_REGION"] = "GRU";
+            builder.Configuration["TERRABASE_DATABASE_PATH"] = root;
+            builder.Configuration["TERRABASE_ALLOW_SCHEMALESS"] = "true";
+            builder.Configuration["TERRABASE_DATABASE_ROUTE"] = database;
+            builder.Configuration["TERRABASE_DATABASE_TENANT"] = "tsauth-billing-e2e";
+            builder.Configuration["TERRABASE_DATABASE_ULID"] = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+            builder.Configuration["TERRABASE_DATABASE_MODE"] = "explicit";
+            builder.Configuration["TERRABASE_DATABASE_HOME_REGION"] = "GRU";
+            builder.Configuration["TERRABASE_DATABASE_SELECTED_REGIONS"] = "GRU";
+        });
+        await engine.Application.StartAsync();
+
+        var engineClient = new TerraScaleClient(
+            new HttpClient(engine.CreateHandler()) { BaseAddress = new Uri("http://127.0.0.1/") },
+            new TerraScaleClientOptions { BaseAddress = new Uri("http://127.0.0.1/"), ApiKey = "billing-e2e-key" });
+
+        // AuthOptions loads from the process environment at build time. The shared fixture's
+        // app already captured its own options, so the Stripe vars affect only this app; they
+        // are restored right after the build so no later AuthOptions.Load call sees them.
+        var stripeVars = new Dictionary<string, string?>
+        {
+            ["TS_AUTH_STRIPE_SECRET_KEY"] = "test_key",
+            ["TS_AUTH_STRIPE_WEBHOOK_SECRET"] = WebhookSecret,
+            ["TS_AUTH_STRIPE_API_URL"] = $"http://127.0.0.1:{stripe.Port}",
+            ["TS_AUTH_PRICE_PRO"] = "price_pro",
+            ["TS_AUTH_PRICE_ENTERPRISE"] = "price_ent",
+        };
+        var saved = stripeVars.Keys.ToDictionary(name => name, name => Environment.GetEnvironmentVariable(name));
+        foreach (var (name, value) in stripeVars)
+            Environment.SetEnvironmentVariable(name, value);
+        WebApplication application;
+        try
+        {
+            Environment.SetEnvironmentVariable("TS_AUTH_PUBLIC_ORIGIN", "https://auth.test");
+            Environment.SetEnvironmentVariable("TS_AUTH_TERRASCALE_API_KEY", "billing-e2e-key");
+            Environment.SetEnvironmentVariable("TS_AUTH_DATABASE", database);
+            Environment.SetEnvironmentVariable("TS_AUTH_MASTER_KEY", Convert.ToBase64String(new byte[32]));
+            Environment.SetEnvironmentVariable("TS_AUTH_OPERATOR_KEY", OperatorKey);
+
+            var (builder, options) = TerraScale.Auth.App.CreateBuilder([]);
+            builder.WebHost.UseTestServer();
+            builder.Services.RemoveAll<TerraScaleClient>();
+            builder.Services.AddSingleton(engineClient);
+            application = builder.Build();
+            TerraScale.Auth.App.Configure(application, options);
+        }
+        finally
+        {
+            foreach (var (name, value) in saved)
+                Environment.SetEnvironmentVariable(name, value);
+        }
+        await application.StartAsync();
+        var http = application.GetTestClient();
+
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            if ((await http.GetAsync("/healthz")).IsSuccessStatusCode)
+                break;
+            await Task.Delay(100);
+        }
+
+        return new BillingApp(http, engineClient, database, stripe, engine, application, root);
+    }
+
+    private sealed record BillingApp(
+        HttpClient Http, TerraScaleClient Sdk, string Database, FakeStripe Stripe,
+        EmbeddedTerraBaseHost Engine, WebApplication Application, string Root) : IAsyncDisposable
+    {
+        public AuthStore Store => new(Sdk, Database);
+
+        public async ValueTask DisposeAsync()
+        {
+            await Application.StopAsync();
+            await Application.DisposeAsync();
+            await Engine.DisposeAsync();
+            Stripe.Dispose();
+            if (Directory.Exists(Root))
+                Directory.Delete(Root, recursive: true);
+        }
+    }
+
+    // ---- Fake Stripe: local HttpListener answering the three calls ts-auth makes ----------
+
+    private sealed class FakeStripe : IDisposable
+    {
+        private readonly HttpListener listener = new();
+        private readonly List<Request> requests = [];
+
+        public sealed record Request(string Method, string Path, string? Authorization, Dictionary<string, string?> Form);
+
+        public int Port { get; }
+
+        private FakeStripe(int port) => Port = port;
+
+        public static FakeStripe Start()
+        {
+            for (var port = 18121; port <= 18139; port++)
+            {
+                var candidate = new FakeStripe(port);
+                candidate.listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+                try
+                {
+                    candidate.listener.Start();
+                }
+                catch (HttpListenerException)
+                {
+                    continue;
+                }
+                _ = Task.Run(candidate.ListenAsync);
+                return candidate;
+            }
+            throw new InvalidOperationException("no free port in 18121-18139 for the fake Stripe");
+        }
+
+        public Request? LastRequest(string path)
+        {
+            lock (requests)
+                return requests.LastOrDefault(request => request.Path == path);
+        }
+
+        private async Task ListenAsync()
+        {
+            while (listener.IsListening)
+            {
+                HttpListenerContext context;
+                try
+                {
+                    context = await listener.GetContextAsync();
+                }
+                catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException)
+                {
+                    return;
+                }
+                try
+                {
+                    await HandleAsync(context);
+                }
+                catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException)
+                {
+                    return;
+                }
+            }
+        }
+
+        private async Task HandleAsync(HttpListenerContext context)
+        {
+            var request = context.Request;
+            string? form = null;
+            if (request.HasEntityBody)
+                using (var reader = new StreamReader(request.InputStream, Encoding.UTF8))
+                    form = await reader.ReadToEndAsync();
+
+            var path = request.Url?.AbsolutePath ?? "";
+            lock (requests)
+                requests.Add(new(request.HttpMethod, path, request.Headers["Authorization"], form is null ? [] : ParseForm(form)));
+
+            var (status, json) = (request.HttpMethod, path) switch
+            {
+                ("POST", "/v1/checkout/sessions") => (200, """{"id":"cs_test_1","url":"https://checkout.example/s_1"}"""),
+                ("POST", "/v1/billing_portal/sessions") => (200, """{"url":"https://portal.example/p_1"}"""),
+                ("GET", "/v1/subscriptions/sub_1") => (200, """{"id":"sub_1","customer":"cus_1","items":[{"price":{"id":"price_pro"}}],"current_period_end":1893456000}"""),
+                _ => (404, """{"error":{"message":"no such route"}}"""),
+            };
+            var body = Encoding.UTF8.GetBytes(json);
+            context.Response.StatusCode = status;
+            context.Response.ContentType = "application/json";
+            await context.Response.OutputStream.WriteAsync(body);
+            context.Response.Close();
+        }
+
+        private static Dictionary<string, string?> ParseForm(string raw) =>
+            raw.Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Select(pair => pair.Split('=', 2))
+                .ToDictionary(pair => WebUtility.UrlDecode(pair[0]), pair => pair.Length > 1 ? WebUtility.UrlDecode(pair[1]) : null);
+
+        public void Dispose()
+        {
+            listener.Stop();
+            listener.Close();
+        }
+    }
+
+    // Copied from AuthServiceFixture (its boot helpers are private): the embedded engine
+    // needs an authenticated principal and an allow-all tenant hook for document writes.
+    private sealed class AuthenticatedPrincipalStartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => application =>
+        {
+            application.Use(async (context, continuation) =>
+            {
+                context.User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+                    [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, "tsauth-billing-e2e")],
+                    "tsauth-billing-e2e"));
+                await continuation().ConfigureAwait(false);
+            });
+            next(application);
+        };
+    }
+
+    private sealed class AllowAllAuthorizationHook : ITenantAuthorizationHook
+    {
+        public ValueTask<TenantAuthorizationDecision> AuthorizeAsync(
+            TenantAuthorizationRequest request, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(TenantAuthorizationDecision.AllowUntil(DateTimeOffset.UtcNow.AddSeconds(10)));
+    }
+}
