@@ -134,12 +134,49 @@ At batch 128 what remains in the ack is per-record lattice work (content
 digests, read-model merge, response outcomes) — there is no fdatasync
 left to remove. The batch-128 end-to-end gap is one mTLS push round trip
 plus the peer's durable-index apply versus Turso's streamed,
-unauthenticated WAL frame with no per-batch RPC. The mechanism paper
-target for that lane is sqld's own design — physical WAL-frame shipping
-(the replica pulls already-encoded frames and applies pages), which maps
-onto TerraBase's TBREC5 journal frames: slice raw frame bytes at the
-acknowledged cut, ship the blob, and let the peer append and apply
-without re-encoding records.
+unauthenticated WAL frame with no per-batch RPC.
+
+## The frame lane (physical journal frames on the wire)
+
+The sqld-design lane from the section above is now built. A drain slices
+its delta into already-encoded TBREC5 journal frames
+(`FileDurableLog.EncodeTransportFrame`), ships one blob per tenant batch
+(`ReplicationFramePush`, inter-node operation 20), and the peer decodes
+the frame once and applies the records with the content digests the
+sender already computed (`AppendOrGetBatchAsync` with trusted digests) —
+no per-record publication rebuild on the sender, no per-record digest
+re-hash on the receiver. The idempotency digest for the batch is the
+SHA-256 of the frame bytes themselves. Ring relay over frames is covered
+by `LeaderlessMultiMasterConvergenceTests` (it is what found the digest
+mispairing below); `quietDeltaEntries=0` in every run.
+
+Building it surfaced one real correctness bug in the gossip envelope:
+when the delta's records were not already in dot order, the envelope
+sorted the records but left the digest list in arrival order, so relayed
+records shipped with another record's digest and the receiving member's
+journal re-verification rejected them on its next export. Records and
+digests now ride through the same permutation.
+
+Two same-window pairs on the async tier after the frame lane (60 samples
+per side, raw `receipts/…/terrabase-lag-framelane{1,2}.jsonl` and
+`turso-lag-framelane{1,2}.jsonl`; framelane1 at host load ~4–5.3,
+framelane2 at load ~1.3):
+
+| Batch | ack p50 (TB / Turso), quiet | send→visible p50 (TB / Turso), quiet |
+| --- | ---: | ---: |
+| 1 | **0.15 ms** / 3.26 — 21× | **1.78 ms** / 5.96 — 3.3× |
+| 16 | **0.93 ms** / 3.75 — 4.0× | **3.94 ms** / 7.38 — 1.9× |
+| 128 | **4.39 ms** / 4.74 — TB by 8% | 17.86 ms / **9.06** — Turso 2.0× |
+
+Batch-128 ack crossed into the lead for the first time (5.07 → 4.39 ms
+versus the pre-frame quiet Anna-tier window), and the batch-128
+end-to-end gap halved: 23.51 → 17.86 ms against Turso's 9.06, from
+Turso ~3× to Turso 2.0×. The loaded pair (framelane1) holds the same
+shape: 0.16 / 0.72 / 4.48 ms ack against 3.40 / 3.23 / 4.41 ms, and
+1.63 / 3.37 / 19.84 ms visible against 5.45 / 5.58 / 7.73 ms. What
+remains at batch 128 is one mTLS round trip plus the peer's own apply
+of 128 records — the same structural difference as before, one lane
+narrower.
 
 ## Bytes on the wire
 
@@ -188,10 +225,10 @@ What remains at batch 128 is structural, not incidental:
    Turso's replica applies a streamed WAL frame with no per-batch RPC,
    no authentication, and no replica fsync by default.
 
-Two contract-level trims remain unimplemented (the push response ships
-128 per-record results the fan-out never reads; the caller recomputes
-per-record lattice digests for the batch idempotency key, ~0.5 ms) —
-together worth ~1 ms, which cannot flip the batch-128 comparison.
+One contract-level trim remains unimplemented (the push response ships
+128 per-record results the fan-out never reads, ~0.5 ms); the caller's
+per-record digest recompute for the batch idempotency key is gone with
+the frame lane, whose idempotency digest is one hash of the frame bytes.
 Closing the raw gap means matching Turso's durability fidelity
 (unverified ack, unverified replica apply, unauthenticated transport),
 not optimizing this path.
