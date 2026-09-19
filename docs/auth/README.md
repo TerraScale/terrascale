@@ -44,8 +44,9 @@ src/TerraScale.Auth/
   Crypto/                 # BLAKE2b, Argon2id, JWT, TOTP, encodings, PHC hashing
   WebAuthn/               # WebAuthn verifier + COSE keys
   Keys/                   # per-instance ES256 key ring, AES-GCM secret box
-  Store/                  # AuthStore over the SDK documents API + schema bootstrap
-  Users/ OAuth/ Passkeys/ Mfa/ Organizations/ Management/ Webhooks/   # feature slices
+  Store/                  # AuthStore over the SDK documents API + atomic uniqueness claims
+  Users/ OAuth/ Passkeys/ Mfa/ Organizations/ Management/ Webhooks/     # core feature slices
+  Connections/ Scim/ Billing/ Templates/ Admin/                        # SSO, directories, payments, tokens
 tests/TerraScale.Auth.Tests/
   AuthServiceFixture.cs   # boots the real service over the real embedded TerraBase engine
   ...E2E tests            # every flow, driven over real HTTP
@@ -119,12 +120,17 @@ project — see `scripts/provision.sh`:
 
 - Hosted UI: `/ui/S/sign-in`, `/sign-up`, `/account`, `/account/sessions`,
   `/forgot-password`, `/reset-password`, `/verify-email`, `/magic-link`,
-  `/mfa/*`, `/passkeys/*`, `/invitations/{id}/accept`
+  `/passcode`, `/mfa/*`, `/passkeys/*`, `/connections/*`, `/admin`,
+  `/invitations/{id}/accept`
 - OAuth/OIDC: `/S/.well-known/openid-configuration`, `/S/.well-known/jwks.json`,
   `/S/oauth/{authorize,token,userinfo,revoke,introspect,logout}`
+- SCIM: `/scim/{directoryId}/Users`, `/Groups`, `/ServiceProviderConfig`
 - Management (Bearer `sk_...`): `/v1/S/users*`, `/v1/S/sessions*`,
-  `/v1/S/api-keys*`, `/v1/S/oauth-clients*`, `/v1/S/organizations*`,
-  `/v1/S/invitations*`, `/v1/S/webhooks*`, `/v1/S/audit-events`
+  `/v1/S/api-keys*`, `/v1/S/oauth-clients*`, `/v1/S/connections*`,
+  `/v1/S/directories*`, `/v1/S/organizations*`, `/v1/S/domains*`,
+  `/v1/S/jwt-templates*`, `/v1/S/webhooks*`, `/v1/S/audit-events`,
+  `/v1/S/billing*`, `/v1/S/instance`
+- Billing webhook: `POST /v1/billing/webhook` (Stripe signature)
 - Operator: `POST /v1/instances` (Bearer `TS_AUTH_OPERATOR_KEY`)
 
 ## CI
