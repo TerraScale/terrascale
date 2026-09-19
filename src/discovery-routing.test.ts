@@ -23,13 +23,31 @@ function discoveryPayload(database: string, overrides: Record<string, unknown> =
 
 type ScriptedResponse = (request: Request) => Response | Promise<Response>;
 
+function catalogPayload(overrides: {
+  regions?: Record<string, unknown>[];
+  hosts?: Record<string, string>;
+} = {}): Record<string, unknown> {
+  return {
+    regions: overrides.regions ?? [
+      { code: "FRA", name: "Frankfurt", country: "DE", latitude: 50.1109, longitude: 8.6821, available: true },
+      { code: "GRU", name: "Sao Paulo", country: "BR", latitude: -23.5475, longitude: -46.6361, available: true },
+    ],
+    hosts: overrides.hosts ?? {
+      FRA: "https://fra.api.terrascale.tech",
+      GRU: "https://gru.api.terrascale.tech",
+    },
+  };
+}
+
 /**
- * A fetch fake that records every request and answers discovery separately.
- * Each test uses a distinct database name so the process-wide routing cache
- * stays hermetic across tests.
+ * A fetch fake that records every request and answers discovery and the
+ * region catalog separately. Each test uses a distinct database name (and,
+ * for catalog-dependent tests, a distinct `routing.baseUrl`) so the
+ * process-wide routing and catalog caches stay hermetic across tests.
  */
 function scriptedFetch(database: string, options: {
-  discovery?: (request: Request) => Response;
+  discovery?: (request: Request) => Response | Promise<Response>;
+  catalog?: (request: Request) => Response | Promise<Response>;
   data?: ScriptedResponse;
 } = {}): { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>; requests: Request[] } {
   const requests: Request[] = [];
@@ -42,6 +60,9 @@ function scriptedFetch(database: string, options: {
       if (url.pathname === "/api/v1/discovery") {
         return options.discovery?.(request) ?? Response.json(discoveryPayload(database));
       }
+      if (url.pathname === "/api/v1/regions") {
+        return options.catalog?.(request) ?? Response.json(catalogPayload());
+      }
       return options.data?.(request) ?? Response.json({ ok: true });
     },
   };
@@ -53,6 +74,7 @@ function http(options: {
   projectId?: string;
   maxRetryAttempts?: number;
   retryDelayMs?: number;
+  routingBaseUrl?: string;
 }): TerraScaleHttp {
   return new TerraScaleHttp({
     fetch: options.fetch,
@@ -60,6 +82,7 @@ function http(options: {
     ...(options.projectId === undefined ? {} : { projectId: options.projectId as never }),
     ...(options.maxRetryAttempts === undefined ? {} : { maxRetryAttempts: options.maxRetryAttempts }),
     ...(options.retryDelayMs === undefined ? {} : { retryDelayMs: options.retryDelayMs }),
+    ...(options.routingBaseUrl === undefined ? {} : { routing: { baseUrl: options.routingBaseUrl } }),
   });
 }
 
@@ -68,7 +91,7 @@ function documentPath(database: string): string {
 }
 
 describe("discovery-driven request routing (ADR 0050)", () => {
-  test("database-scoped requests discover once, then connect directly", async () => {
+  test("database-scoped requests discover once at atlas, then connect directly", async () => {
     const transport = scriptedFetch("orders-once");
     const client = http({ fetch: transport.fetch });
     const path = documentPath("orders-once");
@@ -80,29 +103,39 @@ describe("discovery-driven request routing (ADR 0050)", () => {
 
     const urls = transport.requests.map((request) => new URL(request.url).origin + new URL(request.url).pathname);
     assert.deepEqual(urls, [
-      "https://api.terrascale.tech/api/v1/discovery",
+      "https://atlas.terrascale.tech/api/v1/discovery",
       `https://fra.api.terrascale.tech/${path}`,
       `https://fra.api.terrascale.tech/${path}`,
     ]);
   });
 
-  test("database-less requests keep the global origin without discovery", async () => {
+  test("database-less member routes select a regional endpoint from the catalog", async () => {
     const transport = scriptedFetch("orders-list");
-    const client = http({ fetch: transport.fetch });
+    const client = http({ fetch: transport.fetch, routingBaseUrl: "https://atlas-member.test" });
     const result = await client.request<unknown>({ method: "GET", path: "api/v1/databases", routeName: "databases.list" });
     assert.equal(result.ok, true);
-    assert.equal(new URL(transport.requests[0]!.url).origin, "https://api.terrascale.tech");
-    assert.equal(transport.requests.length, 1);
+    const urls = transport.requests.map((request) => new URL(request.url).origin + new URL(request.url).pathname);
+    assert.deepEqual(urls, [
+      "https://atlas-member.test/api/v1/regions",
+      "https://fra.api.terrascale.tech/api/v1/databases",
+    ]);
   });
 
-  test("discovery failure falls back to the global proxy path", async () => {
+  test("discovery failure degrades to catalog selection, never to a proxy", async () => {
     const transport = scriptedFetch("orders-fallback", {
       discovery: () => new Response("unavailable", { status: 503 }),
     });
-    const client = http({ fetch: transport.fetch });
+    const client = http({ fetch: transport.fetch, routingBaseUrl: "https://atlas-fallback.test" });
     const result = await client.request<unknown>({ method: "GET", path: documentPath("orders-fallback"), routeName: "documents.get" });
     assert.equal(result.ok, true);
-    assert.equal(new URL(transport.requests[1]!.url).origin, "https://api.terrascale.tech");
+    const urls = transport.requests.map((request) => new URL(request.url).origin + new URL(request.url).pathname);
+    assert.deepEqual(urls, [
+      "https://atlas-fallback.test/api/v1/discovery",
+      "https://atlas-fallback.test/api/v1/regions",
+      `https://fra.api.terrascale.tech/${documentPath("orders-fallback")}`,
+    ]);
+    // The retired per-request proxy: no data request ever targets the product origin.
+    assert.equal(urls.some((url) => url.startsWith("https://api.terrascale.tech/")), false);
   });
 
   test("writes skip a draining endpoint", async () => {
@@ -174,7 +207,7 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     assert.equal(gruCalls, 1);
     const origins = transport.requests.map((request) => new URL(request.url).origin);
     assert.deepEqual(origins, [
-      "https://api.terrascale.tech",
+      "https://atlas.terrascale.tech",
       "https://fra.api.terrascale.tech",
       "https://gru.api.terrascale.tech",
     ]);
@@ -207,6 +240,76 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     const second = await client.request<unknown>({ method: "GET", path: documentPath("orders-auth"), routeName: "documents.get" });
     assert.equal(second.ok, false);
     assert.equal(dataCalls, 3);
+  });
+
+  test("a 401 replays a rotated token even when a concurrent request already resolved it", async () => {
+    // Resolution order: this request's attempt (t1), a concurrent request
+    // (t2), then the 401 re-resolution (t2 again). The replay must compare
+    // against the token the failing attempt actually sent, not a shared
+    // latest value that the concurrent request already moved to t2.
+    const tokens = ["t1", "t2", "t2"];
+    let served = 0;
+    let dataCalls = 0;
+    let releaseData!: (response: Response) => void;
+    const transport = scriptedFetch("orders-rotate", {
+      data: (request) => {
+        dataCalls++;
+        if (request.headers.get("authorization") === "Bearer t2") return Response.json({ ok: true });
+        if (dataCalls === 1) return new Promise<Response>(resolve => { releaseData = resolve; });
+        return Response.json({ error: { code: "unauthenticated", message: "expired" } }, { status: 401 });
+      },
+    });
+    const client = http({
+      fetch: transport.fetch,
+      accessToken: () => Promise.resolve(tokens[Math.min(served++, tokens.length - 1)]),
+    });
+    const pending = client.request<unknown>({ method: "GET", path: documentPath("orders-rotate"), routeName: "documents.get" });
+    await new Promise<void>(resolve => {
+      const check = () => dataCalls >= 1 ? resolve() : setTimeout(check, 0);
+      check();
+    });
+    // A concurrent request resolves the provider to the rotated token. The
+    // product route skips discovery and the catalog entirely.
+    const concurrent = await client.request<unknown>({ method: "GET", path: "api/v1/organizations", routeName: "organizations.list" });
+    assert.equal(concurrent.ok, true);
+    // Only now does the first attempt's 401 arrive.
+    releaseData(Response.json({ error: { code: "unauthenticated", message: "expired" } }, { status: 401 }));
+    const result = await pending;
+    assert.equal(result.ok, true);
+    assert.equal(dataCalls, 3);
+    assert.equal(transport.requests[transport.requests.length - 1]!.headers.get("authorization"), "Bearer t2");
+  });
+
+  test("caller cancellation does not abort or poison the shared discovery request", async () => {
+    const discoverySignals: AbortSignal[] = [];
+    let releaseDiscovery!: (response: Response) => void;
+    const transport = scriptedFetch("orders-cancel", {
+      discovery: (request) => {
+        discoverySignals.push(request.signal);
+        return new Promise<Response>(resolve => { releaseDiscovery = resolve; });
+      },
+    });
+    const client = http({ fetch: transport.fetch });
+    const controller = new AbortController();
+    const pending = client.request<unknown>({
+      method: "GET", path: documentPath("orders-cancel"), routeName: "documents.get", signal: controller.signal,
+    });
+    await new Promise<void>(resolve => {
+      const check = () => discoverySignals.length >= 1 ? resolve() : setTimeout(check, 0);
+      check();
+    });
+    controller.abort(new Error("caller cancelled"));
+    // One caller's cancellation never aborted the shared discovery fetch.
+    assert.equal(discoverySignals[0]!.aborted, false);
+    releaseDiscovery(Response.json(discoveryPayload("orders-cancel")));
+    const result = await pending;
+    assert.equal(result.ok, false);
+    // The completed discovery served the next request directly: no failure
+    // backoff was armed, so no proxy fallback and no re-discovery.
+    const next = await client.request<unknown>({ method: "GET", path: documentPath("orders-cancel"), routeName: "documents.get" });
+    assert.equal(next.ok, true);
+    assert.equal(transport.requests.filter((request) => request.url.includes("/api/v1/discovery")).length, 1);
+    assert.equal(new URL(transport.requests[transport.requests.length - 1]!.url).origin, "https://fra.api.terrascale.tech");
   });
 
   test("an ambiguous write timeout on an unkeyed mutation is never replayed", async () => {
@@ -242,5 +345,65 @@ describe("discovery-driven request routing (ADR 0050)", () => {
     await projectB.request<unknown>({ method: "GET", path: documentPath("orders-scoped"), routeName: "documents.get" });
     // Two scopes, two discovery lookups; neither served the other.
     assert.equal(discoveryDatabases.length, 2);
+  });
+
+  test("product routes target the product origin without discovery or catalog", async () => {
+    for (const path of [
+      "api/v1/organizations",
+      "api/v1/organizations/01ARZ3NDEKTSV4RRFFQ69G5FAV/projects",
+      "api/v1/projects",
+      "api/v1/regions/FRA",
+    ]) {
+      const transport = scriptedFetch("orders-product");
+      const client = http({ fetch: transport.fetch });
+      const result = await client.request<unknown>({ method: "GET", path, routeName: "organizations.list" });
+      assert.equal(result.ok, true);
+      assert.deepEqual(transport.requests.map((request) => new URL(request.url).origin), ["https://api.terrascale.tech"]);
+    }
+  });
+
+  test("the region catalog form itself targets the discovery origin", async () => {
+    const transport = scriptedFetch("orders-catalog-route");
+    const client = http({ fetch: transport.fetch });
+    const result = await client.request<unknown>({ method: "GET", path: "api/v1/regions", routeName: "regions.list" });
+    assert.equal(result.ok, true);
+    assert.deepEqual(transport.requests.map((request) => new URL(request.url).origin), ["https://atlas.terrascale.tech"]);
+    assert.equal(new URL(transport.requests[0]!.url).pathname, "/api/v1/regions");
+  });
+
+  test("the catalog is fetched once per five minutes across requests", async () => {
+    const catalogCalls: string[] = [];
+    const transport = scriptedFetch("orders-catalog-reuse", {
+      catalog: (request) => {
+        catalogCalls.push(new URL(request.url).origin);
+        return Response.json(catalogPayload());
+      },
+    });
+    const client = http({ fetch: transport.fetch, routingBaseUrl: "https://atlas-reuse.test" });
+    for (let i = 0; i < 3; i++) {
+      const result = await client.request<unknown>({ method: "GET", path: "api/v1/databases", routeName: "databases.list" });
+      assert.equal(result.ok, true);
+    }
+    assert.deepEqual(catalogCalls, ["https://atlas-reuse.test"]);
+    assert.equal(transport.requests.filter((request) => new URL(request.url).pathname === "/api/v1/regions").length, 1);
+    assert.equal(
+      transport.requests.filter((request) => new URL(request.url).origin === "https://fra.api.terrascale.tech").length,
+      3,
+    );
+  });
+
+  test("catalog hosts are validated: an evil host is never contacted", async () => {
+    const transport = scriptedFetch("orders-evil-host", {
+      catalog: () => Response.json(catalogPayload({ hosts: { FRA: "https://evil.example.com", GRU: "https://gru.api.terrascale.tech" } })),
+    });
+    const client = http({ fetch: transport.fetch, routingBaseUrl: "https://atlas-evil.test" });
+    const result = await client.request<unknown>({ method: "GET", path: "api/v1/databases", routeName: "databases.list" });
+    // The rejected catalog leaves the configured origin as the last resort.
+    assert.equal(result.ok, true);
+    assert.deepEqual(transport.requests.map((request) => new URL(request.url).origin), [
+      "https://atlas-evil.test",
+      "https://api.terrascale.tech",
+    ]);
+    assert.equal(transport.requests.some((request) => new URL(request.url).hostname === "evil.example.com"), false);
   });
 });

@@ -89,7 +89,7 @@ test("generated route metadata pins the terrabase contract version", async () =>
   assert.equal(version.trim(), "v1");
   assert.equal(parsed.manifestVersion, 2);
   assert.equal(parsed.contractVersion, version.trim());
-  assert.deepEqual(parsed.source, { repository: "terrabase+ts-proxy", bundle: "contracts/v1", openapi: "openapi.json" });
+  assert.deepEqual(parsed.source, { repository: "terrabase+ts-atlas", bundle: "contracts/v1", openapi: "openapi.json" });
   assert.equal(parsed.routeCount, parsed.routes.length);
   assert.equal(parsed.routeCount, 73);
   assert.deepEqual(parsed.routes.filter(({ producer }) => producer === "edge").map(({ routeName }) => routeName), ["regions.list"]);

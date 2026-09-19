@@ -73,6 +73,8 @@ describe("regional routing consistency", () => {
       apiBaseUrl: "https://api.terrascale.tech",
       preferredRegion: "FRA",
       regionAffinity: "failover",
+      // Pure transport semantics: the discovery suites own atlas routing.
+      routing: { enabled: false },
       fetch,
     });
     await failover.databases.get(databaseId, projectId);
@@ -95,6 +97,8 @@ describe("regional routing consistency", () => {
     const requests: Request[] = [];
     const http = new TerraScaleHttp({
       accessToken: "token",
+      // Pure transport semantics: the discovery suites own atlas routing.
+      routing: { enabled: false },
       fetch: async input => {
         requests.push(input instanceof Request ? input : new Request(input));
         return requests.length === 1
@@ -133,6 +137,8 @@ describe("regional routing consistency", () => {
     for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const) {
       const requests: Request[] = [];
       const http = new TerraScaleHttp({
+        // Pure transport semantics: the discovery suites own atlas routing.
+        routing: { enabled: false },
         fetch: async input => {
           requests.push(input instanceof Request ? input : new Request(input));
           return Response.json(
@@ -159,6 +165,8 @@ describe("regional routing consistency", () => {
   test("repairs a safe POST read using the advertised placement", async () => {
     const requests: Request[] = [];
     const http = new TerraScaleHttp({
+      // Pure transport semantics: the discovery suites own atlas routing.
+      routing: { enabled: false },
       fetch: async input => {
         requests.push(input instanceof Request ? input : new Request(input));
         return requests.length === 1

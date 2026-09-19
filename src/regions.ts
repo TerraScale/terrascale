@@ -6,6 +6,15 @@ export type TerraScaleRegionCode = string;
 /** The public global REST origin. Regional hosts are derived from this name. */
 export const terraScaleGlobalApiHostname = "api.terrascale.tech";
 
+/**
+ * The metadata origin (ADR 0050 §8): `ts-atlas` serves discovery and the
+ * region catalog on `atlas.terrascale.tech` and forwards nothing.
+ */
+export const terraScaleDiscoveryHostname = "atlas.terrascale.tech";
+
+/** The default discovery/catalog origin, independent of `apiBaseUrl`. */
+export const terraScaleDiscoveryBaseUrl = `https://${terraScaleDiscoveryHostname}`;
+
 /** Return the canonical public hostname for a Region's REST member. */
 export function regionalApiHostname(region: TerraScaleRegionCode): string {
   return `${region.toLowerCase()}.${terraScaleGlobalApiHostname}`;

@@ -61,6 +61,7 @@ describe("management entrypoint", () => {
   it("lists project operations with bounded pagination and lossless revisions", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
+      routing: { enabled: false },
       apiBaseUrl: "https://api.example.test",
       projectId: "project-1",
       fetch: async input => {
@@ -84,6 +85,7 @@ describe("management entrypoint", () => {
   it("bounds operation page sizes before sending", () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
+      routing: { enabled: false },
       apiBaseUrl: "https://api.example.test",
       fetch: fixtureFetch(requests),
     });
@@ -94,6 +96,7 @@ describe("management entrypoint", () => {
   it("parses the canonical operation GET as an OperationSummary", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
+      routing: { enabled: false },
       apiBaseUrl: "https://api.example.test",
       fetch: async input => {
         requests.push(new Request(input));
@@ -116,6 +119,7 @@ describe("management entrypoint", () => {
 
   it("preserves omitted metadata and the maximum producer u64 revision", async () => {
     const client = createTerraScaleManagementClient({
+      routing: { enabled: false },
       apiBaseUrl: "https://api.example.test",
       fetch: async () => new Response(
         '{"operations":[{"operation_id":"op-2","kind":"recovery","database_id":"db-2","name":"db-2","state":"running","stage":"capturing","cancellable":false,"cancellation_reason":"Native recovery has no safe cancellation action"},{"operation_id":"op-3","kind":"database_create","database_id":"db-3","name":"db-3","state":"succeeded","stage":"ready","created_at":"2026-09-06T12:00:00Z","revision":18446744073709551615,"cancellable":false,"cancellation_reason":"Provisioning has no safe cancellation action"}],"covered_kinds":["export","recovery"]}',
@@ -136,6 +140,7 @@ describe("management entrypoint", () => {
   it("uses the producer-published database, branch, and backup routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
+      routing: { enabled: false },
       apiBaseUrl: "https://api.example.test",
       fetch: fixtureFetch(requests),
     });
@@ -174,6 +179,7 @@ describe("management entrypoint", () => {
   it("fails closed before validating or sending unsupported management routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
+      routing: { enabled: false },
       apiBaseUrl: "https://api.example.test",
       fetch: fixtureFetch(requests),
     });
@@ -195,6 +201,7 @@ describe("management entrypoint", () => {
   it("uses the producer-published collection and index routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
+      routing: { enabled: false },
       apiBaseUrl: "https://api.example.test",
       projectId: "project",
       fetch: fixtureFetch(requests),
@@ -221,6 +228,7 @@ describe("management entrypoint", () => {
 it("publishes the producer import lifecycle routes and binary upload body", async () => {
   const requests: Request[] = [];
   const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
     apiBaseUrl: "https://api.example.test",
     fetch: async input => {
       const request = new Request(input);
@@ -257,6 +265,7 @@ it("preserves import uint64 fields above the JavaScript safe integer range", asy
   const value = "9007199254740993";
   const body = `{"committed_records":${value},"cursor":${value},"database_id":"db","durability":"regional","error":null,"format":"jsonl","input_committed":true,"input_digest":null,"input_length":${value},"operation_id":"import-1","pending_cursor":${value},"pending_operation":null,"pending_records":${value},"project_id":"project","state":"complete","tenant_id":"tenant"}`;
   const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
     apiBaseUrl: "https://api.example.test",
     fetch: async input => {
       const request = new Request(input);
@@ -289,6 +298,7 @@ it("preserves import uint64 fields above the JavaScript safe integer range", asy
 
 it("rejects an empty import upload before making a request", () => {
   const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
     apiBaseUrl: "https://api.example.test",
     fetch: async () => { throw new Error("fetch must not run"); },
   });
@@ -313,6 +323,7 @@ it("carries schema generation preconditions and a stable apply identity", async 
 
 it("preserves the published rolling_back schema migration state", async () => {
   const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
     fetch: async () => Response.json({
       generation: 1,
       schema_version: 2,
@@ -329,6 +340,7 @@ it("preserves the published rolling_back schema migration state", async () => {
 it("rolls back a schema migration with the required identity and generation preconditions", async () => {
   const requests: Request[] = [];
   const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
     fetch: async input => {
       const request = new Request(input);
       requests.push(request);
@@ -353,6 +365,7 @@ it("rolls back a schema migration with the required identity and generation prec
 it("reads an authorization lease with lossless int64 timestamps and no auth requirement", async () => {
   const requests: Request[] = [];
   const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
     fetch: async input => {
       const request = new Request(input);
       requests.push(request);
@@ -378,7 +391,7 @@ it("reads an authorization lease with lossless int64 timestamps and no auth requ
 
 it("bounds recommendations and keeps export idempotency in the published request body", async () => {
   const requests: Request[] = [];
-  const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });
+  const client = createTerraScaleManagementClient({ routing: { enabled: false }, fetch: fixtureFetch(requests) });
   await client.collections.recommendations("db", "users", { limit: 64 });
   expect(new URL(requests[0]!.url).search).toBe("?limit=64");
   for (const limit of [0, 65, 1.5, NaN]) expect(() => client.collections.recommendations("db", "users", { limit })).toThrow(TypeError);
@@ -391,7 +404,7 @@ it("bounds recommendations and keeps export idempotency in the published request
 
 it("rejects non-public or ambiguous webhook endpoints before issuing a request", () => {
   const requests: Request[] = [];
-  const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });
+  const client = createTerraScaleManagementClient({ routing: { enabled: false }, fetch: fixtureFetch(requests) });
   for (const endpoint of [
     "https://user:pass@example.test/hook",
     "https://example.test/hook?",
@@ -411,6 +424,7 @@ it("cancels an in-flight export download through its typed options", async () =>
   let requestStarted: (() => void) | undefined;
   const started = new Promise<void>(resolve => { requestStarted = resolve; });
   const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
     fetch: async input => {
       const request = new Request(input);
       requestStarted!();
@@ -430,6 +444,7 @@ it("cancels an in-flight export download through its typed options", async () =>
 it("returns typed export artifact metadata and rejects invalid headers", async () => {
   const bytes = new Uint8Array([1, 2, 3]);
   const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
     fetch: async () => new Response(bytes, {
       headers: {
         "content-type": "application/octet-stream",
@@ -454,6 +469,7 @@ it("returns typed export artifact metadata and rejects invalid headers", async (
     { "x-terrascale-artifact-length": "3", "x-terrascale-artifact-checksum": "0".repeat(64) + ", " + "0".repeat(64) },
   ]) {
     const invalid = createTerraScaleManagementClient({
+      routing: { enabled: false },
       fetch: async () => new Response(bytes, { headers: { "content-type": "application/octet-stream", "x-terrascale-artifact-checksum": "0".repeat(64), ...headers } }),
     });
     const rejected = await invalid.exports.download("db", "job", "member");
@@ -468,7 +484,7 @@ it("distinguishes accepted production provisioning from a ready database", async
     name: "primary", regions: ["GRU"], residency: "br-only", parent_database_id: null, state: "pending",
   };
   const requests: Request[] = [];
-  const client = createTerraScaleManagementClient({ fetch: async input => {
+  const client = createTerraScaleManagementClient({ routing: { enabled: false }, fetch: async input => {
     requests.push(new Request(input));
     return Response.json(accepted, { status: 202 });
   } });
@@ -481,12 +497,12 @@ it("distinguishes accepted production provisioning from a ready database", async
   } else throw new Error("expected pending provisioning");
   expect(await requests[0]?.json()).toEqual({ name: "primary", placement: ["GRU"], residency: "br-only", operation_id: "create-one" });
   expect(() => client.databases.create({ name: "primary", placement: ["GRU"], operation_id: "create-one" } as never)).toThrow(TypeError);
-  const mismatched = createTerraScaleManagementClient({ fetch: async () => Response.json(accepted, { status: 201 }) });
+  const mismatched = createTerraScaleManagementClient({ routing: { enabled: false }, fetch: async () => Response.json(accepted, { status: 201 }) });
   const rejected = await mismatched.databases.create({ name: "primary", placement: ["GRU"] });
   expect(rejected.ok).toBe(false);
   if (!rejected.ok) expect(rejected.error.kind).toBe("invalid-response");
   const incomplete = { ...accepted, project_id: undefined };
-  const incompleteClient = createTerraScaleManagementClient({ fetch: async () => Response.json(incomplete, { status: 202 }) });
+  const incompleteClient = createTerraScaleManagementClient({ routing: { enabled: false }, fetch: async () => Response.json(incomplete, { status: 202 }) });
   const incompleteResult = await incompleteClient.databases.create({ name: "primary", placement: ["GRU"], residency: "br-only", operation_id: "create-one" });
   expect(incompleteResult.ok).toBe(false);
   if (!incompleteResult.ok) expect(incompleteResult.error.code).toBe("invalid_create_response");
@@ -494,7 +510,7 @@ it("distinguishes accepted production provisioning from a ready database", async
 
 it("requires exact branch confirmation and bounds admission faults before transport", async () => {
   const requests: Request[] = [];
-  const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });
+  const client = createTerraScaleManagementClient({ routing: { enabled: false }, fetch: fixtureFetch(requests) });
   const request = { confirmBranch: "branch", fault: "latency", durationMs: 1000, maxOperations: 1, delayMs: 10 } as const;
   expect(() => client.development.setFault("primary", request)).toThrow(TypeError);
   for (const changed of [{ durationMs: 30001 }, { maxOperations: 101 }, { delayMs: 1001 }, { fault: "unavailable" as const, delayMs: 1 }]) {
@@ -508,6 +524,7 @@ it("retries webhook creation only with an explicit stable identity and never ret
   for (const operation of ["create", "keyed-create", "rotate"] as const) {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
+      routing: { enabled: false },
       maxRetryAttempts: 1, retryDelayMs: 0,
       fetch: async input => {
         requests.push(new Request(input));
@@ -538,7 +555,7 @@ it("uses per-call project scope and forwards management pagination", async () =>
 });
 
 it("rejects private IPv6 webhook destinations", async () => {
-  const client = createTerraScaleManagementClient({ fetch: async () => Response.json({}) });
+  const client = createTerraScaleManagementClient({ routing: { enabled: false }, fetch: async () => Response.json({}) });
   for (const endpoint of [
     "https://[::1]/hook",
     "https://[fc00::1]/hook",

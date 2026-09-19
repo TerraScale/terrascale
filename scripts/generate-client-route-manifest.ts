@@ -64,7 +64,7 @@ try {
     manifestVersion: 2,
     contractVersion: pinnedContractVersion,
     source: {
-      repository: "terrabase+ts-proxy",
+      repository: "terrabase+ts-atlas",
       bundle: "contracts/v1",
       openapi: "openapi.json",
     },

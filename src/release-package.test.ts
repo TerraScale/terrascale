@@ -123,7 +123,7 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
   }
   for (const job of [staticJob, jobDefinition(workflow, "node")]) {
     assert.match(job, /repository: TerraScale\/ts-rust/u);
-    assert.match(job, /repository: TerraScale\/ts-proxy/u);
+    assert.match(job, /repository: TerraScale\/ts-atlas/u);
   }
 
   const nodeJob = jobDefinition(workflow, "node");

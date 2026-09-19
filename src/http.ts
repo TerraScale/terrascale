@@ -8,6 +8,8 @@ import {
   composeAbortSignals,
   TerraScaleDiscoveryRouter,
   discoveryActive,
+  isProductRoute,
+  isRegionCatalogRoute,
   parseRoutingDatabase,
 } from "./discovery.js";
 import {
@@ -22,6 +24,7 @@ import {
 import {
   canonicalRegionCode,
   regionalApiBaseUrl,
+  terraScaleDiscoveryBaseUrl,
   type TerraScaleRegionCode,
 } from "./regions.js";
 export type TerraScaleRouteName =
@@ -106,7 +109,9 @@ export class TerraScaleHttp {
     this.#router = this.config.regionAffinity !== "strict" && discoveryActive(this.config.routing, this.config.apiBaseUrl)
       ? new TerraScaleDiscoveryRouter({
         origin: this.config.apiBaseUrl,
-        discoveryBaseUrl: this.config.routing.baseUrl,
+        // The discovery origin is the metadata host, independent of the
+        // product `apiBaseUrl`; `routing.baseUrl` overrides it for tests/dev.
+        discoveryBaseUrl: this.config.routing.baseUrl ?? terraScaleDiscoveryBaseUrl,
         fetch: fetchHandler,
         timeoutMs: this.config.requestTimeoutMs,
         discoveryTimeoutMs: this.config.routing.timeoutMs ?? 3_000,
@@ -173,9 +178,13 @@ export class TerraScaleHttp {
         : options.body instanceof Uint8Array
           ? options.body
           : JSON.stringify(options.body);
-      // ADR 0050: database-scoped requests route through discovery to a
-      // direct regional endpoint; the global origin remains the fallback.
+      // ADR 0050 §1/§8 route classification: database-scoped requests route
+      // through discovery to a direct regional endpoint; product routes target
+      // the product origin; every other member route selects a regional
+      // endpoint from the catalog. There is no proxy fallback anymore.
       const routingDatabase = this.#router === undefined ? null : parseRoutingDatabase(options.path);
+      const catalogRoute = this.#router !== undefined && routingDatabase === null && isRegionCatalogRoute(options.path);
+      const productRoute = this.#router !== undefined && routingDatabase === null && isProductRoute(options.path);
       const needsWrite = isMutation(options.method) && !(options.retryableRead === true && options.method === "POST");
       // One bounded deadline covers every attempt (ADR 0050 §5.9).
       const deadline = this.config.requestTimeoutMs > 0 ? AbortSignal.timeout(this.config.requestTimeoutMs) : undefined;
@@ -197,10 +206,25 @@ export class TerraScaleHttp {
           const routedBase = routingDatabase === null || this.#router === undefined
             ? undefined
             : await this.#router.resolveBase(routingDatabase, needsWrite);
-          const requestBase = routedBase?.baseUrl ?? this.baseUrl(requestRegionHint);
+          let requestBase: string;
+          if (this.#router === undefined) {
+            requestBase = this.baseUrl(requestRegionHint);
+          } else if (catalogRoute) {
+            // `api/v1/regions` exactly is the catalog itself, served by the discovery origin.
+            requestBase = this.#router.discoveryOrigin;
+          } else if (productRoute) {
+            // Dashboard-owned product routes target the product origin.
+            requestBase = this.config.apiBaseUrl;
+          } else {
+            // Discovery failures and database-less member routes degrade to
+            // catalog selection (ADR 0050 §5.8); the configured origin is the
+            // last resort when the catalog cannot answer either.
+            requestBase = routedBase?.baseUrl
+              ?? (await this.#router.resolveCatalogBase())
+              ?? this.baseUrl(requestRegionHint);
+          }
           routedRegion = routedBase?.region;
           attemptStartedAt = performance.now();
-          const globalFirstContact = this.isGlobalFirstContact(requestBase, requestRegionHint);
           const url = buildUrl(requestBase, options.path, options.query);
           const headers = await withCancellation(
             this.buildHeaders({ ...options, regionHint: requestRegionHint }, idempotencyKey, sentToken),
@@ -247,7 +271,6 @@ export class TerraScaleHttp {
           }
 
           if (response.ok) {
-            if (globalFirstContact) this.observeServingRegion(response.headers);
             if (!body.ok) {
               return err(
                 options.routeName,
@@ -380,13 +403,6 @@ export class TerraScaleHttp {
     return regionalApiBaseUrl(this.config.apiBaseUrl, region);
   }
 
-  private isGlobalFirstContact(baseUrl: string, regionHint?: TerraScaleRegionCode): boolean {
-    return this.config.regionAffinity === "failover" &&
-      this.#pinnedRegion === undefined &&
-      regionHint === undefined &&
-      baseUrl === this.config.apiBaseUrl;
-  }
-
   private async buildHeaders<TBody>(
     options: TerraScaleRequestOptions<TBody>,
     idempotencyKey: string | undefined,
@@ -475,13 +491,6 @@ export class TerraScaleHttp {
     }
 
     return status === undefined || retryableStatuses.has(status);
-  }
-
-  private observeServingRegion(headers: Headers): void {
-    const region = servingRegion(headers);
-    if (region !== undefined && this.#pinnedRegion === undefined) {
-      this.#pinnedRegion = region;
-    }
   }
 
   private observeSession(headers: Headers): void {
@@ -589,10 +598,6 @@ function sessionTokenAdvances(current: string, candidate: string): boolean {
   // its causal frontier. Keep the latest valid observation rather than
   // comparing encodings as if they were numeric revisions.
   return candidate !== current;
-}
-
-function servingRegion(headers: Headers): TerraScaleRegionCode | undefined {
-  return canonicalRegionCode(headers.get("x-terrascale-serving-region") ?? headers.get("x-terrascale-region") ?? undefined);
 }
 
 function placementRegion(headers: Headers): TerraScaleRegionCode | undefined {

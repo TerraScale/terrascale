@@ -64,7 +64,7 @@ jobs:
         uses: https://data.forgejo.org/actions/checkout@v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/ts-proxy
+          repository: TerraScale/ts-atlas
           path: contracts/edge-root
           fetch-depth: 1
           token: ""
@@ -141,7 +141,7 @@ jobs:
         uses: https://data.forgejo.org/actions/checkout@v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/ts-proxy
+          repository: TerraScale/ts-atlas
           path: contracts/edge-root
           fetch-depth: 1
           token: ""

@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "contractVersion": "v1",
   "source": {
-    "repository": "terrabase+ts-proxy",
+    "repository": "terrabase+ts-atlas",
     "bundle": "contracts/v1",
     "openapi": "openapi.json"
   },

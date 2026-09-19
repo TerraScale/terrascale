@@ -151,7 +151,8 @@ it("preserves full-width auth result counts as bigint", async () => {
 it("serializes transaction operations, preserves keys, and commits once", async () => {
   const paths: string[] = [];
   const keys: string[] = [];
-  const client = createAuthPersistenceClient({ fetch: async input => {
+  // Pure transport sequencing: the discovery suites own atlas routing.
+  const client = createAuthPersistenceClient({ routing: { enabled: false }, fetch: async input => {
     const request = new Request(input);
     const path = new URL(request.url).pathname;
     paths.push(path);

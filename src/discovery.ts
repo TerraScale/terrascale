@@ -1,10 +1,16 @@
 import type { FetchLike } from "./config.js";
-import { isRegionCode, terraScaleGlobalApiHostname, type TerraScaleRegionCode } from "./regions.js";
+import {
+  isRegionCode,
+  terraScaleDiscoveryHostname,
+  terraScaleGlobalApiHostname,
+  type TerraScaleRegionCode,
+} from "./regions.js";
 
 /**
- * SDK-driven routing discovery (ADR 0050). Discovery replaces the global
- * proxy as the default first contact: one metadata GET per routing scope,
- * then direct regional connections. The proxy remains only as a fallback.
+ * SDK-driven routing discovery (ADR 0050). Discovery is the first contact:
+ * one metadata GET per routing scope against `atlas.terrascale.tech`, then
+ * direct regional connections. The per-request proxy is retired (§8): a
+ * discovery failure degrades to region-catalog selection, never to a proxy.
  */
 
 export type TerraScaleRoutingCapability = "read" | "write" | "sql" | "reactive";
@@ -115,7 +121,7 @@ function validateEndpointUrl(raw: unknown, region: TerraScaleRegionCode, loopbac
 
 /**
  * Strictly validates a discovery response. Any structural doubt rejects the
- * document (the SDK falls back to the ADR 0043 proxy path); routing never
+ * document (the SDK degrades to catalog selection); routing never
  * widens on malformed input. `loopbackClient` admits http dev-origin
  * endpoint URLs (loopback and `*.localhost`), which a dev worker publishes
  * from its DEV_ORIGINS.
@@ -205,7 +211,8 @@ export function routingDocumentFromPlacement(
   revision: number,
 ): TerraScaleRoutingDocument | null {
   try {
-    if (new URL(`${scope.origin}/`).hostname !== terraScaleGlobalApiHostname) return null;
+    const hostname = new URL(`${scope.origin}/`).hostname;
+    if (hostname !== terraScaleGlobalApiHostname && hostname !== terraScaleDiscoveryHostname) return null;
   } catch {
     return null;
   }
@@ -262,6 +269,8 @@ export class TerraScaleRoutingCache {
   readonly #stale = new Set<string>();
   /** Opaque per-scope generation tokens, bumped whenever cached routing changes. */
   readonly #generations = new Map<string, object>();
+  /** Last observed routing revision per scope, sent as `rev` on refreshes (ADR 0050 §2). */
+  readonly #lastRevision = new Map<string, number>();
   #nowMs: () => number = () => Date.now();
 
   /** Tests inject a deterministic clock. */
@@ -307,8 +316,14 @@ export class TerraScaleRoutingCache {
   set(scope: TerraScaleRoutingScope, document: TerraScaleRoutingDocument): void {
     const key = scopeKey(scope);
     this.#entries.set(key, { document, expiresAtMs: this.#nowMs() + document.refreshSeconds * 1_000 });
+    this.#lastRevision.set(key, document.revision);
     this.#demoted.delete(key);
     this.#bump(key);
+  }
+
+  /** The last observed routing revision for the scope, 0 when never seen. */
+  lastRevision(scope: TerraScaleRoutingScope): number {
+    return this.#lastRevision.get(scopeKey(scope)) ?? 0;
   }
 
   /** Invalidate after a rejected route; the next lookup rediscovers with `stale=1`. */
@@ -497,9 +512,177 @@ export class TerraScaleDiscoveryError extends Error {
   }
 }
 
+export type TerraScaleRegionCatalogRegion = {
+  readonly code: TerraScaleRegionCode;
+  readonly name: string;
+  readonly country: string;
+  readonly latitude: number;
+  readonly longitude: number;
+  readonly available: boolean;
+};
+
+/** The region catalog (ADR 0050 §2/§8): the edge's client-relative region view. */
+export type TerraScaleRegionCatalog = {
+  readonly regions: readonly TerraScaleRegionCatalogRegion[];
+  /** Regional member origins by Region code, validated like routing endpoints. */
+  readonly hosts: Readonly<Record<string, string>>;
+};
+
+export const regionCatalogCacheSeconds = 300;
+
+/**
+ * Strictly validates a region-catalog response. Hosts obey the same
+ * endpoint-URL trust rules as routing documents: the regional
+ * `{region}.api.terrascale.tech` family, or dev loopback/`*.localhost`
+ * origins when the discovery origin itself is loopback.
+ */
+export function parseRegionCatalog(payload: unknown, loopbackClient = false): TerraScaleRegionCatalog | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const doc = payload as Record<string, unknown>;
+  const rawRegions = doc.regions;
+  if (!Array.isArray(rawRegions) || rawRegions.length === 0 || rawRegions.length > maxEndpoints) return null;
+  const regions: TerraScaleRegionCatalogRegion[] = [];
+  const codes = new Set<string>();
+  for (const raw of rawRegions) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const entry = raw as Record<string, unknown>;
+    if (!isRegionCode(entry.code) || codes.has(entry.code)) return null;
+    if (typeof entry.name !== "string" || entry.name.length === 0 || entry.name.length > 128) return null;
+    if (typeof entry.country !== "string" || entry.country.length === 0 || entry.country.length > 96) return null;
+    if (typeof entry.latitude !== "number" || !Number.isFinite(entry.latitude) || Math.abs(entry.latitude) > 90) return null;
+    if (typeof entry.longitude !== "number" || !Number.isFinite(entry.longitude) || Math.abs(entry.longitude) > 180) return null;
+    if (typeof entry.available !== "boolean") return null;
+    codes.add(entry.code);
+    regions.push({
+      code: entry.code,
+      name: entry.name,
+      country: entry.country,
+      latitude: entry.latitude,
+      longitude: entry.longitude,
+      available: entry.available,
+    });
+  }
+  const rawHosts = doc.hosts;
+  if (!rawHosts || typeof rawHosts !== "object" || Array.isArray(rawHosts)) return null;
+  const byCode = new Map(regions.map((region) => [region.code, region]));
+  const hosts: Record<string, string> = {};
+  for (const [code, raw] of Object.entries(rawHosts)) {
+    const region = byCode.get(code);
+    if (region === undefined) return null;
+    const host = validateEndpointUrl(raw, region.code, loopbackClient);
+    if (host === null) return null;
+    hosts[code] = host;
+  }
+  for (const region of regions) {
+    if (hosts[region.code] === undefined) return null;
+  }
+  return { regions, hosts };
+}
+
+/** The first available region's host: the catalog's recommended regional endpoint. */
+function firstAvailableCatalogHost(catalog: TerraScaleRegionCatalog): string | undefined {
+  for (const region of catalog.regions) {
+    if (!region.available) continue;
+    const host = catalog.hosts[region.code];
+    if (host !== undefined) return host;
+  }
+  return undefined;
+}
+
+/**
+ * The process-wide region-catalog cache (ADR 0050 §5.8): five-minute TTL,
+ * single-flight per origin, refreshed on failure (a failed fetch caches
+ * nothing, so the next request retries immediately).
+ */
+export class TerraScaleRegionCatalogCache {
+  readonly #entries = new Map<string, { readonly catalog: TerraScaleRegionCatalog; readonly expiresAtMs: number }>();
+  readonly #inflight = new Map<string, Promise<TerraScaleRegionCatalog>>();
+  #nowMs: () => number = () => Date.now();
+
+  /** Tests inject a deterministic clock. */
+  setClock(nowMs: () => number): void {
+    this.#nowMs = nowMs;
+  }
+
+  get(origin: string): TerraScaleRegionCatalog | undefined {
+    const entry = this.#entries.get(origin);
+    if (entry === undefined) return undefined;
+    if (entry.expiresAtMs <= this.#nowMs()) {
+      this.#entries.delete(origin);
+      return undefined;
+    }
+    return entry.catalog;
+  }
+
+  set(origin: string, catalog: TerraScaleRegionCatalog): void {
+    this.#entries.set(origin, { catalog, expiresAtMs: this.#nowMs() + regionCatalogCacheSeconds * 1_000 });
+  }
+
+  delete(origin: string): void {
+    this.#entries.delete(origin);
+  }
+
+  /** Single-flight: concurrent catalog fetches for one origin share one request. */
+  async coalesce(origin: string, initiate: () => Promise<TerraScaleRegionCatalog>): Promise<TerraScaleRegionCatalog> {
+    const existing = this.#inflight.get(origin);
+    if (existing !== undefined) return existing;
+    const promise = initiate().finally(() => {
+      this.#inflight.delete(origin);
+    });
+    this.#inflight.set(origin, promise);
+    return promise;
+  }
+}
+
+const sharedRegionCatalogCache = new TerraScaleRegionCatalogCache();
+
+/** The process-wide catalog cache; one client per application shares it. */
+export function sharedRegionCatalogCacheInstance(): TerraScaleRegionCatalogCache {
+  return sharedRegionCatalogCache;
+}
+
+export type RegionCatalogFetchInput = {
+  readonly origin: string;
+  readonly fetch: FetchLike;
+  readonly timeoutMs: number;
+  readonly signal?: AbortSignal | undefined;
+};
+
+/** One bounded region-catalog request (ADR 0050 §5.8). Never authenticated. */
+export async function fetchRegionCatalog(input: RegionCatalogFetchInput): Promise<TerraScaleRegionCatalog> {
+  const url = new URL("/api/v1/regions", `${input.origin}/`);
+  const timeoutSignal = AbortSignal.timeout(input.timeoutMs);
+  const composed = composeAbortSignals([input.signal, timeoutSignal]);
+  try {
+    const response = await input.fetch(new Request(url, {
+      method: "GET",
+      headers: new Headers({ accept: "application/json" }),
+      redirect: "manual",
+      ...(composed.signal === undefined ? {} : { signal: composed.signal }),
+    }));
+    if (!response.ok) {
+      throw new TerraScaleDiscoveryError("unavailable", `The region catalog answered ${response.status}.`);
+    }
+    const payload: unknown = await response.json();
+    let loopbackClient = false;
+    try {
+      loopbackClient = isDevOrigin(new URL(`${input.origin}/`));
+    } catch {
+      loopbackClient = false;
+    }
+    const catalog = parseRegionCatalog(payload, loopbackClient);
+    if (catalog === null) {
+      throw new TerraScaleDiscoveryError("invalid_document", "The region catalog returned a malformed response.");
+    }
+    return catalog;
+  } finally {
+    composed.dispose();
+  }
+}
+
 /**
  * The fixed path table for database-scoped requests, mirroring the edge's
- * parseDb exactly (ts-proxy design §4): `/api/v1/databases/{name}…`. The
+ * parseDb exactly (ADR 0050 §2): `/api/v1/databases/{name}…`. The
  * database name is the routing scope; database-less routes never discover.
  */
 export function parseRoutingDatabase(path: string): string | null {
@@ -508,6 +691,29 @@ export function parseRoutingDatabase(path: string): string | null {
   if (segments[2] !== "databases" || segments.length < 4) return null;
   const database = segments[3];
   return database !== undefined && parseRoutingDatabaseName(database) !== null ? database : null;
+}
+
+function apiV1Segments(path: string): string[] {
+  return path.replace(/^\/+/, "").split("/").filter(Boolean);
+}
+
+/**
+ * Dashboard-owned product routes (ADR 0050 §8): everything under
+ * `api/v1/organizations` and `api/v1/projects`, plus `api/v1/regions/{code}`.
+ * They target the product origin (`apiBaseUrl`). `api/v1/regions` exactly is
+ * the region catalog on the discovery origin, never a product route.
+ */
+export function isProductRoute(path: string): boolean {
+  const segments = apiV1Segments(path);
+  if (segments[0] !== "api" || segments[1] !== "v1") return false;
+  if (segments[2] === "organizations" || segments[2] === "projects") return true;
+  return segments[2] === "regions" && segments.length >= 4;
+}
+
+/** The region-catalog form: `api/v1/regions` exactly, served by the discovery origin. */
+export function isRegionCatalogRoute(path: string): boolean {
+  const segments = apiV1Segments(path);
+  return segments[0] === "api" && segments[1] === "v1" && segments[2] === "regions" && segments.length === 3;
 }
 
 export const defaultRoutingBranch = "main";
@@ -573,13 +779,19 @@ export type RouterConfig = {
 export class TerraScaleDiscoveryRouter {
   readonly #config: RouterConfig;
   readonly #cache: TerraScaleRoutingCache;
+  readonly #catalogCache: TerraScaleRegionCatalogCache;
   readonly #rtt = new RegionRttTracker();
   /** Sticky selected region per scope; moves only on failure, 421, or exit from the eligible set. */
   readonly #pinned = new Map<string, TerraScaleRegionCode>();
 
-  constructor(config: RouterConfig, cache: TerraScaleRoutingCache = sharedRoutingCacheInstance()) {
+  constructor(
+    config: RouterConfig,
+    cache: TerraScaleRoutingCache = sharedRoutingCacheInstance(),
+    catalogCache: TerraScaleRegionCatalogCache = sharedRegionCatalogCacheInstance(),
+  ) {
     this.#config = config;
     this.#cache = cache;
+    this.#catalogCache = catalogCache;
   }
 
   get discoveryOrigin(): string {
@@ -603,7 +815,7 @@ export class TerraScaleDiscoveryRouter {
   /**
    * Resolve the base URL for one database-scoped operation. Returns undefined
    * when discovery cannot answer (cache miss + failed/timeout request): the
-   * caller falls back to the ADR 0043 global-origin path for that request.
+   * caller degrades to catalog selection for that request (ADR 0050 §5.8).
    */
   async resolveBase(database: string, needsWrite: boolean): Promise<ResolvedRoutingBase | undefined> {
     const scope = this.scopeFor(database);
@@ -616,11 +828,13 @@ export class TerraScaleDiscoveryRouter {
       // shared single-flight discovery.
       const generation = this.#cache.generation(scope);
       try {
+        const revision = this.#cache.lastRevision(scope);
         document = await this.#cache.coalesce(scope, () => fetchRoutingDocument({
           origin: this.discoveryOrigin,
           database,
           branch: defaultRoutingBranch,
           ...(stale ? { stale: true } : {}),
+          ...(revision > 0 ? { revision } : {}),
           measuredRttMs: this.#rtt.snapshot(),
           fetch: this.#config.fetch,
           timeoutMs: this.#config.discoveryTimeoutMs,
@@ -636,9 +850,9 @@ export class TerraScaleDiscoveryRouter {
         this.#cache.set(scope, document);
       } catch (error) {
         // Any discovery failure — including a worker 404, which the contract
-        // reserves — falls back to the ADR 0043 path; the member's response
-        // stays authoritative for existence, not the discovery cache. Only
-        // genuine failures arm the backoff, never a cancellation.
+        // reserves — degrades the caller to catalog selection; the member's
+        // response stays authoritative for existence, not the discovery
+        // cache. Only genuine failures arm the backoff, never a cancellation.
         if (!isAbortError(error)) this.#cache.noteFailure(scope);
         return undefined;
       }
@@ -646,6 +860,30 @@ export class TerraScaleDiscoveryRouter {
     const endpoint = this.#selectEndpoint(scope, document, needsWrite);
     if (endpoint === undefined) return undefined;
     return { baseUrl: endpoint.url, region: endpoint.region, fromDiscovery: true };
+  }
+
+  /**
+   * The catalog-selected regional origin (ADR 0050 §5.8/§8): the discovery
+   * failure fallback and the base for database-less member routes. The
+   * catalog is cached five minutes per discovery origin; a failed fetch
+   * caches nothing, so the next request refreshes it. Returns undefined
+   * when the catalog cannot answer.
+   */
+  async resolveCatalogBase(): Promise<string | undefined> {
+    const origin = this.discoveryOrigin;
+    const cached = this.#catalogCache.get(origin);
+    if (cached !== undefined) return firstAvailableCatalogHost(cached);
+    try {
+      const catalog = await this.#catalogCache.coalesce(origin, () => fetchRegionCatalog({
+        origin,
+        fetch: this.#config.fetch,
+        timeoutMs: this.#config.discoveryTimeoutMs,
+      }));
+      this.#catalogCache.set(origin, catalog);
+      return firstAvailableCatalogHost(catalog);
+    } catch {
+      return undefined;
+    }
   }
 
   /**

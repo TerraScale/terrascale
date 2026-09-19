@@ -185,19 +185,28 @@ automatic retry candidates.
 
 ## Region and session behavior
 
-The default public API origin is `https://api.terrascale.tech`. Per
+The discovery origin is `https://atlas.terrascale.tech` (the metadata-only
+`ts-atlas` Worker); `https://api.terrascale.tech` is the dashboard-owned
+product API origin. Per
 [ADR 0050](../terrabase/docs/adr/0050-sdk-discovery-and-direct-regional-routing.md),
 the SDK's first database-scoped request performs one metadata
-`GET /api/v1/discovery` call against that origin and then connects
+`GET /api/v1/discovery` call against the discovery origin and then connects
 **directly** to the ranked regional endpoint —
 `https://gru.api.terrascale.tech`, `https://sfo.api.terrascale.tech`, or
 `https://fra.api.terrascale.tech` — for every subsequent query, mutation, and
 reactive connection. Discovery never runs before every query: the routing
 document is cached per database/branch/project/tenant scope for its refresh
 policy, concurrent lookups share one request, and a healthy connection is
-kept across refreshes. If discovery itself fails or times out (bounded at
-3 s), the request falls back to the global origin, which still proxies for
-unpinned callers.
+kept across refreshes.
+
+There is no proxy fallback: the per-request proxy is retired. If discovery
+fails or times out (bounded at 3 s), the SDK fetches the region catalog
+(`GET /api/v1/regions` on the discovery origin, cached five minutes) and
+sends the request directly to the first available regional endpoint.
+Database-less member routes (database create/list, tenants) use the same
+catalog selection, while dashboard-owned product routes
+(`/api/v1/organizations`, `/api/v1/projects`, `/api/v1/regions/{code}`)
+target the product origin `api.terrascale.tech`.
 
 Routing documents carry a routing revision, a refresh policy, and eligible
 endpoints with per-region capabilities; a draining replica keeps reads but

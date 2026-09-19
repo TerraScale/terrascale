@@ -74,6 +74,8 @@ test("SQL rejects unsafe integers when the runtime does not provide original num
 test("SQL parameters reject unsafe integer numbers while preserving finite fractions", async () => {
   let requests = 0;
   const client = createTerraScaleClient({
+    // Pure SQL parameter semantics: the discovery suites own atlas routing.
+    routing: { enabled: false },
     fetch: async () => {
       requests++;
       return new Response('{"matched":1,"rows":[]}', { headers: { "content-type": "application/json" } });

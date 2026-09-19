@@ -693,13 +693,15 @@ export class TerraScaleSyncV1Client {
     message: Extract<SyncV1Message, { readonly kind: "subscribe" }>,
     signal?: AbortSignal,
   ): Promise<AttachedView> {
-    // ADR 0050 §5.7: attach goes directly to the discovered regional
-    // endpoint. A discovery miss (failure, timeout, or cache expiry) keeps
-    // the global origin; the response region header then derives the member
-    // exactly as before.
+    // ADR 0050 §5.7/§5.8: attach goes directly to the discovered regional
+    // endpoint. A discovery miss (failure, timeout, or cache expiry) degrades
+    // to the catalog-selected regional origin — there is no proxy to fall
+    // back to — and the response region header then derives the member.
     const router = this.#discoveryRouter;
     const resolved = router === undefined ? undefined : await router.resolveBase(databaseId, false);
-    const attachBase = resolved?.baseUrl ?? this.#apiBaseUrl;
+    const attachBase = resolved?.baseUrl
+      ?? (router === undefined ? undefined : await router.resolveCatalogBase())
+      ?? this.#apiBaseUrl;
     const headers = await this.#headers("application/json", undefined);
     if (this.#tenantId !== undefined) headers.set("x-terrascale-tenant-id", this.#tenantId);
     if (this.#projectId !== undefined) headers.set("x-terrascale-project-id", this.#projectId);

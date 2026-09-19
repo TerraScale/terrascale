@@ -34734,7 +34734,7 @@
   ],
   "sources": {
     "openApiSha256": "a0577d2d9575d3205e53f9d8c7c844debcc2c36dfa1d9a9ccf0b4c564d137c07",
-    "edgeOpenApiSha256": "ea10c9124b918774a408c05cc5e6c2d51e7f2f8da512d3a46bc39929581137bc",
-    "routeManifestSha256": "165195073921ac8c718d4f653321c3736a3c1cd8502348aa2fcdf6eaf7dcfbf9"
+    "edgeOpenApiSha256": "44705aeb48706308014712a3c04fa365fbc48bceef5ad7565cc3b2a03ec038d4",
+    "routeManifestSha256": "d0cce665a000f81439fbda8792bdd97b07823cec83eaa680d25f72f4cbb7e2d0"
   }
 }

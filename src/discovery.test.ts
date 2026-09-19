@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   discoveryActive,
+  fetchRegionCatalog,
   fetchRoutingDocument,
+  parseRegionCatalog,
   parseRoutingDatabase,
   parseRoutingDocument,
   RegionRttTracker,
   routingDocumentFromPlacement,
   TerraScaleDiscoveryError,
   TerraScaleDiscoveryRouter,
+  TerraScaleRegionCatalogCache,
   TerraScaleRoutingCache,
 } from "./discovery.js";
 
@@ -116,6 +119,88 @@ describe("parseRoutingDatabase", () => {
     expect(parseRoutingDatabase("api/v1/reactive/views")).toBeNull();
     expect(parseRoutingDatabase("api/v1/organizations/org")).toBeNull();
     expect(parseRoutingDatabase("api/v1/databases/NotAName/documents")).toBeNull();
+  });
+});
+
+function catalogPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    regions: [
+      { code: "FRA", name: "Frankfurt", country: "DE", latitude: 50.1109, longitude: 8.6821, available: true },
+      { code: "GRU", name: "Sao Paulo", country: "BR", latitude: -23.5475, longitude: -46.6361, available: false },
+    ],
+    hosts: {
+      FRA: "https://fra.api.terrascale.tech",
+      GRU: "https://gru.api.terrascale.tech",
+    },
+    ...overrides,
+  };
+}
+
+describe("parseRegionCatalog", () => {
+  it("accepts a well-formed catalog", () => {
+    const catalog = parseRegionCatalog(catalogPayload());
+    expect(catalog?.regions).toHaveLength(2);
+    expect(catalog?.hosts.FRA).toBe("https://fra.api.terrascale.tech");
+  });
+
+  it("rejects unknown regions, duplicates, and structural doubts", () => {
+    expect(parseRegionCatalog(catalogPayload({ regions: [
+      { code: "fra", name: "Frankfurt", country: "DE", latitude: 1, longitude: 1, available: true },
+    ], hosts: { fra: "https://fra.api.terrascale.tech" } }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ regions: [
+      { code: "FRA", name: "Frankfurt", country: "DE", latitude: 1, longitude: 1, available: true },
+      { code: "FRA", name: "Frankfurt", country: "DE", latitude: 1, longitude: 1, available: false },
+    ] }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ regions: [] }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ regions: [
+      { code: "FRA", name: "Frankfurt", country: "DE", latitude: 91, longitude: 1, available: true },
+    ] }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ regions: [
+      { code: "FRA", name: "Frankfurt", country: "DE", latitude: 1, longitude: 1, available: "yes" },
+    ] }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ hosts: { SFO: "https://sfo.api.terrascale.tech", FRA: "https://fra.api.terrascale.tech", GRU: "https://gru.api.terrascale.tech" } }))).toBeNull();
+  });
+
+  it("rejects missing hosts entries and non-trusted hosts", () => {
+    expect(parseRegionCatalog(catalogPayload({ hosts: { FRA: "https://fra.api.terrascale.tech" } }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ hosts: { FRA: "https://evil.example.com", GRU: "https://gru.api.terrascale.tech" } }))).toBeNull();
+    expect(parseRegionCatalog(catalogPayload({ hosts: { FRA: "http://fra.api.terrascale.tech", GRU: "https://gru.api.terrascale.tech" } }))).toBeNull();
+  });
+
+  it("admits loopback hosts only for loopback clients", () => {
+    const loopback = catalogPayload({ hosts: { FRA: "http://127.0.0.1:7101", GRU: "http://gru.api.localhost:8787" } });
+    expect(parseRegionCatalog(loopback)).toBeNull();
+    expect(parseRegionCatalog(loopback, true)?.hosts.FRA).toBe("http://127.0.0.1:7101");
+  });
+});
+
+describe("TerraScaleRegionCatalogCache", () => {
+  it("expires entries after five minutes", () => {
+    const cache = new TerraScaleRegionCatalogCache();
+    let now = 1_000;
+    cache.setClock(() => now);
+    const catalog = parseRegionCatalog(catalogPayload())!;
+    cache.set("https://atlas.terrascale.tech", catalog);
+    expect(cache.get("https://atlas.terrascale.tech")).toBe(catalog);
+    now += 301_000;
+    expect(cache.get("https://atlas.terrascale.tech")).toBeUndefined();
+  });
+
+  it("shares one in-flight catalog fetch per origin", async () => {
+    const cache = new TerraScaleRegionCatalogCache();
+    let fetches = 0;
+    const catalog = parseRegionCatalog(catalogPayload())!;
+    const initiate = async (): Promise<typeof catalog> => {
+      fetches++;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return catalog;
+    };
+    const [a, b] = await Promise.all([
+      cache.coalesce("https://atlas.terrascale.tech", initiate),
+      cache.coalesce("https://atlas.terrascale.tech", initiate),
+    ]);
+    expect(fetches).toBe(1);
+    expect(a).toBe(b);
   });
 });
 
@@ -272,11 +357,122 @@ describe("TerraScaleDiscoveryRouter", () => {
     expect(await router.resolveBase("orders", false)).toBeUndefined();
   });
 
+  it("resolves the catalog-selected regional origin and caches it five minutes", async () => {
+    const catalogCache = new TerraScaleRegionCatalogCache();
+    let clock = 1_000;
+    catalogCache.setClock(() => clock);
+    let catalogFetches = 0;
+    const router = new TerraScaleDiscoveryRouter({
+      origin: "https://api.terrascale.tech",
+      discoveryBaseUrl: "https://atlas.terrascale.tech",
+      fetch: async () => {
+        catalogFetches++;
+        return Response.json(catalogPayload());
+      },
+      timeoutMs: 30_000,
+      discoveryTimeoutMs: 500,
+    }, new TerraScaleRoutingCache(), catalogCache);
+    // GRU is listed second but unavailable; the first available region wins.
+    expect(await router.resolveCatalogBase()).toBe("https://fra.api.terrascale.tech");
+    expect(await router.resolveCatalogBase()).toBe("https://fra.api.terrascale.tech");
+    expect(catalogFetches).toBe(1);
+    clock += 301_000;
+    await router.resolveCatalogBase();
+    expect(catalogFetches).toBe(2);
+  });
+
+  it("returns undefined on catalog failure and retries on the next call", async () => {
+    const catalogCache = new TerraScaleRegionCatalogCache();
+    let fail = true;
+    let catalogFetches = 0;
+    const router = new TerraScaleDiscoveryRouter({
+      origin: "https://api.terrascale.tech",
+      discoveryBaseUrl: "https://atlas.terrascale.tech",
+      fetch: async () => {
+        catalogFetches++;
+        return fail ? new Response("unavailable", { status: 503 }) : Response.json(catalogPayload());
+      },
+      timeoutMs: 30_000,
+      discoveryTimeoutMs: 500,
+    }, new TerraScaleRoutingCache(), catalogCache);
+    expect(await router.resolveCatalogBase()).toBeUndefined();
+    fail = false;
+    // Refresh on failure: nothing was cached, so the next call refetches.
+    expect(await router.resolveCatalogBase()).toBe("https://fra.api.terrascale.tech");
+    expect(catalogFetches).toBe(2);
+  });
+
   it("honours a preferred region only when it is eligible", async () => {
     const router = routerWith(async () => Response.json(validDocumentPayload()), { preferredRegion: "GRU" });
     expect((await router.resolveBase("orders", false))?.region).toBe("GRU");
     // GRU is read-only in the fixture, so a write must stay on FRA.
     expect((await router.resolveBase("orders", true))?.region).toBe("FRA");
+  });
+
+  it("keeps the pinned region across a re-ranking refresh (ADR 0050 §5.5)", async () => {
+    const cache = new TerraScaleRoutingCache();
+    let clock = 1_000;
+    cache.setClock(() => clock);
+    let gruFirst = false;
+    const router = new TerraScaleDiscoveryRouter({
+      origin: "https://api.terrascale.tech",
+      discoveryBaseUrl: "https://api.terrascale.tech",
+      fetch: async () => Response.json(validDocumentPayload(gruFirst ? {
+        endpoints: [
+          { region: "GRU", url: "https://gru.api.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] },
+          { region: "FRA", url: "https://fra.api.terrascale.tech", priority: 2, capabilities: ["read", "write", "sql", "reactive"] },
+        ],
+      } : {})),
+      timeoutMs: 30_000,
+      discoveryTimeoutMs: 500,
+    }, cache);
+    expect((await router.resolveBase("orders", false))?.region).toBe("FRA");
+    // A routine refresh now ranks GRU first; the healthy pin stays on FRA.
+    gruFirst = true;
+    clock += 301_000;
+    expect((await router.resolveBase("orders", false))?.region).toBe("FRA");
+  });
+
+  it("moves selection when the pinned region leaves the document", async () => {
+    const cache = new TerraScaleRoutingCache();
+    let clock = 1_000;
+    cache.setClock(() => clock);
+    let withFra = true;
+    const router = new TerraScaleDiscoveryRouter({
+      origin: "https://api.terrascale.tech",
+      discoveryBaseUrl: "https://api.terrascale.tech",
+      fetch: async () => Response.json(withFra ? validDocumentPayload() : validDocumentPayload({
+        endpoints: [{ region: "GRU", url: "https://gru.api.terrascale.tech", priority: 1, capabilities: ["read", "write", "sql", "reactive"] }],
+      })),
+      timeoutMs: 30_000,
+      discoveryTimeoutMs: 500,
+    }, cache);
+    expect((await router.resolveBase("orders", false))?.region).toBe("FRA");
+    withFra = false;
+    clock += 301_000;
+    expect((await router.resolveBase("orders", false))?.region).toBe("GRU");
+  });
+
+  it("moves selection when the pinned region is demoted", async () => {
+    const router = routerWith(async () => Response.json(validDocumentPayload()));
+    expect((await router.resolveBase("orders", false))?.region).toBe("FRA");
+    router.reportRegionFailure("orders", "FRA");
+    expect((await router.resolveBase("orders", false))?.region).toBe("GRU");
+  });
+
+  it("discards an in-flight discovery result when a 421 placement lands mid-flight", async () => {
+    let releaseFetch!: (response: Response) => void;
+    const router = routerWith(() => new Promise<Response>(resolve => {
+      releaseFetch = resolve;
+    }));
+    const pending = router.resolveBase("orders", false);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    router.notePlacement("orders", ["SFO"], 5);
+    // The fetch started before the 421 and still answers with the old ranking.
+    releaseFetch(Response.json(validDocumentPayload()));
+    expect(await pending).toBeUndefined();
+    expect(router.cachedDocument("orders")?.endpoints[0]?.region).toBe("SFO");
+    expect((await router.resolveBase("orders", false))?.region).toBe("SFO");
   });
 
   it("sends measured region RTT and stale corrections", async () => {
@@ -300,6 +496,8 @@ describe("TerraScaleDiscoveryRouter", () => {
     await router.resolveBase("orders", false);
     expect(requests).toHaveLength(2);
     expect(requests[1]?.headers.get("x-terrascale-region-rtt")).toBe("FRA=90");
+    // ADR 0050 §2: refreshes carry the cached routing revision as `rev`.
+    expect(new URL(requests[1]!.url).searchParams.get("rev")).toBe("9");
     router.reportRejectedRoute("orders");
     clock += 301_000;
     await router.resolveBase("orders", false);
@@ -323,6 +521,25 @@ describe("fetchRoutingDocument", () => {
       origin: "https://api.terrascale.tech",
       database: "orders",
       branch: "main",
+      fetch: async () => Response.json({ hello: "world" }),
+      timeoutMs: 500,
+    }).catch((error: unknown) => error);
+    expect((malformed as TerraScaleDiscoveryError).code).toBe("invalid_document");
+  });
+});
+
+describe("fetchRegionCatalog", () => {
+  it("maps catalog failures to typed discovery errors", async () => {
+    const unavailable = await fetchRegionCatalog({
+      origin: "https://atlas.terrascale.tech",
+      fetch: async () => new Response("boom", { status: 503 }),
+      timeoutMs: 500,
+    }).catch((error: unknown) => error);
+    expect(unavailable).toBeInstanceOf(TerraScaleDiscoveryError);
+    expect((unavailable as TerraScaleDiscoveryError).code).toBe("unavailable");
+
+    const malformed = await fetchRegionCatalog({
+      origin: "https://atlas.terrascale.tech",
       fetch: async () => Response.json({ hello: "world" }),
       timeoutMs: 500,
     }).catch((error: unknown) => error);
