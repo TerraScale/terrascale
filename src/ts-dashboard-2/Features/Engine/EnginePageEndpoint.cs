@@ -15,9 +15,7 @@ public sealed class EnginePageEndpoint(DashboardStore store, TerraBaseBackend te
     public override async Task<IResult> HandleAsync(CancellationToken ct)
     {
         var shell = ShellFactory.Create(store, "/engine");
-        var model = terrabase.Configured
-            ? await EnginePageModel.LoadLiveAsync(terrabase, shell, ct)
-            : EnginePageModel.NotConfigured(shell, terrabase.RawUrl);
+        var model = await EnginePageModel.LoadAsync(terrabase, shell, ct);
         return EngineSlice.Create(model);
     }
 }

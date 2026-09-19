@@ -1,6 +1,7 @@
-using TerraScale.DotNet;
-
 namespace TerraScale.Dashboard2;
+
+#if TERRABASE_SDK
+using TerraScale.DotNet;
 
 /// <summary>
 /// TerraBase live-observability access point. Reads TERRABASE_URL once and
@@ -35,3 +36,17 @@ public sealed class TerraBaseBackend
     public TerraScaleClient CreateClient(HttpClient? http = null) =>
         new(http ?? CreateHttpClient(), new TerraScaleClientOptions { BaseAddress = Url!, ApiKey = "dashboard-local" });
 }
+#else
+/// <summary>
+/// Stub without the sibling ts-dotnet checkout: never configured, so the
+/// Engine page renders its setup panel.
+/// </summary>
+public sealed class TerraBaseBackend
+{
+    public string RawUrl { get; } = "";
+
+    public bool Configured => false;
+
+    public Uri? Url => null;
+}
+#endif

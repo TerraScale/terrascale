@@ -24,6 +24,9 @@
   </ItemGroup>
 
   <!-- Live engine observability via the sibling ts-dotnet SDK checkout; absent sibling keeps the dashboard buildable. -->
+  <PropertyGroup Condition="Exists('../../../ts-dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj')">
+    <DefineConstants>$(DefineConstants);TERRABASE_SDK</DefineConstants>
+  </PropertyGroup>
   <ItemGroup Condition="Exists('../../../ts-dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj')">
     <ProjectReference Include="../../../ts-dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj" SetTargetFramework="TargetFramework=net10.0" />
   </ItemGroup>
