@@ -2,6 +2,8 @@
 @{
     var shell = Model.Shell;
     var t = (string s) => s;
+    string WebhookStatusTone(string status) => status switch { "Active" => "ts-badge-success", "Paused" => "ts-badge-warning", _ => "ts-badge-neutral" };
+    string DeliveryStatusTone(string status) => status switch { "Delivered" => "ts-badge-success", "Retrying" => "ts-badge-warning", "Pending" => "ts-badge-info", _ => "ts-badge-danger" };
     var tabs = new (string Id, string Label)[]
     {
         ("identity", "Identity"),
@@ -261,7 +263,8 @@
                 <p class="ts-panel-subtitle">@t("Endpoint deliveries for project events")</p>
                 @Icons.Webhook(18)
             </div>
-            <div class="ts-padded">
+            <div class="ts-padded ts-stack-16">
+                <p class="ts-webhook-usage">@Model.WebhookAllowance.Used of @Model.WebhookAllowance.Limit endpoints used — the @Model.WebhookAllowance.Plan plan allows up to @Model.WebhookAllowance.Limit webhook endpoints per database. Each delivery is retried up to @(DashboardStore.WebhookMaxRetryAttempts) times.</p>
                 @if (Model.Webhooks.Length == 0)
                 {
                     <div class="ts-empty">
@@ -279,6 +282,7 @@
                                     <th>Secret</th>
                                     <th>Status</th>
                                     <th>Created</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -287,13 +291,99 @@
                                     <tr>
                                         <td class="ts-mono ts-meta ts-break-all">@webhook.Url</td>
                                         <td class="ts-mono ts-meta">@webhook.SecretPreview</td>
-                                        <td><span class="ts-badge ts-badge-success">@webhook.Status</span></td>
+                                        <td><span class="ts-badge @WebhookStatusTone(webhook.Status)">@webhook.Status</span></td>
                                         <td class="ts-meta">@DashboardStore.FormatUtcDateTime(webhook.CreatedAt)</td>
+                                        <td>
+                                            <div class="ts-credential-actions">
+                                                @if (webhook.Status == "Disabled")
+                                                {
+                                                    <form method="post" action="/api/v1/dashboard/webhooks/toggle">
+                                                        <input type="hidden" name="webhookId" value="@webhook.Id" />
+                                                        <input type="hidden" name="state" value="active" />
+                                                        <button type="submit" class="ts-btn ts-btn-ghost ts-btn-sm">Enable</button>
+                                                    </form>
+                                                }
+                                                else
+                                                {
+                                                    <form method="post" action="/api/v1/dashboard/webhooks/toggle">
+                                                        <input type="hidden" name="webhookId" value="@webhook.Id" />
+                                                        <input type="hidden" name="state" value="@(webhook.Status == "Paused" ? "active" : "paused")" />
+                                                        <button type="submit" class="ts-btn ts-btn-ghost ts-btn-sm">@(webhook.Status == "Paused" ? "Resume" : "Pause")</button>
+                                                    </form>
+                                                    <form method="post" action="/api/v1/dashboard/webhooks/toggle">
+                                                        <input type="hidden" name="webhookId" value="@webhook.Id" />
+                                                        <input type="hidden" name="state" value="disabled" />
+                                                        <button type="submit" class="ts-btn ts-btn-ghost ts-btn-sm">Disable</button>
+                                                    </form>
+                                                }
+                                                <form method="post" action="/api/v1/dashboard/webhooks/rotate">
+                                                    <input type="hidden" name="webhookId" value="@webhook.Id" />
+                                                    <button type="submit" class="ts-btn ts-btn-ghost ts-btn-sm">Rotate secret</button>
+                                                </form>
+                                            </div>
+                                        </td>
                                     </tr>
                                 }
                             </tbody>
                         </table>
                     </div>
+                    @foreach (var webhook in Model.Webhooks)
+                    {
+                        var deliveries = Model.WebhookDeliveries.Where(d => d.WebhookId == webhook.Id).ToArray();
+                        if (deliveries.Length == 0)
+                        {
+                            continue;
+                        }
+                        <div class="ts-webhook-deliveries">
+                            <h4 class="ts-webhook-deliveries-title">@t("Deliveries")</h4>
+                            <span class="ts-mono ts-meta ts-break-all">@webhook.Url</span>
+                            <div class="ts-table-wrap">
+                                <table class="ts-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Event</th>
+                                            <th>Status</th>
+                                            <th>Attempts</th>
+                                            <th>Last response</th>
+                                            <th>Next retry</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var delivery in deliveries)
+                                        {
+                                            <tr>
+                                                <td>
+                                                    <div class="ts-grid-tight">
+                                                        <span class="ts-text-strong">@delivery.Event</span>
+                                                        <span class="ts-mono ts-meta">@delivery.Id</span>
+                                                    </div>
+                                                </td>
+                                                <td><span class="ts-badge @DeliveryStatusTone(delivery.Status)">@delivery.Status</span></td>
+                                                <td class="ts-mono ts-meta">@delivery.Attempt/@delivery.MaxAttempts</td>
+                                                <td>
+                                                    <div class="ts-grid-tight">
+                                                        <span class="ts-meta">@(delivery.StatusCode is { } code ? code.ToString() : "-")</span>
+                                                        @if (delivery.Error.Length > 0)
+                                                        {
+                                                            <span class="ts-meta">@delivery.Error</span>
+                                                        }
+                                                    </div>
+                                                </td>
+                                                <td class="ts-meta">@(delivery.NextAttemptAt.Length > 0 ? DashboardStore.FormatUtcDateTime(delivery.NextAttemptAt) : "-")</td>
+                                                <td>
+                                                    <form method="post" action="/api/v1/dashboard/webhooks/replay">
+                                                        <input type="hidden" name="deliveryId" value="@delivery.Id" />
+                                                        <button type="submit" class="ts-btn ts-btn-ghost ts-btn-sm">Replay</button>
+                                                    </form>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
                 }
                 <form method="post" action="/api/v1/dashboard/webhooks" class="ts-form ts-inline-form">
                     <div class="ts-field">
@@ -398,4 +488,40 @@
         </section>
     }
 </div>
+
+@if (Model.WebhookSecretValue is { } webhookSecret)
+{
+    <dialog class="ts-dialog" data-autoopen>
+        <div class="ts-dialog-content">
+            <div class="ts-dialog-header">
+                <h3 class="ts-dialog-title">@t("Webhook secret")</h3>
+                <p class="ts-dialog-description">@t("Copy this secret now. It will not be shown again.")</p>
+            </div>
+            <div class="ts-alert ts-alert-warning">
+                <span class="ts-alert-title">@Icons.TriangleAlert(16) @t("Secret is shown once")</span>
+                <span class="ts-alert-body">@t("The previous signing secret stops working as soon as consumers switch to this one.")</span>
+            </div>
+            <dl class="ts-secret-list">
+                <div class="ts-secret-row"><dt class="ts-muted">@t("Webhook")</dt><dd class="ts-secret-value">@Model.WebhookSecretId</dd></div>
+                <div class="ts-secret-row"><dt class="ts-muted">@t("Endpoint")</dt><dd class="ts-secret-value ts-break-all">@Model.WebhookSecretUrl</dd></div>
+                <div class="ts-secret-section">
+                    <dt class="ts-muted">@t("Secret")</dt>
+                    <dd class="ts-secret-secret-row">
+                        <code class="ts-secret-code">@webhookSecret</code>
+                        <button type="button" class="ts-icon-btn" data-copy="@webhookSecret" aria-label='@t("Copy secret")'>@Icons.Copy(15)</button>
+                    </dd>
+                </div>
+            </dl>
+            <div class="ts-form-actions">
+                <button type="button" class="ts-btn ts-btn-primary ts-btn-lg" data-copy="@webhookSecret"><span data-copy-label>@t("Copy secret")</span></button>
+                <a class="ts-btn ts-btn-ghost ts-btn-lg" href="/settings?tab=webhooks">@t("Done")</a>
+            </div>
+        </div>
+    </dialog>
+}
+
+@if (Model.Toast is { } toast)
+{
+    <div class="ts-toasts"><div class="ts-toast"><span class="ts-alert-title">@Icons.CircleCheck(16) @toast</span></div></div>
+}
 @ShellHtml.Bottom(shell)

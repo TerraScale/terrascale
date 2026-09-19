@@ -4922,3 +4922,26 @@ details.ts-menu[open] > summary.ts-account-trigger {
   background-color: var(--ts-surface);
   cursor: pointer;
 }
+
+/* ===== Feature: Settings webhooks ===== */
+.ts-webhook-usage {
+  margin: 0;
+  color: var(--ts-ink-muted);
+  font-size: var(--ts-fs-ui);
+  line-height: 1.5;
+}
+
+.ts-webhook-deliveries {
+  display: grid;
+  gap: var(--ts-sm);
+  padding-top: var(--ts-md);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-webhook-deliveries-title {
+  margin: 0;
+  font-size: var(--ts-fs-ui);
+  font-weight: 600;
+  color: var(--ts-ink);
+}
+
