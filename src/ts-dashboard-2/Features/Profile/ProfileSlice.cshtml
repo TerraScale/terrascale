@@ -24,7 +24,7 @@
                     <p class="ts-muted ts-ui ts-break-words">@Model.Email · @primaryRole · @Model.ActiveOrganizationName</p>
                 </div>
             </div>
-            <div class="ts-stack-12 ts-min-width">
+            <div class="ts-stack-12 ts-min-width ts-header-column">
                 <div class="ts-actions-row">
                     <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('profile-edit').showModal()">@Icons.Pencil(16) @t("Edit")</button>
                 </div>
@@ -38,14 +38,14 @@
         </div>
     </section>
 
-    <nav class="ts-tabs ts-tabs-boxed" aria-label="Profile sections">
-        <div class="ts-tabs-list">
+    <div class="ts-profile-tabs">
+        <nav class="ts-tabs" aria-label="Profile sections">
             @foreach (var (id, label) in tabs)
             {
                 <a class="ts-tab" href="/profile?tab=@id" aria-selected="@(Model.Tab == id ? "true" : "false")">@label</a>
             }
-        </div>
-    </nav>
+        </nav>
+    </div>
 
     @if (Model.Tab == "profile")
     {
@@ -75,7 +75,7 @@
                 </div>
             </section>
             <section class="ts-panel">
-                <div class="ts-panel-header">
+                <div class="ts-panel-header ts-panel-header-row">
                     <div>
                         <h3 class="ts-panel-title">@t("Language")</h3>
                         <p class="ts-panel-subtitle">@t("Choose the language used by onboarding and the Dashboard.")</p>
@@ -169,7 +169,7 @@
         <section class="ts-grid-two">
             <section class="ts-security-stack">
                 <section class="ts-panel">
-                    <div class="ts-panel-header">
+                    <div class="ts-panel-header ts-panel-header-row">
                         <div>
                             <h3 class="ts-panel-title">@t("Change password")</h3>
                             <p class="ts-panel-subtitle">@t("All active sessions are terminated after the password changes.")</p>
@@ -196,7 +196,7 @@
                     </form>
                 </section>
                 <section class="ts-panel">
-                    <div class="ts-panel-header">
+                    <div class="ts-panel-header ts-panel-header-row">
                         <div>
                             <h3 class="ts-panel-title">@t("Multi-factor authentication")</h3>
                             <p class="ts-panel-subtitle">@t("A verified authenticator is required on every new login.")</p>
@@ -246,7 +246,7 @@
                                 <input type="hidden" name="factor" value="totp" />
                                 <div class="ts-well-row">
                                     <span class="ts-factor-text"><span class="ts-icon-success">@Icons.ShieldCheck(16)</span> TOTP @t("authenticator")</span>
-                                    <button class="ts-btn ts-btn-danger-solid ts-btn-lg" type="submit">@Icons.Trash2(15) @t("Remove")</button>
+                                    <button class="ts-btn ts-btn-destructive ts-btn-lg" type="submit">@Icons.Trash2(15) @t("Remove")</button>
                                 </div>
                                 <div class="ts-warning-box">
                                     <div class="ts-field">
@@ -278,7 +278,7 @@
                 </section>
             </section>
             <section class="ts-panel">
-                <div class="ts-panel-header">
+                <div class="ts-panel-header ts-panel-header-row">
                     <div>
                         <h3 class="ts-panel-title">@t("Passkeys")</h3>
                         <p class="ts-panel-subtitle">@t("Use a platform authenticator or security key for passwordless sign-in.")</p>
@@ -306,7 +306,7 @@
                                     </div>
                                     <form method="post" action="/api/v1/dashboard/profile/passkeys/remove">
                                         <input type="hidden" name="passkeyId" value="@passkey.Id" />
-                                        <button class="ts-btn ts-btn-danger-solid ts-btn-lg" type="submit">@Icons.Trash2(15) @t("Remove")</button>
+                                        <button class="ts-btn ts-btn-destructive ts-btn-lg" type="submit">@Icons.Trash2(15) @t("Remove")</button>
                                     </form>
                                 </div>
                             }
@@ -429,7 +429,7 @@
                 <label class="ts-label" for="phoneNumber">@t("Phone number (optional)")</label>
                 <input class="ts-input" id="phoneNumber" name="phoneNumber" value="@Model.PhoneNumber" autocomplete="tel" inputmode="tel" />
             </div>
-            <div class="ts-dialog-actions">
+            <div class="ts-dialog-footer">
                 <button type="button" class="ts-btn ts-btn-secondary ts-btn-lg" data-on-click="document.getElementById('profile-edit').close()">@t("Cancel")</button>
                 <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg">@Icons.Save(16) @t("Save")</button>
             </div>
