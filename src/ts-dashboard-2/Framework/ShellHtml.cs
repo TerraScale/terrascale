@@ -39,7 +39,6 @@ public static class ShellHtml
         }
 
         builder.AppendLine("        <div class=\"ts-inset\">");
-        builder.AppendLine("""            <div class="ts-dotwave" aria-hidden="true"></div>""");
         builder.AppendLine("""            <button type="button" class="ts-fab ts-fab-nav" aria-label="Open navigation" data-on-click="navOpen=!navOpen">""" + Icons.PanelLeft(18).Value + "</button>");
         builder.AppendLine("            <main class=\"ts-main\">");
         builder.AppendLine($"                <h1 class=\"ts-page-title\">{Escape(shell.PageTitle)}</h1>");

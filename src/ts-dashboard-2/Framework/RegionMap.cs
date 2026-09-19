@@ -53,8 +53,9 @@ public static class RegionMap
         ["MEL"] = new("ap-melbourne-1", 123.5, 67.55),
     };
 
-    /// <summary>Inline SVG pin overlay; arcs connect consecutive regions
-    /// (ring), matching the auth page visual. Unknown codes are skipped.</summary>
+    /// <summary>Region overlay for the auth map: animated connection arcs
+    /// (inline SVG) plus fixed-size pulsing pins (HTML, percent-positioned so
+    /// they never scale with the map). Unknown codes are skipped.</summary>
     public static HtmlString Highlight(IReadOnlyCollection<string> codes)
     {
         var pins = codes.Select(code => (code, pin: Regions.GetValueOrDefault(code)))
@@ -63,7 +64,7 @@ public static class RegionMap
             .ToList();
         if (pins.Count == 0) return HtmlString.Empty;
 
-        var svg = new StringBuilder()
+        var html = new StringBuilder()
             .Append("<svg class=\"ts-region-pins\" viewBox=\"0 0 ")
             .Append(Width).Append(' ').Append(Height)
             .Append("\" preserveAspectRatio=\"xMidYMid meet\" aria-hidden=\"true\">");
@@ -71,23 +72,25 @@ public static class RegionMap
         {
             var from = pins[i].pin;
             var to = pins[(i + 1) % pins.Count].pin;
-            svg.Append("<path fill=\"none\" stroke=\"rgba(37, 99, 235, 0.7)\" stroke-dasharray=\"2 3\" stroke-linecap=\"round\" stroke-width=\"0.22\" opacity=\"0.92\" d=\"")
-               .Append(ArcPath(from, to))
-               .Append("\" />");
+            html.Append("<path class=\"ts-region-arc\" style=\"animation-delay:").Append(i * 0.45).Append("s\" d=\"")
+                .Append(ArcPath(from, to))
+                .Append("\" />");
         }
-        foreach (var (code, pin) in pins)
+        html.Append("</svg>");
+        for (var i = 0; i < pins.Count; i++)
         {
-            svg.Append("<g id=\"ts-region-").Append(code)
-               .Append("\" class=\"ts-region-pin\" data-oci=\"").Append(pin.Oci)
-               .Append("\" transform=\"translate(").Append(pin.X.ToString("0.##")).Append(' ').Append(pin.Y.ToString("0.##")).Append(")\">")
-               .Append("<circle r=\"7\" fill=\"").Append(AccentSoft).Append("\" opacity=\"0.22\" />")
-               .Append("<circle r=\"3.2\" fill=\"none\" stroke=\"rgba(37, 99, 235, 0.82)\" stroke-width=\"0.6\" />")
-               .Append("<circle r=\"3.2\" fill=\"").Append(AccentSoft).Append("\" /></g>");
+            var (code, pin) = pins[i];
+            var left = (pin.X / Width * 100).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            var top = (pin.Y / Height * 100).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            html.Append("<span class=\"ts-region-pin\" id=\"ts-region-").Append(code)
+                .Append("\" data-oci=\"").Append(pin.Oci)
+                .Append("\" style=\"left:").Append(left).Append("%;top:").Append(top).Append("%\">")
+                .Append("<span class=\"ts-region-pin-ring\" style=\"animation-delay:").Append((i * 0.3).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)).Append("s\"></span>")
+                .Append("<span class=\"ts-region-pin-core\"></span>")
+                .Append("</span>");
         }
-        return new HtmlString(svg.Append("</svg>").ToString());
+        return new HtmlString(html.ToString());
     }
-
-    private const string AccentSoft = "#60A5FA";
 
     private static string ArcPath(Pin from, Pin to)
     {
