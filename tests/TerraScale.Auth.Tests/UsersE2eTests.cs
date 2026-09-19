@@ -246,6 +246,38 @@ public sealed class UsersE2eTests
     }
 
     [Test]
+    public async Task SignInPasswordCheckBurnsArgon2idWorkOnEveryFailurePath()
+    {
+        // Response timing must not reveal which emails are registered: every
+        // failure path burns one full Argon2id verification, like a real mismatch.
+        var known = new User
+        {
+            Id = "usr_x",
+            InstanceId = "inst",
+            PasswordHash = PasswordHasher.Hash("password123"),
+            CreatedAt = 0,
+            UpdatedAt = 0,
+        };
+        var cases = new (User? User, string Password)[]
+        {
+            (null, "password123"),                          // unknown email
+            (known with { Deleted = true }, "password123"), // deleted user
+            (known with { PasswordHash = null }, "whatever"), // password-less user
+            (known, "wrongpassword"),                       // wrong password
+        };
+        foreach (var (user, password) in cases)
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var ok = SessionService.VerifySignInPassword(user, password);
+            watch.Stop();
+            await Assert.That(ok).IsFalse();
+            await Assert.That(watch.ElapsedMilliseconds).IsGreaterThanOrEqualTo(10);
+        }
+
+        await Assert.That(SessionService.VerifySignInPassword(known, "password123")).IsTrue();
+    }
+
+    [Test]
     public async Task BannedAccountShowsSuspended()
     {
         var service = await ServiceAsync();
@@ -274,7 +306,18 @@ public sealed class UsersE2eTests
         var email = Email();
         await SignUpAsync(service, slug, email);
 
-        foreach (var next in new[] { "https://evil.example/home", "//evil.example", "https://auth.test.evil.example" })
+        foreach (var next in new[]
+        {
+            "https://evil.example/home",
+            "//evil.example",
+            "https://auth.test.evil.example",
+            // Browsers treat "\" as "/" in URLs, so "/\evil.example" reaches "//evil.example".
+            "/\\evil.example",
+            "/\\/evil.example",
+            "\\/evil.example",
+            // Browsers strip control characters before parsing, so "/<TAB>/…" also becomes "//…".
+            "/\t/evil.example",
+        })
         {
             using var response = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
             {
@@ -285,6 +328,14 @@ public sealed class UsersE2eTests
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
             await Assert.That(response.Headers.Location?.ToString()).IsEqualTo($"/ui/{slug}/account");
         }
+
+        using var sameOrigin = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
+        {
+            ["email"] = email,
+            ["password"] = "password123",
+            ["next"] = $"https://auth.test/ui/{slug}/account",
+        }));
+        await Assert.That(sameOrigin.Headers.Location?.ToString()).IsEqualTo($"https://auth.test/ui/{slug}/account");
 
         using var safe = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
         {

@@ -137,9 +137,9 @@ public static class UserEndpoints
         var requested = form["next"].ToString() is { Length: > 0 } formNext ? formNext : queryNext;
 
         var user = await store.FindUserByEmailAsync(instance.Id, SessionService.NormalizeEmail(email), ct);
-        if (user is null || user.Deleted || !SessionService.VerifyPassword(user, password))
+        if (!SessionService.VerifySignInPassword(user, password))
             return SignInPage(slug, "Invalid email or password.", email, requested);
-        if (user.Banned)
+        if (user!.Banned)
             return SignInPage(slug, "This account is suspended.", email, requested);
 
         if (await MfaGate.RequiredForUserAsync(store, user.Id, ct))
@@ -609,7 +609,9 @@ public static class UserEndpoints
     {
         if (next is { Length: > 0 })
         {
-            if (next.StartsWith('/') && !next.StartsWith("//"))
+            // Browsers treat "\" as "/" and strip control characters before parsing a URL,
+            // so "/\evil" or "/\t/evil" must not pass as site-relative paths.
+            if (next.StartsWith('/') && !next.StartsWith("//") && !next.Contains('\\') && !next.Any(char.IsControl))
                 return next;
             var origin = options.PublicOrigin.GetLeftPart(UriPartial.Authority).TrimEnd('/');
             if (string.Equals(next, origin, StringComparison.OrdinalIgnoreCase)

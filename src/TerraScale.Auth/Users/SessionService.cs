@@ -57,6 +57,20 @@ public sealed class SessionService(AuthStore store)
     public static bool VerifyPassword(User user, string password) =>
         user.PasswordHash is not null && PasswordHasher.Verify(password, user.PasswordHash);
 
+    /// <summary>Hash of the same cost as real passwords, burned on unknown accounts so that
+    /// sign-in response timing cannot reveal whether an email is registered.</summary>
+    private static readonly string DummyHash = PasswordHasher.Hash("ts-auth timing equalizer");
+
+    /// <summary>Sign-in check: always runs one Argon2id verification, even for unknown,
+    /// deleted, or password-less accounts, so timing cannot enumerate accounts.</summary>
+    public static bool VerifySignInPassword(User? user, string password)
+    {
+        if (user is { Deleted: false, PasswordHash: { Length: > 0 } })
+            return VerifyPassword(user, password);
+        _ = PasswordHasher.Verify(password, DummyHash);
+        return false;
+    }
+
     /// <summary>Issues a session and returns the opaque cookie token (only the hash is stored).</summary>
     public async Task<(Session Session, string Token)> CreateSessionAsync(string instanceId, string userId, string? userAgent, string? ipAddress, CancellationToken ct = default)
     {

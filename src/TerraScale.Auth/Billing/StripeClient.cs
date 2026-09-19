@@ -9,21 +9,22 @@ internal static class StripeClient
 {
     private static readonly HttpClient Http = new(new SocketsHttpHandler { AllowAutoRedirect = false }, disposeHandler: true);
 
-    public static Task<JsonElement> PostAsync(AuthOptions options, string path, IReadOnlyDictionary<string, string> form, CancellationToken ct)
+    public static async Task<JsonElement> PostAsync(AuthOptions options, string path, IReadOnlyDictionary<string, string> form, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(options.StripeApiUrl, path))
         {
             Content = new FormUrlEncodedContent(form),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.StripeSecretKey);
-        return SendAsync(request, ct);
+        // Awaited here so the using keeps the request (and its content) alive for the whole send.
+        return await SendAsync(request, ct);
     }
 
-    public static Task<JsonElement> GetAsync(AuthOptions options, string path, CancellationToken ct)
+    public static async Task<JsonElement> GetAsync(AuthOptions options, string path, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(options.StripeApiUrl, path));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.StripeSecretKey);
-        return SendAsync(request, ct);
+        return await SendAsync(request, ct);
     }
 
     private static async Task<JsonElement> SendAsync(HttpRequestMessage request, CancellationToken ct)
