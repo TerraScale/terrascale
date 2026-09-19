@@ -42,7 +42,7 @@ frame-lane work), five commits through `e5c22936`:
   frames above 256 KiB skip compression; frame push resolves tenant
   authorization once per frame; member hosts run server GC.
 
-## Results — send→ack (final window, host load ~4.4–5.0, back-to-back)
+## Results — send→ack (evening window pair, host load ~4.2–4.9, back-to-back)
 
 | Batch | TerraBase p50 | Turso p50 | Faster |
 | ---: | ---: | ---: | --- |
@@ -83,6 +83,26 @@ The last two structural changes after the mid-day standings:
   apply no longer queues behind the previous batch's journal phase.
   Together these removed the fixed serialization ahead of the peer
   (batch 64 p50: 6.6→4.4 ms in the quiet window).
+
+## Evening additions (all tests green on every commit)
+
+- **Parallel digests** for local admits of 128+ rows (each row's digest is
+  independent; the pass now spans the member's cores) — batch-128 ack
+  5.6→3.5 ms p50, batch-1024 ack min 17.7→9.7 ms.
+- **Pooled frame decode strings**: one frame is one tenant and usually one
+  origin, so the decode interns those strings instead of allocating an
+  identical copy per row.
+- **Direct frame-push unary lane**: a replication frame push is one
+  authenticated call carrying its own payload — no generic request
+  envelope, no single-value MessagePack walk, no union dispatch. (A
+  client-streaming lane was prototyped and abandoned: MagicOnion 7.10.2's
+  dynamic binder cannot construct client-streaming methods.)
+- **Single-batch verbatim fan-out**: the common drain shape — one tenant,
+  one split batch, journal bytes for every row — assembles its frame
+  directly and checks the byte bound on the assembled frame; the
+  per-record tenant parse and sizing walk are gone.
+- **Duplicate frames no longer wake the ring fan-out** (an adversarial
+  design panel's finding — re-ship windows must not echo through gossip).
 
 ## Why 128–1024 still trail
 
