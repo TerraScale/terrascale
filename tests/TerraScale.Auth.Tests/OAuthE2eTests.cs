@@ -541,6 +541,79 @@ public sealed class OAuthE2eTests
         await Assert.That(audit.Any(e => e.Type == "oauth.code_issued")).IsTrue();
     }
 
+    [Test]
+    public async Task RefreshRejectsExpiredAndCrossClientTokens()
+    {
+        var arranged = await ArrangeAsync();
+        var (tokens, _, _) = await FullFlowAsync(arranged);
+        var refresh = tokens.GetProperty("refresh_token").GetString()!;
+
+        // The token only works for the client it was issued to.
+        using var create = new HttpRequestMessage(HttpMethod.Post, $"/v1/{arranged.Slug}/oauth-clients")
+        {
+            Content = JsonContent.Create(new { name = "Other App", redirect_uris = new[] { "https://other.test/cb" } }),
+        };
+        create.Headers.Authorization = new("Bearer", arranged.ApiKey);
+        var created = await arranged.Service.Http.SendAsync(create);
+        created.EnsureSuccessStatusCode();
+        var other = await created.Content.ReadFromJsonAsync<JsonElement>();
+
+        var crossClient = await arranged.Service.Http.SendAsync(new HttpRequestMessage(HttpMethod.Post, $"/{arranged.Slug}/oauth/token")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "refresh_token",
+                ["refresh_token"] = refresh,
+                ["client_id"] = other.GetProperty("client").GetProperty("clientId").GetString()!,
+                ["client_secret"] = other.GetProperty("client_secret").GetString()!,
+            }),
+        });
+        await Assert.That(crossClient.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await crossClient.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
+
+        // An expired refresh token is refused.
+        var expiredValue = SecureTokens.RandomToken(48);
+        await arranged.Service.Store.CreateRefreshTokenAsync(new RefreshToken
+        {
+            Id = "rtk_" + SecureTokens.RandomToken(20),
+            InstanceId = arranged.InstanceId,
+            ClientId = arranged.ClientId,
+            UserId = arranged.User.Id,
+            TokenKey = SecureTokens.Sha256Hex(expiredValue),
+            Status = "active",
+            Scopes = ["openid"],
+            CreatedAt = DateTimeOffset.UtcNow.AddDays(-31).ToUnixTimeSeconds(),
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(-1).ToUnixTimeSeconds(),
+        });
+        var expired = await arranged.Service.Http.SendAsync(TokenRequest(arranged, new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = expiredValue,
+        }));
+        await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await expired.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
+    }
+
+    [Test]
+    public async Task RefreshRejectsBannedUsersAndKillsTheFamily()
+    {
+        var arranged = await ArrangeAsync();
+        var (tokens, _, _) = await FullFlowAsync(arranged);
+        var refresh = tokens.GetProperty("refresh_token").GetString()!;
+
+        await arranged.Service.Store.UpsertUserAsync(arranged.User with { Banned = true });
+        var banned = await arranged.Service.Http.SendAsync(TokenRequest(arranged, new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = refresh,
+        }));
+        await Assert.That(banned.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await banned.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
+
+        var stored = await arranged.Service.Store.FindRefreshTokenAsync(SecureTokens.Sha256Hex(refresh));
+        await Assert.That(stored!.Status).IsEqualTo("revoked");
+    }
+
     // ---- public clients + client_credentials ------------------------------------------------
 
     [Test]

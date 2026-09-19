@@ -474,6 +474,12 @@ public static class OAuthEndpoints
             await RevokeRefreshFamilyAsync(store, instance.Id, client.ClientId, token.UserId, ct);
             return TokenError("invalid_grant", "refresh token is no longer active");
         }
+        if (await store.GetUserAsync(token.UserId, ct) is not { Banned: false, Deleted: false })
+        {
+            // A banned/deleted user must not keep minting tokens; kill the family.
+            await RevokeRefreshFamilyAsync(store, instance.Id, client.ClientId, token.UserId, ct);
+            return TokenError("invalid_grant", "user is no longer active");
+        }
 
         var (refreshToken, refreshId) = await CreateRefreshTokenAsync(store, instance.Id, client.ClientId, token.UserId, token.Scopes, ct);
         await store.UpsertRefreshTokenAsync(token with { Status = "rotated", RotatedTo = refreshId }, ct);
