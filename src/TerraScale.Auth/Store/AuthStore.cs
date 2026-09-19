@@ -81,18 +81,45 @@ public sealed class AuthStore(TerraScaleClient client, string database)
         }
     }
 
-    private async Task<IReadOnlyList<T>> QueryAsync<T>(string collection, string field, string equalValue, int limit, CancellationToken ct) where T : class
+    private static TerraScaleDocumentPredicate Eq(string field, string value) =>
+        new(field, TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement(value));
+
+    private async Task<IReadOnlyList<T>> QueryAsync<T>(string collection, string field, string equalValue, int limit, CancellationToken ct) where T : class =>
+        await QueryAsync<T>(collection, [Eq(field, equalValue)], limit, ct);
+
+    private async Task<IReadOnlyList<T>> QueryAsync<T>(string collection, TerraScaleDocumentPredicate[] predicates, int limit, CancellationToken ct) where T : class
     {
         var result = await client.Documents.QueryAsync(
             Database,
             collection,
-            new TerraScaleDocumentQuery(
-                Predicates: [new TerraScaleDocumentPredicate(field, TerraScaleQueryOperator.Equal, JsonSerializer.SerializeToElement(equalValue))],
-                Projection: null,
-                Limit: limit,
-                After: null),
+            new TerraScaleDocumentQuery(Predicates: predicates, Projection: null, Limit: limit, After: null),
             cancellationToken: ct);
         return result.Documents.Select(row => row.Value.Deserialize<T>(Json)).OfType<T>().ToList();
+    }
+
+    /// <summary>
+    /// Every match for the predicates, walking engine pages by the opaque query cursor
+    /// to the end. A bounded page is an arbitrary subset, not "the first N" in any
+    /// caller-meaningful order: ids are random tokens, so id-order is not time-order,
+    /// and any listing a caller filters, orders, or takes "the latest" from must see
+    /// the complete matching set first.
+    /// </summary>
+    private async Task<IReadOnlyList<T>> QueryAllAsync<T>(string collection, TerraScaleDocumentPredicate[] predicates, int pageSize, CancellationToken ct) where T : class
+    {
+        var matches = new List<T>();
+        string? after = null;
+        while (true)
+        {
+            var page = await client.Documents.QueryAsync(
+                Database,
+                collection,
+                new TerraScaleDocumentQuery(Predicates: predicates, Projection: null, Limit: pageSize, After: after),
+                cancellationToken: ct);
+            matches.AddRange(page.Documents.Select(row => row.Value.Deserialize<T>(Json)).OfType<T>());
+            if (!page.HasMore || page.NextAfter is null)
+                return matches;
+            after = page.NextAfter;
+        }
     }
 
     // ---- Instances ----------------------------------------------------------------
@@ -380,8 +407,8 @@ public sealed class AuthStore(TerraScaleClient client, string database)
         // Cascade: everything the org claimed leaves with it. Memberships carry
         // memberKey claims, and enrollment domains carry an instance-wide domainKey
         // claim that would otherwise reject the same domain forever with no owner
-        // behind it. The org-bound listings are unpaginated, so re-query until a
-        // round comes back empty rather than walking a mutating cursor.
+        // behind it. The listings are complete walks; the re-query rounds only guard
+        // against a membership created concurrently with the delete.
         while ((await ListMembershipsByOrgAsync(id, ct)) is { Count: > 0 } memberships)
             foreach (var membership in memberships)
                 await DeleteMembershipAsync(membership.Id, ct);
@@ -456,8 +483,11 @@ public sealed class AuthStore(TerraScaleClient client, string database)
         }
     }
 
+    /// <summary>All of an org's memberships, walking the engine pages to the end —
+    /// member-existence checks and the admin-portal admin check must not go blind
+    /// past the 100th member.</summary>
     public Task<IReadOnlyList<OrgMembership>> ListMembershipsByOrgAsync(string orgId, CancellationToken ct = default) =>
-        QueryAsync<OrgMembership>("memberships", "orgId", orgId, 100, ct);
+        QueryAllAsync<OrgMembership>("memberships", [Eq("orgId", orgId)], 100, ct);
 
     // ---- Invitations -------------------------------------------------------------------
 
@@ -563,26 +593,28 @@ public sealed class AuthStore(TerraScaleClient client, string database)
         }
     }
 
+    /// <summary>The instance's tokens for one purpose, scoped server-side to both
+    /// fields and walked to the end. The instanceId must be a predicate, not a
+    /// caller-side hope: a purpose-only query crosses instances.</summary>
     public Task<IReadOnlyList<VerificationToken>> ListVerificationTokensAsync(string instanceId, string purpose, int limit, CancellationToken ct = default) =>
-        QueryAsync<VerificationToken>("verification_tokens", "purpose", purpose, limit, ct);
+        QueryAllAsync<VerificationToken>("verification_tokens", [Eq("instanceId", instanceId), Eq("purpose", purpose)], limit, ct);
 
-    /// <summary>A user's tokens for one purpose. Per-user accurate: the engine
-    /// returns purpose-wide listings id-ordered and bounded, so they cannot answer
-    /// "does this user have a recent token" once other users' tokens exist.</summary>
-    public async Task<IReadOnlyList<VerificationToken>> ListUserVerificationTokensAsync(string userId, string purpose, CancellationToken ct = default) =>
-        (await QueryAsync<VerificationToken>("verification_tokens", "userId", userId, 100, ct))
-        .Where(t => t.Purpose == purpose)
-        .ToList();
+    /// <summary>A user's tokens for one purpose, server-filtered on both fields and
+    /// walked to the end — the passcode resend throttle must not lose the user's
+    /// latest passcode among older tokens of other purposes.</summary>
+    public Task<IReadOnlyList<VerificationToken>> ListUserVerificationTokensAsync(string userId, string purpose, CancellationToken ct = default) =>
+        QueryAllAsync<VerificationToken>("verification_tokens", [Eq("userId", userId), Eq("purpose", purpose)], 100, ct);
 
     /// <summary>
     /// Marks a user's outstanding tokens for a purpose as consumed. Used when the email
     /// changes: a verification link proves control of the OLD address and must not be
-    /// able to mark the new one verified.
+    /// able to mark the new one verified. Walked to the end — invalidation is a
+    /// guarantee, not a best effort over one page.
     /// </summary>
     public async Task InvalidateVerificationTokensAsync(string userId, string purpose, CancellationToken ct = default)
     {
-        foreach (var token in await QueryAsync<VerificationToken>("verification_tokens", "userId", userId, 100, ct))
-            if (token.Purpose == purpose && !token.Consumed)
+        foreach (var token in await ListUserVerificationTokensAsync(userId, purpose, ct))
+            if (!token.Consumed)
                 await UpsertVerificationTokenAsync(token with { Consumed = true }, ct);
     }
 
@@ -626,14 +658,28 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<AuditEvent> CreateAuditEventAsync(AuditEvent auditEvent, CancellationToken ct = default) =>
         CreateAsync("audit_events", auditEvent.Id, auditEvent, ct);
 
-    public Task<IReadOnlyList<AuditEvent>> ListAuditEventsAsync(string instanceId, int limit, CancellationToken ct = default) =>
-        QueryAsync<AuditEvent>("audit_events", "instanceId", instanceId, limit, ct);
+    /// <summary>The instance's audit events, newest first, capped at <paramref name="limit"/>.
+    /// Ids are random tokens so id-order is not time-order: the complete set is walked,
+    /// then ordered by CreatedAt, then truncated — never a bounded id-ordered subset.</summary>
+    public async Task<IReadOnlyList<AuditEvent>> ListAuditEventsAsync(string instanceId, int limit, CancellationToken ct = default)
+    {
+        var events = await QueryAllAsync<AuditEvent>("audit_events", [Eq("instanceId", instanceId)], 1000, ct);
+        return events.OrderByDescending(e => e.CreatedAt).Take(limit).ToList();
+    }
 
-    /// <summary>Audit events for the instance at or after a unix-seconds boundary (HLC-order caveat: ties on CreatedAt).</summary>
+    /// <summary>Audit events for the instance at or after a unix-seconds boundary, oldest
+    /// first. The boundary is a server-side predicate (numbers compare numerically), so
+    /// webhook delivery walks only what is past its cursor and still sees every match
+    /// (unix-second ties on CreatedAt are the caller's to dedupe).</summary>
     public async Task<IReadOnlyList<AuditEvent>> ListAuditEventsSinceAsync(string instanceId, long sinceUnixSeconds, int limit, CancellationToken ct = default)
     {
-        var recent = await QueryAsync<AuditEvent>("audit_events", "instanceId", instanceId, limit, ct);
-        return recent.Where(e => e.CreatedAt >= sinceUnixSeconds).OrderBy(e => e.CreatedAt).ToList();
+        var predicates = new TerraScaleDocumentPredicate[]
+        {
+            Eq("instanceId", instanceId),
+            new("createdAt", TerraScaleQueryOperator.GreaterThanOrEqual, JsonSerializer.SerializeToElement(sinceUnixSeconds)),
+        };
+        var events = await QueryAllAsync<AuditEvent>("audit_events", predicates, limit, ct);
+        return events.OrderBy(e => e.CreatedAt).ToList();
     }
 
     // ---- Connections (social OIDC + SAML SSO) ------------------------------------------------
@@ -755,8 +801,10 @@ public sealed class AuthStore(TerraScaleClient client, string database)
             await ReleaseUniqueAsync("org-domain", domain.DomainKey, ct);
     }
 
+    /// <summary>The instance's enrollment domains, walked to the end — enrollment-domain
+    /// lookups by name must not miss domains past the first page.</summary>
     public Task<IReadOnlyList<OrgDomain>> ListOrgDomainsAsync(string instanceId, CancellationToken ct = default) =>
-        QueryAsync<OrgDomain>("org_domains", "instanceId", instanceId, 100, ct);
+        QueryAllAsync<OrgDomain>("org_domains", [Eq("instanceId", instanceId)], 100, ct);
 
     // ---- Signing keys -----------------------------------------------------------------------
 
