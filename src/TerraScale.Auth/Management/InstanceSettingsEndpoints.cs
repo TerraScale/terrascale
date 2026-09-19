@@ -21,8 +21,12 @@ public static class InstanceSettingsEndpoints
             if (body is null)
                 return ApiResults.BadRequest("invalid_request", "body required");
 
-            if (body.LogoUrl is { } logoUrl && !Uri.TryCreate(logoUrl, UriKind.Absolute, out var uri))
-                return ApiResults.BadRequest("invalid_logo_url", "logo_url must be an absolute URL");
+            // Branding lands in every hosted page's HTML: only absolute http(s) URLs.
+            // Scheme matters — Uri accepts javascript:, data:, vbscript:, and even bare
+            // paths (as file:) as "absolute", so an allowlist is the gate.
+            if (body.LogoUrl is { } logoUrl
+                && (!Uri.TryCreate(logoUrl, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https")))
+                return ApiResults.BadRequest("invalid_logo_url", "logo_url must be an absolute http(s) URL");
             if (body.ThemeColor is { } themeColor && !IsValidHexColor(themeColor))
                 return ApiResults.BadRequest("invalid_theme_color", "theme_color must look like #6c5ce7");
 
@@ -51,7 +55,7 @@ public static class InstanceSettingsEndpoints
             if (await resolver.ResolveAsync(request, ct) is not { } context || context.Instance.Slug != slug)
                 return ApiResults.Unauthorized();
             var instance = context.Instance;
-            return Results.Ok(new { instance.Id, instance.Slug, instance.Name, instance.LogoUrl, instance.ThemeColor, instance.CreatedAt });
+            return Results.Ok(new { id = instance.Id, slug = instance.Slug, name = instance.Name, logo_url = instance.LogoUrl, theme_color = instance.ThemeColor, created_at = instance.CreatedAt });
         });
     }
 
@@ -60,4 +64,7 @@ public static class InstanceSettingsEndpoints
 }
 
 /// <summary>Patch body for instance settings; null fields are left unchanged.</summary>
-public sealed record InstanceSettingsPatch(string? Name, string? LogoUrl, string? ThemeColor);
+public sealed record InstanceSettingsPatch(
+    string? Name,
+    [property: System.Text.Json.Serialization.JsonPropertyName("logo_url")] string? LogoUrl,
+    [property: System.Text.Json.Serialization.JsonPropertyName("theme_color")] string? ThemeColor);

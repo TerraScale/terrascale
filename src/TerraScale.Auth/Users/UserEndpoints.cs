@@ -84,7 +84,7 @@ public static class UserEndpoints
             return NotFoundPage();
 
         if (HttpMethods.IsGet(request.Method))
-            return SignUpPage(slug);
+            return SignUpPage(slug, instance);
 
         var form = await request.ReadFormAsync(ct);
         var email = form["email"].ToString().Trim();
@@ -92,25 +92,25 @@ public static class UserEndpoints
         var name = form["name"].ToString().Trim();
 
         if (!SessionService.IsValidEmail(email))
-            return SignUpPage(slug, "Please enter a valid email address.", email, name);
+            return SignUpPage(slug, instance, "Please enter a valid email address.", email, name);
         if (password.Length < 8)
-            return SignUpPage(slug, "Password must be at least 8 characters.", email, name);
+            return SignUpPage(slug, instance, "Password must be at least 8 characters.", email, name);
 
         User user;
         try
         {
             // Pre-check because not every deployment enforces the unique emailKey index; the catch covers those that do.
             if (await store.FindUserByEmailAsync(instance.Id, SessionService.NormalizeEmail(email), ct) is not null)
-                return SignUpPage(slug, "This email is already registered.", email, name);
+                return SignUpPage(slug, instance, "This email is already registered.", email, name);
             user = await sessions.CreateUserAsync(instance.Id, email, username: null, password, Optional(name), ct);
         }
         catch (QuotaExceededException)
         {
-            return SignUpPage(slug, "This app has reached its user limit. The owner can raise it by upgrading the plan.", email, name);
+            return SignUpPage(slug, instance, "This app has reached its user limit. The owner can raise it by upgrading the plan.", email, name);
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed)
         {
-            return SignUpPage(slug, "This email is already registered.", email, name);
+            return SignUpPage(slug, instance, "This email is already registered.", email, name);
         }
 
         await AuditAsync(store, instance.Id, user.Id, "user.signed_up");
@@ -132,7 +132,7 @@ public static class UserEndpoints
 
         var queryNext = request.Query["next"].ToString();
         if (HttpMethods.IsGet(request.Method))
-            return SignInPage(slug, next: queryNext);
+            return SignInPage(slug, instance, next: queryNext);
 
         var form = await request.ReadFormAsync(ct);
         var email = form["email"].ToString().Trim();
@@ -141,9 +141,9 @@ public static class UserEndpoints
 
         var user = await store.FindUserByEmailAsync(instance.Id, SessionService.NormalizeEmail(email), ct);
         if (!SessionService.VerifySignInPassword(user, password))
-            return SignInPage(slug, "Invalid email or password.", email, requested);
+            return SignInPage(slug, instance, "Invalid email or password.", email, requested);
         if (user!.Banned)
-            return SignInPage(slug, "This account is suspended.", email, requested);
+            return SignInPage(slug, instance, "This account is suspended.", email, requested);
 
         if (await MfaGate.RequiredForUserAsync(store, user.Id, ct))
         {
@@ -280,7 +280,7 @@ public static class UserEndpoints
                     $"Sign in to {instance.Name} by opening:\n\n{Link(options, $"/ui/{slug}/magic-link/consume", token)}\n\nThis link expires in 10 minutes and can only be used once.", ct);
             }
         }
-        return CheckEmailPage(slug, email, "sign-in link", minutes: 10);
+        return CheckEmailPage(slug, instance, email, "sign-in link", minutes: 10);
     }
 
     private static async Task<IResult> ConsumeMagicLinkAsync(string slug, HttpRequest request, AuthStore store, SessionService sessions, CancellationToken ct)
@@ -292,7 +292,7 @@ public static class UserEndpoints
         var record = await ConsumeTokenAsync(store, instance.Id, request.Query["token"].ToString(), "magic_link", ct);
         var user = record?.UserId is { } userId ? await store.GetUserAsync(userId, ct) : null;
         if (user is null || user.Deleted || user.Banned)
-            return InvalidLinkPage(slug);
+            return InvalidLinkPage(slug, instance);
 
         await EstablishSessionAsync(store, sessions, request.HttpContext, instance, user, "magic_link", ct);
         return Results.Redirect($"/ui/{slug}/account");
@@ -305,7 +305,7 @@ public static class UserEndpoints
             return NotFoundPage();
 
         if (HttpMethods.IsGet(request.Method))
-            return ForgotPasswordPage(slug);
+            return ForgotPasswordPage(slug, instance);
 
         var form = await request.ReadFormAsync(ct);
         var email = form["email"].ToString().Trim();
@@ -319,7 +319,7 @@ public static class UserEndpoints
                     $"Reset your {instance.Name} password by opening:\n\n{Link(options, $"/ui/{slug}/reset-password", token)}\n\nThis link expires in 30 minutes and can only be used once. If you didn't request this, ignore this email.", ct);
             }
         }
-        return CheckEmailPage(slug, email, "password reset link", minutes: 30);
+        return CheckEmailPage(slug, instance, email, "password reset link", minutes: 30);
     }
 
     private static async Task<IResult> ResetPasswordAsync(string slug, HttpRequest request, AuthStore store, CancellationToken ct)
@@ -338,21 +338,21 @@ public static class UserEndpoints
             token = form["token"].ToString();
         }
         if (token.Length == 0)
-            return InvalidLinkPage(slug);
+            return InvalidLinkPage(slug, instance);
 
         if (form is null)
             return await TokenValidAsync(store, instance.Id, token, "reset_password", ct)
-                ? ResetPasswordPage(slug, token)
-                : InvalidLinkPage(slug);
+                ? ResetPasswordPage(slug, instance, token)
+                : InvalidLinkPage(slug, instance);
 
         var password = form["password"].ToString();
         if (password.Length < 8)
-            return ResetPasswordPage(slug, token, "Password must be at least 8 characters.");
+            return ResetPasswordPage(slug, instance, token, "Password must be at least 8 characters.");
 
         var record = await ConsumeTokenAsync(store, instance.Id, token, "reset_password", ct);
         var user = record?.UserId is { } userId ? await store.GetUserAsync(userId, ct) : null;
         if (user is null || user.Deleted || user.Banned)
-            return InvalidLinkPage(slug);
+            return InvalidLinkPage(slug, instance);
 
         await store.UpsertUserAsync(user with
         {
@@ -361,7 +361,7 @@ public static class UserEndpoints
         }, ct);
         await RevokeSessionsAsync(store, user.Id, except: null, ct);
         await AuditAsync(store, instance.Id, user.Id, "password.reset", new Dictionary<string, object> { ["user_id"] = user.Id });
-        return DonePage(slug, "Password updated", "Your password has been updated and all sessions were signed out. Sign in with your new password.");
+        return DonePage(slug, instance, "Password updated", "Your password has been updated and all sessions were signed out. Sign in with your new password.");
     }
 
     private static async Task<IResult> VerifyEmailAsync(string slug, HttpRequest request, AuthStore store, CancellationToken ct)
@@ -373,7 +373,7 @@ public static class UserEndpoints
         var record = await ConsumeTokenAsync(store, instance.Id, request.Query["token"].ToString(), "verify_email", ct);
         var user = record?.UserId is { } userId ? await store.GetUserAsync(userId, ct) : null;
         if (user is null)
-            return InvalidLinkPage(slug);
+            return InvalidLinkPage(slug, instance);
 
         await store.UpsertUserAsync(user with
         {
@@ -381,12 +381,12 @@ public static class UserEndpoints
             UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         }, ct);
         await AuditAsync(store, instance.Id, user.Id, "user.email_verified");
-        return DonePage(slug, "Email verified", "Your email address has been verified.");
+        return DonePage(slug, instance, "Email verified", "Your email address has been verified.");
     }
 
     // ---- Pages ----------------------------------------------------------------------
 
-    private static IResult SignUpPage(string slug, string? error = null, string email = "", string name = "") =>
+    private static IResult SignUpPage(string slug, Instance brand, string? error = null, string email = "", string name = "") =>
         Ui.Page("Create your account", $"""
             <h1>Create your account</h1>
             {ErrorDiv(error)}
@@ -400,9 +400,9 @@ public static class UserEndpoints
             <button type="submit">Create account</button>
             </form>
             <p class="hint">Already registered? <a href="/ui/{slug}/sign-in">Sign in</a></p>
-            """);
+            """, themeColor: brand.ThemeColor, logoUrl: brand.LogoUrl);
 
-    private static IResult SignInPage(string slug, string? error = null, string email = "", string next = "") =>
+    private static IResult SignInPage(string slug, Instance brand, string? error = null, string email = "", string next = "") =>
         Ui.Page("Sign in", $"""
             <h1>Sign in</h1>
             {ErrorDiv(error)}
@@ -422,7 +422,7 @@ public static class UserEndpoints
             <p class="hint"><a href="/ui/{slug}/passkeys/assert">Sign in with a passkey</a> · <a href="/ui/{slug}/passcode">Sign in with an email code</a></p>
             <p class="hint"><a href="/ui/{slug}/connections/list">Sign in with SSO</a></p>
             <p class="hint"><a href="/ui/{slug}/forgot-password">Forgot your password?</a> · <a href="/ui/{slug}/sign-up">Create an account</a></p>
-            """);
+            """, themeColor: brand.ThemeColor, logoUrl: brand.LogoUrl);
 
     private static IResult AccountPage(string slug, User user, string currentSessionId, string? error = null)
     {
@@ -477,7 +477,7 @@ public static class UserEndpoints
             """);
     }
 
-    private static IResult ForgotPasswordPage(string slug) =>
+    private static IResult ForgotPasswordPage(string slug, Instance brand) =>
         Ui.Page("Reset your password", $"""
             <h1>Reset your password</h1>
             <p class="muted">Enter your email and we'll send a reset link.</p>
@@ -487,9 +487,9 @@ public static class UserEndpoints
             <button type="submit">Send reset link</button>
             </form>
             <p class="hint"><a href="/ui/{slug}/sign-in">Back to sign in</a></p>
-            """);
+            """, themeColor: brand.ThemeColor, logoUrl: brand.LogoUrl);
 
-    private static IResult ResetPasswordPage(string slug, string token, string? error = null) =>
+    private static IResult ResetPasswordPage(string slug, Instance brand, string token, string? error = null) =>
         Ui.Page("Choose a new password", $"""
             <h1>Choose a new password</h1>
             {ErrorDiv(error)}
@@ -499,29 +499,29 @@ public static class UserEndpoints
             <input id="rp-password" name="password" type="password" minlength="8" required autofocus>
             <button type="submit">Update password</button>
             </form>
-            """);
+            """, themeColor: brand.ThemeColor, logoUrl: brand.LogoUrl);
 
-    private static IResult CheckEmailPage(string slug, string email, string what, int minutes) =>
+    private static IResult CheckEmailPage(string slug, Instance brand, string email, string what, int minutes) =>
         Ui.Page("Check your email", $"""
             <h1>Check your email</h1>
             <div class="success">If an account exists for {Ui.Esc(email)}, a {what} is on its way.</div>
             <p class="muted">The link expires in {minutes} minutes and can only be used once.</p>
             <p class="hint"><a href="/ui/{slug}/sign-in">Back to sign in</a></p>
-            """);
+            """, themeColor: brand.ThemeColor, logoUrl: brand.LogoUrl);
 
-    private static IResult DonePage(string slug, string title, string message) =>
+    private static IResult DonePage(string slug, Instance brand, string title, string message) =>
         Ui.Page(title, $"""
             <h1>{Ui.Esc(title)}</h1>
             <div class="success">{Ui.Esc(message)}</div>
             <p class="hint"><a href="/ui/{slug}/sign-in">Back to sign in</a></p>
-            """);
+            """, themeColor: brand.ThemeColor, logoUrl: brand.LogoUrl);
 
-    private static IResult InvalidLinkPage(string slug) =>
+    private static IResult InvalidLinkPage(string slug, Instance brand) =>
         Ui.Page("Invalid link", $"""
             <h1>This link is no longer valid</h1>
             <div class="error">This link is invalid, expired, or already used.</div>
             <p class="hint"><a href="/ui/{slug}/sign-in">Back to sign in</a> · <a href="/ui/{slug}/forgot-password">Request a new one</a></p>
-            """, status: 400);
+            """, status: 400, themeColor: brand.ThemeColor, logoUrl: brand.LogoUrl);
 
     private static IResult NotFoundPage() =>
         Ui.Page("Not found", """
