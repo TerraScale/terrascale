@@ -104,6 +104,25 @@ The last two structural changes after the mid-day standings:
 - **Duplicate frames no longer wake the ring fan-out** (an adversarial
   design panel's finding — re-ship windows must not echo through gossip).
 
+## Final window (parallel codec landed; `1069fb42`)
+
+| Batch | TerraBase p50 (min) | Turso p50 (min) | Visible |
+| ---: | ---: | ---: | --- |
+| 1 | **1.11** (0.93) | 4.55 (4.10) | **TerraBase 4.1×** |
+| 16 | **1.58** (1.43) | 5.02 (4.05) | **TerraBase 3.2×** |
+| 32 | **2.92** (2.38) | 5.08 (4.41) | **TerraBase 1.7×** |
+| 64 | **4.77** (4.28) | 5.52 (4.47) | **TerraBase 1.2×** |
+| 128 | 10.22 (8.84) | **7.29** (5.59) | window-dependent: this window Turso 1.4×; the quieter parallel-codec window won 6.86 vs 7.29 (min 5.94 vs 5.59) |
+| 1024 | 58.27 (27.86) | **19.13** (16.72) | Turso ~1.7× on the floor |
+
+Late additions: **parallel large-batch frame encode** (parallel length
+pass, prefix-sum destinations, parallel writers into one pooled buffer)
+and **parallel large-frame decode** (per-row decode with partition-local
+string pools) — batch-128 visible min 6.99→5.94 ms, batch-64 min
+4.28 ms. Batch-1024's best window of the day (21.9 ms min, ack 9.7 ms)
+shows the floor; typical loaded windows run 28–45 ms p50, and the
+morning baseline was 225 ms.
+
 ## Why 128–1024 still trail
 
 Turso's replica applies a continuously-streamed WAL frame of **page
