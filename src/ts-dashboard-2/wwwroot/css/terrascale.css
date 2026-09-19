@@ -7590,7 +7590,6 @@ single-selector rules may stay on one line.
 
   .ts-audit-table {
     font-size: var(--ts-fs-body);
-    min-width: 720px;
   }
 
   .ts-audit-table thead th {
@@ -7975,6 +7974,161 @@ single-selector rules may stay on one line.
   .ts-data .ts-table-frame,
   .ts-db-page .ts-table-frame {
     margin-inline: 0;
+  }
+
+  /* ===== notes wave2: audit / notifications / api-keys precision pass ===== */
+
+  /* v1 PanelHeader insets: 20px default, 16px from lg up (the shared
+     panel-header base ships no inline padding). */
+  .ts-notes-page .ts-panel-header {
+    padding: 0 20px 20px;
+  }
+
+  @media (min-width: 64rem) {
+    .ts-notes-page .ts-panel-header {
+      padding: 0 16px 16px;
+    }
+  }
+
+  /* v1 compat Badge: 24px tall, control radius, tinted borders. */
+  .ts-notes-page .ts-badge {
+    height: 24px;
+    border-radius: var(--ts-radius-control);
+  }
+
+  .ts-notes-page .ts-badge-success {
+    background-color: color-mix(in oklab, var(--ts-success) 10%, transparent);
+    border-color: color-mix(in oklab, var(--ts-success) 25%, transparent);
+  }
+
+  .ts-notes-page .ts-badge-warning {
+    border-color: color-mix(in oklab, var(--ts-warning) 30%, transparent);
+  }
+
+  .ts-notes-page .ts-badge-danger {
+    background-color: color-mix(in oklab, var(--ts-danger) 10%, transparent);
+    border-color: color-mix(in oklab, var(--ts-danger) 25%, transparent);
+  }
+
+  .ts-notes-page .ts-badge-info {
+    background-color: color-mix(in oklab, var(--ts-info) 10%, transparent);
+    border-color: color-mix(in oklab, var(--ts-info) 25%, transparent);
+  }
+
+  /* v1 DataTable: fixed equal columns, 16px body, 16/20 cells, top-aligned
+     nowrap cells; the last row keeps its bottom border. */
+  .ts-notes-page .ts-table {
+    table-layout: fixed;
+    font-size: var(--ts-fs-body);
+    min-width: 0;
+  }
+
+  .ts-notes-page .ts-table thead th {
+    padding: var(--ts-lg) 20px;
+    font-size: var(--ts-fs-ui);
+  }
+
+  .ts-notes-page .ts-table tbody td {
+    padding: var(--ts-lg) 20px;
+    vertical-align: top;
+    white-space: nowrap;
+  }
+
+  .ts-notes-page .ts-table tbody tr:last-child td {
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-notes-page .ts-table tbody tr:hover {
+    background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
+  }
+
+  /* v1 CredentialsTable renders its DataTable bare (no wrapper chrome). */
+  .ts-apikeys-table-wrap {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background-color: transparent;
+  }
+
+  /* v1 searchField: label above, icon inset 12px, text starts at 36px. */
+  .ts-apikeys-search {
+    flex-basis: 18rem;
+    flex-grow: 1;
+    max-width: 28rem;
+    min-width: 0;
+  }
+
+  .ts-apikeys-search-box {
+    position: relative;
+  }
+
+  .ts-apikeys-search-box svg {
+    color: var(--ts-ink-muted);
+    pointer-events: none;
+    position: absolute;
+    left: var(--ts-md);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  /* v1 auditLink (Reset filters): muted ghost with 12px inline padding. */
+  .ts-audit-reset {
+    padding-inline: var(--ts-md);
+    color: var(--ts-ink-muted);
+  }
+
+  .ts-audit-reset:hover {
+    color: var(--ts-ink);
+  }
+
+  /* v1 rowHeader: column below lg, 20px gap, flex-start alignment. */
+  .ts-audit-intro {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 20px;
+  }
+
+  @media (min-width: 64rem) {
+    .ts-audit-intro {
+      flex-direction: row;
+      justify-content: space-between;
+    }
+  }
+
+  /* v1 gridMin: the metrics well keeps a 16rem floor. */
+  .ts-audit-metrics {
+    min-width: 16rem;
+  }
+
+  /* v1 wrapCenter rows carry no gap (icons hug their text). */
+  .ts-audit-meta-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .ts-audit-range-label {
+    margin-right: var(--ts-xs);
+  }
+
+  /* v1 audit search input: icon at 12px, text at 36px. */
+  .ts-audit-search-box {
+    position: relative;
+    min-width: 0;
+  }
+
+  .ts-audit-search-box svg {
+    color: var(--ts-ink-muted);
+    pointer-events: none;
+    position: absolute;
+    left: var(--ts-md);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  /* v1 gridLabel gap is 6px (ts-field defaults to 8). */
+  .ts-audit-form .ts-field {
+    gap: 6px;
   }
 }
 /* end @layer features */

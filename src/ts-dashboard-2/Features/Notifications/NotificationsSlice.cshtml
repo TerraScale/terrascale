@@ -9,15 +9,15 @@
     };
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
-    <section class="ts-panel">
+<div class="ts-page ts-notes-page">
+    <section class="ts-panel ts-panel-20">
         <div class="ts-notifications-header">
             <p class="ts-muted ts-ui">Product notifications returned by the TerraScale API for the signed-in account.</p>
             <div class="ts-row">
                 <form method="post" action="/api/v1/notifications/read-all">
                     <button class="ts-btn ts-btn-primary ts-btn-lg" type="submit" disabled="@(Model.Unread == 0 ? "disabled" : null)">@Icons.CheckCheck(16) Mark all read</button>
                 </form>
-                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/notifications">@Icons.RefreshCw(16) Refresh</a>
+                <a class="ts-btn ts-btn-secondary" href="/notifications">@Icons.RefreshCw(16) Refresh</a>
             </div>
         </div>
         <div class="ts-notifications-stats">
@@ -55,15 +55,17 @@
         </div>
         @if (Model.Notifications.Count is 0)
         {
-            <div class="ts-empty">
-                <span class="ts-empty-icon">@Icons.SearchX(16)</span>
-                <span class="ts-empty-title">No notifications returned</span>
-                <span class="ts-empty-meta">The API did not return persistent notifications for this account.</span>
+            <div class="ts-padded">
+                <div class="ts-empty">
+                    <span class="ts-empty-icon">@Icons.SearchX(16)</span>
+                    <span class="ts-empty-title">No notifications returned</span>
+                    <span class="ts-empty-meta">The API did not return persistent notifications for this account.</span>
+                </div>
             </div>
         }
         else
         {
-            <div class="ts-stack-sm">
+            <div class="ts-stack-sm ts-padded">
                 @foreach (var notification in Model.Notifications)
                 {
                     var unread = notification.Status == "Unread";

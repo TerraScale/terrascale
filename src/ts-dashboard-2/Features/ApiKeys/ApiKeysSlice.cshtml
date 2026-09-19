@@ -10,7 +10,7 @@
     string Expires(CredentialView c) => ApiKeyFormatting.UtcDateTime(c.ExpiresAt);
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
+<div class="ts-page ts-notes-page">
     <section class="ts-panel ts-panel20">
         <div class="ts-metric-toolbar">
             <div class="ts-metric-tile">
@@ -55,11 +55,13 @@
         </div>
 
         <form class="ts-filter-bar" method="get" action="/api-keys">
-            <label class="ts-search-field">
-                <span class="ts-sr-only">Filter credentials</span>
-                @Icons.Search(16)
-                <input class="ts-input ts-search-input" type="search" name="q" value="@Model.Query" placeholder="Filter credentials" />
-            </label>
+            <div class="ts-filter-field ts-apikeys-search">
+                <label class="ts-filter-label" for="credential-filter">Filter credentials</label>
+                <div class="ts-apikeys-search-box">
+                    @Icons.Search(16)
+                    <input class="ts-input ts-search-input" id="credential-filter" type="search" name="q" value="@Model.Query" placeholder="Search credentials" />
+                </div>
+            </div>
             <div class="ts-filter-field">
                 <label class="ts-filter-label" for="credential-kind-filter">Type</label>
                 <select class="ts-select ts-filter-select" id="credential-kind-filter" name="kind">
@@ -121,7 +123,7 @@
         }
         else
         {
-            <div class="ts-table-wrap">
+            <div class="ts-table-wrap ts-apikeys-table-wrap">
                 <table class="ts-table">
                     <thead>
                         <tr>
