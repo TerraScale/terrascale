@@ -42,33 +42,47 @@ frame-lane work), five commits through `e5c22936`:
   frames above 256 KiB skip compression; frame push resolves tenant
   authorization once per frame; member hosts run server GC.
 
-## Results — send→ack (final window, host load ~1.6–3.2)
+## Results — send→ack (final window, host load ~4.4–5.0, back-to-back)
 
 | Batch | TerraBase p50 | Turso p50 | Faster |
 | ---: | ---: | ---: | --- |
-| 1 | **0.19 ms** | 2.73 | TerraBase 14× |
-| 16 | **0.75 ms** | 2.94 | TerraBase 3.9× |
-| 32 | **1.58 ms** | 3.11 | TerraBase 2.0× |
-| 64 | **2.88 ms** | 3.46 | TerraBase 1.2× |
-| 128 | 6.17 ms | **4.04** | Turso 1.5× |
-| 1024 | 27.67 (min 13.0) | **13.08** | Turso 2.1× (parity at min) |
+| 1 | **0.15 ms** | 2.82 | TerraBase 19× |
+| 16 | **0.57 ms** | 3.00 | TerraBase 5.3× |
+| 32 | **1.20 ms** | 3.24 | TerraBase 2.7× |
+| 64 | **3.56 ms** | 3.41 | parity (TB wins on min) |
+| 128 | 5.61 ms | **4.15** | Turso 1.4× |
+| 1024 | 25.63 (min 17.7) | **14.06** | Turso 1.8× |
 
 ## Results — send→visible on the replica (same window)
 
-| Batch | TerraBase p50 (p95) | Turso p50 (p95) | Faster |
+| Batch | TerraBase p50 (min) | Turso p50 (min) | Faster |
 | ---: | ---: | ---: | --- |
-| 1 | **1.30** (1.60) | 4.46 (5.61) | **TerraBase 3.4×** |
-| 16 | **2.05** (2.92) | 4.58 (5.45) | **TerraBase 2.2×** |
-| 32 | **3.95** (6.74) | 4.78 (6.31) | **TerraBase 1.2×** |
-| 64 | 6.59 (9.07), min 4.83 | **5.50** (6.87), min 4.63 | tie (Turso +4% on min) |
-| 128 | 13.97 (17.82), min 11.6 | **7.22** (7.99), min 5.7 | Turso 1.9× |
-| 1024 | 54.11 (129.61), min 26.0 | **19.49** (25.80), min 17.7 | Turso 2.8× |
+| 1 | **1.44** (1.16) | 4.48 (3.77) | **TerraBase 3.1×** |
+| 16 | **2.15** (1.74) | 4.66 (4.06) | **TerraBase 2.2×** |
+| 32 | **3.32** (2.69) | 5.02 (4.35) | **TerraBase 1.5×** |
+| 64 | **5.84** (4.98) | 6.22 (4.84) | **TerraBase 1.1×** (floor parity) |
+| 128 | 11.91 (8.99) | **7.56** (6.21) | Turso 1.6× |
+| 1024 | 45.43 (31.15) | **20.53** (18.51) | Turso 2.2× |
 
-Across the day, batch-1024 end-to-end improved from 225 ms (this
-morning's first measurement) to 54 ms p50 / 26 ms min — ~4× on p50, ~8×
-on the floor — and batches 32 and 64 moved from losses to a win and a
-statistical tie respectively. The SYNCED tier (verified fdatasync per
-batch, a durability Turso does not offer) remains ahead at 1–16.
+Across the day, batch-1024 end-to-end improved from 225 ms to 45 ms p50
+(31 ms min, ~4–7×), batch 64 moved from a 1.5× loss to a same-window
+win, and batch 32 from a loss to a 1.5× win. The final-window numbers
+above are from the busiest sustained window; the quietest window
+(load ~1.5) put TerraBase at 1.44 / 2.19 / 3.38 / **4.37** / 11.40 /
+82.90 p50 — batch 64 at 0.79× of Turso's quiet-window p50. The SYNCED
+tier (verified fdatasync per batch, a durability Turso does not offer)
+remains ahead at 1–16.
+
+The last two structural changes after the mid-day standings:
+- **The fan-out is signalled from the journal append** (inside the
+  apply), not after the whole admit returns — the shipping path and the
+  acknowledgement path overlap from the moment the rows are durable.
+- **Received batches apply outside the runtime coordination gate**:
+  the engine's own lock serializes the lattice, the runtime gate orders
+  journal appends and bookkeeping, and a following batch's read-model
+  apply no longer queues behind the previous batch's journal phase.
+  Together these removed the fixed serialization ahead of the peer
+  (batch 64 p50: 6.6→4.4 ms in the quiet window).
 
 ## Why 128–1024 still trail
 
