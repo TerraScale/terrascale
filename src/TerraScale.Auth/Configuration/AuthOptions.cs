@@ -56,10 +56,25 @@ public sealed record AuthOptions
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (key, value) in EnvironmentVariables()) values[key] = value;
+
+        // Unknown or malformed options must fail fast: silently ignoring them lets a
+        // typo'd arg (or the unsupported `--key value` form) lose to the environment
+        // without the operator ever noticing.
+        string[] knownKeys =
+        [
+            "listen", "public-origin", "terrascale-api-url", "terrascale-api-key",
+            "terrascale-project-id", "terrascale-tenant-id", "database", "master-key",
+            "operator-key", "rate-limit", "stripe-secret-key", "stripe-webhook-secret",
+            "stripe-api-url", "price-pro", "price-enterprise",
+        ];
         foreach (var arg in args)
         {
-            if (arg.StartsWith("--", StringComparison.Ordinal) && arg.AsSpan().IndexOf('=') is int eq && eq > 2)
+            if (!arg.StartsWith("--", StringComparison.Ordinal) || arg == "--")
+                continue;
+            if (arg.AsSpan().IndexOf('=') is int eq && eq > 2 && knownKeys.Contains(arg[2..eq], StringComparer.OrdinalIgnoreCase))
                 values[arg[2..eq]] = arg[(eq + 1)..];
+            else
+                throw new InvalidOperationException($"Unknown or malformed option '{arg}' (expected --key=value)");
         }
 
         string Required(string name)
@@ -69,11 +84,29 @@ public sealed record AuthOptions
             return value;
         }
 
+        string? Optional(string name) =>
+            values.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
+
+        Uri HttpUrl(string name, string value)
+        {
+            try
+            {
+                var uri = new Uri(value, UriKind.Absolute);
+                if (uri.Scheme is not ("http" or "https"))
+                    throw new InvalidOperationException($"TS_AUTH_{name} must be an absolute http(s) URL");
+                return uri;
+            }
+            catch (UriFormatException exception)
+            {
+                throw new InvalidOperationException($"TS_AUTH_{name} must be an absolute http(s) URL", exception);
+            }
+        }
+
         var listen = values.GetValueOrDefault("listen", "http://+:8080");
         if (!listen.StartsWith("http://", StringComparison.Ordinal) && !listen.StartsWith("https://", StringComparison.Ordinal))
             throw new InvalidOperationException("TS_AUTH_LISTEN must be an http(s) URL");
         var publicOrigin = Required("public-origin");
-        var apiUrl = values.GetValueOrDefault("terrascale-api-url", "https://api.terrascale.tech");
+        var apiUrl = Optional("terrascale-api-url") ?? "https://api.terrascale.tech";
         var masterKey = Required("master-key");
 
         byte[] masterKeyBytes;
@@ -90,25 +123,28 @@ public sealed record AuthOptions
         if (masterKeyBytes.Length != 32)
             throw new InvalidOperationException("TS_AUTH_MASTER_KEY must decode to 32 bytes");
 
+        int rateLimit = 1000;
+        if (values.TryGetValue("rate-limit", out var rateLimitRaw) && !string.IsNullOrWhiteSpace(rateLimitRaw)
+            && (!int.TryParse(rateLimitRaw, out rateLimit) || rateLimit <= 0))
+            throw new InvalidOperationException("TS_AUTH_RATE_LIMIT must be a positive integer");
+
         return new AuthOptions
         {
             Listen = listen,
-            PublicOrigin = new Uri(publicOrigin, UriKind.Absolute),
-            TerrascaleApiUrl = new Uri(apiUrl, UriKind.Absolute),
+            PublicOrigin = HttpUrl("PUBLIC_ORIGIN", publicOrigin),
+            TerrascaleApiUrl = HttpUrl("TERRASCALE_API_URL", apiUrl),
             TerrascaleApiKey = Required("terrascale-api-key"),
-            TerrascaleProjectId = values.GetValueOrDefault("terrascale-project-id"),
-            TerrascaleTenantId = values.GetValueOrDefault("terrascale-tenant-id"),
+            TerrascaleProjectId = Optional("terrascale-project-id"),
+            TerrascaleTenantId = Optional("terrascale-tenant-id"),
             Database = Required("database"),
             MasterKey = masterKeyBytes,
             OperatorKey = Required("operator-key"),
-            RateLimitPerWindow = int.TryParse(values.GetValueOrDefault("rate-limit"), out var rateLimit) && rateLimit > 0 ? rateLimit : 1000,
-            StripeSecretKey = values.GetValueOrDefault("stripe-secret-key"),
-            StripeWebhookSecret = values.GetValueOrDefault("stripe-webhook-secret"),
-            StripeApiUrl = string.IsNullOrWhiteSpace(values.GetValueOrDefault("stripe-api-url"))
-                ? new Uri("https://api.stripe.com", UriKind.Absolute)
-                : new Uri(values.GetValueOrDefault("stripe-api-url")!, UriKind.Absolute),
-            PricePro = values.GetValueOrDefault("price-pro"),
-            PriceEnterprise = values.GetValueOrDefault("price-enterprise"),
+            RateLimitPerWindow = rateLimit,
+            StripeSecretKey = Optional("stripe-secret-key"),
+            StripeWebhookSecret = Optional("stripe-webhook-secret"),
+            StripeApiUrl = HttpUrl("STRIPE_API_URL", Optional("stripe-api-url") ?? "https://api.stripe.com"),
+            PricePro = Optional("price-pro"),
+            PriceEnterprise = Optional("price-enterprise"),
         };
     }
 
