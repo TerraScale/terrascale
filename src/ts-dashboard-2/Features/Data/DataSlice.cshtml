@@ -7,7 +7,7 @@
     var deleting = Model.DeletingId is { Length: > 0 } did ? store.SavedQueries.FirstOrDefault(q => q.Id == did) : null;
 }
 @ShellHtml.Top(shell)
-<div class="ts-page">
+<div class="ts-page ts-data">
     <section class="ts-panel ts-panel-pad20">
         <div class="ts-data-intro">
             <h2 class="ts-title-24">Data</h2>
@@ -28,7 +28,10 @@
     @if (Model.Error is { } pageError)
     {
         <div class="ts-alert ts-alert-danger" role="alert" data-code="data_explorer_request_failed">
-            <span class="ts-alert-title">@Icons.CircleAlert(16) @pageError</span>
+            @Icons.CircleAlert(19)
+            <div>
+                <div class="ts-alert-title">@pageError</div>
+            </div>
         </div>
     }
 
@@ -43,16 +46,20 @@
                 @if (store.SavedQueries.Length == 0)
                 {
                     <div class="ts-empty">
-                        <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
-                        <span class="ts-empty-title">No saved queries</span>
-                        <span class="ts-ui">Save a project query to make it available to collaborators.</span>
-                        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/data?view=queries&amp;create=1">Save query</a>
+                        <div class="ts-empty-content">
+                            <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                            <span class="ts-empty-title">No saved queries</span>
+                            <span class="ts-ui">Save a project query to make it available to collaborators.</span>
+                        </div>
+                        <div class="ts-empty-action">
+                            <a class="ts-btn ts-btn-secondary ts-btn-lg" href="/data?view=queries&amp;create=1">Save query</a>
+                        </div>
                     </div>
                 }
                 else
                 {
                     <div class="ts-actions-row">
-                        <a class="ts-btn ts-btn-primary ts-btn-lg" href="/data?view=queries&amp;create=1">@Icons.Plus(16) Save query</a>
+                        <a class="ts-btn ts-btn-primary ts-btn-lg" href="/data?view=queries&amp;create=1">@Icons.Plus(20) Save query</a>
                     </div>
                     <div class="ts-table-frame">
                         <table class="ts-table">
@@ -89,10 +96,13 @@
                 <h3 class="ts-panel-title">Collection documents</h3>
                 <p class="ts-panel-subtitle">Read live rows from the selected TerraBase collection</p>
             </div>
-            <div class="ts-panel-pad">
+            <div class="ts-panel-pad ts-explorer-pad">
                 <div class="ts-alert ts-alert-info" role="alert" data-code="explorer_no_collections">
-                    <span class="ts-alert-title">@Icons.Info(16) Collection listing unavailable</span>
-                    <span class="ts-alert-body">The SDK contract does not publish collections.list yet. Enter a collection name in the URL or use the document editor after selecting one.</span>
+                    @Icons.Info(19)
+                    <div>
+                        <div class="ts-alert-title">Collection listing unavailable</div>
+                        <div class="ts-alert-body">The SDK contract does not publish collections.list yet. Enter a collection name in the URL or use the document editor after selecting one.</div>
+                    </div>
                 </div>
                 <form class="ts-explorer-controls" method="get" action="/data">
                     <input type="hidden" name="view" value="table" />
@@ -112,10 +122,12 @@
                 <p class="ts-context-line">@(Model.SelectedDatabase.Length > 0 && Model.SelectedCollection.Length > 0 ? $"{Model.SelectedDatabase} / {Model.SelectedCollection}" : "Choose a database and collection to load live rows.")</p>
                 @if (Model.Documents.Length == 0)
                 {
-                    <div class="ts-empty">
-                        <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
-                        <span class="ts-empty-title">No documents loaded</span>
-                        <span class="ts-ui">Select a collection to read live documents from TerraBase.</span>
+                    <div class="ts-empty ts-empty-mt">
+                        <div class="ts-empty-content">
+                            <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                            <span class="ts-empty-title">No documents loaded</span>
+                            <span class="ts-ui">Select a collection to read live documents from TerraBase.</span>
+                        </div>
                     </div>
                 }
                 else
@@ -140,8 +152,11 @@
                     @if (visible.Length == 0)
                     {
                         <div class="ts-empty">
-                            <span class="ts-empty-title">No matching documents</span>
-                            <span class="ts-ui">Adjust the document filter to see rows.</span>
+                            <div class="ts-empty-content">
+                                <span class="ts-empty-icon-box">@Icons.SearchX(16)</span>
+                                <span class="ts-empty-title">No matching documents</span>
+                                <span class="ts-ui">Adjust the document filter to see rows.</span>
+                            </div>
                         </div>
                     }
                     else
@@ -216,7 +231,7 @@
                         <input class="ts-input" name="collectionDisplay" value="@Model.SelectedCollection" readonly />
                         <span class="ts-hint">Collection listing is unavailable in the published SDK; enter one explicitly.</span>
                     </label>
-                    <label class="ts-field">
+                    <label class="ts-field ts-field-flush">
                         <span class="ts-label">Operation</span>
                         <select class="ts-select" name="operation" data-on-change="$docOp = evt.target.value">
                             <option value="create">Create (PUT)</option>
@@ -230,11 +245,11 @@
                         <input class="ts-input ts-input-mono" name="id" value="@(editingDocument?.Id ?? "")" placeholder="Generated for create" />
                         <span class="ts-hint">Required for update, patch, and delete.</span>
                     </label>
-                    <label class="ts-field" data-show="$docOp !== 'delete'">
+                    <label class="ts-field ts-field-flush" data-show="$docOp !== 'delete'">
                         <span class="ts-label">Document JSON</span>
                         <textarea class="ts-textarea ts-textarea-mono" name="document" rows="8" spellcheck="false" aria-invalid="@(Model.Error is null ? null : "true")">@(editingDocument?.Json ?? "{\n  \"status\": \"active\"\n}")</textarea>
                     </label>
-                    <p class="ts-ui" data-show="$docOp === 'delete'">The JSON body is ignored for delete.</p>
+                    <p class="ts-ua-p" data-show="$docOp === 'delete'">The JSON body is ignored for delete.</p>
                     <div><button class="ts-btn ts-btn-primary" type="submit">Apply document operation</button></div>
                 </form>
             </div>
@@ -274,21 +289,30 @@
                     @if (analysis is { Ok: false })
                     {
                         <div class="ts-alert ts-alert-danger" role="alert" data-code="explorer_sql_invalid">
-                            <span class="ts-alert-title">@Icons.CircleAlert(16) @analysis.Error</span>
+                            @Icons.CircleAlert(19)
+                            <div>
+                                <div class="ts-alert-title">@analysis.Error</div>
+                            </div>
                         </div>
                     }
                     else if (analysis is { Ok: true })
                     {
                         var explainPrefix = Model.Sql.TrimStart().StartsWith("EXPLAIN", StringComparison.OrdinalIgnoreCase);
                         <div class="ts-alert @(explainPrefix ? "ts-alert-info" : "ts-alert-success")" role="alert" data-code="explorer_sql_valid">
-                            <span class="ts-alert-title">@(explainPrefix ? Icons.Info(16) : Icons.CircleCheck(16)) @(analysis.Collection is null ? "Read-only statement accepted." : $"Read-only statement accepted on {analysis.Collection}.")</span>
-                            <span class="ts-alert-body">Collection @(analysis.Collection ?? Model.SqlCollection); @analysis.ParameterSlots parameter slot(s); @(analysis.HasLimit ? "bounded with LIMIT." : "unbounded: add LIMIT.")</span>
+                            @(explainPrefix ? Icons.Info(19) : Icons.CircleCheck(19))
+                            <div>
+                                <div class="ts-alert-title">@(analysis.Collection is null ? "Read-only statement accepted." : $"Read-only statement accepted on {analysis.Collection}.")</div>
+                                <div class="ts-alert-body">Collection @(analysis.Collection ?? Model.SqlCollection); @analysis.ParameterSlots parameter slot(s); @(analysis.HasLimit ? "bounded with LIMIT." : "unbounded: add LIMIT.")</div>
+                            </div>
                         </div>
                     }
                     @if (Model.SqlChecked && analysis is { Ok: true })
                     {
                         <div class="ts-alert ts-alert-success" role="alert" data-code="explorer_sql_server_checked">
-                            <span class="ts-alert-title">@Icons.CircleCheck(16) Server check passed.</span>
+                            @Icons.CircleCheck(19)
+                            <div>
+                                <div class="ts-alert-title">Server check passed.</div>
+                            </div>
                         </div>
                     }
                     <div><button class="ts-btn ts-btn-primary" type="submit" disabled="@(Model.Sql.Trim().Length == 0 ? "disabled" : null)">Check SQL</button></div>
@@ -301,10 +325,10 @@
                             <textarea class="ts-textarea ts-textarea-mono" rows="4" readonly>@analysis.Explain</textarea>
                         </label>
                         <section class="ts-stack-sm">
-                            <h4 class="ts-section-h4">Index suggestions</h4>
+                            <h4 class="ts-ua-h4">Index suggestions</h4>
                             @if (analysis.Suggestions.Length == 0)
                             {
-                                <p class="ts-muted ts-ui">No missing indexes detected for this statement.</p>
+                                <p class="ts-ua-p">No missing indexes detected for this statement.</p>
                             }
                             else
                             {
@@ -343,8 +367,11 @@
             @if (Model.Conflict)
             {
                 <div class="ts-alert ts-alert-warning" role="alert">
-                    <span class="ts-alert-title">@Icons.TriangleAlert(16) Changed elsewhere</span>
-                    <span class="ts-alert-body">Your draft remains unchanged. Reload the latest query before explicitly resubmitting.</span>
+                    @Icons.TriangleAlert(19)
+                    <div>
+                        <div class="ts-alert-title">Changed elsewhere</div>
+                        <div class="ts-alert-body">Your draft remains unchanged. Reload the latest query before explicitly resubmitting.</div>
+                    </div>
                 </div>
                 <a class="ts-btn ts-btn-secondary" href="/data?view=queries&amp;edit=@Model.Editing.Id">Reload latest</a>
             }

@@ -7794,5 +7794,187 @@ single-selector rules may stay on one line.
     background-color: var(--ts-surface-muted);
     color: var(--ts-ink);
   }
+
+  /* ===== data-db wave2: /data + /databases v1 parity ===== */
+
+  /* v1 PanelHeader insets: 20px, compacted to 16px at lg (Panel.tsx). */
+  .ts-data .ts-panel-header,
+  .ts-db-page .ts-panel-header {
+    padding-inline: 20px;
+    padding-bottom: 20px;
+  }
+
+  @media (min-width: 64rem) {
+
+    .ts-data .ts-panel-header,
+    .ts-db-page .ts-panel-header {
+      padding-inline: var(--ts-lg);
+      padding-bottom: var(--ts-lg);
+    }
+  }
+
+  /* v1 panel title line-height 1.375 (Panel.tsx). */
+  .ts-data .ts-panel-title,
+  .ts-db-page .ts-panel-title {
+    line-height: 1.375;
+  }
+
+  /* v1 panel bodies sit on a 16px rhythm (DataWorkspace pad children,
+     SqlConsole / saved-queries root gap lg, DatabaseList root gap lg).
+     The documents view stacks its controls tighter (~8px in v1). */
+  .ts-data .ts-panel-pad,
+  .ts-db-page .ts-panel-pad {
+    gap: var(--ts-lg);
+  }
+
+  .ts-data .ts-explorer-pad {
+    gap: var(--ts-sm);
+  }
+
+  /* v1 dataStats sit 24px under the intro (dataStats marginTop xl). */
+  .ts-data-stats {
+    margin-top: var(--ts-xl);
+  }
+
+  /* v1 inputs/selects read 16px body text (Input / NativeSelect). */
+  .ts-data .ts-input,
+  .ts-data .ts-select,
+  .ts-db-page .ts-input {
+    font-size: var(--ts-fs-body);
+  }
+
+  /* v1 field help is 14px/1.6 (FormField description). */
+  .ts-data .ts-hint {
+    font-size: var(--ts-fs-ui);
+    line-height: 1.6;
+  }
+
+  /* v1 Textarea: 16px/1.6, sized to content with a 112px floor. */
+  .ts-data .ts-textarea {
+    font-size: var(--ts-fs-body);
+    line-height: 1.6;
+    min-height: 112px;
+    padding: var(--ts-md) var(--ts-pad-inline);
+    field-sizing: content;
+  }
+
+  /* v1 editor renders Operation/Document JSON labels in bare divs: no gap. */
+  .ts-data .ts-field-flush {
+    gap: 0;
+  }
+
+  /* v1 leaves the SQL console h4/p bare: UA defaults (bold 16px h4 with
+     1.33em block margins, 16px p with 1em margins). */
+  .ts-data .ts-ua-h4 {
+    margin: 1.33em 0;
+    font-size: var(--ts-fs-body);
+    font-weight: var(--ts-fw-bold);
+    line-height: normal;
+  }
+
+  .ts-data .ts-ua-p {
+    margin: 1em 0;
+  }
+
+  /* v1 Alert: 14/16 padding, 16px text, 19px icon beside title+body,
+     medium-weight tone title, muted 14px description (compat/alert.tsx). */
+  .ts-data .ts-alert,
+  .ts-db-page .ts-alert {
+    padding: 14px var(--ts-lg);
+    font-size: var(--ts-fs-body);
+  }
+
+  .ts-data .ts-alert > svg,
+  .ts-db-page .ts-alert > svg {
+    margin-top: 2px;
+  }
+
+  .ts-data .ts-alert-title,
+  .ts-db-page .ts-alert-title {
+    font-weight: var(--ts-fw-medium);
+  }
+
+  .ts-data .ts-alert-body,
+  .ts-db-page .ts-alert-body {
+    color: var(--ts-ink-muted);
+    font-size: var(--ts-fs-ui);
+  }
+
+  /* v1 buttons are semibold (ButtonStyleX). */
+  .ts-data .ts-btn,
+  .ts-db-page .ts-btn {
+    font-weight: var(--ts-fw-semibold);
+  }
+
+  /* v1 IconButton is 44px square (anatomy.controlHeightLarge). */
+  .ts-data .ts-icon-btn,
+  .ts-db-page .ts-icon-btn {
+    width: var(--ts-control-h-lg);
+    height: var(--ts-control-h-lg);
+  }
+
+  /* v1 DataExplorerTable empty state drops 16px below the context line. */
+  .ts-data .ts-empty-mt {
+    margin-top: var(--ts-lg);
+  }
+
+  /* v1 EmptyState DOM: a content stack (gap sm, 24rem max) over an action
+     column (gap 10px), not one flat gap-lg list. */
+  .ts-data .ts-empty-content,
+  .ts-db-page .ts-empty-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ts-sm);
+    max-width: 24rem;
+  }
+
+  .ts-data .ts-empty-action,
+  .ts-db-page .ts-empty-action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    max-width: 24rem;
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* v1 DataTable: 16px body, 14px semibold uppercase heads, 16/20 cells,
+     fixed layout, every row bordered, 50% muted hover. */
+  .ts-data .ts-table,
+  .ts-db-page .ts-table {
+    font-size: var(--ts-fs-body);
+    table-layout: fixed;
+    min-width: 0;
+  }
+
+  .ts-data .ts-table thead th,
+  .ts-db-page .ts-table thead th {
+    padding: var(--ts-lg) 20px;
+    font-size: var(--ts-fs-ui);
+    line-height: 1.4;
+  }
+
+  .ts-data .ts-table tbody td,
+  .ts-db-page .ts-table tbody td {
+    padding: var(--ts-lg) 20px;
+  }
+
+  .ts-data .ts-table tbody tr:last-child td,
+  .ts-db-page .ts-table tbody tr:last-child td {
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-data .ts-table tbody tr:hover,
+  .ts-db-page .ts-table tbody tr:hover {
+    background-color: color-mix(in oklab, var(--ts-surface-muted) 50%, transparent);
+  }
+
+  /* v1 tables span the padded panel width (DataTable scroller, no insets). */
+  .ts-data .ts-table-frame,
+  .ts-db-page .ts-table-frame {
+    margin-inline: 0;
+  }
 }
 /* end @layer features */
