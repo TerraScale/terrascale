@@ -89,6 +89,23 @@ public sealed class CryptoVectorTests
         await Assert.That(PasswordHasher.Verify("correct horse battery staple", "$argon2id$v=19$garbage")).IsFalse();
     }
 
+    // Malformed stored hashes must verify to false, never throw.
+    [Test]
+    [Arguments("$argon2id$v=19$m=abc,t=1,p=1$c2FsdA$aGFzaA")]          // non-numeric m
+    [Arguments("$argon2id$v=19$m=32,t=1x,p=1$c2FsdA$aGFzaA")]          // non-numeric t
+    [Arguments("$argon2id$v=19$m=32,t=1,p=99999999999999999999$Y2FzZQ$aGFzaA")] // p overflows int
+    [Arguments("$argon2id$v=19$m=32,t=1,p=1$c2FsdA$AA")]               // 1-byte tag (below Argon2 minimum)
+    [Arguments("$argon2id$v=19$m=32,t=1,p=1$c2FsdA$")]                 // missing tag
+    [Arguments("$argon2id$v=19$m=32,t=1$c2FsdA$aGFzaA")]               // missing parameter
+    [Arguments("$argon2id$v=19$m=32,t=1,p=1$c2F*dA$aGFzaA")]           // invalid base64 salt
+    [Arguments("$argon2id$v=16$m=32,t=1,p=1$c2FsdA$aGFzaA")]           // wrong version
+    [Arguments("$argon2i$v=19$m=32,t=1,p=1$c2FsdA$aGFzaA")]            // wrong type
+    [Arguments("")]
+    public async Task PasswordHasherRejectsMalformedPhc(string phc)
+    {
+        await Assert.That(PasswordHasher.Verify("any", phc)).IsFalse();
+    }
+
     // RFC 6238 appendix B test vectors (8 digits, ASCII seeds).
     [Test]
     [MethodDataSource(nameof(Rfc6238Cases))]

@@ -44,11 +44,13 @@ public static class PasswordHasher
             var pair = parameter.Split('=', 2);
             if (pair.Length != 2)
                 return false;
+            if (!int.TryParse(pair[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                return false;
             switch (pair[0])
             {
-                case "m": memory = int.Parse(pair[1], System.Globalization.CultureInfo.InvariantCulture); break;
-                case "t": passes = int.Parse(pair[1], System.Globalization.CultureInfo.InvariantCulture); break;
-                case "p": lanes = int.Parse(pair[1], System.Globalization.CultureInfo.InvariantCulture); break;
+                case "m": memory = parsed; break;
+                case "t": passes = parsed; break;
+                case "p": lanes = parsed; break;
             }
         }
         if (memory < 8 * lanes || passes < 1 || lanes < 1)
@@ -65,6 +67,9 @@ public static class PasswordHasher
         {
             return false;
         }
+
+        if (expected.Length < 4)
+            return false; // Argon2id requires a tag of at least 4 bytes
 
         var actual = Argon2id.Derive(
             System.Text.Encoding.UTF8.GetBytes(password),
