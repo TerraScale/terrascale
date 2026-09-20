@@ -4,9 +4,11 @@ using TerraScale.Endpoints;
 namespace TerraScale.Dashboard2.Features.Onboarding;
 
 /// <summary>Account registration (activation step 1). Validates the form the
-/// way ts-dashboard's client validation does, creates the account's world in
-/// the in-memory store, starts its session, and returns to the wizard.</summary>
-public sealed class OnboardingRegisterEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
+/// way ts-dashboard's client validation does. Demo mode creates the in-memory
+/// world directly; live mode creates the user at ts-auth (the SDK's auth
+/// service, management API) and signs in through the OIDC token exchange —
+/// the world itself materializes from Terrabase state on the first request.</summary>
+public sealed class OnboardingRegisterEndpoint(DashboardStore store, DashboardSecurityOptions security, LiveAuthSessionService? liveSessions = null) : EndpointWithoutRequest<IResult>
 {
     private const int MinPasswordLength = 12;
 
@@ -26,7 +28,11 @@ public sealed class OnboardingRegisterEndpoint(DashboardStore store) : EndpointW
         var password = form["password"].ToString();
         var confirmPassword = form["confirmPassword"].ToString();
         var error = Validate(displayName, email, password, confirmPassword, form["terms"] == "true");
-        if (error is null && store.FindAccount(email) is not null)
+        if (error is null && !security.DemoMode)
+        {
+            error = await liveSessions!.RegisterAsync(email, password, displayName, ct);
+        }
+        else if (error is null && store.FindAccount(email) is not null)
         {
             error = "An account with this email already exists.";
         }
@@ -36,9 +42,24 @@ public sealed class OnboardingRegisterEndpoint(DashboardStore store) : EndpointW
             return Results.Redirect("/onboarding?error=" + Uri.EscapeDataString(error), false, false);
         }
 
-        var world = AccountWorld.Fresh(displayName, email);
-        world.AccountPassword = password;
-        var token = store.BeginSession(world);
+        string token;
+        if (!security.DemoMode)
+        {
+            var signIn = await liveSessions!.SignInAsync(email, password, ct);
+            if (!signIn.Ok)
+            {
+                return Results.Redirect("/onboarding?error=" + Uri.EscapeDataString("The account was created but sign-in failed. Try signing in."), false, false);
+            }
+
+            token = liveSessions.IssueCookie(signIn.Session!);
+        }
+        else
+        {
+            var world = AccountWorld.Fresh(displayName, email);
+            world.AccountPassword = password;
+            token = store.BeginSession(world);
+        }
+
         HttpContext.Response.Cookies.Append(
             DashboardAuthMiddleware.SessionCookie,
             token,

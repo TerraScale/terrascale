@@ -23,26 +23,61 @@ public sealed record DashboardSecurityOptions(bool DemoMode, LiveIdentityOptions
         if (mode != "live")
             throw new InvalidOperationException("TS_DASHBOARD_MODE must be either live or demo.");
 
-        var issuer = configuration["TS_DASHBOARD_IDP_ISSUER"]?.Trim();
-        var introspection = configuration["TS_DASHBOARD_IDP_INTROSPECTION_URL"]?.Trim();
+        var idpOrigin = ParseOrigin(configuration["TS_DASHBOARD_IDP_ORIGIN"]?.Trim(), allowLoopbackHttp: !environment.IsProduction(), name: "TS_DASHBOARD_IDP_ORIGIN");
+        var publicOrigin = ParseOrigin(configuration["TS_DASHBOARD_PUBLIC_ORIGIN"]?.Trim(), allowLoopbackHttp: !environment.IsProduction(), name: "TS_DASHBOARD_PUBLIC_ORIGIN");
+        var stateUrl = ParseOrigin(configuration["TS_DASHBOARD_STATE_URL"]?.Trim(), allowLoopbackHttp: !environment.IsProduction(), name: "TS_DASHBOARD_STATE_URL");
+        var instance = configuration["TS_DASHBOARD_IDP_INSTANCE"]?.Trim();
         var clientId = configuration["TS_DASHBOARD_IDP_CLIENT_ID"]?.Trim();
         var clientSecret = configuration["TS_DASHBOARD_IDP_CLIENT_SECRET"];
-        var stateUrl = configuration["TS_DASHBOARD_STATE_URL"]?.Trim();
+        var managementKey = configuration["TS_DASHBOARD_IDP_MANAGEMENT_KEY"]?.Trim();
         var stateKey = configuration["TS_DASHBOARD_STATE_API_KEY"]?.Trim();
         var stateDatabase = configuration["TS_DASHBOARD_STATE_DATABASE"]?.Trim();
-        if (!Uri.TryCreate(issuer, UriKind.Absolute, out var issuerUri) || issuerUri.Scheme != Uri.UriSchemeHttps
-            || !Uri.TryCreate(introspection, UriKind.Absolute, out var introspectionUri) || introspectionUri.Scheme != Uri.UriSchemeHttps
-            || !Uri.TryCreate(stateUrl, UriKind.Absolute, out var stateUri) || stateUri.Scheme != Uri.UriSchemeHttps
+        if (instance is null || instance.Length < 3
             || string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret)
+            || string.IsNullOrWhiteSpace(managementKey)
             || string.IsNullOrWhiteSpace(stateKey) || string.IsNullOrWhiteSpace(stateDatabase))
         {
-            throw new InvalidOperationException("Live dashboard requires HTTPS identity-provider issuer/introspection URLs, identity-provider credentials, and TS_DASHBOARD_STATE_URL, TS_DASHBOARD_STATE_API_KEY, and TS_DASHBOARD_STATE_DATABASE for durable account state.");
+            throw new InvalidOperationException(
+                "Live dashboard requires TS_DASHBOARD_IDP_ORIGIN, TS_DASHBOARD_IDP_INSTANCE, TS_DASHBOARD_IDP_CLIENT_ID, TS_DASHBOARD_IDP_CLIENT_SECRET, TS_DASHBOARD_IDP_MANAGEMENT_KEY, TS_DASHBOARD_PUBLIC_ORIGIN, and TS_DASHBOARD_STATE_URL, TS_DASHBOARD_STATE_API_KEY, TS_DASHBOARD_STATE_DATABASE.");
         }
 
-        return new(false, new LiveIdentityOptions(issuerUri, introspectionUri, clientId, clientSecret), new DashboardStateOptions(stateUri, stateKey, stateDatabase));
+        if (environment.IsProduction()
+            && (!idpOrigin.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || !publicOrigin.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || !stateUrl.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException("Live dashboard requires HTTPS identity-provider, public, and state origins in production.");
+        }
+
+        var issuer = new Uri($"{idpOrigin.ToString().TrimEnd('/')}/{instance}");
+        var introspection = new Uri($"{idpOrigin.ToString().TrimEnd('/')}/{instance}/oauth/introspect");
+        return new(false,
+            new LiveIdentityOptions(idpOrigin, publicOrigin, instance, issuer, introspection, clientId, clientSecret, managementKey),
+            new DashboardStateOptions(stateUrl, stateKey, stateDatabase));
+    }
+
+    /// <summary>HTTP origins are development-only and only for loopback hosts,
+    /// mirroring the SDK's own loopback rule.</summary>
+    private static Uri ParseOrigin(string? raw, bool allowLoopbackHttp, string name)
+    {
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out var parsed)
+            || (parsed.Scheme != Uri.UriSchemeHttps && !(allowLoopbackHttp && parsed.Scheme == Uri.UriSchemeHttp && parsed.IsLoopback)))
+        {
+            throw new InvalidOperationException($"{name} must be an absolute origin (HTTPS, or HTTP on loopback outside production).");
+        }
+
+        return new Uri(parsed.GetLeftPart(UriPartial.Authority));
     }
 }
 
-public sealed record LiveIdentityOptions(Uri Issuer, Uri IntrospectionEndpoint, string ClientId, string ClientSecret);
+public sealed record LiveIdentityOptions(
+    Uri Origin,
+    Uri PublicOrigin,
+    string InstanceSlug,
+    Uri Issuer,
+    Uri IntrospectionEndpoint,
+    string ClientId,
+    string ClientSecret,
+    string ManagementApiKey);
 
 public sealed record DashboardStateOptions(Uri ApiUrl, string ApiKey, string Database);

@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ImportGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <Import Project="$(NuGetPackageRoot)razorslices/0.11.3/build/RazorSlices.targets" Condition="Exists('$(NuGetPackageRoot)razorslices/0.11.3/build/RazorSlices.targets')" />
+  </ImportGroup>
+</Project>

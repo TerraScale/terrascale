@@ -3,7 +3,13 @@ namespace TerraScale.Dashboard2;
 /// <summary>Session cookie guard. Public paths pass through; everything else
 /// requires a signed-in dashboard session and points the store at that
 /// session's account world for the rest of the request.</summary>
-public sealed class DashboardAuthMiddleware(RequestDelegate next, DashboardStore store, DashboardSecurityOptions security, LiveIdentityProvider? identityProvider = null, DashboardStateRepository? stateRepository = null)
+public sealed class DashboardAuthMiddleware(
+    RequestDelegate next,
+    DashboardStore store,
+    DashboardSecurityOptions security,
+    LiveIdentityProvider? identityProvider = null,
+    DashboardStateRepository? stateRepository = null,
+    LiveAuthSessionService? liveSessions = null)
 {
     public const string SessionCookie = "ts_session";
 
@@ -27,8 +33,12 @@ public sealed class DashboardAuthMiddleware(RequestDelegate next, DashboardStore
 
             if (!security.DemoMode)
             {
-                // Demo login and simulated OAuth/passkey flows are never reachable in live mode.
+                // Live mode keeps the auth surfaces (login, onboarding, reset)
+                // public; the demo-only flows (invitations, cli, agent, oauth
+                // consent, checkout) stay behind the session.
                 isPublic = path.Equals("/login", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("/onboarding", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("/reset-password", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWith("/health/", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWith("/css/", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWith("/js/", StringComparison.OrdinalIgnoreCase)
@@ -37,8 +47,9 @@ public sealed class DashboardAuthMiddleware(RequestDelegate next, DashboardStore
                     || path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWith("/openapi", StringComparison.OrdinalIgnoreCase)
                     || path.StartsWith("/scalar", StringComparison.OrdinalIgnoreCase)
-                    || path.Equals("/api/v1/auth/me", StringComparison.OrdinalIgnoreCase);
+                    || path.StartsWith("/api/v1/auth/", StringComparison.OrdinalIgnoreCase);
 
+                var activated = false;
                 var bearer = context.Request.Headers.Authorization.ToString();
                 if (bearer.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) && identityProvider is not null)
                 {
@@ -46,7 +57,19 @@ public sealed class DashboardAuthMiddleware(RequestDelegate next, DashboardStore
                     if (identity is not null && stateRepository is not null)
                     {
                         await store.TryActivateExternalIdentityAsync(identity.Subject, identity.Email, identity.DisplayName, stateRepository, context.RequestAborted);
-                        isPublic = true;
+                        activated = true;
+                    }
+                }
+
+                // Browser sessions: the opaque cookie maps to a validated
+                // ts-auth token pair kept server-side.
+                if (!activated && liveSessions is not null && stateRepository is not null && token is { Length: > 0 } cookie)
+                {
+                    var session = liveSessions.Lookup(cookie);
+                    if (session is not null && await liveSessions.EnsureValidAsync(session, context.RequestAborted))
+                    {
+                        await store.TryActivateExternalIdentityAsync(session.Subject, session.Email, session.DisplayName, stateRepository, context.RequestAborted);
+                        activated = true;
                     }
                 }
             }

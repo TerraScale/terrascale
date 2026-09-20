@@ -3,7 +3,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.Databases;
 
-public sealed class CreateDatabaseEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
+public sealed class CreateDatabaseEndpoint(DashboardStore store, DashboardSecurityOptions security, TerrabaseDataPlane? dataPlane = null) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -21,7 +21,26 @@ public sealed class CreateDatabaseEndpoint(DashboardStore store) : EndpointWitho
             return Results.Redirect("/databases?error=" + Uri.EscapeDataString("Database name is required."), false, false);
         }
 
-        store.CreateDatabase(name);
+        if (!security.DemoMode)
+        {
+            // Live mode provisions the database in TerraBase through the SDK
+            // before the dashboard records it; the world row persists with the
+            // terrabase name so the two stay linked.
+            try
+            {
+                var provisioned = await dataPlane!.CreateDatabaseAsync(name, $"op_{Guid.NewGuid():N}"[..28], ct);
+                store.CreateDatabase(provisioned);
+            }
+            catch (HttpRequestException exception)
+            {
+                return Results.Redirect("/databases?error=" + Uri.EscapeDataString($"TerraBase rejected the database: {exception.Message}"), false, false);
+            }
+        }
+        else
+        {
+            store.CreateDatabase(name);
+        }
+
         return Results.Redirect("/databases", false, false);
     }
 }

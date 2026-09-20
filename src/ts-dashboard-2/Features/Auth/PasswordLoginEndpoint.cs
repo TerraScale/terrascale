@@ -6,9 +6,10 @@ namespace TerraScale.Dashboard2.Features.Auth;
 
 /// <summary>Signs in with email + password. Accepts the login form (redirects)
 /// or a JSON body (returns the session payload), mirroring ts-dashboard's
-/// /api/v1/auth/password/login contract. Any registered account or the demo
-/// account signs in to its own world.</summary>
-public sealed class PasswordLoginEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
+/// /api/v1/auth/password/login contract. Live mode delegates credential
+/// verification to ts-auth (the SDK's auth service) and keeps the resulting
+/// token pair behind the opaque dashboard cookie.</summary>
+public sealed class PasswordLoginEndpoint(DashboardStore store, DashboardSecurityOptions security, LiveAuthSessionService? liveSessions = null) : EndpointWithoutRequest<IResult>
 {
     public const string DemoPassword = "terrascale";
 
@@ -43,6 +44,19 @@ public sealed class PasswordLoginEndpoint(DashboardStore store) : EndpointWithou
             redirectTo = null;
         }
 
+        if (!security.DemoMode)
+        {
+            var result = await liveSessions!.SignInAsync(email ?? "", password ?? "", ct);
+            if (!result.Ok)
+            {
+                return isForm
+                    ? Results.Redirect("/login?error=" + Uri.EscapeDataString(result.Error ?? "Incorrect email or password."))
+                    : Results.Json(new { error = "invalid_credentials" }, statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            return SignInSucceeded(liveSessions.IssueCookie(result.Session!), isForm, redirectTo);
+        }
+
         var world = store.FindAccount(email ?? "");
         if (world is null || !world.VerifyPassword(password ?? ""))
         {
@@ -52,11 +66,15 @@ public sealed class PasswordLoginEndpoint(DashboardStore store) : EndpointWithou
         }
 
         var token = store.BeginSession(world);
+        return SignInSucceeded(token, isForm, redirectTo);
+    }
+
+    private IResult SignInSucceeded(string token, bool isForm, string? redirectTo)
+    {
         HttpContext.Response.Cookies.Append(
             DashboardAuthMiddleware.SessionCookie,
             token,
             new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, Path = "/" });
-
         if (isForm)
         {
             var target = redirectTo is { Length: > 0 } and var t && t.StartsWith('/') ? t : "/";
@@ -65,7 +83,7 @@ public sealed class PasswordLoginEndpoint(DashboardStore store) : EndpointWithou
 
         return Results.Ok(new
         {
-            user = new { world.CurrentUser.Email, world.CurrentUser.Name, onboardingCompleted = world.OnboardingCompleted },
+            user = new { store.CurrentUser.Email, store.CurrentUser.Name, onboardingCompleted = store.OnboardingCompleted },
         });
     }
 }
