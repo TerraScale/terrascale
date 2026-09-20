@@ -1,0 +1,32 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <RestoreSuccess Condition=" '$(RestoreSuccess)' == '' ">True</RestoreSuccess>
+    <RestoreTool Condition=" '$(RestoreTool)' == '' ">NuGet</RestoreTool>
+    <ProjectAssetsFile Condition=" '$(ProjectAssetsFile)' == '' ">$(MSBuildThisFileDirectory)project.assets.json</ProjectAssetsFile>
+    <NuGetPackageRoot Condition=" '$(NuGetPackageRoot)' == '' ">/home/mariogk/.nuget/packages/</NuGetPackageRoot>
+    <NuGetPackageFolders Condition=" '$(NuGetPackageFolders)' == '' ">/home/mariogk/.nuget/packages/</NuGetPackageFolders>
+    <NuGetProjectStyle Condition=" '$(NuGetProjectStyle)' == '' ">PackageReference</NuGetProjectStyle>
+    <NuGetToolVersion Condition=" '$(NuGetToolVersion)' == '' ">7.0.0</NuGetToolVersion>
+  </PropertyGroup>
+  <ItemGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <SourceRoot Include="/home/mariogk/.nuget/packages/" />
+  </ItemGroup>
+  <ImportGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <Import Project="$(NuGetPackageRoot)tunit.core/1.56.18/buildTransitive/net10.0/TUnit.Core.props" Condition="Exists('$(NuGetPackageRoot)tunit.core/1.56.18/buildTransitive/net10.0/TUnit.Core.props')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.testing.platform/2.2.3/buildTransitive/net9.0/Microsoft.Testing.Platform.props" Condition="Exists('$(NuGetPackageRoot)microsoft.testing.platform/2.2.3/buildTransitive/net9.0/Microsoft.Testing.Platform.props')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.testing.platform.msbuild/2.2.3/buildTransitive/Microsoft.Testing.Platform.MSBuild.props" Condition="Exists('$(NuGetPackageRoot)microsoft.testing.platform.msbuild/2.2.3/buildTransitive/Microsoft.Testing.Platform.MSBuild.props')" />
+    <Import Project="$(NuGetPackageRoot)tunit.engine/1.56.18/buildTransitive/net10.0/TUnit.Engine.props" Condition="Exists('$(NuGetPackageRoot)tunit.engine/1.56.18/buildTransitive/net10.0/TUnit.Engine.props')" />
+    <Import Project="$(NuGetPackageRoot)tunit.assertions/1.56.18/buildTransitive/net10.0/TUnit.Assertions.props" Condition="Exists('$(NuGetPackageRoot)tunit.assertions/1.56.18/buildTransitive/net10.0/TUnit.Assertions.props')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.testing.extensions.trxreport/2.2.3/buildTransitive/net9.0/Microsoft.Testing.Extensions.TrxReport.props" Condition="Exists('$(NuGetPackageRoot)microsoft.testing.extensions.trxreport/2.2.3/buildTransitive/net9.0/Microsoft.Testing.Extensions.TrxReport.props')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.testing.extensions.telemetry/2.2.3/buildTransitive/net9.0/Microsoft.Testing.Extensions.Telemetry.props" Condition="Exists('$(NuGetPackageRoot)microsoft.testing.extensions.telemetry/2.2.3/buildTransitive/net9.0/Microsoft.Testing.Extensions.Telemetry.props')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.testing.extensions.codecoverage/18.8.0/buildTransitive/net8.0/Microsoft.Testing.Extensions.CodeCoverage.props" Condition="Exists('$(NuGetPackageRoot)microsoft.testing.extensions.codecoverage/18.8.0/buildTransitive/net8.0/Microsoft.Testing.Extensions.CodeCoverage.props')" />
+    <Import Project="$(NuGetPackageRoot)microsoft.extensions.configuration.usersecrets/10.0.12/buildTransitive/net8.0/Microsoft.Extensions.Configuration.UserSecrets.props" Condition="Exists('$(NuGetPackageRoot)microsoft.extensions.configuration.usersecrets/10.0.12/buildTransitive/net8.0/Microsoft.Extensions.Configuration.UserSecrets.props')" />
+    <Import Project="$(NuGetPackageRoot)sentry/6.11.0/buildTransitive/Sentry.props" Condition="Exists('$(NuGetPackageRoot)sentry/6.11.0/buildTransitive/Sentry.props')" />
+  </ImportGroup>
+  <PropertyGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
+    <PkgSentry Condition=" '$(PkgSentry)' == '' ">/home/mariogk/.nuget/packages/sentry/6.11.0</PkgSentry>
+    <PkgAWSSDK_Core Condition=" '$(PkgAWSSDK_Core)' == '' ">/home/mariogk/.nuget/packages/awssdk.core/4.0.102.4</PkgAWSSDK_Core>
+    <PkgAWSSDK_S3 Condition=" '$(PkgAWSSDK_S3)' == '' ">/home/mariogk/.nuget/packages/awssdk.s3/4.0.103.2</PkgAWSSDK_S3>
+  </PropertyGroup>
+</Project>

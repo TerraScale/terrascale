@@ -1,0 +1,479 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v11.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v11.0": {
+      "TerraBase.ZoneTree/1.9.7.0": {
+        "dependencies": {
+          "NativeCompressions": "0.6.1"
+        },
+        "runtime": {
+          "TerraBase.ZoneTree.dll": {}
+        }
+      },
+      "NativeCompressions/0.6.1": {
+        "dependencies": {
+          "NativeCompressions.LZ4": "0.6.1",
+          "NativeCompressions.Zstandard": "0.6.1"
+        }
+      },
+      "NativeCompressions.LZ4/0.6.1": {
+        "dependencies": {
+          "NativeCompressions.LZ4.Core": "0.6.1",
+          "NativeCompressions.LZ4.Runtime": "0.6.1"
+        }
+      },
+      "NativeCompressions.LZ4.Core/0.6.1": {
+        "runtime": {
+          "lib/net9.0/NativeCompressions.LZ4.Core.dll": {
+            "assemblyVersion": "0.6.1.0",
+            "fileVersion": "0.6.1.0",
+            "localPath": "NativeCompressions.LZ4.Core.dll"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime/0.6.1": {
+        "dependencies": {
+          "NativeCompressions.LZ4.Runtime.android-arm": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.android-arm64": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.android-x64": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.ios-arm64": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.ios-x64": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.linux-arm64": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.linux-x64": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.osx-arm64": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.osx-x64": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.win-arm64": "0.6.1",
+          "NativeCompressions.LZ4.Runtime.win-x64": "0.6.1"
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.android-arm/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/android-arm/native/liblz4.so": {
+            "rid": "android-arm",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/android-arm/native/liblz4.so"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.android-arm64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/android-arm64/native/liblz4.so": {
+            "rid": "android-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/android-arm64/native/liblz4.so"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.android-x64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/android-x64/native/liblz4.so": {
+            "rid": "android-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/android-x64/native/liblz4.so"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.ios-arm64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/ios-arm64/native/liblz4.a": {
+            "rid": "ios-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/ios-arm64/native/liblz4.a"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.ios-x64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/ios-x64/native/liblz4.a": {
+            "rid": "ios-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/ios-x64/native/liblz4.a"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.linux-arm64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/linux-arm64/native/liblz4.so": {
+            "rid": "linux-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/linux-arm64/native/liblz4.so"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.linux-x64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/linux-x64/native/liblz4.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/linux-x64/native/liblz4.so"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.osx-arm64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/osx-arm64/native/liblz4.dylib": {
+            "rid": "osx-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/osx-arm64/native/liblz4.dylib"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.osx-x64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/osx-x64/native/liblz4.dylib": {
+            "rid": "osx-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/osx-x64/native/liblz4.dylib"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.win-arm64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/win-arm64/native/lz4.dll": {
+            "rid": "win-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/win-arm64/native/lz4.dll"
+          }
+        }
+      },
+      "NativeCompressions.LZ4.Runtime.win-x64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/win-x64/native/lz4.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/win-x64/native/lz4.dll"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard/0.6.1": {
+        "dependencies": {
+          "NativeCompressions.Zstandard.Core": "0.6.1",
+          "NativeCompressions.Zstandard.Runtime": "0.6.1"
+        }
+      },
+      "NativeCompressions.Zstandard.Core/0.6.1": {
+        "runtime": {
+          "lib/net9.0/NativeCompressions.Zstandard.Core.dll": {
+            "assemblyVersion": "0.6.1.0",
+            "fileVersion": "0.6.1.0",
+            "localPath": "NativeCompressions.Zstandard.Core.dll"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime/0.6.1": {
+        "dependencies": {
+          "NativeCompressions.Zstandard.Runtime.android-arm": "0.6.1",
+          "NativeCompressions.Zstandard.Runtime.android-arm64": "0.6.1",
+          "NativeCompressions.Zstandard.Runtime.android-x64": "0.6.1",
+          "NativeCompressions.Zstandard.Runtime.linux-arm64": "0.6.1",
+          "NativeCompressions.Zstandard.Runtime.linux-x64": "0.6.1",
+          "NativeCompressions.Zstandard.Runtime.osx-arm64": "0.6.1",
+          "NativeCompressions.Zstandard.Runtime.osx-x64": "0.6.1",
+          "NativeCompressions.Zstandard.Runtime.win-arm64": "0.6.1",
+          "NativeCompressions.Zstandard.Runtime.win-x64": "0.6.1"
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime.android-arm/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/android-arm/native/libzstd.so": {
+            "rid": "android-arm",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/android-arm/native/libzstd.so"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime.android-arm64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/android-arm64/native/libzstd.so": {
+            "rid": "android-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/android-arm64/native/libzstd.so"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime.android-x64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/android-x64/native/libzstd.so": {
+            "rid": "android-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/android-x64/native/libzstd.so"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime.linux-arm64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/linux-arm64/native/libzstd.so": {
+            "rid": "linux-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/linux-arm64/native/libzstd.so"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime.linux-x64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/linux-x64/native/libzstd.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/linux-x64/native/libzstd.so"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime.osx-arm64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/osx-arm64/native/libzstd.dylib": {
+            "rid": "osx-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/osx-arm64/native/libzstd.dylib"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime.osx-x64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/osx-x64/native/libzstd.dylib": {
+            "rid": "osx-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/osx-x64/native/libzstd.dylib"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime.win-arm64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/win-arm64/native/libzstd.dll": {
+            "rid": "win-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/win-arm64/native/libzstd.dll"
+          }
+        }
+      },
+      "NativeCompressions.Zstandard.Runtime.win-x64/0.6.1": {
+        "runtimeTargets": {
+          "runtimes/win-x64/native/libzstd.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0",
+            "localPath": "runtimes/win-x64/native/libzstd.dll"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "TerraBase.ZoneTree/1.9.7.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "NativeCompressions/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-yESAPDsL6q0QbUVqeoT4j4EfNYfpvWoRmAhp1IjgNsS7eAEPlAA7258RfiLWaIb2zF1ci/KJwJDxU9rTt5dFWw==",
+      "path": "nativecompressions/0.6.1",
+      "hashPath": "nativecompressions.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-uN7a//cyj8IqwNOy28TsmIYicmZOeoxJAaRmqxeg8EXdjiG09wUHO3tFxs4KoDEp5F/43A0pYbpvk1pMbnNw8g==",
+      "path": "nativecompressions.lz4/0.6.1",
+      "hashPath": "nativecompressions.lz4.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Core/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-qFPrvB2EdV8Pj0VAUhZsfR2jsOoNgyZubZi4udVa0w5f7VJdRug37Xi+b4At2TPd10Kg+AizkWae/BRHib5p2w==",
+      "path": "nativecompressions.lz4.core/0.6.1",
+      "hashPath": "nativecompressions.lz4.core.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-9b15NrhFzjuNNXbme1v3jYg+4fEeI+iBnqKh8d7Ydv5TxlEjEUPY/l0FgiabG+JouXpdK5PW2+kJFQTuJ8Lu3Q==",
+      "path": "nativecompressions.lz4.runtime/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.android-arm/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-9BkccLPcx7jQuRRZuuXx9gFtce/sXIYZNu2O8gW+02VpocV/SEQvxRPI/fWUByLLIkQX6RW5ezu3UY0VBAq/IQ==",
+      "path": "nativecompressions.lz4.runtime.android-arm/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.android-arm.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.android-arm64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-cc/myufYAx6rvN2jV/mw74Qti+EDtcA5NMOH0RGtjcGm2J1/aeNgYtbLrmrzUIXv4trqjEx60NUei7v4QhH/ew==",
+      "path": "nativecompressions.lz4.runtime.android-arm64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.android-arm64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.android-x64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-dNPvH7YxpD+1HF+Aiz8sqfAS5g6rOhpa0MqBx1rWy0QupjQ7ehxIBeGviB8CjCcbv1d55RVNNNQf7ydAEHhytg==",
+      "path": "nativecompressions.lz4.runtime.android-x64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.android-x64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.ios-arm64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-SaFq10ORu+x7BqCHaWYzuWqx/m1Rt5hwwGGu4o8v5kSrszwYMWiemQIT52KjXLNjjWc/LH5ooDPRzUQ+7KLXOw==",
+      "path": "nativecompressions.lz4.runtime.ios-arm64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.ios-arm64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.ios-x64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-1GHfyvJUBwFPcsG0fOdMeXVzf5zvNPxScWde8Ili3K+h1v0VwkLt2RvkiqWSKUnE6frsizu0o8EjPxcnXwewgQ==",
+      "path": "nativecompressions.lz4.runtime.ios-x64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.ios-x64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.linux-arm64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-ki8Ez9+qNnzovbDUaqHyJ4kUyM14wzYDM3DuLboqdNwgjAoJom/Ye/LRVVQYVMW5h9cVY7eeSRyeq0aKS1H7zQ==",
+      "path": "nativecompressions.lz4.runtime.linux-arm64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.linux-arm64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.linux-x64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-gmBy/UOC8OAMOXNObF6Hl8jUBwaWJqLCe9OzzVidiNu0HTXeKgO5GSe5BMLInrJxi7qGzUwecQAvamxJ0guKqg==",
+      "path": "nativecompressions.lz4.runtime.linux-x64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.linux-x64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.osx-arm64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-Un5za5THkynojuoajJiJEodXmZWtXbnIcUgO+7XJ55Mx43TSNkOXGNDwypRgVHQgWe7uhJl5jTS5GnheQzhbcw==",
+      "path": "nativecompressions.lz4.runtime.osx-arm64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.osx-arm64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.osx-x64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-Q9GI7BDjPlrUPiW4muB9vuWKnoHJZxFrEwDdg3eaOeWpRFDUP+xIQ6h3iHjaBey1KGi4aJWvN+Oo7knk9m+Pig==",
+      "path": "nativecompressions.lz4.runtime.osx-x64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.osx-x64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.win-arm64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-kxUV0RJIp33FjaMwkdXwb8Y/slUkwdFGYP8d3nEO0f1W9x8dOxAyh+Gk7GetPw4eNHBNBf9RIOozxo5AOogD2g==",
+      "path": "nativecompressions.lz4.runtime.win-arm64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.win-arm64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.LZ4.Runtime.win-x64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-hhHnpVkAI4evIweNq5+dzIk4RVwc/1wbPllXgvIdHCFfTzlELFoS2NoY3XHGNonnWZKB7PReiY44Y+CqV7j6QQ==",
+      "path": "nativecompressions.lz4.runtime.win-x64/0.6.1",
+      "hashPath": "nativecompressions.lz4.runtime.win-x64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-O6ZnSaLoWaZuAiBYXYJfVsARgT3oWHYzo5vnnR0sP3tLCeReoBETeLKVNle8SuWVXGHdfTdAjbif39gd9FVdmw==",
+      "path": "nativecompressions.zstandard/0.6.1",
+      "hashPath": "nativecompressions.zstandard.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Core/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-QYMmJdjmg5tEDLfBj4WYylNpsOvn0pE8woyqhu6HK/j5iOgaR9l69MvdQ+OzBhfuZtWkVcHoTbp3HtDuqb6ZsA==",
+      "path": "nativecompressions.zstandard.core/0.6.1",
+      "hashPath": "nativecompressions.zstandard.core.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-ptMtHMAmYbZEM4SdRn1ZTBXFqpsocLJdlgngRg/FBBpG0gyuB/UkidYchvzOxZf6Wf5p/mgnyZG4IAZVNOO2kw==",
+      "path": "nativecompressions.zstandard.runtime/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime.android-arm/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-/49JsrRQFeYKPuKKYFV3gXUsGtsTP5VWOMu2dIdru7WIUSzINHiAlZcuvtZdcQDINbK0KVKPBfqEaI1GNgeKrw==",
+      "path": "nativecompressions.zstandard.runtime.android-arm/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.android-arm.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime.android-arm64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-U7+tATEmZoqEUlBCtYoMvNR/vDLHVr7uEERa7MKU1bb0efoWRd7nV2C7ULum+8tTyoromIwuphRdA6nKzQOGyA==",
+      "path": "nativecompressions.zstandard.runtime.android-arm64/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.android-arm64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime.android-x64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-oOQhjetjEcW31u9V6zfvr1cSAv4GaqNXGt3A/YK8IpKt9QueRNoKDiIKP8DPG0gaEDOB/V2G1Kt7r5wQ62UqTg==",
+      "path": "nativecompressions.zstandard.runtime.android-x64/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.android-x64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime.linux-arm64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-NfFMpJ3ikFE7EM3Kp0uR+qaQR1kGUV3jW4nJ1qXrLlOTx1ZEGaXveEQFX6HW2sj0edTxdNk7noPq0SnJez3Aqg==",
+      "path": "nativecompressions.zstandard.runtime.linux-arm64/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.linux-arm64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime.linux-x64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-1LjlTiZ9AKR45CXtiw6WVsfdtaJ+TgHj8nK85QQlO3PNkmC0VtInQ/CmQRpYBPfJ4gQ7ZLP+8feM45BfzOkYDQ==",
+      "path": "nativecompressions.zstandard.runtime.linux-x64/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.linux-x64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime.osx-arm64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-A58ChYf6Wdzfv+oDWIowMR87SwghlriwoU22gq1s85OZNSwGX0nqBFYS0eDYF6gdtcCght4AL6lEmFl+b8Jpkw==",
+      "path": "nativecompressions.zstandard.runtime.osx-arm64/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.osx-arm64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime.osx-x64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-+7p93a7kgh2Hn8CCy77onaXp6b0hjs+WjTVC2SvTFtXDD8Mfk5SThAvGafk+WuqKNU2udZzvpRn7IA9qVbuwNw==",
+      "path": "nativecompressions.zstandard.runtime.osx-x64/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.osx-x64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime.win-arm64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-v3pxIzWDR3fG9gkwCJuwc5a/KzFSjJm3cDZl5qQ8PDekV6anm992J7cnVukvEy5MvnRRkaaePRnSbqZzxijilw==",
+      "path": "nativecompressions.zstandard.runtime.win-arm64/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.win-arm64.0.6.1.nupkg.sha512"
+    },
+    "NativeCompressions.Zstandard.Runtime.win-x64/0.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-sIkjjYJ+z277MvyHTJCFI2dmoifWnQ+EsuULz1ewM15lpARdIpFPmdUhSukBov7HCFdczTIhkQyRmXulU7rang==",
+      "path": "nativecompressions.zstandard.runtime.win-x64/0.6.1",
+      "hashPath": "nativecompressions.zstandard.runtime.win-x64.0.6.1.nupkg.sha512"
+    }
+  }
+}

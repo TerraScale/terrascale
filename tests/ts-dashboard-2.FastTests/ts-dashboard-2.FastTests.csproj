@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>TerraScale.Dashboard2.FastTests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsTestingPlatformApplication>true</IsTestingPlatformApplication>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);NU1900</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../ts-dashboard-2.Testing/ts-dashboard-2.Testing.csproj" />
+    <PackageReference Include="TUnit" Version="1.56.18" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,6 @@
+{
+  "TerraScale.DotNet, Version=0.1.0.0, Culture=neutral, PublicKeyToken=null": "\/home\/mariogk\/Projects\/TerraScale\/ts-dotnet\/src\/TerraScale.DotNet",
+  "TerraScale.Endpoints, Version=1.1.0.0, Culture=neutral, PublicKeyToken=null": "\/home\/mariogk\/Projects\/TerraScale\/ts-libs\/src\/TerraScale.Endpoints",
+  "ts-dashboard-2, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "\/home\/mariogk\/Projects\/TerraScale\/ts-dashboard-2\/src\/ts-dashboard-2",
+  "ts-dashboard-2.Testing, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "\/home\/mariogk\/Projects\/TerraScale\/ts-dashboard-2\/tests\/ts-dashboard-2.Testing"
+}
