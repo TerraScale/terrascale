@@ -42,6 +42,37 @@ dashboard instances update the same world concurrently, the losing request
 returns HTTP 409 `state_conflict` so the operator can reload before retrying;
 the service never silently overwrites the winning state.
 
+## Modes
+
+`TS_DASHBOARD_MODE` selects the backend:
+
+- **demo** (default in development): everything in-memory — the seeded
+  demo account (mario@terrascale.tech / terrascale), instant onboarding,
+  Playwright-verified v1 parity. Production refuses demo mode.
+- **live**: ts-auth (the ts-dotnet SDK's auth service) owns identity —
+  registration creates real users, sign-in walks the hosted form → OIDC
+  authorize (PKCE) → token exchange, sessions validate through RFC 7662
+  introspection and refresh through the rotating refresh grant. Account
+  state persists as documents in Terrabase through the SDK with
+  change-token optimistic concurrency (409 `state_conflict` on races), and
+  database creates provision real Terrabase databases. Requires
+  `TS_DASHBOARD_IDP_ORIGIN`, `TS_DASHBOARD_IDP_INSTANCE`,
+  `TS_DASHBOARD_IDP_CLIENT_ID/SECRET`, `TS_DASHBOARD_IDP_MANAGEMENT_KEY`,
+  `TS_DASHBOARD_PUBLIC_ORIGIN`, and `TS_DASHBOARD_STATE_URL/API_KEY/DATABASE`.
+  Loopback HTTP origins are accepted outside production for local stacks.
+
+## Tests
+
+- `tests/ts-dashboard-2.FastTests` — TUnit, the user-blocking critical
+  paths; seconds to run, run it before every push.
+- `tests/ts-dashboard-2.SlowTests` — TUnit, methodical: every page, every
+  mutation, plus the live stack (embedded Terrabase + real ts-auth) when
+  the sibling `terrabase/` and `ts-auth/` checkouts exist; the live
+  fixtures compile out otherwise.
+- `npx playwright test` — browser E2E (demo mode).
+- The shared harness lives in `tests/ts-dashboard-2.Testing`
+  (`DashboardTestApp` boots the whole endpoint pipeline in-memory).
+
 ## Page pattern
 
 ```csharp

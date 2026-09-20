@@ -6,14 +6,18 @@ on:
 jobs:
   e2e:
     runs-on: terrascale-builder
-    timeout-minutes: 15
+    timeout-minutes: 20
     concurrency:
       group: e2e-${{ github.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
-      - name: Build
+      - name: Build solution (app + test projects)
         run: dotnet build ts-dashboard-2.slnx
+      - name: Fast tests (user-blocking critical paths)
+        run: dotnet run --project tests/ts-dashboard-2.FastTests --no-build
+      - name: Slow tests (methodical; live stack compiles out without sibling checkouts)
+        run: dotnet run --project tests/ts-dashboard-2.SlowTests --no-build
       - name: Install JS deps
         run: npm ci
       - name: Cache Playwright browsers
@@ -23,5 +27,5 @@ jobs:
           key: playwright-1.63.0
       - name: Install Playwright browser
         run: npx playwright install chromium
-      - name: Run E2E suite
+      - name: Run browser E2E suite
         run: npx playwright test
