@@ -3,3 +3,19 @@ bin/
 obj/
 target/
 TestResults/
+/ts-auth/go/ts-auth-bench
+
+# Raw benchmark run artifacts (DB snapshots, restore targets, object-store payloads).
+# Summary/receipt evidence files stay trackable.
+**/receipts/**/data/
+**/receipts/**/source/
+**/receipts/**/targets/
+**/receipts/**/object-store/
+
+# Trash / editor leftovers
+*~
+*.bak
+*.tmp
+*.orig
+*.rej
+Thumbs.db
