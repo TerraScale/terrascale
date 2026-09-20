@@ -6,6 +6,7 @@ import {
   validatePlacementLock,
 } from "./management.js";
 import type { SchemaDocument, WebhookDelivery } from "./management-contracts.js";
+import { blake3 } from "./blake3.js";
 
 const completeIndex = {
   field: "email",
@@ -48,10 +49,15 @@ function fixtureFetch(requests: Request[]): typeof fetch {
   return async (input) => {
     const request = new Request(input);
     requests.push(request);
+    const deletion = {
+      request: { environment: "development", tenant_id: "tenant-1", project_id: "project-1", database_id: "primary", operation_id: "delete-primary" },
+      requested_at: "2026-09-20T00:00:00Z", state: "preparing", cutoff: "2026-09-20T00:00:00Z", targets: [],
+    };
     const body = request.method === "POST" && new URL(request.url).pathname === "/api/v1/databases"
       ? { created_at: 1, deleted: false, name: "primary", placement: "GRU", residency: "", parent: null }
       : request.method === "POST" && (new URL(request.url).pathname.endsWith("/backups/restore") || new URL(request.url).pathname.endsWith("/branches"))
         ? { environment: "production", tenant_id: "tenant-1", project_id: "project-1", operation_id: "op-restore", database_id: "db-restore", key_version: "key-1", name: "restored", regions: ["GRU"], residency: "br-only", parent_database_id: "primary", state: "accepted" }
+      : request.method === "DELETE" ? deletion
       : {};
     return Response.json(body, { status: request.method === "POST" && (new URL(request.url).pathname.endsWith("/backups/restore") || new URL(request.url).pathname.endsWith("/branches")) ? 202 : request.method === "POST" ? 201 : 200 });
   };
@@ -449,7 +455,7 @@ it("returns typed export artifact metadata and rejects invalid headers", async (
       headers: {
         "content-type": "application/octet-stream",
         "x-terrascale-artifact-length": "3",
-        "x-terrascale-artifact-checksum": "A".repeat(64),
+        "x-terrascale-artifact-checksum": blake3(bytes).toUpperCase(),
       },
     }),
   });
@@ -458,7 +464,7 @@ it("returns typed export artifact metadata and rejects invalid headers", async (
   if (result.ok) {
     expect(result.value.bytes).toEqual(bytes);
     expect(result.value.length).toBe(3);
-    expect(result.value.checksum).toBe("a".repeat(64));
+    expect(result.value.checksum).toBe(blake3(bytes));
   }
 
   for (const headers of [
@@ -475,6 +481,60 @@ it("returns typed export artifact metadata and rejects invalid headers", async (
     const rejected = await invalid.exports.download("db", "job", "member");
     expect(rejected.ok).toBe(false);
   }
+});
+
+it("rejects an export artifact whose checksum does not match its bytes", async () => {
+  const bytes = new Uint8Array([1, 2, 3]);
+  const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
+    fetch: async () => new Response(bytes, {
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-terrascale-artifact-length": "3",
+        "x-terrascale-artifact-checksum": "0".repeat(64),
+      },
+    }),
+  });
+  const result = await client.exports.download("db", "job", "member");
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.code).toBe("artifact_checksum_mismatch");
+});
+
+it("fails closed when an export status response violates its bounded contract", async () => {
+  const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
+    fetch: async () => Response.json({ job_id: "job-1", status: "Running" }),
+  });
+  const status = await client.exports.get("db", "job-1");
+  expect(status.ok).toBe(false);
+  if (!status.ok) expect(status.error.code).toBe("invalid_export_status");
+  const listClient = createTerraScaleManagementClient({
+    routing: { enabled: false },
+    fetch: async () => Response.json({ exports: [{ job_id: "job-1", status: "Running" }], next_cursor: null }),
+  });
+  const list = await listClient.exports.list("db");
+  expect(list.ok).toBe(false);
+  if (!list.ok) expect(list.error.code).toBe("invalid_export_list");
+});
+
+it("fails closed when a deletion response omits its durable request identity", async () => {
+  const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
+    fetch: async () => Response.json({ requested_at: "2026-09-20T00:00:00Z", state: "preparing", cutoff: "2026-09-20T00:00:00Z", targets: [] }),
+  });
+  const result = await client.databases.deletionStatus("db", "operation-1");
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.code).toBe("invalid_deletion_operation");
+});
+
+it("fails closed when export admission omits its resume cursor", async () => {
+  const client = createTerraScaleManagementClient({
+    routing: { enabled: false },
+    fetch: async () => Response.json({ job_id: "job-1", status_path: "/api/v1/exports/job-1" }, { status: 202 }),
+  });
+  const result = await client.exports.create("db", { idempotency_key: "export-1" });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.code).toBe("invalid_export_acceptance");
 });
 
 it("distinguishes accepted production provisioning from a ready database", async () => {

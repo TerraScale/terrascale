@@ -408,6 +408,9 @@ export type DiscoveryFetchInput = {
 export function composeAbortSignals(signals: readonly (AbortSignal | undefined)[]): { signal: AbortSignal | undefined; dispose: () => void } {
   const live = signals.filter((signal): signal is AbortSignal => signal !== undefined);
   if (live.length === 0) return { signal: undefined, dispose: () => undefined };
+  // One live signal is its own composition: forwarding through a fresh
+  // controller would only add a listener hop and a per-request allocation.
+  if (live.length === 1) return { signal: live[0], dispose: () => undefined };
   const controller = new AbortController();
   const detach = (): void => {
     for (const signal of live) signal.removeEventListener("abort", abort);

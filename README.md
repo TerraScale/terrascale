@@ -37,6 +37,7 @@ path.
 | `@terrascale/sdk/schema` | Schema builders |
 | `@terrascale/sdk/sql` | Parameterized SQL builders |
 | `@terrascale/sdk/management` | Database and collection management |
+| `@terrascale/sdk/ts-auth` | ts-auth hosted identity provider management client |
 | `@terrascale/sdk/react` | React integration |
 | `@terrascale/sdk/svelte` | Svelte integration |
 | `@terrascale/sdk/tanstack` | TanStack integration |
@@ -49,6 +50,40 @@ one-time-consume, pagination, transaction, and migration operations. It is
 server-only and is excluded from browser bundles. The generated Database API
 implementation, pinned Better Auth compatibility and license checks, and
 adapter conformance are separate qualification gates.
+
+## ts-auth identity provider
+
+The `ts-auth` entrypoint manages a ts-auth hosted identity instance: users,
+sessions, API keys, organizations, connections, directories, JWT templates,
+webhooks, audit events, plan and usage limits, instance settings, OAuth
+clients, and the public OIDC endpoints. These routes mirror the ts-auth
+service contract on its own origin, not the TerraScale product /api/v1
+producer contract: the deployment origin is `apiBaseUrl`, the instance `sk_`
+management key is `accessToken`, and every route is scoped to the configured
+instance slug.
+
+~~~ts
+import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
+
+const tsAuth = createTsAuthClient({
+  apiBaseUrl: "https://idp.example.com",
+  accessToken: process.env.TS_AUTH_MANAGEMENT_KEY,
+  instanceSlug: "acme",
+});
+
+const page = await tsAuth.users.list({ limit: 100 });
+if (page.ok) {
+  console.log(page.value.data.map((user) => user.email));
+}
+~~~
+
+One-time secrets (`api_key`, `client_secret`, the SCIM directory `token`, and
+the webhook `signing_secret`) are returned only by the creating or rotating
+call. Webhook deliveries are verified against the raw request bytes with
+`verifyTsAuthWebhook` and `verifyTsAuthWebhookWithTolerance`. Safe reads are
+retried when `maxRetryAttempts` is configured; mutations are never retried. A
+per-call `AbortSignal` is currently accepted on `users.list`, `users.listAll`,
+and `auditEvents.list` only; the request deadline bounds everything else.
 
 ```ts
 import { AuthPersistenceClient, createTerraScaleAuthAdapter } from "@terrascale/sdk/better-auth";

@@ -248,6 +248,11 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
         new RegExp(`\\b${method}\\b`, "u"),
       );
     }
+    // The generated journeys are native ESM TypeScript files. Give the
+    // temporary consumer the same package boundary a real ESM consumer has;
+    // otherwise Node 24 interprets the fixture as CommonJS before the packed
+    // SDK can be exercised.
+    await writeFile(path.join(consumer, "package.json"), JSON.stringify({ type: "module" }));
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "@better-auth/core@1.7.2", "react@18.3.1"], { cwd: consumer });
     const journey = path.join(consumer, "packed-journey.ts");
     await writeFile(journey, packedConsumerJourney);

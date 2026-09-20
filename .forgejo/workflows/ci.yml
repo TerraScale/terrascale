@@ -89,6 +89,12 @@ jobs:
       - name: Check the forbidden SDK surface
         run: npm run check:forbidden-surface
 
+      - name: Generate and validate the locked dependency SBOM
+        run: npm run check:sbom -- --output ts-typescript-sbom.json
+
+      - name: Fail closed on high or critical dependency vulnerabilities
+        run: npm run check:vulnerabilities
+
   node:
     name: verify/node-${{ matrix.node }}
     strategy:
@@ -159,6 +165,12 @@ jobs:
 
       - name: Run the complete SDK test suite
         run: npm test
+
+      - name: Validate the locked dependency SBOM
+        run: npm run check:sbom
+
+      - name: Fail closed on high or critical dependency vulnerabilities
+        run: npm run check:vulnerabilities
 
   browser:
     name: verify/browser-current-engines

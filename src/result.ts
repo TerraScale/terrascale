@@ -55,6 +55,8 @@ export type TerraScaleError = {
   readonly message: string;
   /** Optional producer-provided remediation from the published error body. */
   readonly fix?: string | undefined;
+  /** Retry delay from the Retry-After header, in milliseconds, when the server sent one. */
+  readonly retryAfter?: number | undefined;
   readonly category?: TerraScaleErrorCategory | undefined;
   readonly detail?: string | undefined;
   readonly suggestedAction?: string | undefined;
@@ -126,7 +128,7 @@ export function err(
 
 const redactedDiagnostic = "[redacted]";
 const redactedUrl = "[redacted URL]";
-const sensitiveKeyPattern = /(?:^|[._-])(api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|authorization|bearer|password|passwd|secret|credential|cookie|private[._-]?key)(?:$|[._-])/iu;
+const sensitiveKeyPattern = /(?:^|[._-])(api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|authorization|bearer|password|passwd|secret|credential|cookie|jwt|private[._-]?key)(?:$|[._-])/iu;
 const sensitiveQueryKeyPattern = /^(?:api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|token|authorization|bearer|password|passwd|secret|credential|cookie|query|sql|statement|parameters?)$/iu;
 const bearerPattern = /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/giu;
 const keyValuePattern = /((?:api[._-]?key|access[._-]?token|refresh[._-]?token|session(?:[._-]?token)?|authorization|bearer|password|passwd|secret|credential|cookie|query|sql|statement|parameters?)\s*[:=]\s*)(["']?)([^\s,;)}\]"']+)/giu;

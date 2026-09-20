@@ -3,6 +3,7 @@ import { TerraScaleHttp } from "./http.js";
 import { normalizeRegionCodes, type TerraScaleRegionCode } from "./regions.js";
 import type * as Models from "./models.js";
 import { validateSchema, type CollectionSchema } from "./schema.js";
+import { blake3 } from "./blake3.js";
 import type * as Contracts from "./management-contracts.js";
 export type * from "./management-contracts.js";
 import { err, type TerraScaleResult, type TerraScaleSuccess, type TerraScaleFailure } from "./result.js";
@@ -251,24 +252,24 @@ export class ManagementDatabasesClient {
   delete(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<DeletionOperation>> {
     if (options?.confirm !== true) throw new TypeError("Database deletion requires options.confirm to be true.");
     requireText(options.idempotencyKey, "idempotencyKey", 128);
-    return this.#http.request({
+    return this.#http.request<unknown>({
       method: "DELETE",
       path: databasePath(databaseId),
       routeName: "databases.deleteDatabase",
       idempotencyKey: options.idempotencyKey,
       projectId: options.projectId,
-    });
+    }).then(decodeDeletionOperation);
   }
 
   deletionStatus(databaseId: string, operationId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<DeletionOperation>> {
     requireText(databaseId, "databaseId", 256);
     requireText(operationId, "operationId", 128);
-    return this.#http.request({
+    return this.#http.request<unknown>({
       method: "GET",
       path: `${databasePath(databaseId)}/deletions/${idSegment(operationId, "operation id")}`,
       routeName: "databases.deletionStatus",
       signal: options.signal,
-    });
+    }).then(decodeDeletionOperation);
   }
 
   restore(databaseId: string): Promise<TerraScaleResult<Database>> {
@@ -531,20 +532,20 @@ export class ManagementExportsClient {
 
   list(databaseId: string, options: ManagementRequestOptions & { readonly after?: string; readonly limit?: number } = {}): Promise<TerraScaleResult<Contracts.ExportList>> {
     if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 50)) throw new TypeError("limit must be an integer between 1 and 50.");
-    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/exports`, routeName: "databases.listExports", signal: options.signal, query: { after: options.after, limit: options.limit } });
+    return this.#http.request<unknown>({ method: "GET", path: `${databasePath(databaseId)}/exports`, routeName: "databases.listExports", signal: options.signal, query: { after: options.after, limit: options.limit } }).then(decodeExportList);
   }
 
   cancel(databaseId: string, jobId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ExportStatus>> {
-    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}/cancel`, routeName: "databases.cancelExport", signal: options.signal, idempotencyKey: false });
+    return this.#http.request<unknown>({ method: "POST", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}/cancel`, routeName: "databases.cancelExport", signal: options.signal, idempotencyKey: false }).then(decodeExportStatus);
   }
 
   create(databaseId: string, request: Contracts.CreateExportRequest, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ExportAccepted>> {
     requireText(request?.idempotency_key, "idempotency_key", 512);
-    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/exports`, routeName: "databases.createExport", signal: options.signal, body: request, idempotencyKey: false });
+    return this.#http.request<unknown>({ method: "POST", path: `${databasePath(databaseId)}/exports`, routeName: "databases.createExport", signal: options.signal, body: request, idempotencyKey: false }).then(decodeExportAccepted);
   }
 
   get(databaseId: string, jobId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ExportStatus>> {
-    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}`, routeName: "databases.getExport", signal: options.signal });
+    return this.#http.request<unknown>({ method: "GET", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}`, routeName: "databases.getExport", signal: options.signal }).then(decodeExportStatus);
   }
 
   download(databaseId: string, jobId: string, member: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<ExportDownload>> {
@@ -553,7 +554,7 @@ export class ManagementExportsClient {
 
   resume(databaseId: string, jobId: string, request: Contracts.ResumeExportRequest, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ExportStatus>> {
     requireText(request?.resume_cursor, "resume_cursor");
-    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}/resume`, routeName: "databases.resumeExport", signal: options.signal, body: request, idempotencyKey: false });
+    return this.#http.request<unknown>({ method: "POST", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}/resume`, routeName: "databases.resumeExport", signal: options.signal, body: request, idempotencyKey: false }).then(decodeExportStatus);
   }
 }
 
@@ -802,6 +803,107 @@ function validateCreateDatabase(request: CreateDatabaseRequest): void {
   }
 }
 
+function decodeDeletionOperation(result: TerraScaleResult<unknown>): TerraScaleResult<DeletionOperation> {
+  if (!result.ok) return result;
+  if (isDeletionOperation(result.value)) return { ...result, value: result.value };
+  return invalidManagementResponse(result, "invalid_deletion_operation", "Deletion operation response does not match the published contract.");
+}
+
+function decodeExportAccepted(result: TerraScaleResult<unknown>): TerraScaleResult<Contracts.ExportAccepted> {
+  if (!result.ok) return result;
+  if (isRecord(result.value) && typeof result.value.job_id === "string" && result.value.job_id.length > 0 &&
+    typeof result.value.status_path === "string" && result.value.status_path.length > 0 &&
+    typeof result.value.resume_cursor === "string") {
+    return { ...result, value: result.value as Contracts.ExportAccepted };
+  }
+  return invalidManagementResponse(result, "invalid_export_acceptance", "Export acceptance response does not match the published contract.");
+}
+
+function isDeletionOperation(value: unknown): value is DeletionOperation {
+  if (!isRecord(value) || !isDeletionRequest(value.request) || typeof value.requested_at !== "string" ||
+    !isOneOf(value.state, ["preparing", "stopping", "edge_pending", "cleanup_pending"] as const) ||
+    typeof value.cutoff !== "string" || !Array.isArray(value.targets) || !value.targets.every(isDeletionTarget)) return false;
+  if (value.edge_receipt !== undefined && (!isRecord(value.edge_receipt) || !isDeletionRequest(value.edge_receipt.request) ||
+    typeof value.edge_receipt.cutoff !== "string" || typeof value.edge_receipt.access_revoked !== "boolean")) return false;
+  if (value.claim !== undefined && (!isRecord(value.claim) || typeof value.claim.schemaVersion !== "number" ||
+    !Number.isInteger(value.claim.schemaVersion) || value.claim.schemaVersion < 0 ||
+    !["environment", "tenant_id", "project_id", "database_id", "operation_id", "policy_revision", "policy_fingerprint", "grace_condition", "deadline", "accepted_at", "authority_epoch"]
+      .every(key => typeof (value.claim as Record<string, unknown>)[key] === "string"))) return false;
+  return ["automatic_policy_revision", "automatic_grace_condition", "automatic_deadline"]
+    .every(key => value[key] === undefined || typeof value[key] === "string");
+}
+
+function isDeletionRequest(value: unknown): value is DeletionRequest {
+  return isRecord(value) && ["environment", "tenant_id", "project_id", "database_id", "operation_id"]
+    .every(key => typeof value[key] === "string" && value[key].length > 0);
+}
+
+function isDeletionTarget(value: unknown): value is DeletionTarget {
+  if (!isRecord(value) || !isDeletionStop(value.stop)) return false;
+  if (value.preparation !== undefined && (!isRecord(value.preparation) || typeof value.preparation.prepared !== "boolean" ||
+    typeof value.preparation.last_accounted_at !== "string" || !isDeletionStopLike(value.preparation))) return false;
+  if (value.receipt !== undefined && (!isRecord(value.receipt) || typeof value.receipt.access_revoked !== "boolean" ||
+    typeof value.receipt.usage_stopped !== "boolean" || !isDeletionStopLike(value.receipt))) return false;
+  return true;
+}
+
+function isDeletionStop(value: unknown): value is DeletionStop {
+  return isDeletionStopLike(value) && typeof (value as Record<string, unknown>).cutoff === "string";
+}
+
+function isDeletionStopLike(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && ["environment", "organization_id", "project_id", "database_id", "operation_id", "region"]
+    .every(key => typeof value[key] === "string" && value[key].length > 0);
+}
+
+function decodeExportStatus(result: TerraScaleResult<unknown>): TerraScaleResult<Contracts.ExportStatus> {
+  if (!result.ok) return result;
+  if (isExportStatus(result.value)) return { ...result, value: result.value };
+  return invalidManagementResponse(result, "invalid_export_status", "Export status response does not match the published contract.");
+}
+
+function decodeExportList(result: TerraScaleResult<unknown>): TerraScaleResult<Contracts.ExportList> {
+  if (!result.ok) return result;
+  if (isRecord(result.value) && Array.isArray(result.value.exports) && result.value.exports.every(isExportStatus) &&
+    (result.value.next_cursor === null || typeof result.value.next_cursor === "string")) {
+    return { ...result, value: result.value as Contracts.ExportList };
+  }
+  return invalidManagementResponse(result, "invalid_export_list", "Export list response does not match the published contract.");
+}
+
+function isExportStatus(value: unknown): value is Contracts.ExportStatus {
+  if (!isRecord(value)) return false;
+  return typeof value.job_id === "string" && value.job_id.length > 0 &&
+    isOneOf(value.status, ["Accepted", "Running", "Cancelled", "Complete", "Failed"] as const) &&
+    isUInt64Value(value.created_at_millis) &&
+    isOneOf(value.phase, ["Documents", "History", "Done"] as const) &&
+    isOneOf(value.cancellation, ["available", "requested", "complete", "unavailable"] as const) &&
+    isUInt64Value(value.pages) && isUInt64Value(value.records) &&
+    (value.estimated_records === null || isUInt64Value(value.estimated_records)) &&
+    typeof value.progress_basis_points === "number" && Number.isInteger(value.progress_basis_points) && value.progress_basis_points >= 0 && value.progress_basis_points <= 10000 &&
+    typeof value.resume_cursor === "string" &&
+    (value.manifest === null || (isRecord(value.manifest) && typeof value.manifest.path === "string" &&
+      isUInt64Value(value.manifest.length) && typeof value.manifest.checksum === "string")) &&
+    (value.error === null || typeof value.error === "string");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUInt64Value(value: unknown): value is Contracts.UInt64Value {
+  if (typeof value === "bigint") return value >= 0n && value <= 18446744073709551615n;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isOneOf<const T extends readonly string[]>(value: unknown, choices: T): value is T[number] {
+  return typeof value === "string" && (choices as readonly string[]).includes(value);
+}
+
+function invalidManagementResponse<T>(result: TerraScaleSuccess<unknown>, code: string, message: string): TerraScaleResult<T> {
+  return err(result.routeName, { kind: "invalid-response", code, message, status: result.status }, result.status, result.headers, result.value);
+}
+
 function decodeExportDownload(result: TerraScaleResult<Uint8Array>): TerraScaleResult<ExportDownload> {
   if (!result.ok) return result;
   const lengthHeader = result.headers.get("x-terrascale-artifact-length");
@@ -815,6 +917,10 @@ function decodeExportDownload(result: TerraScaleResult<Uint8Array>): TerraScaleR
   }
   if (BigInt(result.value.byteLength) !== BigInt(length)) {
     return err(result.routeName, { kind: "invalid-response", code: "artifact_length_mismatch", message: "Export artifact length header does not match the response body.", status: result.status }, result.status, result.headers);
+  }
+  const measuredChecksum = blake3(result.value);
+  if (measuredChecksum !== checksumHeader.toLowerCase()) {
+    return err(result.routeName, { kind: "invalid-response", code: "artifact_checksum_mismatch", message: "Export artifact checksum does not match the response body.", status: result.status }, result.status, result.headers);
   }
   return { ...result, value: { bytes: result.value, length, checksum: checksumHeader.toLowerCase() } };
 }

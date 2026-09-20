@@ -33,6 +33,10 @@
       "types": "./dist/management.d.ts",
       "import": "./dist/management.js"
     },
+    "./ts-auth": {
+      "types": "./dist/ts-auth.d.ts",
+      "import": "./dist/ts-auth.js"
+    },
     "./react": {
       "types": "./dist/react/index.d.ts",
       "import": "./dist/react/index.js"
@@ -77,6 +81,8 @@
     "check:openapi-contract-descriptor": "node scripts/generate-openapi-contract-descriptor.ts --check",
     "check:public-contract-fixture": "vitest run test/public-contract-fixture.test.ts",
     "check:forbidden-surface": "vitest run test/forbidden-surface.test.ts",
+    "check:sbom": "node scripts/check-sbom.mjs",
+    "check:vulnerabilities": "node scripts/check-vulnerabilities.mjs",
     "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.ts",
     "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.ts",
     "local": "node dist/local/cli.js",

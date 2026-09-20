@@ -6,6 +6,7 @@ import { test } from "vitest";
 import { capturePublicClientRoutes, exercisePublicClientRoutes } from "./client-route-capture.js";
 import type { TerraScaleRouteName } from "./http.js";
 import type { TerraScaleResult } from "./result.js";
+import { blake3 } from "./blake3.js";
 
 // These are producer response bytes supplied to the transport codec. They do
 // not stand in for a running product service or prove a live deployment.
@@ -107,6 +108,17 @@ type Vector = { operationId: string; request: { method: string }; response: Wire
  * producer health status (including the updated `healthy: false` fixture).
  */
 function materializeResponse(routeName: TerraScaleRouteName, response: WireResponse): WireResponse {
+  if (response.mediaType === "application/octet-stream" && response.status >= 200 && response.status < 300) {
+    const bytes = new TextEncoder().encode(String(response.body ?? ""));
+    return {
+      ...response,
+      headers: {
+        ...(response.headers ?? {}),
+        "x-terrascale-artifact-length": String(bytes.byteLength),
+        "x-terrascale-artifact-checksum": blake3(bytes),
+      },
+    };
+  }
   if (routeName !== "health.health" || response.body === undefined || typeof response.body !== "object" || response.body === null || Array.isArray(response.body)) {
     return response;
   }

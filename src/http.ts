@@ -45,7 +45,8 @@ export type TerraScaleRouteName =
   | `regions.${string}`
   | `savedQueries.${string}`
   | `settings.${string}`
-  | `usage.${string}`;
+  | `usage.${string}`
+  | `tsauth.${string}`;
 
 export type TerraScaleBase = "api";
 export type TerraScaleHttpMethod = "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
@@ -62,6 +63,8 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly projectId?: string | undefined;
   readonly query?: QueryRecord | undefined;
   readonly body?: TBody | undefined;
+  /** Pre-encoded form body, sent as application/x-www-form-urlencoded. */
+  readonly formBody?: URLSearchParams | string | undefined;
   readonly headers?: HeadersInit | undefined;
   readonly idempotencyKey?: string | false | undefined;
   /** Opt in only for named read operations whose POST body is safe to repeat. */
@@ -168,23 +171,35 @@ export class TerraScaleHttp {
     const startedAt = performance.now();
     let idempotencyKey: string | undefined;
 
+    if (options.body !== undefined && options.formBody !== undefined) {
+      throw new TypeError("Requests accept either a JSON body or a form body, not both.");
+    }
+
     try {
       options.signal?.throwIfAborted();
       idempotencyKey = this.resolveIdempotencyKey(options);
       // One logical operation must retain the same bytes across retries,
       // even when the caller mutates its object while a request is pending.
-      const requestBody = options.body === undefined
-        ? undefined
-        : options.body instanceof Uint8Array
+      const requestBody = options.body !== undefined
+        ? options.body instanceof Uint8Array
           ? options.body
-          : JSON.stringify(options.body);
+          : JSON.stringify(options.body)
+        : options.formBody === undefined
+          ? undefined
+          : typeof options.formBody === "string"
+            ? options.formBody
+            : options.formBody.toString();
       // ADR 0050 §1/§8 route classification: database-scoped requests route
       // through discovery to a direct regional endpoint; product routes target
       // the product origin; every other member route selects a regional
       // endpoint from the catalog. There is no proxy fallback anymore.
-      const routingDatabase = this.#router === undefined ? null : parseRoutingDatabase(options.path);
-      const catalogRoute = this.#router !== undefined && routingDatabase === null && isRegionCatalogRoute(options.path);
-      const productRoute = this.#router !== undefined && routingDatabase === null && isProductRoute(options.path);
+      // ts-auth is a separate service on its own origin, outside that
+      // classification: discovery, catalog selection, and regional rewriting
+      // never apply to its requests.
+      const serviceRoute = options.routeName.startsWith("tsauth.");
+      const routingDatabase = !serviceRoute && this.#router !== undefined ? parseRoutingDatabase(options.path) : null;
+      const catalogRoute = !serviceRoute && this.#router !== undefined && routingDatabase === null && isRegionCatalogRoute(options.path);
+      const productRoute = !serviceRoute && this.#router !== undefined && routingDatabase === null && isProductRoute(options.path);
       const needsWrite = isMutation(options.method) && !(options.retryableRead === true && options.method === "POST");
       // One bounded deadline covers every attempt (ADR 0050 §5.9).
       const deadline = this.config.requestTimeoutMs > 0 ? AbortSignal.timeout(this.config.requestTimeoutMs) : undefined;
@@ -207,7 +222,9 @@ export class TerraScaleHttp {
             ? undefined
             : await this.#router.resolveBase(routingDatabase, needsWrite);
           let requestBase: string;
-          if (this.#router === undefined) {
+          if (serviceRoute) {
+            requestBase = this.config.apiBaseUrl;
+          } else if (this.#router === undefined) {
             requestBase = this.baseUrl(requestRegionHint);
           } else if (catalogRoute) {
             // `api/v1/regions` exactly is the catalog itself, served by the discovery origin.
@@ -225,13 +242,16 @@ export class TerraScaleHttp {
           }
           routedRegion = routedBase?.region;
           attemptStartedAt = performance.now();
-          const url = buildUrl(requestBase, options.path, options.query);
+          const url = buildUrl(requestBase, options.path, options.query, options.routeName);
           const headers = await withCancellation(
             this.buildHeaders({ ...options, regionHint: requestRegionHint }, idempotencyKey, sentToken),
             options.signal,
           );
-          const composed = composeAbortSignals([options.signal, deadline]);
-          const attemptSignal = composed.signal;
+          // composeAbortSignals returns the single live signal as-is (the
+          // common case: a deadline, no caller signal), so the per-attempt
+          // composition only allocates when both are present.
+          const attemptCompose = composeAbortSignals([options.signal, deadline]);
+          const attemptSignal = attemptCompose.signal;
           options.signal?.throwIfAborted();
           const requestInit: RequestInit = {
             method: options.method,
@@ -240,23 +260,33 @@ export class TerraScaleHttp {
             ...(attemptSignal === undefined ? {} : { signal: attemptSignal }),
           };
           if (requestBody !== undefined) {
-            headers.set("content-type", headers.get("content-type") ?? "application/json");
+            headers.set(
+              "content-type",
+              headers.get("content-type") ??
+                (options.formBody === undefined ? "application/json" : "application/x-www-form-urlencoded"),
+            );
             requestInit.body = requestBody instanceof Uint8Array ? requestBody as unknown as BodyInit : requestBody;
           }
 
           const request = new Request(url, requestInit);
           fetchStarted = true;
           let response: Response;
+          let body: ParsedBody;
           try {
             response = await this.#fetch(request);
+            responseReceived = true;
+            if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
+              // The redirected body is never consumed; drain it before failing.
+              void response.body?.cancel().catch(() => undefined);
+              throw new TypeError("The TerraScale API returned an unsupported HTTP redirect.");
+            }
+            body = await readResponseBody(response, options.routeName);
           } finally {
-            composed.dispose();
+            // The composed signal stays attached until the body has been read:
+            // disposing at header time would detach the caller signal and the
+            // deadline while the stream is still in flight.
+            attemptCompose.dispose();
           }
-          responseReceived = true;
-          if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
-            throw new TypeError("The TerraScale API returned an unsupported HTTP redirect.");
-          }
-          const body = await readResponseBody(response, options.routeName);
           this.observeSession(response.headers);
           if (routedRegion !== undefined && response.status < 500) {
             this.#router?.recordLatency(routedRegion, performance.now() - attemptStartedAt);
@@ -337,7 +367,7 @@ export class TerraScaleHttp {
           }
 
           const errorBody = sanitizeHttpDiagnostic(body.ok ? body.value : body.raw);
-          const error = errorFromResponse(response, errorBody);
+          const error = errorFromResponse(response, errorBody, options.routeName);
           if (retryableStatuses.has(response.status) && routedRegion !== undefined && routingDatabase !== null) {
             // A regional endpoint implicated by a retryable failure moves
             // behind the eligible alternatives (ADR 0050 §5.3).
@@ -351,7 +381,14 @@ export class TerraScaleHttp {
             // Preserve the server response when its backoff exceeds our automatic
             // retry window. Capping Retry-After would send the request too early.
             if (delayMs <= 30_000) {
-              await delayForRetry(delayMs, options.signal);
+              // The deadline bounds the sleep too: aborting mid-sleep stops the
+              // loop promptly instead of after the full backoff.
+              const sleepCompose = composeAbortSignals([options.signal, deadline]);
+              try {
+                await delayForRetry(delayMs, sleepCompose.signal);
+              } finally {
+                sleepCompose.dispose();
+              }
               attempt++;
               continue;
             }
@@ -408,7 +445,7 @@ export class TerraScaleHttp {
     idempotencyKey: string | undefined,
     sentToken: { value: string | undefined },
   ): Promise<Headers> {
-    validateInternalHeaders(options.headers);
+    validateInternalHeaders(options.headers, options.routeName);
     const headers = new Headers();
 
     headers.set("accept", options.routeName === "databases.downloadExport" ? "application/octet-stream" : "application/json");
@@ -430,7 +467,12 @@ export class TerraScaleHttp {
       );
     }
 
-    const token = await resolveAccessToken(this.#accessToken);
+    // ts-auth public OIDC endpoints authenticate with client credentials in
+    // the form body (or a caller-supplied OAuth access token on userinfo),
+    // never with the instance sk_ management key from the client config.
+    const token = options.routeName.startsWith("tsauth.oidc.")
+      ? undefined
+      : await resolveAccessToken(this.#accessToken);
     sentToken.value = token;
 
     if (token !== undefined && token.length > 0) {
@@ -552,13 +594,16 @@ const internalHeaderNames = new Set([
   "x-terrascale-auth-transaction",
 ]);
 
-function validateInternalHeaders(headers: HeadersInit | undefined): void {
+function validateInternalHeaders(headers: HeadersInit | undefined, routeName: TerraScaleRouteName = "" as TerraScaleRouteName): void {
   if (headers === undefined) {
     return;
   }
 
+  // ts-auth OAuth userinfo carries a caller-selected OAuth bearer token;
+  // authorization stays non-configurable on every other surface.
+  const callerBearerAllowed = routeName === "tsauth.oidc.userinfo";
   for (const [name] of new Headers(headers).entries()) {
-    if (!internalHeaderNames.has(name)) {
+    if (!internalHeaderNames.has(name) && !(callerBearerAllowed && name === "authorization")) {
       throw new TypeError(
         `Header "${name}" is not configurable; use the named TerraScale SDK operation option instead.`,
       );
@@ -622,18 +667,26 @@ function placementRegions(headers: Headers): TerraScaleRegionCode[] {
   return regions;
 }
 
-function retryDelay(response: Response | undefined, baseDelayMs: number, attempt: number): number {
+/** Retry-After parsed to milliseconds; undefined when absent or unparseable. */
+function retryAfterMs(response: Response | undefined): number | undefined {
   const retryAfter = response?.headers.get("retry-after");
-  if (retryAfter !== null && retryAfter !== undefined) {
-    const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      return seconds * 1_000;
-    }
+  if (retryAfter === null || retryAfter === undefined) {
+    return undefined;
+  }
 
-    const date = Date.parse(retryAfter);
-    if (Number.isFinite(date)) {
-      return Math.max(0, date - Date.now());
-    }
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1_000;
+  }
+
+  const date = Date.parse(retryAfter);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+function retryDelay(response: Response | undefined, baseDelayMs: number, attempt: number): number {
+  const retryAfter = retryAfterMs(response);
+  if (retryAfter !== undefined) {
+    return retryAfter;
   }
 
   // Computed backoff carries jitter (ADR 0050 §5.9) so concurrent clients
@@ -678,9 +731,18 @@ type ParsedBody =
   | { readonly ok: true; readonly value: unknown; readonly raw: string }
   | { readonly ok: false; readonly errorMessage: string; readonly raw: string };
 
-function buildUrl(baseUrl: string, path: string, query: QueryRecord | undefined): URL {
+function buildUrl(baseUrl: string, path: string, query: QueryRecord | undefined, routeName: TerraScaleRouteName): URL {
   const normalizedPath = path.replace(/^\/+/, "");
-  if (!/^api\/v1(?:\/|$)/u.test(normalizedPath)) {
+  if (routeName.startsWith("tsauth.")) {
+    // ts-auth is a separate service on its own origin, not a TerraScale
+    // product surface: its management API is rooted at /v1 and its public
+    // OIDC endpoints hang directly under the instance slug segment. The
+    // product /api/v1 guard does not apply, but a ts-auth request path must
+    // still match one of those two published shapes.
+    if (!/^v1\//u.test(normalizedPath) && !/^[^/]+\/(?:\.well-known|oauth)\//u.test(normalizedPath)) {
+      throw new TypeError("ts-auth requests are limited to /v1 management routes and instance-scoped public OIDC routes.");
+    }
+  } else if (!/^api\/v1(?:\/|$)/u.test(normalizedPath)) {
     throw new TypeError("TerraScale SDK requests are limited to the public /api/v1 contract.");
   }
 
@@ -729,15 +791,33 @@ async function readResponseBody(response: Response, routeName: TerraScaleRouteNa
     }
     return { ok: true, value: new Uint8Array(await response.arrayBuffer()), raw: "" };
   }
+  // ts-auth JSON routes publish JSON bodies, so an empty or non-JSON 2xx is a
+  // broken response, not a passthrough value. Void routes are exempt: the
+  // service answers revoke with 200 plus an empty body (RFC 7009) and the
+  // delete family with 204 No Content, which never carries a body.
+  const tsauthJsonRoute = response.ok &&
+    routeName.startsWith("tsauth.") &&
+    response.status !== 204 &&
+    routeName !== "tsauth.oidc.revoke";
   const raw = await response.text();
 
   if (raw.length === 0) {
+    if (tsauthJsonRoute) {
+      return { ok: false, errorMessage: "ts-auth returned an empty response body.", raw };
+    }
     return { ok: true, value: undefined, raw };
   }
 
   const contentType = response.headers.get("content-type") ?? "";
 
   if (!contentType.toLowerCase().includes("json")) {
+    if (tsauthJsonRoute) {
+      return {
+        ok: false,
+        errorMessage: `ts-auth returned a non-JSON response body (${contentType === "" ? "no content type" : contentType}).`,
+        raw,
+      };
+    }
     return response.ok ? { ok: true, value: raw, raw } : { ok: true, value: { message: raw }, raw };
   }
 
@@ -912,7 +992,7 @@ function parseDocumentValue(raw: string): unknown {
   });
 }
 
-function errorFromResponse(response: Response, body: unknown): TerraScaleError {
+function errorFromResponse(response: Response, body: unknown, routeName: TerraScaleRouteName): TerraScaleError {
   // Error responses are producer-controlled. Sanitize before extracting any
   // published fields so hostile values cannot enter `message`, `fix`, or
   // validation metadata and rely on a later result-level pass to clean them.
@@ -920,23 +1000,35 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
   const source = unwrapErrorBody(safeBody);
   const category = errorCategory(source);
   const traceId = stringProperty(source, "traceId");
+  // RFC 6749 flat OAuth failures carry the code in `error` and the message in
+  // `error_description`. On ts-auth routes a bare `error` is already the
+  // published OAuth code (RFC 6749 allows omitting the description); on every
+  // other surface the pair only maps when both are present, so the legacy
+  // flat shape (a bare human message in `error`) keeps its meaning.
+  const flatError = stringProperty(source, "error");
+  const flatOAuthPair = flatError !== undefined && typeof source.error_description === "string";
+  const oauthCode = routeName.startsWith("tsauth.") ? flatError : (flatOAuthPair ? flatError : undefined);
   const code =
     stringProperty(source, "code") ??
     stringProperty(source, "errorCode") ??
+    oauthCode ??
     defaultCode(response.status);
   const validation = validationIssues(source);
   const fix = stringProperty(source, "fix");
+  const retryAfter = retryAfterMs(response);
 
   return {
     kind: kindFromStatus(response.status, validation, code),
     code,
     message:
       stringProperty(source, "message") ??
+      (flatOAuthPair ? stringProperty(source, "error_description") : undefined) ??
       stringProperty(source, "error") ??
       stringProperty(source, "detail") ??
       stringProperty(source, "title") ??
       (response.statusText || "The TerraScale API request failed."),
     ...(fix === undefined ? {} : { fix }),
+    ...(retryAfter === undefined ? {} : { retryAfter }),
     category,
     detail: stringProperty(source, "detail"),
     suggestedAction: stringProperty(source, "suggestedAction"),

@@ -13,6 +13,10 @@ const committedArchiveSha256 = (await readFile(path.join(repositoryRoot, "CONTRA
 const versionPattern = /^v[1-9][0-9]*$/u;
 const hexPattern = /^[0-9a-f]{64}$/iu;
 
+/** The committed edge pin is optional until the edge archive is published; fail closed when absent. */
+const committedEdgeArchiveSha256 = async (): Promise<string | undefined> =>
+  (await readFile(path.join(repositoryRoot, "EDGE_CONTRACT_ARCHIVE_SHA256"), "utf8").catch(() => undefined))?.trim();
+
 export const pinnedContractVersion = version;
 
 export type ContractBundle = {
@@ -25,8 +29,14 @@ export type ContractBundle = {
 /** Resolve the edge-owned bundle separately from the TerraBase bundle. */
 export async function resolveEdgeContractBundle(): Promise<ContractBundle> {
   const source = process.env.EDGE_CONTRACT_SOURCE ?? process.env.TERRASCALE_EDGE_CONTRACT_SOURCE;
-  if (source === undefined) {
-    throw new Error("contracts: edge contract source is not published; set EDGE_CONTRACT_SOURCE.");
+  const url = process.env.EDGE_CONTRACT_URL ?? process.env.TERRASCALE_EDGE_CONTRACT_URL;
+  if (source !== undefined && url !== undefined) throw new Error("contracts: set only EDGE_CONTRACT_SOURCE or EDGE_CONTRACT_URL, not both.");
+  if (source === undefined && url === undefined) throw new Error("contracts: edge contract source is not published; set EDGE_CONTRACT_SOURCE or EDGE_CONTRACT_URL with EDGE_CONTRACT_ARCHIVE_SHA256.");
+  if (url !== undefined) {
+    const archiveSha256 = process.env.EDGE_CONTRACT_ARCHIVE_SHA256 ?? process.env.TERRASCALE_EDGE_CONTRACT_ARCHIVE_SHA256
+      ?? await committedEdgeArchiveSha256();
+    if (archiveSha256 === undefined || !hexPattern.test(archiveSha256)) throw new Error("contracts: EDGE_CONTRACT_URL requires a 64-character EDGE_CONTRACT_ARCHIVE_SHA256.");
+    return resolvePublishedArchive(url, archiveSha256, "edge");
   }
   let root = path.resolve(process.cwd(), source);
   // Producer checkouts keep the bundle under contracts/edge/v1; CI stages the
@@ -56,7 +66,11 @@ export async function resolveContractBundle(): Promise<ContractBundle> {
     ?? process.env.CONTRACT_BUNDLE_SHA256 ?? process.env.TERRASCALE_CONTRACT_BUNDLE_SHA256;
   const expectedArchiveSha256 = archiveSha256 ?? committedArchiveSha256;
   if (!hexPattern.test(expectedArchiveSha256)) throw new Error("contracts: CONTRACT_URL requires a 64-character CONTRACT_ARCHIVE_SHA256.");
-  if (!/^https?:$/u.test(new URL(url).protocol)) throw new Error("contracts: CONTRACT_URL must use http or https.");
+  return resolvePublishedArchive(url, expectedArchiveSha256, "terrabase");
+}
+
+async function resolvePublishedArchive(url: string, expectedArchiveSha256: string, origin: "terrabase" | "edge"): Promise<ContractBundle> {
+  if (!/^https?:$/u.test(new URL(url).protocol)) throw new Error("contracts: contract archive URL must use http or https.");
   const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`contracts: failed to download ${url}: HTTP ${response.status}.`);
   const payload = new Uint8Array(await response.arrayBuffer());
@@ -76,7 +90,7 @@ export async function resolveContractBundle(): Promise<ContractBundle> {
     let root: string | undefined;
     for (const candidate of candidates) if (await existsManifest(candidate)) { root = candidate; break; }
     if (!root) throw new Error("contracts: archive does not contain manifest.json.");
-    return await validateContractBundle(root, () => rm(temporary, { recursive: true, force: true }), "terrabase");
+    return await validateContractBundle(root, () => rm(temporary, { recursive: true, force: true }), origin);
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
     throw error;

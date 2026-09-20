@@ -85,3 +85,17 @@ published version or rebuild different bytes under the same version.
 Use a patch version for backward-compatible changes. Before `1.0`, a
 source-breaking exported TypeScript change requires a minor version. Update
 `package.json` and `package-lock.json` together before promotion.
+
+## Dependency SBOM
+
+The SDK CI runs `npm run check:sbom`, which generates a CycloneDX 1.5 inventory
+from the committed lockfile, verifies the package identity and every npm
+component reference, rejects duplicate or malformed component identities, and
+records the SHA-256 digest of `package-lock.json` in the evidence envelope. A
+release process must retain that generated envelope with the candidate receipt
+and complete vulnerability review before publication.
+
+For consumers that download the signed edge archive, set both
+`EDGE_CONTRACT_URL` and `EDGE_CONTRACT_ARCHIVE_SHA256`; the SDK refuses an edge
+URL without its immutable digest or when a local source and URL are supplied
+simultaneously.
