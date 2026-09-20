@@ -239,7 +239,8 @@ def unpack_url(url: str, destination: Path) -> Path:
             "immutable v1 package URL (registry blocker)"
         )
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        request = urllib.request.Request(url, headers={"User-Agent": "terrascale-ci/1"})
+        with urllib.request.urlopen(request, timeout=30) as response:
             chunks = []
             size = 0
             while True:

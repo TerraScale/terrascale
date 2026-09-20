@@ -210,3 +210,16 @@ scope and timestamps. States are `preparing`, `stopping`, `edge_pending`, and
 Canceling the status request does not cancel deletion. `DeleteDatabase` requires
 HTTP 202 and `GetDeletionStatus` requires HTTP 200, with matching operation and
 configured tenant/project scope in both responses.
+
+## Supported versions
+
+- Go floor: `go 1.24.0`, declared in `go.mod` and enforced by the toolchain at
+  build time. The SDK has no CGO dependencies; runtime dependency is
+  `github.com/coder/websocket` (see `go.mod` for the pinned version).
+- Toolchain checks: `go vet`, `gofmt`, `go test ./...` and `go test -race ./...`
+  all run in CI; the dependency lane runs the pinned `govulncheck@v1.8.0`
+  scanner and fails on any known vulnerability.
+- Contract surface: the TerraBase API contract is pinned through
+  `scripts/contracts.py` (immutable archive with SHA-256 verification); tests
+  fail closed when the archive is not resolvable. The packaged-consumer test
+  exercises the module from outside this checkout.

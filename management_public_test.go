@@ -12,7 +12,26 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/zeebo/blake3"
 )
+
+func TestBlake3MatchesPublishedVectors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{name: "empty", data: nil, want: "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"},
+		{name: "abc", data: []byte("abc"), want: "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := fmt.Sprintf("%x", blake3.Sum256(test.data)); got != test.want {
+				t.Fatalf("BLAKE3(%q) = %s, want %s", test.data, got, test.want)
+			}
+		})
+	}
+}
 
 func TestNewProducerManagementRoutes(t *testing.T) {
 	const usage = `{"tenant_id":"tenant-1","database_id":"db-1","snapshot_sequence":18446744073709551615,"meters":[{"meter":"document_write_units","units":"170141183460469231731687303715884105727"},{"meter":"storage_byte_seconds","units":"9007199254740993"}],"reads":{"total_reads":18446744073709551615}}`
@@ -215,7 +234,7 @@ func TestDownloadExportPreservesBinaryArtifact(t *testing.T) {
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Header().Set("Cache-Control", "private, no-store")
 			w.Header().Set("X-TerraScale-Artifact-Length", fmt.Sprint(len(body)))
-			w.Header().Set("X-TerraScale-Artifact-Checksum", strings.Repeat("a", 64))
+			w.Header().Set("X-TerraScale-Artifact-Checksum", fmt.Sprintf("%x", blake3.Sum256(body)))
 			_, _ = w.Write(body)
 		}))
 		client, err := NewClient(Config{APIBaseURL: server.URL})
@@ -227,6 +246,23 @@ func TestDownloadExportPreservesBinaryArtifact(t *testing.T) {
 		if err != nil || got == nil || !bytes.Equal(got.Bytes, body) {
 			t.Fatalf("download changed bytes: %x want %x: %v", got, body, err)
 		}
+	}
+}
+
+func TestDownloadExportRejectsChecksumMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("X-TerraScale-Artifact-Length", "3")
+		w.Header().Set("X-TerraScale-Artifact-Checksum", strings.Repeat("0", 64))
+		_, _ = w.Write([]byte{1, 2, 3})
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Databases.DownloadExport(t.Context(), "demo", "job-1", "member"); err == nil || !strings.Contains(err.Error(), "checksum does not match") {
+		t.Fatalf("expected checksum mismatch, got %v", err)
 	}
 }
 

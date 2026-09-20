@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -660,6 +661,9 @@ type APIError struct {
 	Placement string
 	RequestID string
 	Body      string
+	// RetryAfter exposes the server-sent Retry-After header (delta-seconds
+	// or HTTP-date) when present, uncapped; nil when absent or unparseable.
+	RetryAfter *time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -1144,6 +1148,7 @@ func errorFromResponse(route, method, path string, status int, headers http.Head
 	if placement, ok := placementRegion(headers); ok {
 		apiErr.Placement = string(placement)
 	}
+	apiErr.RetryAfter = retryAfterFromHeader(headers)
 	return apiErr
 }
 
@@ -1291,6 +1296,33 @@ func (c *Client) retryDelayFor(headers http.Header, attempt int) time.Duration {
 		return MaxRetryAfter
 	}
 	return d
+}
+
+// retryAfterFromHeader exposes the Retry-After the server sent (delta-seconds
+// or HTTP-date) on APIError, uncapped, unlike the capped retry scheduling in
+// parseRetryAfter. Nil when absent or unparseable.
+func retryAfterFromHeader(headers http.Header) *time.Duration {
+	value := strings.TrimSpace(headers.Get("Retry-After"))
+	if value == "" {
+		return nil
+	}
+	if secs, err := strconv.ParseUint(value, 10, 64); err == nil || isDecimal(value) {
+		// An out-of-range delta is still a delta: clamp to the largest
+		// representable duration instead of wrapping.
+		if err != nil || secs > uint64(math.MaxInt64)/uint64(time.Second) {
+			secs = uint64(math.MaxInt64 / int64(time.Second))
+		}
+		d := time.Duration(secs) * time.Second
+		return &d
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		d := time.Until(t)
+		if d < 0 {
+			d = 0
+		}
+		return &d
+	}
+	return nil
 }
 
 func parseRetryAfter(value string) (time.Duration, bool) {

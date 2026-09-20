@@ -110,6 +110,9 @@ jobs:
       - name: Run Go vet
         run: go vet ./...
 
+      - name: Run the pinned Go vulnerability scanner
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
       - name: Build all Go packages
         run: go build ./...
 

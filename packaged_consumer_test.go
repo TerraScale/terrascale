@@ -73,6 +73,30 @@ func TestPackagedGoConsumerPreservesSQLIntegers(t *testing.T) {
 	if err := os.MkdirAll(dependencyRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	blakeDependencyRoot := filepath.Join(proxy, "github.com", "zeebo", "blake3", "@v")
+	if err := os.MkdirAll(blakeDependencyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{".mod", ".info", ".zip"} {
+		name := "v0.2.4" + suffix
+		data, err := os.ReadFile(filepath.Join(cache, "cache", "download", "github.com", "zeebo", "blake3", "@v", name))
+		if err != nil {
+			t.Fatalf("read blake3 module cache %s: %v", name, err)
+		}
+		write(filepath.Join(blakeDependencyRoot, name), data)
+	}
+	cpuidDependencyRoot := filepath.Join(proxy, "github.com", "klauspost", "cpuid", "v2", "@v")
+	if err := os.MkdirAll(cpuidDependencyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{".mod", ".info", ".zip"} {
+		name := "v2.0.12" + suffix
+		data, err := os.ReadFile(filepath.Join(cache, "cache", "download", "github.com", "klauspost", "cpuid", "v2", "@v", name))
+		if err != nil {
+			t.Fatalf("read cpuid module cache %s: %v", name, err)
+		}
+		write(filepath.Join(cpuidDependencyRoot, name), data)
+	}
 	for _, suffix := range []string{".mod", ".info", ".zip"} {
 		name := "v1.8.15" + suffix
 		data, err := os.ReadFile(filepath.Join(cache, "cache", "download", "github.com", "coder", "websocket", "@v", name))

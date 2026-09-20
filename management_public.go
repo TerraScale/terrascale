@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/zeebo/blake3"
 )
 
 // IndexRecommendations carries the coordinator generation and bounded candidates.
@@ -356,6 +358,10 @@ func (d *DatabasesClient) DownloadExport(ctx context.Context, database, jobID, m
 	}
 	if uint64(len(out)) != length {
 		return nil, fmt.Errorf("sdk: artifact length header does not match body")
+	}
+	measured := fmt.Sprintf("%x", blake3.Sum256(out))
+	if !strings.EqualFold(measured, checksum) {
+		return nil, fmt.Errorf("sdk: artifact checksum does not match body")
 	}
 	return &ExportDownload{Bytes: []byte(out), Length: length, Checksum: strings.ToLower(checksum)}, nil
 }
