@@ -76,8 +76,13 @@ public sealed class AdminPortalE2eTests
         await page.GotoAsync(Url(service, $"/ui/{slug}/sign-up"));
         await page.FillAsync("#su-email", email);
         await page.FillAsync("#su-password", "password123");
-        await page.ClickAsync("button:has-text('Create account')");
-        await page.WaitForURLAsync("**/account");
+        // Register navigation before submitting, then assert the authenticated
+        // page itself. Authorization probes do not depend on the window load event.
+        await Task.WhenAll(
+            page.WaitForURLAsync(Url(service, $"/ui/{slug}/account"),
+                new() { WaitUntil = WaitUntilState.DOMContentLoaded }),
+            page.ClickAsync("button:has-text('Create account')"));
+        await page.GetByRole(AriaRole.Heading, new() { Name = "Your account", Exact = true }).WaitForAsync();
         var user = await service.Store.FindUserByEmailAsync(instanceId, email)
             ?? throw new InvalidOperationException("user missing from store");
         return user.Id;
