@@ -3,7 +3,7 @@
 // closed when its sandbox credentials are absent.
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalEnvelope, runAll } from "./run-snippets.mjs";
@@ -22,6 +22,13 @@ const llmsGenerated = spawnSync(process.execPath, [join(root, "scripts", "genera
   encoding: "utf8",
 });
 assert.equal(llmsGenerated.status, 0, llmsGenerated.stdout + llmsGenerated.stderr);
+// Translation freshness: every locale tree must match its English source
+// (fail-closed; reviewed translations are left alone by the sync).
+const i18nSynced = spawnSync(process.execPath, [join(root, "scripts", "i18n-sync.mjs"), "--check"], {
+  cwd: root,
+  encoding: "utf8",
+});
+assert.equal(i18nSynced.status, 0, i18nSynced.stdout + i18nSynced.stderr);
 const results = await runAll(stub ? "stub" : "remote");
 if (stub) console.warn("LOCAL-ONLY: stub snippets are smoke tests; remote launch qualification is not passed.");
 const heartbeat = Uint8Array.from([0x97, 0x01, 0x00, 0x00, 0x06, 0xcf, 0, 0, 0, 0, 0, 0, 0, 0, 0xcf, 0, 0, 0, 0, 0, 0, 0, 0, 0x90]);
@@ -58,6 +65,25 @@ assert.ok(starterPage.includes("databaseId"), "starter scopes reactive attach by
 assert.ok(!starterPage.includes("new TerraScale("), "starter does not use removed SDK constructor");
 assert.ok(!starterPage.includes(".from("), "starter does not use removed collection facade");
 assert.ok(read("create-terrascale-app/template/package.json").includes('"@terrascale/sdk": "0.3.0"'), "starter pins the current SDK version");
+// Version freshness: every SDK version the English docs advertise must equal
+// the starter's installed pin. Locale trees are generated copies of English
+// and stay fresh via i18n-sync. This proves internal consistency only; the
+// pin is not resolved against a released registry package (private
+// registry, no credentials in CI).
+const pinnedSdk = read("create-terrascale-app/template/package.json").match(/"@terrascale\/sdk": "(\d+\.\d+\.\d+)"/)?.[1];
+assert.ok(pinnedSdk, "starter template pins a @terrascale/sdk version");
+const versionedSources = [
+  "docs/snippets.md",
+  "docs/getting-started/index.md",
+  ...readdirSync(join(root, "docs", "snippets"))
+    .filter((file) => file.endsWith(".ts"))
+    .map((file) => `docs/snippets/${file}`),
+];
+for (const source of versionedSources) {
+  for (const [advertised, version] of read(source).matchAll(/@terrascale\/sdk`?\s+(\d+\.\d+\.\d+)/g)) {
+    assert.equal(version, pinnedSdk, `${source} advertises ${advertised} but the starter pins ${pinnedSdk}`);
+  }
+}
 assert.ok(read("create-terrascale-app/template/terrascale.schema.json").includes('"historyRetentionDays": 7'), "starter schema uses canonical JSON shape");
 assert.ok(read("scripts/run-snippets.mjs").includes("TERRASCALE_SANDBOX_API_KEY"), "remote runner is credential-gated");
 assert.ok(read("scripts/run-snippets.mjs").includes("launch gate not passed"), "missing real sandbox is an explicit failed launch gate");
@@ -102,4 +128,4 @@ for (const needle of ["$1 per 1M", "$0.20 per GB-month", "| Writes / month | 100
   assert.ok(pricingIndex.includes(needle), `pricing/index.md agrees on ${needle}`);
 }
 
-console.log(`npm test: ${results.length} snippets + pricing/limits + llms route assertions passed.`);
+console.log(`npm test: ${results.length} snippets + i18n freshness + SDK-version consistency + pricing/limits + llms route assertions passed.`);
