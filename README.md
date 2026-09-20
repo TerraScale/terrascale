@@ -34,8 +34,13 @@ one endpoint per file, CI/deploy).
 ```
 dotnet run --project src/ts-dashboard-2
 # open http://localhost:5000 → redirected to /login
-# demo credentials: mario@terrascale.tech / terrascale
+# demo credentials: mario@terrascale.tech / terrascale (requires TS_DASHBOARD_MODE=demo; production refuses demo authentication)
 ```
+
+Live account worlds are persisted through TerraBase change-token writes. If two
+dashboard instances update the same world concurrently, the losing request
+returns HTTP 409 `state_conflict` so the operator can reload before retrying;
+the service never silently overwrites the winning state.
 
 ## Page pattern
 

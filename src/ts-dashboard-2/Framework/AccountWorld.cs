@@ -11,6 +11,8 @@ namespace TerraScale.Dashboard2;
 /// </summary>
 public sealed class AccountWorld
 {
+    public AccountWorld() { }
+
     private AccountWorld(bool demo)
     {
         IsDemo = demo;
@@ -33,9 +35,9 @@ public sealed class AccountWorld
         return world;
     }
 
-    public bool IsDemo { get; }
+    public bool IsDemo { get; set; }
 
-    public DateTimeOffset CreatedAt { get; }
+    public DateTimeOffset CreatedAt { get; set; }
 
     // --- Session-scoped account state --------------------------------------
 
@@ -60,9 +62,9 @@ public sealed class AccountWorld
     /// <summary>Platform-owner (admin) session; fresh accounts are plain
     /// members until promoted through the testing dev-shim, like
     /// ts-dashboard's promoteOwner.</summary>
-    public bool OwnerSession { get; private set; } = true;
+    public bool OwnerSession { get; set; } = true;
 
-    public bool PromotedOwner { get; private set; }
+    public bool PromotedOwner { get; set; }
 
     public void PromoteToOwner()
     {

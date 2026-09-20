@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 
 namespace TerraScale.Dashboard2;
@@ -15,15 +16,17 @@ public sealed partial class DashboardStore
     private const string DemoToken = "demo-session-token";
 
     private static readonly AsyncLocal<AccountWorld?> ActiveWorld = new();
+    private static readonly AsyncLocal<bool> ExternalIdentityActive = new();
+    private static readonly AsyncLocal<string?> ExternalIdentitySubject = new();
 
     private readonly AccountWorld _demoWorld = AccountWorld.Demo();
 
     // ponytail: token → world map; no expiry, no refresh — demo ceiling.
-    private readonly Dictionary<string, AccountWorld> _sessions = new();
+    private readonly ConcurrentDictionary<string, AccountWorld> _sessions = new(StringComparer.Ordinal);
 
     /// <summary>Registered accounts by email. Logout drops the session token
     /// but the account survives, so signing back in works (v1 parity).</summary>
-    private readonly Dictionary<string, AccountWorld> _accounts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, AccountWorld> _accounts = new(StringComparer.OrdinalIgnoreCase);
 
     public DashboardStore()
     {
@@ -40,7 +43,7 @@ public sealed partial class DashboardStore
     {
         if (token is not null && token != DemoToken)
         {
-            _sessions.Remove(token);
+            _sessions.TryRemove(token, out _);
         }
     }
 
@@ -52,10 +55,35 @@ public sealed partial class DashboardStore
 
     // --- Sessions ----------------------------------------------------------
 
+    /// <summary>Clears request-local activation before authentication runs.</summary>
+    public void ResetRequestActivation()
+    {
+        ActiveWorld.Value = null;
+        ExternalIdentityActive.Value = false;
+        ExternalIdentitySubject.Value = null;
+    }
+
     /// <summary>Points this request at the cookie's world. Anonymous requests
     /// keep the demo world as an inert default.</summary>
     public bool TryActivate(string? token) =>
         token is not null && _sessions.TryGetValue(token, out var world) && (ActiveWorld.Value = world) == world;
+
+    /// <summary>Activates the account represented by a validated live IdP subject.
+    /// The identity is the key; bearer tokens are never stored by the dashboard.</summary>
+    public async Task TryActivateExternalIdentityAsync(string subject, string email, string displayName, DashboardStateRepository repository, CancellationToken ct)
+    {
+        var key = $"idp:{subject}";
+        var world = await repository.LoadAsync(subject, ct) ?? _accounts.GetOrAdd(key, _ => AccountWorld.Fresh(displayName, email));
+        _accounts[key] = world;
+        ActiveWorld.Value = world;
+        ExternalIdentityActive.Value = true;
+        ExternalIdentitySubject.Value = subject;
+    }
+
+    public Task PersistExternalIdentityAsync(DashboardStateRepository repository, CancellationToken ct) =>
+        ExternalIdentitySubject.Value is { Length: > 0 } subject
+            ? repository.SaveAsync(subject, World.RegisteredEmail, World, ct)
+            : Task.CompletedTask;
 
     /// <summary>Creates a session for an existing world and activates it for
     /// the current request; returns the session token.</summary>
@@ -72,8 +100,8 @@ public sealed partial class DashboardStore
     }
 
     public bool IsAuthenticated(HttpContext context) =>
-        context.Request.Cookies[DashboardAuthMiddleware.SessionCookie] is { Length: > 0 } token
-        && (token == DemoToken || _sessions.ContainsKey(token));
+        ExternalIdentityActive.Value || (context.Request.Cookies[DashboardAuthMiddleware.SessionCookie] is { Length: > 0 } token
+        && (token == DemoToken || _sessions.ContainsKey(token)));
 
     /// <summary>Finds the world whose account owns the email, if any.</summary>
     public AccountWorld? FindAccount(string email) =>
