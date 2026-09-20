@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use blake3::hash;
 use serde_json::json;
 use terrascale::management::{
     CancellationToken, CreateDatabaseRequest, CreateImport, CreateIndexRequest,
@@ -57,6 +58,18 @@ fn client(mock: Arc<Mock>) -> TerraScaleClient {
             .expect("config"),
         mock,
     )
+}
+
+#[test]
+fn blake3_matches_published_vectors() {
+    assert_eq!(
+        hash(&[]).to_hex().to_string(),
+        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+    );
+    assert_eq!(
+        hash(b"abc").to_hex().to_string(),
+        "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+    );
 }
 
 #[tokio::test]
@@ -642,7 +655,10 @@ async fn export_download_preserves_binary_body_and_authentication() {
                 "x-terrascale-artifact-length".into(),
                 bytes.len().to_string(),
             ),
-            ("x-terrascale-artifact-checksum".into(), "A".repeat(64)),
+            (
+                "x-terrascale-artifact-checksum".into(),
+                hash(&bytes).to_hex().to_string(),
+            ),
         ],
         body: bytes.clone().into(),
     }]);
@@ -654,7 +670,7 @@ async fn export_download_preserves_binary_body_and_authentication() {
         .unwrap();
     assert_eq!(download.bytes, bytes);
     assert_eq!(download.length, 4);
-    assert_eq!(download.checksum, "a".repeat(64));
+    assert_eq!(download.checksum, hash(&bytes).to_hex().to_string());
     let request = mock.last();
     assert_eq!(request.method, Method::Get);
     assert!(request.url.ends_with("/exports/job/artifacts/part.bin"));

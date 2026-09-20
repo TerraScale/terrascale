@@ -10,6 +10,7 @@ use crate::generated_contract::models::SchemaDocument;
 use crate::regions::RegionCode;
 use crate::schema::CollectionSchema;
 use crate::transport::{Method, Request};
+use blake3::Hasher;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 const DEFAULT_PAGE_SIZE: u32 = 100;
@@ -1393,6 +1394,16 @@ impl Exports {
         if response.body.len() as u64 != length {
             return Err(Error::invalid_response(
                 "artifact length header does not match body",
+            ));
+        }
+        let measured = Hasher::new()
+            .update(&response.body)
+            .finalize()
+            .to_hex()
+            .to_string();
+        if !measured.eq_ignore_ascii_case(&checksum) {
+            return Err(Error::invalid_response(
+                "artifact checksum does not match body",
             ));
         }
         Ok(ExportDownload {

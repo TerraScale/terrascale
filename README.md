@@ -98,6 +98,52 @@ opening exchange for it.
 in-progress schema migration with its required `Idempotency-Key` and
 `If-Match` headers.
 
+## ts-auth (hosted IdP) client
+
+`client.auth_idp(slug)` returns the management client for one ts-auth
+instance. ts-auth is a separate service from TerraBase: it has its own origin
+(`auth_base_url`) and its own instance key (`auth_api_key`, the `sk_...`
+management key), both optional on the config and independent of the TerraBase
+credentials. Calls fail with a `Validation` error when `auth_base_url` is not
+configured; management routes additionally require `auth_api_key`.
+
+```rust,no_run
+# async fn example() -> terrascale::Result<()> {
+use terrascale::{ClientConfig, TerraScaleClient};
+
+let client = TerraScaleClient::new(
+    ClientConfig::builder()
+        .api_key("ts_test_key")
+        .auth_base_url("https://auth.example.com")
+        .auth_api_key("sk_live_key")
+        .build()?,
+);
+let auth = client.auth_idp("acme")?;
+let page = auth.users().list(Some(20), None).await?;
+let created = auth
+    .users()
+    .patch(&page.data[0].id, terrascale::auth_idp::AuthIdpUserPatch::new().with_name("Ada"))
+    .await?;
+let _ = created;
+# Ok(())
+# }
+```
+
+Families mirror the management client grouping: `users()`, `sessions()`,
+`api_keys()`, `organizations()`, `connections()`, `directories()`,
+`jwt_templates()`, `webhooks()`, `audit_events()`, `billing()`, `instance()`,
+`oauth_clients()`, and the public OIDC routes under `oidc()` (discovery, JWKS,
+token, revoke, introspect, userinfo — no instance key; client credentials go
+in the token form body). One-time secrets (API keys, client secrets, SCIM
+directory tokens, webhook signing secrets, impersonation tokens) are returned
+only by the creating or rotating call and are redacted from `Debug`.
+Webhook deliveries are verified with `verify_auth_idp_webhook` (or
+`verify_auth_idp_webhook_with_tolerance` for a replay window), which checks
+`sha256=` HMAC-SHA256 over `timestamp + "." + raw body` in constant time.
+Reads are retried on transient failures like the rest of the SDK; mutations
+are never retried (ts-auth has no idempotency contract). These routes are not
+part of the TerraBase producer contract.
+
 ## Region catalog and member health
 
 The public `GET https://atlas.terrascale.tech/api/v1/regions` endpoint is the
@@ -119,7 +165,7 @@ manifest.
 
 - `src/` — `terrascale` crate. Key modules are `config`, `discovery`,
   `regions`, `transport`, `client`, `documents`, `schema`, `sql`, `reactive`,
-  `tenants`, and `management`.
+  `tenants`, `management`, and `auth_idp` (ts-auth hosted IdP client).
 - `terrascale-derive/` — `#[derive(Schema)]` collection and field metadata.
 - `tests/conformance.rs` — SDK behavior checks against a mock transport.
 - `tests/producer_http_conformance.rs` — public SDK calls exercised against
@@ -156,3 +202,13 @@ its operation or idempotency identity and reconcile durable server state before
 resubmitting. Operation discovery reports the producer’s explicit `covered_kinds`
 and cancellation capability; it does not imply that every asynchronous owner
 is represented or remotely cancellable.
+
+## Supported versions
+
+- Toolchain: Rust `1.97.1`, pinned by `rust-toolchain.toml` and used for all
+  formatting, lint (`clippy -D warnings`), and locked workspace tests.
+- Edition: 2021, declared in `Cargo.toml`. `cargo-audit` 0.22.2 runs the
+  dependency advisory gate over the committed lockfile.
+- Contract surface: the TerraBase API contract is pinned through
+  `scripts/contracts.py` (immutable archive with SHA-256 verification); tests
+  fail closed when the archive is not resolvable.

@@ -7,19 +7,43 @@ use crate::regions::{
 };
 
 /// Runtime configuration for [`crate::TerraScaleClient`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClientConfig {
     api_base_url: String,
     sync_base_url: String,
     /// Effective discovery/catalog origin; `Some` means discovery is active.
     atlas_base_url: Option<String>,
     api_key: Option<String>,
+    /// ts-auth (hosted IdP) deployment origin; `None` disables the ts-auth client.
+    auth_base_url: Option<String>,
+    /// ts-auth instance management key (`sk_...`), separate from the TerraBase key.
+    auth_api_key: Option<String>,
     project_id: Option<String>,
     tenant_id: Option<String>,
     preferred_region: Option<RegionCode>,
     region_affinity: RegionAffinity,
     max_retry_attempts: u8,
     retry_delay_ms: u32,
+}
+
+impl std::fmt::Debug for ClientConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ClientConfig")
+            .field("api_base_url", &self.api_base_url)
+            .field("sync_base_url", &self.sync_base_url)
+            .field("atlas_base_url", &self.atlas_base_url)
+            .field("api_key", &"[REDACTED]")
+            .field("auth_base_url", &self.auth_base_url)
+            .field("auth_api_key", &"[REDACTED]")
+            .field("project_id", &self.project_id)
+            .field("tenant_id", &self.tenant_id)
+            .field("preferred_region", &self.preferred_region)
+            .field("region_affinity", &self.region_affinity)
+            .field("max_retry_attempts", &self.max_retry_attempts)
+            .field("retry_delay_ms", &self.retry_delay_ms)
+            .finish()
+    }
 }
 
 impl ClientConfig {
@@ -52,6 +76,12 @@ impl ClientConfig {
     #[must_use]
     pub fn project_id(&self) -> Option<&str> {
         self.project_id.as_deref()
+    }
+
+    /// ts-auth (hosted IdP) deployment origin, when the ts-auth client is used.
+    #[must_use]
+    pub fn auth_base_url(&self) -> Option<&str> {
+        self.auth_base_url.as_deref()
     }
 
     /// Tenant selector checked against the authenticated server authority.
@@ -87,21 +117,49 @@ impl ClientConfig {
     pub(crate) fn api_key(&self) -> Option<&str> {
         self.api_key.as_deref()
     }
+
+    pub(crate) fn auth_api_key(&self) -> Option<&str> {
+        self.auth_api_key.as_deref()
+    }
 }
 
 /// Builder for [`ClientConfig`].
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ClientConfigBuilder {
     api_base_url: Option<String>,
     sync_base_url: Option<String>,
     atlas_base_url: Option<String>,
     api_key: Option<String>,
+    auth_base_url: Option<String>,
+    auth_api_key: Option<String>,
     project_id: Option<String>,
     tenant_id: Option<String>,
     preferred_region: Option<RegionCode>,
     region_affinity: RegionAffinity,
     max_retry_attempts: u8,
     retry_delay_ms: Option<u32>,
+}
+
+// The builder holds the raw keys before normalization; Debug redacts them
+// like ClientConfig so a dbg! mid-construction cannot leak a credential.
+impl std::fmt::Debug for ClientConfigBuilder {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ClientConfigBuilder")
+            .field("api_base_url", &self.api_base_url)
+            .field("sync_base_url", &self.sync_base_url)
+            .field("atlas_base_url", &self.atlas_base_url)
+            .field("api_key", &"[REDACTED]")
+            .field("auth_base_url", &self.auth_base_url)
+            .field("auth_api_key", &"[REDACTED]")
+            .field("project_id", &self.project_id)
+            .field("tenant_id", &self.tenant_id)
+            .field("preferred_region", &self.preferred_region)
+            .field("region_affinity", &self.region_affinity)
+            .field("max_retry_attempts", &self.max_retry_attempts)
+            .field("retry_delay_ms", &self.retry_delay_ms)
+            .finish()
+    }
 }
 
 impl ClientConfigBuilder {
@@ -135,6 +193,23 @@ impl ClientConfigBuilder {
     #[must_use]
     pub fn api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
+        self
+    }
+
+    /// ts-auth (hosted IdP) deployment origin (required for the ts-auth
+    /// client; same origin rules as the product base URL).
+    #[must_use]
+    pub fn auth_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.auth_base_url = Some(base_url.into());
+        self
+    }
+
+    /// ts-auth instance management key (`sk_...`). Sent as
+    /// `Authorization: Bearer` on ts-auth management routes only; a
+    /// `Bearer `-prefixed value is normalized like [`Self::api_key`].
+    #[must_use]
+    pub fn auth_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.auth_api_key = Some(api_key.into());
         self
     }
 
@@ -186,6 +261,10 @@ impl ClientConfigBuilder {
             .api_key
             .map(|api_key| normalize_api_key(&api_key))
             .transpose()?;
+        let auth_api_key = self
+            .auth_api_key
+            .map(|api_key| normalize_api_key(&api_key))
+            .transpose()?;
         for (name, value) in [
             ("tenant_id", &self.tenant_id),
             ("project_id", &self.project_id),
@@ -229,6 +308,11 @@ impl ClientConfigBuilder {
                 .as_deref()
                 .unwrap_or(crate::regions::GLOBAL_SYNC_BASE_URL),
         )?;
+        let auth_base_url = self
+            .auth_base_url
+            .as_deref()
+            .map(normalize_base_url)
+            .transpose()?;
         // Discovery is the default only for failover-affinity clients on the
         // public global origin; an explicit Atlas override forces it on for
         // any origin (ADR 0050 §5.1).
@@ -253,6 +337,8 @@ impl ClientConfigBuilder {
             sync_base_url,
             atlas_base_url,
             api_key,
+            auth_base_url,
+            auth_api_key,
             project_id: self.project_id,
             tenant_id: self.tenant_id,
             preferred_region: self.preferred_region,

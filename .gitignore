@@ -1,4 +1,5 @@
 target/
+awkprof.out
 
 # Private generated CI release candidates and signatures
 /.terrascale-develop-release/

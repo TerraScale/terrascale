@@ -31,7 +31,7 @@ impl Method {
 }
 
 /// One typed outgoing request.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Request {
     /// Route name for observability (e.g. `documents.create`).
     pub route_name: String,
@@ -39,6 +39,25 @@ pub struct Request {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for Request {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Request")
+            .field("route_name", &self.route_name)
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field(
+                "headers",
+                &format_args!("<{} headers, authorization redacted>", self.headers.len()),
+            )
+            .field(
+                "body",
+                &format_args!("<{} bytes>", self.body.as_ref().map_or(0, Vec::len)),
+            )
+            .finish()
+    }
 }
 
 impl Request {
@@ -63,13 +82,27 @@ impl Request {
 }
 
 /// One incoming response.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Response {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     /// Raw body kept as shared bytes: large artifacts are not copied on
     /// transport boundaries.
     pub body: bytes::Bytes,
+}
+
+impl std::fmt::Debug for Response {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Response")
+            .field("status", &self.status)
+            .field(
+                "headers",
+                &format_args!("<{} headers, authorization redacted>", self.headers.len()),
+            )
+            .field("body", &format_args!("<{} bytes>", self.body.len()))
+            .finish()
+    }
 }
 
 impl Response {

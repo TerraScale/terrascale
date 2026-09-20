@@ -291,7 +291,8 @@ def unpack_url(url: str, archive_sha256: str, destination: Path) -> Path:
     if parsed.scheme not in ("http", "https"):
         die("CONTRACT_URL must use http or https")
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        request = urllib.request.Request(url, headers={"User-Agent": "terrascale-ci/1"})
+        with urllib.request.urlopen(request, timeout=30) as response:
             payload = response.read(MAX_ARCHIVE_BYTES + 1)
     except Exception as error:  # noqa: BLE001 - preserve a useful gate error
         die(f"could not download pinned contract URL {url!r}: {error}")

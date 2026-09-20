@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 
+use crate::auth_idp::AuthIdpClient;
 use crate::config::ClientConfig;
 use crate::discovery::{self, RouteKind, Router};
 use crate::documents::{DatabaseScope, DocumentsClient};
@@ -32,6 +33,11 @@ pub const SESSION_HEADER: &str = "X-TerraScale-Session";
 
 /// Maximum length accepted for a caller-provided idempotency key.
 pub const MAX_IDEMPOTENCY_KEY_LENGTH: usize = 128;
+
+/// Retry sleeps never exceed this; a server-sent `Retry-After` asking for
+/// more is surfaced to the caller as an error instead of retried (matching
+/// the .NET and TS SDKs).
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
 
 /// Internal marker removed by [`Shared::decorate`] before transport. It lets
 /// a per-request eventual-consistency option suppress the shared causal
@@ -254,15 +260,20 @@ impl Shared {
                     .push(("authorization".to_owned(), format!("Bearer {api_key}")));
             }
         }
-        for (header, value) in [
-            ("x-terrascale-tenant-id", self.config.tenant_id()),
-            ("x-terrascale-project-id", self.config.project_id()),
-        ] {
-            if let Some(value) = value {
-                request
-                    .headers
-                    .retain(|(name, _)| !name.eq_ignore_ascii_case(header));
-                request.headers.push((header.to_owned(), value.to_owned()));
+        // ts-auth routes share only the transport: TerraBase tenant, project,
+        // and region headers must not leak to a separate service.
+        let is_auth_idp = request.route_name.starts_with("auth_idp.");
+        if !is_auth_idp {
+            for (header, value) in [
+                ("x-terrascale-tenant-id", self.config.tenant_id()),
+                ("x-terrascale-project-id", self.config.project_id()),
+            ] {
+                if let Some(value) = value {
+                    request
+                        .headers
+                        .retain(|(name, _)| !name.eq_ignore_ascii_case(header));
+                    request.headers.push((header.to_owned(), value.to_owned()));
+                }
             }
         }
         if !request
@@ -284,7 +295,8 @@ impl Shared {
                 request.headers.push((SESSION_HEADER.to_owned(), token));
             }
         }
-        if (self.config.preferred_region().is_some() || self.pinned_region().is_some())
+        if !is_auth_idp
+            && (self.config.preferred_region().is_some() || self.pinned_region().is_some())
             && !request
                 .headers
                 .iter()
@@ -298,7 +310,11 @@ impl Shared {
                 ));
             }
         }
+        // ts-auth mutations carry no TerraBase idempotency identity: the key
+        // scopes one logical TerraBase mutation, and replaying it against a
+        // different service would be meaningless (or worse).
         if is_mutation(request)
+            && !request.route_name.starts_with("auth_idp.")
             && !request
                 .headers
                 .iter()
@@ -507,7 +523,7 @@ impl Shared {
                             routed.demote_on(&self.router, &error);
                             if self.can_retry(&request, &error, retries) {
                                 retries += 1;
-                                self.wait_before_retry(retries).await;
+                                self.wait_before_retry(retries, error.retry_after).await;
                             } else {
                                 return Err(error);
                             }
@@ -518,7 +534,7 @@ impl Shared {
                     routed.demote_on(&self.router, &error);
                     if self.can_retry(&request, &error, retries) {
                         retries += 1;
-                        self.wait_before_retry(retries).await;
+                        self.wait_before_retry(retries, None).await;
                     } else {
                         return Err(error);
                     }
@@ -554,7 +570,20 @@ impl Shared {
         if request.route_name == "reactive.poll" || request.route_name == "webhooks.rotate_secret" {
             return false;
         }
+        // A server-sent Retry-After longer than the sleep cap is returned to
+        // the caller instead of retried.
+        if error
+            .retry_after
+            .is_some_and(|delay| delay > MAX_RETRY_AFTER)
+        {
+            return false;
+        }
         if retries >= self.config.max_retry_attempts() || !is_retryable(error) {
+            return false;
+        }
+        // Belt and braces for the decorate-side exclusion: a ts-auth mutation
+        // never becomes replay-safe, even if a caller smuggles a key header in.
+        if is_mutation(request) && request.route_name.starts_with("auth_idp.") {
             return false;
         }
         !is_mutation(request)
@@ -564,9 +593,20 @@ impl Shared {
                 .any(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
     }
 
-    async fn wait_before_retry(&self, retries: u8) {
-        let delay = u64::from(self.config.retry_delay_ms()) * u64::from(retries);
-        tokio::time::sleep(Duration::from_millis(delay)).await;
+    /// Wait before the next attempt. A server-sent `Retry-After` (delays
+    /// beyond [`MAX_RETRY_AFTER`] never reach this point; they surface as
+    /// errors) wins; otherwise the delay is `retry_delay_ms * 2^(attempt -
+    /// 1)`. The sleep is capped at [`MAX_RETRY_AFTER`].
+    async fn wait_before_retry(&self, retries: u8, retry_after: Option<Duration>) {
+        let delay = match retry_after {
+            Some(delay) => delay,
+            None => {
+                let base = u64::from(self.config.retry_delay_ms());
+                let shift = u32::from(retries.saturating_sub(1)).min(5);
+                Duration::from_millis(base.saturating_mul(1_u64 << shift))
+            }
+        };
+        tokio::time::sleep(delay.min(MAX_RETRY_AFTER)).await;
     }
 }
 
@@ -719,25 +759,42 @@ struct ErrorBody {
     fix: Option<String>,
 }
 
-#[derive(Debug, Default, serde::Deserialize)]
-struct ErrorResponse {
-    #[serde(default)]
-    error: Option<ErrorBody>,
-    #[serde(flatten)]
-    body: ErrorBody,
+/// Error envelopes seen on the wire, tried in order: TerraBase's nested
+/// `{"error":{"code","message"}}`, ts-auth OAuth's flat RFC 6749 shape
+/// `{"error","error_description"}`, and a bare top-level `{code,message}`.
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum WireErrorEnvelope {
+    Nested {
+        error: ErrorBody,
+    },
+    Flat {
+        error: String,
+        #[serde(default)]
+        error_description: Option<String>,
+    },
+    Bare(ErrorBody),
 }
 
 /// Decode the standard JSON ErrorResponse shape. Public within the crate so
 /// direct-delivery transports report pre-stream failures identically.
 pub(crate) fn decode_error(route_name: &str, response: &Response) -> Error {
     const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
-    let body = (response.body.len() <= MAX_ERROR_BODY_BYTES)
-        .then(|| serde_json::from_slice::<ErrorResponse>(&response.body).ok())
+    let envelope = (response.body.len() <= MAX_ERROR_BODY_BYTES)
+        .then(|| serde_json::from_slice::<WireErrorEnvelope>(&response.body).ok())
         .flatten();
-    let details = body
-        .as_ref()
-        .and_then(|body| body.error.as_ref())
-        .or_else(|| body.as_ref().map(|body| &body.body));
+    let details = envelope.map(|envelope| match envelope {
+        WireErrorEnvelope::Nested { error } => error,
+        WireErrorEnvelope::Flat {
+            error,
+            error_description,
+        } => ErrorBody {
+            code: Some(error.clone()),
+            message: error_description.or(Some(error)),
+            fix: None,
+        },
+        WireErrorEnvelope::Bare(body) => body,
+    });
     let code = details
         .as_ref()
         .and_then(|b| b.code.clone())
@@ -765,7 +822,19 @@ pub(crate) fn decode_error(route_name: &str, response: &Response) -> Error {
     let mut error = Error::for_status(response.status, code, message);
     error.fix = fix.map(String::into_boxed_str);
     error.request_id = response.header("x-request-id").map(str::to_owned);
+    error.retry_after = response
+        .header("retry-after")
+        .and_then(parse_retry_after_seconds);
     error
+}
+
+/// Parse the seconds form of a `Retry-After` header; the HTTP-date form and
+/// non-numeric values yield no delay. The value is stored uncapped on
+/// [`Error::retry_after`]; the retry loop caps the sleep and returns delays
+/// beyond [`MAX_RETRY_AFTER`] to the caller.
+fn parse_retry_after_seconds(value: &str) -> Option<Duration> {
+    let seconds: u64 = value.trim().parse().ok()?;
+    Some(Duration::from_secs(seconds))
 }
 
 fn is_retryable(error: &Error) -> bool {
@@ -908,5 +977,13 @@ impl TerraScaleClient {
     #[must_use]
     pub fn management(&self) -> ManagementClient {
         ManagementClient::new(self.shared.clone())
+    }
+
+    /// ts-auth (hosted IdP) management client for one instance slug. Requires
+    /// `auth_base_url` on the config; management routes additionally require
+    /// `auth_api_key`. ts-auth routes are not part of the TerraBase producer
+    /// contract.
+    pub fn auth_idp(&self, slug: &str) -> Result<AuthIdpClient> {
+        AuthIdpClient::new(self.shared.clone(), slug)
     }
 }

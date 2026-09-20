@@ -3,11 +3,13 @@
 //! Document CRUD, the
 //! typed schema builder (plus `#[derive(Schema)]`), the typed SQL
 //! builder and raw parameterized SQL, `subscribe`/`execute`, checkpoints and
-//! typed resets, region pinning, tenants, and management.
+//! typed resets, region pinning, tenants, management, and the ts-auth
+//! (hosted IdP) client.
 //!
 //! Start at [`TerraScaleClient`] with a [`ClientConfig`]; every operation
 //! returns [`Result`] with a typed [`Error`].
 
+pub mod auth_idp;
 pub mod client;
 pub mod config;
 pub mod discovery;
@@ -25,6 +27,9 @@ pub mod tenants;
 pub mod transport;
 pub(crate) mod websocket;
 
+pub use auth_idp::{
+    verify_auth_idp_webhook, verify_auth_idp_webhook_with_tolerance, AuthIdpClient,
+};
 pub use client::{
     TerraScaleClient, API_ROOT, MAX_IDEMPOTENCY_KEY_LENGTH, PLACEMENT_HEADER, SESSION_HEADER,
 };

@@ -12,16 +12,24 @@ members = ["terrascale-derive"]
 terrascale-derive = { path = "terrascale-derive", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+blake3 = "1"
 thiserror = "2"
 async-trait = "0.1"
 futures-util = "0.3"
 base64 = "0.22"
 bytes = "1"
+sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "test-util"] }
 base64 = "0.22"
 sha2 = "0.10"
+
+[lints.clippy]
+# The single crate Error type carries every diagnostic field in full (never
+# boxed) so callers can match without dereferencing; that keeps it above
+# clippy's Result-size threshold.
+result_large_err = "allow"

@@ -1,6 +1,7 @@
 //! Independent checks against the versioned producer HTTP corpus.
 
 use async_trait::async_trait;
+use blake3::hash;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
@@ -318,7 +319,10 @@ fn response(status: u16, vector: &Value) -> Response {
                     "x-terrascale-artifact-length".into(),
                     bytes.len().to_string(),
                 ));
-                headers.push(("x-terrascale-artifact-checksum".into(), "0".repeat(64)));
+                headers.push((
+                    "x-terrascale-artifact-checksum".into(),
+                    hash(&bytes).to_hex().to_string(),
+                ));
             }
             headers
         },

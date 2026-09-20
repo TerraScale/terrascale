@@ -59,6 +59,14 @@ jobs:
             *) echo "unsupported Rust host: ${host}" >&2; exit 1 ;;
           esac
 
+      - name: Audit Rust dependencies with the pinned advisory scanner
+        run: |
+          set -eu
+          audit_root="${RUNNER_TEMP:-/tmp}/terrascale-cargo-audit"
+          rm -rf -- "${audit_root}"
+          cargo install cargo-audit --version 0.22.2 --locked --root "${audit_root}"
+          "${audit_root}/bin/cargo-audit" audit
+
       - name: Check Rust formatting
         run: cargo fmt --all --check
 

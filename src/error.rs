@@ -1,5 +1,7 @@
 //! Typed SDK errors, mirroring the `@terrascale/sdk` result model.
 
+use std::time::Duration;
+
 use thiserror::Error;
 
 /// Machine-readable failure kinds returned by [`Error`].
@@ -40,6 +42,9 @@ pub struct Error {
     pub request_id: Option<String>,
     /// Placement hint from a 421 response (`X-TerraScale-Placement`).
     pub placement: Option<String>,
+    /// `Retry-After` delay requested by the response, seconds form only (the
+    /// HTTP-date form is not parsed), stored uncapped.
+    pub retry_after: Option<Duration>,
 }
 
 impl Error {
@@ -53,6 +58,7 @@ impl Error {
             status: None,
             request_id: None,
             placement: None,
+            retry_after: None,
         }
     }
 
@@ -88,6 +94,7 @@ impl Error {
             status: Some(status),
             request_id: None,
             placement: None,
+            retry_after: None,
         }
     }
 }
