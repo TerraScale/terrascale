@@ -137,10 +137,10 @@ public sealed class TerraScaleApiException : HttpRequestException
         }
     }
 
-    private static string? RedactDiagnostic(string? value) =>
+    internal static string? RedactDiagnostic(string? value) =>
         value is null ? null : RedactTextAssignments(value);
 
-    private static string? RedactResponseBody(string? body)
+    internal static string? RedactResponseBody(string? body)
     {
         if (body is null || body.Length == 0)
         {
@@ -252,8 +252,8 @@ public sealed class TerraScaleApiException : HttpRequestException
             "authorization" or "proxyauthorization" or "cookie" or "setcookie" or
             "token" or "accesstoken" or "refreshtoken" or "idtoken" or "session" or
             "sessiontoken" or "bearertoken" or "authorizationtoken" or "securitytoken" or
-            "apikey" or "secret" or "clientsecret" or "password" or "credential" or
-            "credentials" or "privatekey" or "authentication" or "auth" => true,
+            "apikey" or "secret" or "clientsecret" or "signingsecret" or "jwt" or "password" or
+            "credential" or "credentials" or "privatekey" or "authentication" or "auth" => true,
             _ => false
         };
     }
@@ -330,8 +330,8 @@ public sealed class TerraScaleApiException : HttpRequestException
         "access_token", "refresh_token", "id_token", "session", "api_key", "api-key",
         "apikey", "session_token", "session-token", "bearer_token", "bearer-token",
         "authorization_token", "authorization-token", "security_token", "security-token",
-        "auth_token", "auth-token", "secret", "client_secret", "password", "credential",
-        "private_key"
+        "auth_token", "auth-token", "secret", "client_secret", "signing_secret", "jwt",
+        "password", "credential", "credentials", "authentication", "auth", "private_key"
     ];
 
     private static bool IsHeaderCredentialKey(string key) =>
@@ -364,7 +364,7 @@ public sealed class TerraScaleApiException : HttpRequestException
         return null;
     }
 
-    private static async Task<string?> ReadResponseBodyAsync(
+    internal static async Task<string?> ReadResponseBodyAsync(
         HttpContent? content,
         CancellationToken cancellationToken)
     {

@@ -49,6 +49,21 @@ and the loopback emulator keep direct routing exactly as before. Set
   421 repair and endpoint failover, bounded transient retries, idempotency and
   request IDs, typed `TerraScaleApiException` errors, and
   dependency-injection registration.
+- `TerraScaleAuthClient`: the ts-auth hosted identity provider from the same
+  package. One instance-scoped client covers the whole management API — users
+  (including impersonation, MFA factors, passkeys), sessions, API keys,
+  organizations with memberships/invitations/domains, SSO connections, SCIM
+  directories, JWT templates, webhooks with dead-letter replay, audit events,
+  billing, instance branding — plus the public OIDC surface (discovery, JWKS,
+  authorization-code exchange with PKCE, refresh and client-credentials grants,
+  introspection, revocation, userinfo). `TerraScaleAuthWebhookVerifier`
+  authenticates inbound ts-auth webhook deliveries (HMAC-SHA256 over
+  `timestamp + "." + body`) in constant time. Management responses mix
+  snake_case and camelCase per family; every wire name is pinned explicitly.
+  Safe reads retry per options; mutations carry no idempotency contract and are
+  sent exactly once. One-time secrets (API keys, OAuth client secrets, SCIM
+  tokens — the SCIM token also by its rotating call — are returned only by
+their creating (or rotating) call.
 - Named clients for document CRUD, collections, databases, database branches,
   regions, backups, SQL, reactive views, usage, schemas, indexes, webhooks,
   development operations, and durable exports. Provisioning creation distinguishes
@@ -85,6 +100,24 @@ var client = new TerraScaleClient(
     });
 
 var databases = await client.Databases.ListAsync(cancellationToken: cancellationToken);
+```
+
+For ts-auth, use the same package with `TerraScaleAuthClient` — the origin is
+your deployment's public origin and the key is the instance `sk_...` management
+key:
+
+```csharp
+var auth = new TerraScaleAuthClient(
+    httpClient,
+    new TerraScaleAuthClientOptions
+    {
+        BaseAddress = new Uri("https://auth.example.com"),
+        ApiKey = Environment.GetEnvironmentVariable("TS_AUTH_API_KEY"),
+        InstanceSlug = "acme"
+    });
+
+var user = await auth.Users.CreateAsync(email: "user@example.com");
+var token = await auth.Oidc.RequestClientCredentialsTokenAsync(clientId, clientSecret);
 ```
 
 Caller-supplied `HttpClient` handlers must set `AllowAutoRedirect = false`.

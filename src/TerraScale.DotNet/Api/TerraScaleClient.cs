@@ -325,6 +325,9 @@ public sealed class TerraScaleClient
         var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
         if ((ulong)bytes.LongLength != length)
             throw new TerraScaleApiException(response.StatusCode, "The export artifact length header does not match the response body.", null, ReadRequestId(response), null, null);
+        var measuredChecksum = Blake3.HashHex(bytes);
+        if (!string.Equals(measuredChecksum, checksum, StringComparison.OrdinalIgnoreCase))
+            throw new TerraScaleApiException(response.StatusCode, "The export artifact checksum does not match the response body.", null, ReadRequestId(response), null, null);
         return new ExportDownload(bytes, length, checksum.ToLowerInvariant());
     }
 

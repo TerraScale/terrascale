@@ -19,6 +19,13 @@ public sealed class TerraScaleManagementClientTests
     ];
 
     [Test]
+    public async Task Blake3MatchesPublishedVectors()
+    {
+        await Assert.That(Blake3.HashHex([])).IsEqualTo("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262");
+        await Assert.That(Blake3.HashHex("abc"u8)).IsEqualTo("6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85");
+    }
+
+    [Test]
     public async Task NamedOperationsConsumeEveryProducerSuccessAndFailure()
     {
         await using var stream = File.OpenRead(Path.Combine(AppContext.BaseDirectory, "conformance", "http.json"));
@@ -102,6 +109,15 @@ public sealed class TerraScaleManagementClientTests
             await Assert.That(async () => await client.Management.Exports.DownloadArtifactAsync("db", "job", "member"))
                 .Throws<Exception>();
         }
+    }
+
+    [Test]
+    public async Task ExportDownloadRejectsChecksumMismatch()
+    {
+        using var http = new HttpClient(new ArtifactHandler("3", new string('0', 64), [1, 2, 3]));
+        var client = Client(http);
+        var error = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Management.Exports.DownloadArtifactAsync("db", "job", "member"));
+        await Assert.That(error!.Message).Contains("checksum does not match");
     }
 
     [Test]
@@ -238,7 +254,7 @@ public sealed class TerraScaleManagementClientTests
                 {
                     var headers = fixture.GetProperty("headers");
                     response.Headers.Add("X-TerraScale-Artifact-Length", headers.GetProperty("x-terrascale-artifact-length").GetString()!);
-                    response.Headers.Add("X-TerraScale-Artifact-Checksum", headers.GetProperty("x-terrascale-artifact-checksum").GetString()!);
+                    response.Headers.Add("X-TerraScale-Artifact-Checksum", Blake3.HashHex(Encoding.UTF8.GetBytes(body.GetString()!)));
                 }
             }
             return response;
