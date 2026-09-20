@@ -15,8 +15,16 @@ public sealed record DashboardSecurityOptions(bool DemoMode, LiveIdentityOptions
 
         if (mode == "demo")
         {
-            if (environment.IsProduction() && configuration["TS2_E2E"] != "1")
-                throw new InvalidOperationException("TS_DASHBOARD_MODE=demo is development-only and cannot start in production.");
+            // Production refuses demo authentication unless the operator has
+            // explicitly acknowledged there is no live identity provider yet.
+            if (environment.IsProduction()
+                && configuration["TS2_E2E"] != "1"
+                && configuration["TS_DASHBOARD_PRODUCTION_DEMO"] != "1")
+            {
+                throw new InvalidOperationException(
+                    "TS_DASHBOARD_MODE=demo is development-only; set TS_DASHBOARD_PRODUCTION_DEMO=1 to acknowledge running the demo backend in production, or configure live mode.");
+            }
+
             return new(true);
         }
 

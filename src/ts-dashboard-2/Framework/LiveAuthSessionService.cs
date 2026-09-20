@@ -71,15 +71,27 @@ public sealed class LiveAuthSessionService(DashboardSecurityOptions security)
             return new(null, "Incorrect email or password.");
         }
 
-        // The hosted session cookie now authorizes the OIDC authorize step.
+        // The hosted session cookie now authorizes the OIDC authorize step. The
+        // cookie is always Secure and CookieContainer will not replay Secure
+        // cookies over a dev HTTP loopback origin, so the session rides on an
+        // explicit Cookie header instead of the handler's container.
+        var sessionCookie = signIn.Headers.TryGetValues("Set-Cookie", out var setCookies)
+            ? string.Join("; ", setCookies.Select(value => value.Split(';')[0]).Where(part => part.Length > 0))
+            : null;
         var verifier = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var challenge = Convert.ToBase64String(SHA256.HashData(Encoding.ASCII.GetBytes(verifier))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var redirectUri = $"{identity.PublicOrigin.ToString().TrimEnd('/')}/api/v1/auth/oidc/callback";
         var authorizeQuery = $"response_type=code&client_id={Uri.EscapeDataString(identity.ClientId)}&redirect_uri={Uri.EscapeDataString(redirectUri)}"
             + $"&scope={Uri.EscapeDataString("openid profile email")}&state={Uri.EscapeDataString(Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant())}"
             + $"&code_challenge={challenge}&code_challenge_method=S256";
-        using var authorize = await http.GetAsync($"/{identity.InstanceSlug}/oauth/authorize?{authorizeQuery}", ct);
-        if (authorize.StatusCode != HttpStatusCode.Redirect || authorize.Headers.Location is not { } location)
+        using var authorize = new HttpRequestMessage(HttpMethod.Get, $"/{identity.InstanceSlug}/oauth/authorize?{authorizeQuery}");
+        if (sessionCookie is { Length: > 0 })
+        {
+            authorize.Headers.TryAddWithoutValidation("Cookie", sessionCookie);
+        }
+
+        using var authorizeResponse = await http.SendAsync(authorize, ct);
+        if (authorizeResponse.StatusCode != HttpStatusCode.Redirect || authorizeResponse.Headers.Location is not { } location)
         {
             return new(null, "The identity provider did not issue an authorization code.");
         }
@@ -272,8 +284,10 @@ public sealed class LiveAuthSessionService(DashboardSecurityOptions security)
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
-            UseCookies = true,
-            CookieContainer = new CookieContainer(),
+            // The hosted session cookie is forwarded explicitly per request: it
+            // is always Secure, which a cookie container would refuse to send
+            // over an HTTP loopback identity origin.
+            UseCookies = false,
         };
         return new HttpClient(handler) { BaseAddress = identity.Origin, Timeout = TimeSpan.FromSeconds(15) };
     }
@@ -284,19 +298,29 @@ public sealed class LiveAuthSessionService(DashboardSecurityOptions security)
             .ToDictionary(parts => Uri.UnescapeDataString(parts[0]), parts => parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : null);
 
     private sealed record TokenResponse(
-        string AccessToken,
-        string? RefreshToken,
-        long ExpiresIn);
+        [property: System.Text.Json.Serialization.JsonPropertyName("access_token")] string AccessToken,
+        [property: System.Text.Json.Serialization.JsonPropertyName("refresh_token")] string? RefreshToken,
+        [property: System.Text.Json.Serialization.JsonPropertyName("expires_in")] long ExpiresIn);
 
     private sealed record UserInfoResponse(
-        string Subject,
+        [property: System.Text.Json.Serialization.JsonPropertyName("sub")] string Subject,
         string? Email,
         string? Name);
 
     private sealed record IntrospectionResponse(bool Active);
 
-    private sealed class JsonContent(Dictionary<string, string?> values) : HttpContent
+    private sealed class JsonContent : HttpContent
     {
+        private readonly Dictionary<string, string?> values;
+
+        public JsonContent(Dictionary<string, string?> values)
+        {
+            this.values = values;
+            // Management endpoints parse the body with ReadFromJsonAsync, which
+            // rejects requests without an application/json content type.
+            Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        }
+
         protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
             await JsonSerializer.SerializeAsync(stream, values, Json);
 

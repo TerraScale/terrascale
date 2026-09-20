@@ -13,44 +13,42 @@ public sealed class DashboardStateRepository(DashboardSecurityOptions security)
 {
     private const string Collection = "dashboard_account_worlds";
     private static readonly JsonSerializerOptions Json = CreateJsonOptions();
-    // The token belongs to the request that loaded the world. A process-wide
-    // subject dictionary lets concurrent requests overwrite one another's
-    // expected token and can turn a conflict into a silent last-writer win.
-    private readonly AsyncLocal<string?> _loadedChangeToken = new();
     private readonly TerraScaleClient _client = CreateClient(security.State!);
 
-    public async Task<AccountWorld?> LoadAsync(string subject, CancellationToken ct)
+    /// <summary>Loads the stored world with its change token. The token is the
+    /// caller's concurrency ticket: pass it back to <see cref="SaveAsync"/>,
+    /// which throws <see cref="DashboardStateConflictException"/> when another
+    /// writer committed first.</summary>
+    public async Task<(AccountWorld? World, string? ChangeToken)> LoadAsync(string subject, CancellationToken ct)
     {
         try
         {
             var document = await _client.Documents.GetAsync(security.State!.Database, Collection, DocumentId(subject), ct);
-            _loadedChangeToken.Value = document.ChangeToken;
-            return document.Data.Deserialize<StateDocument>(Json)?.World;
+            return (document.Data.Deserialize<StateDocument>(Json)?.World, document.ChangeToken);
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            _loadedChangeToken.Value = null;
-            return null;
+            return (null, null);
         }
     }
 
-    public async Task SaveAsync(string subject, string email, AccountWorld world, CancellationToken ct)
+    public async Task<string> SaveAsync(string subject, string email, AccountWorld world, string? expectedChangeToken, CancellationToken ct)
     {
-        var body = new StateDocument(subject, email, world);
-        var expected = _loadedChangeToken.Value;
-        TerraScaleDocument result;
+        // Serialize with this repository's options (default ImmutableArray →
+        // empty) before handing plain JSON to the SDK: the SDK's own
+        // serialization cannot know about default-array worlds.
+        var body = JsonSerializer.SerializeToElement(new StateDocument(subject, email, world), Json);
         try
         {
-            result = await _client.Documents.PutAsync(
+            var result = await _client.Documents.PutAsync(
                 security.State!.Database, Collection, DocumentId(subject), body,
-                new TerraScaleDocumentMutationOptions(ExpectedChangeToken: expected, Durability: TerraScaleDurability.Global), ct);
+                new TerraScaleDocumentMutationOptions(ExpectedChangeToken: expectedChangeToken, Durability: TerraScaleDurability.Global), ct);
+            return result.ChangeToken!;
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
         {
-            _loadedChangeToken.Value = null;
             throw new DashboardStateConflictException(subject);
         }
-        _loadedChangeToken.Value = result.ChangeToken;
     }
 
     private static TerraScaleClient CreateClient(DashboardStateOptions options) => new(
@@ -87,7 +85,7 @@ public sealed class DashboardStateRepository(DashboardSecurityOptions security)
 #else
 public sealed class DashboardStateRepository
 {
-    public Task<AccountWorld?> LoadAsync(string subject, CancellationToken ct) => throw new InvalidOperationException("The live dashboard requires the TerraScale SDK state adapter.");
-    public Task SaveAsync(string subject, string email, AccountWorld world, CancellationToken ct) => throw new InvalidOperationException("The live dashboard requires the TerraScale SDK state adapter.");
+    public Task<(AccountWorld? World, string? ChangeToken)> LoadAsync(string subject, CancellationToken ct) => throw new InvalidOperationException("The live dashboard requires the TerraScale SDK state adapter.");
+    public Task<string> SaveAsync(string subject, string email, AccountWorld world, string? expectedChangeToken, CancellationToken ct) => throw new InvalidOperationException("The live dashboard requires the TerraScale SDK state adapter.");
 }
 #endif

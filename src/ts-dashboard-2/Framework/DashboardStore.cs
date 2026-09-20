@@ -18,6 +18,7 @@ public sealed partial class DashboardStore
     private static readonly AsyncLocal<AccountWorld?> ActiveWorld = new();
     private static readonly AsyncLocal<bool> ExternalIdentityActive = new();
     private static readonly AsyncLocal<string?> ExternalIdentitySubject = new();
+    private static readonly AsyncLocal<string?> ExternalChangeToken = new();
 
     private readonly AccountWorld _demoWorld = AccountWorld.Demo();
 
@@ -61,6 +62,7 @@ public sealed partial class DashboardStore
         ActiveWorld.Value = null;
         ExternalIdentityActive.Value = false;
         ExternalIdentitySubject.Value = null;
+        ExternalChangeToken.Value = null;
     }
 
     /// <summary>Points this request at the cookie's world. Anonymous requests
@@ -68,22 +70,43 @@ public sealed partial class DashboardStore
     public bool TryActivate(string? token) =>
         token is not null && _sessions.TryGetValue(token, out var world) && (ActiveWorld.Value = world) == world;
 
-    /// <summary>Activates the account represented by a validated live IdP subject.
-    /// The identity is the key; bearer tokens are never stored by the dashboard.</summary>
-    public async Task TryActivateExternalIdentityAsync(string subject, string email, string displayName, DashboardStateRepository repository, CancellationToken ct)
+    /// <summary>Loaded external activation state: the world plus the change
+    /// token the state repository handed back with it.</summary>
+    public sealed record ExternalActivation(AccountWorld World, string Subject, string? ChangeToken);
+
+    /// <summary>Loads (or first materializes) the account world for a validated
+    /// live IdP subject. The identity is the key; bearer tokens are never stored
+    /// by the dashboard. Async half of external activation: the request-local
+    /// writes happen in <see cref="ActivateExternalWorld"/> so they land in the
+    /// middleware's own frame — values set inside an awaited method never flow
+    /// back to the caller.</summary>
+    public async Task<ExternalActivation> LoadExternalWorldAsync(string subject, string email, string displayName, DashboardStateRepository repository, CancellationToken ct)
     {
         var key = $"idp:{subject}";
-        var world = await repository.LoadAsync(subject, ct) ?? _accounts.GetOrAdd(key, _ => AccountWorld.Fresh(displayName, email));
+        var (world, changeToken) = await repository.LoadAsync(subject, ct);
+        world ??= _accounts.GetOrAdd(key, _ => AccountWorld.Fresh(displayName, email));
         _accounts[key] = world;
-        ActiveWorld.Value = world;
-        ExternalIdentityActive.Value = true;
-        ExternalIdentitySubject.Value = subject;
+        return new(world, subject, changeToken);
     }
 
-    public Task PersistExternalIdentityAsync(DashboardStateRepository repository, CancellationToken ct) =>
-        ExternalIdentitySubject.Value is { Length: > 0 } subject
-            ? repository.SaveAsync(subject, World.RegisteredEmail, World, ct)
-            : Task.CompletedTask;
+    /// <summary>Sets the request-local activation for a loaded external world.</summary>
+    public void ActivateExternalWorld(ExternalActivation activation)
+    {
+        ActiveWorld.Value = activation.World;
+        ExternalIdentityActive.Value = true;
+        ExternalIdentitySubject.Value = activation.Subject;
+        ExternalChangeToken.Value = activation.ChangeToken;
+    }
+
+    public async Task PersistExternalIdentityAsync(DashboardStateRepository repository, CancellationToken ct)
+    {
+        if (ExternalIdentitySubject.Value is not { Length: > 0 } subject)
+        {
+            return;
+        }
+
+        ExternalChangeToken.Value = await repository.SaveAsync(subject, World.RegisteredEmail, World, ExternalChangeToken.Value, ct);
+    }
 
     /// <summary>Creates a session for an existing world and activates it for
     /// the current request; returns the session token.</summary>

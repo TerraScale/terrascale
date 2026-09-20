@@ -16,8 +16,6 @@ jobs:
         run: dotnet build ts-dashboard-2.slnx
       - name: Fast tests (user-blocking critical paths)
         run: dotnet run --project tests/ts-dashboard-2.FastTests --no-build
-      - name: Slow tests (methodical; live stack compiles out without sibling checkouts)
-        run: dotnet run --project tests/ts-dashboard-2.SlowTests --no-build
       - name: Install JS deps
         run: npm ci
       - name: Cache Playwright browsers

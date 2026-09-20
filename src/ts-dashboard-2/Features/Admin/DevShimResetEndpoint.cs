@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard2.Features.Admin;
 /// POST /api/v1/testing/dev-shim/reset { promoteOwner: true } does.
 /// Production-only deployment: the shim 404s unless TS2_E2E=1 (set by the
 /// Playwright webServer) so a deployed instance can never hand out owner.</summary>
-public sealed class DevShimResetEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
+public sealed class DevShimResetEndpoint(DashboardStore store, IConfiguration configuration) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -20,7 +20,7 @@ public sealed class DevShimResetEndpoint(DashboardStore store) : EndpointWithout
 
     public override async Task<IResult> HandleAsync(CancellationToken ct)
     {
-        if (Environment.GetEnvironmentVariable("TS2_E2E") != "1")
+        if (configuration["TS2_E2E"] != "1")
         {
             return Results.NotFound();
         }

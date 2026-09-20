@@ -56,7 +56,8 @@ public sealed class DashboardAuthMiddleware(
                     var identity = await identityProvider.IntrospectAsync(bearer["Bearer ".Length..].Trim(), context.RequestAborted);
                     if (identity is not null && stateRepository is not null)
                     {
-                        await store.TryActivateExternalIdentityAsync(identity.Subject, identity.Email, identity.DisplayName, stateRepository, context.RequestAborted);
+                        var activation = await store.LoadExternalWorldAsync(identity.Subject, identity.Email, identity.DisplayName, stateRepository, context.RequestAborted);
+                        store.ActivateExternalWorld(activation);
                         activated = true;
                     }
                 }
@@ -68,7 +69,8 @@ public sealed class DashboardAuthMiddleware(
                     var session = liveSessions.Lookup(cookie);
                     if (session is not null && await liveSessions.EnsureValidAsync(session, context.RequestAborted))
                     {
-                        await store.TryActivateExternalIdentityAsync(session.Subject, session.Email, session.DisplayName, stateRepository, context.RequestAborted);
+                        var activation = await store.LoadExternalWorldAsync(session.Subject, session.Email, session.DisplayName, stateRepository, context.RequestAborted);
+                        store.ActivateExternalWorld(activation);
                         activated = true;
                     }
                 }
