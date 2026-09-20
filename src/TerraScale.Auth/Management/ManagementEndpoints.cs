@@ -243,6 +243,8 @@ public static class ManagementEndpoints
             foreach (var membership in await store.ListMembershipsByUserAsync(user.Id, ct))
                 if (membership.InstanceId == context.Instance.Id)
                     await store.DeleteMembershipAsync(membership.Id, ct);
+            await store.DeleteUserAuthenticationArtifactsAsync(context.Instance.Id, user.Id, ct);
+            await store.ReleaseQuotaSeatAsync(user, ct);
             await store.UpsertUserAsync(user with
             {
                 Deleted = true,

@@ -67,9 +67,8 @@ public sealed record BillingState(string Plan, string Status, int Quota, Subscri
 public static class Quota
 {
     /// True when the instance's effective plan still has room for one more user.
-    /// Advisory check-then-create: two concurrent creates racing for the last seat can both
-    /// pass (ponytail: an atomic seat claim would need a counter document with CAS retries;
-    /// add if over-quota creep ever matters in practice).
+    /// This is an advisory display check; creation itself claims a durable seat
+    /// atomically through <see cref="AuthStore.ClaimQuotaSeatAsync"/>.
     public static async Task<bool> AllowsSignUpAsync(AuthStore store, string instanceId, CancellationToken ct = default)
     {
         var state = await BillingState.CurrentAsync(store, instanceId, ct);

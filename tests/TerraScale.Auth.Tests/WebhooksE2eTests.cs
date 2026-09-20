@@ -125,6 +125,11 @@ public sealed class WebhooksE2eTests
         await Assert.That(events[0].GetProperty("id").GetString()).IsEqualTo(newer.Id);
         await Assert.That(events[0].GetProperty("type").GetString()).IsEqualTo("user.audit_query");
         await Assert.That(events[0].GetProperty("data").GetProperty("n").GetInt32()).IsEqualTo(2);
+        await Assert.That(events[0].GetProperty("integrity_version").GetInt32()).IsEqualTo(1);
+        await Assert.That(events[0].GetProperty("integrity_hash").GetString()).IsNotNullOrEmpty();
+        await Assert.That(events[0].GetProperty("integrity_signature").GetString()).IsNotNullOrEmpty();
+        await Assert.That(events[0].GetProperty("integrity_key_fingerprint").GetString())
+            .IsEqualTo(AuditEvent.ComputeKeyFingerprint(AuthServiceFixture.AuditSigningKey));
         await Assert.That(events[0].GetProperty("created_at").GetInt64()).IsGreaterThanOrEqualTo(events[events.GetArrayLength() - 1].GetProperty("created_at").GetInt64());
         await Assert.That(events.EnumerateArray().Any(e => e.GetProperty("id").GetString() == older.Id)).IsTrue();
     }
@@ -147,7 +152,12 @@ public sealed class WebhooksE2eTests
         await Assert.That(createdResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var createdBody = await createdResponse.Content.ReadFromJsonAsync<JsonElement>();
         var id = createdBody.GetProperty("id").GetString()!;
-        await Assert.That(createdBody.GetProperty("signing_secret").GetString()!.Length).IsGreaterThanOrEqualTo(32);
+        var signingSecret = createdBody.GetProperty("signing_secret").GetString()!;
+        await Assert.That(signingSecret.Length).IsGreaterThanOrEqualTo(32);
+        var stored = await service.Store.GetWebhookEndpointAsync(id);
+        await Assert.That(stored).IsNotNull();
+        await Assert.That(stored!.SigningSecretBox).StartsWith("v1:");
+        await Assert.That(stored.SigningSecretBox).DoesNotContain(signingSecret);
 
         using var list = Get($"/v1/{slug}/webhooks", apiKey);
         var listResponse = await service.Http.SendAsync(list);
@@ -184,13 +194,13 @@ public sealed class WebhooksE2eTests
             InstanceId = instanceId,
             Url = sink.BaseUrl + "/redis",
             Events = ["user.*"],
-            SigningSecret = secret,
+            SigningSecretBox = TerraScale.Auth.Keys.SecretBox.Encrypt(AuthServiceFixture.MasterKey, System.Text.Encoding.UTF8.GetBytes(secret)),
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
 
         // A fresh dispatcher simulates a process restart: in-memory cursors start empty,
         // so it must re-discover instances that already hold webhook endpoints.
-        var restarted = new WebhookDispatcher(service.Store, NullLogger<WebhookDispatcher>.Instance);
+        var restarted = new WebhookDispatcher(service.Store, NullLogger<WebhookDispatcher>.Instance, AuthServiceFixture.MasterKey);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var run = restarted.RunAsync(cts.Token);
         await Task.Delay(TimeSpan.FromSeconds(4)); // let the discovery tick land before raising the event
@@ -208,6 +218,21 @@ public sealed class WebhooksE2eTests
         var timestamp = delivery.Headers.GetValueOrDefault("X-TsAuth-Timestamp", "");
         await Assert.That(delivery.Headers.GetValueOrDefault("X-TsAuth-Signature"))
             .IsEqualTo("sha256=" + HexHmac(secret, timestamp, delivery.Body));
+        // The sink observes the successful HTTP response before the dispatcher
+        // persists its checkpoint. Wait for that durable write instead of making
+        // the assertion depend on the response/checkpoint scheduling race.
+        WebhookCursor? cursor = null;
+        var cursorDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < cursorDeadline)
+        {
+            cursor = await service.Store.GetWebhookCursorAsync(instanceId);
+            if (!string.IsNullOrEmpty(cursor?.LastEventId))
+                break;
+            await Task.Delay(50);
+        }
+        await Assert.That(cursor).IsNotNull();
+        await Assert.That(cursor!.LastEventId).IsNotNullOrEmpty();
+        await Assert.That(cursor.LastCreatedAt).IsGreaterThanOrEqualTo(DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds());
 
         cts.Cancel();
         await run;

@@ -41,8 +41,8 @@ ts-auth. Statuses reflect the code on `main` — each ✅ is backed by tests.
 | Server-side sessions, device list, revoke | ✅ | `/ui/{slug}/account/sessions`, management API |
 | API keys with scopes | ✅ | `/v1/{slug}/api-keys` |
 | Rate limiting | ✅ | fixed window per key per 5 min |
-| Webhooks (HMAC-signed, retried) | ✅ | `/v1/{slug}/webhooks` + dispatcher |
-| Audit logs + query API | ✅ | `/v1/{slug}/audit-events` |
+| Webhooks (HMAC-signed, retried) | ✅ | `/v1/{slug}/webhooks` + durable delivery records, dead-letter listing/replay, and dispatcher |
+| Audit logs + query API | ✅ | `/v1/{slug}/audit-events`, SHA-256 integrity and optional HMAC authenticity seals |
 
 ## Organizations (B2B)
 
@@ -62,7 +62,7 @@ ts-auth. Statuses reflect the code on `main` — each ✅ is backed by tests.
 | Multi-tenant instances | ✅ | every entity keyed by instance; atomic identifier claims |
 | Hosted UI with branding | ✅ | `Ui.Page` theme/logo from `PATCH /v1/{slug}/instance` |
 | Pluggable email/SMS | ✅ | `IEmailSender` / `ISmsSender` |
-| Stripe billing + plan quotas | ✅ | `/v1/{slug}/billing*` + webhook (see below) |
+| Stripe billing + plan quotas | ✅ | `/v1/{slug}/billing*` + webhook, including authenticated quota-seat reconciliation (see below) |
 | Payments (checkout, portal) | ✅ | Stripe Checkout + Billing Portal sessions |
 | Subscription lifecycle via webhooks | ✅ | `/v1/billing/webhook` (signature-verified) |
 

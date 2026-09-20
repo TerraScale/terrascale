@@ -1,6 +1,7 @@
 namespace TerraScale.Auth.Store;
 
 using System.Globalization;
+using System.Security.Cryptography;
 using TerraScale.Auth.Crypto;
 using TerraScale.DotNet;
 
@@ -11,11 +12,28 @@ using TerraScale.DotNet;
 /// atomic claim documents: a claim is a CreateOnly document write, which the
 /// engine rejects on collision — race-safe without transactions.
 /// </summary>
-public sealed class AuthStore(TerraScaleClient client, string database)
+public sealed class AuthStore(
+    TerraScaleClient client,
+    string database,
+    byte[]? auditSigningKey = null,
+    IReadOnlyList<byte[]>? auditVerificationKeys = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private readonly byte[]? signingKey = auditSigningKey?.ToArray();
+    private readonly IReadOnlyList<byte[]> verificationKeys = auditVerificationKeys is null
+        ? []
+        : auditVerificationKeys.Select(static key => key.ToArray()).ToArray();
 
     public string Database { get; } = database;
+
+    /// <summary>Verifies an event against the active key and the configured rotation overlap.</summary>
+    public bool HasAuthenticAuditIntegrity(AuditEvent value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (signingKey is null)
+            return false;
+        return value.HasAuthenticIntegrity(new[] { signingKey }.Concat(verificationKeys));
+    }
 
     // ---- Atomic uniqueness claims ---------------------------------------------------
 
@@ -43,7 +61,122 @@ public sealed class AuthStore(TerraScaleClient client, string database)
 
     private static string UniqueClaimId(string kind, string key) => $"{kind}:{SecureTokens.Sha256Hex(key)}";
 
-    private sealed record UniqueClaim(string OwnerType, string OwnerId);
+    private sealed record UniqueClaim(string OwnerType, string OwnerId, string? InstanceId = null, int? Seat = null);
+
+    /// <summary>Reconciles durable quota-seat claims against live users. This is an
+    /// operator-safe repair for interrupted user creation or legacy cleanup: only
+    /// claims with no matching live owner are removed.</summary>
+    public async Task<QuotaSeatReconciliation> ReconcileQuotaSeatsAsync(string instanceId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
+
+        var users = new List<User>();
+        string? after = null;
+        while (true)
+        {
+            var page = await ListUsersAsync(instanceId, 1000, after, ct);
+            users.AddRange(page.Users);
+            if (page.NextAfter is null)
+                break;
+            after = page.NextAfter;
+        }
+
+        var ownedSeats = users
+            .Where(user => !user.Deleted && TryReadQuotaSeat(user, out _))
+            .Select(user => (UserId: user.Id, Seat: ReadQuotaSeat(user)))
+            .ToHashSet();
+        var claims = await QueryAllAsync<UniqueClaim>(
+            "uniques",
+            [Eq("ownerType", "quota-seat"), Eq("instanceId", instanceId)],
+            1000,
+            ct);
+
+        var removed = 0;
+        foreach (var claim in claims)
+        {
+            if (claim.Seat is not int seat || ownedSeats.Contains((claim.OwnerId, seat)))
+                continue;
+
+            await ReleaseUniqueAsync("quota-seat", $"{instanceId}:{seat}", ct);
+            removed++;
+        }
+
+        return new QuotaSeatReconciliation(claims.Count, removed, claims.Count - removed);
+    }
+
+    private static bool TryReadQuotaSeat(User user, out int seat)
+    {
+        seat = ReadQuotaSeat(user);
+        return seat >= 0;
+    }
+
+    private static int ReadQuotaSeat(User user)
+    {
+        if (!user.PrivateMetadata.TryGetValue("quotaSeat", out var value))
+            return -1;
+        return value switch
+        {
+            int number => number,
+            long number => checked((int)number),
+            JsonElement element when element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var number) => number,
+            _ => -1,
+        };
+    }
+
+    public sealed record QuotaSeatReconciliation(int ClaimsExamined, int ClaimsRemoved, int ClaimsRetained);
+
+    /// <summary>
+    /// Claims one of the instance's bounded user seats with a create-only write.
+    /// Concurrent creators converge on different seats; a caller must release the
+    /// returned seat if its user write fails.
+    /// </summary>
+    public async Task<int> ClaimQuotaSeatAsync(string instanceId, int quota, string ownerId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quota);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
+        for (var seat = 0; seat < quota; seat++)
+        {
+            try
+            {
+                await client.Documents.PutAsync(
+                    Database,
+                    "uniques",
+                    UniqueClaimId("quota-seat", $"{instanceId}:{seat}"),
+                    new UniqueClaim("quota-seat", ownerId, instanceId, seat),
+                    new TerraScaleDocumentMutationOptions(CreateOnly: true),
+                    ct);
+                return seat;
+            }
+            catch (TerraScaleApiException exception) when (exception.StatusCode is System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.PreconditionFailed)
+            {
+                // Another creator owns this seat; try the next atomically.
+            }
+        }
+        throw new Billing.QuotaExceededException();
+    }
+
+    public Task ReleaseQuotaSeatAsync(string instanceId, int seat, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
+        ArgumentOutOfRangeException.ThrowIfNegative(seat);
+        return ReleaseUniqueAsync("quota-seat", $"{instanceId}:{seat}", ct);
+    }
+
+    public async Task ReleaseQuotaSeatAsync(User user, CancellationToken ct = default)
+    {
+        if (!user.PrivateMetadata.TryGetValue("quotaSeat", out var value))
+            return;
+        var seat = value switch
+        {
+            int number => number,
+            long number => checked((int)number),
+            JsonElement element when element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var number) => number,
+            _ => -1,
+        };
+        if (seat >= 0)
+            await ReleaseQuotaSeatAsync(user.InstanceId, seat, ct);
+    }
 
     // ---- Documents API plumbing -------------------------------------------------
 
@@ -264,6 +397,45 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task UpsertSessionAsync(Session session, CancellationToken ct = default) =>
         UpsertAsync("sessions", session.Id, session, ct);
 
+    /// <summary>
+    /// Updates activity only while the session is still active, using the exact
+    /// document version observed by the caller. A concurrent revoke therefore
+    /// wins instead of being overwritten by a stale activity write.
+    /// </summary>
+    public async Task<bool> TryTouchSessionAsync(string id, string instanceId, long lastActiveAt, CancellationToken ct = default)
+    {
+        TerraScaleDocument document;
+        try
+        {
+            document = await client.Documents.GetAsync(Database, "sessions", id, cancellationToken: ct);
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+
+        if (document.Data.Deserialize<Session>(Json) is not { } session
+            || session.InstanceId != instanceId
+            || session.Status != "active")
+            return false;
+
+        try
+        {
+            await client.Documents.PutAsync(
+                Database,
+                "sessions",
+                id,
+                session with { LastActiveAt = lastActiveAt },
+                new TerraScaleDocumentMutationOptions(ExpectedChangeToken: document.ChangeToken),
+                ct);
+            return true;
+        }
+        catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+        {
+            return false;
+        }
+    }
+
     public async Task<Session?> FindSessionByTokenAsync(string tokenKey, CancellationToken ct = default)
     {
         var matches = await QueryAsync<Session>("sessions", "tokenKey", tokenKey, 2, ct);
@@ -271,7 +443,46 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     }
 
     public Task<IReadOnlyList<Session>> ListSessionsByUserAsync(string userId, CancellationToken ct = default) =>
-        QueryAsync<Session>("sessions", "userId", userId, 100, ct);
+        QueryAllAsync<Session>("sessions", [Eq("userId", userId)], 100, ct);
+
+    /// <summary>Deletes matching session, OAuth grant, MFA, and verification-token records for one user.
+    /// Audit events are intentionally retained as the accountability record.</summary>
+    public async Task<UserAuthenticationCleanupResult> DeleteUserAuthenticationArtifactsAsync(string instanceId, string userId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+
+        var sessions = await QueryAllAsync<Session>("sessions", [Eq("instanceId", instanceId), Eq("userId", userId)], 100, ct);
+        var authorizationCodes = await QueryAllAsync<AuthorizationCode>("oauth_codes", [Eq("instanceId", instanceId), Eq("userId", userId)], 100, ct);
+        var refreshTokens = await QueryAllAsync<RefreshToken>("refresh_tokens", [Eq("instanceId", instanceId), Eq("userId", userId)], 100, ct);
+        var factors = await QueryAllAsync<MfaFactor>("mfa_factors", [Eq("instanceId", instanceId), Eq("userId", userId)], 100, ct);
+        var verificationTokens = await QueryAllAsync<VerificationToken>("verification_tokens", [Eq("instanceId", instanceId), Eq("userId", userId)], 100, ct);
+
+        foreach (var session in sessions)
+            await DeleteIgnoringMissingAsync("sessions", session.Id, ct);
+        foreach (var code in authorizationCodes)
+            await DeleteIgnoringMissingAsync("oauth_codes", code.Id, ct);
+        foreach (var token in refreshTokens)
+            await DeleteIgnoringMissingAsync("refresh_tokens", token.Id, ct);
+        foreach (var factor in factors)
+            await DeleteIgnoringMissingAsync("mfa_factors", factor.Id, ct);
+        foreach (var token in verificationTokens)
+            await DeleteIgnoringMissingAsync("verification_tokens", token.Id, ct);
+
+        return new UserAuthenticationCleanupResult(
+            sessions.Count,
+            authorizationCodes.Count,
+            refreshTokens.Count,
+            factors.Count,
+            verificationTokens.Count);
+    }
+
+    public sealed record UserAuthenticationCleanupResult(
+        int Sessions,
+        int AuthorizationCodes,
+        int RefreshTokens,
+        int MfaFactors,
+        int VerificationTokens);
 
     // ---- OAuth clients --------------------------------------------------------------
 
@@ -605,6 +816,69 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<IReadOnlyList<VerificationToken>> ListUserVerificationTokensAsync(string userId, string purpose, CancellationToken ct = default) =>
         QueryAllAsync<VerificationToken>("verification_tokens", [Eq("userId", userId), Eq("purpose", purpose)], 100, ct);
 
+    /// <summary>Atomically increments the durable failure count on the newest live
+    /// token for a user and purpose. The compare-and-set retry makes the lockout
+    /// counter safe across auth processes and restartable.</summary>
+    public async Task<int> RecordVerificationFailureAsync(string instanceId, string userId, string purpose, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(purpose);
+        var predicates = new[] { Eq("instanceId", instanceId), Eq("userId", userId), Eq("purpose", purpose) };
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            TerraScaleDocumentQueryRow? latest = null;
+            VerificationToken? latestToken = null;
+            string? after = null;
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            while (true)
+            {
+                var page = await client.Documents.QueryAsync(
+                    Database,
+                    "verification_tokens",
+                    new TerraScaleDocumentQuery(Predicates: predicates, Projection: null, Limit: 100, After: after),
+                    cancellationToken: ct);
+                foreach (var row in page.Documents)
+                {
+                    if (row.Value.Deserialize<VerificationToken>(Json) is { } token
+                        && token.ExpiresAt > now
+                        && !token.Consumed
+                        && (latestToken is null || token.CreatedAt > latestToken.CreatedAt))
+                    {
+                        latest = row;
+                        latestToken = token;
+                    }
+                }
+                if (!page.HasMore || page.NextAfter is null)
+                    break;
+                after = page.NextAfter;
+            }
+
+            if (latest is null || latestToken is not { } current)
+                return 0;
+            var next = checked(current.FailedAttempts + 1);
+            try
+            {
+                await client.Documents.PutAsync(
+                    Database,
+                    "verification_tokens",
+                    current.Id,
+                    current with { FailedAttempts = next },
+                    new TerraScaleDocumentMutationOptions(ExpectedChangeToken: latest.Version.ToString(CultureInfo.InvariantCulture)),
+                    ct);
+                return next;
+            }
+            catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+            {
+                // Another process advanced the counter; reread and retry.
+            }
+        }
+        throw new HttpRequestException(
+            "verification failure counter contention exceeded retry bound",
+            inner: null,
+            statusCode: System.Net.HttpStatusCode.ServiceUnavailable);
+    }
+
     /// <summary>
     /// Marks a user's outstanding tokens for a purpose as consumed. Used when the email
     /// changes: a verification link proves control of the OLD address and must not be
@@ -635,6 +909,21 @@ public sealed class AuthStore(TerraScaleClient client, string database)
     public Task<IReadOnlyList<WebhookEndpoint>> ListWebhookEndpointsAsync(string instanceId, CancellationToken ct = default) =>
         QueryAsync<WebhookEndpoint>("webhooks", "instanceId", instanceId, 100, ct);
 
+    public Task<WebhookCursor?> GetWebhookCursorAsync(string instanceId, CancellationToken ct = default) =>
+        GetOrNullAsync<WebhookCursor>("webhook_cursors", instanceId, ct);
+
+    public Task UpsertWebhookCursorAsync(WebhookCursor cursor, CancellationToken ct = default) =>
+        UpsertAsync("webhook_cursors", cursor.Id, cursor, ct);
+
+    public Task<WebhookDelivery?> GetWebhookDeliveryAsync(string id, CancellationToken ct = default) =>
+        GetOrNullAsync<WebhookDelivery>("webhook_deliveries", id, ct);
+
+    public Task UpsertWebhookDeliveryAsync(WebhookDelivery delivery, CancellationToken ct = default) =>
+        UpsertAsync("webhook_deliveries", delivery.Id, delivery, ct);
+
+    public Task<IReadOnlyList<WebhookDelivery>> ListWebhookDeliveriesAsync(string instanceId, CancellationToken ct = default) =>
+        QueryAllAsync<WebhookDelivery>("webhook_deliveries", [Eq("instanceId", instanceId)], 1000, ct);
+
     /// <summary>Distinct instance ids that have webhook endpoints, so a restarted
     /// dispatcher can re-register them (its in-memory cursors start empty).</summary>
     public async Task<IReadOnlyList<string>> ListWebhookInstanceIdsAsync(CancellationToken ct = default)
@@ -655,8 +944,27 @@ public sealed class AuthStore(TerraScaleClient client, string database)
 
     // ---- Audit events ----------------------------------------------------------------------
 
-    public Task<AuditEvent> CreateAuditEventAsync(AuditEvent auditEvent, CancellationToken ct = default) =>
-        CreateAsync("audit_events", auditEvent.Id, auditEvent, ct);
+    public Task<AuditEvent?> GetAuditEventAsync(string id, CancellationToken ct = default) =>
+        GetOrNullAsync<AuditEvent>("audit_events", id, ct);
+
+    public Task<AuditEvent> CreateAuditEventAsync(AuditEvent auditEvent, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(auditEvent);
+        var sealedEvent = auditEvent with
+        {
+            IntegrityVersion = 1,
+            IntegrityHash = AuditEvent.ComputeIntegrityHash(auditEvent),
+            IntegritySignature = signingKey is null
+                ? null
+                : Convert.ToHexString(HMACSHA256.HashData(
+                    signingKey,
+                    System.Text.Encoding.UTF8.GetBytes($"v1:{AuditEvent.ComputeIntegrityHash(auditEvent)}"))).ToLowerInvariant(),
+            IntegrityKeyFingerprint = signingKey is null
+                ? null
+                : AuditEvent.ComputeKeyFingerprint(signingKey),
+        };
+        return CreateAsync("audit_events", sealedEvent.Id, sealedEvent, ct);
+    }
 
     /// <summary>The instance's audit events, newest first, capped at <paramref name="limit"/>.
     /// Ids are random tokens so id-order is not time-order: the complete set is walked,

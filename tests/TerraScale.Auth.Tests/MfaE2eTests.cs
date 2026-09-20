@@ -4,7 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
+using Microsoft.Playwright;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Keys;
 using TerraScale.Auth.Mfa;
@@ -15,28 +15,41 @@ using TerraScale.Auth.Users;
 [NotInParallel]
 public sealed class MfaE2eTests
 {
-    private static readonly Regex RecoveryCodePattern = new("<code>([A-Za-z0-9]{10})</code>");
-
     [Test]
     public async Task EnrollPageRequiresSession()
     {
         var c = await ArrangeAsync("page");
-        var response = await c.Http.GetAsync($"/ui/{c.Slug}/mfa/enroll");
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(response.Headers.Location?.ToString().Contains("/sign-in")).IsTrue();
+        await using var page = await BrowserFixture.NewPageAsync();
+
+        // The browser follows the redirect: a signed-out visitor lands on sign-in.
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/enroll"));
+        await Assert.That(page.Url).Contains("/sign-in");
     }
 
     [Test]
     public async Task EnrollmentShowsSecretAndIssuesRecoveryCodes()
     {
         var c = await ArrangeAsync("enroll");
-        var (secret, codes, factors) = await EnrollAsync(c);
+        await using var page = await SessionPageAsync(c);
 
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/enroll"));
+        await page.ClickAsync("button:has-text('Set up authenticator')");
+
+        var totp = (await c.Store.ListMfaFactorsAsync(c.User.Id)).Single(f => f.Type == "totp");
+        var secret = SecretBox.Decrypt(AuthServiceFixture.MasterKey, totp.SecretBox!);
+        // The setup page shows exactly the secret the store holds encrypted.
         await Assert.That(Encodings.Base32Encode(secret).Length).IsEqualTo(32);
+        await Assert.That(await page.Locator(".row code").First.TextContentAsync()).IsEqualTo(Encodings.Base32Encode(secret));
+
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("button:has-text('Confirm')");
+        await page.Locator(".list .row code").First.WaitForAsync();
+        var codes = (await page.Locator(".list .row code").AllTextContentsAsync()).ToArray();
         await Assert.That(codes.Length).IsEqualTo(10);
 
-        var totp = factors.Single(f => f.Type == "totp");
-        await Assert.That(totp.Confirmed).IsTrue();
+        var factors = await c.Store.ListMfaFactorsAsync(c.User.Id);
+        var confirmed = factors.Single(f => f.Type == "totp");
+        await Assert.That(confirmed.Confirmed).IsTrue();
 
         var recovery = factors.Single(f => f.Type == "recovery");
         await Assert.That(recovery.RecoveryCodes!.Length).IsEqualTo(10);
@@ -51,24 +64,23 @@ public sealed class MfaE2eTests
     public async Task WrongConfirmCodeKeepsFactorUnconfirmedThenCorrectCodeConfirms()
     {
         var c = await ArrangeAsync("wrong");
-        using (var start = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/enroll/start")))
-            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await using var page = await SessionPageAsync(c);
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/enroll"));
+        await page.ClickAsync("button:has-text('Set up authenticator')");
         var totp = (await c.Store.ListMfaFactorsAsync(c.User.Id)).Single(f => f.Type == "totp");
         var secret = SecretBox.Decrypt(AuthServiceFixture.MasterKey, totp.SecretBox!);
 
         // A code from 10 minutes ago is far outside the ±30s verify window.
         var stale = Totp.Compute(secret, DateTimeOffset.UtcNow.AddMinutes(-10));
-        using (var wrong = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post,
-            $"/mfa/enroll/confirm?factor={totp.Id}", Form(("code", stale)))))
-        {
-            await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await wrong.Content.ReadAsStringAsync()).Contains("Try again")).IsTrue();
-        }
+        await page.FillAsync("#code", stale);
+        await page.ClickAsync("button:has-text('Confirm')");
+        await page.Locator(".error").WaitForAsync();
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("Try again");
         await Assert.That((await c.Store.GetMfaFactorAsync(totp.Id))!.Confirmed).IsFalse();
 
-        using var right = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post,
-            $"/mfa/enroll/confirm?factor={totp.Id}", Form(("code", Totp.Compute(secret, DateTimeOffset.UtcNow)))));
-        await Assert.That(right.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("button:has-text('Confirm')");
+        await page.Locator(".list .row code").First.WaitForAsync();
         await Assert.That((await c.Store.GetMfaFactorAsync(totp.Id))!.Confirmed).IsTrue();
     }
 
@@ -76,38 +88,44 @@ public sealed class MfaE2eTests
     public async Task UnconfirmedFactorDoesNotGateSignInOrVerifyCodes()
     {
         var c = await ArrangeAsync("unconfirmed");
-        using (var start = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/enroll/start")))
-            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await using (var sessionPage = await SessionPageAsync(c))
+        {
+            await sessionPage.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/enroll"));
+            await sessionPage.ClickAsync("button:has-text('Set up authenticator')");
+        }
         var totp = (await c.Store.ListMfaFactorsAsync(c.User.Id)).Single(f => f.Type == "totp");
         var secret = SecretBox.Decrypt(AuthServiceFixture.MasterKey, totp.SecretBox!);
 
         // Password sign-in issues a session directly: an unconfirmed factor never routes to the MFA gate.
-        using var signIn = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/sign-in",
-            Form(("email", c.User.Email!), ("password", "correct horse battery staple")));
-        await Assert.That(signIn.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(signIn.Headers.Location?.ToString().Contains("mfa/verify")).IsFalse();
-        await Assert.That(SessionCookie(signIn)).IsNotNull();
+        await using var page = await BrowserFixture.NewPageAsync();
+        await SignInAsync(page, c);
+        await page.WaitForURLAsync("**/account");
+        await Assert.That(page.Url).DoesNotContain("mfa/verify");
+        await Assert.That(await HasSessionCookieAsync(page, c)).IsTrue();
 
         // The not-yet-confirmed secret never verifies at the MFA gate either.
         var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
-        using var verify = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
-        await Assert.That(verify.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await verify.Content.ReadAsStringAsync()).Contains("Invalid code")).IsTrue();
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/verify?token={token}"));
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("button:has-text('Verify')");
+        await page.Locator(".error").WaitForAsync();
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("Invalid code");
     }
 
     [Test]
     public async Task ConfirmingAnAlreadyConfirmedFactorIsRejected()
     {
         var c = await ArrangeAsync("reconfirm");
-        var (secret, codes, factors) = await EnrollAsync(c);
+        await using var page = await SessionPageAsync(c);
+        var (secret, codes, factors) = await EnrollAsync(c, page);
         var totp = factors.Single(f => f.Type == "totp");
 
-        using var replay = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post,
-            $"/mfa/enroll/confirm?factor={totp.Id}", Form(("code", Totp.Compute(secret, DateTimeOffset.UtcNow)))));
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // A stale re-submission of the confirm form (back button + resubmit) on the
+        // already-confirmed factor: not confirmable anymore.
+        var replay = page.WaitForResponseAsync(r => r.Url.Contains("/mfa/enroll/confirm"));
+        await SubmitFormAsync(page, c, $"/ui/{c.Slug}/mfa/enroll/confirm?factor={totp.Id}",
+            ("code", Totp.Compute(secret, DateTimeOffset.UtcNow)));
+        await Assert.That((await replay).Status).IsEqualTo(404);
 
         // The already-saved recovery set was not silently re-minted.
         var recovery = (await c.Store.ListMfaFactorsAsync(c.User.Id)).Single(f => f.Type == "recovery");
@@ -118,11 +136,14 @@ public sealed class MfaE2eTests
     public async Task SecondConfirmedTotpEnrollmentIsRejected()
     {
         var c = await ArrangeAsync("dupe");
-        await EnrollAsync(c);
+        await using var page = await SessionPageAsync(c);
+        await EnrollAsync(c, page);
 
-        using var again = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/enroll/start"));
-        await Assert.That(again.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That((await again.Content.ReadAsStringAsync()).Contains("already have a confirmed authenticator")).IsTrue();
+        var start = page.WaitForResponseAsync(r => r.Url.EndsWith("/mfa/enroll/start"));
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/enroll"));
+        await page.ClickAsync("button:has-text('Set up authenticator')");
+        await Assert.That((await start).Status).IsEqualTo(409);
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("already have a confirmed authenticator");
         await Assert.That((await c.Store.ListMfaFactorsAsync(c.User.Id)).Count(f => f.Type == "totp")).IsEqualTo(1);
     }
 
@@ -132,17 +153,16 @@ public sealed class MfaE2eTests
         var c = await ArrangeAsync("verify");
         var (secret, _, _) = await EnrollAsync(c);
 
-        var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
-        using (var form = await c.Http.GetAsync($"/ui/{c.Slug}/mfa/verify?token={token}"))
-            await Assert.That(form.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        // Step-up through the real sign-in page: the gate intercepts the password
+        // sign-in and the browser follows the pending redirect to the verify form.
+        await using var page = await BrowserFixture.NewPageAsync();
+        await SignInAsync(page, c, next: $"/ui/{c.Slug}/account?welcome=1");
+        await page.WaitForURLAsync(url => url.Contains("/mfa/verify"));
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("button:has-text('Verify')");
+        await page.WaitForURLAsync(url => new Uri(url).PathAndQuery == $"/ui/{c.Slug}/account?welcome=1");
 
-        using var post = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", token), ("next", $"/ui/{c.Slug}/account?welcome=1"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
-        await Assert.That(post.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(post.Headers.Location?.ToString()).IsEqualTo($"/ui/{c.Slug}/account?welcome=1");
-
-        var resolved = await new SessionService(c.Store).ResolveAsync(c.InstanceId, SessionCookie(post)!);
+        var resolved = await new SessionService(c.Store).ResolveAsync(c.InstanceId, await SessionCookieAsync(page, c));
         await Assert.That(resolved is not null && resolved.Value.User.Id == c.User.Id).IsTrue();
         await Assert.That((await c.Store.GetUserAsync(c.User.Id))!.LastSignInAt).IsNotNull();
 
@@ -158,15 +178,16 @@ public sealed class MfaE2eTests
         await EnrollAsync(c); // confirmed TOTP: the step-up gate is armed for this user
 
         // Password sign-in is intercepted by the MFA gate: pending redirect, no session cookie.
-        using var password = await c.Http.PostAsync(
+        using var password = await c.Wire.PostAsync(
             $"/ui/{c.Slug}/sign-in",
             Form(("email", c.User.Email!), ("password", "correct horse battery staple")));
         await Assert.That(password.StatusCode).IsEqualTo(HttpStatusCode.Found);
         await Assert.That(password.Headers.Location?.ToString().Contains("mfa/verify")).IsTrue();
         await Assert.That(SessionCookie(password)).IsNull();
 
-        // Register a passkey for the same user.
-        using var authenticator = new PasskeyE2eTests.FakeAuthenticator();
+        // Register a passkey for the same user. The passkey ceremony itself is the hosted
+        // page's backing JSON API, so it stays on the wire with the fake authenticator.
+        using var authenticator = PasskeyE2eTests.NewAuthenticator(c.Service);
         string challenge;
         using (var options = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/passkeys/register/options")))
         {
@@ -221,21 +242,27 @@ public sealed class MfaE2eTests
     {
         var c = await ArrangeAsync("redirect");
         var (secret, _, _) = await EnrollAsync(c);
+        await using var page = await BrowserFixture.NewPageAsync();
 
+        // A hostile absolute next would navigate the browser off-origin if the guard
+        // broke; the form's hidden next is tampered to carry it past sign-in's own
+        // sanitizer so the verify POST's guard is the one under test.
         var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
-        using var post = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", token), ("next", "https://evil.example/steal"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
-        await Assert.That(post.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(post.Headers.Location?.ToString()).IsEqualTo($"/ui/{c.Slug}/account");
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/verify?token={token}"));
+        await page.EvalOnSelectorAsync("input[name=next]", "el => el.value = 'https://evil.example/steal'");
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("button:has-text('Verify')");
+        await page.WaitForURLAsync("**/account");
+        await Assert.That(new Uri(page.Url).PathAndQuery).IsEqualTo($"/ui/{c.Slug}/account");
 
         // Protocol-relative targets are not site-local either.
         var (second, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
-        using var relative = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", second), ("next", "//evil.example/steal"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
-        await Assert.That(relative.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(relative.Headers.Location?.ToString()).IsEqualTo($"/ui/{c.Slug}/account");
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/verify?token={second}"));
+        await page.EvalOnSelectorAsync("input[name=next]", "el => el.value = '//evil.example/steal'");
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("button:has-text('Verify')");
+        await page.WaitForURLAsync("**/account");
+        await Assert.That(new Uri(page.Url).PathAndQuery).IsEqualTo($"/ui/{c.Slug}/account");
     }
 
     [Test]
@@ -243,35 +270,36 @@ public sealed class MfaE2eTests
     {
         var c = await ArrangeAsync("retry");
         var (secret, _, _) = await EnrollAsync(c);
+        await using var page = await BrowserFixture.NewPageAsync();
 
         var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
-        using (var wrong = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow.AddMinutes(-10))))))
-        {
-            await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await wrong.Content.ReadAsStringAsync()).Contains("Invalid code")).IsTrue();
-            await Assert.That(wrong.Headers.TryGetValues("Set-Cookie", out _)).IsFalse();
-        }
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/verify?token={token}"));
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow.AddMinutes(-10)));
+        await page.ClickAsync("button:has-text('Verify')");
+        await page.Locator(".error").WaitForAsync();
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("Invalid code");
+        await Assert.That(await HasSessionCookieAsync(page, c)).IsFalse();
 
-        using var right = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
-        await Assert.That(right.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(SessionCookie(right)).IsNotNull();
+        // The same pending token accepts the retry: the browser follows to the account.
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("button:has-text('Verify')");
+        await page.WaitForURLAsync("**/account");
+        await Assert.That(await HasSessionCookieAsync(page, c)).IsTrue();
     }
 
     [Test]
     public async Task InvalidPendingTokenShowsExpiredPage()
     {
         var c = await ArrangeAsync("expired");
-        using var post = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", "not-a-real-token"), ("next", $"/ui/{c.Slug}/account"), ("code", "123456")));
-        await Assert.That(post.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var html = await post.Content.ReadAsStringAsync();
-        await Assert.That(html.Contains("expired")).IsTrue();
-        await Assert.That(html.Contains("/sign-in")).IsTrue();
+        await using var page = await BrowserFixture.NewPageAsync();
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/sign-in"));
+
+        var post = page.WaitForResponseAsync(r => r.Url.EndsWith("/mfa/verify"));
+        await SubmitFormAsync(page, c, $"/ui/{c.Slug}/mfa/verify",
+            ("token", "not-a-real-token"), ("next", $"/ui/{c.Slug}/account"), ("code", "123456"));
+        await Assert.That((await post).Status).IsEqualTo(200);
+        await page.Locator("h1:has-text('expired')").WaitForAsync();
+        await Assert.That(await page.ContentAsync()).Contains("/sign-in");
     }
 
     [Test]
@@ -279,6 +307,8 @@ public sealed class MfaE2eTests
     {
         var c = await ArrangeAsync("ttl");
         var (secret, _, _) = await EnrollAsync(c);
+        await using var page = await BrowserFixture.NewPageAsync();
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/sign-in"));
 
         // A pending token past its 10-minute TTL — wrong-code retries are allowed,
         // but only until the token expires.
@@ -294,12 +324,12 @@ public sealed class MfaE2eTests
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-11).ToUnixTimeSeconds(),
         });
 
-        using var post = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
-        await Assert.That(post.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await post.Content.ReadAsStringAsync()).Contains("expired")).IsTrue();
-        await Assert.That(post.Headers.TryGetValues("Set-Cookie", out _)).IsFalse();
+        var post = page.WaitForResponseAsync(r => r.Url.EndsWith("/mfa/verify"));
+        await SubmitFormAsync(page, c, $"/ui/{c.Slug}/mfa/verify",
+            ("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow)));
+        await Assert.That((await post).Status).IsEqualTo(200);
+        await page.Locator("h1:has-text('expired')").WaitForAsync();
+        await Assert.That(await HasSessionCookieAsync(page, c)).IsFalse();
         await Assert.That(await SignedInCountAsync(c)).IsEqualTo(0);
     }
 
@@ -308,23 +338,25 @@ public sealed class MfaE2eTests
     {
         var c = await ArrangeAsync("reuse");
         var (secret, _, _) = await EnrollAsync(c);
+        await using var page = await BrowserFixture.NewPageAsync();
 
         var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
-        using (var post = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow)))))
-        {
-            await Assert.That(post.StatusCode).IsEqualTo(HttpStatusCode.Found);
-            // Exactly one session cookie on the response that completes the sign-in.
-            await Assert.That(post.Headers.GetValues("Set-Cookie").Count(v => v.StartsWith("tsauth_session=", StringComparison.Ordinal))).IsEqualTo(1);
-        }
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/verify?token={token}"));
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("button:has-text('Verify')");
+        await page.WaitForURLAsync("**/account");
+        // Exactly one session cookie in the browser's jar for the completed sign-in.
+        var cookies = (await page.Context.CookiesAsync(c.Service.Origin.ToString()))
+            .Where(cookie => cookie.Name == "tsauth_session").ToArray();
+        await Assert.That(cookies.Length).IsEqualTo(1);
 
-        using var replay = await c.Http.PostAsync(
-            $"/ui/{c.Slug}/mfa/verify",
-            Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow))));
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await replay.Content.ReadAsStringAsync()).Contains("expired")).IsTrue();
-        await Assert.That(replay.Headers.TryGetValues("Set-Cookie", out _)).IsFalse();
+        // Replaying the consumed token shows the expired page and never replaces the session.
+        var replay = page.WaitForResponseAsync(r => r.Url.EndsWith("/mfa/verify"));
+        await SubmitFormAsync(page, c, $"/ui/{c.Slug}/mfa/verify",
+            ("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", Totp.Compute(secret, DateTimeOffset.UtcNow)));
+        await Assert.That((await replay).Status).IsEqualTo(200);
+        await page.Locator("h1:has-text('expired')").WaitForAsync();
+        await Assert.That(await SessionCookieAsync(page, c)).IsEqualTo(cookies[0].Value);
         await Assert.That(await SignedInCountAsync(c)).IsEqualTo(1);
     }
 
@@ -337,9 +369,9 @@ public sealed class MfaE2eTests
         var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
         var code = Totp.Compute(secret, DateTimeOffset.UtcNow);
         var responses = await Task.WhenAll(
-            c.Http.PostAsync($"/ui/{c.Slug}/mfa/verify",
+            c.Wire.PostAsync($"/ui/{c.Slug}/mfa/verify",
                 Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", code))),
-            c.Http.PostAsync($"/ui/{c.Slug}/mfa/verify",
+            c.Wire.PostAsync($"/ui/{c.Slug}/mfa/verify",
                 Form(("token", token), ("next", $"/ui/{c.Slug}/account"), ("code", code))));
 
         using (responses[0])
@@ -357,17 +389,25 @@ public sealed class MfaE2eTests
     public async Task RecoveryCodeConsumedOnce()
     {
         var c = await ArrangeAsync("recovery");
-        var (_, codes, _) = await EnrollAsync(c);
+        await using var page = await SessionPageAsync(c);
+        var (_, codes, _) = await EnrollAsync(c, page);
+        var arranged = await SessionCookieAsync(page, c);
 
-        using (var first = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/recovery/consume", Form(("code", codes[0])))))
-        {
-            await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.Found);
-            await Assert.That(SessionCookie(first)).IsNotNull();
-        }
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/recovery"));
+        await page.FillAsync("#code", codes[0]);
+        await page.ClickAsync("button:has-text('Unlock account')");
+        await page.WaitForURLAsync("**/account");
+        // Consume minted a fresh session (a different token than the arranged one).
+        var fresh = await SessionCookieAsync(page, c);
+        await Assert.That(fresh).IsNotEqualTo(arranged);
 
-        using var second = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/recovery/consume", Form(("code", codes[0]))));
-        await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await second.Content.ReadAsStringAsync()).Contains("invalid or already used")).IsTrue();
+        // The same code is burned: the page says so and the session is left untouched.
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/recovery"));
+        await page.FillAsync("#code", codes[0]);
+        await page.ClickAsync("button:has-text('Unlock account')");
+        await page.Locator(".error").WaitForAsync();
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("invalid or already used");
+        await Assert.That(await SessionCookieAsync(page, c)).IsEqualTo(fresh);
 
         var recovery = (await c.Store.ListMfaFactorsAsync(c.User.Id)).Single(f => f.Type == "recovery");
         await Assert.That(recovery.RecoveryCodes!.Length).IsEqualTo(9);
@@ -410,12 +450,12 @@ public sealed class MfaE2eTests
         await Assert.That(fresh.Length).IsEqualTo(10);
 
         // The pre-regeneration codes no longer work; the fresh ones do.
-        using (var stale = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/recovery/consume", Form(("code", originalCodes[0])))))
+        using (var stale = await c.Wire.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/recovery/consume", Form(("code", originalCodes[0])))))
         {
             var html = await stale.Content.ReadAsStringAsync();
             await Assert.That(html.Contains("invalid or already used")).IsTrue();
         }
-        using var freshWorks = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/recovery/consume", Form(("code", fresh[0]))));
+        using var freshWorks = await c.Wire.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/recovery/consume", Form(("code", fresh[0]))));
         await Assert.That(freshWorks.StatusCode).IsEqualTo(HttpStatusCode.Found);
 
         using (var deleted = await c.Http.SendAsync(ApiRequest(c, HttpMethod.Delete, $"/v1/{c.Slug}/users/{c.User.Id}/mfa-factors/{totp.Id}")))
@@ -439,7 +479,8 @@ public sealed class MfaE2eTests
         string Slug,
         string ApiKey,
         User User,
-        string SessionToken)
+        string SessionToken,
+        HttpClient Wire)
     {
         public AuthStore Store => Service.Store;
 
@@ -454,25 +495,36 @@ public sealed class MfaE2eTests
         var sessions = new SessionService(service.Store);
         var user = await sessions.CreateUserAsync(instanceId, $"{label}-{Guid.NewGuid().ToString("N")[..6]}@example.com", null, "correct horse battery staple", null);
         var (_, token) = await sessions.CreateSessionAsync(instanceId, user.Id, "e2e", "127.0.0.1");
-        return new Context(service, instanceId, slug, apiKey, user, token);
+        // The fixture's shared client follows redirects; the wire tests here assert
+        // 302s and Location headers, so they send through one that does not.
+        var wire = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { BaseAddress = service.Origin };
+        return new Context(service, instanceId, slug, apiKey, user, token, wire);
     }
 
-    /// <summary>Runs the full happy-path enrollment and returns the secret, the plaintext recovery codes, and the final factor list.</summary>
-    private static async Task<(byte[] Secret, string[] Codes, IReadOnlyList<MfaFactor> Factors)> EnrollAsync(Context c)
+    /// <summary>Runs the full happy-path enrollment through the hosted pages (the
+    /// start form, the confirm form) and returns the secret, the recovery codes as
+    /// shown on the page, and the final factor list.</summary>
+    private static async Task<(byte[] Secret, string[] Codes, IReadOnlyList<MfaFactor> Factors)> EnrollAsync(Context c, IPage page)
     {
-        using (var start = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post, "/mfa/enroll/start")))
-            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/mfa/enroll"));
+        await page.ClickAsync("button:has-text('Set up authenticator')");
 
         var totp = (await c.Store.ListMfaFactorsAsync(c.User.Id)).Single(f => f.Type == "totp");
         var secret = SecretBox.Decrypt(AuthServiceFixture.MasterKey, totp.SecretBox!);
 
-        using var confirm = await c.Http.SendAsync(SessionRequest(c, HttpMethod.Post,
-            $"/mfa/enroll/confirm?factor={totp.Id}", Form(("code", Totp.Compute(secret, DateTimeOffset.UtcNow)))));
-        await Assert.That(confirm.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var html = await confirm.Content.ReadAsStringAsync();
-        var codes = RecoveryCodePattern.Matches(html).Select(m => m.Groups[1].Value).ToArray();
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("button:has-text('Confirm')");
+        await page.Locator(".list .row code").First.WaitForAsync();
+        var codes = (await page.Locator(".list .row code").AllTextContentsAsync()).ToArray();
 
         return (secret, codes, await c.Store.ListMfaFactorsAsync(c.User.Id));
+    }
+
+    /// <summary>Enrollment as pure arrangement on a throwaway browser page.</summary>
+    private static async Task<(byte[] Secret, string[] Codes, IReadOnlyList<MfaFactor> Factors)> EnrollAsync(Context c)
+    {
+        await using var page = await SessionPageAsync(c);
+        return await EnrollAsync(c, page);
     }
 
     private static HttpRequestMessage SessionRequest(Context c, HttpMethod method, string path, FormUrlEncodedContent? content = null)
@@ -501,4 +553,52 @@ public sealed class MfaE2eTests
     /// <summary>Completed password+mfa sign-ins for the arranged user's instance, as audit events.</summary>
     private static async Task<int> SignedInCountAsync(Context c) =>
         (await c.Store.ListAuditEventsAsync(c.InstanceId, 100)).Count(e => e.Type == "user.signed_in");
+
+    // ---- Browser helpers ----------------------------------------------------------------
+
+    private static string PageUrl(Context c, string path) => new Uri(c.Service.Origin, path).ToString();
+
+    /// <summary>A fresh browser page signed in as the arranged user: the session token
+    /// is fixture state, every interaction after that is the real hosted flow.</summary>
+    private static async Task<IPage> SessionPageAsync(Context c)
+    {
+        var page = await BrowserFixture.NewPageAsync();
+        await page.Context.AddCookiesAsync([new Microsoft.Playwright.Cookie
+        {
+            Name = "tsauth_session",
+            Value = c.SessionToken,
+            Url = c.Service.Origin.ToString(),
+        }]);
+        return page;
+    }
+
+    /// <summary>Submits the sign-in form with the arranged user's password; the browser
+    /// follows whatever redirect the service returns (direct session or MFA gate).</summary>
+    private static async Task SignInAsync(IPage page, Context c, string? next = null)
+    {
+        var query = next is null ? "" : $"?next={Uri.EscapeDataString(next)}";
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/sign-in{query}"));
+        await page.FillAsync("#si-email", c.User.Email!);
+        await page.FillAsync("#si-password", "correct horse battery staple");
+        await page.ClickAsync("button:has-text('Sign in')");
+    }
+
+    /// <summary>Posts like a stale or script-built browser form would (real navigation,
+    /// no client-side validation) — for fields no rendered form can carry anymore,
+    /// which is exactly the replay scenario under test.</summary>
+    private static async Task SubmitFormAsync(IPage page, Context c, string path, params (string Name, string Value)[] fields)
+    {
+        var inputs = string.Concat(fields.Select(f => $"<input type=\"hidden\" name=\"{f.Name}\" value=\"{f.Value}\">"));
+        var form = $"<form id=\"e2e-post\" method=\"post\" action=\"{PageUrl(c, path)}\">{inputs}</form>";
+        await page.EvalOnSelectorAsync("body",
+            "(body, html) => { body.insertAdjacentHTML('beforeend', html); body.querySelector('#e2e-post').submit(); }",
+            form);
+    }
+
+    private static async Task<bool> HasSessionCookieAsync(IPage page, Context c) =>
+        (await page.Context.CookiesAsync(c.Service.Origin.ToString())).Any(cookie => cookie.Name == "tsauth_session");
+
+    private static async Task<string> SessionCookieAsync(IPage page, Context c) =>
+        (await page.Context.CookiesAsync(c.Service.Origin.ToString()))
+            .Single(cookie => cookie.Name == "tsauth_session").Value;
 }

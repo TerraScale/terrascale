@@ -49,6 +49,59 @@ public sealed class OptionsTests
     }
 
     [Test]
+    public async Task AuditSigningKeyMustBeBase64Encoded32Bytes()
+    {
+        foreach (var value in new[] { "not-base64", Convert.ToBase64String(new byte[16]), Convert.ToBase64String(new byte[33]) })
+        {
+            var error = Assert.Throws<InvalidOperationException>(() => TerraScale.Auth.Configuration.AuthOptions.Load(
+            [
+                "--public-origin=https://example.com",
+                "--terrascale-api-key=k",
+                "--database=ts-auth",
+                "--master-key=" + Convert.ToBase64String(new byte[32]),
+                "--audit-signing-key=" + value,
+                "--operator-key=op",
+            ]));
+            await Assert.That(error.Message).Contains("TS_AUTH_AUDIT_SIGNING_KEY");
+        }
+    }
+
+    [Test]
+    public async Task AuditVerificationKeysSupportRotationOverlap()
+    {
+        var first = Convert.ToBase64String(Enumerable.Repeat((byte)1, 32).ToArray());
+        var second = Convert.ToBase64String(Enumerable.Repeat((byte)2, 32).ToArray());
+        var options = TerraScale.Auth.Configuration.AuthOptions.Load(
+        [
+            "--public-origin=https://example.com",
+            "--terrascale-api-key=k",
+            "--database=ts-auth",
+            "--master-key=" + Convert.ToBase64String(new byte[32]),
+            "--audit-signing-key=" + first,
+            "--audit-verify-keys=" + second + ";" + first,
+            "--operator-key=op",
+        ]);
+        await Assert.That(options.AuditVerificationKeys).Count().IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task AuditVerificationKeysAreBounded()
+    {
+        var values = string.Join(';', Enumerable.Range(0, 6).Select(_ => Convert.ToBase64String(new byte[32])));
+        var error = Assert.Throws<InvalidOperationException>(() => TerraScale.Auth.Configuration.AuthOptions.Load(
+        [
+            "--public-origin=https://example.com",
+            "--terrascale-api-key=k",
+            "--database=ts-auth",
+            "--master-key=" + Convert.ToBase64String(new byte[32]),
+            "--audit-signing-key=" + Convert.ToBase64String(new byte[32]),
+            "--audit-verify-keys=" + values,
+            "--operator-key=op",
+        ]));
+        await Assert.That(error.Message).Contains("at most 5");
+    }
+
+    [Test]
     public async Task ArgsOverrideEnvironment()
     {
         var snapshot = SnapshotAuthEnvironment();

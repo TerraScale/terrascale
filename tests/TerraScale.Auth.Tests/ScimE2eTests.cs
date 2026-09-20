@@ -332,11 +332,23 @@ public sealed class ScimE2eTests
         var (userId, email) = await ProvisionAsync(http, token, directoryId);
         await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Count).IsEqualTo(1);
 
+        var verificationId = "vt_" + Guid.NewGuid().ToString("N");
+        await store.CreateVerificationTokenAsync(new VerificationToken
+        {
+            Id = verificationId,
+            InstanceId = instanceId,
+            UserId = userId,
+            Purpose = "reset_password",
+            TokenKey = verificationId,
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+        });
+
         using var deleted = await http.SendAsync(Request(HttpMethod.Delete, token, $"/scim/{directoryId}/Users/{userId}"));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
         await SendAsync(http, HttpMethod.Get, token, $"/scim/{directoryId}/Users/{userId}", null, HttpStatusCode.NotFound, "application/scim+json");
 
+        await Assert.That(await store.GetVerificationTokenAsync(verificationId)).IsNull();
         var user = await store.GetUserAsync(userId);
         await Assert.That(user!.Deleted).IsTrue();
         await Assert.That(user.EmailKey).IsNull();
@@ -788,7 +800,8 @@ public sealed class ScimE2eTests
 
     [Test]
     public async Task DiscoveryDocumentsExposeServiceProviderConfigResourceTypesAndSchemas()
-    {        var (service, _, slug, apiKey) = await StartAsync();
+    {
+        var (service, _, slug, apiKey) = await StartAsync();
         var http = service.Http;
         var (directoryId, token) = await CreateDirectoryAsync(http, apiKey, slug);
 

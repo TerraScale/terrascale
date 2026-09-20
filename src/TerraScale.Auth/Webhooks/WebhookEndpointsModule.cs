@@ -1,6 +1,8 @@
 namespace TerraScale.Auth.Webhooks;
 
 using TerraScale.Auth.Api;
+using TerraScale.Auth.Configuration;
+using TerraScale.Auth.Keys;
 using TerraScale.Auth.Store;
 
 /// <summary>Webhooks feature: outbound endpoint management (sk_ auth), the
@@ -12,11 +14,12 @@ public static class WebhookEndpointsModule
     {
         var store = app.Services.GetRequiredService<AuthStore>();
         var resolver = app.Services.GetRequiredService<InstanceResolver>();
+        var options = app.Services.GetRequiredService<AuthOptions>();
         var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger<WebhookDispatcher>();
 
         // App.cs is shared, so there is no AddHostedService: the delivery engine starts
         // here instead — one loop per application, stopped by ApplicationStopping.
-        var dispatcher = new WebhookDispatcher(store, logger);
+        var dispatcher = new WebhookDispatcher(store, logger, options.MasterKey);
         _ = Task.Run(() => dispatcher.RunAsync(app.Lifetime.ApplicationStopping));
 
         app.MapPost("/v1/{slug}/webhooks", async (string slug, HttpRequest request, CancellationToken ct) =>
@@ -38,10 +41,7 @@ public static class WebhookEndpointsModule
                 InstanceId = context.Instance.Id,
                 Url = body.Url,
                 Events = body.Events,
-                // Stored plaintext on purpose: unlike sk_ keys (hashed, because ts-auth only
-                // verifies them), the signing secret must be recoverable — ts-auth itself uses
-                // it to sign outbound deliveries. It is revealed exactly once, in this response.
-                SigningSecret = Crypto.SecureTokens.RandomToken(32),
+                SigningSecretBox = SecretBox.Encrypt(options.MasterKey, System.Text.Encoding.UTF8.GetBytes(Crypto.SecureTokens.RandomToken(32))),
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             };
             await store.CreateWebhookEndpointAsync(endpoint, ct);
@@ -54,8 +54,9 @@ public static class WebhookEndpointsModule
                 Data = new Dictionary<string, object> { ["endpoint_id"] = endpoint.Id },
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             }, ct);
-            dispatcher.EnsureInstance(context.Instance.Id);
-            return Results.Ok(new { endpoint.Id, endpoint.Url, endpoint.Events, signing_secret = endpoint.SigningSecret });
+            await dispatcher.EnsureInstanceAsync(context.Instance.Id, ct);
+            var signingSecret = System.Text.Encoding.UTF8.GetString(SecretBox.Decrypt(options.MasterKey, endpoint.SigningSecretBox));
+            return Results.Ok(new { endpoint.Id, endpoint.Url, endpoint.Events, signing_secret = signingSecret });
         });
 
         app.MapGet("/v1/{slug}/webhooks", async (string slug, HttpRequest request, CancellationToken ct) =>
@@ -65,6 +66,30 @@ public static class WebhookEndpointsModule
 
             var endpoints = await store.ListWebhookEndpointsAsync(context.Instance.Id, ct);
             return Results.Ok(endpoints.Select(ToListItem).ToArray());
+        });
+
+        app.MapGet("/v1/{slug}/webhooks/dead-letter", async (string slug, HttpRequest request, CancellationToken ct) =>
+        {
+            if (await resolver.ResolveAsync(request, ct) is not { } context || context.Instance.Slug != slug)
+                return ApiResults.Unauthorized();
+            var deliveries = await store.ListWebhookDeliveriesAsync(context.Instance.Id, ct);
+            return Results.Ok(deliveries.Where(d => d.Status == "dead").OrderByDescending(d => d.UpdatedAt).Select(d => new
+            {
+                d.Id,
+                endpoint_id = d.EndpointId,
+                event_id = d.EventId,
+                d.Attempts,
+                last_error = d.LastError,
+                updated_at = d.UpdatedAt,
+            }).ToArray());
+        });
+
+        app.MapPost("/v1/{slug}/webhooks/dead-letter/{id}/replay", async (string slug, string id, HttpRequest request, CancellationToken ct) =>
+        {
+            if (await resolver.ResolveAsync(request, ct) is not { } context || context.Instance.Slug != slug)
+                return ApiResults.Unauthorized();
+            var replayed = await dispatcher.ReplayAsync(context.Instance.Id, id, ct);
+            return replayed ? Results.Ok(new { replayed = true }) : ApiResults.NotFound();
         });
 
         app.MapDelete("/v1/{slug}/webhooks/{id}", async (string slug, string id, HttpRequest request, CancellationToken ct) =>
@@ -104,7 +129,7 @@ public static class WebhookEndpointsModule
                 Data = new Dictionary<string, object> { ["endpoint_id"] = id },
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             }, ct);
-            dispatcher.EnsureInstance(context.Instance.Id);
+            await dispatcher.EnsureInstanceAsync(context.Instance.Id, ct);
             return Results.Ok(new { queued = true });
         });
 
@@ -135,8 +160,31 @@ public static class WebhookEndpointsModule
     private static object ToAuditJson(AuditEvent auditEvent)
     {
         if (auditEvent.ActorId is { } actor)
-            return new { auditEvent.Id, auditEvent.Type, actor_id = actor, auditEvent.Data, created_at = auditEvent.CreatedAt };
-        return new { auditEvent.Id, auditEvent.Type, auditEvent.Data, created_at = auditEvent.CreatedAt };
+            return new
+            {
+                auditEvent.Id,
+                instance_id = auditEvent.InstanceId,
+                auditEvent.Type,
+                actor_id = actor,
+                auditEvent.Data,
+                created_at = auditEvent.CreatedAt,
+                integrity_version = auditEvent.IntegrityVersion,
+                integrity_hash = auditEvent.IntegrityHash,
+                integrity_signature = auditEvent.IntegritySignature,
+                integrity_key_fingerprint = auditEvent.IntegrityKeyFingerprint,
+            };
+        return new
+        {
+            auditEvent.Id,
+            instance_id = auditEvent.InstanceId,
+            auditEvent.Type,
+            auditEvent.Data,
+            created_at = auditEvent.CreatedAt,
+            integrity_version = auditEvent.IntegrityVersion,
+            integrity_hash = auditEvent.IntegrityHash,
+            integrity_signature = auditEvent.IntegritySignature,
+            integrity_key_fingerprint = auditEvent.IntegrityKeyFingerprint,
+        };
     }
 }
 

@@ -388,6 +388,17 @@ public sealed class ManagementE2eTests
     {
         var (service, _, slug, key) = await InstanceAsync();
 
+        // Send the non-ASCII probes over the real socket too. The default
+        // HttpClient ASCII encoder rejects them before the service can validate them.
+        using var headerClient = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            RequestHeaderEncodingSelector = (name, _) =>
+                name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+                    ? System.Text.Encoding.UTF8
+                    : null,
+        }) { BaseAddress = service.Origin };
+
         // Every malformed Authorization shape must resolve to nothing — 401, never a 500.
         var probes = new[]
         {
@@ -408,7 +419,7 @@ public sealed class ManagementE2eTests
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/{slug}/users");
             request.Headers.TryAddWithoutValidation("Authorization", header);
-            using var response = await service.Http.SendAsync(request);
+            using var response = await headerClient.SendAsync(request);
             var preview = header.Length <= 24 ? header : header[..24] + "…";
             await Assert.That(response.StatusCode)
                 .IsEqualTo(HttpStatusCode.Unauthorized)
@@ -703,8 +714,57 @@ public sealed class ManagementE2eTests
             Nickname = "probe",
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await service.Store.CreateRefreshTokenAsync(new RefreshToken
+        {
+            Id = "rtk_purge_probe",
+            InstanceId = instanceId,
+            ClientId = "client-purge",
+            UserId = userId,
+            TokenKey = "refresh-purge-key",
+            Status = "active",
+            Scopes = ["openid"],
+            CreatedAt = now,
+            ExpiresAt = now + 3600,
+        });
+        await service.Store.CreateAuthorizationCodeAsync(new AuthorizationCode
+        {
+            Id = "code_purge_probe",
+            InstanceId = instanceId,
+            ClientId = "client-purge",
+            UserId = userId,
+            CodeKey = "authorization-purge-key",
+            RedirectUri = "https://example.test/callback",
+            Scopes = ["openid"],
+            ExpiresAt = now + 600,
+        });
+        await service.Store.CreateMfaFactorAsync(new MfaFactor
+        {
+            Id = "mfa_purge_probe",
+            InstanceId = instanceId,
+            UserId = userId,
+            Type = "recovery",
+            RecoveryCodes = ["hash"],
+            CreatedAt = now,
+        });
+        await service.Store.CreateVerificationTokenAsync(new VerificationToken
+        {
+            Id = "verify_purge_probe",
+            InstanceId = instanceId,
+            UserId = userId,
+            Purpose = "reset_password",
+            TokenKey = "verification-purge-key",
+            ExpiresAt = now + 600,
+            CreatedAt = now,
+        });
 
         await SendAsync(http, Request(HttpMethod.Delete, $"/v1/{slug}/users/{userId}", key), HttpStatusCode.NoContent);
+
+        await Assert.That(await service.Store.ListSessionsByUserAsync(userId)).IsEmpty();
+        await Assert.That(await service.Store.GetRefreshTokenAsync("rtk_purge_probe")).IsNull();
+        await Assert.That(await service.Store.GetAuthorizationCodeAsync("code_purge_probe")).IsNull();
+        await Assert.That(await service.Store.GetMfaFactorAsync("mfa_purge_probe")).IsNull();
+        await Assert.That(await service.Store.GetVerificationTokenAsync("verify_purge_probe")).IsNull();
 
         using var secondDelete = await http.SendAsync(Request(HttpMethod.Delete, $"/v1/{slug}/users/{userId}", key));
         await Assert.That(secondDelete.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

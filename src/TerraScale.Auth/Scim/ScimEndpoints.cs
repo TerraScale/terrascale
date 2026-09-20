@@ -415,6 +415,7 @@ public static class ScimEndpoints
             var (_, writeFailure) = await WriteScimUserAsync(store, client, directory, user with { Deleted = true, UpdatedAt = Now() }, [], ct);
             if (writeFailure is not null)
                 return writeFailure;
+            await store.ReleaseQuotaSeatAsync(user, ct);
             await AuditAsync(store, directory, "directory.user_deprovisioned", new() { ["user_id"] = user.Id }, ct);
             return Results.NoContent();
         });
@@ -903,6 +904,8 @@ public static class ScimEndpoints
         {
             if (updated.Banned || updated.Deleted)
             {
+                if (updated.Deleted)
+                    await store.DeleteUserAuthenticationArtifactsAsync(directory.InstanceId, updated.Id, ct);
                 foreach (var membership in await store.ListMembershipsByUserAsync(updated.Id, ct))
                     await store.DeleteMembershipAsync(membership.Id, ct);
                 foreach (var group in await groups.ListByInstanceAsync(directory.InstanceId, ct))

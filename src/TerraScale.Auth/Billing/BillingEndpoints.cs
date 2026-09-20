@@ -142,6 +142,23 @@ public static class BillingEndpoints
             var state = await BillingState.CurrentAsync(store, context.Instance.Id, ct);
             return Results.Ok(new { allowed = currentUsers < state.Quota, plan = state.Plan, quota = state.Quota });
         });
+
+        // Explicit operator repair for interrupted user creation. The operation is
+        // idempotent and removes only claims that no live user owns.
+        app.MapPost("/v1/{slug}/billing/quota/reconcile", async (
+            string slug, HttpRequest request, InstanceResolver resolver, AuthStore store, CancellationToken ct) =>
+        {
+            if (await resolver.ResolveAsync(request, ct) is not { } context || context.Instance.Slug != slug)
+                return ApiResults.Unauthorized();
+
+            var result = await store.ReconcileQuotaSeatsAsync(context.Instance.Id, ct);
+            return Results.Ok(new
+            {
+                claims_examined = result.ClaimsExamined,
+                claims_removed = result.ClaimsRemoved,
+                claims_retained = result.ClaimsRetained,
+            });
+        });
     }
 
     private static void MapWebhook(WebApplication app)

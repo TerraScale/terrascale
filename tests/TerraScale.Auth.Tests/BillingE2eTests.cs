@@ -7,7 +7,6 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -315,8 +314,8 @@ public sealed class BillingE2eTests
         await Assert.That(request.Form["line_items[0][quantity]"]).IsEqualTo("1");
         await Assert.That(request.Form["client_reference_id"]).IsEqualTo(instanceId);
         await Assert.That(request.Form["metadata[instance_id]"]).IsEqualTo(instanceId);
-        await Assert.That(request.Form["success_url"]).IsEqualTo($"https://auth.test/ui/{slug}/billing/return?status=success");
-        await Assert.That(request.Form["cancel_url"]).IsEqualTo($"https://auth.test/ui/{slug}/billing/return?status=cancel");
+        await Assert.That(request.Form["success_url"]).IsEqualTo($"{app.Origin}ui/{slug}/billing/return?status=success");
+        await Assert.That(request.Form["cancel_url"]).IsEqualTo($"{app.Origin}ui/{slug}/billing/return?status=cancel");
 
         using var badPlan = await app.Http.SendAsync(PostJson($"/v1/{slug}/billing/checkout", apiKey, new { plan = "gold" }));
         await Assert.That(badPlan.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
@@ -365,8 +364,8 @@ public sealed class BillingE2eTests
             $"/v1/{slug}/billing/checkout?success_url=https%3A%2F%2Fevil.example&cancel_url=https%3A%2F%2Fevil.example&plan=enterprise", apiKey, new { plan = "pro" }));
         await Assert.That(influenced.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var request = app.Stripe.LastRequest("/v1/checkout/sessions")!;
-        await Assert.That(request.Form["success_url"]).IsEqualTo($"https://auth.test/ui/{slug}/billing/return?status=success");
-        await Assert.That(request.Form["cancel_url"]).IsEqualTo($"https://auth.test/ui/{slug}/billing/return?status=cancel");
+        await Assert.That(request.Form["success_url"]).IsEqualTo($"{app.Origin}ui/{slug}/billing/return?status=success");
+        await Assert.That(request.Form["cancel_url"]).IsEqualTo($"{app.Origin}ui/{slug}/billing/return?status=cancel");
         await Assert.That(request.Form["line_items[0][price]"]).IsEqualTo("price_pro");
     }
 
@@ -781,20 +780,28 @@ public sealed class BillingE2eTests
     {
         var app = await SharedApp;
         var (_, slug, apiKey) = await NewInstanceAsync(app);
+        string Url(string path) => new Uri(app.Origin, path).ToString();
+        await using var page = await BrowserFixture.NewPageAsync();
 
-        var success = await app.Http.GetStringAsync($"/ui/{slug}/billing/return?status=success");
-        await Assert.That(success).Contains("confirmed");
-        var canceled = await app.Http.GetStringAsync($"/ui/{slug}/billing/return?status=cancel");
-        await Assert.That(canceled).Contains("canceled");
+        // The return pages: Stripe lands the payer here; the heading states the outcome.
+        var success = await page.GotoAsync(Url($"/ui/{slug}/billing/return?status=success"));
+        await Assert.That(success!.Status).IsEqualTo(200);
+        await Assert.That(await page.Locator("h1").TextContentAsync()).Contains("confirmed");
+        var canceled = await page.GotoAsync(Url($"/ui/{slug}/billing/return?status=cancel"));
+        await Assert.That(canceled!.Status).IsEqualTo(200);
+        await Assert.That(await page.Locator("h1").TextContentAsync()).Contains("canceled");
 
-        var dashboard = await app.Http.GetStringAsync($"/ui/{slug}/billing?key={apiKey}");
-        await Assert.That(dashboard).Contains("free");
-        await Assert.That(dashboard).Contains("of 100");
+        // The keyed dashboard renders the free plan and the usage row ("0 of 100").
+        var dashboard = await page.GotoAsync(Url($"/ui/{slug}/billing?key={apiKey}"));
+        await Assert.That(dashboard!.Status).IsEqualTo(200);
+        await Assert.That(await page.Locator("h1").TextContentAsync()).Contains("free");
+        await Assert.That(await page.Locator("body").TextContentAsync()).Contains("of 100");
 
-        using var noKey = await app.Http.GetAsync($"/ui/{slug}/billing");
-        await Assert.That(noKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        using var badKey = await app.Http.GetAsync($"/ui/{slug}/billing?key=sk_not_a_key");
-        await Assert.That(badKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        // Without a key, or with one that resolves to nothing, the page is a 401.
+        var noKey = await page.GotoAsync(Url($"/ui/{slug}/billing"));
+        await Assert.That(noKey!.Status).IsEqualTo(401);
+        var badKey = await page.GotoAsync(Url($"/ui/{slug}/billing?key=sk_not_a_key"));
+        await Assert.That(badKey!.Status).IsEqualTo(401);
     }
 
     // ---- Arranging helpers ----------------------------------------------------------------
@@ -931,10 +938,11 @@ public sealed class BillingE2eTests
         // is restored right after the build so no later AuthOptions.Load call sees them.
         var environment = new Dictionary<string, string?>
         {
-            ["TS_AUTH_PUBLIC_ORIGIN"] = "https://auth.test",
             ["TS_AUTH_TERRASCALE_API_KEY"] = "billing-e2e-key",
             ["TS_AUTH_DATABASE"] = database,
             ["TS_AUTH_MASTER_KEY"] = Convert.ToBase64String(new byte[32]),
+            ["TS_AUTH_AUDIT_SIGNING_KEY"] = Convert.ToBase64String(AuthServiceFixture.AuditSigningKey),
+            ["TS_AUTH_AUDIT_VERIFY_KEYS"] = Convert.ToBase64String(AuthServiceFixture.AuditPreviousSigningKey),
             ["TS_AUTH_OPERATOR_KEY"] = OperatorKey,
             ["TS_AUTH_STRIPE_SECRET_KEY"] = "test_key",
             ["TS_AUTH_STRIPE_WEBHOOK_SECRET"] = WebhookSecret,
@@ -942,40 +950,13 @@ public sealed class BillingE2eTests
             ["TS_AUTH_PRICE_PRO"] = "price_pro",
             ["TS_AUTH_PRICE_ENTERPRISE"] = priceEnterprise,
         };
-        var saved = environment.Keys.ToDictionary(name => name, name => Environment.GetEnvironmentVariable(name));
-        WebApplication application;
-        try
-        {
-            foreach (var (name, value) in environment)
-                Environment.SetEnvironmentVariable(name, value);
+        var (application, http, origin) = await AuthServiceFixture.StartAppAsync(environment, engineClient, _ => { });
 
-            var (builder, options) = TerraScale.Auth.App.CreateBuilder([]);
-            builder.WebHost.UseTestServer();
-            builder.Services.RemoveAll<TerraScaleClient>();
-            builder.Services.AddSingleton(engineClient);
-            application = builder.Build();
-            TerraScale.Auth.App.Configure(application, options);
-        }
-        finally
-        {
-            foreach (var (name, value) in saved)
-                Environment.SetEnvironmentVariable(name, value);
-        }
-        await application.StartAsync();
-        var http = application.GetTestClient();
-
-        for (var attempt = 0; attempt < 100; attempt++)
-        {
-            if ((await http.GetAsync("/healthz")).IsSuccessStatusCode)
-                break;
-            await Task.Delay(100);
-        }
-
-        return new BillingApp(http, engineClient, database, stripe, engine, application, root);
+        return new BillingApp(http, origin, engineClient, database, stripe, engine, application, root);
     }
 
     private sealed record BillingApp(
-        HttpClient Http, TerraScaleClient Sdk, string Database, FakeStripe Stripe,
+        HttpClient Http, Uri Origin, TerraScaleClient Sdk, string Database, FakeStripe Stripe,
         EmbeddedTerraBaseHost Engine, WebApplication Application, string Root) : IAsyncDisposable
     {
         public AuthStore Store => new(Sdk, Database);
@@ -1084,15 +1065,15 @@ public sealed class BillingE2eTests
             var (status, json) = ResponseOverrides.TryGetValue($"{request.HttpMethod} {path}", out var canned)
                 ? canned
                 : (request.HttpMethod, path) switch
-            {
-                ("POST", "/v1/checkout/sessions") => (200, """{"id":"cs_test_1","url":"https://checkout.example/s_1"}"""),
-                ("POST", "/v1/billing_portal/sessions") => (200, """{"url":"https://portal.example/p_1"}"""),
-                ("GET", var p) when p.StartsWith("/v1/subscriptions/", StringComparison.Ordinal)
-                    => (200, SubscriptionBodies.GetValueOrDefault(
-                        p["/v1/subscriptions/".Length..],
-                        """{"id":"sub_1","customer":"cus_1","items":[{"price":{"id":"price_pro"}}],"current_period_end":1893456000}""")),
-                _ => (404, """{"error":{"message":"no such route"}}"""),
-            };
+                {
+                    ("POST", "/v1/checkout/sessions") => (200, """{"id":"cs_test_1","url":"https://checkout.example/s_1"}"""),
+                    ("POST", "/v1/billing_portal/sessions") => (200, """{"url":"https://portal.example/p_1"}"""),
+                    ("GET", var p) when p.StartsWith("/v1/subscriptions/", StringComparison.Ordinal)
+                        => (200, SubscriptionBodies.GetValueOrDefault(
+                            p["/v1/subscriptions/".Length..],
+                            """{"id":"sub_1","customer":"cus_1","items":[{"price":{"id":"price_pro"}}],"current_period_end":1893456000}""")),
+                    _ => (404, """{"error":{"message":"no such route"}}"""),
+                };
             var body = Encoding.UTF8.GetBytes(json);
             context.Response.StatusCode = status;
             context.Response.ContentType = "application/json";

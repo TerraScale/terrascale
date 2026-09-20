@@ -3,65 +3,51 @@ namespace TerraScale.Auth.Tests;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using Microsoft.Playwright;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Ui;
 
 /// <summary>
-/// Hosted-UI XSS and CSRF posture: every attacker-influenced value that a page interpolates
-/// must be escaped at interpolation, the session cookie must carry SameSite=Lax (which is the
-/// CSRF defense for every session-gated POST), state-changing routes must not accept GET, and
-/// the slug charset that all raw slug interpolation rests on must hold at creation.
+/// Hosted-UI XSS and CSRF posture, driven through a real headless Chromium
+/// (Playwright): attacker-influenced values must render as text/attribute
+/// values and never execute, the session cookie must carry SameSite=Lax (the
+/// CSRF defense for every session-gated POST), and state-changing routes must
+/// not accept GET. Slug-charset validation stays on the wire (operator API).
 /// </summary>
 [NotInParallel]
 public sealed class HostedUiSecurityTests
 {
     private static async Task<AuthServiceFixture> ServiceAsync() => await AuthServiceFixture.GetAsync();
 
-    private static async Task<(string InstanceId, string Slug)> InstanceAsync()
+    private static async Task<(AuthServiceFixture Service, string InstanceId, string Slug)> InstanceAsync()
     {
         var service = await ServiceAsync();
         var (id, slug, _) = await service.CreateInstanceAsync("secure-" + Guid.NewGuid().ToString("N")[..8]);
-        return (id, slug);
+        return (service, id, slug);
     }
 
     private static string Email() => $"s{Guid.NewGuid().ToString("N")[..10]}@example.com";
 
-    private static HttpRequestMessage Post(string path, Dictionary<string, string> fields, string? cookie = null)
+    private static string Url(AuthServiceFixture service, string path) => new Uri(service.Origin, path).ToString();
+
+    /// <summary>Fails the test if any script dialog (alert/confirm/prompt) ever fires on the page.</summary>
+    private static void FailOnDialog(IPage page)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(fields) };
-        if (cookie is not null)
-            request.Headers.TryAddWithoutValidation("Cookie", cookie);
-        return request;
+        page.Dialog += (_, dialog) => throw new InvalidOperationException(
+            $"unexpected script dialog ({dialog.Type}): {dialog.Message}");
     }
 
-    private static HttpRequestMessage Get(string path, string? cookie = null)
+    /// <summary>Signs up through the real sign-up page; the browser follows the redirect to /account.</summary>
+    private static async Task SignUpAsync(IPage page, string url, string email, string? name = null)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, path);
-        if (cookie is not null)
-            request.Headers.TryAddWithoutValidation("Cookie", cookie);
-        return request;
-    }
-
-    private static async Task<string> BodyAsync(HttpResponseMessage response) => await response.Content.ReadAsStringAsync();
-
-    private static async Task<(string Cookie, string SessionId)> SignUpAsync(AuthServiceFixture service, string slug, string email, string? userAgent = null)
-    {
-        var request = Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
-        {
-            ["email"] = email,
-            ["password"] = "password123",
-            ["name"] = "Test User",
-        });
-        if (userAgent is not null)
-            request.Headers.TryAddWithoutValidation("User-Agent", userAgent);
-        using var response = await service.Http.SendAsync(request);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        var header = response.Headers.GetValues("Set-Cookie").First();
-        var cookie = header.Split(';')[0];
-        var session = await service.Store.FindSessionByTokenAsync(SecureTokens.Sha256Hex(cookie["tsauth_session=".Length..]))
-            ?? throw new InvalidOperationException("session missing from store");
-        return (cookie, session.Id);
+        await page.GotoAsync(url);
+        await page.FillAsync("#su-email", email);
+        await page.FillAsync("#su-password", "password123");
+        if (name is not null)
+            await page.FillAsync("#su-name", name);
+        await page.ClickAsync("button:has-text('Create account')");
+        await page.WaitForURLAsync("**/account");
     }
 
     // ---- Escaping -------------------------------------------------------------------------
@@ -81,50 +67,59 @@ public sealed class HostedUiSecurityTests
     [Test]
     public async Task SignUpValidationErrorEchoesNameAndEmailEscaped()
     {
-        var service = await ServiceAsync();
-        var (_, slug) = await InstanceAsync();
+        var (service, _, slug) = await InstanceAsync();
         var name = """<script>alert("x")</script>""";
         var email = $"a'b@example.com";
+        await using var page = await BrowserFixture.NewPageAsync();
+        FailOnDialog(page);
 
-        // Short password re-renders the form with the submitted name and email.
-        using var response = await service.Http.SendAsync(Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
-        {
-            ["email"] = email,
-            ["password"] = "short",
-            ["name"] = name,
-        }));
-        var html = await BodyAsync(response);
-        await Assert.That(html.Contains(System.Net.WebUtility.HtmlEncode(name))).IsTrue();
-        await Assert.That(html.Contains(name)).IsFalse();
-        await Assert.That(html).Contains(System.Net.WebUtility.HtmlEncode(email));
+        // Short password re-renders the form server-side with the submitted name and
+        // email. Submitting via the DOM API keeps the browser's minlength validation
+        // out of the way so the server-side re-render (the thing under test) happens.
+        await page.GotoAsync(Url(service, $"/ui/{slug}/sign-up"));
+        await page.FillAsync("#su-email", email);
+        await page.FillAsync("#su-password", "short");
+        await page.FillAsync("#su-name", name);
+        await page.EvalOnSelectorAsync("form", "form => form.submit()");
+        await page.Locator(".error").WaitForAsync();
+
+        // The hostile name round-trips as an attribute VALUE (decoded by the DOM) — it
+        // never became markup — and no dialog fired while the page rendered.
+        await Assert.That(await page.Locator(".error").IsVisibleAsync()).IsTrue();
+        await Assert.That(await page.InputValueAsync("#su-name")).IsEqualTo(name);
+        await Assert.That(await page.InputValueAsync("#su-email")).IsEqualTo(email);
     }
 
     [Test]
     public async Task SignInPageEscapesHostileNextParameter()
     {
-        var service = await ServiceAsync();
-        var (_, slug) = await InstanceAsync();
+        var (service, _, slug) = await InstanceAsync();
         var hostile = "\"><script>alert(1)</script>";
+        await using var page = await BrowserFixture.NewPageAsync();
+        FailOnDialog(page);
 
-        using var response = await service.Http.SendAsync(
-            Get($"/ui/{slug}/sign-in?next={Uri.EscapeDataString(hostile)}"));
-        var html = await BodyAsync(response);
-        await Assert.That(html.Contains(System.Net.WebUtility.HtmlEncode(hostile))).IsTrue();
-        await Assert.That(html.Contains(hostile)).IsFalse();
+        await page.GotoAsync(Url(service, $"/ui/{slug}/sign-in?next={Uri.EscapeDataString(hostile)}"));
+
+        // The payload survives as the hidden input's value, not as markup; no dialog fired.
+        await Assert.That(await page.InputValueAsync("input[name=next]")).IsEqualTo(hostile);
+        await Assert.That(await page.Locator("input[name=next]").GetAttributeAsync("value")).IsEqualTo(hostile);
     }
 
     [Test]
     public async Task SessionsPageEscapesAttackerChosenUserAgent()
     {
-        var service = await ServiceAsync();
-        var (_, slug) = await InstanceAsync();
+        var (service, _, slug) = await InstanceAsync();
         var hostile = """UA <script>alert(1)</script>""";
-        var (cookie, _) = await SignUpAsync(service, slug, Email(), userAgent: hostile);
+        await using var page = await BrowserFixture.NewPageAsync(new BrowserNewPageOptions { UserAgent = hostile });
+        FailOnDialog(page);
 
-        using var response = await service.Http.SendAsync(Get($"/ui/{slug}/account/sessions", cookie));
-        var html = await BodyAsync(response);
-        await Assert.That(html.Contains(System.Net.WebUtility.HtmlEncode(hostile))).IsTrue();
-        await Assert.That(html.Contains(hostile)).IsFalse();
+        // Signing up through the hostile-UA browser records that UA on the session.
+        await SignUpAsync(page, Url(service, $"/ui/{slug}/sign-up"), Email());
+        await page.GotoAsync(Url(service, $"/ui/{slug}/account/sessions"));
+
+        // The hostile UA renders as the device row's TEXT (decoded by the DOM); no dialog fired.
+        var devices = await page.Locator(".row").AllTextContentsAsync();
+        await Assert.That(devices.Any(d => d.Contains(hostile, StringComparison.Ordinal))).IsTrue();
     }
 
     [Test]
@@ -132,6 +127,7 @@ public sealed class HostedUiSecurityTests
     {
         // Every page interpolates {slug} raw (URLs, and the passkey/passcode pages splice it into
         // inline <script>), so the creation-time charset check is the single load-bearing guard.
+        // This is the operator API, not a hosted page — it stays on the wire.
         var service = await ServiceAsync();
         foreach (var slug in new[] { "\"><script>alert(1)</script>", "a b", "a/b", "a\\b", "a'b" })
         {
@@ -150,42 +146,57 @@ public sealed class HostedUiSecurityTests
     [Test]
     public async Task SessionCookieIsLaxHttpOnlyAndSecure()
     {
-        var service = await ServiceAsync();
-        var (_, slug) = await InstanceAsync();
-        using var response = await service.Http.SendAsync(Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
-        {
-            ["email"] = Email(),
-            ["password"] = "password123",
-        }));
-        var header = response.Headers.GetValues("Set-Cookie").First().ToLowerInvariant();
-        await Assert.That(header.StartsWith("tsauth_session=")).IsTrue();
+        var (service, _, slug) = await InstanceAsync();
+        await using var page = await BrowserFixture.NewPageAsync();
+
+        await SignUpAsync(page, Url(service, $"/ui/{slug}/sign-up"), Email());
+
         // Lax is the CSRF defense documented on SessionCookies; losing it would expose every
         // session-gated POST route to cross-site forms.
-        await Assert.That(header).Contains("samesite=lax");
-        await Assert.That(header).Contains("httponly");
-        await Assert.That(header).Contains("secure");
+        var cookie = (await page.Context.CookiesAsync(service.Origin.ToString()))
+            .Single(c => c.Name == "tsauth_session");
+        await Assert.That(cookie.SameSite).IsEqualTo(SameSiteAttribute.Lax);
+        await Assert.That(cookie.HttpOnly).IsTrue();
+        await Assert.That(cookie.Secure).IsTrue();
     }
 
     [Test]
     public async Task CrossSiteFormPostWithoutCookieCannotRevokeSessions()
     {
-        // SameSite=Lax means a cross-site form POST arrives without the session cookie; those
-        // requests must not be able to revoke (or sign out) a real session.
-        var service = await ServiceAsync();
-        var (_, slug) = await InstanceAsync();
-        var (cookie, sessionId) = await SignUpAsync(service, slug, Email());
+        var (service, _, slug) = await InstanceAsync();
+        await using var page = await BrowserFixture.NewPageAsync();
+        await SignUpAsync(page, Url(service, $"/ui/{slug}/sign-up"), Email());
 
-        using var revokeAll = await service.Http.SendAsync(Post($"/ui/{slug}/account/sessions/revoke-all", []));
-        await Assert.That(revokeAll.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        using var signOut = await service.Http.SendAsync(Post($"/ui/{slug}/sign-out", []));
-        await Assert.That(signOut.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        // The session the browser just created, resolved through the store from the
+        // (HttpOnly) cookie value exactly like the service itself does.
+        var cookie = (await page.Context.CookiesAsync(service.Origin.ToString()))
+            .Single(c => c.Name == "tsauth_session").Value;
+        var session = await service.Store.FindSessionByTokenAsync(SecureTokens.Sha256Hex(cookie))
+            ?? throw new InvalidOperationException("session missing from store");
 
-        var session = await service.Store.GetSessionAsync(sessionId);
-        await Assert.That(session?.Status).IsEqualTo("active");
+        // A real cross-site page whose only job is a top-level form POST at the
+        // session-gated routes: SameSite=Lax must keep the cookie off that request.
+        foreach (var (label, path) in new[]
+        {
+            ("revoke-all", $"/ui/{slug}/account/sessions/revoke-all"),
+            ("sign-out", $"/ui/{slug}/sign-out"),
+        })
+        {
+            await page.RouteAsync("http://cross.example/**", route => route.FulfillAsync(new RouteFulfillOptions
+            {
+                ContentType = "text/html",
+                Body = $$"""<form id="f" method="post" action="{{Url(service, path)}}"></form><script>f.submit()</script>""",
+            }));
+            await page.GotoAsync("http://cross.example/attack-" + label);
+            await page.WaitForURLAsync(url => url.StartsWith(service.Origin.ToString(), StringComparison.Ordinal));
+
+            var after = await service.Store.GetSessionAsync(session.Id);
+            await Assert.That(after?.Status).IsEqualTo("active");
+        }
 
         // And the real browser (cookie attached) still has its session.
-        using var account = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
-        await Assert.That(account.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var account = await page.GotoAsync(Url(service, $"/ui/{slug}/account"));
+        await Assert.That(account!.Status).IsEqualTo((int)HttpStatusCode.OK);
     }
 
     [Test]
@@ -194,8 +205,8 @@ public sealed class HostedUiSecurityTests
         // One representative mutating route per module: none may accept GET (a GET that mutates
         // on the session cookie would be reachable from an <img>/link despite SameSite=Lax,
         // which does send the cookie on top-level GET navigations).
-        var service = await ServiceAsync();
-        var (_, slug) = await InstanceAsync();
+        var (service, _, slug) = await InstanceAsync();
+        await using var page = await BrowserFixture.NewPageAsync();
         foreach (var path in new[]
         {
             $"/ui/{slug}/sign-out",                                // Users
@@ -208,8 +219,8 @@ public sealed class HostedUiSecurityTests
             $"/ui/{slug}/admin/connections",                       // Admin
         })
         {
-            using var response = await service.Http.SendAsync(Get(path));
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.MethodNotAllowed);
+            var response = await page.GotoAsync(Url(service, path));
+            await Assert.That(response!.Status).IsEqualTo(405);
         }
     }
 }

@@ -13,6 +13,9 @@ using TerraScale.DotNet;
 /// <summary>Hosted user-facing UI: sign-up, sign-in, the account console, and the email-token flows.</summary>
 public static class UserEndpoints
 {
+    private static readonly SemaphoreSlim[] TokenConsumeGates =
+        Enumerable.Range(0, 64).Select(static _ => new SemaphoreSlim(1, 1)).ToArray();
+
     private static readonly TimeSpan VerifyEmailTtl = TimeSpan.FromHours(24);
     private static readonly TimeSpan MagicLinkTtl = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan ResetPasswordTtl = TimeSpan.FromMinutes(30);
@@ -585,12 +588,24 @@ public static class UserEndpoints
     }
 
     /// <summary>Single-use consume: validates instance, purpose, expiry, and consumed flag, then marks consumed atomically (compare-and-set), so a double request can never consume twice.</summary>
-    private static Task<VerificationToken?> ConsumeTokenAsync(AuthStore store, string instanceId, string token, string purpose, CancellationToken ct) =>
-        store.ConsumeVerificationTokenAsync(SecureTokens.Sha256Hex(token), record =>
-            record.InstanceId == instanceId
-            && record.Purpose == purpose
-            && !record.Consumed
-            && record.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds(), ct);
+    private static async Task<VerificationToken?> ConsumeTokenAsync(AuthStore store, string instanceId, string token, string purpose, CancellationToken ct)
+    {
+        var tokenKey = SecureTokens.Sha256Hex(token);
+        var gate = TokenConsumeGates[unchecked((uint)tokenKey.GetHashCode()) % (uint)TokenConsumeGates.Length];
+        await gate.WaitAsync(ct);
+        try
+        {
+            return await store.ConsumeVerificationTokenAsync(tokenKey, record =>
+                record.InstanceId == instanceId
+                && record.Purpose == purpose
+                && !record.Consumed
+                && record.ExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds(), ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
 
     private static async Task<bool> TokenValidAsync(AuthStore store, string instanceId, string token, string purpose, CancellationToken ct) =>
         await store.FindVerificationTokenAsync(SecureTokens.Sha256Hex(token), ct) is { } record

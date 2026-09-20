@@ -6,6 +6,7 @@ namespace TerraScale.Auth.Configuration;
 /// </summary>
 public sealed record AuthOptions
 {
+    private const int MaximumAuditVerificationKeys = 5;
     /// <summary>HTTP listen URL (ASP.NET format, e.g. <c>http://+:8080</c>). Env <c>TS_AUTH_LISTEN</c>.</summary>
     public required string Listen { get; init; }
 
@@ -30,8 +31,17 @@ public sealed record AuthOptions
     /// <summary>Master encryption key (base64, 32 bytes) protecting recoverable secrets (TOTP seeds) at rest. Env <c>TS_AUTH_MASTER_KEY</c>.</summary>
     public required byte[] MasterKey { get; init; }
 
+    /// <summary>Dedicated HMAC key (base64, 32 bytes) sealing audit events. Env <c>TS_AUTH_AUDIT_SIGNING_KEY</c>.</summary>
+    public byte[]? AuditSigningKey { get; init; }
+
+    /// <summary>Previous HMAC keys retained during rotation. Env <c>TS_AUTH_AUDIT_VERIFY_KEYS</c>, semicolon-separated base64 keys.</summary>
+    public IReadOnlyList<byte[]> AuditVerificationKeys { get; init; } = [];
+
     /// <summary>Operator key that can create instances. Env <c>TS_AUTH_OPERATOR_KEY</c>.</summary>
     public required string OperatorKey { get; init; }
+
+    /// <summary>Dedicated private metrics scrape key. Env <c>TS_AUTH_METRICS_KEY</c>. Metrics are disabled when it is absent.</summary>
+    public string? MetricsKey { get; init; }
 
     /// <summary>Management API requests allowed per API key per 5-minute window. Env <c>TS_AUTH_RATE_LIMIT</c>, default 1000.</summary>
     public int RateLimitPerWindow { get; init; } = 1000;
@@ -51,6 +61,21 @@ public sealed record AuthOptions
     /// <summary>Stripe price id for the enterprise plan. Env <c>TS_AUTH_PRICE_ENTERPRISE</c>.</summary>
     public string? PriceEnterprise { get; init; }
 
+    /// <summary>SMTP host (OCI Email Delivery). When any SMTP setting is present, all four are required and email is sent over SMTP instead of logged. Env <c>TS_AUTH_SMTP_HOST</c>.</summary>
+    public string? SmtpHost { get; init; }
+
+    /// <summary>SMTP port. Env <c>TS_AUTH_SMTP_PORT</c>, default 587 (STARTTLS).</summary>
+    public int SmtpPort { get; init; } = 587;
+
+    /// <summary>SMTP username — the OCI SMTP credential OCID, full string including the <c>@oci</c> suffix. Env <c>TS_AUTH_SMTP_USERNAME</c>.</summary>
+    public string? SmtpUsername { get; init; }
+
+    /// <summary>SMTP credential password. Env <c>TS_AUTH_SMTP_PASSWORD</c>.</summary>
+    public string? SmtpPassword { get; init; }
+
+    /// <summary>Envelope-from address; must be an approved sender (OCI: <c>noreply@terrascale.tech</c>). Env <c>TS_AUTH_SMTP_FROM_ADDRESS</c>.</summary>
+    public string? SmtpFromAddress { get; init; }
+
     /// <summary>Load options from environment variables, then <c>--key=value</c> args.</summary>
     public static AuthOptions Load(string[] args)
     {
@@ -64,8 +89,9 @@ public sealed record AuthOptions
         [
             "listen", "public-origin", "terrascale-api-url", "terrascale-api-key",
             "terrascale-project-id", "terrascale-tenant-id", "database", "master-key",
-            "operator-key", "rate-limit", "stripe-secret-key", "stripe-webhook-secret",
+            "audit-signing-key", "audit-verify-keys", "operator-key", "metrics-key", "rate-limit", "stripe-secret-key", "stripe-webhook-secret",
             "stripe-api-url", "price-pro", "price-enterprise",
+            "smtp-host", "smtp-port", "smtp-username", "smtp-password", "smtp-from-address",
         ];
         foreach (var arg in args)
         {
@@ -123,10 +149,75 @@ public sealed record AuthOptions
         if (masterKeyBytes.Length != 32)
             throw new InvalidOperationException("TS_AUTH_MASTER_KEY must decode to 32 bytes");
 
+        byte[]? auditSigningKey = null;
+        var auditSigningKeyRaw = Optional("audit-signing-key");
+        if (auditSigningKeyRaw is not null)
+        {
+            try
+            {
+                auditSigningKey = Convert.FromBase64String(auditSigningKeyRaw);
+            }
+            catch (FormatException exception)
+            {
+                throw new InvalidOperationException("TS_AUTH_AUDIT_SIGNING_KEY must be base64", exception);
+            }
+            if (auditSigningKey.Length != 32)
+                throw new InvalidOperationException("TS_AUTH_AUDIT_SIGNING_KEY must decode to 32 bytes");
+        }
+
+        var verificationKeys = new List<byte[]>();
+        if (Optional("audit-verify-keys") is { } verificationRaw)
+        {
+            var encodedKeys = verificationRaw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (encodedKeys.Length > MaximumAuditVerificationKeys)
+                throw new InvalidOperationException($"TS_AUTH_AUDIT_VERIFY_KEYS may contain at most {MaximumAuditVerificationKeys} previous keys");
+            foreach (var encoded in encodedKeys)
+            {
+                byte[] decoded;
+                try
+                {
+                    decoded = Convert.FromBase64String(encoded);
+                }
+                catch (FormatException exception)
+                {
+                    throw new InvalidOperationException("TS_AUTH_AUDIT_VERIFY_KEYS must contain semicolon-separated base64 keys", exception);
+                }
+                if (decoded.Length != 32)
+                    throw new InvalidOperationException("Each TS_AUTH_AUDIT_VERIFY_KEYS entry must decode to 32 bytes");
+                verificationKeys.Add(decoded);
+            }
+        }
+
         int rateLimit = 1000;
         if (values.TryGetValue("rate-limit", out var rateLimitRaw) && !string.IsNullOrWhiteSpace(rateLimitRaw)
             && (!int.TryParse(rateLimitRaw, out rateLimit) || rateLimit <= 0))
             throw new InvalidOperationException("TS_AUTH_RATE_LIMIT must be a positive integer");
+
+        // SMTP is all-or-nothing: a half-configured sender would fall back to logging
+        // (or fail at the first email) without the operator noticing — name what's missing.
+        var smtpParts = new (string Name, string? Value)[]
+        {
+            ("smtp-host", Optional("smtp-host")),
+            ("smtp-username", Optional("smtp-username")),
+            ("smtp-password", Optional("smtp-password")),
+            ("smtp-from-address", Optional("smtp-from-address")),
+        };
+        string? smtpHost = null, smtpUsername = null, smtpPassword = null, smtpFromAddress = null;
+        var smtpPort = 587;
+        if (smtpParts.Any(p => p.Value is not null))
+        {
+            var missing = smtpParts.Where(p => p.Value is null)
+                .Select(p => "TS_AUTH_" + p.Name.Replace('-', '_').ToUpperInvariant()).ToArray();
+            if (missing.Length > 0)
+                throw new InvalidOperationException($"TS_AUTH_SMTP_* is partially configured; missing {string.Join(", ", missing)}");
+            smtpHost = smtpParts[0].Value!;
+            smtpUsername = smtpParts[1].Value!;
+            smtpPassword = smtpParts[2].Value!;
+            smtpFromAddress = smtpParts[3].Value!;
+            if (values.TryGetValue("smtp-port", out var smtpPortRaw) && !string.IsNullOrWhiteSpace(smtpPortRaw)
+                && (!int.TryParse(smtpPortRaw, out smtpPort) || smtpPort is < 1 or > 65535))
+                throw new InvalidOperationException("TS_AUTH_SMTP_PORT must be an integer between 1 and 65535");
+        }
 
         return new AuthOptions
         {
@@ -138,13 +229,21 @@ public sealed record AuthOptions
             TerrascaleTenantId = Optional("terrascale-tenant-id"),
             Database = Required("database"),
             MasterKey = masterKeyBytes,
+            AuditSigningKey = auditSigningKey,
+            AuditVerificationKeys = verificationKeys,
             OperatorKey = Required("operator-key"),
+            MetricsKey = Optional("metrics-key"),
             RateLimitPerWindow = rateLimit,
             StripeSecretKey = Optional("stripe-secret-key"),
             StripeWebhookSecret = Optional("stripe-webhook-secret"),
             StripeApiUrl = HttpUrl("STRIPE_API_URL", Optional("stripe-api-url") ?? "https://api.stripe.com"),
             PricePro = Optional("price-pro"),
             PriceEnterprise = Optional("price-enterprise"),
+            SmtpHost = smtpHost,
+            SmtpPort = smtpPort,
+            SmtpUsername = smtpUsername,
+            SmtpPassword = smtpPassword,
+            SmtpFromAddress = smtpFromAddress,
         };
     }
 

@@ -22,6 +22,59 @@ public sealed class AuthStorePaginationTests
     }
 
     [Test]
+    public async Task UserAuthenticationCleanupWalksPagesAndPreservesOtherScopes()
+    {
+        var (store, instanceId) = await ArrangeAsync();
+        var userId = "usr_" + Guid.NewGuid().ToString("N");
+        var prefix = Guid.NewGuid().ToString("N");
+        var template = new VerificationToken
+        {
+            Id = "vt_" + prefix,
+            InstanceId = instanceId,
+            UserId = userId,
+            Purpose = "reset_password",
+            TokenKey = prefix,
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+        };
+        for (var i = 0; i < BeyondPage; i++)
+            await store.CreateVerificationTokenAsync(template with { Id = $"vt_{prefix}_{i}" });
+        var otherInstance = template with { Id = $"vt_{prefix}_other_instance", InstanceId = instanceId + "_other" };
+        var otherUser = template with { Id = $"vt_{prefix}_other_user", UserId = userId + "_other" };
+        await store.CreateVerificationTokenAsync(otherInstance);
+        await store.CreateVerificationTokenAsync(otherUser);
+
+        var result = await store.DeleteUserAuthenticationArtifactsAsync(instanceId, userId);
+        await Assert.That(result.VerificationTokens).IsEqualTo(BeyondPage);
+        for (var i = 0; i < BeyondPage; i++)
+            await Assert.That(await store.GetVerificationTokenAsync($"vt_{prefix}_{i}")).IsNull();
+        await Assert.That(await store.GetVerificationTokenAsync(otherInstance.Id)).IsNotNull();
+        await Assert.That(await store.GetVerificationTokenAsync(otherUser.Id)).IsNotNull();
+        await Assert.That((await store.DeleteUserAuthenticationArtifactsAsync(instanceId, userId)).VerificationTokens).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task VerificationFailureCounterIsDurableAndInstanceScoped()
+    {
+        var (store, instanceId) = await ArrangeAsync();
+        var userId = "usr_" + Guid.NewGuid().ToString("N");
+        var tokenId = "vt_counter_" + Guid.NewGuid().ToString("N");
+        await store.CreateVerificationTokenAsync(new VerificationToken
+        {
+            Id = tokenId,
+            InstanceId = instanceId,
+            UserId = userId,
+            Purpose = "passcode",
+            TokenKey = "counter-" + tokenId,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds(),
+        });
+
+        await Assert.That(await store.RecordVerificationFailureAsync(instanceId, userId, "passcode")).IsEqualTo(1);
+        await Assert.That(await store.RecordVerificationFailureAsync(instanceId, userId, "passcode")).IsEqualTo(2);
+        await Assert.That((await store.GetVerificationTokenAsync(tokenId))!.FailedAttempts).IsEqualTo(2);
+        await Assert.That(await store.RecordVerificationFailureAsync(instanceId + "-other", userId, "passcode")).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task OrgMembershipListingReachesBeyondTheFirstPage()
     {
         var (store, instanceId) = await ArrangeAsync();
@@ -134,6 +187,34 @@ public sealed class AuthStorePaginationTests
         // Newest-first: the three highest CreatedAt, descending.
         var events = await store.ListAuditEventsAsync(instanceId, 3, CancellationToken.None);
         await Assert.That(events.Select(e => e.Id).ToArray()).IsEquivalentTo(newest.ToArray());
+    }
+
+    [Test]
+    public async Task AuditEventsAreSealedWithAnIntegrityDigest()
+    {
+        var (store, instanceId) = await ArrangeAsync();
+        var audit = await store.CreateAuditEventAsync(new AuditEvent
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            InstanceId = instanceId,
+            Type = "integrity.probe",
+            ActorId = "operator",
+            Data = new Dictionary<string, object> { ["z"] = "last", ["a"] = 1 },
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+
+        await Assert.That(audit.HasValidIntegrity()).IsTrue();
+        await Assert.That(audit.IntegrityVersion).IsEqualTo(1);
+        await Assert.That(audit.IntegrityHash).IsNotNull();
+        await Assert.That(audit.IntegritySignature).IsNotNull();
+        await Assert.That(audit.IntegrityKeyFingerprint)
+            .IsEqualTo(AuditEvent.ComputeKeyFingerprint(AuthServiceFixture.AuditSigningKey));
+        await Assert.That(audit.HasAuthenticIntegrity(AuthServiceFixture.AuditSigningKey)).IsTrue();
+        await Assert.That(audit.HasAuthenticIntegrity(new[] { new byte[32], AuthServiceFixture.AuditSigningKey })).IsTrue();
+        await Assert.That(audit.HasAuthenticIntegrity(new byte[32])).IsFalse();
+        await Assert.That(store.HasAuthenticAuditIntegrity(audit)).IsTrue();
+        await Assert.That((await store.ListAuditEventsAsync(instanceId, 10)).Single(e => e.Id == audit.Id).HasValidIntegrity()).IsTrue();
+        await Assert.That((audit with { Data = new Dictionary<string, object> { ["a"] = 2, ["z"] = "last" } }).HasValidIntegrity()).IsFalse();
     }
 
     [Test]

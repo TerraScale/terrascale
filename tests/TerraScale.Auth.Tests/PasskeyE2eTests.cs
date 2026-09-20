@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Playwright;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Users;
@@ -14,30 +15,40 @@ using TerraScale.Auth.Users;
 [NotInParallel]
 public sealed class PasskeyE2eTests
 {
-    private const string RpId = "auth.test";
-    private const string Origin = "https://auth.test";
-
     [Test]
     public async Task RegistersAndSignsInWithADiscoverableCredential()
     {
         var service = await AuthServiceFixture.GetAsync();
         var (instanceId, slug, _, user, cookie) = await ArrangeAsync();
-        using var authenticator = new FakeAuthenticator();
+        var token = cookie!["tsauth_session=".Length..];
 
+        // The options endpoints are the pages' backing JSON API — driven on the wire.
         var unauthenticated = await service.Http.PostAsync($"/ui/{slug}/passkeys/register/options", content: null);
         await Assert.That(unauthenticated.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
 
         var options = await OptionsAsync(service, slug, cookie);
-        await Assert.That(options.GetProperty("publicKey").GetProperty("rp").GetProperty("id").GetString()).IsEqualTo(RpId);
+        await Assert.That(options.GetProperty("publicKey").GetProperty("rp").GetProperty("id").GetString()).IsEqualTo(service.Origin.Host);
         await Assert.That(options.GetProperty("publicKey").GetProperty("rp").GetProperty("name").GetString()).IsEqualTo("ts-auth");
         await Assert.That(options.GetProperty("publicKey").GetProperty("excludeCredentials").GetArrayLength()).IsEqualTo(0);
         var userHandle = options.GetProperty("publicKey").GetProperty("user").GetProperty("id").GetString()!;
         await Assert.That(Encoding.UTF8.GetString(Encodings.Base64UrlDecode(userHandle))).IsEqualTo(user.Id);
 
-        var registration = await RegisterAsync(service, slug, cookie, authenticator);
+        // Registration through the real manage page: the CDP virtual authenticator
+        // (platform, resident key) satisfies navigator.credentials.create, the page
+        // posts the ceremony and reloads with the new passkey listed.
+        await using var page = await BrowserFixture.NewPageAsync();
+        await page.Context.AddCookiesAsync([SessionCookie(service, token)]);
+        await VirtualAuthenticatorAsync(page);
+
+        await page.GotoAsync(Url(service, $"/ui/{slug}/passkeys/manage"));
+        await page.ClickAsync("#button");
+        await page.Locator(".row", new PageLocatorOptions { HasTextString = "This device" }).WaitForAsync();
+
+        var registration = (await service.Store.ListPasskeysAsync(user.Id)).Single();
         await Assert.That(registration.Algorithm).IsEqualTo("ES256");
-        await Assert.That(registration.Nickname).IsEqualTo("Test key");
-        await Assert.That(registration.Transports).IsEqualTo("internal");
+        // The page names platform-attached keys itself and claims no transports.
+        await Assert.That(registration.Nickname).IsEqualTo("This device");
+        await Assert.That(registration.Transports).IsNull();
         await Assert.That(registration.UserId).IsEqualTo(user.Id);
         await Assert.That(registration.PublicKeyCborBase64).IsNotNull();
 
@@ -45,35 +56,29 @@ public sealed class PasskeyE2eTests
         var second = await OptionsAsync(service, slug, cookie);
         var excluded = second.GetProperty("publicKey").GetProperty("excludeCredentials");
         await Assert.That(excluded.GetArrayLength()).IsEqualTo(1);
-        await Assert.That(excluded[0].GetProperty("id").GetString()).IsEqualTo(authenticator.CredentialKey);
+        await Assert.That(excluded[0].GetProperty("id").GetString()).IsEqualTo(registration.CredentialKey);
 
         var before = await service.Store.ListSessionsByUserAsync(user.Id);
         var assertionOptions = await service.Http.PostAsync($"/ui/{slug}/passkeys/assert/options", content: null);
         await Assert.That(assertionOptions.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var assertionBody = await assertionOptions.Content.ReadFromJsonAsync<JsonElement>();
-        await Assert.That(assertionBody.GetProperty("publicKey").GetProperty("rpId").GetString()).IsEqualTo(RpId);
-        var challenge = assertionBody.GetProperty("publicKey").GetProperty("challenge").GetString()!;
+        await Assert.That(assertionBody.GetProperty("publicKey").GetProperty("rpId").GetString()).IsEqualTo(service.Origin.Host);
 
-        var (authData, signature) = authenticator.Assertion(challenge);
-        var verification = await service.Http.PostAsJsonAsync($"/ui/{slug}/passkeys/assert/verify", new
-        {
-            id = authenticator.CredentialKey,
-            response = new
-            {
-                clientDataJSON = Encodings.Base64UrlEncode(Encoding.UTF8.GetBytes(authenticator.ClientDataJson("webauthn.get", challenge))),
-                authenticatorData = Encodings.Base64UrlEncode(authData),
-                signature = Encodings.Base64UrlEncode(signature),
-            },
-        });
-        await Assert.That(verification.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var verified = await verification.Content.ReadFromJsonAsync<JsonElement>();
-        await Assert.That(verified.GetProperty("redirect").GetString()).IsEqualTo($"/ui/{slug}/account");
+        // Discoverable sign-in on the hosted page, signed out (session cookie cleared):
+        // the same virtual authenticator answers, the verify response's redirect is
+        // followed by the browser to /account with a fresh session cookie.
+        await page.Context.ClearCookiesAsync();
+        await page.GotoAsync(Url(service, $"/ui/{slug}/passkeys/assert"));
+        await page.ClickAsync("#button");
+        await page.WaitForURLAsync("**/account");
+        await Assert.That(page.Url).Contains("/account");
 
         var after = await service.Store.ListSessionsByUserAsync(user.Id);
         await Assert.That(after.Count).IsEqualTo(before.Count + 1);
-        var setCookie = string.Join("; ", verification.Headers.GetValues("Set-Cookie"));
-        await Assert.That(setCookie.Contains("tsauth_session=")).IsTrue();
-        var used = await service.Store.FindPasskeyByCredentialIdAsync(authenticator.CredentialKey);
+        var sessionCookie = (await page.Context.CookiesAsync(service.Origin.ToString()))
+            .Single(c => c.Name == "tsauth_session");
+        await Assert.That(sessionCookie.Secure).IsTrue();
+        var used = await service.Store.FindPasskeyByCredentialIdAsync(registration.CredentialKey);
         await Assert.That(used!.LastUsedAt).IsNotNull();
         await Assert.That(used.SignCount).IsEqualTo(registration.SignCount + 1);
 
@@ -89,7 +94,7 @@ public sealed class PasskeyE2eTests
     {
         var service = await AuthServiceFixture.GetAsync();
         var (_, slug, _, _, cookie) = await ArrangeAsync();
-        using var authenticator = new FakeAuthenticator();
+        using var authenticator = NewAuthenticator(service);
 
         await RegisterAsync(service, slug, cookie, authenticator);
 
@@ -113,8 +118,8 @@ public sealed class PasskeyE2eTests
     {
         var service = await AuthServiceFixture.GetAsync();
         var (_, slug, _, user, cookie) = await ArrangeAsync();
-        using var authenticator = new FakeAuthenticator();
-        using var replaying = new FakeAuthenticator();
+        using var authenticator = NewAuthenticator(service);
+        using var replaying = NewAuthenticator(service);
 
         var challenge = (await OptionsAsync(service, slug, cookie))
             .GetProperty("publicKey").GetProperty("challenge").GetString()!;
@@ -148,7 +153,7 @@ public sealed class PasskeyE2eTests
     {
         var service = await AuthServiceFixture.GetAsync();
         var (_, slug, _, _, cookie) = await ArrangeAsync();
-        using var authenticator = new FakeAuthenticator();
+        using var authenticator = NewAuthenticator(service);
 
         var options = await OptionsAsync(service, slug, cookie);
         var challenge = options.GetProperty("publicKey").GetProperty("challenge").GetString()!;
@@ -171,7 +176,7 @@ public sealed class PasskeyE2eTests
     {
         var service = await AuthServiceFixture.GetAsync();
         var (_, slug, _, _, cookie) = await ArrangeAsync();
-        using var authenticator = new FakeAuthenticator();
+        using var authenticator = NewAuthenticator(service);
         await RegisterAsync(service, slug, cookie, authenticator);
 
         var challenge = await AssertOptionsChallengeAsync(service, slug);
@@ -197,7 +202,7 @@ public sealed class PasskeyE2eTests
     {
         var service = await AuthServiceFixture.GetAsync();
         var (_, slug, _, _, _) = await ArrangeAsync();
-        using var authenticator = new FakeAuthenticator();
+        using var authenticator = NewAuthenticator(service);
 
         var challenge = await AssertOptionsChallengeAsync(service, slug);
         var (authData, signature) = authenticator.Assertion(challenge);
@@ -219,7 +224,7 @@ public sealed class PasskeyE2eTests
     {
         var service = await AuthServiceFixture.GetAsync();
         var (instanceId, slug, apiKey, user, cookie) = await ArrangeAsync();
-        using var authenticator = new FakeAuthenticator();
+        using var authenticator = NewAuthenticator(service);
         var registered = await RegisterAsync(service, slug, cookie, authenticator);
 
         var unauthorized = await service.Http.GetAsync($"/v1/{slug}/users/{user.Id}/passkeys");
@@ -259,25 +264,26 @@ public sealed class PasskeyE2eTests
     {
         var service = await AuthServiceFixture.GetAsync();
         var (_, slug, _, user, cookie) = await ArrangeAsync();
-        using var authenticator = new FakeAuthenticator();
+        using var authenticator = NewAuthenticator(service);
         var registered = await RegisterAsync(service, slug, cookie, authenticator);
 
-        var anonymous = await service.Http.GetAsync($"/ui/{slug}/passkeys/manage");
-        await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await using var page = await BrowserFixture.NewPageAsync();
+        var anonymous = await page.GotoAsync(Url(service, $"/ui/{slug}/passkeys/manage"));
+        await Assert.That(anonymous!.Status).IsEqualTo((int)HttpStatusCode.Unauthorized);
 
-        using var page = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/passkeys/manage");
-        page.Headers.Add("Cookie", cookie);
-        var pageResponse = await service.Http.SendAsync(page);
-        await Assert.That(pageResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var html = await pageResponse.Content.ReadAsStringAsync();
-        await Assert.That(html.Contains("Test key")).IsTrue();
-        await Assert.That(html.Contains($"/ui/{slug}/passkeys/manage/{registered.Id}/delete")).IsTrue();
+        await page.Context.AddCookiesAsync([SessionCookie(service, cookie!["tsauth_session=".Length..])]);
+        await page.GotoAsync(Url(service, $"/ui/{slug}/passkeys/manage"));
 
-        using var delete = new HttpRequestMessage(HttpMethod.Post, $"/ui/{slug}/passkeys/manage/{registered.Id}/delete");
-        delete.Headers.Add("Cookie", cookie);
-        var deleteResponse = await service.Http.SendAsync(delete);
-        await Assert.That(deleteResponse.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
-        await Assert.That(deleteResponse.Headers.Location?.ToString()).IsEqualTo($"/ui/{slug}/passkeys/manage");
+        // The registered passkey renders as a row whose form targets its own delete route.
+        await Assert.That(await page.Locator(".row").TextContentAsync()).Contains("Test key");
+        await Assert.That(await page.Locator("form.inline").GetAttributeAsync("action"))
+            .IsEqualTo($"/ui/{slug}/passkeys/manage/{registered.Id}/delete");
+
+        // Remove submits the form; the browser follows the redirect back to the manage page.
+        await page.ClickAsync("button:has-text('Remove')");
+        await page.WaitForURLAsync("**/passkeys/manage");
+        await Assert.That(page.Url).Contains("/passkeys/manage");
+        await page.GetByText("No passkeys yet").WaitForAsync();
         await Assert.That(await service.Store.FindPasskeyByCredentialIdAsync(authenticator.CredentialKey)).IsNull();
         await Assert.That((await service.Store.ListPasskeysAsync(user.Id)).Count).IsEqualTo(0);
     }
@@ -293,6 +299,44 @@ public sealed class PasskeyE2eTests
         var user = await sessions.CreateUserAsync(instanceId, $"pk-{Guid.NewGuid().ToString("N")[..8]}@example.com", null, null, "Pat Doe");
         var (_, token) = await sessions.CreateSessionAsync(instanceId, user.Id, userAgent: null, ipAddress: null);
         return (instanceId, slug, apiKey, user, $"tsauth_session={token}");
+    }
+
+    /// <summary>A software authenticator pinned to the runtime fixture origin (wire-driven ceremonies).</summary>
+    internal static FakeAuthenticator NewAuthenticator(AuthServiceFixture service) =>
+        new(service.Origin.Host, service.Origin.ToString().TrimEnd('/'));
+
+    private static string Url(AuthServiceFixture service, string path) => new Uri(service.Origin, path).ToString();
+
+    /// <summary>The arranged session as a host-only browser cookie, exactly as the service sets it.</summary>
+    private static Microsoft.Playwright.Cookie SessionCookie(AuthServiceFixture service, string token) => new()
+    {
+        Name = "tsauth_session",
+        Value = token,
+        Domain = service.Origin.Host,
+        Path = "/",
+        Secure = true,
+        HttpOnly = true,
+        SameSite = SameSiteAttribute.Lax,
+    };
+
+    /// <summary>Attaches a CDP virtual authenticator (platform, resident key, UV) to the page.</summary>
+    private static async Task<ICDPSession> VirtualAuthenticatorAsync(IPage page)
+    {
+        var cdp = await page.Context.NewCDPSessionAsync(page);
+        await cdp.SendAsync("WebAuthn.enable");
+        await cdp.SendAsync("WebAuthn.addVirtualAuthenticator", new Dictionary<string, object>
+        {
+            ["options"] = new Dictionary<string, object>
+            {
+                ["protocol"] = "ctap2",
+                ["transport"] = "internal",
+                ["hasResidentKey"] = true,
+                ["hasUserVerification"] = true,
+                ["isUserVerified"] = true,
+                ["automaticPresenceSimulation"] = true,
+            },
+        });
+        return cdp;
     }
 
     private static async Task<JsonElement> OptionsAsync(AuthServiceFixture service, string slug, string cookie)
@@ -343,7 +387,7 @@ public sealed class PasskeyE2eTests
     }
 
     /// <summary>Builds authenticator-side material with a real P-256 keypair for the test RP.</summary>
-    internal sealed class FakeAuthenticator(string rpId = RpId, string origin = Origin) : IDisposable
+    internal sealed class FakeAuthenticator(string rpId, string origin) : IDisposable
     {
         private readonly ECDsa ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         private uint signCount = 5;

@@ -112,12 +112,12 @@ public static class WebAuthnVerifier
             byte[]? parsedAuthData = null;
             while (reader.PeekState() != CborReaderState.EndMap)
             {
-                var label = reader.ReadInt32();
+                var label = ReadAttestationLabel(reader);
                 switch (label)
                 {
-                    case 1: fmt = reader.ReadTextString(); break;
-                    case 2: attStmt = ReadAttestationStatement(reader); break;
-                    case 3: parsedAuthData = reader.ReadByteString(); break;
+                    case "fmt": fmt = reader.ReadTextString(); break;
+                    case "attStmt": attStmt = ReadAttestationStatement(reader); break;
+                    case "authData": parsedAuthData = reader.ReadByteString(); break;
                     default: reader.SkipValue(); break;
                 }
             }
@@ -171,6 +171,25 @@ public static class WebAuthnVerifier
         return signed;
     }
 
+    /// <summary>
+    /// Reads an attestation-object map key. The W3C WebAuthn API encodes the keys as
+    /// text ("fmt"/"attStmt"/"authData" — what every real browser delivers); raw CTAP2
+    /// responses use the integers 1/2/3 instead. Both forms are accepted.
+    /// </summary>
+    private static string ReadAttestationLabel(CborReader reader) =>
+        reader.PeekState() switch
+        {
+            CborReaderState.TextString => reader.ReadTextString(),
+            CborReaderState.UnsignedInteger or CborReaderState.NegativeInteger => reader.ReadInt32() switch
+            {
+                1 => "fmt",
+                2 => "attStmt",
+                3 => "authData",
+                _ => "",
+            },
+            _ => throw new FormatException("attestation object map key must be text or 1/2/3"),
+        };
+
     private static Dictionary<string, object> ReadAttestationStatement(CborReader reader)
     {
         var statement = new Dictionary<string, object>();
@@ -221,8 +240,7 @@ public static class WebAuthnVerifier
         {
             // Basic packed attestation: verify with the attestation certificate's key.
             using var certificate = X509CertificateLoader.LoadCertificate(chain[0]);
-            if (certificate.GetECDsaPublicKey() is { } ecdsa && signature.Length == 64
-                && ecdsa.VerifyData(signedData, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
+            if (certificate.GetECDsaPublicKey() is { } ecdsa && CoseKey.VerifyEs256(ecdsa, signedData, signature))
                 return;
             if (certificate.GetRSAPublicKey() is { } rsa
                 && rsa.VerifyData(signedData, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1))

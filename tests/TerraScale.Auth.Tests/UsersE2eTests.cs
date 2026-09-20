@@ -1,11 +1,14 @@
 namespace TerraScale.Auth.Tests;
 
 using System.Net;
+using Microsoft.Playwright;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Users;
 
-/// <summary>Hosted user-facing UI flows over the real service, engine, and SDK.</summary>
+/// <summary>Hosted user-facing UI flows over the real service, engine, and SDK:
+/// user-visible page flows drive a real headless Chromium, while Location-header
+/// redirect checks, token-consume races, and store-level semantics stay on the wire.</summary>
 [NotInParallel]
 public sealed class UsersE2eTests
 {
@@ -19,6 +22,8 @@ public sealed class UsersE2eTests
     }
 
     private static string Email() => $"u{Guid.NewGuid().ToString("N")[..10]}@example.com";
+
+    private static string Url(AuthServiceFixture service, string path) => new Uri(service.Origin, path).ToString();
 
     private static HttpRequestMessage Post(string path, Dictionary<string, string> fields, string? cookie = null)
     {
@@ -43,8 +48,6 @@ public sealed class UsersE2eTests
             ?? throw new InvalidOperationException("expected a session cookie");
         return header.Split(';')[0];
     }
-
-    private static async Task<string> BodyAsync(HttpResponseMessage response) => await response.Content.ReadAsStringAsync();
 
     /// <summary>Signs in over HTTP and returns (cookie header, session id from the store).</summary>
     private static async Task<(string Cookie, string SessionId)> SignInAsync(AuthServiceFixture service, string slug, string email, string password = "password123")
@@ -94,13 +97,49 @@ public sealed class UsersE2eTests
         return token;
     }
 
+    /// <summary>Fails the test if any script dialog (alert/confirm/prompt) ever fires on the page.</summary>
+    private static void FailOnDialog(IPage page)
+    {
+        page.Dialog += (_, dialog) => throw new InvalidOperationException(
+            $"unexpected script dialog ({dialog.Type}): {dialog.Message}");
+    }
+
+    /// <summary>Signs up through the real sign-up page; the browser follows the redirect to /account.</summary>
+    private static async Task<IPage> SignUpInBrowserAsync(AuthServiceFixture service, string slug, string email)
+    {
+        var page = await BrowserFixture.NewPageAsync();
+        await page.GotoAsync(Url(service, $"/ui/{slug}/sign-up"));
+        await page.FillAsync("#su-email", email);
+        await page.FillAsync("#su-password", "password123");
+        await page.FillAsync("#su-name", "Test User");
+        await page.ClickAsync("button:has-text('Create account')");
+        await page.WaitForURLAsync("**/account");
+        return page;
+    }
+
+    /// <summary>Resolves the browser's session in the store from its (HttpOnly) cookie, exactly like the service does.</summary>
+    private static async Task<Session> BrowserSessionAsync(AuthServiceFixture service, IPage page)
+    {
+        var token = (await page.Context.CookiesAsync(service.Origin.ToString()))
+            .Single(c => c.Name == "tsauth_session").Value;
+        return await service.Store.FindSessionByTokenAsync(SecureTokens.Sha256Hex(token))
+            ?? throw new InvalidOperationException("session missing from store");
+    }
+
+    /// <summary>Waits for the next POST to <paramref name="url"/> (with or without a query string —
+    /// action-less forms post to the current URL) and returns its raw response.</summary>
+    private static Task<IResponse> WaitForPostAsync(IPage page, string url) =>
+        page.WaitForResponseAsync(r => r.Request.Method == "POST"
+            && (r.Url == url || r.Url.StartsWith(url + "?", StringComparison.Ordinal)));
+
     [Test]
     public async Task UnknownInstanceSlugShows404()
     {
         var service = await ServiceAsync();
-        using var response = await service.Http.SendAsync(Get($"/ui/does-not-exist-{Guid.NewGuid().ToString("N")[..6]}/sign-in"));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await BodyAsync(response)).Contains("Page not found");
+        await using var page = await BrowserFixture.NewPageAsync();
+        var response = await page.GotoAsync(Url(service, $"/ui/does-not-exist-{Guid.NewGuid().ToString("N")[..6]}/sign-in"));
+        await Assert.That(response!.Status).IsEqualTo((int)HttpStatusCode.NotFound);
+        await Assert.That(await page.Locator("body").TextContentAsync()).Contains("Page not found");
     }
 
     [Test]
@@ -108,18 +147,17 @@ public sealed class UsersE2eTests
     {
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
+        await using var page = await BrowserFixture.NewPageAsync();
 
-        using var signUp = await service.Http.SendAsync(Get($"/ui/{slug}/sign-up"));
-        await Assert.That(signUp.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var signUpHtml = await BodyAsync(signUp);
-        await Assert.That(signUpHtml).Contains("name=\"password\"");
-        await Assert.That(signUpHtml).Contains("name=\"name\"");
+        var signUp = await page.GotoAsync(Url(service, $"/ui/{slug}/sign-up"));
+        await Assert.That(signUp!.Status).IsEqualTo((int)HttpStatusCode.OK);
+        await Assert.That(await page.Locator("input[name=password]").CountAsync()).IsEqualTo(1);
+        await Assert.That(await page.Locator("input[name=name]").CountAsync()).IsEqualTo(1);
 
-        using var signIn = await service.Http.SendAsync(Get($"/ui/{slug}/sign-in"));
-        await Assert.That(signIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var signInHtml = await BodyAsync(signIn);
-        await Assert.That(signInHtml).Contains($"action=\"/ui/{slug}/magic-link\"");
-        await Assert.That(signInHtml).Contains($"href=\"/ui/{slug}/passkeys/assert\"");
+        var signIn = await page.GotoAsync(Url(service, $"/ui/{slug}/sign-in"));
+        await Assert.That(signIn!.Status).IsEqualTo((int)HttpStatusCode.OK);
+        await Assert.That(await page.Locator($"form[action='/ui/{slug}/magic-link']").CountAsync()).IsEqualTo(1);
+        await Assert.That(await page.Locator($"a[href='/ui/{slug}/passkeys/assert']").CountAsync()).IsEqualTo(1);
     }
 
     [Test]
@@ -129,13 +167,11 @@ public sealed class UsersE2eTests
         var (instanceId, slug) = await InstanceAsync();
         var email = Email();
 
-        var (cookie, sessionId) = await SignUpAsync(service, slug, email);
+        await using var page = await SignUpInBrowserAsync(service, slug, email);
 
-        using var account = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
-        await Assert.That(account.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var html = await BodyAsync(account);
-        await Assert.That(html).Contains(email);
-        await Assert.That(html).Contains("email not verified");
+        var text = await page.Locator("body").TextContentAsync();
+        await Assert.That(text).Contains(email);
+        await Assert.That(text).Contains("email not verified");
 
         var user = await service.Store.FindUserByEmailAsync(instanceId, email);
         await Assert.That(user!.EmailVerified).IsFalse();
@@ -155,15 +191,20 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
         var email = Email();
-        await SignUpAsync(service, slug, email);
+        await using var setup = await SignUpInBrowserAsync(service, slug, email);
 
-        using var response = await service.Http.SendAsync(Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
-        {
-            ["email"] = email,
-            ["password"] = "password123",
-        }));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(response)).Contains("already registered");
+        await using var page = await BrowserFixture.NewPageAsync();
+        FailOnDialog(page);
+        await page.GotoAsync(Url(service, $"/ui/{slug}/sign-up"));
+        await page.FillAsync("#su-email", email);
+        await page.FillAsync("#su-password", "password123");
+        var posting = WaitForPostAsync(page, Url(service, $"/ui/{slug}/sign-up"));
+        await page.ClickAsync("button:has-text('Create account')");
+        await Assert.That((await posting).Status).IsEqualTo((int)HttpStatusCode.OK);
+        await page.Locator(".error").WaitForAsync();
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("already registered");
+        // The email round-trips as the input's VALUE, never as markup.
+        await Assert.That(await page.InputValueAsync("#su-email")).IsEqualTo(email);
     }
 
     [Test]
@@ -171,30 +212,30 @@ public sealed class UsersE2eTests
     {
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
+        await using var page = await BrowserFixture.NewPageAsync();
+        FailOnDialog(page);
+        var url = Url(service, $"/ui/{slug}/sign-up");
 
-        using var badEmail = await service.Http.SendAsync(Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
+        foreach (var (email, password, expected) in new (string Email, string Password, string Expected)[]
         {
-            ["email"] = "not-an-email",
-            ["password"] = "password123",
-        }));
-        await Assert.That(badEmail.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(badEmail)).Contains("valid email");
-
-        using var shortPassword = await service.Http.SendAsync(Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
+            ("not-an-email", "password123", "valid email"),
+            (Email(), "short", "at least 8 characters"),
+            ("a@b.example.com@c", "password123", "valid email"),
+        })
         {
-            ["email"] = Email(),
-            ["password"] = "short",
-        }));
-        await Assert.That(shortPassword.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(shortPassword)).Contains("at least 8 characters");
-
-        using var doubleAt = await service.Http.SendAsync(Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
-        {
-            ["email"] = "a@b.example.com@c",
-            ["password"] = "password123",
-        }));
-        await Assert.That(doubleAt.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(doubleAt)).Contains("valid email");
+            await page.GotoAsync(url);
+            await page.FillAsync("#su-email", email);
+            await page.FillAsync("#su-password", password);
+            // Submit through the DOM API: type=email and minlength=8 client validation would
+            // block these values, and the server-side re-render is the thing under test.
+            var posting = WaitForPostAsync(page, url);
+            await page.EvalOnSelectorAsync("form", "form => form.submit()");
+            await Assert.That((await posting).Status).IsEqualTo((int)HttpStatusCode.OK);
+            await page.Locator(".error").WaitForAsync();
+            await Assert.That(await page.Locator(".error").TextContentAsync()).Contains(expected);
+            // The submitted email round-trips as the input's VALUE, never as markup.
+            await Assert.That(await page.InputValueAsync("#su-email")).IsEqualTo(email);
+        }
     }
 
     [Test]
@@ -203,25 +244,22 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
         var email = Email();
-        await SignUpAsync(service, slug, email);
+        await using var setup = await SignUpInBrowserAsync(service, slug, email);
 
-        using var wrongPassword = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
+        await using var page = await BrowserFixture.NewPageAsync();
+        var url = Url(service, $"/ui/{slug}/sign-in");
+        foreach (var (password, address) in new[] { ("wrongpassword", email), ("password123", "nobody@example.com") })
         {
-            ["email"] = email,
-            ["password"] = "wrongpassword",
-        }));
-        await Assert.That(wrongPassword.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(wrongPassword)).Contains("Invalid email or password");
-        await Assert.That(wrongPassword.Headers.Contains("Set-Cookie")).IsFalse();
-
-        using var unknownEmail = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
-        {
-            ["email"] = "nobody@example.com",
-            ["password"] = "password123",
-        }));
-        await Assert.That(unknownEmail.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(unknownEmail)).Contains("Invalid email or password");
-        await Assert.That(unknownEmail.Headers.Contains("Set-Cookie")).IsFalse();
+            await page.GotoAsync(url);
+            await page.FillAsync("#si-email", address);
+            await page.FillAsync("#si-password", password);
+            var posting = WaitForPostAsync(page, url);
+            await page.ClickAsync("button:has-text('Sign in')");
+            var response = await posting;
+            await Assert.That(response.Status).IsEqualTo((int)HttpStatusCode.OK);
+            await Assert.That(response.Headers.ContainsKey("set-cookie")).IsFalse();
+            await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("Invalid email or password");
+        }
     }
 
     [Test]
@@ -240,16 +278,20 @@ public sealed class UsersE2eTests
         await Assert.That(createdEmpty.PasswordHash).IsNull();
         await Assert.That((await service.Store.FindUserByEmailAsync(instanceId, noPassword))!.PasswordHash).IsNull();
 
+        await using var page = await BrowserFixture.NewPageAsync();
+        var url = Url(service, $"/ui/{slug}/sign-in");
         foreach (var (email, password) in new[] { (noPassword, "password123"), (emptyPassword, ""), (emptyPassword, "password123") })
         {
-            using var response = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
-            {
-                ["email"] = email,
-                ["password"] = password,
-            }));
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(await BodyAsync(response)).Contains("Invalid email or password");
-            await Assert.That(response.Headers.Contains("Set-Cookie")).IsFalse();
+            await page.GotoAsync(url);
+            await page.FillAsync("#si-email", email);
+            await page.FillAsync("#si-password", password);
+            // Submit through the DOM API: the empty password would trip the browser's required check.
+            var posting = WaitForPostAsync(page, url);
+            await page.EvalOnSelectorAsync("form", "form => form.submit()");
+            var response = await posting;
+            await Assert.That(response.Status).IsEqualTo((int)HttpStatusCode.OK);
+            await Assert.That(response.Headers.ContainsKey("set-cookie")).IsFalse();
+            await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("Invalid email or password");
         }
     }
 
@@ -268,10 +310,10 @@ public sealed class UsersE2eTests
         };
         var cases = new (User? User, string Password)[]
         {
-            (null, "password123"),                          // unknown email
-            (known with { Deleted = true }, "password123"), // deleted user
+            (null, "password123"),                            // unknown email
+            (known with { Deleted = true }, "password123"),   // deleted user
             (known with { PasswordHash = null }, "whatever"), // password-less user
-            (known, "wrongpassword"),                       // wrong password
+            (known, "wrongpassword"),                         // wrong password
         };
         foreach (var (user, password) in cases)
         {
@@ -296,19 +338,23 @@ public sealed class UsersE2eTests
         var user = await service.Store.FindUserByEmailAsync(instanceId, email);
         await service.Store.UpsertUserAsync(user! with { Banned = true });
 
-        using var response = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
-        {
-            ["email"] = email,
-            ["password"] = "password123",
-        }));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(response)).Contains("suspended");
-        await Assert.That(response.Headers.Contains("Set-Cookie")).IsFalse();
+        await using var page = await BrowserFixture.NewPageAsync();
+        var url = Url(service, $"/ui/{slug}/sign-in");
+        await page.GotoAsync(url);
+        await page.FillAsync("#si-email", email);
+        await page.FillAsync("#si-password", "password123");
+        var posting = WaitForPostAsync(page, url);
+        await page.ClickAsync("button:has-text('Sign in')");
+        var response = await posting;
+        await Assert.That(response.Status).IsEqualTo((int)HttpStatusCode.OK);
+        await Assert.That(response.Headers.ContainsKey("set-cookie")).IsFalse();
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("suspended");
     }
 
     [Test]
     public async Task SignInOnlyRedirectsToSafeNextTargets()
     {
+        // Location-header matrix: stays on the wire (service.Http has no auto-redirect).
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
         var email = Email();
@@ -341,9 +387,9 @@ public sealed class UsersE2eTests
         {
             ["email"] = email,
             ["password"] = "password123",
-            ["next"] = $"https://auth.test/ui/{slug}/account",
+            ["next"] = $"{service.Origin}ui/{slug}/account",
         }));
-        await Assert.That(sameOrigin.Headers.Location?.ToString()).IsEqualTo($"https://auth.test/ui/{slug}/account");
+        await Assert.That(sameOrigin.Headers.Location?.ToString()).IsEqualTo($"{service.Origin}ui/{slug}/account");
 
         using var safe = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
         {
@@ -360,20 +406,24 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
         var email = Email();
-        var (cookie, sessionId) = await SignUpAsync(service, slug, email);
+        await using var page = await SignUpInBrowserAsync(service, slug, email);
+        var session = await BrowserSessionAsync(service, page);
 
-        using var signOut = await service.Http.SendAsync(Post($"/ui/{slug}/sign-out", new Dictionary<string, string>(), cookie));
-        await Assert.That(signOut.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(signOut.Headers.Location?.ToString()).IsEqualTo($"/ui/{slug}/sign-in");
-        var cleared = signOut.Headers.GetValues("Set-Cookie").First().Split(';')[0];
-        await Assert.That(cleared).IsEqualTo("tsauth_session=");
+        var posting = WaitForPostAsync(page, Url(service, $"/ui/{slug}/sign-out"));
+        await page.ClickAsync("button:text-is('Sign out')");
+        var signOut = await posting;
+        await Assert.That(signOut.Status).IsEqualTo((int)HttpStatusCode.Found);
+        await Assert.That(signOut.Headers["location"]).IsEqualTo($"/ui/{slug}/sign-in");
+        await page.WaitForURLAsync("**/sign-in");
 
-        var session = await service.Store.GetSessionAsync(sessionId);
-        await Assert.That(session!.Status).IsEqualTo("revoked");
+        // The cleared cookie is gone from the browser's jar.
+        await Assert.That((await page.Context.CookiesAsync(service.Origin.ToString()))
+            .Count(c => c.Name == "tsauth_session")).IsEqualTo(0);
 
-        using var account = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
-        await Assert.That(account.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(account.Headers.Location?.ToString()).Contains("sign-in");
+        await Assert.That((await service.Store.GetSessionAsync(session.Id))!.Status).IsEqualTo("revoked");
+
+        await page.GotoAsync(Url(service, $"/ui/{slug}/account"));
+        await Assert.That(page.Url).Contains("sign-in");
     }
 
     [Test]
@@ -381,14 +431,16 @@ public sealed class UsersE2eTests
     {
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
+        await using var page = await BrowserFixture.NewPageAsync();
 
-        using var anonymous = await service.Http.SendAsync(Get($"/ui/{slug}/account"));
-        await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(anonymous.Headers.Location?.ToString())
-            .IsEqualTo($"/ui/{slug}/sign-in?next={Uri.EscapeDataString($"/ui/{slug}/account")}");
+        // Anonymous: bounced to sign-in with the original path carried in ?next=.
+        await page.GotoAsync(Url(service, $"/ui/{slug}/account"));
+        await Assert.That(page.Url).IsEqualTo(Url(service, $"/ui/{slug}/sign-in?next={Uri.EscapeDataString($"/ui/{slug}/account")}"));
 
-        using var garbageCookie = await service.Http.SendAsync(Get($"/ui/{slug}/account", "tsauth_session=garbage"));
-        await Assert.That(garbageCookie.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        // A garbage session cookie is just as anonymous.
+        await page.Context.AddCookiesAsync([new() { Name = "tsauth_session", Value = "garbage", Url = service.Origin.ToString() }]);
+        await page.GotoAsync(Url(service, $"/ui/{slug}/account"));
+        await Assert.That(page.Url).Contains("sign-in");
     }
 
     [Test]
@@ -397,36 +449,39 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (instanceId, slug) = await InstanceAsync();
         var email = Email();
-        var (cookie, _) = await SignUpAsync(service, slug, email);
+        await using var page = await SignUpInBrowserAsync(service, slug, email);
+        var changeUrl = Url(service, $"/ui/{slug}/account/password");
 
-        using var wrongCurrent = await service.Http.SendAsync(Post($"/ui/{slug}/account/password", new Dictionary<string, string>
-        {
-            ["current"] = "not-the-password",
-            ["new"] = "newpassword9",
-        }, cookie));
-        await Assert.That(wrongCurrent.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(wrongCurrent)).Contains("current password is incorrect");
+        await page.FillAsync("#cp-current", "not-the-password");
+        await page.FillAsync("#cp-new", "newpassword9");
+        var posting = WaitForPostAsync(page, changeUrl);
+        await page.ClickAsync("button:has-text('Change password')");
+        var wrong = await posting;
+        await Assert.That(wrong.Status).IsEqualTo((int)HttpStatusCode.OK);
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("current password is incorrect");
 
-        using var changed = await service.Http.SendAsync(Post($"/ui/{slug}/account/password", new Dictionary<string, string>
-        {
-            ["current"] = "password123",
-            ["new"] = "newpassword9",
-        }, cookie));
-        await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(changed.Headers.Location?.ToString()).IsEqualTo($"/ui/{slug}/account");
+        await page.FillAsync("#cp-current", "password123");
+        await page.FillAsync("#cp-new", "newpassword9");
+        posting = WaitForPostAsync(page, changeUrl);
+        await page.ClickAsync("button:has-text('Change password')");
+        var changed = await posting;
+        await Assert.That(changed.Status).IsEqualTo((int)HttpStatusCode.Found);
+        await Assert.That(changed.Headers["location"]).IsEqualTo($"/ui/{slug}/account");
 
         var user = await service.Store.FindUserByEmailAsync(instanceId, email);
         await Assert.That(SessionService.VerifyPassword(user!, "newpassword9")).IsTrue();
         await Assert.That(SessionService.VerifyPassword(user!, "password123")).IsFalse();
 
-        using var oldPassword = await service.Http.SendAsync(Post($"/ui/{slug}/sign-in", new Dictionary<string, string>
-        {
-            ["email"] = email,
-            ["password"] = "password123",
-        }));
-        await Assert.That(await BodyAsync(oldPassword)).Contains("Invalid email or password");
+        await page.GotoAsync(Url(service, $"/ui/{slug}/sign-in"));
+        await page.FillAsync("#si-email", email);
+        await page.FillAsync("#si-password", "password123");
+        await page.ClickAsync("button:has-text('Sign in')");
+        await page.Locator(".error").WaitForAsync();
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("Invalid email or password");
 
-        await SignInAsync(service, slug, email, "newpassword9");
+        await page.FillAsync("#si-password", "newpassword9");
+        await page.ClickAsync("button:has-text('Sign in')");
+        await page.WaitForURLAsync("**/account");
 
         var audits = await service.Store.ListAuditEventsAsync(instanceId, 100);
         await Assert.That(audits.Any(e => e.Type == "user.password_changed")).IsTrue();
@@ -438,21 +493,21 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
         var email = Email();
-        var (cookie, currentSessionId) = await SignUpAsync(service, slug, email);
+        await using var page = await SignUpInBrowserAsync(service, slug, email);
+        var current = await BrowserSessionAsync(service, page);
         var (_, otherSessionId) = await SignInAsync(service, slug, email);
 
-        using var changed = await service.Http.SendAsync(Post($"/ui/{slug}/account/password", new Dictionary<string, string>
-        {
-            ["current"] = "password123",
-            ["new"] = "newpassword9",
-        }, cookie));
-        await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        await page.FillAsync("#cp-current", "password123");
+        await page.FillAsync("#cp-new", "newpassword9");
+        var posting = WaitForPostAsync(page, Url(service, $"/ui/{slug}/account/password"));
+        await page.ClickAsync("button:has-text('Change password')");
+        await Assert.That((await posting).Status).IsEqualTo((int)HttpStatusCode.Found);
 
         await Assert.That((await service.Store.GetSessionAsync(otherSessionId))!.Status).IsEqualTo("revoked");
-        await Assert.That((await service.Store.GetSessionAsync(currentSessionId))!.Status).IsEqualTo("active");
+        await Assert.That((await service.Store.GetSessionAsync(current.Id))!.Status).IsEqualTo("active");
 
-        using var stillSignedIn = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
-        await Assert.That(stillSignedIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var stillSignedIn = await page.GotoAsync(Url(service, $"/ui/{slug}/account"));
+        await Assert.That(stillSignedIn!.Status).IsEqualTo((int)HttpStatusCode.OK);
     }
 
     [Test]
@@ -461,13 +516,17 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
         var email = Email();
-        var (cookie1, session1) = await SignUpAsync(service, slug, email);
+        await using var page = await SignUpInBrowserAsync(service, slug, email);
+        var session1 = (await BrowserSessionAsync(service, page)).Id;
         var (_, session2) = await SignInAsync(service, slug, email);
         var (_, session3) = await SignInAsync(service, slug, email);
 
-        using var response = await service.Http.SendAsync(Post($"/ui/{slug}/account/sessions/revoke-all", new Dictionary<string, string>(), cookie1));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(response.Headers.Location?.ToString()).IsEqualTo($"/ui/{slug}/sign-in");
+        var posting = WaitForPostAsync(page, Url(service, $"/ui/{slug}/account/sessions/revoke-all"));
+        await page.ClickAsync("button:has-text('Sign out everywhere')");
+        var response = await posting;
+        await Assert.That(response.Status).IsEqualTo((int)HttpStatusCode.Found);
+        await Assert.That(response.Headers["location"]).IsEqualTo($"/ui/{slug}/sign-in");
+        await page.WaitForURLAsync("**/sign-in");
 
         await Assert.That((await service.Store.GetSessionAsync(session1))!.Status).IsEqualTo("revoked");
         await Assert.That((await service.Store.GetSessionAsync(session2))!.Status).IsEqualTo("revoked");
@@ -480,41 +539,50 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
         var email = Email();
-        var (cookie, _) = await SignUpAsync(service, slug, email);
+        await using var page = await SignUpInBrowserAsync(service, slug, email);
         var (_, otherSessionId) = await SignInAsync(service, slug, email);
 
-        using var page = await service.Http.SendAsync(Get($"/ui/{slug}/account/sessions", cookie));
-        await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var html = await BodyAsync(page);
-        await Assert.That(html).Contains("this device");
-        await Assert.That(html).Contains("Revoke");
+        await page.GotoAsync(Url(service, $"/ui/{slug}/account/sessions"));
+        var text = await page.Locator("body").TextContentAsync();
+        await Assert.That(text).Contains("this device");
+        await Assert.That(text).Contains("Revoke");
 
-        using var revoke = await service.Http.SendAsync(Post($"/ui/{slug}/account/sessions/{otherSessionId}/revoke", new Dictionary<string, string>(), cookie));
-        await Assert.That(revoke.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(revoke.Headers.Location?.ToString()).IsEqualTo($"/ui/{slug}/account/sessions");
+        // The other device's row: the one NOT marked "this device".
+        var otherRow = page.Locator(".row").Filter(new LocatorFilterOptions { HasNotText = "this device" });
+        await Assert.That(await otherRow.CountAsync()).IsEqualTo(1);
+        var posting = WaitForPostAsync(page, Url(service, $"/ui/{slug}/account/sessions/{otherSessionId}/revoke"));
+        await otherRow.Locator("button").ClickAsync();
+        var revoke = await posting;
+        await Assert.That(revoke.Status).IsEqualTo((int)HttpStatusCode.Found);
+        await Assert.That(revoke.Headers["location"]).IsEqualTo($"/ui/{slug}/account/sessions");
 
         var other = await service.Store.GetSessionAsync(otherSessionId);
         await Assert.That(other!.Status).IsEqualTo("revoked");
 
-        using var stillWorks = await service.Http.SendAsync(Get($"/ui/{slug}/account/sessions", cookie));
-        await Assert.That(stillWorks.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var stillWorks = await page.GotoAsync(Url(service, $"/ui/{slug}/account/sessions"));
+        await Assert.That(stillWorks!.Status).IsEqualTo((int)HttpStatusCode.OK);
     }
 
     [Test]
     public async Task SessionCookieUsesStrictFlags()
     {
+        // The raw Set-Cookie of the real sign-up POST, captured from the browser's network stack.
         var service = await ServiceAsync();
         var (_, slug) = await InstanceAsync();
-        var email = Email();
+        await using var page = await BrowserFixture.NewPageAsync();
 
-        using var response = await service.Http.SendAsync(Post($"/ui/{slug}/sign-up", new Dictionary<string, string>
-        {
-            ["email"] = email,
-            ["password"] = "password123",
-            ["name"] = "Test User",
-        }));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        var header = response.Headers.GetValues("Set-Cookie").First().ToLowerInvariant();
+        var url = Url(service, $"/ui/{slug}/sign-up");
+        await page.GotoAsync(url);
+        await page.FillAsync("#su-email", Email());
+        await page.FillAsync("#su-password", "password123");
+        await page.FillAsync("#su-name", "Test User");
+        var posting = WaitForPostAsync(page, url);
+        await page.ClickAsync("button:has-text('Create account')");
+        var response = await posting;
+        await Assert.That(response.Status).IsEqualTo((int)HttpStatusCode.Found);
+        // AllHeaders merges the network stack's "extra info" headers — Set-Cookie lives there.
+        var headers = await response.AllHeadersAsync();
+        var header = (headers.TryGetValue("set-cookie", out var setCookie) ? setCookie : "").ToLowerInvariant();
         await Assert.That(header).Contains("httponly");
         await Assert.That(header).Contains("secure");
         await Assert.That(header).Contains("samesite=lax");
@@ -528,14 +596,13 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (instanceId, slug) = await InstanceAsync();
         var email = Email();
-        var (cookie, sessionId) = await SignUpAsync(service, slug, email);
+        await using var page = await SignUpInBrowserAsync(service, slug, email);
+        var session = await BrowserSessionAsync(service, page);
 
-        var session = await service.Store.GetSessionAsync(sessionId);
-        await service.Store.UpsertSessionAsync(session! with { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds() });
+        await service.Store.UpsertSessionAsync(session with { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds() });
 
-        using var response = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(response.Headers.Location?.ToString()).Contains("sign-in");
+        await page.GotoAsync(Url(service, $"/ui/{slug}/account"));
+        await Assert.That(page.Url).Contains("sign-in");
     }
 
     [Test]
@@ -544,18 +611,16 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (instanceId, slug) = await InstanceAsync();
         var email = Email();
-        var (cookie, _) = await SignUpAsync(service, slug, email);
+        await using var page = await SignUpInBrowserAsync(service, slug, email);
         var user = await service.Store.FindUserByEmailAsync(instanceId, email);
 
         await service.Store.UpsertUserAsync(user! with { Banned = true });
-        using var banned = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
-        await Assert.That(banned.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(banned.Headers.Location?.ToString()).Contains("sign-in");
+        await page.GotoAsync(Url(service, $"/ui/{slug}/account"));
+        await Assert.That(page.Url).Contains("sign-in");
 
         await service.Store.UpsertUserAsync(user with { Banned = false, Deleted = true });
-        using var deleted = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
-        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(deleted.Headers.Location?.ToString()).Contains("sign-in");
+        await page.GotoAsync(Url(service, $"/ui/{slug}/account"));
+        await Assert.That(page.Url).Contains("sign-in");
     }
 
     [Test]
@@ -564,12 +629,11 @@ public sealed class UsersE2eTests
         var service = await ServiceAsync();
         var (_, slugA) = await InstanceAsync();
         var (_, slugB) = await InstanceAsync();
-        var (cookie, _) = await SignUpAsync(service, slugA, Email());
+        await using var page = await SignUpInBrowserAsync(service, slugA, Email());
 
-        using var response = await service.Http.SendAsync(Get($"/ui/{slugB}/account", cookie));
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(response.Headers.Location?.ToString())
-            .IsEqualTo($"/ui/{slugB}/sign-in?next={Uri.EscapeDataString($"/ui/{slugB}/account")}");
+        // The A-session bounces off instance B straight to B's sign-in, B's account path in ?next=.
+        await page.GotoAsync(Url(service, $"/ui/{slugB}/account"));
+        await Assert.That(page.Url).IsEqualTo(Url(service, $"/ui/{slugB}/sign-in?next={Uri.EscapeDataString($"/ui/{slugB}/account")}"));
     }
 
     [Test]
@@ -597,6 +661,24 @@ public sealed class UsersE2eTests
     }
 
     [Test]
+    public async Task RevokedSessionCannotBeTouchedBackToActive()
+    {
+        var service = await ServiceAsync();
+        var (instanceId, slug) = await InstanceAsync();
+        var (_, sessionId) = await SignUpAsync(service, slug, Email());
+        var session = await service.Store.GetSessionAsync(sessionId);
+        await service.Store.UpsertSessionAsync(session! with { Status = "revoked" });
+
+        var touched = await service.Store.TryTouchSessionAsync(
+            sessionId,
+            instanceId,
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+        await Assert.That(touched).IsFalse();
+        await Assert.That((await service.Store.GetSessionAsync(sessionId))!.Status).IsEqualTo("revoked");
+    }
+
+    [Test]
     public async Task MagicLinkAlwaysShowsCheckEmailPage()
     {
         var service = await ServiceAsync();
@@ -604,13 +686,17 @@ public sealed class UsersE2eTests
         var email = Email();
         await SignUpAsync(service, slug, email);
 
-        using var known = await service.Http.SendAsync(Post($"/ui/{slug}/magic-link", new Dictionary<string, string> { ["email"] = email }));
-        await Assert.That(known.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(known)).Contains("Check your email");
-
-        using var unknown = await service.Http.SendAsync(Post($"/ui/{slug}/magic-link", new Dictionary<string, string> { ["email"] = "nobody@example.com" }));
-        await Assert.That(unknown.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(unknown)).Contains("Check your email");
+        await using var page = await BrowserFixture.NewPageAsync();
+        foreach (var address in new[] { email, "nobody@example.com" })
+        {
+            await page.GotoAsync(Url(service, $"/ui/{slug}/sign-in"));
+            await page.FillAsync("#si-magic", address);
+            var posting = WaitForPostAsync(page, Url(service, $"/ui/{slug}/magic-link"));
+            await page.ClickAsync("button:has-text('Send magic link')");
+            await Assert.That((await posting).Status).IsEqualTo((int)HttpStatusCode.OK);
+            await page.GetByText("Check your email").WaitForAsync();
+            await Assert.That(await page.Locator("body").TextContentAsync()).Contains("Check your email");
+        }
     }
 
     [Test]
@@ -623,18 +709,17 @@ public sealed class UsersE2eTests
         var user = await service.Store.FindUserByEmailAsync(instanceId, email);
         var token = await KnownTokenAsync(service.Store, instanceId, user!.Id, "magic_link", TimeSpan.FromMinutes(10));
 
-        using var consume = await service.Http.SendAsync(Get($"/ui/{slug}/magic-link/consume?token={token}"));
-        await Assert.That(consume.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(consume.Headers.Location?.ToString()).IsEqualTo($"/ui/{slug}/account");
-        var cookie = await SessionCookieAsync(consume);
+        await using var page = await BrowserFixture.NewPageAsync();
+        var consume = Url(service, $"/ui/{slug}/magic-link/consume?token={token}");
+        await page.GotoAsync(consume);
+        await page.WaitForURLAsync("**/account");
+        await Assert.That(page.Url).IsEqualTo(Url(service, $"/ui/{slug}/account"));
+        await Assert.That((await page.Context.CookiesAsync(service.Origin.ToString())).Any(c => c.Name == "tsauth_session")).IsTrue();
+        await Assert.That(await page.Locator("body").TextContentAsync()).Contains(email);
 
-        using var account = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie));
-        await Assert.That(account.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(account)).Contains(email);
-
-        using var replay = await service.Http.SendAsync(Get($"/ui/{slug}/magic-link/consume?token={token}"));
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await BodyAsync(replay)).Contains("no longer valid");
+        var replay = await page.GotoAsync(consume);
+        await Assert.That(replay!.Status).IsEqualTo((int)HttpStatusCode.BadRequest);
+        await Assert.That(await page.Locator("body").TextContentAsync()).Contains("no longer valid");
 
         var audits = await service.Store.ListAuditEventsAsync(instanceId, 100);
         await Assert.That(audits.Any(e => e.Type == "user.signed_in" && e.Data.TryGetValue("method", out var method) && method.ToString() == "magic_link")).IsTrue();
@@ -643,6 +728,7 @@ public sealed class UsersE2eTests
     [Test]
     public async Task MagicLinkConsumeIsAtomicUnderConcurrentDoubleRequest()
     {
+        // Consume race: stays on the wire (browser-driving a race makes it flaky, not better).
         var service = await ServiceAsync();
         var (instanceId, slug) = await InstanceAsync();
         var email = Email();
@@ -667,24 +753,26 @@ public sealed class UsersE2eTests
         var email = Email();
         await SignUpAsync(service, slug, email);
         var user = await service.Store.FindUserByEmailAsync(instanceId, email);
+        await using var page = await BrowserFixture.NewPageAsync();
+        var consume = Url(service, $"/ui/{slug}/magic-link/consume?token=");
 
-        using var garbage = await service.Http.SendAsync(Get($"/ui/{slug}/magic-link/consume?token=garbage"));
-        await Assert.That(garbage.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var garbage = await page.GotoAsync(consume + "garbage");
+        await Assert.That(garbage!.Status).IsEqualTo((int)HttpStatusCode.BadRequest);
 
         var expired = await KnownTokenAsync(service.Store, instanceId, user!.Id, "magic_link", TimeSpan.FromMinutes(-5));
-        using var expiredResponse = await service.Http.SendAsync(Get($"/ui/{slug}/magic-link/consume?token={expired}"));
-        await Assert.That(expiredResponse.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await BodyAsync(expiredResponse)).Contains("no longer valid");
+        var expiredResponse = await page.GotoAsync(consume + expired);
+        await Assert.That(expiredResponse!.Status).IsEqualTo((int)HttpStatusCode.BadRequest);
+        await Assert.That(await page.Locator("body").TextContentAsync()).Contains("no longer valid");
 
         var wrongPurpose = await KnownTokenAsync(service.Store, instanceId, user.Id, "verify_email", TimeSpan.FromMinutes(10));
-        using var wrongPurposeResponse = await service.Http.SendAsync(Get($"/ui/{slug}/magic-link/consume?token={wrongPurpose}"));
-        await Assert.That(wrongPurposeResponse.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var wrongPurposeResponse = await page.GotoAsync(consume + wrongPurpose);
+        await Assert.That(wrongPurposeResponse!.Status).IsEqualTo((int)HttpStatusCode.BadRequest);
 
         var (otherInstanceId, _) = await InstanceAsync();
         var foreignToken = await KnownTokenAsync(service.Store, otherInstanceId, user.Id, "magic_link", TimeSpan.FromMinutes(10));
-        using var foreign = await service.Http.SendAsync(Get($"/ui/{slug}/magic-link/consume?token={foreignToken}"));
-        await Assert.That(foreign.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await BodyAsync(foreign)).Contains("no longer valid");
+        var foreign = await page.GotoAsync(consume + foreignToken);
+        await Assert.That(foreign!.Status).IsEqualTo((int)HttpStatusCode.BadRequest);
+        await Assert.That(await page.Locator("body").TextContentAsync()).Contains("no longer valid");
     }
 
     [Test]
@@ -696,18 +784,22 @@ public sealed class UsersE2eTests
         await SignUpAsync(service, slug, email);
         var user = await service.Store.FindUserByEmailAsync(instanceId, email);
 
-        using var request = await service.Http.SendAsync(Post($"/ui/{slug}/forgot-password", new Dictionary<string, string> { ["email"] = email }));
-        await Assert.That(request.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(request)).Contains("Check your email");
-
-        using var unknown = await service.Http.SendAsync(Post($"/ui/{slug}/forgot-password", new Dictionary<string, string> { ["email"] = "nobody@example.com" }));
-        await Assert.That(unknown.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(unknown)).Contains("Check your email");
+        await using var page = await BrowserFixture.NewPageAsync();
+        foreach (var address in new[] { email, "nobody@example.com" })
+        {
+            await page.GotoAsync(Url(service, $"/ui/{slug}/forgot-password"));
+            await page.FillAsync("#fp-email", address);
+            var posting = WaitForPostAsync(page, Url(service, $"/ui/{slug}/forgot-password"));
+            await page.ClickAsync("button:has-text('Send reset link')");
+            await Assert.That((await posting).Status).IsEqualTo((int)HttpStatusCode.OK);
+            await page.GetByText("Check your email").WaitForAsync();
+            await Assert.That(await page.Locator("body").TextContentAsync()).Contains("Check your email");
+        }
 
         var token = await KnownTokenAsync(service.Store, instanceId, user!.Id, "reset_password", TimeSpan.FromMinutes(30));
-        using var form = await service.Http.SendAsync(Get($"/ui/{slug}/reset-password?token={token}"));
-        await Assert.That(form.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(form)).Contains("name=\"password\"");
+        var form = await page.GotoAsync(Url(service, $"/ui/{slug}/reset-password?token={token}"));
+        await Assert.That(form!.Status).IsEqualTo((int)HttpStatusCode.OK);
+        await Assert.That(await page.Locator("input[name=password]").CountAsync()).IsEqualTo(1);
     }
 
     [Test]
@@ -720,28 +812,26 @@ public sealed class UsersE2eTests
         var user = await service.Store.FindUserByEmailAsync(instanceId, email);
         var token = await KnownTokenAsync(service.Store, instanceId, user!.Id, "reset_password", TimeSpan.FromMinutes(30));
 
-        using var tooShort = await service.Http.SendAsync(Post($"/ui/{slug}/reset-password", new Dictionary<string, string>
-        {
-            ["token"] = token,
-            ["password"] = "short",
-        }));
-        await Assert.That(tooShort.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(tooShort)).Contains("at least 8 characters");
+        await using var page = await BrowserFixture.NewPageAsync();
+        var reset = Url(service, $"/ui/{slug}/reset-password?token={token}");
+        await page.GotoAsync(reset);
+        await page.FillAsync("#rp-password", "short");
+        // Submit through the DOM API so minlength=8 does not hide the server-side re-render.
+        await page.EvalOnSelectorAsync("form", "form => form.submit()");
+        await page.Locator(".error").WaitForAsync();
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("at least 8 characters");
 
-        using var reset = await service.Http.SendAsync(Post($"/ui/{slug}/reset-password", new Dictionary<string, string>
-        {
-            ["token"] = token,
-            ["password"] = "freshpassword1",
-        }));
-        await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(reset)).Contains("updated");
+        await page.FillAsync("#rp-password", "freshpassword1");
+        await page.ClickAsync("button:has-text('Update password')");
+        await page.GetByText("Password updated").WaitForAsync();
+        await Assert.That(await page.Locator("body").TextContentAsync()).Contains("updated");
 
         var after = await service.Store.FindUserByEmailAsync(instanceId, email);
         await Assert.That(SessionService.VerifyPassword(after!, "freshpassword1")).IsTrue();
         await Assert.That((await service.Store.GetSessionAsync(sessionId))!.Status).IsEqualTo("revoked");
 
-        using var replay = await service.Http.SendAsync(Get($"/ui/{slug}/reset-password?token={token}"));
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var replay = await page.GotoAsync(reset);
+        await Assert.That(replay!.Status).IsEqualTo((int)HttpStatusCode.BadRequest);
 
         using var replayPost = await service.Http.SendAsync(Post($"/ui/{slug}/reset-password", new Dictionary<string, string>
         {
@@ -750,7 +840,11 @@ public sealed class UsersE2eTests
         }));
         await Assert.That(replayPost.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
 
-        await SignInAsync(service, slug, email, "freshpassword1");
+        await page.GotoAsync(Url(service, $"/ui/{slug}/sign-in"));
+        await page.FillAsync("#si-email", email);
+        await page.FillAsync("#si-password", "freshpassword1");
+        await page.ClickAsync("button:has-text('Sign in')");
+        await page.WaitForURLAsync("**/account");
 
         var audits = await service.Store.ListAuditEventsAsync(instanceId, 100);
         await Assert.That(audits.Any(e => e.Type == "password.reset")).IsTrue();
@@ -768,19 +862,25 @@ public sealed class UsersE2eTests
 
         await service.Store.UpsertUserAsync(user with { Banned = true });
 
-        using var forgot = await service.Http.SendAsync(Post($"/ui/{slug}/forgot-password", new Dictionary<string, string> { ["email"] = email }));
-        await Assert.That(forgot.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(forgot)).Contains("Check your email");
+        await using var page = await BrowserFixture.NewPageAsync();
+        await page.GotoAsync(Url(service, $"/ui/{slug}/forgot-password"));
+        await page.FillAsync("#fp-email", email);
+        var posting = WaitForPostAsync(page, Url(service, $"/ui/{slug}/forgot-password"));
+        await page.ClickAsync("button:has-text('Send reset link')");
+        await Assert.That((await posting).Status).IsEqualTo((int)HttpStatusCode.OK);
+        await page.GetByText("Check your email").WaitForAsync();
+        await Assert.That(await page.Locator("body").TextContentAsync()).Contains("Check your email");
+
         var unconsumed = (await service.Store.ListVerificationTokensAsync(instanceId, "reset_password", 100))
             .Where(t => t.InstanceId == instanceId && t.UserId == user.Id && !t.Consumed).ToList();
         await Assert.That(unconsumed.Count).IsEqualTo(1); // only the pre-ban KnownTokenAsync one
 
-        using var reset = await service.Http.SendAsync(Post($"/ui/{slug}/reset-password", new Dictionary<string, string>
-        {
-            ["token"] = token,
-            ["password"] = "attackerpassword1",
-        }));
-        await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        // The banned user's still-valid token: the form renders, but submitting fails.
+        await page.GotoAsync(Url(service, $"/ui/{slug}/reset-password?token={token}"));
+        await page.FillAsync("#rp-password", "attackerpassword1");
+        posting = WaitForPostAsync(page, Url(service, $"/ui/{slug}/reset-password"));
+        await page.ClickAsync("button:has-text('Update password')");
+        await Assert.That((await posting).Status).IsEqualTo((int)HttpStatusCode.BadRequest);
 
         var after = await service.Store.FindUserByEmailAsync(instanceId, email);
         await Assert.That(SessionService.VerifyPassword(after!, "password123")).IsTrue();
@@ -796,15 +896,16 @@ public sealed class UsersE2eTests
         var user = await service.Store.FindUserByEmailAsync(instanceId, email);
         var token = await KnownTokenAsync(service.Store, instanceId, user!.Id, "verify_email", TimeSpan.FromHours(24));
 
-        using var verify = await service.Http.SendAsync(Get($"/ui/{slug}/verify-email?token={token}"));
-        await Assert.That(verify.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await BodyAsync(verify)).Contains("verified");
+        await using var page = await BrowserFixture.NewPageAsync();
+        var verify = await page.GotoAsync(Url(service, $"/ui/{slug}/verify-email?token={token}"));
+        await Assert.That(verify!.Status).IsEqualTo((int)HttpStatusCode.OK);
+        await Assert.That(await page.Locator("body").TextContentAsync()).Contains("verified");
 
         var after = await service.Store.GetUserAsync(user.Id);
         await Assert.That(after!.EmailVerified).IsTrue();
 
-        using var replay = await service.Http.SendAsync(Get($"/ui/{slug}/verify-email?token={token}"));
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var replay = await page.GotoAsync(Url(service, $"/ui/{slug}/verify-email?token={token}"));
+        await Assert.That(replay!.Status).IsEqualTo((int)HttpStatusCode.BadRequest);
 
         var audits = await service.Store.ListAuditEventsAsync(instanceId, 100);
         await Assert.That(audits.Any(e => e.Type == "user.email_verified")).IsTrue();

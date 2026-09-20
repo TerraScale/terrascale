@@ -70,8 +70,11 @@ public sealed class UniquenessE2eTests
         var usernameKey = $"{instanceId}:taken-name";
         await store.CreateUserAsync(new User
         {
-            Id = "usr_uname_owner", InstanceId = instanceId, Email = "owner@example.com",
-            EmailKey = $"{instanceId}:owner@example.com", UsernameKey = usernameKey,
+            Id = "usr_uname_owner",
+            InstanceId = instanceId,
+            Email = "owner@example.com",
+            EmailKey = $"{instanceId}:owner@example.com",
+            UsernameKey = usernameKey,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
@@ -82,8 +85,11 @@ public sealed class UniquenessE2eTests
         var conflict = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
             store.CreateUserAsync(new User
             {
-                Id = "usr_uname_victim", InstanceId = instanceId, Email = "fresh-uname@example.com",
-                EmailKey = $"{instanceId}:fresh-uname@example.com", UsernameKey = usernameKey,
+                Id = "usr_uname_victim",
+                InstanceId = instanceId,
+                Email = "fresh-uname@example.com",
+                EmailKey = $"{instanceId}:fresh-uname@example.com",
+                UsernameKey = usernameKey,
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             }));
@@ -120,15 +126,25 @@ public sealed class UniquenessE2eTests
         var memberKey = $"{org.Id}:usr_member";
         await store.CreateMembershipAsync(new OrgMembership
         {
-            Id = "mem_1", InstanceId = instanceId, OrgId = org.Id, UserId = "usr_member",
-            MemberKey = memberKey, Role = "member", CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Id = "mem_1",
+            InstanceId = instanceId,
+            OrgId = org.Id,
+            UserId = "usr_member",
+            MemberKey = memberKey,
+            Role = "member",
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
 
         var conflict = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
             store.CreateMembershipAsync(new OrgMembership
             {
-                Id = "mem_2", InstanceId = instanceId, OrgId = org.Id, UserId = "usr_member",
-                MemberKey = memberKey, Role = "admin", CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Id = "mem_2",
+                InstanceId = instanceId,
+                OrgId = org.Id,
+                UserId = "usr_member",
+                MemberKey = memberKey,
+                Role = "admin",
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             }));
         await Assert.That(conflict!.StatusCode is System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.PreconditionFailed).IsTrue();
 
@@ -136,8 +152,13 @@ public sealed class UniquenessE2eTests
         await store.DeleteMembershipAsync("mem_1");
         await store.CreateMembershipAsync(new OrgMembership
         {
-            Id = "mem_3", InstanceId = instanceId, OrgId = org.Id, UserId = "usr_member",
-            MemberKey = memberKey, Role = "admin", CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Id = "mem_3",
+            InstanceId = instanceId,
+            OrgId = org.Id,
+            UserId = "usr_member",
+            MemberKey = memberKey,
+            Role = "admin",
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
     }
 
@@ -148,7 +169,10 @@ public sealed class UniquenessE2eTests
         var slugKey = $"{instanceId}:same-slug";
         var first = new Organization
         {
-            Id = "org_first", InstanceId = instanceId, Name = "First", SlugKey = slugKey,
+            Id = "org_first",
+            InstanceId = instanceId,
+            Name = "First",
+            SlugKey = slugKey,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         };
         await store.CreateOrganizationAsync(first);
@@ -156,7 +180,10 @@ public sealed class UniquenessE2eTests
         var conflict = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
             store.CreateOrganizationAsync(new Organization
             {
-                Id = "org_second", InstanceId = instanceId, Name = "Second", SlugKey = slugKey,
+                Id = "org_second",
+                InstanceId = instanceId,
+                Name = "Second",
+                SlugKey = slugKey,
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             }));
         await Assert.That(conflict!.StatusCode is System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.PreconditionFailed).IsTrue();
@@ -164,7 +191,10 @@ public sealed class UniquenessE2eTests
         await store.DeleteOrganizationAsync("org_first");
         await store.CreateOrganizationAsync(new Organization
         {
-            Id = "org_third", InstanceId = instanceId, Name = "Third", SlugKey = slugKey,
+            Id = "org_third",
+            InstanceId = instanceId,
+            Name = "Third",
+            SlugKey = slugKey,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
     }
@@ -177,19 +207,31 @@ public sealed class UniquenessE2eTests
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var org = await store.CreateOrganizationAsync(new Organization
         {
-            Id = "org_cascade", InstanceId = instanceId, Name = "Cascade",
-            SlugKey = $"{instanceId}:cascade-{suffix}", CreatedAt = now,
+            Id = "org_cascade",
+            InstanceId = instanceId,
+            Name = "Cascade",
+            SlugKey = $"{instanceId}:cascade-{suffix}",
+            CreatedAt = now,
         });
         var domainKey = $"{instanceId}:recycle-{suffix}.com";
         await store.CreateOrgDomainAsync(new OrgDomain
         {
-            Id = "dom_cascade", InstanceId = instanceId, OrgId = org.Id,
-            Domain = $"recycle-{suffix}.com", DomainKey = domainKey, CreatedAt = now,
+            Id = "dom_cascade",
+            InstanceId = instanceId,
+            OrgId = org.Id,
+            Domain = $"recycle-{suffix}.com",
+            DomainKey = domainKey,
+            CreatedAt = now,
         });
         await store.CreateMembershipAsync(new OrgMembership
         {
-            Id = "mem_cascade", InstanceId = instanceId, OrgId = org.Id, UserId = "usr_cascade",
-            MemberKey = $"{org.Id}:usr_cascade", Role = "member", CreatedAt = now,
+            Id = "mem_cascade",
+            InstanceId = instanceId,
+            OrgId = org.Id,
+            UserId = "usr_cascade",
+            MemberKey = $"{org.Id}:usr_cascade",
+            Role = "member",
+            CreatedAt = now,
         });
 
         await store.DeleteOrganizationAsync(org.Id);
@@ -199,8 +241,12 @@ public sealed class UniquenessE2eTests
         // The domain claim was released with the org, so another org can enroll it.
         await store.CreateOrgDomainAsync(new OrgDomain
         {
-            Id = "dom_reborn", InstanceId = instanceId, OrgId = "org_other",
-            Domain = $"recycle-{suffix}.com", DomainKey = domainKey, CreatedAt = now,
+            Id = "dom_reborn",
+            InstanceId = instanceId,
+            OrgId = "org_other",
+            Domain = $"recycle-{suffix}.com",
+            DomainKey = domainKey,
+            CreatedAt = now,
         });
     }
 
@@ -212,20 +258,35 @@ public sealed class UniquenessE2eTests
         var credentialKey = TerraScale.Auth.Crypto.SecureTokens.RandomToken(32);
         await store.CreatePasskeyAsync(new Passkey
         {
-            Id = "pky_idem", InstanceId = instanceId, UserId = "usr_idem", CredentialKey = credentialKey,
-            PublicKeyCborBase64 = "AAECAwQFBgcI", Algorithm = "ES256", SignCount = 1, Nickname = "k",
+            Id = "pky_idem",
+            InstanceId = instanceId,
+            UserId = "usr_idem",
+            CredentialKey = credentialKey,
+            PublicKeyCborBase64 = "AAECAwQFBgcI",
+            Algorithm = "ES256",
+            SignCount = 1,
+            Nickname = "k",
             CreatedAt = now,
         });
         await store.CreateOAuthClientAsync(new OAuthClient
         {
-            Id = "cli_idem", InstanceId = instanceId, ClientId = "cid_idem",
-            ClientKey = $"{instanceId}:cid_idem", Name = "idem", RedirectUris = [],
-            TokenEndpointAuthMethod = "none", CreatedAt = now,
+            Id = "cli_idem",
+            InstanceId = instanceId,
+            ClientId = "cid_idem",
+            ClientKey = $"{instanceId}:cid_idem",
+            Name = "idem",
+            RedirectUris = [],
+            TokenEndpointAuthMethod = "none",
+            CreatedAt = now,
         });
         await store.CreateOrgDomainAsync(new OrgDomain
         {
-            Id = "dom_idem", InstanceId = instanceId, OrgId = "org_idem",
-            Domain = "idem.example.com", DomainKey = $"{instanceId}:idem.example.com", CreatedAt = now,
+            Id = "dom_idem",
+            InstanceId = instanceId,
+            OrgId = "org_idem",
+            Domain = "idem.example.com",
+            DomainKey = $"{instanceId}:idem.example.com",
+            CreatedAt = now,
         });
 
         // A second delete of the same entity (or one that never existed) is a no-op,
@@ -235,8 +296,14 @@ public sealed class UniquenessE2eTests
         await store.DeletePasskeyAsync("pky_never_existed");
         await store.CreatePasskeyAsync(new Passkey
         {
-            Id = "pky_reborn", InstanceId = instanceId, UserId = "usr_idem", CredentialKey = credentialKey,
-            PublicKeyCborBase64 = "AAECAwQFBgcI", Algorithm = "ES256", SignCount = 1, Nickname = "k",
+            Id = "pky_reborn",
+            InstanceId = instanceId,
+            UserId = "usr_idem",
+            CredentialKey = credentialKey,
+            PublicKeyCborBase64 = "AAECAwQFBgcI",
+            Algorithm = "ES256",
+            SignCount = 1,
+            Nickname = "k",
             CreatedAt = now,
         });
 
@@ -245,9 +312,14 @@ public sealed class UniquenessE2eTests
         await store.DeleteOAuthClientAsync("cli_never_existed");
         await store.CreateOAuthClientAsync(new OAuthClient
         {
-            Id = "cli_reborn", InstanceId = instanceId, ClientId = "cid_idem",
-            ClientKey = $"{instanceId}:cid_idem", Name = "idem", RedirectUris = [],
-            TokenEndpointAuthMethod = "none", CreatedAt = now,
+            Id = "cli_reborn",
+            InstanceId = instanceId,
+            ClientId = "cid_idem",
+            ClientKey = $"{instanceId}:cid_idem",
+            Name = "idem",
+            RedirectUris = [],
+            TokenEndpointAuthMethod = "none",
+            CreatedAt = now,
         });
 
         await store.DeleteOrgDomainAsync("dom_idem");
@@ -255,8 +327,12 @@ public sealed class UniquenessE2eTests
         await store.DeleteOrgDomainAsync("dom_never_existed");
         await store.CreateOrgDomainAsync(new OrgDomain
         {
-            Id = "dom_reborn2", InstanceId = instanceId, OrgId = "org_idem",
-            Domain = "idem.example.com", DomainKey = $"{instanceId}:idem.example.com", CreatedAt = now,
+            Id = "dom_reborn2",
+            InstanceId = instanceId,
+            OrgId = "org_idem",
+            Domain = "idem.example.com",
+            DomainKey = $"{instanceId}:idem.example.com",
+            CreatedAt = now,
         });
     }
 
@@ -268,8 +344,14 @@ public sealed class UniquenessE2eTests
         var credentialKey = TerraScale.Auth.Crypto.SecureTokens.RandomToken(32);
         var passkey = new Passkey
         {
-            Id = "pky_1", InstanceId = instanceId, UserId = "usr_pk", CredentialKey = credentialKey,
-            PublicKeyCborBase64 = "AAECAwQFBgcI", Algorithm = "ES256", SignCount = 1, Nickname = "k",
+            Id = "pky_1",
+            InstanceId = instanceId,
+            UserId = "usr_pk",
+            CredentialKey = credentialKey,
+            PublicKeyCborBase64 = "AAECAwQFBgcI",
+            Algorithm = "ES256",
+            SignCount = 1,
+            Nickname = "k",
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         };
         await store.CreatePasskeyAsync(passkey);

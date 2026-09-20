@@ -10,6 +10,7 @@ using System.Security.Cryptography.Xml;
 using System.Text;
 using System.Text.Json;
 using System.Xml;
+using Microsoft.Playwright;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Keys;
 using TerraScale.Auth.Store;
@@ -74,11 +75,12 @@ public sealed class ConnectionsE2eTests
             var publicList = await (await service.Http.GetAsync($"/ui/{slug}/connections")).Content.ReadFromJsonAsync<JsonElement>();
             await Assert.That(publicList.GetArrayLength()).IsEqualTo(1);
             await Assert.That(publicList[0].GetProperty("name").GetString()).IsEqualTo("Acme SSO");
-            var listPage = await service.Http.GetAsync($"/ui/{slug}/connections/list");
-            await Assert.That(listPage.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var listPageHtml = await listPage.Content.ReadAsStringAsync();
-            await Assert.That(listPageHtml.Contains("Continue with Acme SSO")).IsTrue();
-            await Assert.That(listPageHtml.Contains($"/ui/{slug}/connections/{connectionId}/saml/login")).IsTrue();
+            // The hosted connections list page: a button per enabled connection, posting to its login path.
+            await using var page = await BrowserFixture.NewPageAsync();
+            var listPage = await page.GotoAsync(Url(service, $"/ui/{slug}/connections/list"));
+            await Assert.That(listPage!.Status).IsEqualTo((int)HttpStatusCode.OK);
+            await Assert.That(await page.Locator("button", new PageLocatorOptions { HasText = "Continue with Acme SSO" }).TextContentAsync()).IsEqualTo("Continue with Acme SSO");
+            await Assert.That(await page.Locator("form").GetAttributeAsync("action")).IsEqualTo($"/ui/{slug}/connections/{connectionId}/saml/login");
 
             // Disable: sign-in entry points disappear (404), public lists drop it.
             using var disabled = new HttpRequestMessage(HttpMethod.Patch, $"/v1/{slug}/connections/{connectionId}")
@@ -87,7 +89,8 @@ public sealed class ConnectionsE2eTests
             };
             disabled.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             await Assert.That((await service.Http.SendAsync(disabled)).StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/saml/login")).StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            var disabledLogin = await page.GotoAsync(Url(service, $"/ui/{slug}/connections/{connectionId}/saml/login"));
+            await Assert.That(disabledLogin!.Status).IsEqualTo((int)HttpStatusCode.NotFound);
             var disabledList = await (await service.Http.GetAsync($"/ui/{slug}/connections")).Content.ReadFromJsonAsync<JsonElement>();
             await Assert.That(disabledList.GetArrayLength()).IsEqualTo(0);
 
@@ -127,7 +130,7 @@ public sealed class ConnectionsE2eTests
         await using var idp = await FakeIdP.StartAsync();
         var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
         var (connectionId, _) = await CreateOidcConnectionAsync(service, slug, apiKey, idp);
-        var callback = $"https://auth.test/{slug}/connections/{connectionId}/oidc/callback";
+        var callback = $"{service.Origin}{slug}/connections/{connectionId}/oidc/callback";
 
         using var authorize = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/authorize");
         await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Found);
@@ -142,7 +145,6 @@ public sealed class ConnectionsE2eTests
         using var callbackResponse = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(query["state"])}");
         await Assert.That(callbackResponse.StatusCode).IsEqualTo(HttpStatusCode.Found);
         await Assert.That(callbackResponse.Headers.Location!.ToString()).IsEqualTo($"/ui/{slug}/account");
-        var cookie = await SessionCookieAsync(callbackResponse);
 
         // The token exchange reached the IdP as client_secret_post with the stored secret.
         Dictionary<string, string> tokenRequest;
@@ -163,8 +165,10 @@ public sealed class ConnectionsE2eTests
 
         await Assert.That(await AuditMethodAsync(service, instanceId, user.Id)).IsEqualTo($"oidc:{connectionId}");
 
-        using var account = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie: cookie));
-        await Assert.That(account.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        // The hosted account page, as the freshly signed-in user's browser sees it.
+        await using var accountPage = await SessionPageAsync(service, callbackResponse);
+        var account = await accountPage.GotoAsync(Url(service, $"/ui/{slug}/account"));
+        await Assert.That(account!.Status).IsEqualTo((int)HttpStatusCode.OK);
 
         // The state is single-use.
         using var replay = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/oidc/callback?code=test-code&state={Uri.EscapeDataString(query["state"])}");
@@ -260,13 +264,15 @@ public sealed class ConnectionsE2eTests
         var (instanceId, slug, apiKey) = await NewInstanceWithKeyAsync();
         var (connectionId, _) = await CreateOidcConnectionAsync(service, slug, apiKey, idp);
 
-        // A local password account exists for the victim.
+        // A local password account exists for the victim, created through the real sign-up page.
         var victim = $"victim{Guid.NewGuid().ToString("N")[..8]}@example.test";
-        using (var signUp = await service.Http.PostAsync($"/ui/{slug}/sign-up",
-            new FormUrlEncodedContent(new Dictionary<string, string> { ["email"] = victim, ["password"] = "password123", ["name"] = "Victim" })))
-        {
-            await Assert.That(signUp.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        }
+        await using var signUpPage = await BrowserFixture.NewPageAsync();
+        await signUpPage.GotoAsync(Url(service, $"/ui/{slug}/sign-up"));
+        await signUpPage.FillAsync("#su-email", victim);
+        await signUpPage.FillAsync("#su-password", "password123");
+        await signUpPage.FillAsync("#su-name", "Victim");
+        await signUpPage.ClickAsync("button:has-text('Create account')");
+        await signUpPage.WaitForURLAsync("**/account");
         var before = await service.Store.FindUserByEmailAsync(instanceId, victim)
             ?? throw new InvalidOperationException("victim missing from store");
 
@@ -354,7 +360,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
 
             using var login = await service.Http.GetAsync($"/ui/{slug}/connections/{connectionId}/saml/login");
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.Found);
@@ -374,7 +380,6 @@ public sealed class ConnectionsE2eTests
                 new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = samlResponse, ["RelayState"] = relayState }));
             await Assert.That(acsResponse.StatusCode).IsEqualTo(HttpStatusCode.Found);
             await Assert.That(acsResponse.Headers.Location!.ToString()).IsEqualTo($"/ui/{slug}/account");
-            var cookie = await SessionCookieAsync(acsResponse);
 
             var user = await service.Store.FindUserByEmailAsync(instanceId, "jane@acme.test")
                 ?? throw new InvalidOperationException("user missing from store");
@@ -382,8 +387,10 @@ public sealed class ConnectionsE2eTests
             await Assert.That(user.Name).IsEqualTo("Jane Doe");
             await Assert.That(await AuditMethodAsync(service, instanceId, user.Id)).IsEqualTo($"saml:{connectionId}");
 
-            using var account = await service.Http.SendAsync(Get($"/ui/{slug}/account", cookie: cookie));
-            await Assert.That(account.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            // The hosted account page, as the freshly signed-in user's browser sees it.
+            await using var accountPage = await SessionPageAsync(service, acsResponse);
+            var account = await accountPage.GotoAsync(Url(service, $"/ui/{slug}/account"));
+            await Assert.That(account!.Status).IsEqualTo((int)HttpStatusCode.OK);
 
             // RelayState is single-use.
             using var replay = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
@@ -401,7 +408,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_anything");
             var samlResponse = BuildSignedSamlResponse(certificate, "_anything", acs, email: "jane@acme.test", audience: "https://other-sp.example/acs");
 
@@ -421,7 +428,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_anything");
             var samlResponse = BuildSignedSamlResponse(certificate, "_anything", acs, email: "jane@acme.test", notOnOrAfter: DateTimeOffset.UtcNow.AddMinutes(-5));
 
@@ -441,7 +448,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_anything");
             // Signed for jane@, then rewritten to attacker@ after signing.
             var samlResponse = BuildSignedSamlResponse(certificate, "_anything", acs, email: "jane@acme.test", tamperNameId: true);
@@ -462,7 +469,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_anything");
             var samlResponse = BuildSignedSamlResponse(certificate, "_anything", acs, email: "jane@acme.test", sign: false);
 
@@ -481,7 +488,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var samlResponse = BuildSignedSamlResponse(certificate, "_anything", acs, email: "jane@acme.test");
 
             using var response = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
@@ -500,7 +507,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_respSig");
             var samlResponse = BuildSignedSamlResponse(certificate, "_respSig", acs, email: "resp-signed@acme.test", signResponse: true);
 
@@ -526,7 +533,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_xswA");
 
             var original = SignEnveloped(certificate, AssertionXml("_attacker" + Guid.NewGuid().ToString("N")[..8], "_xswA", acs, "attacker@acme.test"));
@@ -555,7 +562,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_xswB");
             var responseId = "_origresp" + Guid.NewGuid().ToString("N")[..8];
 
@@ -584,7 +591,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_xswC");
             var responseId = "_clonedresp" + Guid.NewGuid().ToString("N")[..8];
 
@@ -613,7 +620,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_xswD");
             var assertionId = "_cloned" + Guid.NewGuid().ToString("N")[..8];
 
@@ -636,7 +643,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_wrongkey");
             using var attackerKey = NewIdpCertificate().Certificate;
             var samlResponse = BuildSignedSamlResponse(attackerKey, "_wrongkey", acs, email: "attacker@acme.test");
@@ -657,7 +664,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
 
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_future");
             using var future = await service.Http.PostAsync($"/ui/{slug}/connections/{connectionId}/saml/acs",
@@ -681,7 +688,7 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
             var relayState = await MintRelayStateAsync(service.Store, instanceId, connectionId, "_expected");
             var samlResponse = BuildSignedSamlResponse(certificate, "_someOtherRequest", acs, email: "irt@acme.test");
 
@@ -701,14 +708,14 @@ public sealed class ConnectionsE2eTests
         using (certificate)
         {
             var connectionId = await CreateSamlConnectionAsync(service, slug, apiKey, pem);
-            var acs = $"https://auth.test/{slug}/connections/{connectionId}/saml/acs";
+            var acs = $"{service.Origin}{slug}/connections/{connectionId}/saml/acs";
 
             // Substring/prefix/suffix/empty look-alikes must never pass.
             foreach (var (label, audience) in new[]
             {
                 ("prefix", acs[..^4]),
                 ("suffix", acs + "/extra"),
-                ("substring", "https://auth.test"),
+                ("substring", service.Origin.ToString().TrimEnd('/')),
                 ("empty", ""),
             })
             {
@@ -783,13 +790,11 @@ public sealed class ConnectionsE2eTests
         return await service.CreateInstanceAsync("sso-" + Guid.NewGuid().ToString("N")[..8]);
     }
 
-    private static HttpRequestMessage Get(string url, string? apiKey = null, string? cookie = null)
+    private static HttpRequestMessage Get(string url, string? apiKey = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
         if (apiKey is not null)
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        if (cookie is not null)
-            request.Headers.TryAddWithoutValidation("Cookie", cookie);
         return request;
     }
 
@@ -805,6 +810,24 @@ public sealed class ConnectionsE2eTests
         var header = (response.Headers.TryGetValues("Set-Cookie", out var values) ? values.FirstOrDefault() : null)
             ?? throw new InvalidOperationException("expected a session cookie");
         return header.Split(';')[0];
+    }
+
+    private static string Url(AuthServiceFixture service, string path) => new Uri(service.Origin, path).ToString();
+
+    /// <summary>A browser page carrying the session cookie a wire sign-in minted: hosted pages
+    /// render exactly as the freshly signed-in user's browser sees them.</summary>
+    private static async Task<IPage> SessionPageAsync(AuthServiceFixture service, HttpResponseMessage response)
+    {
+        var token = (await SessionCookieAsync(response)).Split('=', 2)[1];
+        var page = await BrowserFixture.NewPageAsync();
+        await page.Context.AddCookiesAsync([new Microsoft.Playwright.Cookie
+        {
+            Name = "tsauth_session",
+            Value = token,
+            Url = service.Origin.ToString(),
+            Secure = true,
+        }]);
+        return page;
     }
 
     /// <summary>Creates an OIDC connection pinned at the fake IdP (discovery + explicit endpoint overrides).</summary>

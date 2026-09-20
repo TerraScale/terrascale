@@ -220,20 +220,18 @@ public sealed class PasscodeE2eTests
     public async Task HostedPagesRender()
     {
         var c = await ArrangeAsync("pages");
+        await using var page = await BrowserFixture.NewPageAsync();
 
-        using (var page = await c.Http.GetAsync($"/ui/{c.Slug}/passcode"))
-        {
-            await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var html = await page.Content.ReadAsStringAsync();
-            await Assert.That(html.Contains("/passcode/request")).IsTrue();
-            await Assert.That(html.Contains("/passcode/verify")).IsTrue();
-            await Assert.That(html.Contains($"/ui/{c.Slug}/sign-in")).IsTrue();
-        }
-        using (var expired = await c.Http.GetAsync($"/ui/{c.Slug}/passcode/mfa?token=garbage"))
-        {
-            await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await expired.Content.ReadAsStringAsync()).Contains("expired")).IsTrue();
-        }
+        var passcode = await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/passcode"));
+        await Assert.That(passcode!.Status).IsEqualTo((int)HttpStatusCode.OK);
+        var html = await page.ContentAsync();
+        await Assert.That(html).Contains("/passcode/request");
+        await Assert.That(html).Contains("/passcode/verify");
+        await Assert.That(html).Contains($"/ui/{c.Slug}/sign-in");
+
+        var expired = await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/passcode/mfa?token=garbage"));
+        await Assert.That(expired!.Status).IsEqualTo((int)HttpStatusCode.OK);
+        await Assert.That(await page.Locator("h1").TextContentAsync()).Contains("expired");
 
         // A live pending token renders the form, and the form posts through to a redirect.
         var secret = RandomNumberGenerator.GetBytes(20);
@@ -248,18 +246,18 @@ public sealed class PasscodeE2eTests
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
         var (token, _) = await MfaGate.BeginPendingAsync(c.Store, c.InstanceId, c.User.Id);
-        using (var form = await c.Http.GetAsync($"/ui/{c.Slug}/passcode/mfa?token={token}"))
-        {
-            var html = await form.Content.ReadAsStringAsync();
-            await Assert.That(html.Contains($"name=\"mfa_token\" value=\"{token}\"")).IsTrue();
-        }
-        using var posted = await c.Http.PostAsync($"/ui/{c.Slug}/passcode/mfa",
-            new FormUrlEncodedContent(new Dictionary<string, string> { ["mfa_token"] = token, ["code"] = Totp.Compute(secret, DateTimeOffset.UtcNow) }));
-        await Assert.That(posted.StatusCode).IsEqualTo(HttpStatusCode.Found);
-        await Assert.That(posted.Headers.Location?.ToString()).IsEqualTo($"/ui/{c.Slug}/account");
+        await page.GotoAsync(PageUrl(c, $"/ui/{c.Slug}/passcode/mfa?token={token}"));
+        await Assert.That(await page.InputValueAsync("input[name=mfa_token]")).IsEqualTo(token);
+        await page.FillAsync("#code", Totp.Compute(secret, DateTimeOffset.UtcNow));
+        await page.ClickAsync("form button");
+        // The browser follows the 302 the form POST earns.
+        await page.WaitForURLAsync("**/account");
+        await Assert.That(page.Url).Contains($"/ui/{c.Slug}/account");
     }
 
     // ---- Helpers ---------------------------------------------------------------------
+
+    private static string PageUrl(Context c, string path) => new Uri(c.Service.Origin, path).ToString();
 
     /// <summary>Stores a passcode verification token with a code the test knows.
     /// The optional id lets tests control where the token lands in the engine's

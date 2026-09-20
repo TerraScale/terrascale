@@ -30,7 +30,8 @@ public sealed class SessionService(AuthStore store)
     /// the instance is at quota and <see cref="TerraScale.DotNet.TerraScaleApiException"/> on conflict.</summary>
     public async Task<User> CreateUserAsync(string instanceId, string? email, string? username, string? password, string? name, CancellationToken ct = default)
     {
-        if (!await Quota.AllowsSignUpAsync(store, instanceId, ct))
+        var billing = await BillingState.CurrentAsync(store, instanceId, ct);
+        if (await BillingState.CountUsersAsync(store, instanceId, billing.Quota, ct) >= billing.Quota)
             throw new QuotaExceededException();
 
         string? emailKey = null;
@@ -44,19 +45,30 @@ public sealed class SessionService(AuthStore store)
         string? usernameKey = username is null ? null : $"{instanceId}:{username.Trim().ToLowerInvariant()}";
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        return await store.CreateUserAsync(new User
+        var userId = "usr_" + SecureTokens.RandomToken(20);
+        var quotaSeat = await store.ClaimQuotaSeatAsync(instanceId, billing.Quota, userId, ct);
+        try
         {
-            Id = "usr_" + SecureTokens.RandomToken(20),
-            InstanceId = instanceId,
-            Email = email,
-            Username = username,
-            EmailKey = emailKey,
-            UsernameKey = usernameKey,
-            PasswordHash = password is { Length: > 0 } ? PasswordHasher.Hash(password) : null,
-            Name = name,
-            CreatedAt = now,
-            UpdatedAt = now,
-        }, ct);
+            return await store.CreateUserAsync(new User
+            {
+                Id = userId,
+                InstanceId = instanceId,
+                Email = email,
+                Username = username,
+                EmailKey = emailKey,
+                UsernameKey = usernameKey,
+                PasswordHash = password is { Length: > 0 } ? PasswordHasher.Hash(password) : null,
+                Name = name,
+                CreatedAt = now,
+                UpdatedAt = now,
+                PrivateMetadata = new Dictionary<string, object> { ["quotaSeat"] = quotaSeat },
+            }, ct);
+        }
+        catch
+        {
+            await store.ReleaseQuotaSeatAsync(instanceId, quotaSeat, ct);
+            throw;
+        }
     }
 
     /// <summary>Verifies a password against a user's stored hash.</summary>
@@ -113,9 +125,7 @@ public sealed class SessionService(AuthStore store)
             return null;
 
         if (session.LastActiveAt is null || DateTimeOffset.UtcNow.ToUnixTimeSeconds() - session.LastActiveAt > 300)
-        {
-            await store.UpsertSessionAsync(session with { LastActiveAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() }, ct);
-        }
+            await store.TryTouchSessionAsync(session.Id, instanceId, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), ct);
         return (session, user);
     }
 

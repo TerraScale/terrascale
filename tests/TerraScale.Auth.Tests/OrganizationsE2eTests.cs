@@ -4,12 +4,15 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Playwright;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Ui;
 using TerraScale.Auth.Users;
 
-/// <summary>Organizations, memberships, and invitations end to end over the real service.</summary>
+/// <summary>Organizations, memberships, and invitations end to end over the real
+/// service. The hosted invitation-accept page is driven through a real headless
+/// Chromium (Playwright); the management API and concurrency races stay on the wire.</summary>
 [NotInParallel]
 public sealed class OrganizationsE2eTests
 {
@@ -42,6 +45,23 @@ public sealed class OrganizationsE2eTests
         var organization = await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations", orgSlug is null ? new { name } : new { name, slug = orgSlug }, HttpStatusCode.OK);
         await Assert.That(organization.GetProperty("id").GetString()!.StartsWith("org_")).IsTrue();
         return organization;
+    }
+
+    private static string Url(AuthServiceFixture service, string path) => new Uri(service.Origin, path).ToString();
+
+    /// <summary>Plants a store-minted session cookie in the browser context — exactly
+    /// the cookie (host-only, Secure, HttpOnly, Lax) the hosted UI sets on sign-in.</summary>
+    private static async Task SignInWithCookieAsync(IPage page, AuthServiceFixture service, string cookieToken)
+    {
+        await page.Context.AddCookiesAsync([new Microsoft.Playwright.Cookie
+        {
+            Name = SessionCookies.Name,
+            Value = cookieToken,
+            Url = service.Origin.ToString(),
+            Secure = true,
+            HttpOnly = true,
+            SameSite = SameSiteAttribute.Lax,
+        }]);
     }
 
     [Test]
@@ -222,12 +242,13 @@ public sealed class OrganizationsE2eTests
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
 
-        using var accept = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}");
-        accept.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={cookieToken}");
-        using var page = await http.SendAsync(accept);
-        await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var html = await page.Content.ReadAsStringAsync();
-        await Assert.That(html).Contains("joined Acme Corp");
+        // The member opens the emailed acceptance link (absolute on the runtime origin)
+        // in a signed-in browser: the page renders the joined message.
+        await using var page = await BrowserFixture.NewPageAsync();
+        await SignInWithCookieAsync(page, service, cookieToken);
+        var response = await page.GotoAsync(Url(service, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}"));
+        await Assert.That(response!.Status).IsEqualTo((int)HttpStatusCode.OK);
+        await Assert.That(await page.Locator(".success").TextContentAsync()).Contains("joined Acme Corp");
 
         var membership = (await store.ListMembershipsByOrgAsync(orgId)).Single();
         await Assert.That(membership.UserId).IsEqualTo(user.Id);
@@ -275,26 +296,37 @@ public sealed class OrganizationsE2eTests
             return secret;
         }
 
+        string AcceptUrl(string invitationId, string token) => Url(service, $"/ui/{slug}/invitations/{invitationId}/accept?token={token}");
+
         // Expired invitation: page rejects it and nothing is created.
         var expiredId = await InviteAsync($"invitee-{Guid.NewGuid().ToString("N")[..6]}@example.com");
         await store.UpsertInvitationAsync((await store.GetInvitationAsync(expiredId))! with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-60).ToUnixTimeSeconds() });
-        var expiredPage = await http.GetAsync($"/ui/{slug}/invitations/{expiredId}/accept?token={await MintTokenAsync(expiredId)}");
-        await Assert.That(expiredPage.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await expiredPage.Content.ReadAsStringAsync()).Contains("expired or was revoked");
+        await using (var expiredPage = await BrowserFixture.NewPageAsync())
+        {
+            var response = await expiredPage.GotoAsync(AcceptUrl(expiredId, await MintTokenAsync(expiredId)));
+            await Assert.That(response!.Status).IsEqualTo(400);
+            await Assert.That(await expiredPage.Locator(".error").TextContentAsync()).Contains("expired or was revoked");
+        }
         await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Count).IsEqualTo(0);
 
         // No account for the invited email: the page points at sign-up.
         var noUserId = await InviteAsync($"nobody-{Guid.NewGuid().ToString("N")[..6]}@example.com");
-        var noUserPage = await http.GetAsync($"/ui/{slug}/invitations/{noUserId}/accept?token={await MintTokenAsync(noUserId)}");
-        await Assert.That(noUserPage.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await noUserPage.Content.ReadAsStringAsync()).Contains("Go to sign-up");
+        await using (var noUserPage = await BrowserFixture.NewPageAsync())
+        {
+            var response = await noUserPage.GotoAsync(AcceptUrl(noUserId, await MintTokenAsync(noUserId)));
+            await Assert.That(response!.Status).IsEqualTo((int)HttpStatusCode.OK);
+            await Assert.That(await noUserPage.Locator(".hint a").TextContentAsync()).Contains("Go to sign-up");
+        }
 
         // Account exists but nobody is signed in: the page points at sign-in.
         var signedOutEmail = $"invitee-{Guid.NewGuid().ToString("N")[..6]}@example.com";
         var signedOutUser = await sessions.CreateUserAsync(instanceId, signedOutEmail, null, null, null);
         var signedOutId = await InviteAsync(signedOutEmail);
-        var signedOutPage = await http.GetAsync($"/ui/{slug}/invitations/{signedOutId}/accept?token={await MintTokenAsync(signedOutId)}");
-        await Assert.That(await signedOutPage.Content.ReadAsStringAsync()).Contains("Sign in");
+        await using (var signedOutPage = await BrowserFixture.NewPageAsync())
+        {
+            await signedOutPage.GotoAsync(AcceptUrl(signedOutId, await MintTokenAsync(signedOutId)));
+            await Assert.That(await signedOutPage.Locator(".hint a").TextContentAsync()).Contains("Sign in");
+        }
 
         // Signed in as a different user: the page explains and links sign-out; invitation stays pending.
         var otherEmail = $"other-{Guid.NewGuid().ToString("N")[..6]}@example.com";
@@ -303,21 +335,24 @@ public sealed class OrganizationsE2eTests
         var targetEmail = $"invitee-{Guid.NewGuid().ToString("N")[..6]}@example.com";
         await sessions.CreateUserAsync(instanceId, targetEmail, null, null, null);
         var wrongUserId = await InviteAsync(targetEmail);
-        using var wrongUserRequest = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{wrongUserId}/accept?token={await MintTokenAsync(wrongUserId)}");
-        wrongUserRequest.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={otherCookie}");
-        var wrongUserPage = await http.SendAsync(wrongUserRequest);
-        var wrongUserHtml = await wrongUserPage.Content.ReadAsStringAsync();
-        await Assert.That(wrongUserHtml).Contains(otherEmail);
-        await Assert.That(wrongUserHtml).Contains("Sign out");
+        await using (var wrongUserPage = await BrowserFixture.NewPageAsync())
+        {
+            await SignInWithCookieAsync(wrongUserPage, service, otherCookie);
+            await wrongUserPage.GotoAsync(AcceptUrl(wrongUserId, await MintTokenAsync(wrongUserId)));
+            await Assert.That(await wrongUserPage.Locator(".error").TextContentAsync()).Contains(otherEmail);
+            await Assert.That(await wrongUserPage.Locator(".hint a").TextContentAsync()).Contains("Sign out");
+        }
         await Assert.That((await store.GetInvitationAsync(wrongUserId))!.Status).IsEqualTo("pending");
 
         // Invalid token (matching session, pending invitation): rejected.
         var invalidTokenId = await InviteAsync(signedOutEmail);
-        using var invalidTokenRequest = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{invalidTokenId}/accept?token=not-the-real-token");
-        invalidTokenRequest.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={(await sessions.CreateSessionAsync(instanceId, signedOutUser.Id, null, null)).Token}");
-        var invalidTokenPage = await http.SendAsync(invalidTokenRequest);
-        await Assert.That(invalidTokenPage.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await invalidTokenPage.Content.ReadAsStringAsync()).Contains("invalid or has already been used");
+        await using (var invalidTokenPage = await BrowserFixture.NewPageAsync())
+        {
+            await SignInWithCookieAsync(invalidTokenPage, service, (await sessions.CreateSessionAsync(instanceId, signedOutUser.Id, null, null)).Token);
+            var response = await invalidTokenPage.GotoAsync(AcceptUrl(invalidTokenId, "not-the-real-token"));
+            await Assert.That(response!.Status).IsEqualTo(400);
+            await Assert.That(await invalidTokenPage.Locator(".error").TextContentAsync()).Contains("invalid or has already been used");
+        }
     }
 
     [Test]
@@ -349,11 +384,11 @@ public sealed class OrganizationsE2eTests
 
         await SendAsync(http, HttpMethod.Post, apiKey, $"/v1/{slug}/organizations/{orgId}/invitations/{invitationId}/revoke", null, HttpStatusCode.OK);
 
-        using var accept = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}");
-        accept.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={cookie}");
-        using var page = await http.SendAsync(accept);
-        await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await page.Content.ReadAsStringAsync()).Contains("expired or was revoked");
+        await using var page = await BrowserFixture.NewPageAsync();
+        await SignInWithCookieAsync(page, service, cookie);
+        var response = await page.GotoAsync(Url(service, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}"));
+        await Assert.That(response!.Status).IsEqualTo(400);
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("expired or was revoked");
         await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Count).IsEqualTo(0);
         await Assert.That((await store.GetInvitationAsync(invitationId))!.Status).IsEqualTo("revoked");
     }
@@ -385,18 +420,18 @@ public sealed class OrganizationsE2eTests
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
 
-        using var first = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}");
-        first.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={cookie}");
-        using var firstPage = await http.SendAsync(first);
-        await Assert.That(firstPage.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await firstPage.Content.ReadAsStringAsync()).Contains("joined Acme Corp");
+        var link = Url(service, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}");
+        await using var page = await BrowserFixture.NewPageAsync();
+        await SignInWithCookieAsync(page, service, cookie);
+
+        var first = await page.GotoAsync(link);
+        await Assert.That(first!.Status).IsEqualTo((int)HttpStatusCode.OK);
+        await Assert.That(await page.Locator(".success").TextContentAsync()).Contains("joined Acme Corp");
 
         // The very same link, replayed: rejected as used, and nothing changes.
-        using var replay = new HttpRequestMessage(HttpMethod.Get, $"/ui/{slug}/invitations/{invitationId}/accept?token={knownToken}");
-        replay.Headers.TryAddWithoutValidation("Cookie", $"{SessionCookies.Name}={cookie}");
-        using var replayPage = await http.SendAsync(replay);
-        await Assert.That(replayPage.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await replayPage.Content.ReadAsStringAsync()).Contains("invalid or has already been used");
+        var replay = await page.GotoAsync(link);
+        await Assert.That(replay!.Status).IsEqualTo(400);
+        await Assert.That(await page.Locator(".error").TextContentAsync()).Contains("invalid or has already been used");
         await Assert.That((await store.ListMembershipsByOrgAsync(orgId)).Count).IsEqualTo(1);
         await Assert.That((await store.ListAuditEventsAsync(instanceId, 100)).Count(e => e.Type == "invitation.accepted")).IsEqualTo(1);
     }
@@ -437,6 +472,7 @@ public sealed class OrganizationsE2eTests
 
         // One single-use link, two concurrent accepts: the token consume must be a
         // compare-and-set, so exactly one request accepts; the loser reads as used.
+        // (Concurrency races stay on the wire — browser-driving them adds flake, not signal.)
         using var first = Accept();
         using var second = Accept();
         var responses = await Task.WhenAll(http.SendAsync(first), http.SendAsync(second));

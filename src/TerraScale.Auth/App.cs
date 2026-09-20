@@ -4,6 +4,7 @@ using TerraScale.Auth.Api;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Keys;
 using TerraScale.Auth.Store;
+using TerraScale.Auth.Observability;
 using TerraScale.DotNet;
 
 /// <summary>Builds and wires the ts-auth application. Split so tests can swap
@@ -16,8 +17,13 @@ public static class App
         var options = AuthOptions.Load(args);
 
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
+        if (!builder.Environment.IsDevelopment() && options.AuditSigningKey is null)
+            throw new InvalidOperationException("TS_AUTH_AUDIT_SIGNING_KEY is required outside Development; audit authenticity cannot be disabled in production.");
+        if (!builder.Environment.IsDevelopment() && options.MetricsKey is null)
+            throw new InvalidOperationException("TS_AUTH_METRICS_KEY is required outside Development; the private metrics surface must remain scrapeable and separately authenticated.");
         builder.WebHost.UseUrls(options.Listen);
         builder.Services.AddSingleton(options);
+        builder.Services.AddSingleton<AuthMetrics>();
         builder.Services.AddSingleton(_ => new TerraScaleClient(
             new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
             {
@@ -31,18 +37,49 @@ public static class App
                 TenantId = options.TerrascaleTenantId,
                 MaxRetryAttempts = 2,
             }));
-        builder.Services.AddSingleton<AuthStore>(provider => new AuthStore(provider.GetRequiredService<TerraScaleClient>(), options.Database));
+        builder.Services.AddSingleton<AuthStore>(provider => new AuthStore(
+            provider.GetRequiredService<TerraScaleClient>(),
+            options.Database,
+            options.AuditSigningKey,
+            options.AuditVerificationKeys));
         builder.Services.AddSingleton<KeyRing>();
         builder.Services.AddSingleton<InstanceResolver>();
         builder.Services.AddSingleton<Users.SessionService>();
-        builder.Services.AddSingleton<Email.IEmailSender, Email.LoggingEmailSender>();
+        if (options.SmtpHost is { } smtpHost)
+            builder.Services.AddSingleton<Email.IEmailSender>(sp => new Email.SmtpEmailSender(
+                smtpHost, options.SmtpPort, options.SmtpUsername!, options.SmtpPassword!, options.SmtpFromAddress!,
+                sp.GetRequiredService<ILogger<Email.SmtpEmailSender>>()));
+        else
+            builder.Services.AddSingleton<Email.IEmailSender, Email.LoggingEmailSender>();
         return (builder, options);
     }
 
     /// <summary>Maps all endpoints. Call once on the built application.</summary>
     public static void Configure(WebApplication app, AuthOptions options)
     {
-        // First in the pipeline: a storage-engine outage or an unexpected handler fault
+        // Record the final status after the exception envelope has translated storage
+        // failures into 503 responses. Keeping this outermost prevents failed requests
+        // from being counted as 200s by a finally block inside the envelope.
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Path.StartsWithSegments("/metrics", StringComparison.Ordinal))
+            {
+                await next();
+                return;
+            }
+
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { await next(); }
+            finally
+            {
+                context.RequestServices.GetRequiredService<AuthMetrics>().RecordRequest(
+                    context.Request.Method,
+                    context.Response.StatusCode,
+                    System.Diagnostics.Stopwatch.GetElapsedTime(started));
+            }
+        });
+
+        // A storage-engine outage or an unexpected handler fault
         // must answer with the standard error envelope (503/500) — not escape as an
         // unhandled exception, which is a bare body-less 500 through Kestrel. Covers
         // every module and the rate-limit middleware's own instance resolution.
@@ -52,7 +89,7 @@ public static class App
         // across all endpoint modules.
         Management.ManagementGate.Use(app);
 
-        app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
+        ObservabilityEndpoints.Map(app);
         EndpointModules.MapAll(app);
 
         // Operator onboarding: create an instance and its first API key.

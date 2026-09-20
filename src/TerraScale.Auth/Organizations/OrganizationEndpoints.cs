@@ -163,6 +163,13 @@ public static class OrganizationEndpoints
             {
                 return ApiResults.Conflict("already_a_member", "the user is already a member of this organization");
             }
+            await AuditAsync(store, context.Instance.Id, "membership.created", context.ApiKeyId, new Dictionary<string, object>
+            {
+                ["organization_id"] = organization.Id,
+                ["membership_id"] = membership.Id,
+                ["user_id"] = membership.UserId,
+                ["role"] = membership.Role,
+            }, ct);
             return Results.Ok(Render(membership));
         });
 
@@ -206,6 +213,13 @@ public static class OrganizationEndpoints
             // delete+re-create window where the membership or its claim is released).
             membership = membership with { Role = body.Role!.Trim() };
             await store.UpsertMembershipAsync(membership, ct);
+            await AuditAsync(store, context.Instance.Id, "membership.updated", context.ApiKeyId, new Dictionary<string, object>
+            {
+                ["organization_id"] = organization.Id,
+                ["membership_id"] = membership.Id,
+                ["user_id"] = membership.UserId,
+                ["role"] = membership.Role,
+            }, ct);
             return Results.Ok(Render(membership));
         });
 
@@ -223,6 +237,12 @@ public static class OrganizationEndpoints
                 return ApiResults.NotFound("membership_not_found", "no such membership in this organization");
 
             await store.DeleteMembershipAsync(membership.Id, ct);
+            await AuditAsync(store, context.Instance.Id, "membership.deleted", context.ApiKeyId, new Dictionary<string, object>
+            {
+                ["organization_id"] = organization.Id,
+                ["membership_id"] = membership.Id,
+                ["user_id"] = membership.UserId,
+            }, ct);
             return Results.NoContent();
         });
 

@@ -1,3 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
 namespace TerraScale.Auth.Store;
 
 /// <summary>A ts-auth customer instance (one tenant of the IdP).</summary>
@@ -187,6 +191,8 @@ public sealed record VerificationToken
     public required string TokenKey { get; init; }         // unique
     public required long ExpiresAt { get; init; }
     public bool Consumed { get; init; }
+    /// <summary>Durable consecutive invalid passcode attempts for this token.</summary>
+    public int FailedAttempts { get; init; }
     public long CreatedAt { get; init; }
 }
 
@@ -197,9 +203,34 @@ public sealed record WebhookEndpoint
     public required string InstanceId { get; init; }
     public required string Url { get; init; }
     public required string[] Events { get; init; }
-    public required string SigningSecret { get; init; }    // stored plaintext: endpoints sign outbound payloads
+    public required string SigningSecretBox { get; init; } // v1 AES-GCM box; plaintext is never persisted
     public bool Enabled { get; init; } = true;
     public long CreatedAt { get; init; }
+}
+
+/// <summary>Durable per-instance delivery checkpoint. It prevents a process
+/// restart from silently skipping audit events that were queued after the last
+/// successful dispatcher tick.</summary>
+public sealed record WebhookCursor
+{
+    public required string Id { get; init; }
+    public required string InstanceId { get; init; }
+    public required long LastCreatedAt { get; init; }
+    public required string LastEventId { get; init; }
+    public required long UpdatedAt { get; init; }
+}
+
+/// <summary>Durable outcome for one endpoint and audit event.</summary>
+public sealed record WebhookDelivery
+{
+    public required string Id { get; init; }
+    public required string InstanceId { get; init; }
+    public required string EndpointId { get; init; }
+    public required string EventId { get; init; }
+    public required string Status { get; init; } // pending | succeeded | dead
+    public int Attempts { get; init; }
+    public string? LastError { get; init; }
+    public long UpdatedAt { get; init; }
 }
 
 /// <summary>An audit event (WorkOS-style audit log).</summary>
@@ -211,6 +242,53 @@ public sealed record AuditEvent
     public string? ActorId { get; init; }
     public Dictionary<string, object> Data { get; init; } = [];
     public long CreatedAt { get; init; }
+    /// <summary>Versioned digest over the immutable event fields and canonical data.</summary>
+    public int? IntegrityVersion { get; init; }
+    public string? IntegrityHash { get; init; }
+    /// <summary>HMAC-SHA256 over the versioned integrity hash, when audit signing is configured.</summary>
+    public string? IntegritySignature { get; init; }
+    /// <summary>Lowercase SHA-256 fingerprint of the signing key, never the key material.</summary>
+    public string? IntegrityKeyFingerprint { get; init; }
+
+    public static string ComputeIntegrityHash(AuditEvent value)
+    {
+        var data = value.Data
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var canonical = string.Join("\n", value.Id, value.InstanceId, value.Type,
+            value.ActorId ?? string.Empty, value.CreatedAt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            JsonSerializer.Serialize(data));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
+
+    public bool HasValidIntegrity() =>
+        IntegrityVersion == 1 && IntegrityHash is not null
+        && CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(IntegrityHash),
+            Encoding.UTF8.GetBytes(ComputeIntegrityHash(this)));
+
+    public bool HasAuthenticIntegrity(ReadOnlySpan<byte> signingKey) =>
+        HasValidIntegrity()
+        && IntegritySignature is not null
+        && (IntegrityKeyFingerprint is null
+            || string.Equals(IntegrityKeyFingerprint, ComputeKeyFingerprint(signingKey), StringComparison.Ordinal))
+        && CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(IntegritySignature),
+            Encoding.UTF8.GetBytes(Convert.ToHexString(HMACSHA256.HashData(
+                signingKey,
+                Encoding.UTF8.GetBytes($"v{IntegrityVersion}:{IntegrityHash}"))).ToLowerInvariant()));
+
+    public static string ComputeKeyFingerprint(ReadOnlySpan<byte> signingKey) =>
+        Convert.ToHexString(SHA256.HashData(signingKey)).ToLowerInvariant();
+
+    public bool HasAuthenticIntegrity(IEnumerable<byte[]> signingKeys)
+    {
+        ArgumentNullException.ThrowIfNull(signingKeys);
+        var valid = false;
+        foreach (var key in signingKeys)
+            valid |= HasAuthenticIntegrity(key);
+        return valid;
+    }
 }
 
 /// <summary>A persisted signing key (ES256) for JWT issuance.</summary>

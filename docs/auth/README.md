@@ -26,7 +26,7 @@ hashing, JWT, OAuth 2.1/OIDC, WebAuthn, TOTP, webhook signing.
 | Admin portal | Hosted page for org admins to manage SSO connections and directories |
 | Management API | Full developer REST API with `sk_...` keys, per-family key scopes, pagination, rate limiting |
 | JWT templates | Custom-claim tokens (`{{user.email}}` substitution) minted on demand |
-| Webhooks | HMAC-signed outbound events with retries, driven by the audit log |
+| Webhooks | HMAC-signed outbound events with retries, durable delivery status, dead-letter listing, and operator replay |
 | Audit logs | Every significant action, queryable API |
 | Billing | Stripe subscriptions: Checkout, customer portal, signature-verified webhooks, plan quotas |
 
@@ -48,8 +48,17 @@ src/TerraScale.Auth/
   Users/ OAuth/ Passkeys/ Mfa/ Organizations/ Management/ Webhooks/     # core feature slices
   Connections/ Scim/ Billing/ Templates/ Admin/                        # SSO, directories, payments, tokens
 tests/TerraScale.Auth.Tests/
-  AuthServiceFixture.cs   # boots the real service over the real embedded TerraBase engine
-  ...E2E tests            # every flow, driven over real HTTP
+  AuthServiceFixture.cs   # boots the real service (real loopback listener) over the real embedded TerraBase engine
+  BrowserFixture.cs       # shared headless Chromium for the hosted-UI tests
+  ...E2E tests            # every flow: hosted UI in a real browser (Playwright), APIs over real HTTP
+```
+
+Browser tests need the Playwright Chromium build that matches the
+`Microsoft.Playwright` package (CI installs and caches it):
+
+```sh
+~/.nuget/packages/microsoft.playwright/<version>/.playwright/node/linux-x64/node \
+  ~/.nuget/packages/microsoft.playwright/<version>/.playwright/package/cli.js install chromium
 ```
 
 ## Running
@@ -74,18 +83,51 @@ dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_TERRASCALE_PROJECT_ID` / `TS_AUTH_TERRASCALE_TENANT_ID` | Optional project/tenant selectors |
 | `TS_AUTH_DATABASE` | TerraBase database backing ts-auth |
 | `TS_AUTH_MASTER_KEY` | base64 32 bytes; encrypts recoverable secrets (TOTP seeds) |
+| `TS_AUTH_AUDIT_SIGNING_KEY` | base64 32-byte HMAC key for authentic audit-event seals (required outside Development) |
+| `TS_AUTH_AUDIT_VERIFY_KEYS` | optional semicolon-separated previous audit HMAC keys retained during rotation |
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
+| `TS_AUTH_METRICS_KEY` | Dedicated private `/metrics` scrape key sent as `X-TerraScale-Metrics-Key` (required outside Development) |
 | `TS_AUTH_LISTEN` | Listen URL (default `http://+:8080`) |
 | `TS_AUTH_RATE_LIMIT` | Management API requests per key per 5 min (default 1000) |
 | `TS_AUTH_STRIPE_SECRET_KEY` | Stripe secret key (billing routes 503 when unset) |
 | `TS_AUTH_STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_...`) |
 | `TS_AUTH_PRICE_PRO` / `TS_AUTH_PRICE_ENTERPRISE` | Stripe price ids for the plans |
 | `TS_AUTH_STRIPE_API_URL` | Stripe API origin (test override) |
+| `TS_AUTH_SMTP_HOST` | SMTP host for real email delivery (OCI: `smtp.email.sa-saopaulo-1.oci.oraclecloud.com`); when unset, emails are only logged |
+| `TS_AUTH_SMTP_PORT` | SMTP port, default 587 (STARTTLS) |
+| `TS_AUTH_SMTP_USERNAME` | SMTP username — the OCI SMTP credential OCID, full string including the `@oci` suffix |
+| `TS_AUTH_SMTP_PASSWORD` | SMTP credential password |
+| `TS_AUTH_SMTP_FROM_ADDRESS` | Envelope-from; must be an approved sender (OCI: `noreply@terrascale.tech`) |
+
+The four `TS_AUTH_SMTP_HOST` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` are
+all-or-nothing: setting any one without the others fails startup with the list
+of missing variables.
 
 Uniqueness of user-chosen identifiers (emails, usernames, org slugs,
 credentials) is enforced with atomic claim documents: CreateOnly writes the
 engine rejects on collision — race-safe without transactions. See
 `docs/parity.md` for the full Clerk/WorkOS/Auth0 feature matrix.
+
+### Email delivery (OCI)
+
+Without `TS_AUTH_SMTP_*` configuration ts-auth uses the logging sender —
+emails go to stdout only (the dev/test default). For real delivery via OCI
+Email Delivery, set the five variables above; fetch the credentials from the
+ts-infra state:
+
+```sh
+cd ts-infra && export TF_VAR_state_passphrase=...
+tofu output -raw smtp_username   # full string incl. the @oci suffix
+tofu output -raw smtp_password
+```
+
+DNS prerequisites (terrascale.tech is hosted at Purelymail — not editable from
+this repo):
+
+- SPF: the domain TXT record must include `include:rp.oracleemaildelivery.com`
+  (Americas) or deliverability suffers.
+- DKIM: the OCI managed-DKIM records are output by ts-infra once applied;
+  publish the CNAMEs in the zone. DKIM stays `PENDING` until they resolve.
 
 ### Local development against a real TerraBase member
 
@@ -104,8 +146,10 @@ TS_AUTH_TERRASCALE_API_URL=http://127.0.0.1:8420 TS_AUTH_TERRASCALE_API_KEY=dev 
 ```
 
 Tests never need this: `AuthServiceFixture` boots the **embedded TerraBase
-engine** in-process and hands its transport to the real SDK, so every E2E test
-exercises the exact production path (service → SDK → document API → engine).
+engine** in-process, hands its transport to the real SDK, and serves the real
+service on a loopback listener — so every E2E test exercises the exact
+production path (browser or HttpClient → service → SDK → document API →
+engine).
 
 ## Provisioning ts-auth on TerraScale (the end-user flow)
 
@@ -135,7 +179,15 @@ project — see `scripts/provision.sh`:
   `/v1/S/audit-events`,
   `/v1/S/billing*`, `/v1/S/instance`
 - Billing webhook: `POST /v1/billing/webhook` (Stripe signature)
+- Quota repair: `POST /v1/{slug}/billing/quota/reconcile` removes only orphaned durable seat claims and returns the examined/removed/retained counts. It requires the instance's authenticated management key.
+
+Outbound webhook signing secrets are envelope-encrypted with `TS_AUTH_MASTER_KEY` at rest and are returned only once when an endpoint is created.
+Webhook delivery checkpoints are stored durably per instance, so a process restart resumes from the last successful tick and does not silently skip queued audit events.
+Each endpoint/event delivery also has a durable outcome (`succeeded`, `pending`, or `dead`); dead deliveries are visible at `/v1/{slug}/webhooks/dead-letter` and can be replayed with the corresponding operator endpoint after remediation. Audit exports include their integrity digest and authenticity seal so downstream retention systems can verify them.
+The `TerraScale.Auth.Store.AuditExportVerifier` helper verifies an exported JSON array offline. Supply the active and retained rotation keys to distinguish digest mutation from an invalid authenticity seal; verification returns only counts and event IDs, never event payloads.
 - Operator: `POST /v1/instances` (Bearer `TS_AUTH_OPERATOR_KEY`)
+- Liveness/readiness: `GET /healthz` and `GET /readyz` (`/readyz` checks TerraBase member health).
+- Private metrics: `GET /metrics` (`X-TerraScale-Metrics-Key`), with bounded request, uptime, build, and readiness metrics.
 
 ## CI
 

@@ -11,7 +11,8 @@ jobs:
   ci:
     name: Check and build ts-auth
     runs-on: terrascale-builder
-    timeout-minutes: 30
+    # The browser-driven hosted-UI suite needs the headroom (serialized E2E classes).
+    timeout-minutes: 60
     env:
       FORGEJO_SHA: ${{ forgejo.sha }}
       FORGEJO_TOKEN: ${{ forgejo.token }}
@@ -52,6 +53,23 @@ jobs:
             tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
             --runtime linux-x64 --nologo
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-msft-1.62.0-chromium
+
+      # Browser-driven hosted-UI tests need Chromium; the Microsoft.Playwright
+      # package bundles its own node, so no system node/pwsh is required.
+      - name: Install Playwright Chromium
+        run: |
+          set -euo pipefail
+          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
+          playwright_root="${NUGET_PACKAGES}/microsoft.playwright/1.62.0/.playwright"
+          node_bin="${playwright_root}/node/linux-x64/node"
+          test -x "${node_bin}"
+          "${node_bin}" "${playwright_root}/package/cli.js" install chromium
+
       - name: Build ts-auth tests and service
         run: |
           set -euo pipefail
@@ -60,14 +78,52 @@ jobs:
             tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
             --configuration Release --no-restore --nologo
 
+      - name: Verify dependency audit failure handling
+        run: python3 -m unittest discover -s scripts -p test_check_nuget_vulnerabilities.py
+
+      - name: Fail closed on vulnerable NuGet packages
+        run: |
+          set -euo pipefail
+          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
+          python3 scripts/check_nuget_vulnerabilities.py \
+            src/TerraScale.Auth/TerraScale.Auth.csproj \
+            tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj
+
       - name: Run ts-auth tests
         run: |
           set -euo pipefail
           export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
-          exec dotnet run \
+          mkdir -p -- artifacts/ci/tests
+          test_log="artifacts/ci/tests/auth-tests.log"
+          dotnet run \
             --project tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj \
             --configuration Release --no-build -- \
-            --minimum-expected-tests 50
+            --minimum-expected-tests 50 \
+            --maximum-parallel-tests 1 \
+            --log-level None 2>&1 | tee "${test_log}"
+          grep -Fq 'Test run summary: Passed!' "${test_log}"
+          grep -Eq 'failed: 0' "${test_log}"
+          report="$(find tests/TerraScale.Auth.Tests -type f -path '*/TestResults/*-report.html' -print -quit)"
+          test -n "${report}"
+          cp -- "${report}" artifacts/ci/tests/ts-auth-tunit-report.html
+          (cd artifacts/ci/tests && sha256sum auth-tests.log ts-auth-tunit-report.html) \
+            > artifacts/ci/tests/SHA256SUMS
+          (cd artifacts/ci/tests && sha256sum --check --strict SHA256SUMS)
+          jq -n \
+            --arg sourceCommit "${FORGEJO_SHA:?event SHA is required}" \
+            --arg testLog "auth-tests.log" \
+            --arg report "ts-auth-tunit-report.html" \
+            --arg digests "SHA256SUMS" \
+            '{schemaVersion: 1, sourceCommit: $sourceCommit, testLog: $testLog, report: $report, digests: $digests}' \
+            > artifacts/ci/tests/test-receipt.json
+
+      - name: Upload ts-auth test evidence
+        uses: https://data.forgejo.org/actions/upload-artifact@v7.0.1
+        with:
+          name: ts-auth-tests-${{ forgejo.sha }}
+          path: artifacts/ci/tests
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Build and inspect the release image
         run: |

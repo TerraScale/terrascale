@@ -84,7 +84,7 @@ public sealed class AuditE2eTests
         }
 
         // Passkey registration: only public key material should ever be referenced.
-        using (var authenticator = new PasskeyE2eTests.FakeAuthenticator())
+        using (var authenticator = PasskeyE2eTests.NewAuthenticator(service))
         {
             var challenge = (await (await http.SendAsync(CookieRequest(HttpMethod.Post, $"/ui/{slug}/passkeys/register/options", cookie)))
                 .Content.ReadFromJsonAsync<JsonElement>()).GetProperty("publicKey").GetProperty("challenge").GetString()!;

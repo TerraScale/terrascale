@@ -3,6 +3,7 @@ namespace TerraScale.Auth.Tests;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using TerraScale.Auth.Billing;
 using TerraScale.Auth.Connections;
 using TerraScale.Auth.Crypto;
 using TerraScale.Auth.Store;
@@ -65,6 +66,43 @@ public sealed class QuotaE2eTests
                 throw new InvalidOperationException($"no live user found for instance {instanceId}");
             after = next;
         }
+    }
+
+    [Test]
+    public async Task ConcurrentCreationCannotExceedThePlanQuota()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, _, _) = await service.CreateInstanceAsync("quota-race-" + Unique());
+        var sessions = new SessionService(service.Store);
+        var attempts = Enumerable.Range(0, FreeQuota + 8)
+            .Select(index => sessions.CreateUserAsync(instanceId, $"race-{index}-{Unique()}@example.com", null, null, null))
+            .ToArray();
+        var results = await Task.WhenAll(attempts.Select(async task =>
+        {
+            try { await task; return true; }
+            catch (QuotaExceededException) { return false; }
+        }));
+
+        await Assert.That(results.Count(created => created)).IsEqualTo(FreeQuota);
+        await Assert.That(await BillingState.CountUsersAsync(service.Store, instanceId, FreeQuota + 1)).IsEqualTo(FreeQuota);
+    }
+
+    [Test]
+    public async Task QuotaSeatReconciliationRemovesOrphanedClaims()
+    {
+        var service = await AuthServiceFixture.GetAsync();
+        var (instanceId, _, _) = await service.CreateInstanceAsync("quota-reconcile-" + Unique());
+
+        var sessions = new SessionService(service.Store);
+        var user = await sessions.CreateUserAsync(instanceId, $"owner-{Unique()}@example.com", null, null, null);
+        var orphanSeat = await service.Store.ClaimQuotaSeatAsync(instanceId, FreeQuota, "usr_missing");
+
+        var result = await service.Store.ReconcileQuotaSeatsAsync(instanceId);
+
+        await Assert.That(result.ClaimsExamined).IsEqualTo(2);
+        await Assert.That(result.ClaimsRemoved).IsEqualTo(1);
+        await Assert.That(result.ClaimsRetained).IsEqualTo(1);
+        await Assert.That(orphanSeat).IsNotEqualTo((int)user.PrivateMetadata["quotaSeat"]);
     }
 
     private static async Task<string> CreateDirectoryAsync(HttpClient http, string apiKey, string slug)

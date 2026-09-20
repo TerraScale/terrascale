@@ -187,13 +187,14 @@ public sealed class OAuthE2eTests
     public async Task DiscoveryAndJwksExposeStandardShapes()
     {
         var arranged = await ArrangeAsync();
+        var issuer = arranged.Service.Origin.ToString().TrimEnd('/');
         var discovery = await arranged.Service.Http.GetFromJsonAsync<JsonElement>($"/{arranged.Slug}/.well-known/openid-configuration");
-        await Assert.That(discovery.GetProperty("issuer").GetString()).IsEqualTo($"https://auth.test/{arranged.Slug}");
-        await Assert.That(discovery.GetProperty("authorization_endpoint").GetString()).IsEqualTo($"https://auth.test/{arranged.Slug}/oauth/authorize");
-        await Assert.That(discovery.GetProperty("token_endpoint").GetString()).IsEqualTo($"https://auth.test/{arranged.Slug}/oauth/token");
-        await Assert.That(discovery.GetProperty("userinfo_endpoint").GetString()).IsEqualTo($"https://auth.test/{arranged.Slug}/oauth/userinfo");
-        await Assert.That(discovery.GetProperty("jwks_uri").GetString()).IsEqualTo($"https://auth.test/{arranged.Slug}/.well-known/jwks.json");
-        await Assert.That(discovery.GetProperty("end_session_endpoint").GetString()).IsEqualTo($"https://auth.test/{arranged.Slug}/oauth/logout");
+        await Assert.That(discovery.GetProperty("issuer").GetString()).IsEqualTo($"{issuer}/{arranged.Slug}");
+        await Assert.That(discovery.GetProperty("authorization_endpoint").GetString()).IsEqualTo($"{issuer}/{arranged.Slug}/oauth/authorize");
+        await Assert.That(discovery.GetProperty("token_endpoint").GetString()).IsEqualTo($"{issuer}/{arranged.Slug}/oauth/token");
+        await Assert.That(discovery.GetProperty("userinfo_endpoint").GetString()).IsEqualTo($"{issuer}/{arranged.Slug}/oauth/userinfo");
+        await Assert.That(discovery.GetProperty("jwks_uri").GetString()).IsEqualTo($"{issuer}/{arranged.Slug}/.well-known/jwks.json");
+        await Assert.That(discovery.GetProperty("end_session_endpoint").GetString()).IsEqualTo($"{issuer}/{arranged.Slug}/oauth/logout");
         await Assert.That(string.Join(",", discovery.GetProperty("response_types_supported").EnumerateArray().Select(v => v.GetString()))).IsEqualTo("code");
         await Assert.That(string.Join(",", discovery.GetProperty("grant_types_supported").EnumerateArray().Select(v => v.GetString()))).IsEqualTo("authorization_code,refresh_token,client_credentials");
         await Assert.That(string.Join(",", discovery.GetProperty("code_challenge_methods_supported").EnumerateArray().Select(v => v.GetString()))).IsEqualTo("S256");
@@ -216,6 +217,7 @@ public sealed class OAuthE2eTests
     public async Task AuthorizationCodeFlowWithPkceIssuesVerifiableTokens()
     {
         var arranged = await ArrangeAsync();
+        var issuer = arranged.Service.Origin.ToString().TrimEnd('/');
         var (tokens, _, _) = await FullFlowAsync(arranged, nonce: "n-42");
 
         var accessToken = tokens.GetProperty("access_token").GetString()!;
@@ -226,14 +228,14 @@ public sealed class OAuthE2eTests
         await Assert.That(tokens.GetProperty("refresh_token").GetString()!.Length > 0).IsTrue();
 
         var access = JwtPayload(accessToken);
-        await Assert.That(access.GetProperty("iss").GetString()).IsEqualTo($"https://auth.test/{arranged.Slug}");
+        await Assert.That(access.GetProperty("iss").GetString()).IsEqualTo($"{issuer}/{arranged.Slug}");
         await Assert.That(access.GetProperty("sub").GetString()).IsEqualTo(arranged.User.Id);
         await Assert.That(access.GetProperty("aud").GetString()).IsEqualTo(arranged.ClientId);
         await Assert.That(access.GetProperty("scope").GetString()).IsEqualTo("openid profile email");
         await Assert.That(access.GetProperty("sid").GetString()).IsEqualTo(arranged.Session.Id);
 
         var id = JwtPayload(idToken);
-        await Assert.That(id.GetProperty("iss").GetString()).IsEqualTo($"https://auth.test/{arranged.Slug}");
+        await Assert.That(id.GetProperty("iss").GetString()).IsEqualTo($"{issuer}/{arranged.Slug}");
         await Assert.That(id.GetProperty("sub").GetString()).IsEqualTo(arranged.User.Id);
         await Assert.That(id.GetProperty("aud").GetString()).IsEqualTo(arranged.ClientId);
         await Assert.That(id.GetProperty("nonce").GetString()).IsEqualTo("n-42");

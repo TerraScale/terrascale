@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Playwright;
 
 /// <summary>
 /// Instance settings end to end: branding inputs are operator-controlled and flow into
@@ -185,20 +186,32 @@ public sealed class InstanceSettingsE2eTests
             ("/ui/" + slug + "/forgot-password", HttpStatusCode.OK),
             ("/ui/" + slug + "/reset-password?token=bad", HttpStatusCode.BadRequest),
         };
-        var escaped = System.Net.WebUtility.HtmlEncode(logo);
+        await using var page = await BrowserFixture.NewPageAsync();
+        page.Dialog += (_, dialog) => throw new InvalidOperationException(
+            $"unexpected script dialog ({dialog.Type}): {dialog.Message}");
         foreach (var (path, status) in pages)
         {
-            using var response = await service.Http.GetAsync(path);
-            await Assert.That(response.StatusCode).IsEqualTo(status);
-            var html = await response.Content.ReadAsStringAsync();
+            // DOMContentLoaded: the branded <img> points at a dead host on purpose, and its
+            // failed fetch must not stall the assertions (attributes exist at parse time).
+            var response = await page.GotoAsync(
+                new Uri(service.Origin, path).ToString(),
+                new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
+            await Assert.That(response!.Status).IsEqualTo((int)status);
 
-            // Branding actually reaches the page.
-            await Assert.That(html.Contains("--accent:#123456")).IsTrue();
-            await Assert.That(html.Contains("<img src=\"" + escaped + "\"")).IsTrue();
+            // Branding actually reaches the page: the logo renders as the img's src and the
+            // theme color as the root --accent custom property the stylesheet consumes.
+            await Assert.That(await page.Locator("img.logo-img").GetAttributeAsync("src")).IsEqualTo(logo);
+            var accent = await page.EvalOnSelectorAsync(
+                "html", "el => getComputedStyle(el).getPropertyValue('--accent').trim()");
+            await Assert.That(accent?.ToString()).IsEqualTo("#123456");
 
-            // And only as escaped output: no raw injection survives.
-            await Assert.That(html.Contains(logo)).IsFalse();
-            await Assert.That(html.Contains("<script")).IsFalse();
+            // And only as escaped output: the payload never became markup — the img carries
+            // exactly its legit attributes (no onerror survived the quote), no script
+            // element exists, and no dialog fired while the page rendered.
+            var attributes = await page.Locator("img.logo-img").EvaluateAsync(
+                "el => [...el.attributes].map(a => a.name).join(',')");
+            await Assert.That(attributes?.ToString()).IsEqualTo("src,alt,class");
+            await Assert.That(await page.Locator("script").CountAsync()).IsEqualTo(0);
         }
     }
 }

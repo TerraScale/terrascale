@@ -1,6 +1,5 @@
 namespace TerraScale.Auth.Users;
 
-using System.Collections.Concurrent;
 using TerraScale.Auth.Api;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Crypto;
@@ -15,11 +14,9 @@ public static class PasscodeEndpoints
 {
     private static readonly TimeSpan CodeLifetime = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan ResendThrottle = TimeSpan.FromSeconds(30);
+    private static readonly SemaphoreSlim[] FailureGates =
+        Enumerable.Range(0, 64).Select(static _ => new SemaphoreSlim(1, 1)).ToArray();
     private const int MaxVerifyAttempts = 5;
-
-    // ponytail: in-memory failure counters reset on restart; upgrade path is an
-    // attempts column on the verification token record.
-    private static readonly ConcurrentDictionary<string, int> FailedAttempts = new(StringComparer.Ordinal);
 
     /// <summary>Maps passcode endpoints.</summary>
     public static void Map(WebApplication app)
@@ -89,9 +86,7 @@ public static class PasscodeEndpoints
                     ct)
                 : null;
             if (record is null || user is null)
-                return await InvalidCodeAsync(store, user is { Banned: false } ? user.Id : null, ct);
-
-            FailedAttempts.TryRemove(user.Id, out _);
+                return await InvalidCodeAsync(store, instance.Id, user is { Banned: false } ? user.Id : null, ct);
 
             if (await MfaGate.RequiredForUserAsync(store, user.Id, ct))
             {
@@ -173,12 +168,25 @@ public static class PasscodeEndpoints
 
     /// <summary>Counts consecutive failures per user; at the cap the user's pending
     /// passcode tokens are marked consumed. Always delayed to blunt brute force.</summary>
-    private static async Task<IResult> InvalidCodeAsync(AuthStore store, string? userId, CancellationToken ct)
+    private static async Task<IResult> InvalidCodeAsync(AuthStore store, string instanceId, string? userId, CancellationToken ct)
     {
         await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
-        if (userId is not null && FailedAttempts.AddOrUpdate(userId, 1, (_, count) => count + 1) >= MaxVerifyAttempts)
+        var attempts = 0;
+        if (userId is not null)
         {
-            FailedAttempts.TryRemove(userId, out _);
+            var gate = FailureGates[unchecked((uint)userId.GetHashCode()) % (uint)FailureGates.Length];
+            await gate.WaitAsync(ct);
+            try
+            {
+                attempts = await store.RecordVerificationFailureAsync(instanceId, userId, "passcode", ct);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+        if (userId is not null && attempts == MaxVerifyAttempts)
+        {
             await store.InvalidateVerificationTokensAsync(userId, "passcode", ct);
         }
         return Results.Json(new { ok = false, error = "invalid_code" }, statusCode: 401);

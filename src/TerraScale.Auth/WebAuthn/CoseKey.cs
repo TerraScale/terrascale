@@ -122,20 +122,39 @@ public sealed class CoseKey
         return (parameters.Q.X!, parameters.Q.Y!);
     }
 
-    /// <summary>Verifies a WebAuthn signature (ES256 raw r||s or RSA padding) over the signed data.</summary>
+    /// <summary>Verifies a WebAuthn signature (ES256, RS256, PS256) over the signed data.</summary>
     public bool Verify(ReadOnlySpan<byte> data, ReadOnlySpan<byte> signature)
     {
         switch (Algorithm, key)
         {
             case ("ES256", ECDsa ecdsa):
-                return signature.Length == 64
-                    && ecdsa.VerifyData(data.ToArray(), signature.ToArray(), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+                return VerifyEs256(ecdsa, data.ToArray(), signature);
             case ("RS256", RSA rsa256):
                 return rsa256.VerifyData(data.ToArray(), signature.ToArray(), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
             case ("PS256", RSA rsaPss):
                 return rsaPss.VerifyData(data.ToArray(), signature.ToArray(), HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
             default:
                 return false;
+        }
+    }
+
+    /// <summary>
+    /// WebAuthn encodes ES256 signatures as ASN.1 DER (Ecdsa-Sig-Value, what real
+    /// authenticators and browsers deliver); the raw IEEE-P1363 r||s form is accepted
+    /// too. Either way the signature covers the same bytes — this is encoding
+    /// tolerance, not a weaker check.
+    /// </summary>
+    internal static bool VerifyEs256(ECDsa ecdsa, byte[] data, ReadOnlySpan<byte> signature)
+    {
+        if (signature.Length == 64)
+            return ecdsa.VerifyData(data, signature.ToArray(), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+        try
+        {
+            return ecdsa.VerifyData(data, signature.ToArray(), HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
+        }
+        catch (Exception exception) when (exception is FormatException or CryptographicException)
+        {
+            return false;
         }
     }
 }
