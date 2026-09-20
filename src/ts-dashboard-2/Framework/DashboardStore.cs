@@ -260,6 +260,17 @@ public sealed partial class DashboardStore
         return secret;
     }
 
+    /// <summary>Records a credential Terrabase already issued (live mode):
+    /// the platform owns the secret; the dashboard keeps only the masked view.</summary>
+    public void CreateIssuedApiKey(string keyId, string name, string[] scopes, string? databaseId)
+    {
+        var key = new ProjectApiKey(
+            keyId, ActiveProjectId, name, keyId[..Math.Min(12, keyId.Length)], keyId[^Math.Min(4, keyId.Length)..],
+            scopes, databaseId, CurrentUser.Email, DateTimeOffset.Now.ToString("O"),
+            DateTimeOffset.Now.AddMonths(6).ToString("O"), null, null);
+        ApiKeys = ApiKeys.Add(key);
+    }
+
     public void MarkNotificationRead(string id) =>
         Notifications = [.. Notifications.Select(n => n.Id == id ? n with { Status = "Read" } : n)];
 

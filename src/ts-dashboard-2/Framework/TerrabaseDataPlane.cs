@@ -1,6 +1,8 @@
 namespace TerraScale.Dashboard2;
 
 #if TERRABASE_SDK
+using System.Text;
+using System.Text.Json;
 using TerraScale.DotNet;
 
 /// <summary>
@@ -31,6 +33,31 @@ public sealed class TerrabaseDataPlane(DashboardSecurityOptions security)
         };
     }
 
+    /// <summary>Issues a real Terrabase credential for the project through the
+    /// platform control plane; the secret is returned exactly once.</summary>
+    public async Task<(string KeyId, string Secret)> IssueCredentialAsync(string name, string[] scopes, string? database, CancellationToken ct)
+    {
+        using var http = CreateHttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(security.State!.ApiUrl, "/api/v1/credentials"))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                name,
+                scopes,
+                database,
+            }), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {security.State.ApiKey}");
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        await using var body = await response.Content.ReadAsStreamAsync(ct);
+        using var document = await JsonDocument.ParseAsync(body, cancellationToken: ct);
+        return (document.RootElement.GetProperty("id").GetString()!, document.RootElement.GetProperty("secret").GetString()!);
+    }
+
+    private HttpClient CreateHttpClient() =>
+        new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
+
     /// <summary>True when the database exists and is not deleted.</summary>
     public async Task<bool> DatabaseExistsAsync(string name, CancellationToken ct)
     {
@@ -50,6 +77,9 @@ public sealed class TerrabaseDataPlane(DashboardSecurityOptions security)
 public sealed class TerrabaseDataPlane
 {
     public Task<string> CreateDatabaseAsync(string name, string operationId, CancellationToken ct) =>
+        throw new InvalidOperationException("The live dashboard requires the TerraScale SDK data plane.");
+
+    public Task<(string KeyId, string Secret)> IssueCredentialAsync(string name, string[] scopes, string? database, CancellationToken ct) =>
         throw new InvalidOperationException("The live dashboard requires the TerraScale SDK data plane.");
 }
 #endif

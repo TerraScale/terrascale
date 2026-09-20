@@ -43,6 +43,24 @@ public sealed partial class HtmlPage
 
     public string? FirstTagText(string tag) => MatchGroup(Html, $"<{tag}[^>]*>(.*?)</{tag}>", 1)?.Trim();
 
+
+    /// <summary>Every button on the page: (label, opens dialog id or null,
+    /// submit button).</summary>
+    public IReadOnlyList<(string Label, string? OpensDialog, bool Submit)> Buttons =>
+        [.. Regex.Matches(Html, """<button\b([^>]*)>(.*?)</button>""", RegexOptions.Singleline | RegexOptions.IgnoreCase)
+            .Select(m =>
+            {
+                var attributes = m.Groups[1].Value;
+                var label = Regex.Replace(m.Groups[2].Value, "<[^>]+>", "").Trim();
+                var opens = Regex.Match(attributes, """data-open-dialog=["']([^"']+)["']""").Groups[1].Value;
+                return (label, opens.Length is 0 ? null : opens, Regex.IsMatch(attributes, """type=["']submit["']""", RegexOptions.IgnoreCase) || !Regex.IsMatch(attributes, """\btype=["']""", RegexOptions.IgnoreCase));
+            })
+            .Where(b => b.Item1.Length > 0)];
+
+    /// <summary>Value of the one-time credential secret dialog, when present.</summary>
+    public string? SecretCode =>
+        MatchGroup(Html, """<code class="ts-secret-code"[^>]*>(.*?)</code>""", 1)?.Trim();
+
     public IReadOnlyList<string> TagTexts(string tag) =>
         [.. Regex.Matches(Html, $"<{tag}[^>]*>(.*?)</{tag}>", RegexOptions.Singleline)
             .Select(m => Regex.Replace(m.Groups[1].Value, "<[^>]+>", "").Trim())

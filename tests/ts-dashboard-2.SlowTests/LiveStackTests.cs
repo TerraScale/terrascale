@@ -14,12 +14,13 @@ using TerraScale.Dashboard2.Testing;
 /// OIDC sign-in, Terrabase-persisted account worlds, real database
 /// provisioning, refresh-token revocation — end to end.
 /// </summary>
+[TUnit.Core.NotInParallel]
 public sealed class LiveStackTests
 {
     private const string Password = "Live-tests-123!";
 
     /// <summary>The shared running stack across every live test.</summary>
-    private static readonly Task<LiveDashboardFixture> Stack = LiveDashboardFixture.StartAsync();
+    private static readonly Task<LiveDashboardFixture> Stack = LiveDashboardFixture.Shared;
 
     // ---- full registration journey ---------------------------------------------------
 

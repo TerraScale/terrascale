@@ -3,7 +3,10 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard2.Features.ApiKeys;
 
-public sealed class CreateApiKeyEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
+/// <summary>Creates a project API key. Demo mode mints the seeded secret; live
+/// mode issues a REAL Terrabase credential through the platform control plane
+/// (the secret is returned exactly once and shown to the user the same way).</summary>
+public sealed class CreateApiKeyEndpoint(DashboardStore store, DashboardSecurityOptions security, TerrabaseDataPlane? dataPlane = null) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -24,9 +27,24 @@ public sealed class CreateApiKeyEndpoint(DashboardStore store) : EndpointWithout
             return Results.Redirect("/api-keys?create=key&error=" + Uri.EscapeDataString("Enter at least one scope."), false, false);
         }
 
-        var secret = store.CreateApiKey(name, [.. scopes], databaseId.Length is 0 ? null : databaseId);
+        if (!security.DemoMode)
+        {
+            try
+            {
+                var (keyId, secret) = await dataPlane!.IssueCredentialAsync(name, [.. scopes], databaseId.Length is 0 ? null : databaseId, ct);
+                store.CreateIssuedApiKey(keyId, name, [.. scopes], databaseId.Length is 0 ? null : databaseId);
+                store.SavePendingSecret(keyId, name, secret);
+                return Results.Redirect($"/api-keys?created={keyId}&toast={Uri.EscapeDataString("API key created.")}", false, false);
+            }
+            catch (HttpRequestException exception)
+            {
+                return Results.Redirect("/api-keys?create=key&error=" + Uri.EscapeDataString($"TerraBase rejected the credential: {exception.Message}"), false, false);
+            }
+        }
+
+        var demoSecret = store.CreateApiKey(name, [.. scopes], databaseId.Length is 0 ? null : databaseId);
         var created = store.ApiKeys.Last(); // CreateApiKey appends the new key
-        store.SavePendingSecret(created.KeyId, created.Name, secret);
+        store.SavePendingSecret(created.KeyId, created.Name, demoSecret);
         return Results.Redirect($"/api-keys?created={created.KeyId}&toast={Uri.EscapeDataString("API key created.")}", false, false);
     }
 }

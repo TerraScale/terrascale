@@ -6,6 +6,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
@@ -100,6 +102,12 @@ public sealed class LiveDashboardFixture : IAsyncDisposable
 
     public string ClientSecret { get; }
 
+    private static Task<LiveDashboardFixture>? shared;
+
+    /// <summary>One stack for every live test in the run: booting two full
+    /// stacks concurrently trips ts-auth's instance-creation rate limit.</summary>
+    public static Task<LiveDashboardFixture> Shared => shared ??= StartAsync();
+
     /// <summary>Boots the whole live stack: engines, ts-auth, instance, OAuth client.</summary>
     public static async Task<LiveDashboardFixture> StartAsync()
     {
@@ -169,7 +177,7 @@ public sealed class LiveDashboardFixture : IAsyncDisposable
         // database plus the dev control plane the dashboard's data plane dials.
         var stateDatabase = "tsdash-live-" + Guid.NewGuid().ToString("N")[..8];
         var stateUrl = new Uri($"http://127.0.0.1:{ReserveLoopbackPort()}");
-        var controlPlane = new DevControlPlane(root, stateDatabase);
+        var controlPlane = new DevControlPlane(root, stateDatabase, EngineApiKey);
         var stateMember = TerraBaseHost.Create(stateUrl.ToString(), builder =>
         {
             builder.Services.AddSingleton<IStartupFilter>(new ControlPlaneStartupFilter(controlPlane));
@@ -312,15 +320,27 @@ public sealed class LiveDashboardFixture : IAsyncDisposable
             ValueTask.FromResult(TenantAuthorizationDecision.AllowUntil(DateTimeOffset.UtcNow.AddSeconds(10)));
     }
 
-    /// <summary>Routes the platform's database-management surface onto the state
-    /// member: every created database is a REAL embedded TerraBase engine bound
-    /// to that exact name. Document routes pass through to the member.</summary>
+    /// <summary>The state member's front door: authenticates the caller (the
+    /// admin key reaches everything; an issued credential only its scoped
+    /// databases), then routes the platform's database-management surface and
+    /// the document routes of plane-provisioned databases onto their real
+    /// embedded engines. Everything else falls through to the member itself.</summary>
     private sealed class ControlPlaneStartupFilter(DevControlPlane plane) : IStartupFilter
     {
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => application =>
         {
             application.Use(async (context, continuation) =>
             {
+                if (!HttpMethods.IsGet(context.Request.Path) || !context.Request.Path.StartsWithSegments("/health"))
+                {
+                    if (!plane.IsAuthorized(context))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        await context.Response.WriteAsync("unauthorized");
+                        return;
+                    }
+                }
+
                 if (await plane.TryHandleAsync(context))
                     return;
                 await continuation().ConfigureAwait(false);
@@ -332,18 +352,56 @@ public sealed class LiveDashboardFixture : IAsyncDisposable
     private sealed class DevControlPlane : IAsyncDisposable
     {
         private readonly string root;
+        private readonly string adminKey;
         private readonly ConcurrentDictionary<string, WireDatabase> databases = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, EmbeddedTerraBaseHost> enginesByDatabase = new(StringComparer.Ordinal);
         private readonly List<EmbeddedTerraBaseHost> engines = [];
+        private readonly ConcurrentDictionary<string, IssuedCredential> credentialsBySecret = new(StringComparer.Ordinal);
 
-        public DevControlPlane(string root, string stateDatabase)
+        /// <summary>A credential the plane issued; an empty database scope means
+        /// the key reaches every plane database, otherwise exactly the listed ones.</summary>
+        public sealed record IssuedCredential(string Id, string Name, string[] Databases);
+
+        public DevControlPlane(string root, string stateDatabase, string adminKey)
         {
             this.root = root;
+            this.adminKey = adminKey;
             // The member's own state binding is a real database too.
             databases[stateDatabase] = Record(stateDatabase);
         }
 
+        /// <summary>Authenticate the request: the admin key reaches everything,
+        /// an issued credential only its scoped databases.</summary>
+        public bool IsAuthorized(HttpContext context)
+        {
+            var header = context.Request.Headers.Authorization.ToString();
+            var presented = header.StartsWith("Bearer ", StringComparison.Ordinal) ? header["Bearer ".Length..] : string.Empty;
+            if (presented.Length == 0)
+                return false;
+            if (CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(presented), Encoding.UTF8.GetBytes(adminKey)))
+                return true;
+            if (!credentialsBySecret.TryGetValue(presented, out var credential))
+                return false;
+            if (credential.Databases.Length == 0)
+                return true;
+            return credential.Databases.Contains(RouteDatabase(context.Request.Path));
+        }
+
         public async Task<bool> TryHandleAsync(HttpContext context)
         {
+            if (context.Request.Path.StartsWithSegments("/api/v1/credentials", out var credentialRemainder))
+            {
+                if ((credentialRemainder.Value?.Length ?? 0) > 0)
+                    return false;
+                if (HttpMethods.IsPost(context.Request.Method))
+                {
+                    await IssueCredentialAsync(context);
+                    return true;
+                }
+
+                return false;
+            }
+
             if (!context.Request.Path.StartsWithSegments("/api/v1/databases", out var remaining))
                 return false;
 
@@ -365,9 +423,10 @@ public sealed class LiveDashboardFixture : IAsyncDisposable
                 return false;
             }
 
+            var name = Uri.UnescapeDataString(segments[0]);
+
             if (segments.Length == 1 && HttpMethods.IsGet(context.Request.Method))
             {
-                var name = Uri.UnescapeDataString(segments[0]);
                 if (databases.TryGetValue(name, out var record))
                     await WriteJsonAsync(context, 200, record);
                 else
@@ -375,7 +434,86 @@ public sealed class LiveDashboardFixture : IAsyncDisposable
                 return true;
             }
 
+            // Document and collection routes for a plane-provisioned database
+            // proxy into that database's real embedded engine.
+            if (segments.Length >= 2 && enginesByDatabase.ContainsKey(name))
+            {
+                await ProxyAsync(context, name);
+                return true;
+            }
+
             return false;
+        }
+
+        /// <summary>Database name carried by a /api/v1/databases/{name}/... route.</summary>
+        private static string RouteDatabase(PathString path)
+        {
+            if (path.StartsWithSegments("/api/v1/databases", out var remaining))
+            {
+                var first = remaining.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                if (first is { Length: > 0 })
+                    return Uri.UnescapeDataString(first);
+            }
+
+            return string.Empty;
+        }
+
+        private async Task IssueCredentialAsync(HttpContext context)
+        {
+            using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            var root = body.RootElement;
+            var name = root.TryGetProperty("name", out var nameValue) ? nameValue.GetString() : null;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                await WriteJsonAsync(context, 400, new { error = "invalid_request", message = "name is required" });
+                return;
+            }
+
+            var scopes = root.TryGetProperty("scopes", out var scopesValue)
+                ? scopesValue.EnumerateArray().Select(s => s.GetString() ?? "").Where(s => s.Length > 0).ToArray()
+                : [];
+            var database = root.TryGetProperty("database", out var databaseValue) ? databaseValue.GetString() : null;
+            var secret = "tsk_live_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+            var id = "key_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(10)).ToLowerInvariant();
+            credentialsBySecret[secret] = new IssuedCredential(id, name, string.IsNullOrWhiteSpace(database) ? [] : [database]);
+            await WriteJsonAsync(context, 201, new { id, name, secret, scopes });
+        }
+
+        /// <summary>Forwards one request to the plane database's engine — the
+        /// real TerraBase document pipeline, in-memory hop included.</summary>
+        private async Task ProxyAsync(HttpContext context, string database)
+        {
+            if (!enginesByDatabase.TryGetValue(database, out var engine))
+            {
+                await WriteJsonAsync(context, 404, new { error = "not_found", message = $"no database named {database}" });
+                return;
+            }
+
+            var client = new HttpClient(engine.CreateHandler(), disposeHandler: false) { BaseAddress = new Uri("http://127.0.0.1/") };
+            using var upstream = new HttpRequestMessage(new HttpMethod(context.Request.Method), context.Request.Path + context.Request.QueryString);
+            if (context.Request.ContentLength is > 0 or null && (context.Request.ContentLength ?? -1) != 0 && context.Request.Body is { CanRead: true })
+            {
+                using var memory = new MemoryStream();
+                await context.Request.Body.CopyToAsync(memory, context.RequestAborted);
+                upstream.Content = new ByteArrayContent(memory.ToArray());
+                if (context.Request.ContentType is { Length: > 0 } contentType)
+                    upstream.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+            }
+
+            foreach (var header in context.Request.Headers)
+            {
+                if (!header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) && !header.Key.StartsWith("Host", StringComparison.OrdinalIgnoreCase) && !header.Key.StartsWith("Content-", StringComparison.OrdinalIgnoreCase))
+                    upstream.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+            }
+
+            using var response = await client.SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted);
+            context.Response.StatusCode = (int)response.StatusCode;
+            foreach (var header in response.Headers)
+                context.Response.Headers[header.Key] = header.Value.ToArray();
+            foreach (var header in response.Content.Headers)
+                context.Response.Headers[header.Key] = header.Value.ToArray();
+            context.Response.Headers.Remove("Transfer-Encoding");
+            await response.Content.CopyToAsync(context.Response.Body, context.RequestAborted);
         }
 
         private async Task CreateAsync(HttpContext context)
@@ -396,6 +534,7 @@ public sealed class LiveDashboardFixture : IAsyncDisposable
 
             var engine = TerraBaseHost.CreateEmbedded(builder => ConfigureEngine(builder, name, Path.Combine(root, "db-" + name)));
             await engine.Application.StartAsync();
+            enginesByDatabase[name] = engine;
             lock (engines)
             {
                 engines.Add(engine);
