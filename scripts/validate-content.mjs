@@ -14,9 +14,13 @@ if (renderedFiles.length) failures.push(...scanProhibitedClaims(renderedFiles, r
 
 const pricing = fs.readFileSync(path.join(root, 'src/components/sections/PricingSection.svelte'), 'utf8')
 const site = fs.readFileSync(path.join(root, 'src/lib/site.ts'), 'utf8')
+// Prices and allowances must mirror the qualified billing catalog seeded by
+// ts-dashboard (src/backend/billing/catalog.ts createSeedPlans), which is what
+// checkout actually charges: Starter $5 (5 databases, 5 GB, 1M units/month),
+// Pro $50 (25 databases, 25 GB, 100M units/month), Enterprise $500 support base.
 const expectedPlans = new Map([
   ['Starter', 5],
-  ['Pro', 25],
+  ['Pro', 50],
   ['Enterprise', 500],
 ])
 const planMatches = [...site.matchAll(/name:\s*'([^']+)'[\s\S]*?price:\s*(\d+)/g)]
@@ -33,8 +37,8 @@ for (const plan of expectedPlans.keys()) {
   failures.push(`site.ts: missing Public Alpha plan ${plan}.`)
 }
 const expectedLimits = {
-  Starter: [5, 10, 5, 5, 1_000_000],
-  Pro: [25, 50, 25, 50, 10_000_000],
+  Starter: [5, 5, 5, 5, 1_000_000],
+  Pro: [25, 25, 25, 25, 100_000_000],
   Enterprise: [null, null, null, null, null],
 }
 for (const [plan, limits] of Object.entries(expectedLimits)) {
