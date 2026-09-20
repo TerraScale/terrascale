@@ -177,6 +177,25 @@ routes are not part of the producer contract and do not provide anonymous or
 no-account provisioning; the Dashboard session and project membership remain
 required.
 
+`TSAuth` exposes the hosted ts-auth identity provider's management and OIDC
+routes. Point a client at the deployment origin with the instance `sk_` key —
+`NewClient(sdk.Config{TSAuthBaseURL: "https://auth.example.com", AccessToken:
+"sk_..."})` — then call `client.TSAuth.Instance("slug")` for the scoped
+families (`Users`, `Sessions`, `APIKeys`, `Organizations`, `OAuthClients`,
+`Connections`, `Directories`, `JWTTemplates`, `Webhooks`, `AuditEvents`,
+`Billing`, `Instance`, and `OIDC`); for example
+`client.TSAuth.Instance("acme").Users.List(ctx, 50, "")`. The deployment
+origin must be explicit: `TSAuthBaseURL` when set, else a non-default
+`APIBaseURL`; the default product origin is rejected because it never serves
+ts-auth routes. One-time secrets
+(`api_key`, OAuth `client_secret`, directory `token`, webhook
+`signing_secret`) are returned only by the creating or rotating call. The OIDC
+family uses client credentials instead of the `sk_` key, and webhook
+deliveries are verified with `VerifyTSAuthWebhook` (HMAC-SHA256 over
+`timestamp + "." + rawBody`, with an optional replay tolerance). These routes
+are not part of the TerraBase producer contract; a ts-auth origin is a custom
+origin, so no discovery routing applies.
+
 Document reads expose the exact response `ETag` and session token. Pass that
 ETag to `WithIfMatch` for conditional PUT, PATCH, or DELETE; `"*"` requires
 an existing document. Retain the same condition and `WithIdempotencyKey` when

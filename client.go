@@ -97,6 +97,11 @@ type Config struct {
 	// APIBaseURL overrides the default product API origin (tests, custom
 	// origins).
 	APIBaseURL string
+	// TSAuthBaseURL is the ts-auth deployment origin used by the TSAuth
+	// family. When empty, TSAuth uses APIBaseURL and requires it to not be
+	// the default product origin (DefaultAPIBaseURL), which never serves
+	// ts-auth routes.
+	TSAuthBaseURL string
 	// DiscoveryBaseURL overrides the metadata origin — discovery and the
 	// region catalog (ADR 0050) — for tests and development. It defaults to
 	// https://atlas.terrascale.tech and is independent of APIBaseURL.
@@ -150,6 +155,7 @@ type Client struct {
 
 	AuthPersistence  *AuthPersistenceClient
 	ProjectAPIKeys   *ProjectAPIKeysClient
+	TSAuth           *TSAuthClient
 	Operations       *OperationsClient
 	Documents        *DocumentsClient
 	Regions          *RegionsClient
@@ -278,6 +284,7 @@ func NewClient(cfg Config) (*Client, error) {
 
 	c := &Client{cfg: Config{
 		APIBaseURL:       base,
+		TSAuthBaseURL:    strings.TrimSpace(cfg.TSAuthBaseURL),
 		DiscoveryBaseURL: discoveryBase,
 		AccessToken:      cfg.AccessToken,
 		TokenProvider:    cfg.TokenProvider,
@@ -307,6 +314,7 @@ func NewClient(cfg Config) (*Client, error) {
 	c.regional = regional
 	c.AuthPersistence = &AuthPersistenceClient{c: c}
 	c.ProjectAPIKeys = &ProjectAPIKeysClient{c: c}
+	c.TSAuth = &TSAuthClient{c: c}
 	c.Operations = &OperationsClient{c: c}
 	c.Documents = &DocumentsClient{c: c}
 	c.Regions = &RegionsClient{c: c}
