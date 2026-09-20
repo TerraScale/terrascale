@@ -5,31 +5,22 @@ public sealed record DashboardSecurityOptions(bool DemoMode, LiveIdentityOptions
 {
     public static DashboardSecurityOptions Load(IConfiguration configuration, IHostEnvironment environment)
     {
-        var mode = configuration["TS_DASHBOARD_MODE"]?.Trim().ToLowerInvariant();
-        if (mode is null or "")
-        {
-            if (environment.IsProduction())
-                throw new InvalidOperationException("TS_DASHBOARD_MODE must be set to live after configuring a real identity provider; demo authentication is disabled in production.");
-            mode = "demo";
-        }
-
-        if (mode == "demo")
+        var productionDemo = configuration["TS_DASHBOARD_PRODUCTION_DEMO"] == "1";
+        // Demo is the default; any live setting opts into live validation.
+        if (productionDemo || !HasLiveConfiguration(configuration))
         {
             // Production refuses demo authentication unless the operator has
             // explicitly acknowledged there is no live identity provider yet.
             if (environment.IsProduction()
                 && configuration["TS2_E2E"] != "1"
-                && configuration["TS_DASHBOARD_PRODUCTION_DEMO"] != "1")
+                && !productionDemo)
             {
                 throw new InvalidOperationException(
-                    "TS_DASHBOARD_MODE=demo is development-only; set TS_DASHBOARD_PRODUCTION_DEMO=1 to acknowledge running the demo backend in production, or configure live mode.");
+                    "The demo backend is development-only; set TS_DASHBOARD_PRODUCTION_DEMO=1 to acknowledge running it in production, or configure the live identity provider.");
             }
 
             return new(true);
         }
-
-        if (mode != "live")
-            throw new InvalidOperationException("TS_DASHBOARD_MODE must be either live or demo.");
 
         var idpOrigin = ParseOrigin(configuration["TS_DASHBOARD_IDP_ORIGIN"]?.Trim(), allowLoopbackHttp: !environment.IsProduction(), name: "TS_DASHBOARD_IDP_ORIGIN");
         var publicOrigin = ParseOrigin(configuration["TS_DASHBOARD_PUBLIC_ORIGIN"]?.Trim(), allowLoopbackHttp: !environment.IsProduction(), name: "TS_DASHBOARD_PUBLIC_ORIGIN");
@@ -63,6 +54,17 @@ public sealed record DashboardSecurityOptions(bool DemoMode, LiveIdentityOptions
             new LiveIdentityOptions(idpOrigin, publicOrigin, instance, issuer, introspection, clientId, clientSecret, managementKey),
             new DashboardStateOptions(stateUrl, stateKey, stateDatabase));
     }
+
+    private static bool HasLiveConfiguration(IConfiguration configuration) =>
+        !string.IsNullOrWhiteSpace(configuration["TS_DASHBOARD_IDP_ORIGIN"])
+        || !string.IsNullOrWhiteSpace(configuration["TS_DASHBOARD_IDP_INSTANCE"])
+        || !string.IsNullOrWhiteSpace(configuration["TS_DASHBOARD_IDP_CLIENT_ID"])
+        || !string.IsNullOrWhiteSpace(configuration["TS_DASHBOARD_IDP_CLIENT_SECRET"])
+        || !string.IsNullOrWhiteSpace(configuration["TS_DASHBOARD_IDP_MANAGEMENT_KEY"])
+        || !string.IsNullOrWhiteSpace(configuration["TS_DASHBOARD_PUBLIC_ORIGIN"])
+        || !string.IsNullOrWhiteSpace(configuration["TS_DASHBOARD_STATE_URL"])
+        || !string.IsNullOrWhiteSpace(configuration["TS_DASHBOARD_STATE_API_KEY"])
+        || !string.IsNullOrWhiteSpace(configuration["TS_DASHBOARD_STATE_DATABASE"]);
 
     /// <summary>HTTP origins are development-only and only for loopback hosts,
     /// mirroring the SDK's own loopback rule.</summary>

@@ -19,8 +19,10 @@
             <div class="ts-alert ts-alert-info" role="status">
                 <span class="ts-alert-title">@Icons.Terminal(16) Point the dashboard at a TerraBase host</span>
                 <span class="ts-alert-body">
-                    Set <code>TERRABASE_URL</code> to the TerraBase origin and restart the dashboard, for example:<br />
-                    <code>TERRABASE_URL=http://127.0.0.1:8080 dotnet run --project src/ts-dashboard-2</code>
+                    Set <code>TERRABASE_URL</code> to the TerraBase origin and optionally
+                    <code>TERRABASE_API_KEY</code> to a member API key, then restart the dashboard,<br />
+                    for example:<br />
+                    <code>TERRABASE_URL=http://127.0.0.1:8080 TERRABASE_API_KEY=dev dotnet run --project src/ts-dashboard-2</code>
                 </span>
             </div>
         </section>

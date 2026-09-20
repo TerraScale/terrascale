@@ -18,7 +18,6 @@ public sealed class DashboardTestApp : IDisposable
     {
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.UseSetting("TS_DASHBOARD_MODE", "demo");
             builder.UseSetting("TS2_E2E", "1");
         });
     }

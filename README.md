@@ -17,6 +17,12 @@ one endpoint per file, CI/deploy).
 - **Datastar** (`wwwroot/js/datastar.js`) — the front/back communication layer;
   slices declare `data-*` attributes, endpoints stream `Datastar.Stream(...)` events
 - Server-rendered SVG charts (`Framework/Charts.cs`) and lucide icon set (`Framework/Icons.cs`)
+- **TerraScale.DotNet** — the workspace prefers the sibling `ts-dotnet` SDK
+  checkout; standalone Docker and CI builds restore the vendored SDK package
+  from `src/ts-dashboard-2/nuget/`. Set `TERRABASE_URL` (or
+  `TERRASCALE_API_URL`) to enable the live TerraBase engine page and
+  `TERRABASE_API_KEY` (or `TERRASCALE_API_KEY`) when the member requires
+  authentication.
 
 ## Layout
 
@@ -34,7 +40,7 @@ one endpoint per file, CI/deploy).
 ```
 dotnet run --project src/ts-dashboard-2
 # open http://localhost:5000 → redirected to /login
-# demo credentials: mario@terrascale.tech / terrascale (requires TS_DASHBOARD_MODE=demo; production refuses demo authentication)
+# demo credentials: mario@terrascale.tech / terrascale (development defaults to demo; production requires TS_DASHBOARD_PRODUCTION_DEMO=1)
 ```
 
 Live account worlds are persisted through TerraBase change-token writes. If two
@@ -44,11 +50,13 @@ the service never silently overwrites the winning state.
 
 ## Modes
 
-`TS_DASHBOARD_MODE` selects the backend:
+The dashboard defaults to the in-memory demo backend. Supplying live identity
+and state settings selects the live backend:
 
 - **demo** (default in development): everything in-memory — the seeded
   demo account (mario@terrascale.tech / terrascale), instant onboarding,
-  Playwright-verified v1 parity. Production refuses demo mode.
+  Playwright-verified v1 parity. Production requires the explicit
+  `TS_DASHBOARD_PRODUCTION_DEMO=1` acknowledgment.
 - **live**: ts-auth (the ts-dotnet SDK's auth service) owns identity —
   registration creates real users, sign-in walks the hosted form → OIDC
   authorize (PKCE) → token exchange, sessions validate through RFC 7662
@@ -60,6 +68,11 @@ the service never silently overwrites the winning state.
   `TS_DASHBOARD_IDP_CLIENT_ID/SECRET`, `TS_DASHBOARD_IDP_MANAGEMENT_KEY`,
   `TS_DASHBOARD_PUBLIC_ORIGIN`, and `TS_DASHBOARD_STATE_URL/API_KEY/DATABASE`.
   Loopback HTTP origins are accepted outside production for local stacks.
+
+Fly deployments use the checked-in `fly.toml`, which sets
+`TS_DASHBOARD_PRODUCTION_DEMO=1`. With no live provider settings, this keeps
+the production and pull-request preview apps on the seeded in-memory demo
+backend.
 
 ## Tests
 

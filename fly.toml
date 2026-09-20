@@ -3,6 +3,7 @@ primary_region = "gru"
 
 [env]
   ASPNETCORE_ENVIRONMENT = "Production"
+  TS_DASHBOARD_PRODUCTION_DEMO = "1"
 
 [http_service]
   internal_port = 8080

@@ -203,7 +203,6 @@ public sealed class LiveDashboardFixture : IAsyncDisposable
         new WebApplicationFactory<DashboardStore>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
-            builder.UseSetting("TS_DASHBOARD_MODE", "live");
             builder.UseSetting("TS2_E2E", "1");
             builder.UseSetting("TS_DASHBOARD_IDP_ORIGIN", AuthOrigin.ToString());
             builder.UseSetting("TS_DASHBOARD_PUBLIC_ORIGIN", "http://localhost");
