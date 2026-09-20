@@ -1,0 +1,13 @@
+<Project>
+  <!-- Runs before Restore and BeforeBuild so a missing subject repo fails with
+       an explicit, actionable error instead of a cryptic restore/NU failure or
+       a silently reduced benchmark. -->
+  <Target Name="ValidateBenchmarkSubjects" BeforeTargets="Restore;BeforeBuild">
+    <Error
+      Condition="!Exists('$(TerraBaseProject)')"
+      Text="TerraBase subject project not found at '$(TerraBaseProject)'. ts-benchmark measures the sibling terrabase checkout: clone it next to ts-benchmark, or set /p:TerraBaseRepo=&lt;absolute path&gt;." />
+    <Error
+      Condition="'$(MSBuildProjectName)' == 'TerraBase.FullTextBenchmarks' and !Exists('$(TerraBaseZoneTreeProject)')"
+      Text="TerraBase.ZoneTree subject project not found at '$(TerraBaseZoneTreeProject)'. ts-benchmark measures the sibling terrabase checkout: clone it next to ts-benchmark, or set /p:TerraBaseRepo=&lt;absolute path&gt;." />
+  </Target>
+</Project>

@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <!-- ts-benchmark imports only the bench/ tree from the TerraBase repo, so
+         the measured subject lives in the sibling `terrabase` checkout. The
+         paths below are the single source of truth for subject resolution;
+         Directory.Build.targets fails the build loudly when they are absent
+         (docs/review-2026-09-19.md P1: never silently skip a missing subject). -->
+    <TerraBaseRepo>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../terrabase'))</TerraBaseRepo>
+    <TerraBaseProject>$(TerraBaseRepo)/src/TerraBase/TerraBase.csproj</TerraBaseProject>
+    <TerraBaseZoneTreeProject>$(TerraBaseRepo)/src/TerraBase.ZoneTree/TerraBase.ZoneTree.csproj</TerraBaseZoneTreeProject>
+    <TerraScaleSdkProject>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../ts-dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj'))</TerraScaleSdkProject>
+  </PropertyGroup>
+</Project>

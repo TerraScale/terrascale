@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
     <RootNamespace>TerraBase.Benchmarks</RootNamespace>
     <AssemblyName>TerraBase.Benchmarks</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -13,25 +14,43 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/TerraBase/TerraBase.csproj" />
+    <ProjectReference Include="$(TerraBaseProject)" />
   </ItemGroup>
 
   <!-- The ts-dotnet SDK engine lane references the sibling TerraScale.DotNet
-       project directly, so CI environments without the workspace layout still
-       build (the reference and the lane compile only when the project exists). -->
-  <PropertyGroup>
-    <TerraScaleSdkProject>../../../ts-dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj</TerraScaleSdkProject>
-  </PropertyGroup>
+       project directly. The reference and lane compile only when that project
+       exists, so CI environments without the workspace layout still build —
+       but requesting the lane at runtime then fails loudly instead of
+       silently skipping it (see EngineComparisonWorkload). -->
   <PropertyGroup Condition="Exists('$(TerraScaleSdkProject)')">
     <DefineConstants>$(DefineConstants);TERRASCALE_SDK</DefineConstants>
   </PropertyGroup>
   <ItemGroup Condition="Exists('$(TerraScaleSdkProject)')">
-    <ProjectReference Include="$(TerraScaleSdkProject)" SetTargetFramework="TargetFramework=net10.0" />
+    <ProjectReference Include="$(TerraScaleSdkProject)" SetTargetFramework="TargetFramework=net11.0" />
   </ItemGroup>
 
+  <!-- Subject provenance baked into the binary so every emitted run receipt
+       can name the exact subject project it was built against. -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" />
-    <PackageReference Include="LiteDB" />
-    <PackageReference Include="Turso.Data.Sqlite.Provider" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TerraBaseSubjectProject</_Parameter1>
+      <_Parameter2>$(TerraBaseProject)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TerraScaleSdkProject</_Parameter1>
+      <_Parameter2>$(TerraScaleSdkProject)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TerraScaleSdkAvailable</_Parameter1>
+      <_Parameter2 Condition="Exists('$(TerraScaleSdkProject)')">true</_Parameter2>
+      <_Parameter2 Condition="!Exists('$(TerraScaleSdkProject)')">false</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- Versions mirror the subject repo's Directory.Packages.props pins. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="LiteDB" Version="6.0.0-prerelease.181" />
+    <PackageReference Include="Turso.Data.Sqlite.Provider" Version="0.8.0-pre.11" />
   </ItemGroup>
 </Project>

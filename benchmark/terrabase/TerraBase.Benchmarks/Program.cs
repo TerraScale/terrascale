@@ -22,79 +22,150 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (RunReceipt.IsSelfCheckRequested(args))
+        {
+            return RunReceipt.SelfCheck();
+        }
+
+        var helpRequested = args.Any(static argument => argument is "--help" or "-h");
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var workloadName = RequestedWorkload(args);
+        if (workloadName.Length == 0)
+        {
+            workloadName = "storage-runner";
+        }
+
+        var outputDirectory = Path.GetFullPath(CliOutputDirectory(args)
+            ?? Path.Combine("bench", "receipts", $"run-{startedAtUtc:yyyyMMddTHHmmssZ}"));
+
+        // The measured subject must resolve before anything runs: a missing
+        // subject path fails loudly here instead of producing an unattributed
+        // or silently skipped benchmark.
+        SubjectProvenance subject;
         try
         {
-            if (NativeBackupQualificationWorkload.IsRequested(args))
-            {
-                return await NativeBackupQualificationWorkload.RunAsync(args).ConfigureAwait(false);
-            }
-
-            if (MagicOnionReplicationQualificationWorkload.IsReplicaHostRequested(args))
-            {
-                return await MagicOnionReplicationQualificationWorkload.RunReplicaHostAsync(args).ConfigureAwait(false);
-            }
-
-            if (MagicOnionReplicationQualificationWorkload.IsRequested(args))
-            {
-                return await MagicOnionReplicationQualificationWorkload.RunAsync(args).ConfigureAwait(false);
-            }
-
-            if (MagicOnionReplicationWorkload.IsRequested(args))
-            {
-                return await MagicOnionReplicationWorkload.RunAsync(args).ConfigureAwait(false);
-            }
-
-            if (RecoveryWorkload.IsRequested(args))
-            {
-                return await RecoveryWorkload.RunAsync(args).ConfigureAwait(false);
-            }
-
-            if (CompressionWorkload.IsRequested(args))
-            {
-                return await CompressionWorkload.RunAsync(args).ConfigureAwait(false);
-            }
-
-            if (EngineComparisonWorkload.IsRequested(args))
-            {
-                return await EngineComparisonWorkload.RunAsync(args).ConfigureAwait(false);
-            }
-
-            if (AutomaticIndexWorkload.IsRequested(args))
-            {
-                return await AutomaticIndexWorkload.RunAsync(args).ConfigureAwait(false);
-            }
-
-            var requestedWorkload = RequestedWorkload(args);
-            if (requestedWorkload.Equals("larger-memory", StringComparison.OrdinalIgnoreCase))
-            {
-                return await RunLargerMemoryAsync(args).ConfigureAwait(false);
-            }
-
-            if (requestedWorkload.Equals("subscriptions", StringComparison.OrdinalIgnoreCase))
-            {
-                return await RunSubscriptionsAsync(args).ConfigureAwait(false);
-            }
-
-            var options = BenchmarkOptions.Parse(args);
-            if (options.ShowHelp)
-            {
-                BenchmarkOptions.PrintHelp();
-                return 0;
-            }
-
-            return await new BenchmarkRunner(options).RunAsync().ConfigureAwait(false);
-        }
-        catch (ArgumentException exception)
-        {
-            Console.Error.WriteLine($"Invalid benchmark configuration: {exception.Message}");
-            BenchmarkOptions.PrintHelp();
-            return 2;
+            subject = RunReceipt.CaptureSubject();
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"Benchmark runner failed: {exception}");
+            Console.Error.WriteLine($"Benchmark subject resolution failed: {exception.Message}");
+            if (!helpRequested)
+            {
+                RunReceipt.Write(outputDirectory, workloadName, "failed", 1, startedAtUtc, DateTimeOffset.UtcNow, null, exception.Message);
+            }
+
             return 1;
         }
+
+        string? error = null;
+        int exitCode;
+        try
+        {
+            exitCode = await RunWorkloadAsync(args).ConfigureAwait(false);
+        }
+        catch (ArgumentException exception)
+        {
+            error = exception.Message;
+            Console.Error.WriteLine($"Invalid benchmark configuration: {exception.Message}");
+            BenchmarkOptions.PrintHelp();
+            exitCode = 2;
+        }
+        catch (Exception exception)
+        {
+            error = exception.ToString();
+            Console.Error.WriteLine($"Benchmark runner failed: {exception}");
+            exitCode = 1;
+        }
+
+        if (!helpRequested)
+        {
+            var status = exitCode == 0 ? "complete" : exitCode == 2 ? "invalid" : "failed";
+            RunReceipt.Write(outputDirectory, workloadName, status, exitCode, startedAtUtc, DateTimeOffset.UtcNow, subject, error);
+        }
+
+        return exitCode;
+    }
+
+    private static string? CliOutputDirectory(string[] args)
+    {
+        for (var index = 0; index < args.Length; index++)
+        {
+            var argument = args[index];
+            if (argument.StartsWith("--output=", StringComparison.OrdinalIgnoreCase))
+            {
+                return argument["--output=".Length..];
+            }
+
+            if (argument.Equals("--output", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
+            {
+                return args[index + 1];
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<int> RunWorkloadAsync(string[] args)
+    {
+        if (NativeBackupQualificationWorkload.IsRequested(args))
+        {
+            return await NativeBackupQualificationWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (MagicOnionReplicationQualificationWorkload.IsReplicaHostRequested(args))
+        {
+            return await MagicOnionReplicationQualificationWorkload.RunReplicaHostAsync(args).ConfigureAwait(false);
+        }
+
+        if (MagicOnionReplicationQualificationWorkload.IsRequested(args))
+        {
+            return await MagicOnionReplicationQualificationWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (MagicOnionReplicationWorkload.IsRequested(args))
+        {
+            return await MagicOnionReplicationWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (RecoveryWorkload.IsRequested(args))
+        {
+            return await RecoveryWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (CompressionWorkload.IsRequested(args))
+        {
+            return await CompressionWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (EngineComparisonWorkload.IsRequested(args))
+        {
+            return await EngineComparisonWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        if (AutomaticIndexWorkload.IsRequested(args))
+        {
+            return await AutomaticIndexWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
+        var requestedWorkload = RequestedWorkload(args);
+        if (requestedWorkload.Equals("larger-memory", StringComparison.OrdinalIgnoreCase))
+        {
+            return await RunLargerMemoryAsync(args).ConfigureAwait(false);
+        }
+
+        if (requestedWorkload.Equals("subscriptions", StringComparison.OrdinalIgnoreCase))
+        {
+            return await RunSubscriptionsAsync(args).ConfigureAwait(false);
+        }
+
+        var options = BenchmarkOptions.Parse(args);
+        if (options.ShowHelp)
+        {
+            BenchmarkOptions.PrintHelp();
+            return 0;
+        }
+
+        return await new BenchmarkRunner(options).RunAsync().ConfigureAwait(false);
     }
 
     private static string RequestedWorkload(string[] args)

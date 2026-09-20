@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "workload": "engine-comparison",
+  "status": "complete",
+  "startedAtUtc": "2026-09-20T18:20:20.8768864Z",
+  "finishedAtUtc": "2026-09-20T18:20:34.6345478Z",
+  "exitCode": 0,
+  "command": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/TerraBase.Benchmarks/bin/Release/net11.0/TerraBase.Benchmarks.dll --workload engine-comparison --engines tsauth-sdk --samples 5 --operations 5000 --warmup 1000 --seed 1337 --output terrabase/receipts/20260920-tsauth-sdk-postreview",
+  "outputDirectory": "/home/mariogk/Projects/TerraScale/ts-benchmark/terrabase/receipts/20260920-tsauth-sdk-postreview",
+  "subject": {
+    "project": "/home/mariogk/Projects/TerraScale/terrabase/src/TerraBase/TerraBase.csproj",
+    "repository": "/home/mariogk/Projects/TerraScale/terrabase",
+    "commit": "9bbddbef31e189e6294521a2410b30b45b9c36d2",
+    "treeDigest": "1a60a68300b66d2b42c29d4b15d1a685a6fea9ff",
+    "dirty": true
+  },
+  "toolchain": {
+    "machineName": "mariogk-dev",
+    "dotnetVersion": "11.0.0",
+    "frameworkDescription": ".NET 11.0.0-rc.1.26425.128",
+    "operatingSystem": "NixOS 26.05 (Yarara)",
+    "architecture": "X64",
+    "processorCount": 4,
+    "cpuModel": "Intel(R) Xeon(R) CPU E5-2660 v4 @ 2.00GHz",
+    "buildConfiguration": "Release"
+  },
+  "artifacts": [
+    {
+      "file": "engine-comparison-receipt.json",
+      "bytes": 34794,
+      "sha256": "252aea32e6ae85d5029004b70cfcfd060e2ffcb84b4262be1e906cf0e5ed9bc9"
+    }
+  ],
+  "error": null,
+  "receiptSha256": "f78139a32557e7355ccecb905f9454c5f68c05f055e6d38bc761d7d91f60a545"
+}

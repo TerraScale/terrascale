@@ -118,6 +118,15 @@ internal static partial class EngineComparisonWorkload
         try
         {
             var matrix = FilterMatrix(options);
+            if (matrix.Length == 0)
+            {
+                // A filter that matches nothing (for example requesting the
+                // terrabase-sdk lane on a binary built without it) must fail
+                // loudly rather than run a silently reduced comparison.
+                var requested = options.Engines is { Length: > 0 } engines ? string.Join(",", engines) : "(all)";
+                throw new ArgumentException(
+                    $"Engine comparison matched no cases for --engines '{requested}'.{MissingSdkLaneReason(options)}");
+            }
             var cases = new List<ComparisonCaseResult>();
             // Parity pairs run their samples interleaved (A,B,A,B) so machine
             // drift between engines cannot bias the ratio: each sample of one
@@ -218,6 +227,26 @@ internal static partial class EngineComparisonWorkload
         [.. CaseMatrix
             .Where(definition => options.Engines is null || options.Engines.Contains(definition.Engine, StringComparer.Ordinal))
             .Where(definition => options.Lanes is null || options.Lanes.Contains(definition.Lane.ToString().ToLowerInvariant(), StringComparer.Ordinal))];
+
+    /// <summary>
+    /// Names the missing ts-dotnet checkout when the terrabase-sdk lane was
+    /// requested but the binary was built without it, so the failure explains
+    /// the absent path instead of looking like a bad filter.
+    /// </summary>
+    private static string MissingSdkLaneReason(ComparisonOptions options)
+    {
+#if TERRASCALE_SDK
+        return string.Empty;
+#else
+        if (options.Engines is null || !options.Engines.Contains("terrabase-sdk", StringComparer.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        var sdkProject = BenchmarkAssemblyMetadata.Value("TerraScaleSdkProject") ?? "(path not recorded)";
+        return $" The 'terrabase-sdk' lane is not compiled into this binary: the TerraScale.DotNet project was not found at '{sdkProject}' when it was built. Restore that checkout and rebuild.";
+#endif
+    }
 
     /// <summary>
     /// The benchmark host's socket path: kept under the system temporary
@@ -336,6 +365,14 @@ internal static partial class EngineComparisonWorkload
         new("terrabase-sdk", "ASYNC", ComparisonLane.Mixed, 1),
         new("terrabase-sdk", "ASYNC", ComparisonLane.Read, 16),
         new("terrabase-sdk", "ASYNC", ComparisonLane.Write, 16),
+        // The ts-auth management API client lane: same official-SDK class as
+        // terrabase-sdk, but against the ts-auth stub (client-path cost only).
+        new("tsauth-sdk", null, ComparisonLane.Read, 1),
+        new("tsauth-sdk", null, ComparisonLane.Query, 1),
+        new("tsauth-sdk", null, ComparisonLane.Write, 1),
+        new("tsauth-sdk", null, ComparisonLane.Mixed, 1),
+        new("tsauth-sdk", null, ComparisonLane.Read, 16),
+        new("tsauth-sdk", null, ComparisonLane.Write, 16),
 #endif
     ];
 
@@ -513,6 +550,11 @@ internal static partial class EngineComparisonWorkload
                         durability: definition.Synchronous == "ASYNC"
                             ? StorageWalDurability.AsyncWal
                             : StorageWalDurability.Synced,
+                        cancellationToken).ConfigureAwait(false);
+                    break;
+                case "tsauth-sdk":
+                    backend = await TsAuthSdkBackend.OpenAsync(
+                        dataPath, options.DatasetSize, options.PayloadSize,
                         cancellationToken).ConfigureAwait(false);
                     break;
 #endif
@@ -2011,6 +2053,7 @@ internal static partial class EngineComparisonWorkload
             "terrabase-http",
 #if TERRASCALE_SDK
             "terrabase-sdk",
+            "tsauth-sdk",
 #endif
         ];
 
@@ -2138,6 +2181,7 @@ internal static partial class EngineComparisonWorkload
             "terrabase-engine" => "TerraBase engine",
             "terrabase-http" => "TerraBase HTTP",
             "terrabase-sdk" => "TerraBase SDK",
+            "tsauth-sdk" => "ts-auth SDK",
             _ => engine,
         };
 

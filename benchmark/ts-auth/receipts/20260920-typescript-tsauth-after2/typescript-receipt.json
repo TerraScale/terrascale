@@ -1,0 +1,330 @@
+{
+  "subject": "ts-typescript (official TS SDK, TsAuthClient)",
+  "sdkLanguage": "typescript",
+  "nodeVersion": "v24.21.0",
+  "samples": 5,
+  "operations": 5000,
+  "warmup": 1000,
+  "seed": 1337,
+  "datasetSize": 1000,
+  "payloadSize": 256,
+  "instanceSlug": "bench",
+  "cases": [
+    {
+      "lane": "read",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 7956.559324809687,
+      "p50Microseconds": 100.40399999996907,
+      "p95Microseconds": 189.2560000000003,
+      "p99Microseconds": 328.30299999989165,
+      "allocatedBytesPerOperation": 1649.936
+    },
+    {
+      "lane": "read",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 7593.920530788071,
+      "p50Microseconds": 110.88600000016413,
+      "p95Microseconds": 194.1420000000562,
+      "p99Microseconds": 310.1730000000771,
+      "allocatedBytesPerOperation": 1390.4464
+    },
+    {
+      "lane": "read",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 11734.642418749194,
+      "p50Microseconds": 74.35900000018592,
+      "p95Microseconds": 112.1819999998479,
+      "p99Microseconds": 149.95699999985845,
+      "allocatedBytesPerOperation": 5936.5936
+    },
+    {
+      "lane": "read",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 11498.233535580513,
+      "p50Microseconds": 70.83699999975579,
+      "p95Microseconds": 134.1669999997066,
+      "p99Microseconds": 184.4850000002225,
+      "allocatedBytesPerOperation": -3563.696
+    },
+    {
+      "lane": "read",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 11686.497503758292,
+      "p50Microseconds": 68.264999999883,
+      "p95Microseconds": 125.28100000008635,
+      "p99Microseconds": 162.30499999983294,
+      "allocatedBytesPerOperation": 2403.4784
+    },
+    {
+      "lane": "read",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 16090.526796960594,
+      "p50Microseconds": 928.5100000001876,
+      "p95Microseconds": 1004.613000000063,
+      "p99Microseconds": 4600.3310000000965,
+      "allocatedBytesPerOperation": -4247.5008
+    },
+    {
+      "lane": "read",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 12638.227229597933,
+      "p50Microseconds": 1210.7949999999619,
+      "p95Microseconds": 1628.1060000001162,
+      "p99Microseconds": 5761.5169999999125,
+      "allocatedBytesPerOperation": 8426.408
+    },
+    {
+      "lane": "read",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 14288.95016136784,
+      "p50Microseconds": 992.0609999999215,
+      "p95Microseconds": 1375.7170000003498,
+      "p99Microseconds": 1688.876000000164,
+      "allocatedBytesPerOperation": -4218.72
+    },
+    {
+      "lane": "read",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 16034.402387560986,
+      "p50Microseconds": 946.4760000000751,
+      "p95Microseconds": 1073.9450000000943,
+      "p99Microseconds": 2184.3440000002374,
+      "allocatedBytesPerOperation": 8754.6944
+    },
+    {
+      "lane": "read",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 9626.426144684938,
+      "p50Microseconds": 1055.793000000449,
+      "p95Microseconds": 3051.042000000052,
+      "p99Microseconds": 6432.82199999976,
+      "allocatedBytesPerOperation": -7776.0416
+    },
+    {
+      "lane": "query",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 2395.1126679824606,
+      "p50Microseconds": 394.0949999996519,
+      "p95Microseconds": 538.8700000003155,
+      "p99Microseconds": 777.3000000006505,
+      "allocatedBytesPerOperation": 11150.136
+    },
+    {
+      "lane": "query",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 2421.0993770953405,
+      "p50Microseconds": 386.83599999967555,
+      "p95Microseconds": 543.5050000005504,
+      "p99Microseconds": 775.3160000002026,
+      "allocatedBytesPerOperation": -2087.3616
+    },
+    {
+      "lane": "query",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 2317.2567453370725,
+      "p50Microseconds": 391.4760000006936,
+      "p95Microseconds": 629.5810000010533,
+      "p99Microseconds": 856.1389999995299,
+      "allocatedBytesPerOperation": -480.9616
+    },
+    {
+      "lane": "query",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 2410.6265393387234,
+      "p50Microseconds": 385.34100000106264,
+      "p95Microseconds": 550.5860000012035,
+      "p99Microseconds": 828.6619999998948,
+      "allocatedBytesPerOperation": -2123.72
+    },
+    {
+      "lane": "query",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 2504.29265311397,
+      "p50Microseconds": 377.50899999991816,
+      "p95Microseconds": 455.29499999975087,
+      "p99Microseconds": 829.4400000013411,
+      "allocatedBytesPerOperation": 11118.5168
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 10435.990838711177,
+      "p50Microseconds": 93.06400000059512,
+      "p95Microseconds": 119.16500000006636,
+      "p99Microseconds": 175.4430000000866,
+      "allocatedBytesPerOperation": 10689.2448
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 9393.9685243511,
+      "p50Microseconds": 91.91500000088126,
+      "p95Microseconds": 160.18899999835412,
+      "p99Microseconds": 207.34900000024936,
+      "allocatedBytesPerOperation": -1515.6704
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 9647.86558349772,
+      "p50Microseconds": 89.51100000194856,
+      "p95Microseconds": 147.39000000190572,
+      "p99Microseconds": 179.44400000124006,
+      "allocatedBytesPerOperation": -136.7472
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 10192.83286390784,
+      "p50Microseconds": 88.07900000101654,
+      "p95Microseconds": 140.35000000149012,
+      "p99Microseconds": 179.19400000027963,
+      "allocatedBytesPerOperation": -2038.9632
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 10930.546689849874,
+      "p50Microseconds": 85.68799999920884,
+      "p95Microseconds": 129.66299999970943,
+      "p99Microseconds": 163.62200000003213,
+      "allocatedBytesPerOperation": -2018.0096
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 10297.840358751379,
+      "p50Microseconds": 1424.9189999973169,
+      "p95Microseconds": 2293.8329999997222,
+      "p99Microseconds": 5788.002999997843,
+      "allocatedBytesPerOperation": -2037.3472
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 11653.014561919232,
+      "p50Microseconds": 1396.2879999999132,
+      "p95Microseconds": 1681.3400000028196,
+      "p99Microseconds": 2033.5740000009537,
+      "allocatedBytesPerOperation": 10392.2592
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 11090.32601641385,
+      "p50Microseconds": 1417.4849999981234,
+      "p95Microseconds": 1722.211000000243,
+      "p99Microseconds": 5374.685999999201,
+      "allocatedBytesPerOperation": -2081.9456
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 9408.038113362316,
+      "p50Microseconds": 1368.2520000002114,
+      "p95Microseconds": 3479.638000000705,
+      "p99Microseconds": 9658.04399999979,
+      "allocatedBytesPerOperation": -2057.0592
+    },
+    {
+      "lane": "mixed",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 12882.76660999514,
+      "p50Microseconds": 1314.9219999977504,
+      "p95Microseconds": 1468.6729999993986,
+      "p99Microseconds": 1845.3859999972337,
+      "allocatedBytesPerOperation": -2069.1504
+    },
+    {
+      "lane": "write",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 6966.568912700559,
+      "p50Microseconds": 119.81399999785936,
+      "p95Microseconds": 185.53400000018883,
+      "p99Microseconds": 224.8440000003029,
+      "allocatedBytesPerOperation": 4222.8624
+    },
+    {
+      "lane": "write",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 9354.008015831078,
+      "p50Microseconds": 94.19900000284542,
+      "p95Microseconds": 150.3179999999702,
+      "p99Microseconds": 194.09799999993993,
+      "allocatedBytesPerOperation": 1010.2496
+    },
+    {
+      "lane": "write",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 9732.23029636598,
+      "p50Microseconds": 92.55999999732012,
+      "p95Microseconds": 145.62600000135717,
+      "p99Microseconds": 179.78299999958836,
+      "allocatedBytesPerOperation": 863.76
+    },
+    {
+      "lane": "write",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 9242.037868388801,
+      "p50Microseconds": 91.98800000012852,
+      "p95Microseconds": 154.87999999822932,
+      "p99Microseconds": 190.13099999938277,
+      "allocatedBytesPerOperation": 858.5456
+    },
+    {
+      "lane": "write",
+      "concurrency": 1,
+      "throughputOpsPerSecond": 9441.763637151354,
+      "p50Microseconds": 92.4620000005234,
+      "p95Microseconds": 152.17499999926076,
+      "p99Microseconds": 178.79199999879347,
+      "allocatedBytesPerOperation": 870.2672
+    },
+    {
+      "lane": "write",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 13687.274461604626,
+      "p50Microseconds": 1045.192000001407,
+      "p95Microseconds": 1308.8390000011714,
+      "p99Microseconds": 4835.482999998931,
+      "allocatedBytesPerOperation": 848.136
+    },
+    {
+      "lane": "write",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 14580.1171356696,
+      "p50Microseconds": 1043.1529999987106,
+      "p95Microseconds": 1141.6509999980917,
+      "p99Microseconds": 1626.0289999991073,
+      "allocatedBytesPerOperation": 839.3312
+    },
+    {
+      "lane": "write",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 14508.630817404859,
+      "p50Microseconds": 1045.719999998255,
+      "p95Microseconds": 1186.1730000018724,
+      "p99Microseconds": 1705.5749999999534,
+      "allocatedBytesPerOperation": 835.9104
+    },
+    {
+      "lane": "write",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 12611.822439897296,
+      "p50Microseconds": 1175.7629999992787,
+      "p95Microseconds": 1352.8019999976095,
+      "p99Microseconds": 5029.641999997693,
+      "allocatedBytesPerOperation": 836.5088
+    },
+    {
+      "lane": "write",
+      "concurrency": 16,
+      "throughputOpsPerSecond": 12911.514265569294,
+      "p50Microseconds": 1180.6539999997767,
+      "p95Microseconds": 1374.260000000504,
+      "p99Microseconds": 2498.3549999997194,
+      "allocatedBytesPerOperation": 794.0304
+    }
+  ],
+  "finishedUTC": "2026-09-20T16:29:21.495Z"
+}

@@ -39,6 +39,14 @@ Console.WriteLine(
     $"warmup={options.Warmup} operations={options.Operations} write_batch={options.WriteBatch} " +
     $"write_operations={options.WriteOperations} rebuild_operations={options.RebuildOperations} seed={options.Seed}");
 
+// Every run emits a compact run receipt (subject provenance, toolchain,
+// timestamps, digest). The subject must resolve first: a missing path fails
+// loudly instead of running an unattributed benchmark.
+var runStartedAtUtc = DateTimeOffset.UtcNow;
+var subject = TerraBase.Benchmarks.RunReceipt.CaptureSubject();
+var runOutputDirectory = Path.Combine(
+    "bench", "receipts", $"fulltext-{runStartedAtUtc:yyyyMMddTHHmmssZ}");
+
 // Letter-only vocabulary: the default WordTokenizer treats digits as
 // separators, so numeric suffixes would collapse into one token while
 // SQLite FTS5 keeps them distinct. The query pair comes from one document
@@ -80,6 +88,17 @@ try
     }
 
     await RunWriteLaneAsync(root, storage, scope, source, keys, corpus, options);
+
+    TerraBase.Benchmarks.RunReceipt.Write(
+        runOutputDirectory, "fulltext", "complete", 0, runStartedAtUtc, DateTimeOffset.UtcNow, subject);
+    return;
+}
+catch (Exception exception)
+{
+    TerraBase.Benchmarks.RunReceipt.Write(
+        runOutputDirectory, "fulltext", "failed", 1, runStartedAtUtc, DateTimeOffset.UtcNow, subject,
+        exception.ToString());
+    throw;
 }
 finally
 {

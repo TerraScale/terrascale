@@ -898,8 +898,11 @@ public static class MagicOnionReplicationQualificationWorkload
             };
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            var completed = await Task.WhenAny(ready.Task, process.WaitForExitAsync(), Task.Delay(TimeSpan.FromSeconds(30))).ConfigureAwait(false);
-            if (completed != ready.Task)
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var readyOrTimeout = ready.Task.WaitAsync(timeout.Token);
+            var exited = process.WaitForExitAsync();
+            var completed = await Task.WhenAny(readyOrTimeout, exited).ConfigureAwait(false);
+            if (completed != readyOrTimeout || !readyOrTimeout.IsCompletedSuccessfully)
             {
                 await StopProcessAsync(process, input: null).ConfigureAwait(false);
                 await outputLog.DisposeAsync().ConfigureAwait(false);
@@ -959,9 +962,11 @@ public static class MagicOnionReplicationQualificationWorkload
                     }
                 }
 
-                var exit = process.WaitForExitAsync();
-                var completed = await Task.WhenAny(exit, Task.Delay(TimeSpan.FromSeconds(10))).ConfigureAwait(false);
-                if (completed != exit)
+                try
+                {
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
                 {
                     process.Kill(entireProcessTree: true);
                     await process.WaitForExitAsync().ConfigureAwait(false);

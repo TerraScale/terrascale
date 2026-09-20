@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>14.0</LangVersion>
@@ -10,8 +10,21 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/TerraBase/TerraBase.csproj" />
-    <ProjectReference Include="../../src/TerraBase.ZoneTree/TerraBase.ZoneTree.csproj" />
-    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <ProjectReference Include="$(TerraBaseProject)" />
+    <ProjectReference Include="$(TerraBaseZoneTreeProject)" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+  </ItemGroup>
+
+  <!-- Shared run-receipt emission (subject provenance + digest), same source
+       as the main benchmark runner. -->
+  <ItemGroup>
+    <Compile Include="../TerraBase.Benchmarks/RunReceipt.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TerraBaseSubjectProject</_Parameter1>
+      <_Parameter2>$(TerraBaseProject)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 </Project>
