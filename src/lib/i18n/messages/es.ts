@@ -31,7 +31,7 @@ export const es: Messages = {
 
   footer: {
     tagline:
-      'TerraScale Public Alpha ofrece una base de documentos regional sin porcentaje de disponibilidad ni SLA.',
+      'TerraScale Public Alpha ofrece una base de documentos regional sin porcentaje de disponibilidad ni SLA. La disponibilidad actual se publica en la página de estado.',
     rightsReserved: 'Todos los derechos reservados.',
     columns: {
       product: {
@@ -169,12 +169,12 @@ export const es: Messages = {
     plans: {
       starter: {
         description: 'Plan mensual con una prueba elegible de 30 días',
-        features: ['5 proyectos', '10 bases de datos', '5 miembros', '5 GB entre regiones', '1.000.000 unidades de operación/mes'],
+        features: ['5 proyectos', '5 bases de datos', '5 miembros', '5 GB entre regiones', '1.000.000 unidades de operación/mes'],
         cta: 'Elegir Starter',
       },
       pro: {
         description: 'Plan mensual con una prueba elegible de 30 días',
-        features: ['25 proyectos', '50 bases de datos', '25 miembros', '50 GB entre regiones', '10.000.000 unidades de operación/mes'],
+        features: ['25 proyectos', '25 bases de datos', '25 miembros', '25 GB entre regiones', '100.000.000 unidades de operación/mes'],
         cta: 'Elegir Pro',
       },
       enterprise: {
