@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>TerraScale.Auth.Tools.TerraBaseDevMember</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Resolves the sibling terrabase checkout, mirroring the test project. -->
+    <TerraBaseEngineProject Condition="'$(TerraBaseEngineProject)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\terrabase\src\TerraBase\TerraBase.csproj')">$(MSBuildThisFileDirectory)..\..\..\terrabase\src\TerraBase\TerraBase.csproj</TerraBaseEngineProject>
+    <TerraBaseEngineProject Condition="'$(TerraBaseEngineProject)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\..\..\..\terrabase\src\TerraBase\TerraBase.csproj')">$(MSBuildThisFileDirectory)..\..\..\..\..\..\terrabase\src\TerraBase\TerraBase.csproj</TerraBaseEngineProject>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(TerraBaseEngineProject)')">
+    <ProjectReference Include="$(TerraBaseEngineProject)" />
+  </ItemGroup>
+
+</Project>
