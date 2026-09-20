@@ -244,7 +244,7 @@
       "outputPath": "/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/nuget.config",
+        "/home/mariogk/Projects/TerraScale/ts-dashboard-2/nuget.config",
         "/home/mariogk/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [

@@ -2,7 +2,6 @@
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/tests/ts-dashboard-2.SlowTests/bin/Debug/net11.0/ts-dashboard-2.deps.json
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/tests/ts-dashboard-2.SlowTests/bin/Debug/net11.0/ts-dashboard-2.runtimeconfig.json
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/tests/ts-dashboard-2.SlowTests/bin/Debug/net11.0/ts-dashboard-2.runtimeconfig.dev.json
-/home/mariogk/Projects/TerraScale/ts-dashboard-2/tests/ts-dashboard-2.SlowTests/bin/Debug/net11.0/nuget.config
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/tests/ts-dashboard-2.SlowTests/bin/Debug/net11.0/ts-dashboard-2.staticwebassets.runtime.json
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/tests/ts-dashboard-2.SlowTests/bin/Debug/net11.0/ts-dashboard-2.staticwebassets.endpoints.json
 /home/mariogk/Projects/TerraScale/ts-dashboard-2/tests/ts-dashboard-2.SlowTests/bin/Debug/net11.0/ts-dashboard-2

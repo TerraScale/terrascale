@@ -1945,6 +1945,7 @@
       "outputPath": "/home/mariogk/Projects/TerraScale/ts-dashboard-2/tests/ts-dashboard-2.Testing/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
+        "/home/mariogk/Projects/TerraScale/ts-dashboard-2/nuget.config",
         "/home/mariogk/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
@@ -1952,8 +1953,8 @@
       ],
       "sources": {
         "/home/mariogk/.local/share/mise/dotnet-root/library-packs": {},
-        "https://api.nuget.org/v3/index.json": {},
-        "https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json": {}
+        "/home/mariogk/Projects/TerraScale/ts-dashboard-2/src/ts-dashboard-2/nuget": {},
+        "https://api.nuget.org/v3/index.json": {}
       },
       "frameworks": {
         "net10.0": {
