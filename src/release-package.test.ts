@@ -99,10 +99,7 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
     const definition = jobDefinition(workflow, job);
     assert.match(definition, /runs-on: terrascale-builder/u);
     assert.match(definition, /timeout-minutes: (?:45|60)/u);
-    assert.match(
-      definition,
-      /image: mcr\.microsoft\.com\/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u,
-    );
+    assert.doesNotMatch(definition, /container:\s*\n\s+image:/u);
     assert.match(definition, /actions\/checkout@v6\.1\.0/u);
     assert.match(definition, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/u);
     assert.match(definition, /ref: \$\{\{ forgejo\.sha \}\}/u);
@@ -140,6 +137,7 @@ test("trunk pushes run native SDK checks while npm publication stays gated", asy
   assert.match(browserJob, /test "\$\(node --version\)" = v24\.20\.0/u);
   assert.match(browserJob, /architecture: process\.arch/u);
   assert.match(browserJob, /uname -m/u);
+  assert.match(browserJob, /npx playwright install chromium/u);
   assert.match(browserJob, /npm run test:browser/u);
 
   assert.doesNotMatch(workflow, /(?:candidate|admit|publish|promote-npm-candidate)/iu);

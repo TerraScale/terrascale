@@ -21,8 +21,6 @@ jobs:
     name: verify/static-contracts
     runs-on: terrascale-builder
     timeout-minutes: 45
-    container:
-      image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     steps:
       - name: Check out the exact event revision
         uses: https://data.forgejo.org/actions/checkout@v6.1.0
@@ -103,8 +101,6 @@ jobs:
         node: ["22.23.2", "24.20.0"]
     runs-on: terrascale-builder
     timeout-minutes: 45
-    container:
-      image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     steps:
       - name: Check out the exact event revision
         uses: https://data.forgejo.org/actions/checkout@v6.1.0
@@ -176,8 +172,6 @@ jobs:
     name: verify/browser-current-engines
     runs-on: terrascale-builder
     timeout-minutes: 60
-    container:
-      image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     steps:
       - name: Check out the exact event revision
         uses: https://data.forgejo.org/actions/checkout@v6.1.0
@@ -208,6 +202,9 @@ jobs:
 
       - name: Build the SDK
         run: npm run build
+
+      - name: Install the pinned Playwright Chromium browser
+        run: npx playwright install chromium
 
       - name: Run browser qualification against the current package
         run: npm run test:browser
