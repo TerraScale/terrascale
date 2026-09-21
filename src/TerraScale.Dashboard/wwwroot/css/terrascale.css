@@ -6677,8 +6677,21 @@ single-selector rules may stay on one line.
   .ts-onboarding-form-footer .ts-btn { width: 100%; }
 
   @media (min-width: 40rem) {
-    .ts-onboarding-form-footer { align-items: flex-end; }
+    /* Navigation actions share one horizontal row, right-aligned. */
+    .ts-onboarding-form-footer {
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
     .ts-onboarding-form-footer .ts-btn { width: auto; }
+
+    /* The sign-in prompt keeps its own line under the row, right-aligned. */
+    .ts-onboarding-form-footer .ts-onboarding-secondary {
+      flex-basis: 100%;
+      text-align: end;
+    }
   }
 
   @media (min-width: 64rem) {
