@@ -86,3 +86,6 @@ global using TerraScale.Dashboard.Shared.Models;
 global using TerraScale.Dashboard.Shared.Navigation;
 global using TerraScale.Dashboard.Shared.Rendering;
 global using TerraScale.Dashboard.Shared.State;
+global using TerraScale.Dashboard.Features.Authentication.Endpoints;
+global using TerraScale.Dashboard.Features.Authentication.Models;
+global using TerraScale.Dashboard.Features.Authentication.Pages.Authentication;

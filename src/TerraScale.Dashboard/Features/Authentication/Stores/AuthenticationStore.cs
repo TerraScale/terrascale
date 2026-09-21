@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 using System.Security.Cryptography;
 using TerraScale.Dashboard.Features.Authentication;
 
-namespace TerraScale.Dashboard;
+namespace TerraScale.Dashboard.Shared.State;
 
 public sealed partial class DashboardStore
 {

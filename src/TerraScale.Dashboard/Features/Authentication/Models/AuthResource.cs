@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace TerraScale.Dashboard.Features.Authentication;
+namespace TerraScale.Dashboard.Features.Authentication.Models;
 
 /// <summary>An editable demo resource. Field names match the ts-auth management API.</summary>
 public sealed record AuthResource(

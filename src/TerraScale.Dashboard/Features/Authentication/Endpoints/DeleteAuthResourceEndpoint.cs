@@ -1,6 +1,6 @@
 using TerraScale.Endpoints;
 
-namespace TerraScale.Dashboard.Features.Authentication;
+namespace TerraScale.Dashboard.Features.Authentication.Endpoints;
 
 public sealed class DeleteAuthResourceEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {

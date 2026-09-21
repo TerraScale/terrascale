@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace TerraScale.Dashboard.Features.Authentication;
+namespace TerraScale.Dashboard.Features.Authentication.Models;
 
 /// <summary>Demo state is separate from dashboard accounts and scoped to the selected project.</summary>
 public sealed class AuthInstanceState

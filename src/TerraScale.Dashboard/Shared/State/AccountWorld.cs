@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Features.Data;
-using TerraScale.Dashboard.Features.Authentication;
+using TerraScale.Dashboard.Features.Authentication.Models;
 
 namespace TerraScale.Dashboard.Shared.State;
 
@@ -326,7 +326,7 @@ public sealed class AccountWorld
             m.UserId, m.Name, m.Email, m.Role, m.Status, m.MfaEnabled,
             InitialsOf(m.Name, m.Email), Provider: "password", OrganizationName: ActiveOrganizationName))];
 
-        AuthInstances[ActiveProjectId] = Features.Authentication.AuthInstanceState.Create("Personal", seeded: false);
+        AuthInstances[ActiveProjectId] = AuthInstanceState.Create("Personal", seeded: false);
 
 
     }
@@ -458,7 +458,7 @@ public sealed class AccountWorld
             new("usr_01JC9TB2D4F6H8J0L2N5P8S1V", "Igor Ivanov", "igor@northwind.io", "member", "Active", true, "II", Provider: "password", OrganizationName: "Northwind"),
         ];
 
-        AuthInstances[ActiveProjectId] = Features.Authentication.AuthInstanceState.Create("TerraScale Labs", seeded: true);
+        AuthInstances[ActiveProjectId] = AuthInstanceState.Create("TerraScale Labs", seeded: true);
 
         M2mCredentials =
         [

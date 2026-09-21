@@ -2,7 +2,7 @@ using System.Net.Mail;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace TerraScale.Dashboard.Features.Authentication;
+namespace TerraScale.Dashboard.Features.Authentication.Models;
 
 public static class AuthResourceValidation
 {

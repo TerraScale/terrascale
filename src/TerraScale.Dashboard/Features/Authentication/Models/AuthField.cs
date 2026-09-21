@@ -1,4 +1,4 @@
-namespace TerraScale.Dashboard.Features.Authentication;
+namespace TerraScale.Dashboard.Features.Authentication.Models;
 
 public sealed record AuthField(
     string Key,

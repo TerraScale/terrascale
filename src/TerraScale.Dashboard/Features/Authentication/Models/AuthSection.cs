@@ -1,4 +1,4 @@
-namespace TerraScale.Dashboard.Features.Authentication;
+namespace TerraScale.Dashboard.Features.Authentication.Models;
 
 /// <summary>Navigation, form fields and table columns share one feature-owned contract.</summary>
 public sealed record AuthSection(string Key, string Title, string Description, string Icon, string Singular, AuthField[] Fields, string[] Columns)

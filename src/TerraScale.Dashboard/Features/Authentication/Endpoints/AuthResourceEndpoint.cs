@@ -1,6 +1,6 @@
 using TerraScale.Endpoints;
 
-namespace TerraScale.Dashboard.Features.Authentication;
+namespace TerraScale.Dashboard.Features.Authentication.Endpoints;
 
 public sealed class AuthResourceEndpoint(DashboardStore store) : EndpointWithoutRequest<IResult>
 {

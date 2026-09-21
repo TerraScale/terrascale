@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard;
+using TerraScale.Dashboard.Infrastructure.Configuration;
 
 namespace TerraScale.Dashboard.FastTests;
 
