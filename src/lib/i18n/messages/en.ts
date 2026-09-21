@@ -29,7 +29,7 @@ export const en = {
 
   footer: {
     tagline:
-      'TerraScale Public Alpha offers a regional document database without an uptime percentage or SLA.',
+      'TerraScale Public Alpha offers a regional document database without an uptime percentage or SLA. Current availability is published on the status page.',
     rightsReserved: 'All rights reserved.',
     columns: {
       product: {
@@ -167,12 +167,12 @@ export const en = {
     plans: {
       starter: {
         description: 'Monthly plan with one eligible 30-day trial',
-        features: ['5 projects', '10 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month'],
+        features: ['5 projects', '5 databases', '5 members', '5 GB across regions', '1,000,000 operation units/month'],
         cta: 'Choose Starter',
       },
       pro: {
         description: 'Monthly plan with one eligible 30-day trial',
-        features: ['25 projects', '50 databases', '25 members', '50 GB across regions', '10,000,000 operation units/month'],
+        features: ['25 projects', '25 databases', '25 members', '25 GB across regions', '100,000,000 operation units/month'],
         cta: 'Choose Pro',
       },
       enterprise: {

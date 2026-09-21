@@ -31,7 +31,7 @@ export const ptBr: Messages = {
 
   footer: {
     tagline:
-      'O TerraScale Public Alpha oferece um banco de documentos regional sem percentual de disponibilidade nem SLA.',
+      'O TerraScale Public Alpha oferece um banco de documentos regional sem percentual de disponibilidade nem SLA. A disponibilidade atual é publicada na página de status.',
     rightsReserved: 'Todos os direitos reservados.',
     columns: {
       product: {
@@ -169,12 +169,12 @@ export const ptBr: Messages = {
     plans: {
       starter: {
         description: 'Plano mensal com um teste elegível de 30 dias',
-        features: ['5 projetos', '10 bancos de dados', '5 membros', '5 GB entre regiões', '1.000.000 unidades de operação/mês'],
+        features: ['5 projetos', '5 bancos de dados', '5 membros', '5 GB entre regiões', '1.000.000 unidades de operação/mês'],
         cta: 'Escolher Starter',
       },
       pro: {
         description: 'Plano mensal com um teste elegível de 30 dias',
-        features: ['25 projetos', '50 bancos de dados', '25 membros', '50 GB entre regiões', '10.000.000 unidades de operação/mês'],
+        features: ['25 projetos', '25 bancos de dados', '25 membros', '25 GB entre regiões', '100.000.000 unidades de operação/mês'],
         cta: 'Escolher Pro',
       },
       enterprise: {
