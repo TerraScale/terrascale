@@ -7,15 +7,15 @@ This document is the contract for porting one faithfully.
 
 | Concern | File |
 | --- | --- |
-| Page model + page endpoint | `src/TerraScale.Dashboard/Features/<Feature>/<Page>PageModel.cs` + `<Page>PageEndpoint.cs` (one type per file) |
-| Page template | `src/TerraScale.Dashboard/Features/<Feature>/<Page>Slice.cshtml` |
-| Mutations / API | `src/TerraScale.Dashboard/Features/<Feature>/<Action>Endpoint.cs` — **one endpoint class per file** |
-| Feature store data | `src/TerraScale.Dashboard/Features/<Feature>/<Feature>Store.cs` — `DashboardStore` is `partial`; extend it there |
-| Core entities + seed | `Framework/DashboardStore.cs` — read-mostly; prefer feature partials for additions |
-| Shell chrome (sidebar, head, FABs) | `Framework/ShellHtml.cs` — pages never re-render it |
+| Page model + page endpoint | `src/TerraScale.Dashboard/Features/<Feature>/Pages/<Page>/<Page>PageModel.cs` + `<Page>PageEndpoint.cs` (one type per file) |
+| Page template | `src/TerraScale.Dashboard/Features/<Feature>/Pages/<Page>/<Page>Slice.cshtml` |
+| Mutations / API | `src/TerraScale.Dashboard/Features/<Feature>/Endpoints/<Action>Endpoint.cs` — **one endpoint class per file** |
+| Feature store data | `src/TerraScale.Dashboard/Features/<Feature>/Stores/<Feature>Store.cs` — `DashboardStore` is `partial`; extend it there |
+| Core entities + seed | `Shared/State/DashboardStore.cs` — read-mostly; prefer feature partials for additions |
+| Shell chrome (sidebar, head, FABs) | `Shared/Layout/ShellHtml.cs` — pages never re-render it |
 | CSS framework | `wwwroot/css/terrascale.css` — the ONLY stylesheet; append a `/* ===== Feature: <X> ===== */` section at the end if a pattern is missing |
-| Icons (lucide, exact SVG) | `Icons.cs` — `@Icons.KeyRound(18)` renders raw SVG |
-| SVG charts | `Charts.cs` — `Charts.Sparkline(values)`, `Charts.LineChart(points, label)` |
+| Icons (lucide, exact SVG) | `Shared/Components/Icons.cs` — `@Icons.KeyRound(18)` renders raw SVG |
+| SVG charts | `Shared/Components/Charts.cs` — `Charts.Sparkline(values)`, `Charts.LineChart(points, label)` |
 
 ## Page skeleton
 

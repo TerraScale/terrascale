@@ -21,7 +21,7 @@ one endpoint per file, CI/deploy).
   attribution in `src/TerraScale.Datastar/THIRD_PARTY_LICENSE.md`. Signal
   payloads can use `JsonTypeInfo<T>` overloads from an application-owned
   `JsonSerializerContext` to avoid runtime serializer metadata discovery.
-- Server-rendered SVG charts (`Framework/Charts.cs`) and lucide icon set (`Framework/Icons.cs`)
+- Server-rendered SVG charts (`Shared/Components/Charts.cs`) and lucide icon set (`Shared/Components/Icons.cs`)
 - **TerraScale.DotNet** — the workspace prefers the sibling `ts-dotnet` SDK
   checkout; standalone Docker and CI builds restore the vendored SDK package
   from `src/TerraScale.Dashboard/nuget/`. Set `TERRABASE_URL` (or
@@ -31,12 +31,15 @@ one endpoint per file, CI/deploy).
 
 ## Layout
 
-- `src/TerraScale.Dashboard/Features/<Feature>/` — the feature slice: one endpoint
-  per file (`<Page>PageEndpoint.cs`, `<Action>Endpoint.cs`), one DTO per file
-  (`<Page>PageModel.cs`, row records), the `<Page>Slice.cshtml` view, and the
-  feature's `DashboardStore` partial
-- `src/TerraScale.Dashboard/Framework/` — `SlicePageEndpoint`, `ShellHtml`, shell,
-  store core, icons, charts
+- `src/TerraScale.Dashboard/Features/<Feature>/` — each product area owns its
+  pages and supporting code. Page files live together under `Pages/<Page>/`;
+  action handlers live under `Endpoints/`; domain records under `Models/`;
+  rendered data under `ViewModels/`; feature logic under `Services/` or
+  `Presentation/`; and shared-store partials under `Stores/`.
+- `src/TerraScale.Dashboard/Shared/` — reusable rendering, shell, navigation,
+  components, models, and the shared `DashboardStore` state.
+- `src/TerraScale.Dashboard/Infrastructure/` — authentication, configuration,
+  persistence, and TerraBase integration.
 - `src/TerraScale.Dashboard/wwwroot/css/terrascale.css` — the single-file CSS framework
 - `TerraScale.Dashboard.slnx` — solution at the repo root
 
@@ -115,6 +118,20 @@ content types over HTTP and HTTPS, before serving static files. Datastar's
   (`DashboardTestApp` boots the whole endpoint pipeline in-memory).
 
 ## Page pattern
+
+Each page keeps its endpoint, model, and Razor slice together. For example,
+the databases page is organized as:
+
+```
+Features/Databases/Pages/Databases/
+  DatabasesPageEndpoint.cs
+  DatabasesPageModel.cs
+  DatabasesSlice.cshtml
+```
+
+Use `Models` for feature state and domain records, `ViewModels` for display
+rows/cards/labels, and `Contracts` only when a request or response type crosses
+an HTTP or service boundary. Do not create empty category directories.
 
 ```csharp
 public sealed class DatabasesPageEndpoint(DashboardStore store)

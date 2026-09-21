@@ -229,7 +229,7 @@ public sealed class LiveStackTests
     {
         var fixture = await Stack;
         var services = fixture.CreateDashboardFactory().Services;
-        var repository = services.GetRequiredService<TerraScale.Dashboard.DashboardStateRepository>();
+        var repository = services.GetRequiredService<TerraScale.Dashboard.Infrastructure.Persistence.DashboardStateRepository>();
         var subject = $"conflict-{Guid.NewGuid():N}";
 
         var (missing, missingToken) = await repository.LoadAsync(subject, ct: default);
@@ -238,18 +238,18 @@ public sealed class LiveStackTests
 
         // Writer A creates the world (no expectation yet) and reloads it so it
         // holds a real load-time token.
-        var world = TerraScale.Dashboard.AccountWorld.Fresh("Conflict Probe", "conflict@example.test");
+        var world = TerraScale.Dashboard.Shared.State.AccountWorld.Fresh("Conflict Probe", "conflict@example.test");
         await repository.SaveAsync(subject, world.RegisteredEmail, world, missingToken, ct: default);
         var (_, loadToken) = await repository.LoadAsync(subject, ct: default);
         await Assert.That(loadToken).IsNotNull();
 
         // Writer B commits first: the token advances past A's view.
-        var competing = TerraScale.Dashboard.AccountWorld.Fresh("Writer B", "writer-b@example.test");
+        var competing = TerraScale.Dashboard.Shared.State.AccountWorld.Fresh("Writer B", "writer-b@example.test");
         await repository.SaveAsync(subject, competing.RegisteredEmail, competing, loadToken, ct: default);
 
         // Writer A still holds the load-time token: its save must surface the
         // conflict instead of silently overwriting B's committed world.
-        await Assert.ThrowsAsync<TerraScale.Dashboard.DashboardStateConflictException>(
+        await Assert.ThrowsAsync<TerraScale.Dashboard.Infrastructure.Persistence.DashboardStateConflictException>(
             async () => await repository.SaveAsync(subject, world.RegisteredEmail, world, loadToken, ct: default));
 
         // The committed world is B's, and a reload hands back the fresh token.
