@@ -1,5 +1,5 @@
 {
-  "name": "ts-dashboard-2-e2e",
+  "name": "terrascale-dashboard-e2e",
   "private": true,
   "type": "module",
   "devDependencies": {
@@ -8,7 +8,7 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "e2e": "dotnet build ts-dashboard-2.slnx && playwright test",
+    "e2e": "dotnet build TerraScale.Dashboard.slnx && playwright test",
     "e2e:headed": "playwright test --headed"
   }
 }

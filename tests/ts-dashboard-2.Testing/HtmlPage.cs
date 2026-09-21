@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace TerraScale.Dashboard2.Testing;
+namespace TerraScale.Dashboard.Testing;
 
 /// <summary>A fetched page: status plus lightweight HTML queries. The query
 /// helpers are deliberately dependency-free regexes over the dashboard's own

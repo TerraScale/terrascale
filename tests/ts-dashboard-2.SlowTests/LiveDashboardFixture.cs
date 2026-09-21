@@ -1,5 +1,5 @@
 #if TS_AUTH_STACK
-namespace TerraScale.Dashboard2.SlowTests;
+namespace TerraScale.Dashboard.SlowTests;
 
 using System.Collections.Concurrent;
 using System.Net;

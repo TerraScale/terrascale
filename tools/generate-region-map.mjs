@@ -1,4 +1,4 @@
-// Generates the dotted world map + the C# region pin table for ts-dashboard-2.
+// Generates the dotted world map + the C# region pin table for TerraScale.Dashboard.
 //
 //   cd tools && npm ci && node generate-region-map.mjs
 //
@@ -96,7 +96,7 @@ const rows = regions
 const cs = `using System.Text;
 using Microsoft.AspNetCore.Html;
 
-namespace TerraScale.Dashboard2;
+namespace TerraScale.Dashboard;
 
 /// <summary>Dotted world map overlay: renders highlight pins for TerraScale
 /// regions on top of /brand/region-map.svg. Coordinates are projections from

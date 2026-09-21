@@ -1,7 +1,7 @@
 using System.Text;
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.SlowTests;
+namespace TerraScale.Dashboard.SlowTests;
 
 /// <summary>The owner-only admin surface behind the e2e dev-shim
 /// (POST /api/v1/testing/dev-shim/reset { promoteOwner: true }): all six

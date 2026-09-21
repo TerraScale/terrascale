@@ -1,6 +1,6 @@
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.FastTests;
+namespace TerraScale.Dashboard.FastTests;
 
 /// <summary>Every member-facing nav route must render with its heading —
 /// a 500 or missing title on any of these blocks the whole area.</summary>

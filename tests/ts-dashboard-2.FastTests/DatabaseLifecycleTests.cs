@@ -1,8 +1,8 @@
 using System.Net;
 using System.Text.RegularExpressions;
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.FastTests;
+namespace TerraScale.Dashboard.FastTests;
 
 /// <summary>The core product loop: a user must be able to create a database,
 /// see it listed, open its detail page, and delete it.</summary>

@@ -1,7 +1,7 @@
 using System.Net;
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.FastTests;
+namespace TerraScale.Dashboard.FastTests;
 
 /// <summary>The user-blocking critical paths: if any of these fail, a user
 /// cannot reach or use the dashboard. Keep this suite seconds-fast.</summary>

@@ -1,6 +1,6 @@
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.SlowTests;
+namespace TerraScale.Dashboard.SlowTests;
 
 /// <summary>Every page route renders 200 with its real copy: the demo
 /// account's seeded member pages, the public flows, and a freshly registered

@@ -3,7 +3,7 @@
   <PropertyGroup>
     <!-- net11 to reference the net11 ts-auth + TerraBase siblings for the live stack. -->
     <TargetFramework>net11.0</TargetFramework>
-    <RootNamespace>TerraScale.Dashboard2.SlowTests</RootNamespace>
+    <RootNamespace>TerraScale.Dashboard.SlowTests</RootNamespace>
     <IsPackable>false</IsPackable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

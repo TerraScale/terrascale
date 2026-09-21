@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.SlowTests;
+namespace TerraScale.Dashboard.SlowTests;
 
 /// <summary>Every mutation endpoint round-trips: post the form the slice
 /// posts, follow the redirect, and assert the persisted state on the page

@@ -1,8 +1,0 @@
-using TerraScale.Dashboard2;
-
-namespace TerraScale.Dashboard2.Features.Auth;
-
-public sealed record ResetPasswordPageModel(string? Error, bool Sent, bool Reset, bool Updated) : IPageModel
-{
-    public ShellModel Shell { get; init; } = null!;
-}

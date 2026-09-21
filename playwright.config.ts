@@ -22,7 +22,7 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          command: `TS2_E2E=1 dotnet run --project src/ts-dashboard-2 --no-build --urls ${baseURL}`,
+          command: `TS2_E2E=1 dotnet run --project src/TerraScale.Dashboard --no-build --urls ${baseURL}`,
           url: `${baseURL}/health/live`,
           reuseExistingServer: false,
           timeout: 120_000,

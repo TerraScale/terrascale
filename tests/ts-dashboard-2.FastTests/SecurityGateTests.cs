@@ -1,8 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.FastTests;
+namespace TerraScale.Dashboard.FastTests;
 
 /// <summary>v1 parity guards: the member nav is exactly the eleven v1 items,
 /// the removed /backups route stays gone, and the e2e-only owner promotion

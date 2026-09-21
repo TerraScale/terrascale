@@ -1,7 +1,7 @@
 using System.Net;
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.FastTests;
+namespace TerraScale.Dashboard.FastTests;
 
 /// <summary>Programmatic access and collaboration surfaces: keys, invites,
 /// and the notification inbox a user acts from.</summary>

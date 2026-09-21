@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Configuration;
-using TerraScale.Dashboard2;
+using TerraScale.Dashboard;
 
-namespace TerraScale.Dashboard2.FastTests;
+namespace TerraScale.Dashboard.FastTests;
 
 public sealed class TerraBaseBackendTests
 {

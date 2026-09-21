@@ -1,8 +1,8 @@
 using System.Net;
 using Microsoft.AspNetCore.Mvc.Testing;
-using TerraScale.Dashboard2;
+using TerraScale.Dashboard;
 
-namespace TerraScale.Dashboard2.Testing;
+namespace TerraScale.Dashboard.Testing;
 
 /// <summary>
 /// The dashboard test host: boots the real endpoint pipeline in-memory

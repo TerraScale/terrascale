@@ -1,6 +1,6 @@
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.SlowTests;
+namespace TerraScale.Dashboard.SlowTests;
 
 /// <summary>Error branches: unknown resources, wrong credentials, invalid
 /// form input, and malformed flow requests all land on the documented

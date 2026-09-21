@@ -1,1 +1,1 @@
-global using TerraScale.Dashboard2.Testing;
+global using TerraScale.Dashboard.Testing;

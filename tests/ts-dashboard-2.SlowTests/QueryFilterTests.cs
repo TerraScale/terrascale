@@ -1,6 +1,6 @@
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
-namespace TerraScale.Dashboard2.SlowTests;
+namespace TerraScale.Dashboard.SlowTests;
 
 /// <summary>Query-string behaviors: databases search, the audit filter set
 /// (range, severity, search), data view tabs, and the api-keys filters.</summary>

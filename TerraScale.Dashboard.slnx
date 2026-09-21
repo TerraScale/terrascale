@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
+  <Project Path="tests/ts-dashboard-2.Testing/ts-dashboard-2.Testing.csproj" />
+  <Project Path="tests/ts-dashboard-2.FastTests/ts-dashboard-2.FastTests.csproj" />
+  <Project Path="tests/ts-dashboard-2.SlowTests/ts-dashboard-2.SlowTests.csproj" />
+</Solution>

@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace TerraScale.Dashboard2.SlowTests;
+namespace TerraScale.Dashboard.SlowTests;
 
 /// <summary>Every interactive control on every page gets exercised: every
 /// form is submitted with its own fields and must answer without a server

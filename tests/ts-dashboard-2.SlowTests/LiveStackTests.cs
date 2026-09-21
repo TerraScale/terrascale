@@ -1,11 +1,11 @@
 #if TS_AUTH_STACK
-namespace TerraScale.Dashboard2.SlowTests;
+namespace TerraScale.Dashboard.SlowTests;
 
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.Dashboard2.Testing;
+using TerraScale.Dashboard.Testing;
 
 /// <summary>
 /// The live stack: the dashboard in live mode against a real ts-auth identity
@@ -231,7 +231,7 @@ public sealed class LiveStackTests
     {
         var fixture = await Stack;
         var services = fixture.CreateDashboardFactory().Services;
-        var repository = services.GetRequiredService<TerraScale.Dashboard2.DashboardStateRepository>();
+        var repository = services.GetRequiredService<TerraScale.Dashboard.DashboardStateRepository>();
         var subject = $"conflict-{Guid.NewGuid():N}";
 
         var (missing, missingToken) = await repository.LoadAsync(subject, ct: default);
@@ -240,18 +240,18 @@ public sealed class LiveStackTests
 
         // Writer A creates the world (no expectation yet) and reloads it so it
         // holds a real load-time token.
-        var world = TerraScale.Dashboard2.AccountWorld.Fresh("Conflict Probe", "conflict@example.test");
+        var world = TerraScale.Dashboard.AccountWorld.Fresh("Conflict Probe", "conflict@example.test");
         await repository.SaveAsync(subject, world.RegisteredEmail, world, missingToken, ct: default);
         var (_, loadToken) = await repository.LoadAsync(subject, ct: default);
         await Assert.That(loadToken).IsNotNull();
 
         // Writer B commits first: the token advances past A's view.
-        var competing = TerraScale.Dashboard2.AccountWorld.Fresh("Writer B", "writer-b@example.test");
+        var competing = TerraScale.Dashboard.AccountWorld.Fresh("Writer B", "writer-b@example.test");
         await repository.SaveAsync(subject, competing.RegisteredEmail, competing, loadToken, ct: default);
 
         // Writer A still holds the load-time token: its save must surface the
         // conflict instead of silently overwriting B's committed world.
-        await Assert.ThrowsAsync<TerraScale.Dashboard2.DashboardStateConflictException>(
+        await Assert.ThrowsAsync<TerraScale.Dashboard.DashboardStateConflictException>(
             async () => await repository.SaveAsync(subject, world.RegisteredEmail, world, loadToken, ct: default));
 
         // The committed world is B's, and a reload hands back the fresh token.
