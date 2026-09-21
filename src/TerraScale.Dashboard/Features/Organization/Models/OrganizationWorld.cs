@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using TerraScale.Dashboard.Features.Data;
 
-namespace TerraScale.Dashboard;
+namespace TerraScale.Dashboard.Features.Organization.Models;
 
 public enum OrganizationKind { Personal, Business }
 

@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace TerraScale.Dashboard;
+namespace TerraScale.Dashboard.Shared.State;
 
 public sealed partial class DashboardStore
 {
