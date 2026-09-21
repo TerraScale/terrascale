@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { logout, registerAndOnboard } from "./support/journey";
+import { logout, registerAndOnboard, registerAndOpenPaymentStep } from "./support/journey";
 
 type Route = { path: string; expectText: string };
 
@@ -88,6 +88,51 @@ test("onboarding password visibility toggles reveal and hide each field", async 
     await expect(input).toHaveAttribute("type", "password");
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
   }
+});
+
+test("onboarding payment step keeps monthly and annual pricing separate", async ({ page }) => {
+  await registerAndOpenPaymentStep(page, {
+    email: `e2e-interval-${Date.now()}@example.test`,
+    password: "E2e-interval-123!",
+    displayName: "E2E Interval",
+  });
+
+  await expect(page.locator(".ts-onboarding-plan")).toHaveCount(3);
+
+  // Each card shows exactly one price row: the one for the active interval.
+  // Both rows visible means the Datastar module never loaded (a broken
+  // static-asset response makes the browser reject it).
+  const visiblePrices = () =>
+    page.$$eval(".ts-onboarding-plan", (plans) =>
+      plans.map((plan) =>
+        [...plan.querySelectorAll(".ts-onboarding-plan-price-row")]
+          .filter((row) => row.checkVisibility())
+          .map((row) => row.innerText.replace(/\s+/g, " ").trim()),
+      ),
+    );
+
+  await expect.poll(visiblePrices).toEqual([["$5 / month"], ["$50 / month"], ["$99 / month"]]);
+
+  // Exactly one segmented control is visible (the other is breakpoint-hidden).
+  const interval = page.locator(".ts-onboarding-interval:visible");
+  await expect(interval).toHaveCount(1);
+  const monthly = interval.getByRole("button", { name: "Monthly" });
+  const annual = interval.getByRole("button", { name: "Annual" });
+  await expect(monthly).toHaveAttribute("aria-pressed", "true");
+  await expect(annual).toHaveAttribute("aria-pressed", "false");
+
+  await annual.click();
+  await expect(annual).toHaveAttribute("aria-pressed", "true");
+  await expect(monthly).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(visiblePrices).toEqual([["$50 / year"], ["$500 / year"], ["$990 / year"]]);
+
+  await monthly.click();
+  await expect.poll(visiblePrices).toEqual([["$5 / month"], ["$50 / month"], ["$99 / month"]]);
+
+  // Plan cards stay a radio group while the interval changes the price only.
+  await page.locator(".ts-onboarding-plan-pro").click();
+  await expect(page.locator(".ts-onboarding-plan-pro")).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator(".ts-onboarding-plan-starter")).toHaveAttribute("aria-checked", "false");
 });
 
 test("anonymous dashboard access redirects to login", async ({ page }) => {
