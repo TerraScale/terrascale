@@ -39,29 +39,18 @@ npm run cf:pages:dev
 
 ## Deployment
 
-The site is deployed by `ts-deploy` from this repository's Forgejo Actions
-workflow. A push to `develop` runs `./ts-deploy ci --repo ts-landing`, which
-verifies the checkout with the native npm check, builds the site, signs one immutable
-candidate archive, publishes it to the Forgejo release, and only then deploys
-the extracted, byte-verified candidate to Cloudflare Pages.
+This repository's Forgejo Actions workflow (`.forgejo/workflows/ci.yml`) is
+verification only. A push to `main` — and every pull request targeting
+`main` — checks out the event revision, installs the locked dependencies
+with `npm ci`, and runs `npm run check` and `npm run lint`.
 
-- Pages project: `ts-landing` (its `pages.dev` label is `terrascale-landing-page`)
-- Production branch: `main`
-- Build output: `build/`
-- Pages client: the Wrangler pinned in `package-lock.json`
-
-A pull request additionally publishes one Cloudflare Pages preview deployment on
-the pull request head branch and posts its URL as a single
-`<!-- ts-deploy-preview -->` comment, updated in place on every push. The
-non-production branch label is what makes the deployment a preview: it routes no
-production traffic and leaves nothing to clean up when the pull request closes.
-
-There is no separate deploy command to remember and no Cloudflare credential in
-this repository. The reusable workflow binds `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID` from Forgejo Actions secrets and resolves them only when
-the preview runs; a missing value fails closed before Wrangler starts. A
-`wrangler.toml` in this working tree pins the same Pages project name for the
-local preview, and plays no part in the pipeline.
+Nothing in this repository deploys the site: the workflow holds no
+Cloudflare credential, publishes no release archive, and creates no
+per-pull-request preview deployment. Publishing the built site to the
+Cloudflare Pages project `ts-landing` (build output `build/`, Pages client
+the Wrangler pinned in `package-lock.json`) is performed outside this
+repository's workflow. The `wrangler.toml` in this working tree pins the
+Pages project name for the local preview and plays no part in any pipeline.
 
 This repo is intentionally configured for static output only. Do not assume
 Cloudflare Functions, Workers, or SSR are part of the deployment flow unless the
@@ -78,12 +67,6 @@ npm run cf:pages:dev
 That builds the site and serves the generated `build/` output through
 `wrangler pages dev`.
 
-### CI credentials
-
-The deployment workflow receives exactly two Cloudflare Actions secrets,
-`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. No other credential, and no
-Cloudflare credential in any other repository, is needed to publish this site.
-
 ## Icons
 
 - Add or update icon entries in `scripts/icons-manifest.mjs`
@@ -94,6 +77,3 @@ Cloudflare credential in any other repository, is needed to publish this site.
 ## Assets
 
 Static assets live in `static/` and are served from root-relative URLs such as `/logo-principal.svg` or `/icons/lucide/menu.svg`.
-
-<!-- preview lane test 1789225418 -->
-<!-- second push 1789225604 -->

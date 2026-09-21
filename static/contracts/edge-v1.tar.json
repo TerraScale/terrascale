@@ -1,0 +1,15 @@
+{
+  "archive": "edge-v1.tar",
+  "archiveSha256": "488f5d7a6cefad8a1736e532c668674264ea786bc4fd5282a5a320c870f3a8ce",
+  "archiveBytes": 10240,
+  "artifactCount": 3,
+  "atlasSourceRevision": "19a1be35045d68ffc23abc748df089e093fb2721",
+  "contractVersion": "v1",
+  "files": [
+    "manifest.json",
+    "openapi.json",
+    "route-source.json"
+  ],
+  "manifestSha256": "a0b16a329e054f574b944887d462e1e93fd9bb8c82f12562024cab40e4a7e94e",
+  "schemaVersion": 1
+}
