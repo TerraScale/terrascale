@@ -18,4 +18,11 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           export PATH="$HOME/.fly/bin:$PATH"
-          fly deploy --strategy immediate
+          # The in-memory demo backend must live in exactly one process:
+          # two machines each hold their own accounts and sessions, so a
+          # registration on one is invisible on the other (sign-in then fails
+          # with "Incorrect email or password" and onboarding bounces to
+          # /login). --ha=false skips spare machines and the explicit scale
+          # pins the app to one warm machine.
+          fly deploy --strategy immediate --ha=false
+          fly scale count 1 --yes
