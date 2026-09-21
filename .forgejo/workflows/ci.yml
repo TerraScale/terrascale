@@ -51,18 +51,23 @@ jobs:
             --commit-hash "${FORGEJO_SHA:?deploy: the event SHA is required}" 2>&1)" \
             || { printf '%s\n' "${output}" >&2; exit 1; }
           printf '%s\n' "${output}"
-      - name: Smoke check the production site
+      - name: Smoke check the production deployment
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
         run: |
           set -eu
-          # Give the promoted deployment a moment to answer on the custom
-          # domain, then require it to serve the site.
-          for _ in 1 2 3 4 5; do
-            if curl -fsS -o /dev/null https://terrascale.tech/; then
-              echo "deploy: https://terrascale.tech/ answers after publish"
+          # Proof of freshness, not just reachability: the prerendered
+          # homepage must reference this build's immutable entry chunk. A
+          # failed or un-promoted deployment keeps serving the previous
+          # build's hashes and fails this step.
+          entry="$(grep -oE '_app/immutable/entry/start\.[A-Za-z0-9_-]+\.js' build/index.html | head -n 1)"
+          test -n "${entry}" \
+            || { echo "deploy: no immutable entry chunk in build/index.html" >&2; exit 1; }
+          for _ in 1 2 3 4 5 6; do
+            if curl -fsS "https://terrascale.tech/" | grep -qF "${entry}"; then
+              echo "deploy: https://terrascale.tech/ serves this build (${entry})"
               exit 0
             fi
             sleep 5
           done
-          echo "deploy: https://terrascale.tech/ did not answer after publish" >&2
+          echo "deploy: https://terrascale.tech/ is not serving this build (expected ${entry})" >&2
           exit 1
