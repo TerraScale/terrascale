@@ -14,7 +14,8 @@ public static class ShellHtml
 {
     public static HtmlString Top(ShellModel shell)
     {
-        var dataSubNav = shell.Route?.Id == RouteId.Data ? " data-datasubnav" : "";
+        var hasSubNav = shell.Route?.Id is RouteId.Data or RouteId.Authentication;
+        var dataSubNav = hasSubNav ? " data-datasubnav" : "";
         var builder = new StringBuilder("""
             <!DOCTYPE html>
             <html lang="en" data-theme="dark">
@@ -39,6 +40,10 @@ public static class ShellHtml
         {
             builder.Append(DataSubNav(shell));
         }
+        else if (shell.Route?.Id == RouteId.Authentication)
+        {
+            builder.Append(AuthenticationSubNav(shell));
+        }
 
         builder.AppendLine("        <div class=\"ts-inset\">");
         builder.AppendLine("""            <button type="button" class="ts-fab ts-fab-nav" aria-label="Open navigation" data-on-click="navOpen=!navOpen">""" + Icons.PanelLeft(18).Value + "</button>");
@@ -62,6 +67,7 @@ public static class ShellHtml
                 "api-key" => "/api-keys?create=1",
                 "invitation" => "/access?create=1",
                 "project" => "/organization?create=1",
+                "auth-user" => "/auth/users?create=1",
                 _ => "#",
             };
             builder.AppendLine($"""                <a class="ts-fab ts-fab-create" href="{createHref}" aria-label="{Escape(route.PrimaryAction)}">{Icons.Plus(18).Value}<span class="ts-fab-label">Create</span></a>""");
@@ -113,7 +119,8 @@ public static class ShellHtml
 
     private static string NavItem(ShellModel shell, NavRoute route)
     {
-        var active = shell.ActiveHref == route.Href;
+        var active = shell.ActiveHref == route.Href
+            || (route.Id == RouteId.Authentication && shell.ActiveHref.StartsWith("/auth/", StringComparison.OrdinalIgnoreCase));
         var icon = Icon(route.Icon);
         int? count = route.Id switch
         {
@@ -244,6 +251,34 @@ public static class ShellHtml
         builder.AppendLine(SubNavLink("/data?view=table", "Collection documents", "Table", viewKey == "table"));
         builder.AppendLine(SubNavLink("/data?view=editor", "Document editor", "FileText", viewKey == "editor"));
         builder.AppendLine(SubNavLink("/data?view=sql", "SQL console", "Terminal", viewKey == "sql"));
+        builder.AppendLine("            </div>");
+        builder.AppendLine("        </aside>");
+        return builder.ToString();
+    }
+
+    private static string AuthenticationSubNav(ShellModel shell)
+    {
+        var builder = new StringBuilder("        <aside class=\"ts-datasubnav\" aria-label=\"Authentication views\">");
+        builder.AppendLine("            <div class=\"ts-datasubnav-header\">AUTHENTICATION</div>");
+        builder.AppendLine("            <div class=\"ts-datasubnav-menu\">");
+        builder.AppendLine(SubNavLink("/auth", "Overview", "ShieldCheck", shell.ActiveHref == "/auth"));
+        builder.AppendLine(SubNavLink("/auth/users", "Users", "Users", shell.ActiveHref == "/auth/users"));
+        builder.AppendLine(SubNavLink("/auth/sessions", "Sessions", "Monitor", shell.ActiveHref == "/auth/sessions"));
+        builder.AppendLine(SubNavLink("/auth/organizations", "Organizations", "Building2", shell.ActiveHref == "/auth/organizations"));
+        builder.AppendLine(SubNavLink("/auth/memberships", "Memberships", "Users", shell.ActiveHref == "/auth/memberships"));
+        builder.AppendLine(SubNavLink("/auth/invitations", "Invitations", "MailPlus", shell.ActiveHref == "/auth/invitations"));
+        builder.AppendLine(SubNavLink("/auth/domains", "Domains", "Globe", shell.ActiveHref == "/auth/domains"));
+        builder.AppendLine(SubNavLink("/auth/connections", "Connections", "GlobeLock", shell.ActiveHref == "/auth/connections"));
+        builder.AppendLine(SubNavLink("/auth/directories", "Directories", "FolderOpen", shell.ActiveHref == "/auth/directories"));
+        builder.AppendLine(SubNavLink("/auth/clients", "OAuth clients", "KeySquare", shell.ActiveHref == "/auth/clients"));
+        builder.AppendLine(SubNavLink("/auth/templates", "JWT templates", "FileJson", shell.ActiveHref == "/auth/templates"));
+        builder.AppendLine(SubNavLink("/auth/keys", "Management keys", "KeyRound", shell.ActiveHref == "/auth/keys"));
+        builder.AppendLine(SubNavLink("/auth/webhooks", "Webhooks", "Webhook", shell.ActiveHref == "/auth/webhooks"));
+        builder.AppendLine(SubNavLink("/auth/deliveries", "Deliveries", "Send", shell.ActiveHref == "/auth/deliveries"));
+        builder.AppendLine(SubNavLink("/auth/audit", "Audit log", "ScrollText", shell.ActiveHref == "/auth/audit"));
+        builder.AppendLine(SubNavLink("/auth/billing", "Billing", "CreditCard", shell.ActiveHref == "/auth/billing"));
+        builder.AppendLine(SubNavLink("/auth/quickstart", "Quickstart", "Terminal", shell.ActiveHref == "/auth/quickstart"));
+        builder.AppendLine(SubNavLink("/auth/settings", "Settings", "Settings", shell.ActiveHref == "/auth/settings"));
         builder.AppendLine("            </div>");
         builder.AppendLine("        </aside>");
         return builder.ToString();

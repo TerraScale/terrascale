@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using TerraScale.Dashboard.Features.Data;
+using TerraScale.Dashboard.Features.Authentication;
 
 namespace TerraScale.Dashboard;
 
@@ -181,6 +182,8 @@ public sealed class AccountWorld
 
     public ImmutableArray<SettingsAuthProvider> AuthProviders { get; set; } = [];
 
+    public Dictionary<string, AuthInstanceState> AuthInstances { get; set; } = [];
+
     public ImmutableArray<DashboardStore.AdminUserRow> AdminUsers { get; set; } = [];
 
     public ImmutableArray<DashboardStore.AdminOrganizationRow> AdminOrganizations { get; set; } = [];
@@ -291,6 +294,10 @@ public sealed class AccountWorld
         AllUsers = [.. TeamMembers.Select(m => new DashboardUser(
             m.UserId, m.Name, m.Email, m.Role, m.Status, m.MfaEnabled,
             InitialsOf(m.Name, m.Email), Provider: "password", OrganizationName: ActiveOrganizationName))];
+
+        AuthInstances[ActiveProjectId] = Features.Authentication.AuthInstanceState.Create("Personal", seeded: false);
+
+
     }
 
     private void SeedDemo()
@@ -416,6 +423,8 @@ public sealed class AccountWorld
             new("usr_01JC9TA1Z3C5E7G9I1K4M7P0S", "Dana White", "dana@northwind.io", "owner", "Suspended", false, "DW", Provider: "sso", SupportNote: "Billing dispute open.", OrganizationName: "Northwind"),
             new("usr_01JC9TB2D4F6H8J0L2N5P8S1V", "Igor Ivanov", "igor@northwind.io", "member", "Active", true, "II", Provider: "password", OrganizationName: "Northwind"),
         ];
+
+        AuthInstances[ActiveProjectId] = Features.Authentication.AuthInstanceState.Create("TerraScale Labs", seeded: true);
 
         M2mCredentials =
         [
