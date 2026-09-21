@@ -29,13 +29,13 @@ jobs:
           CONTRACT_URL: ${{ vars.CONTRACT_URL }}
         run: >-
           CONTRACT_ARCHIVE_SHA256="$(tr -d '[:space:]' < CONTRACT_ARCHIVE_SHA256)"
-          python3 scripts/contracts.py --version "$(tr -d '[:space:]' < CONTRACT_VERSION)"
+          dotnet run scripts/contracts.cs --version "$(tr -d '[:space:]' < CONTRACT_VERSION)"
 
       - name: Verify dependency audit failure handling
-        run: python3 -m unittest discover -s scripts -p test_check_nuget_vulnerabilities.py
+        run: dotnet run scripts/check-nuget-vulnerabilities.tests.cs -- --minimum-expected-tests 13
 
       - name: Fail closed on vulnerable NuGet packages
-        run: python3 scripts/check_nuget_vulnerabilities.py src/TerraScale.DotNet/TerraScale.DotNet.csproj src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj
+        run: dotnet run scripts/check-nuget-vulnerabilities.cs src/TerraScale.DotNet/TerraScale.DotNet.csproj src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj
 
       - name: Build the Release solution
         run: dotnet build TerraScale.DotNet.slnx --configuration Release --nologo
