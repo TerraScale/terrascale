@@ -220,6 +220,6 @@ configured tenant/project scope in both responses.
   all run in CI; the dependency lane runs the pinned `govulncheck@v1.8.0`
   scanner and fails on any known vulnerability.
 - Contract surface: the TerraBase API contract is pinned through
-  `scripts/contracts.py` (immutable archive with SHA-256 verification); tests
+  `scripts/contracts.cs` (immutable archive with SHA-256 verification); tests
   fail closed when the archive is not resolvable. The packaged-consumer test
   exercises the module from outside this checkout.

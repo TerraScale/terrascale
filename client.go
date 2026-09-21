@@ -163,6 +163,7 @@ type Client struct {
 	Databases        *DatabasesClient
 	DatabaseBranches *DatabaseBranchesClient
 	Backups          *BackupsClient
+	Files            *FilesClient
 	Usage            *UsageClient
 }
 
@@ -322,6 +323,7 @@ func NewClient(cfg Config) (*Client, error) {
 	c.Databases = &DatabasesClient{c: c}
 	c.DatabaseBranches = &DatabaseBranchesClient{c: c}
 	c.Backups = &BackupsClient{c: c}
+	c.Files = &FilesClient{c: c}
 	c.Usage = &UsageClient{c: c}
 	return c, nil
 }

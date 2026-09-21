@@ -34,73 +34,13 @@ jobs:
           test "$(git rev-parse HEAD)" = "${FORGEJO_SHA:?event SHA is required}"
 
       - name: Verify the immutable producer contract
-        run: |
-          set -eu
-          python3 - <<'PY'
-          import hashlib
-          import os
-          import tempfile
-          import urllib.parse
-          import urllib.request
-          from pathlib import Path
-
-          from scripts.contracts import unpack_url, validate_bundle
-
-          url = os.environ.get("CONTRACT_URL", "")
-          if not url:
-              raise SystemExit("contracts: CONTRACT_URL is required in CI")
-          parsed = urllib.parse.urlparse(url)
-          if parsed.scheme != "https" or not parsed.netloc:
-              raise SystemExit("contracts: CONTRACT_URL must be an absolute HTTPS URL")
-
-          version = Path("CONTRACT_VERSION").read_text(encoding="utf-8").strip()
-          archive_sha256 = "".join(Path("CONTRACT_ARCHIVE_SHA256").read_text(encoding="utf-8").split())
-          if len(archive_sha256) != 64 or any(character not in "0123456789abcdefABCDEF" for character in archive_sha256):
-              raise SystemExit("contracts: CONTRACT_ARCHIVE_SHA256 must be a 64-character hexadecimal digest")
-
-          with tempfile.TemporaryDirectory(prefix="terrascale-contract-ci-") as directory:
-              archive = Path(directory) / "contract.tar"
-              total = 0
-              request = urllib.request.Request(url, headers={"User-Agent": "terrascale-ci/1"})
-              with urllib.request.urlopen(request, timeout=30) as response, archive.open("wb") as output:
-                  while chunk := response.read(1024 * 1024):
-                      total += len(chunk)
-                      if total > 80 * 1024 * 1024:
-                          raise SystemExit("contracts: downloaded contract archive is too large")
-                      output.write(chunk)
-              actual_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
-              if actual_sha256.lower() != archive_sha256.lower():
-                  raise SystemExit(
-                      f"contracts: archive SHA-256 {actual_sha256} does not match CONTRACT_ARCHIVE_SHA256"
-                  )
-
-              unpack_root = Path(directory) / "unpack"
-              unpack_root.mkdir()
-              producer = unpack_url(archive.as_uri(), unpack_root)
-              producer_manifest, producer_digests = validate_bundle(producer, version)
-              committed = Path("contracts") / version
-              committed_manifest, committed_digests = validate_bundle(committed, version)
-              if producer_manifest != committed_manifest or producer_digests != committed_digests:
-                  raise SystemExit("contracts: downloaded producer bundle differs from the committed bundle")
-
-              def regular_files(root: Path) -> set[str]:
-                  return {
-                      str(path.relative_to(root))
-                      for path in root.rglob("*")
-                      if path.is_file()
-                  }
-
-              if regular_files(producer) != regular_files(committed):
-                  raise SystemExit("contracts: downloaded producer file set differs from the committed bundle")
-              for relative in regular_files(producer):
-                  if (producer / relative).read_bytes() != (committed / relative).read_bytes():
-                      raise SystemExit(f"contracts: downloaded producer artifact differs: {relative}")
-
-          print(f"contracts: verified immutable {version} producer bundle ({archive_sha256})")
-          PY
+        run: dotnet run scripts/verify-producer.cs
 
       - name: Verify the committed contract bundle
-        run: python3 scripts/verify_contracts.py
+        run: dotnet run scripts/verify-contracts.cs
+
+      - name: Run the contract boundary tests
+        run: dotnet run scripts/contracts.tests.cs -- --minimum-expected-tests 9
 
       - name: Verify Go formatting
         run: |

@@ -2,12 +2,21 @@
 #:package Blake3@3.0.2
 #:include contracts.lib.cs
 
+using System.Security.Cryptography;
+using System.Text.Json;
+using TerraScale.Ci;
+
+Console.Out.Flush();
+Console.Error.Flush();
+ExitImmediate(Run().GetAwaiter().GetResult());
+
+async Task<int> Run()
+{
+
 // Port of the former inline python heredoc in .forgejo/workflows/ci.yml —
 // download the immutable producer archive, SHA-256 it against the pin, and
 // byte-compare the producer bundle with the committed bundle.
 
-using System.Security.Cryptography;
-using TerraScale.Ci;
 
 try
 {
@@ -81,3 +90,10 @@ catch (ContractError error)
 }
 
 static string RepoSourcePath([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
+}
+
+// dotnet's SIGCHLD reaper FailFasts (ECHILD) at container teardown after child
+// processes were reaped by WaitForExit; skip managed shutdown entirely.
+[System.Runtime.InteropServices.DllImport("libc", EntryPoint = "_exit")]
+static extern void ExitImmediate(int code);

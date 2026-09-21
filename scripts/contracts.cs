@@ -5,6 +5,14 @@
 using System.Text.Json;
 using TerraScale.Ci;
 
+Console.Out.Flush();
+Console.Error.Flush();
+ExitImmediate(Run());
+
+int Run()
+{
+
+
 string? Flag(string name)
 {
     for (var index = 0; index < args.Length - 1; index++)
@@ -253,3 +261,11 @@ catch (ContractError error)
 }
 
 static string RepoSourcePath([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
+}
+
+
+// dotnet's SIGCHLD reaper FailFasts (ECHILD) at container teardown after child
+// processes were reaped by WaitForExit; skip managed shutdown entirely.
+[System.Runtime.InteropServices.DllImport("libc", EntryPoint = "_exit")]
+static extern void ExitImmediate(int code);

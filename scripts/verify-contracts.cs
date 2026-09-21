@@ -2,10 +2,19 @@
 #:package Blake3@3.0.2
 #:include contracts.lib.cs
 
+using System.Text.Json;
+using TerraScale.Ci;
+
+Console.Out.Flush();
+Console.Error.Flush();
+ExitImmediate(Run().GetAwaiter().GetResult());
+
+async Task<int> Run()
+{
+
 // Port of the former scripts/verify_contracts.py — verify the committed
 // contract bundle without contacting the registry.
 
-using TerraScale.Ci;
 
 var root = Path.GetFullPath(Path.Join(Path.GetDirectoryName(RepoSourcePath()), ".."));
 string pinnedVersion;
@@ -64,3 +73,10 @@ catch (ContractError error)
 }
 
 static string RepoSourcePath([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
+}
+
+// dotnet's SIGCHLD reaper FailFasts (ECHILD) at container teardown after child
+// processes were reaped by WaitForExit; skip managed shutdown entirely.
+[System.Runtime.InteropServices.DllImport("libc", EntryPoint = "_exit")]
+static extern void ExitImmediate(int code);
