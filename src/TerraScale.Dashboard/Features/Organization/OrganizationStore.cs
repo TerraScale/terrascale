@@ -3,7 +3,7 @@ namespace TerraScale.Dashboard;
 
 public sealed partial class DashboardStore
 {
-    public sealed record OrganizationRegion(string Code, string Name);
+    public sealed record OrganizationRegion(string Code, string Name, string Country, int LatencyMs);
 
     /// <summary>Pending ownership transfer; the demo store issues no secret
     /// code — the confirmation step only needs the expiry (v1 email flow).</summary>
@@ -13,12 +13,15 @@ public sealed partial class DashboardStore
 
     public string OrganizationStatus => "Active";
 
-    /// <summary>Region catalog from src/backend/regions/catalog.ts (GRU/SFO/FRA).</summary>
+    /// <summary>Region catalog from src/backend/regions/catalog.ts (GRU/SFO/FRA)
+    /// plus the ISO country and the demo round-trip latency. Live mode reads the
+    /// country from the SDK region catalog and the latency from measured RTT;
+    /// the demo world seeds the same shape in memory.</summary>
     public ImmutableArray<OrganizationRegion> OrganizationRegions { get; } =
     [
-        new("GRU", "Sao Paulo"),
-        new("SFO", "San Francisco"),
-        new("FRA", "Frankfurt"),
+        new("GRU", "Sao Paulo", "BR", 118),
+        new("SFO", "San Francisco", "US", 28),
+        new("FRA", "Frankfurt", "DE", 74),
     ];
 
     /// <summary>Suggested primary region, falling back to the catalog default.</summary>

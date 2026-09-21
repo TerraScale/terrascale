@@ -32,15 +32,17 @@ public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWitho
             ["100 databases", "50M operations/month", "5 TB-region storage", "100 team members"]),
     ];
 
-    // Pin positions on /brand/region-map.svg (136x80 dotted-map projection,
-    // tools/generate-region-map.mjs settings) for the seeded region codes.
+    // Pin positions on /brand/region-map.svg for the three TerraScale hubs a
+    // project can be placed in. Same codes and 136x80 dotted-map coordinates
+    // as Framework/RegionMap.cs (tools/generate-region-map.mjs projection); the
+    // dashboard's region vocabulary is gru|sfo|fra everywhere, so the wizard
+    // must not offer the us-*/eu-*/sa-* aliases — they collapse onto the same
+    // hubs (HubCode) and draw duplicate pins for one region.
     private static readonly Dictionary<string, (double X, double Y)> RegionPins = new()
     {
-        ["us-east-1"] = (39, 28.58),
-        ["us-west-2"] = (21.5, 24.25),
-        ["eu-central-1"] = (71.5, 20.78),
-        ["eu-west-1"] = (66, 18.19),
-        ["sa-east-1"] = (50, 59.76),
+        ["GRU"] = (50, 59.76),
+        ["SFO"] = (21, 28.58),
+        ["FRA"] = (71.5, 20.78),
     };
 
     public override void Configure()
@@ -89,9 +91,9 @@ public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWitho
             ProgressPercent: Math.Min(100, (int)Math.Round((double)(index + 1) / total * 100)),
             PaymentCanceled: query["payment"] == "canceled",
             Plans: PlanCatalog,
-            Regions: [.. store.Regions
+            Regions: [.. store.OrganizationRegions
                 .Where(r => RegionPins.ContainsKey(r.Code))
-                .Select(r => new OnboardingRegionView(r.Code, r.Name, r.Status == "Live", RegionPins[r.Code].X, RegionPins[r.Code].Y))],
+                .Select(r => new OnboardingRegionView(r.Code, r.Name, r.Country, r.LatencyMs, true, RegionPins[r.Code].X, RegionPins[r.Code].Y))],
             DisplayName: store.CurrentUser.Name,
             Email: store.CurrentUser.Email,
             OrganizationName: store.ActiveOrganizationName,
