@@ -7,17 +7,9 @@ export async function registerAndOnboard(
   page: Page,
   opts: { email: string; password: string; displayName: string },
 ): Promise<void> {
-  await page.goto("/onboarding");
-  await page.fill('input[name="displayName"]', opts.displayName);
-  await page.fill('input[name="email"]', opts.email);
-  await page.fill('input[name="password"]', opts.password);
-  await page.fill('input[name="confirmPassword"]', opts.password);
-  await page.check('input[name="terms"]');
-  await page.click('button[type="submit"]');
-  await page.waitForURL("**/onboarding**");
+  await registerAndOpenPaymentStep(page, opts);
 
-  // Registration provisions the immutable Personal workspace and completes
-  // the account step. Continue without payment so the test stays on the free
+  // Payment step: continue without payment so the test stays on the free
   // allowance path.
   await page.getByRole("button", { name: "Continue without payment" }).click();
   await page.waitForURL((url) => url.pathname === "/onboarding");
@@ -26,6 +18,23 @@ export async function registerAndOnboard(
   await page.fill("#projectName", "Personal");
   await page.getByRole("button", { name: "Create project and open Dashboard" }).click();
   await page.waitForURL((url) => url.pathname === "/" && !url.search);
+}
+
+/** Registers a fresh account and stops on the payment step of the activation
+ * wizard. Registration already provisions the immutable "Personal" workspace. */
+export async function registerAndOpenPaymentStep(
+  page: Page,
+  opts: { email: string; password: string; displayName: string },
+): Promise<void> {
+  await page.goto("/onboarding");
+  await page.fill('input[name="displayName"]', opts.displayName);
+  await page.fill('input[name="email"]', opts.email);
+  await page.fill('input[name="password"]', opts.password);
+  await page.fill('input[name="confirmPassword"]', opts.password);
+  await page.check('input[name="terms"]');
+  await page.click('button[type="submit"]');
+  await page.waitForURL("**/onboarding**");
+  await page.waitForSelector(".ts-onboarding-plan");
 }
 
 export async function login(page: Page, email: string, password: string): Promise<void> {
