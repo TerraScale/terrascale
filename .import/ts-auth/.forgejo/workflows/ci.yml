@@ -120,14 +120,10 @@ jobs:
             --arg digests "SHA256SUMS" \
             '{schemaVersion: 1, sourceCommit: $sourceCommit, testLog: $testLog, report: $report, digests: $digests}' \
             > artifacts/ci/tests/test-receipt.json
-
-      - name: Upload ts-auth test evidence
-        uses: https://data.forgejo.org/actions/upload-artifact@v7.0.1
-        with:
-          name: ts-auth-tests-${{ forgejo.sha }}
-          path: artifacts/ci/tests
-          if-no-files-found: error
-          retention-days: 30
+          echo 'Generated test evidence receipt:'
+          cat artifacts/ci/tests/test-receipt.json
+          echo 'Generated test evidence checksums:'
+          cat artifacts/ci/tests/SHA256SUMS
 
       - name: Build and inspect the release image
         run: |
