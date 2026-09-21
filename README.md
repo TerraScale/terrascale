@@ -74,6 +74,13 @@ Fly deployments use the checked-in `fly.toml`, which sets
 the production and pull-request preview apps on the seeded in-memory demo
 backend.
 
+That demo backend keeps accounts, sessions, and the onboarding wizard in
+process memory, so it must run as **one warm machine**: the deploy workflows
+pass `--ha=false` and `fly scale count 1`, and `fly.toml` disables autostop
+(`auto_stop_machines = "off"`, `min_machines_running = 1`). A stopped machine or
+a second machine answers with an empty store, which strands onboarding at
+`/login` and rejects the account that was just created.
+
 ## Tests
 
 - `tests/TerraScale.Dashboard.FastTests` — TUnit, the user-blocking critical
