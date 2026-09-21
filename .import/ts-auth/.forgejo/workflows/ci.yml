@@ -56,23 +56,6 @@ jobs:
             src/TerraScale.Auth/TerraScale.Auth.csproj \
             --runtime linux-x64 --nologo
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-msft-1.62.0-chromium
-
-      # Browser-driven hosted-UI tests need Chromium; the Microsoft.Playwright
-      # package bundles its own node, so no system node/pwsh is required.
-      - name: Install Playwright Chromium
-        run: |
-          set -euo pipefail
-          export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
-          playwright_root="${NUGET_PACKAGES}/microsoft.playwright/1.62.0/.playwright"
-          node_bin="${playwright_root}/node/linux-x64/node"
-          test -x "${node_bin}"
-          "${node_bin}" "${playwright_root}/package/cli.js" install chromium
-
       - name: Build ts-auth tests and service
         run: |
           set -euo pipefail
@@ -82,13 +65,13 @@ jobs:
             --configuration Release --no-restore --nologo
 
       - name: Verify dependency audit failure handling
-        run: python3 -m unittest discover -s scripts -p test_check_nuget_vulnerabilities.py
+        run: dotnet run scripts/check-nuget-vulnerabilities.tests.cs -- --minimum-expected-tests 13
 
       - name: Fail closed on vulnerable NuGet packages
         run: |
           set -euo pipefail
           export NUGET_PACKAGES="${RUNNER_TEMP:-/tmp}/ts-auth-nuget"
-          python3 scripts/check_nuget_vulnerabilities.py \
+          dotnet run scripts/check-nuget-vulnerabilities.cs \
             src/TerraScale.Auth/TerraScale.Auth.csproj \
             tests/TerraScale.Auth.Tests/TerraScale.Auth.Tests.csproj
 

@@ -16,7 +16,7 @@
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.56.18" />
     <!-- Browser-driven hosted-UI E2E (real Chromium); framework stays TUnit. -->
-    <PackageReference Include="Microsoft.Playwright" Version="1.62.0" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.63.0" />
   </ItemGroup>
 
   <ItemGroup Condition="Exists('$(TerraBaseEngineProject)')">
