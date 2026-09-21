@@ -60,7 +60,7 @@ public sealed class OnboardingStepEndpoint(DashboardStore store) : EndpointWitho
                 }
                 else
                 {
-                    store.CreateProject(name, form["region"].ToString() is { Length: > 0 } region ? region : "us-east-1");
+                    store.CreateProject(name, form["region"].ToString() is { Length: > 0 } region ? region : "GRU");
                 }
             }
 

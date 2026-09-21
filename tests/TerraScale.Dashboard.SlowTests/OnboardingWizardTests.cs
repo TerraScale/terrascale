@@ -128,6 +128,48 @@ public sealed class OnboardingWizardTests
     }
 
     [Test]
+    public async Task ProjectStepOffersOnlyTheThreeTerraScaleRegionHubs()
+    {
+        using var app = new DashboardTestApp();
+        using var client = app.CreateClient();
+        await app.RegisterAsync(client, $"regions-{Guid.NewGuid():N}@example.test", "Member-tests-123!", "Region Probe");
+        await DashboardTestApp.PostFormAsync(client, "/onboarding/step",
+            new Dictionary<string, string> { ["step"] = "organization", ["name"] = "Probe Labs" });
+        await DashboardTestApp.PostFormAsync(client, "/onboarding/step",
+            new Dictionary<string, string> { ["step"] = "payment-method", ["bypass"] = "1" });
+
+        var page = await app.GetPageAsync(client, "/onboarding?step=project");
+
+        // The dashboard's region vocabulary is gru|sfo|fra (SDK, organization
+        // API, database hubs, login map); the wizard must offer exactly those.
+        foreach (var hub in new[] { "GRU", "SFO", "FRA" })
+        {
+            await Assert.That(page.Contains($"name=\"region\" value=\"{hub}\"")).IsTrue();
+        }
+
+        // us-east-1/us-west-2 collapse onto sfo and eu-central-1/eu-west-1 onto
+        // fra (HubCode), so offering them drew duplicate pins for one region.
+        foreach (var alias in new[] { "us-east-1", "us-west-2", "eu-central-1", "eu-west-1", "sa-east-1" })
+        {
+            await Assert.That(page.Contains($"value=\"{alias}\"")).IsFalse();
+        }
+
+        await Assert.That(CountOccurrences(page.Html, "name=\"region\" value=\"")).IsEqualTo(3);
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        for (var index = haystack.IndexOf(needle, StringComparison.Ordinal); index >= 0;
+             index = haystack.IndexOf(needle, index + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    [Test]
     public async Task CheckoutCancelShowsTheSavedProgressBanner()
     {
         using var app = new DashboardTestApp();
