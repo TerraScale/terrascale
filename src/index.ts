@@ -14,6 +14,7 @@ export type {
   AccessClient,
   AuditClient,
   BackupsClient,
+  FilesClient,
   DatabaseBranchesClient,
   DatabaseDocumentsClient,
   DatabasesClient,

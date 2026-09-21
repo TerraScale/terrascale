@@ -592,6 +592,7 @@ const internalHeaderNames = new Set([
   "x-terrascale-delete-confirmation",
   "x-terrascale-preferred-region",
   "x-terrascale-auth-transaction",
+  "x-terrascale-sha256",
 ]);
 
 function validateInternalHeaders(headers: HeadersInit | undefined, routeName: TerraScaleRouteName = "" as TerraScaleRouteName): void {
@@ -784,6 +785,9 @@ function isQueryArray(value: QueryValue): value is readonly QueryScalar[] {
 }
 
 async function readResponseBody(response: Response, routeName: TerraScaleRouteName): Promise<ParsedBody> {
+  if (response.ok && routeName === "databases.downloadFile") {
+    return { ok: true, value: new Uint8Array(await response.arrayBuffer()), raw: "" };
+  }
   if (response.ok && routeName === "databases.downloadExport") {
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     if (mediaType !== "application/octet-stream") {

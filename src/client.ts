@@ -30,6 +30,7 @@ export class TerraScaleClient {
   readonly databases: DatabasesClient;
   readonly databaseBranches: DatabaseBranchesClient;
   readonly backups: BackupsClient;
+  readonly files: FilesClient;
   readonly documents: DocumentsClient;
   readonly databaseDocuments: DatabaseDocumentsClient;
   readonly access: AccessClient;
@@ -52,6 +53,7 @@ export class TerraScaleClient {
     this.databases = new DatabasesClient(this.#http);
     this.databaseBranches = new DatabaseBranchesClient(this.#http);
     this.backups = new BackupsClient(this.#http);
+    this.files = new FilesClient(this.#http);
     this.documents = new DocumentsClient(this.#http);
     this.databaseDocuments = new DatabaseDocumentsClient(this.#http);
     this.access = new AccessClient(this.#http);
@@ -77,6 +79,7 @@ export class TerraScaleClient {
     Object.defineProperties(this, {
       management: { enumerable: false },
       documents: { enumerable: false },
+      files: { enumerable: false },
       sql: { enumerable: false },
       reactive: { enumerable: false },
     });
@@ -159,6 +162,89 @@ export type DocumentBatchResponse = {
   readonly committed: number | bigint;
   readonly count: number;
 };
+
+export type FileObject = {
+  readonly id: string;
+  readonly length: number;
+  readonly sha256: string;
+  readonly createdAt: string;
+  readonly contentType?: string | null;
+  readonly fileName?: string | null;
+};
+
+export type FileObjectsResponse = { readonly files: readonly FileObject[] };
+
+export type FileUploadOptions = {
+  readonly contentType?: string | undefined;
+  readonly fileName?: string | undefined;
+  readonly sha256?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
+};
+
+/** Transparent tenant file storage backed by TerraBase and Tigris. */
+export class FilesClient {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  async upload(
+    database: string,
+    content: Blob | ArrayBuffer | Uint8Array,
+    options: FileUploadOptions = {},
+  ): Promise<TerraScaleResult<FileObject>> {
+    requireDatabaseIdentifier(database);
+    const bytes = content instanceof Blob
+      ? new Uint8Array(await content.arrayBuffer())
+      : content instanceof Uint8Array ? content : new Uint8Array(content);
+    if (bytes.byteLength > 64 * 1024 * 1024) throw new TypeError("file content exceeds the 64 MiB limit.");
+    if (options.sha256 !== undefined && !/^[0-9a-f]{64}$/u.test(options.sha256)) {
+      throw new TypeError("sha256 must be 64 lowercase hexadecimal characters.");
+    }
+    return directRequest(this.#http, "databases.uploadFile", {
+      method: "POST",
+      path: `${apiRoot}/databases/${idPathSegment(database)}/files`,
+      query: options.fileName === undefined ? undefined : { fileName: options.fileName },
+      body: bytes,
+      headers: {
+        ...(options.contentType === undefined ? {} : { "content-type": options.contentType }),
+        ...(options.sha256 === undefined ? {} : { "x-terrascale-sha256": options.sha256 }),
+      },
+      signal: options.signal,
+    });
+  }
+
+  list(database: string, options: { readonly limit?: number; readonly signal?: AbortSignal } = {}): Promise<TerraScaleResult<FileObjectsResponse>> {
+    requireDatabaseIdentifier(database);
+    return directRequest(this.#http, "databases.listFiles", {
+      method: "GET",
+      path: `${apiRoot}/databases/${idPathSegment(database)}/files`,
+      query: options.limit === undefined ? undefined : { limit: options.limit },
+      signal: options.signal,
+    });
+  }
+
+  metadata(database: string, id: string, signal?: AbortSignal): Promise<TerraScaleResult<FileObject>> {
+    requireDatabaseIdentifier(database);
+    requireDocumentIdentifier(id, "file identifier");
+    return directRequest(this.#http, "databases.getFileMetadata", {
+      method: "GET",
+      path: `${apiRoot}/databases/${idPathSegment(database)}/files/${idPathSegment(id)}/metadata`,
+      signal,
+    });
+  }
+
+  download(database: string, id: string, signal?: AbortSignal): Promise<TerraScaleResult<Uint8Array>> {
+    requireDatabaseIdentifier(database);
+    requireDocumentIdentifier(id, "file identifier");
+    return directRequest(this.#http, "databases.downloadFile", {
+      method: "GET",
+      path: `${apiRoot}/databases/${idPathSegment(database)}/files/${idPathSegment(id)}`,
+      signal,
+    });
+  }
+}
 
 /**
  * Typed access to the public collection document routes. Values are sent as
