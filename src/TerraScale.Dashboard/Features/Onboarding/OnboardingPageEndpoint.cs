@@ -93,7 +93,7 @@ public sealed class OnboardingPageEndpoint(DashboardStore store) : EndpointWitho
             Plans: PlanCatalog,
             Regions: [.. store.OrganizationRegions
                 .Where(r => RegionPins.ContainsKey(r.Code))
-                .Select(r => new OnboardingRegionView(r.Code, r.Name, true, RegionPins[r.Code].X, RegionPins[r.Code].Y))],
+                .Select(r => new OnboardingRegionView(r.Code, r.Name, r.Country, r.LatencyMs, true, RegionPins[r.Code].X, RegionPins[r.Code].Y))],
             DisplayName: store.CurrentUser.Name,
             Email: store.CurrentUser.Email,
             OrganizationName: store.ActiveOrganizationName,

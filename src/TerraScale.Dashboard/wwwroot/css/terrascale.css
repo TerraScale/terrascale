@@ -7042,14 +7042,18 @@ single-selector rules may stay on one line.
     box-shadow: var(--ts-focus-ring);
   }
 
-  /* Hover name label; pointer-events stay off so it can never shadow a
-     neighbouring pin's hit target. */
+  /* Hover label: country flag, region name, and round-trip latency;
+     pointer-events stay off so it can never shadow a neighbouring pin's hit
+     target. */
   .ts-onboarding-region-label {
     position: absolute;
     left: 50%;
     bottom: calc(100% + 2px);
     transform: translateX(-50%);
-    padding: 2px 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 7px;
     border: 1px solid var(--ts-line);
     border-radius: var(--ts-radius-control);
     background-color: var(--ts-surface);
@@ -7064,6 +7068,21 @@ single-selector rules may stay on one line.
     transition: opacity var(--ts-t-fast) var(--ts-ease);
   }
 
+  .ts-onboarding-region-flag {
+    flex-shrink: 0;
+    height: 11px;
+    width: 16px;
+    border: 1px solid var(--ts-line);
+    border-radius: 2px;
+    object-fit: cover;
+  }
+
+  .ts-onboarding-region-label-ping {
+    color: var(--ts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
   .ts-onboarding-region-pin:hover .ts-onboarding-region-label,
   .ts-onboarding-region-pin:has(.ts-onboarding-region-input:focus-visible) .ts-onboarding-region-label {
     opacity: 1;
@@ -7075,6 +7094,20 @@ single-selector rules may stay on one line.
   .ts-onboarding-region-pin-label-below .ts-onboarding-region-label {
     top: calc(100% + 2px);
     bottom: auto;
+  }
+
+  /* Side pins anchor the label to that edge of the marker, so a wide label
+     (flag + name + latency) stays inside the clipped frame instead of being
+     centred past it. */
+  .ts-onboarding-region-pin-label-start .ts-onboarding-region-label {
+    left: 0;
+    transform: none;
+  }
+
+  .ts-onboarding-region-pin-label-end .ts-onboarding-region-label {
+    left: auto;
+    right: 0;
+    transform: none;
   }
 
   .ts-onboarding-region-pin-disabled {

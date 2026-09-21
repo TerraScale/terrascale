@@ -355,15 +355,23 @@
                                 var top = (region.Y / RegionMap.Height * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
                                 // Pins in the northern third flip the hover label below the
                                 // marker so the frame's overflow clip cannot cut it off at
-                                // the top edge.
+                                // the top edge; pins near the side edges anchor the label to
+                                // that edge instead of centring it past the clip.
                                 var labelBelow = region.Y < RegionMap.Height / 3;
+                                var edge = region.X / RegionMap.Width;
                                 var classes = "ts-onboarding-region-pin"
                                     + (region.Live ? "" : " ts-onboarding-region-pin-disabled")
-                                    + (labelBelow ? " ts-onboarding-region-pin-label-below" : "");
+                                    + (labelBelow ? " ts-onboarding-region-pin-label-below" : "")
+                                    + (edge < 0.25 ? " ts-onboarding-region-pin-label-start" : "")
+                                    + (edge > 0.75 ? " ts-onboarding-region-pin-label-end" : "");
                                 <label class="@classes" style="left:@(left)%;top:@(top)%">
-                                    <input class="ts-onboarding-region-input" type="radio" name="region" value="@region.Code" aria-label="@region.Name (@region.Code.ToUpperInvariant()) — @(region.Live ? "Available" : "Unavailable")" @(region.Code == defaultRegion ? "checked" : null) @(region.Live ? null : "disabled") />
+                                    <input class="ts-onboarding-region-input" type="radio" name="region" value="@region.Code" aria-label="@region.Name (@region.Code.ToUpperInvariant()) — @(region.Live ? "Available" : "Unavailable"), @region.LatencyMs ms" @(region.Code == defaultRegion ? "checked" : null) @(region.Live ? null : "disabled") />
                                     <span class="ts-onboarding-region-dot" aria-hidden="true"></span>
-                                    <span class="ts-onboarding-region-label" aria-hidden="true">@region.Name</span>
+                                    <span class="ts-onboarding-region-label" aria-hidden="true">
+                                        <img class="ts-onboarding-region-flag" src="/brand/flags/@(region.Country.ToLowerInvariant()).svg" alt="" decoding="async" />
+                                        <span class="ts-onboarding-region-label-name">@region.Name</span>
+                                        <span class="ts-onboarding-region-label-ping">@region.LatencyMs ms</span>
+                                    </span>
                                 </label>
                             }
                         </div>

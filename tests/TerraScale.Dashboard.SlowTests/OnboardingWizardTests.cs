@@ -155,6 +155,17 @@ public sealed class OnboardingWizardTests
         }
 
         await Assert.That(CountOccurrences(page.Html, "name=\"region\" value=\"")).IsEqualTo(3);
+
+        // Each pin's hover carries the country flag and the region latency.
+        foreach (var flag in new[] { "br", "us", "de" })
+        {
+            await Assert.That(page.Contains($"/brand/flags/{flag}.svg")).IsTrue();
+        }
+
+        foreach (var ping in new[] { "118 ms", "28 ms", "74 ms" })
+        {
+            await Assert.That(page.Contains(ping)).IsTrue();
+        }
     }
 
     private static int CountOccurrences(string haystack, string needle)
