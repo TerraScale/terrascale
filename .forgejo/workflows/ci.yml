@@ -43,7 +43,7 @@ jobs:
       - name: Verify the pinned contract bundle
         run: |
           set -eu
-          python3 scripts/contracts.py --version v1 --source contracts/v1
+          dotnet run scripts/contracts.cs --version v1 --source contracts/v1
           git diff --exit-code -- contracts/v1 src/generated_contract.rs
 
       - name: Verify the pinned Rust toolchain

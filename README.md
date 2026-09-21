@@ -171,7 +171,7 @@ manifest.
 - `tests/producer_http_conformance.rs` — public SDK calls exercised against
   the pinned producer HTTP corpus; these do not replace live API qualification.
 - `CONTRACT_VERSION` — pinned contract version; contract verification is run by
-  `python3 scripts/contracts.py` with an explicit source or immutable archive.
+  `dotnet run scripts/contracts.cs` with an explicit source or immutable archive.
 
 The derive accepts named-field and unit structs and implements
 `terrascale::schema::Document`. A type name supplies the default collection
@@ -193,7 +193,7 @@ rename is absent.
 `nice -n 19 cargo fmt --all --check`, `nice -n 19 cargo clippy --workspace
 --all-targets --all-features -- -D warnings`, and `nice -n 19 cargo test
 --workspace --all-features` run the Rust verification set. Contract
-verification uses `python3 scripts/contracts.py` with an explicit source or
+verification uses `dotnet run scripts/contracts.cs` with an explicit source or
 immutable archive and remains fail-closed without one.
 
 Cancellation tokens interrupt local waiting, including an in-flight request or
@@ -210,5 +210,5 @@ is represented or remotely cancellable.
 - Edition: 2021, declared in `Cargo.toml`. `cargo-audit` 0.22.2 runs the
   dependency advisory gate over the committed lockfile.
 - Contract surface: the TerraBase API contract is pinned through
-  `scripts/contracts.py` (immutable archive with SHA-256 verification); tests
+  `scripts/contracts.cs` (immutable archive with SHA-256 verification); tests
   fail closed when the archive is not resolvable.
