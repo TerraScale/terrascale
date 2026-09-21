@@ -39,18 +39,23 @@ npm run cf:pages:dev
 
 ## Deployment
 
-This repository's Forgejo Actions workflow (`.forgejo/workflows/ci.yml`) is
-verification only. A push to `main` — and every pull request targeting
-`main` — checks out the event revision, installs the locked dependencies
-with `npm ci`, and runs `npm run check` and `npm run lint`.
+This repository's Forgejo Actions workflow (`.forgejo/workflows/ci.yml`)
+verifies every push to `main` and every pull request targeting `main`
+(checkout, `npm ci`, `npm run check`, `npm run lint`). A merged push to
+`main` then publishes the verified `build/` output to the Cloudflare Pages
+project `ts-landing` (production domains `terrascale.tech` and
+`www.terrascale.tech`) with the Wrangler pinned in `package-lock.json`, and
+smoke-checks the production URL after the upload. A missing credential fails
+the deploy step closed: a main push can never report green without
+publishing.
 
-Nothing in this repository deploys the site: the workflow holds no
-Cloudflare credential, publishes no release archive, and creates no
-per-pull-request preview deployment. Publishing the built site to the
-Cloudflare Pages project `ts-landing` (build output `build/`, Pages client
-the Wrangler pinned in `package-lock.json`) is performed outside this
-repository's workflow. The `wrangler.toml` in this working tree pins the
-Pages project name for the local preview and plays no part in any pipeline.
+The deploy step reads two repository Actions secrets:
+
+- `CLOUDFLARE_API_TOKEN` — Pages edit access on the account
+- `CLOUDFLARE_ACCOUNT_ID` — the account that owns the Pages project
+
+The `wrangler.toml` in this working tree pins the Pages project name for
+the local preview and plays no part in the pipeline.
 
 This repo is intentionally configured for static output only. Do not assume
 Cloudflare Functions, Workers, or SSR are part of the deployment flow unless the
