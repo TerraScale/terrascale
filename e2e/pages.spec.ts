@@ -56,7 +56,7 @@ test("anonymous routes render", async ({ page }) => {
   // localized title stays in the document as a screen-reader-only h1.
   const response = await page.goto("/onboarding");
   expect(response?.status(), "/onboarding").toBeLessThan(400);
-  await expect(page.locator(".ts-onboarding-brand-logo")).toBeVisible();
+  await expect(page.locator(".ts-onboarding-header-brand .ts-brand-logo")).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Activate your TerraScale account" }),
   ).toBeVisible();

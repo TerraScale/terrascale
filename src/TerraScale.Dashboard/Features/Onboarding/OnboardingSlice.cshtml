@@ -21,14 +21,14 @@
 }
 @FlowHtml.Document("Activate your TerraScale account | TerraScale")
 <main class="ts-onboarding-root @(wide ? "ts-onboarding-root-wide" : null)">
-    <div class="ts-onboarding-container @(wide ? "ts-onboarding-container-wide" : null) @(Model.Registration ? "ts-onboarding-registration" : null)">
+    <div class="ts-onboarding-container @(wide ? "ts-onboarding-container-wide" : null)">
         @* Account creation (anonymous registration) keeps only the TerraScale
            wordmark in the header; the title stays as an sr-only h1 so the
            document outline and accessibility checks keep working. *@
         <header class="ts-onboarding-header @(Model.Registration ? "ts-onboarding-header-brand" : null)">
             @if (Model.Registration)
             {
-                <img class="ts-onboarding-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async" />
+                <img class="ts-brand-logo" src="/brand/logo-terrascale-blue.svg" alt="TerraScale" decoding="async" />
                 <h1 class="ts-sr-only">Activate your TerraScale account</h1>
             }
             else
