@@ -167,6 +167,11 @@ internal static class Program
             return await AutomaticIndexWorkload.RunAsync(args).ConfigureAwait(false);
         }
 
+        if (QueryIndependentIndexWorkload.IsRequested(args))
+        {
+            return await QueryIndependentIndexWorkload.RunAsync(args).ConfigureAwait(false);
+        }
+
         var requestedWorkload = RequestedWorkload(args);
         if (requestedWorkload.Equals("larger-memory", StringComparison.OrdinalIgnoreCase))
         {
